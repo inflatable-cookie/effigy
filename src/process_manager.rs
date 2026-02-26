@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 #[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
-#[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver};

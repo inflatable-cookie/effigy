@@ -20,6 +20,9 @@ use ratatui::{Frame, Terminal};
 use crate::process_manager::{
     ProcessEventKind, ProcessManagerError, ProcessSpec, ProcessSupervisor, ShutdownProgress,
 };
+use crate::ui::{
+    KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer, SummaryCounts, UiError,
+};
 
 const MAX_LOG_LINES: usize = 2000;
 
@@ -51,6 +54,7 @@ struct LogEntry {
 #[derive(Debug)]
 pub enum DevTuiError {
     Io(io::Error),
+    Ui(UiError),
     Process(ProcessManagerError),
     NoProcesses,
 }
@@ -64,6 +68,7 @@ impl std::fmt::Display for DevTuiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DevTuiError::Io(err) => write!(f, "{err}"),
+            DevTuiError::Ui(err) => write!(f, "{err}"),
             DevTuiError::Process(err) => write!(f, "{err}"),
             DevTuiError::NoProcesses => write!(f, "managed TUI session has no processes"),
         }
@@ -81,6 +86,12 @@ impl From<io::Error> for DevTuiError {
 impl From<ProcessManagerError> for DevTuiError {
     fn from(value: ProcessManagerError) -> Self {
         Self::Process(value)
+    }
+}
+
+impl From<UiError> for DevTuiError {
+    fn from(value: UiError) -> Self {
+        Self::Ui(value)
     }
 }
 
@@ -126,7 +137,9 @@ pub fn run_dev_process_tui(
     let mut active_index: usize = 0;
     let mut input_line = String::new();
     let mut input_mode = InputMode::Command;
+    let mut show_help = false;
     let mut shutdown_summary: Option<String> = None;
+    let mut shutdown_total: Option<usize> = None;
     let mut shutdown_forced: Option<usize> = None;
     let mut observed_non_zero: HashMap<String, String> = HashMap::new();
     let mut exit_states: HashMap<String, ProcessExitState> = HashMap::new();
@@ -181,15 +194,7 @@ pub fn run_dev_process_tui(
         let scroll_offset = stored.min(max_offset);
         scroll_offsets.insert(active.clone(), scroll_offset);
         let is_follow = *follow_mode.get(active).unwrap_or(&true);
-        let status = format!(
-            "follow:{}  mode:{}",
-            if is_follow { "on" } else { "off" },
-            if input_mode == InputMode::Insert {
-                "insert"
-            } else {
-                "command"
-            }
-        );
+        let status = format!("follow: {} (f)", if is_follow { "on" } else { "off" },);
 
         terminal.draw(|frame| {
             render_ui(
@@ -203,6 +208,7 @@ pub fn run_dev_process_tui(
                 input_mode,
                 &status,
                 &exit_states,
+                show_help,
             )
         })?;
 
@@ -222,6 +228,9 @@ pub fn run_dev_process_tui(
                     } else {
                         InputMode::Insert
                     };
+                    if input_mode == InputMode::Insert {
+                        show_help = false;
+                    }
                     continue;
                 }
                 if input_mode == InputMode::Insert {
@@ -251,6 +260,10 @@ pub fn run_dev_process_tui(
                 match key.code {
                     KeyCode::Char('i') => {
                         input_mode = InputMode::Insert;
+                        show_help = false;
+                    }
+                    KeyCode::Char('h') => {
+                        show_help = !show_help;
                     }
                     KeyCode::BackTab => {
                         active_index = if active_index == 0 {
@@ -269,6 +282,17 @@ pub fn run_dev_process_tui(
                             active_index - 1
                         };
                     }
+                    KeyCode::Char('f') => {
+                        let active = &process_names[active_index];
+                        if let Some(follow) = follow_mode.get_mut(active) {
+                            *follow = !*follow;
+                        }
+                        if *follow_mode.get(active).unwrap_or(&false) {
+                            if let Some(offset) = scroll_offsets.get_mut(active) {
+                                *offset = max_offset;
+                            }
+                        }
+                    }
                     KeyCode::Up => {
                         let active = &process_names[active_index];
                         if let Some(follow) = follow_mode.get_mut(active) {
@@ -280,9 +304,6 @@ pub fn run_dev_process_tui(
                     }
                     KeyCode::Down => {
                         let active = &process_names[active_index];
-                        if let Some(follow) = follow_mode.get_mut(active) {
-                            *follow = false;
-                        }
                         if let Some(offset) = scroll_offsets.get_mut(active) {
                             *offset = offset.saturating_add(1).min(max_offset);
                         }
@@ -298,9 +319,6 @@ pub fn run_dev_process_tui(
                     }
                     KeyCode::PageDown => {
                         let active = &process_names[active_index];
-                        if let Some(follow) = follow_mode.get_mut(active) {
-                            *follow = false;
-                        }
                         if let Some(offset) = scroll_offsets.get_mut(active) {
                             *offset = offset.saturating_add(10).min(max_offset);
                         }
@@ -323,7 +341,9 @@ pub fn run_dev_process_tui(
                             *offset = max_offset;
                         }
                     }
-                    KeyCode::Esc => {}
+                    KeyCode::Esc => {
+                        show_help = false;
+                    }
                     _ => {}
                 }
             }
@@ -338,6 +358,7 @@ pub fn run_dev_process_tui(
                 "Shutdown: forcing remaining managed processes to stop..."
             }
             ShutdownProgress::Complete { total, forced } => {
+                shutdown_total = Some(total);
                 shutdown_summary = Some(format_shutdown_summary(total, forced));
                 shutdown_forced = Some(forced);
                 shutdown_summary.as_deref().unwrap_or("Shutdown: complete.")
@@ -360,20 +381,43 @@ pub fn run_dev_process_tui(
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, EnableLineWrap)?;
     terminal.show_cursor()?;
-    if let Some(summary) = shutdown_summary {
-        println!("{summary}");
-    }
-    if let Some(forced) = shutdown_forced {
-        if forced > 0 {
-            eprintln!("{}", format_shutdown_warning(forced));
-        }
+
+    let total = shutdown_total.unwrap_or(process_names.len());
+    let forced = shutdown_forced.unwrap_or(0);
+    let graceful = total.saturating_sub(forced);
+    let mut renderer = PlainRenderer::stdout(OutputMode::from_env());
+    renderer.section("Managed Session Ended")?;
+    renderer.key_values(&[
+        KeyValue::new("processes", total.to_string()),
+        KeyValue::new("graceful", graceful.to_string()),
+        KeyValue::new("forced", forced.to_string()),
+    ])?;
+    if forced > 0 {
+        renderer.notice(
+            NoticeLevel::Warning,
+            &format!("forced termination used for {forced} process(es)."),
+        )?;
     }
     if !non_zero_exits.is_empty() {
-        eprintln!("warn: managed process exits:");
-        for (name, diagnostic) in &non_zero_exits {
-            eprintln!("  - {name}: {diagnostic}");
-        }
+        renderer.text("")?;
+        renderer.notice(NoticeLevel::Warning, "managed process exits:")?;
+        let items = non_zero_exits
+            .iter()
+            .map(|(name, diagnostic)| format!("{name}: {diagnostic}"))
+            .collect::<Vec<String>>();
+        renderer.bullet_list("exits", &items)?;
     }
+    renderer.text("")?;
+    renderer.summary(SummaryCounts {
+        ok: graceful,
+        warn: if forced > 0 || !non_zero_exits.is_empty() {
+            1
+        } else {
+            0
+        },
+        err: non_zero_exits.len(),
+    })?;
+    renderer.text("")?;
 
     result?;
     Ok(DevTuiOutcome { non_zero_exits })
@@ -406,8 +450,13 @@ fn render_ui(
     input_mode: InputMode,
     status: &str,
     exit_states: &HashMap<String, ProcessExitState>,
+    show_help: bool,
 ) {
-    let input_height = if input_mode == InputMode::Insert { 3 } else { 0 };
+    let input_height = if input_mode == InputMode::Insert {
+        3
+    } else {
+        0
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -420,11 +469,18 @@ fn render_ui(
 
     let titles = process_names
         .iter()
-        .map(|name| {
+        .enumerate()
+        .map(|(idx, name)| {
             let style = match exit_states.get(name) {
                 Some(ProcessExitState::Success) => Style::default().fg(Color::Green),
                 Some(ProcessExitState::Failure) => Style::default().fg(Color::Red),
-                None => Style::default(),
+                None => {
+                    if idx == active_index {
+                        Style::default().fg(Color::Magenta)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    }
+                }
             };
             Line::from(Span::styled(name.clone(), style))
         })
@@ -460,18 +516,50 @@ fn render_ui(
         })
         .collect::<Vec<Line>>();
 
-    let logs = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title("Output"))
-        .scroll((clamped_offset.min(u16::MAX as usize) as u16, 0));
-    frame.render_widget(logs, chunks[1]);
-    let mut scrollbar_state = ScrollbarState::new(total_lines.max(1))
-        .viewport_content_length(output_height.max(1))
-        .position(clamped_offset);
-    frame.render_stateful_widget(
-        Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
-        chunks[1],
-        &mut scrollbar_state,
-    );
+    if show_help {
+        let help_lines = vec![
+            Line::from(vec![Span::styled(
+                "Command Mode",
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("tab             toggle insert/command mode"),
+            Line::from("left/right       switch process tabs"),
+            Line::from("up/down          scroll output line-by-line"),
+            Line::from("pgup/pgdn        scroll output by page"),
+            Line::from("home/end         jump to top/bottom (end re-enables follow)"),
+            Line::from("f               toggle follow for active tab"),
+            Line::from("h               toggle this help"),
+            Line::from("ctrl+c          quit and shut down managed processes"),
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "Insert Mode",
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("type            send input text to active process"),
+            Line::from("enter           submit input"),
+            Line::from("esc             return to command mode"),
+        ];
+        let help =
+            Paragraph::new(help_lines).block(Block::default().borders(Borders::ALL).title("Help"));
+        frame.render_widget(help, chunks[1]);
+    } else {
+        let logs = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Output"))
+            .scroll((clamped_offset.min(u16::MAX as usize) as u16, 0));
+        frame.render_widget(logs, chunks[1]);
+        let mut scrollbar_state = ScrollbarState::new(total_lines.max(1))
+            .viewport_content_length(output_height.max(1))
+            .position(clamped_offset);
+        frame.render_stateful_widget(
+            Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
+            chunks[1],
+            &mut scrollbar_state,
+        );
+    }
 
     let input = if input_mode == InputMode::Insert {
         Paragraph::new(input_line.to_owned()).block(
@@ -484,14 +572,17 @@ fn render_ui(
     };
     frame.render_widget(input, chunks[2]);
 
-    let footer = Paragraph::new(format!(
-        "{status}  |  tab toggle mode  |  left/right switch  |  up/down/pgup/pgdn/home/end scroll  |  Ctrl+C quit"
-    ))
-    .style(if input_mode == InputMode::Insert {
-        Style::default().fg(Color::Yellow)
+    let mode_label = if input_mode == InputMode::Insert {
+        "insert"
     } else {
-        Style::default().fg(Color::DarkGray)
-    });
+        "command"
+    };
+    let footer = Paragraph::new(format!("{status}  |  mode:{mode_label} (tab)  |  help (h)"))
+        .style(if input_mode == InputMode::Insert {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        });
     frame.render_widget(footer, chunks[3]);
 }
 
@@ -578,10 +669,6 @@ fn format_shutdown_summary(total: usize, forced: usize) -> String {
     }
 }
 
-fn format_shutdown_warning(forced: usize) -> String {
-    format!("warn: forced termination used for {forced} process(es).")
-}
-
 fn is_expected_shutdown_diagnostic(diagnostic: &str) -> bool {
     matches!(diagnostic, "signal=15" | "signal=9")
 }
@@ -607,14 +694,6 @@ mod tests {
         assert_eq!(
             format_shutdown_summary(4, 1),
             "effigy: shutdown complete (3/4 graceful, 1 forced)"
-        );
-    }
-
-    #[test]
-    fn format_shutdown_warning_reports_forced_count() {
-        assert_eq!(
-            format_shutdown_warning(2),
-            "warn: forced termination used for 2 process(es)."
         );
     }
 

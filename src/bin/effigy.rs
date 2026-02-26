@@ -65,21 +65,23 @@ fn main() {
                 }
             }
         }
-        Command::Task(task) => match effigy::runner::run_command(Command::Task(task)) {
-            Ok(output) => {
-                if !output.trim().is_empty() {
-                    let mut renderer = PlainRenderer::stdout(output_mode);
-                    let _ = render_cli_header(&mut renderer, &command_root);
-                    let _ = renderer.text(&output);
+        Command::Task(task) => {
+            let mut renderer = PlainRenderer::stdout(output_mode);
+            let _ = render_cli_header(&mut renderer, &command_root);
+            match effigy::runner::run_command(Command::Task(task)) {
+                Ok(output) => {
+                    if !output.trim().is_empty() {
+                        let _ = renderer.text(&output);
+                    }
                     let _ = renderer.text("");
                 }
+                Err(err) => {
+                    let mut err_renderer = PlainRenderer::stderr(output_mode);
+                    let _ = err_renderer
+                        .error_block(&MessageBlock::new("Task failed", err.to_string()));
+                    std::process::exit(1);
+                }
             }
-            Err(err) => {
-                let mut err_renderer = PlainRenderer::stderr(output_mode);
-                let _ =
-                    err_renderer.error_block(&MessageBlock::new("Task failed", err.to_string()));
-                std::process::exit(1);
-            }
-        },
+        }
     }
 }
