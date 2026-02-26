@@ -11,6 +11,7 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
@@ -487,7 +488,7 @@ fn render_ui(
         .collect::<Vec<Line>>();
     let tabs = Tabs::new(titles)
         .select(active_index)
-        .block(Block::default().borders(Borders::ALL).title("Processes"))
+        .block(panel_block(Some(" EFFIGY "), true, Color::Magenta))
         .highlight_style(Style::default().add_modifier(Modifier::BOLD));
     frame.render_widget(tabs, chunks[0]);
 
@@ -544,11 +545,11 @@ fn render_ui(
             Line::from("esc             return to command mode"),
         ];
         let help =
-            Paragraph::new(help_lines).block(Block::default().borders(Borders::ALL).title("Help"));
+            Paragraph::new(help_lines).block(panel_block(Some("Help"), false, Color::Magenta));
         frame.render_widget(help, chunks[1]);
     } else {
         let logs = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title("Output"))
+            .block(panel_block(None, false, Color::DarkGray))
             .scroll((clamped_offset.min(u16::MAX as usize) as u16, 0));
         frame.render_widget(logs, chunks[1]);
         let mut scrollbar_state = ScrollbarState::new(total_lines.max(1))
@@ -562,11 +563,17 @@ fn render_ui(
     }
 
     let input = if input_mode == InputMode::Insert {
-        Paragraph::new(input_line.to_owned()).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Input (Esc command, Enter send)"),
-        )
+        let mut spans = vec![Span::styled("> ", Style::default().fg(Color::Yellow))];
+        spans.push(Span::styled(
+            input_line.to_owned(),
+            Style::default().fg(Color::Gray),
+        ));
+        spans.push(Span::styled("▏", Style::default().fg(Color::Yellow)));
+        Paragraph::new(Line::from(spans)).block(panel_block(
+            Some("Input (Esc command, Enter send)"),
+            false,
+            Color::Magenta,
+        ))
     } else {
         Paragraph::new("")
     };
@@ -577,13 +584,52 @@ fn render_ui(
     } else {
         "command"
     };
-    let footer = Paragraph::new(format!("{status}  |  mode:{mode_label} (tab)  |  help (h)"))
-        .style(if input_mode == InputMode::Insert {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        });
+    let muted = Style::default().fg(Color::DarkGray);
+    let active = Style::default().fg(Color::Yellow);
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled(status.to_owned(), if follow { active } else { muted }),
+        Span::styled("  |  ", muted),
+        Span::styled(
+            format!("mode:{mode_label} (tab)"),
+            if input_mode == InputMode::Insert {
+                active
+            } else {
+                muted
+            },
+        ),
+        Span::styled("  |  ", muted),
+        Span::styled("help (h)", if show_help { active } else { muted }),
+    ]));
     frame.render_widget(footer, chunks[3]);
+}
+
+fn panel_block<'a>(title: Option<&'a str>, show_version: bool, border_color: Color) -> Block<'a> {
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_set(border::ROUNDED)
+        .border_style(Style::default().fg(border_color));
+    if let Some(title) = title {
+        block = block.title_top(
+            Line::from(Span::styled(
+                title.to_owned(),
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ))
+            .left_aligned(),
+        );
+    }
+    if show_version {
+        let version = format!(" v{} ", env!("CARGO_PKG_VERSION"));
+        block = block.title_bottom(
+            Line::from(Span::styled(
+                version,
+                Style::default().fg(Color::LightMagenta),
+            ))
+            .right_aligned(),
+        );
+    }
+    block
 }
 
 fn ansi_line(raw: &str, base: Style) -> Line<'static> {

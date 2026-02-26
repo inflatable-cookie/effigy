@@ -16,7 +16,7 @@ Effigy can launch commands, but local multi-process development still requires m
 - [x] Support named TOML-driven profiles per managed task (for example `default`, `admin`).
 - [x] Provide one tab per process with live output stream.
 - [x] Support stdin passthrough to focused process tab (for flows like Vite `r + Enter` restart).
-- [x] Provide an extra interactive shell tab to run ad-hoc commands while dev stack is running.
+- [ ] Keep process-manager scope focused on managed processes only (no embedded shell terminal).
 - [ ] Keep process lifecycle deterministic (start order, shutdown order, signal handling, exit propagation).
 
 ## 3) Non-Goals
@@ -40,7 +40,7 @@ Expected behavior:
 - Alternate-screen TUI opens (ratatui).
 - Tabs shown for each configured process:
 - API, frontend, admin (or project-defined equivalents).
-- Dedicated "shell" tab available for ad-hoc command execution.
+- No embedded shell terminal; use managed process tabs only.
 - Focused tab receives stdin input.
 - Global keys support tab switching, help, and graceful shutdown.
 
@@ -51,7 +51,6 @@ Roadmap target for catalog schema extensions:
 ```toml
 [tasks.dev]
 mode = "tui"
-shell = true
 
 [tasks.dev.profiles.default]
 processes = ["api", "front", "admin"]
@@ -68,8 +67,6 @@ run = "vite dev"
 [tasks.dev.processes.admin]
 run = "vite dev --config admin.vite.config.ts"
 
-[shell]
-run = "$SHELL"
 
 ```
 
@@ -82,7 +79,7 @@ Notes:
 ## 6) Execution Plan
 
 ### Phase 4.1 - Schema and Runner Wiring
-- [x] Define managed-task schema for process groups (`mode=tui`, process map, profile map, shell options).
+- [x] Define managed-task schema for process groups (`mode=tui`, process map, profile map).
 - [x] Define CLI profile binding for task passthrough (`effigy dev <profile>`).
 - [x] Extend parser/runner selection path to route managed tasks to TUI runtime.
 - [x] Add validation errors for malformed process definitions.
@@ -94,10 +91,9 @@ Notes:
 - [x] Expand profile-selected process IDs to runnable process specs.
 - [ ] Implement lifecycle policy: startup ordering, cancellation, and graceful shutdown.
 - [x] Implement focus-based stdin dispatch to active process.
-- [x] Implement shell-tab process with interactive stdin/stdout handling.
 
 ### Phase 4.3 - Ratatui Interface
-- [x] Add alternate-screen ratatui app shell.
+- [x] Add alternate-screen ratatui app host.
 - [x] Implement tab bar + per-tab scrollback view.
 - [x] Implement status line (running/exited/error, pid where useful).
 - [ ] Add keymap help overlay and deterministic key handling.

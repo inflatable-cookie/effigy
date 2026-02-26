@@ -301,8 +301,6 @@ struct TaskManifest {
     #[serde(default)]
     defer: Option<ManifestDefer>,
     #[serde(default)]
-    shell: Option<ManifestGlobalShell>,
-    #[serde(default)]
     tasks: BTreeMap<String, ManifestTask>,
 }
 
@@ -318,8 +316,6 @@ struct ManifestTask {
     processes: BTreeMap<String, ManifestManagedProcess>,
     #[serde(default)]
     profiles: BTreeMap<String, ManifestManagedProfile>,
-    #[serde(default)]
-    shell: Option<bool>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -490,12 +486,6 @@ fn tab_entries_from_order(tabs: Option<&ManifestManagedTabOrder>) -> Option<Vec<
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct ManifestGlobalShell {
-    #[serde(default)]
-    run: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
 struct ManifestCatalog {
     alias: Option<String>,
 }
@@ -565,8 +555,6 @@ struct ManagedTaskPlan {
     processes: Vec<ManagedProcessSpec>,
     tab_order: Vec<String>,
     fail_on_non_zero: bool,
-    shell_enabled: bool,
-    shell_run: Option<String>,
     passthrough: Vec<String>,
 }
 
@@ -1201,7 +1189,7 @@ fn render_deferral_trace(
 
 fn resolve_managed_task_plan(
     selector: &TaskSelector,
-    catalog: &LoadedCatalog,
+    _catalog: &LoadedCatalog,
     task: &ManifestTask,
     runtime_args: &TaskRuntimeArgs,
     catalogs: &[LoadedCatalog],
@@ -1292,12 +1280,6 @@ fn resolve_managed_task_plan(
         processes,
         tab_order,
         fail_on_non_zero: task.fail_on_non_zero.unwrap_or(true),
-        shell_enabled: task.shell.unwrap_or(false),
-        shell_run: catalog
-            .manifest
-            .shell
-            .as_ref()
-            .and_then(|shell| shell.run.clone()),
         passthrough: runtime_args.passthrough.iter().skip(1).cloned().collect(),
     }))
 }
@@ -1740,14 +1722,6 @@ fn render_managed_task_plan(
                 "disabled"
             },
         ),
-        KeyValue::new(
-            "shell-tab",
-            if plan.shell_enabled {
-                "enabled"
-            } else {
-                "disabled"
-            },
-        ),
     ])?;
     renderer.text("")?;
     renderer.notice(
@@ -1780,10 +1754,6 @@ fn render_managed_task_plan(
         ],
         rows,
     ))?;
-    if let Some(shell_run) = plan.shell_run {
-        renderer.text("")?;
-        renderer.key_values(&[KeyValue::new("shell-run", shell_run)])?;
-    }
     if !plan.passthrough.is_empty() {
         renderer.text("")?;
         renderer.bullet_list("profile-args", &plan.passthrough)?;
@@ -1834,14 +1804,12 @@ fn run_managed_task_tui(
 ) -> Result<String, RunnerError> {
     let ManagedTaskPlan {
         processes,
-        mut tab_order,
+        tab_order,
         fail_on_non_zero,
-        shell_enabled,
-        shell_run,
         profile,
         ..
     } = plan;
-    let mut specs = processes
+    let specs = processes
         .into_iter()
         .map(|process| ProcessSpec {
             name: process.name,
@@ -1851,18 +1819,6 @@ fn run_managed_task_tui(
             pty: true,
         })
         .collect::<Vec<ProcessSpec>>();
-    if shell_enabled {
-        let shell_name = next_available_process_name(&specs, "shell");
-        let shell_run = resolve_shell_tab_command(shell_run);
-        specs.push(ProcessSpec {
-            name: shell_name.clone(),
-            run: shell_run,
-            cwd: repo_root.to_path_buf(),
-            start_after_ms: 0,
-            pty: true,
-        });
-        tab_order.push(shell_name);
-    }
     let outcome =
         run_dev_process_tui(repo_root.to_path_buf(), specs, tab_order).map_err(|error| {
             RunnerError::Ui(format!(
@@ -1877,19 +1833,6 @@ fn run_managed_task_tui(
         });
     }
     Ok(String::new())
-}
-
-fn next_available_process_name(existing: &[ProcessSpec], base: &str) -> String {
-    if !existing.iter().any(|spec| spec.name == base) {
-        return base.to_owned();
-    }
-    for idx in 2..100 {
-        let candidate = format!("{base}-{idx}");
-        if !existing.iter().any(|spec| spec.name == candidate) {
-            return candidate;
-        }
-    }
-    format!("{base}-100")
 }
 
 fn run_managed_task_runtime(
@@ -1930,13 +1873,6 @@ fn run_managed_task_runtime(
         ),
     ])?;
     renderer.text("")?;
-    if plan.shell_enabled {
-        renderer.notice(
-            NoticeLevel::Info,
-            "shell-tab configured but omitted in stream mode (reserved for TUI runtime).",
-        )?;
-        renderer.text("")?;
-    }
     renderer.notice(
         NoticeLevel::Info,
         "Running managed profile in temporary stream mode.",
@@ -1993,16 +1929,6 @@ fn run_managed_task_runtime(
     let out = renderer.into_inner();
     String::from_utf8(out)
         .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
-}
-
-fn resolve_shell_tab_command(configured: Option<String>) -> String {
-    let configured = configured.map(|run| run.trim().to_owned());
-    match configured.as_deref() {
-        Some("") => "exec ${SHELL:-sh} -s".to_owned(),
-        Some("$SHELL") | Some("${SHELL}") => "exec ${SHELL:-sh} -s".to_owned(),
-        Some(run) => run.to_owned(),
-        None => "exec ${SHELL:-sh} -s".to_owned(),
-    }
 }
 
 fn with_local_node_bin_path(process: &mut ProcessCommand, cwd: &Path) {

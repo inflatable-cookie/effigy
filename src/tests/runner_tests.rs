@@ -1,9 +1,7 @@
 use super::{
-    next_available_process_name, parse_task_runtime_args, parse_task_selector,
-    resolve_shell_tab_command, run_manifest_task_with_cwd, run_pulse, run_tasks, RunnerError,
-    TaskRuntimeArgs,
+    parse_task_runtime_args, parse_task_selector, run_manifest_task_with_cwd, run_pulse, run_tasks,
+    RunnerError, TaskRuntimeArgs,
 };
-use crate::process_manager::ProcessSpec;
 use crate::{PulseArgs, TaskInvocation, TasksArgs};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -603,12 +601,8 @@ fn run_manifest_task_managed_tui_uses_default_profile_when_not_specified() {
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     write_manifest(
         &root.join("effigy.toml"),
-        r#"[shell]
-run = "zsh -l"
-
-[tasks.dev]
+        r#"[tasks.dev]
 mode = "tui"
-shell = true
 
 [tasks.dev.profiles.default]
 processes = ["api", "front", "admin"]
@@ -642,43 +636,6 @@ run = "vite dev --config admin"
     assert!(out.contains("front"));
     assert!(out.contains("admin"));
     assert!(out.contains("fail-on-non-zero: enabled"));
-    assert!(out.contains("shell-tab: enabled"));
-    assert!(out.contains("shell-run: zsh -l"));
-}
-
-#[test]
-fn run_manifest_task_managed_tui_supports_shell_boolean_and_global_shell_config() {
-    let _guard = test_lock().lock().expect("lock");
-    let root = temp_workspace("managed-shell-global-config");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[shell]
-run = "bash -l"
-
-[tasks.dev]
-mode = "tui"
-shell = true
-
-[tasks.dev.profiles.default]
-processes = ["api"]
-
-[tasks.dev.processes.api]
-run = "cargo run -p api"
-"#,
-    );
-
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect("managed plan should render");
-
-    assert!(out.contains("shell-tab: enabled"));
-    assert!(out.contains("shell-run: bash -l"));
 }
 
 #[test]
@@ -1300,53 +1257,6 @@ run = "sh -lc 'exit 9'"
     assert!(out.contains("Managed Task Runtime"));
     assert!(out.contains("fail-on-non-zero: disabled"));
     assert!(out.contains("process `api` exit=9"));
-}
-
-#[test]
-fn next_available_process_name_avoids_shell_name_collisions() {
-    let specs = vec![
-        ProcessSpec {
-            name: "api".to_owned(),
-            run: "printf api".to_owned(),
-            cwd: PathBuf::from("."),
-            start_after_ms: 0,
-            pty: false,
-        },
-        ProcessSpec {
-            name: "shell".to_owned(),
-            run: "sh".to_owned(),
-            cwd: PathBuf::from("."),
-            start_after_ms: 0,
-            pty: false,
-        },
-        ProcessSpec {
-            name: "shell-2".to_owned(),
-            run: "sh".to_owned(),
-            cwd: PathBuf::from("."),
-            start_after_ms: 0,
-            pty: false,
-        },
-    ];
-
-    let name = next_available_process_name(&specs, "shell");
-    assert_eq!(name, "shell-3");
-}
-
-#[test]
-fn resolve_shell_tab_command_normalizes_shell_env_templates() {
-    assert_eq!(resolve_shell_tab_command(None), "exec ${SHELL:-sh} -s");
-    assert_eq!(
-        resolve_shell_tab_command(Some("$SHELL".to_owned())),
-        "exec ${SHELL:-sh} -s"
-    );
-    assert_eq!(
-        resolve_shell_tab_command(Some("${SHELL}".to_owned())),
-        "exec ${SHELL:-sh} -s"
-    );
-    assert_eq!(
-        resolve_shell_tab_command(Some("bash -l".to_owned())),
-        "bash -l"
-    );
 }
 
 fn write_manifest(path: &PathBuf, body: &str) {
