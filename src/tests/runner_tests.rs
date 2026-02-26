@@ -540,6 +540,131 @@ fn run_manifest_task_explicit_deferral_wins_over_implicit_legacy_fallback() {
     assert!(!marker.exists(), "composer fallback should not be invoked");
 }
 
+#[test]
+fn run_manifest_task_managed_tui_uses_default_profile_when_not_specified() {
+    let root = temp_workspace("managed-default-profile");
+    write_manifest(
+        &root.join("effigy.tasks.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["api", "front", "admin"]
+
+[tasks.dev.profiles.admin]
+processes = ["api", "admin"]
+
+[tasks.dev.processes.api]
+run = "cargo run -p api"
+
+[tasks.dev.processes.front]
+run = "vite dev"
+
+[tasks.dev.processes.admin]
+run = "vite dev --config admin"
+
+[tasks.dev.shell]
+enabled = true
+run = "$SHELL"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("managed plan should render");
+
+    assert!(out.contains("Managed Task Plan"));
+    assert!(out.contains("profile: default"));
+    assert!(out.contains("api"));
+    assert!(out.contains("front"));
+    assert!(out.contains("admin"));
+    assert!(out.contains("shell-tab: enabled"));
+}
+
+#[test]
+fn run_manifest_task_managed_tui_accepts_named_profile_argument() {
+    let root = temp_workspace("managed-named-profile");
+    write_manifest(
+        &root.join("effigy.tasks.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["api", "front", "admin"]
+
+[tasks.dev.profiles.admin]
+processes = ["api", "admin"]
+
+[tasks.dev.processes.api]
+run = "cargo run -p api"
+
+[tasks.dev.processes.front]
+run = "vite dev"
+
+[tasks.dev.processes.admin]
+run = "vite dev --config admin"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["admin".to_owned()],
+        },
+        root,
+    )
+    .expect("managed plan should render");
+
+    assert!(out.contains("profile: admin"));
+    assert!(out.contains("api"));
+    assert!(out.contains("admin"));
+    assert!(!out.contains("front"));
+}
+
+#[test]
+fn run_manifest_task_managed_tui_errors_for_unknown_profile() {
+    let root = temp_workspace("managed-unknown-profile");
+    write_manifest(
+        &root.join("effigy.tasks.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["api"]
+
+[tasks.dev.processes.api]
+run = "cargo run -p api"
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["admin".to_owned()],
+        },
+        root,
+    )
+    .expect_err("unknown profile should fail");
+
+    match err {
+        RunnerError::TaskManagedProfileNotFound {
+            task,
+            profile,
+            available,
+        } => {
+            assert_eq!(task, "dev");
+            assert_eq!(profile, "admin");
+            assert_eq!(available, vec!["default".to_owned()]);
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
 fn write_manifest(path: &PathBuf, body: &str) {
     fs::write(path, body).expect("write manifest");
 }

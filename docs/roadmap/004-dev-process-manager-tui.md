@@ -13,6 +13,7 @@ Effigy can launch commands, but local multi-process development still requires m
 
 - [ ] Add a process-manager TUI mode for task commands such as `effigy dev`.
 - [ ] Spawn multiple predefined child processes from task catalog configuration.
+- [ ] Support named TOML-driven profiles per managed task (for example `default`, `admin`).
 - [ ] Provide one tab per process with live output stream.
 - [ ] Support stdin passthrough to focused process tab (for flows like Vite `r + Enter` restart).
 - [ ] Provide an extra interactive shell tab to run ad-hoc commands while dev stack is running.
@@ -29,9 +30,13 @@ Effigy can launch commands, but local multi-process development still requires m
 
 Default invocation:
 - `effigy dev`
+- `effigy dev <profile>`
 
 Expected behavior:
 - Effigy resolves `dev` task as a managed process group task.
+- Effigy chooses process set by profile:
+  - no profile arg uses default profile.
+  - profile arg (for example `admin`) selects configured subset for that profile.
 - Alternate-screen TUI opens (ratatui).
 - Tabs shown for each configured process:
 - API, frontend, admin (or project-defined equivalents).
@@ -47,16 +52,19 @@ Roadmap target for catalog schema extensions:
 [tasks.dev]
 mode = "tui"
 
-[[tasks.dev.processes]]
-name = "api"
+[tasks.dev.profiles.default]
+processes = ["api", "front", "admin"]
+
+[tasks.dev.profiles.admin]
+processes = ["api", "admin"]
+
+[tasks.dev.processes.api]
 run = "cargo run -p farmyard-api"
 
-[[tasks.dev.processes]]
-name = "front"
+[tasks.dev.processes.front]
 run = "vite dev"
 
-[[tasks.dev.processes]]
-name = "admin"
+[tasks.dev.processes.admin]
 run = "vite dev --config admin.vite.config.ts"
 
 [tasks.dev.shell]
@@ -66,17 +74,23 @@ run = "$SHELL"
 
 Notes:
 - This roadmap defines the direction; exact schema can evolve during phase 4.1 if a cleaner manifest shape is identified.
+- `effigy dev` resolves `profiles.default`.
+- `effigy dev admin` resolves `profiles.admin`.
+- Unknown profiles fail with a validation error listing available profiles.
 
 ## 6) Execution Plan
 
 ### Phase 4.1 - Schema and Runner Wiring
-- [ ] Define managed-task schema for process groups (`mode=tui`, process list, shell tab options).
+- [ ] Define managed-task schema for process groups (`mode=tui`, process map, profile map, shell options).
+- [ ] Define CLI profile binding for task passthrough (`effigy dev <profile>`).
 - [ ] Extend parser/runner selection path to route managed tasks to TUI runtime.
 - [ ] Add validation errors for malformed process definitions.
+- [ ] Add validation errors for missing/default/unknown profile references.
 - [ ] Add compatibility behavior when task is missing/invalid.
 
 ### Phase 4.2 - Process Runtime Engine
 - [ ] Build async process supervisor (spawn, stdout/stderr capture, stdin pipe).
+- [ ] Expand profile-selected process IDs to runnable process specs.
 - [ ] Implement lifecycle policy: startup ordering, cancellation, and graceful shutdown.
 - [ ] Implement focus-based stdin dispatch to active process.
 - [ ] Implement shell-tab process with interactive stdin/stdout handling.
@@ -102,6 +116,7 @@ Notes:
 ## 7) Acceptance Criteria
 
 - [ ] `effigy dev` can launch and manage at least 3 configured processes concurrently.
+- [ ] `effigy dev <profile>` launches only the processes configured for that profile.
 - [ ] Each process has dedicated tabbed output view with preserved recent logs.
 - [ ] Focused tab receives stdin correctly (including interactive restart commands).
 - [ ] Shell tab supports ad-hoc commands without leaving the TUI.

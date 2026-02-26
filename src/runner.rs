@@ -66,6 +66,28 @@ pub enum RunnerError {
         stdout: String,
         stderr: String,
     },
+    TaskManagedUnsupportedMode {
+        task: String,
+        mode: String,
+    },
+    TaskManagedProfileNotFound {
+        task: String,
+        profile: String,
+        available: Vec<String>,
+    },
+    TaskManagedProfileEmpty {
+        task: String,
+        profile: String,
+    },
+    TaskManagedProcessNotFound {
+        task: String,
+        profile: String,
+        process: String,
+    },
+    TaskMissingRunCommand {
+        task: String,
+        path: PathBuf,
+    },
     DeferLoopDetected {
         depth: u8,
     },
@@ -141,6 +163,36 @@ impl std::fmt::Display for RunnerError {
                     )
                 }
             }
+            RunnerError::TaskManagedUnsupportedMode { task, mode } => write!(
+                f,
+                "task `{task}` declares unsupported managed mode `{mode}` (expected `tui`)"
+            ),
+            RunnerError::TaskManagedProfileNotFound {
+                task,
+                profile,
+                available,
+            } => write!(
+                f,
+                "managed task `{task}` profile `{profile}` not found (available: {})",
+                available.join(", ")
+            ),
+            RunnerError::TaskManagedProfileEmpty { task, profile } => write!(
+                f,
+                "managed task `{task}` profile `{profile}` has no processes configured"
+            ),
+            RunnerError::TaskManagedProcessNotFound {
+                task,
+                profile,
+                process,
+            } => write!(
+                f,
+                "managed task `{task}` profile `{profile}` references undefined process `{process}`"
+            ),
+            RunnerError::TaskMissingRunCommand { task, path } => write!(
+                f,
+                "task `{task}` in {} is missing `run` command (required for non-managed tasks)",
+                path.display()
+            ),
             RunnerError::DeferLoopDetected { depth } => write!(
                 f,
                 "deferral loop detected ({} deferral hop(s)); refusing to defer again",
@@ -182,7 +234,35 @@ struct TaskManifest {
 
 #[derive(Debug, serde::Deserialize)]
 struct ManifestTask {
+    #[serde(default)]
+    run: Option<String>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    processes: BTreeMap<String, ManifestManagedProcess>,
+    #[serde(default)]
+    profiles: BTreeMap<String, ManifestManagedProfile>,
+    #[serde(default)]
+    shell: Option<ManifestManagedShell>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ManifestManagedProcess {
     run: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ManifestManagedProfile {
+    #[serde(default)]
+    processes: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ManifestManagedShell {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    run: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -237,6 +317,22 @@ struct DeferredCommand {
 struct TaskRuntimeArgs {
     repo_override: Option<PathBuf>,
     verbose_root: bool,
+    passthrough: Vec<String>,
+}
+
+#[derive(Debug)]
+struct ManagedProcessSpec {
+    name: String,
+    run: String,
+}
+
+#[derive(Debug)]
+struct ManagedTaskPlan {
+    mode: String,
+    profile: String,
+    processes: Vec<ManagedProcessSpec>,
+    shell_enabled: bool,
+    shell_run: Option<String>,
     passthrough: Vec<String>,
 }
 
@@ -365,7 +461,7 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
             rows.push(vec![
                 catalog.alias.clone(),
                 selector.task_name.clone(),
-                task.run.clone(),
+                task_run_preview(task),
                 catalog.manifest_path.display().to_string(),
             ]);
         }
@@ -427,7 +523,7 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                 rows.push(vec![
                     catalog.alias.clone(),
                     task_name.clone(),
-                    task_def.run.clone(),
+                    task_run_preview(task_def),
                     catalog.manifest_path.display().to_string(),
                 ]);
             }
@@ -464,6 +560,16 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
         .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
 }
 
+fn task_run_preview(task: &ManifestTask) -> String {
+    if let Some(run) = task.run.as_ref() {
+        return run.clone();
+    }
+    if let Some(mode) = task.mode.as_ref() {
+        return format!("<managed:{mode}>");
+    }
+    "<none>".to_owned()
+}
+
 fn run_manifest_task(task: &TaskInvocation) -> Result<String, RunnerError> {
     let cwd = std::env::current_dir().map_err(RunnerError::Cwd)?;
     run_manifest_task_with_cwd(task, cwd)
@@ -496,6 +602,14 @@ fn run_manifest_task_with_cwd(task: &TaskInvocation, cwd: PathBuf) -> Result<Str
     };
 
     let repo_for_task = selection.catalog.catalog_root.clone();
+    if let Some(plan) = resolve_managed_task_plan(&selector, selection.task, &runtime_args)? {
+        return render_managed_task_plan(
+            &selector.task_name,
+            &repo_for_task,
+            &selection.catalog.manifest_path,
+            plan,
+        );
+    }
 
     let args_rendered = runtime_args
         .passthrough
@@ -504,10 +618,17 @@ fn run_manifest_task_with_cwd(task: &TaskInvocation, cwd: PathBuf) -> Result<Str
         .collect::<Vec<String>>()
         .join(" ");
     let repo_rendered = shell_quote(&repo_for_task.display().to_string());
+    let run_template =
+        selection
+            .task
+            .run
+            .as_ref()
+            .ok_or_else(|| RunnerError::TaskMissingRunCommand {
+                task: selector.task_name.clone(),
+                path: selection.catalog.manifest_path.clone(),
+            })?;
 
-    let command = selection
-        .task
-        .run
+    let command = run_template
         .replace("{repo}", &repo_rendered)
         .replace("{args}", &args_rendered);
 
@@ -826,6 +947,124 @@ fn render_deferral_trace(
     ]);
     let out = renderer.into_inner();
     String::from_utf8_lossy(&out).to_string()
+}
+
+fn resolve_managed_task_plan(
+    selector: &TaskSelector,
+    task: &ManifestTask,
+    runtime_args: &TaskRuntimeArgs,
+) -> Result<Option<ManagedTaskPlan>, RunnerError> {
+    let Some(mode) = task.mode.as_deref() else {
+        return Ok(None);
+    };
+    if mode != "tui" {
+        return Err(RunnerError::TaskManagedUnsupportedMode {
+            task: selector.task_name.clone(),
+            mode: mode.to_owned(),
+        });
+    }
+
+    let profile_name = runtime_args
+        .passthrough
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "default".to_owned());
+    let profile = task.profiles.get(&profile_name).ok_or_else(|| {
+        let mut available = task.profiles.keys().cloned().collect::<Vec<String>>();
+        available.sort();
+        RunnerError::TaskManagedProfileNotFound {
+            task: selector.task_name.clone(),
+            profile: profile_name.clone(),
+            available,
+        }
+    })?;
+
+    if profile.processes.is_empty() {
+        return Err(RunnerError::TaskManagedProfileEmpty {
+            task: selector.task_name.clone(),
+            profile: profile_name,
+        });
+    }
+
+    let mut processes = Vec::with_capacity(profile.processes.len());
+    for process_name in &profile.processes {
+        let process = task.processes.get(process_name).ok_or_else(|| {
+            RunnerError::TaskManagedProcessNotFound {
+                task: selector.task_name.clone(),
+                profile: profile_name.clone(),
+                process: process_name.clone(),
+            }
+        })?;
+        processes.push(ManagedProcessSpec {
+            name: process_name.clone(),
+            run: process.run.clone(),
+        });
+    }
+
+    Ok(Some(ManagedTaskPlan {
+        mode: "tui".to_owned(),
+        profile: profile_name,
+        processes,
+        shell_enabled: task.shell.as_ref().and_then(|s| s.enabled).unwrap_or(false),
+        shell_run: task.shell.as_ref().and_then(|s| s.run.clone()),
+        passthrough: runtime_args.passthrough.iter().skip(1).cloned().collect(),
+    }))
+}
+
+fn render_managed_task_plan(
+    task_name: &str,
+    repo_root: &Path,
+    manifest_path: &Path,
+    plan: ManagedTaskPlan,
+) -> Result<String, RunnerError> {
+    let color_enabled =
+        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+    renderer.section("Managed Task Plan")?;
+    renderer.key_values(&[
+        KeyValue::new("task", task_name.to_owned()),
+        KeyValue::new("mode", plan.mode),
+        KeyValue::new("profile", plan.profile),
+        KeyValue::new("repo-root", repo_root.display().to_string()),
+        KeyValue::new("manifest", manifest_path.display().to_string()),
+        KeyValue::new("processes", plan.processes.len().to_string()),
+        KeyValue::new(
+            "shell-tab",
+            if plan.shell_enabled { "enabled" } else { "disabled" },
+        ),
+    ])?;
+    renderer.text("")?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "TUI runtime not yet implemented; profile/process resolution is active.",
+    )?;
+    renderer.text("")?;
+    let rows = plan
+        .processes
+        .into_iter()
+        .map(|process| vec![process.name, process.run])
+        .collect::<Vec<Vec<String>>>();
+    renderer.table(&TableSpec::new(
+        vec!["process".to_owned(), "run".to_owned()],
+        rows,
+    ))?;
+    if let Some(shell_run) = plan.shell_run {
+        renderer.text("")?;
+        renderer.key_values(&[KeyValue::new("shell-run", shell_run)])?;
+    }
+    if !plan.passthrough.is_empty() {
+        renderer.text("")?;
+        renderer.bullet_list("profile-args", &plan.passthrough)?;
+    }
+    renderer.text("")?;
+    renderer.summary(SummaryCounts {
+        ok: 1,
+        warn: 1,
+        err: 0,
+    })?;
+    let out = renderer.into_inner();
+    String::from_utf8(out)
+        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
 }
 
 fn render_pulse_report(
