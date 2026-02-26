@@ -5,7 +5,9 @@ use crate::ui::widgets::TableSpec;
 
 pub fn render_table(spec: &TableSpec) -> String {
     let mut builder = Builder::default();
-    builder.push_record(spec.headers.iter().map(String::as_str));
+    if !spec.headers.is_empty() {
+        builder.push_record(spec.headers.iter().map(String::as_str));
+    }
     for row in &spec.rows {
         builder.push_record(row.iter().map(String::as_str));
     }

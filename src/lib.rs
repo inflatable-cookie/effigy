@@ -205,27 +205,9 @@ pub fn render_cli_header<R: Renderer>(renderer: &mut R, root: &Path) -> UiResult
 }
 
 fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
-    renderer.section("effigy Help")?;
-    renderer.notice(
-        ui::NoticeLevel::Info,
-        "Unified task runner for nested and multi-repo workspaces",
-    )?;
-    renderer.text("")?;
-
-    renderer.section("Quick Start")?;
-    renderer.bullet_list(
-        "examples",
-        &[
-            "effigy tasks".to_owned(),
-            "effigy repo-pulse --repo /path/to/workspace".to_owned(),
-            "effigy <catalog>:<task>".to_owned(),
-        ],
-    )?;
-    renderer.text("")?;
-
     renderer.section("Commands")?;
     renderer.table(&ui::TableSpec::new(
-        vec!["Command".to_owned(), "Description".to_owned()],
+        Vec::new(),
         vec![
             vec![
                 "effigy tasks".to_owned(),

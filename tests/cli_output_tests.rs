@@ -51,7 +51,7 @@ fn cli_parse_error_includes_usage_in_stderr() {
     assert!(stderr.contains("EFFIGY"));
     assert!(stderr.contains("╭"));
     assert!(stderr.contains("Invalid command arguments"));
-    assert!(stderr.contains("effigy Help"));
+    assert!(stderr.contains("Commands"));
     assert!(!stderr.contains('\u{1b}'));
 }
 

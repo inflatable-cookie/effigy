@@ -97,9 +97,10 @@ fn render_help_writes_structured_sections() {
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
     render_help(&mut renderer, HelpTopic::General).expect("help render");
     let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
-    assert!(rendered.contains("Quick Start"));
     assert!(rendered.contains("Commands"));
     assert!(rendered.contains("Get Command Help"));
+    assert!(!rendered.contains("Quick Start"));
+    assert!(!rendered.contains("effigy Help"));
 }
 
 #[test]

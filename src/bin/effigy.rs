@@ -27,6 +27,7 @@ fn main() {
             let mut renderer = PlainRenderer::stdout(output_mode);
             let _ = render_cli_header(&mut renderer, &command_root);
             let _ = render_help(&mut renderer, topic);
+            let _ = renderer.text("");
         }
         _ => match effigy::runner::run_command(cmd) {
             Ok(output) => {
@@ -35,6 +36,7 @@ fn main() {
                 if !output.trim().is_empty() {
                     let _ = renderer.text(&output);
                 }
+                let _ = renderer.text("");
             }
             Err(err) => {
                 let mut renderer = PlainRenderer::stderr(output_mode);
