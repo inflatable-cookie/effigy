@@ -175,17 +175,17 @@ Phase 003 migration scope:
 
 ### Phase 3.3 - Command adoption
 - [x] Migrate `tasks` and `repo-pulse` to renderer calls.
-- [ ] Replace direct `println!` paths in command surfaces.
-- [ ] Add integration tests for representative success/failure flows.
+- [x] Replace direct `println!` paths in command surfaces.
+- [x] Add integration tests for representative success/failure flows.
 - [ ] Update README and docs with output conventions.
 
 ## 9) Acceptance Criteria
 
 - [x] Commands use semantic widgets through `Renderer`, not ad-hoc formatting.
-- [ ] Success/error/notice block styling is consistent across built-ins.
-- [ ] Tables and progress feedback are available in normal mode.
-- [ ] Output remains readable and deterministic with colour disabled.
-- [ ] Core command behavior remains unchanged except output presentation.
+- [x] Success/error/notice block styling is consistent across built-ins.
+- [x] Tables and progress feedback are available in normal mode.
+- [x] Output remains readable and deterministic with colour disabled.
+- [x] Core command behavior remains unchanged except output presentation.
 
 ## 10) Risks and Mitigations
 

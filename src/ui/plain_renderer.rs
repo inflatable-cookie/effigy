@@ -91,6 +91,14 @@ impl PlainRenderer<AutoStream<std::io::Stderr>> {
 }
 
 impl<W: Write> Renderer for PlainRenderer<W> {
+    fn text(&mut self, body: &str) -> UiResult<()> {
+        write!(self.writer, "{body}")?;
+        if !body.ends_with('\n') {
+            writeln!(self.writer)?;
+        }
+        Ok(())
+    }
+
     fn section(&mut self, title: &str) -> UiResult<()> {
         let rendered = self.style_text(self.theme.accent, title);
         writeln!(self.writer, "== {rendered} ==")?;

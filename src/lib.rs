@@ -139,10 +139,8 @@ where
     }))
 }
 
-pub fn print_usage() {
-    eprintln!(
-        "effigy\n\nUSAGE:\n  effigy <task> [task args]\n  effigy <catalog>:<task> [task args]\n  effigy repo-pulse [--repo <PATH>] [--verbose-root]\n  effigy tasks [--repo <PATH>] [--task <TASK_NAME>]\n\nTASKS:\n  repo-pulse        Run the built-in repository pulse task\n  tasks             List discovered catalogs and available tasks\n  <task>            Resolve task name across discovered effigy.tasks.toml catalogs\n  <catalog>:<task>  Run a task from an explicit catalog alias\n\nOPTIONS (task run):\n  --repo <PATH>     Override target repository path\n  --verbose-root    Print root + catalog resolution trace for task execution\n\nOPTIONS (repo-pulse):\n  --repo <PATH>     Override target repository path\n  --verbose-root    Print root resolution trace\n\nOPTIONS (tasks):\n  --repo <PATH>     Override target repository path\n  --task <NAME>     Filter output to a single task name\n\nGENERAL:\n  -h, --help        Print help\n"
-    );
+pub fn usage_text() -> &'static str {
+    "effigy\n\nUSAGE:\n  effigy <task> [task args]\n  effigy <catalog>:<task> [task args]\n  effigy repo-pulse [--repo <PATH>] [--verbose-root]\n  effigy tasks [--repo <PATH>] [--task <TASK_NAME>]\n\nTASKS:\n  repo-pulse        Run the built-in repository pulse task\n  tasks             List discovered catalogs and available tasks\n  <task>            Resolve task name across discovered effigy.tasks.toml catalogs\n  <catalog>:<task>  Run a task from an explicit catalog alias\n\nOPTIONS (task run):\n  --repo <PATH>     Override target repository path\n  --verbose-root    Print root + catalog resolution trace for task execution\n\nOPTIONS (repo-pulse):\n  --repo <PATH>     Override target repository path\n  --verbose-root    Print root resolution trace\n\nOPTIONS (tasks):\n  --repo <PATH>     Override target repository path\n  --task <NAME>     Filter output to a single task name\n\nGENERAL:\n  -h, --help        Print help\n"
 }
 
 #[cfg(test)]
