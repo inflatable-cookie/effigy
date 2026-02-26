@@ -41,6 +41,9 @@ Precedence:
 2. Otherwise, `EFFIGY_COLOR` applies.
 3. If unset, default is `auto`.
 
+Default palette:
+- Effigy uses a Gum-inspired default palette (soft neutral text with a vivid accent), while preserving semantic mappings (`info`, `success`, `warning`, `error`).
+
 ## 4) Authoring Rules
 
 When adding/updating command output:

@@ -1,12 +1,16 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use crate::resolver::{resolve_target_root, ResolveError};
 use crate::tasks::pulse::PulseTask;
 use crate::tasks::{Task, TaskContext, TaskError};
-use crate::ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer, SummaryCounts, TableSpec};
+use crate::ui::theme::resolve_color_enabled;
+use crate::ui::{
+    KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer, SummaryCounts, TableSpec,
+};
 use crate::{Command, PulseArgs, TaskInvocation, TasksArgs};
 
 #[derive(Debug)]
@@ -240,13 +244,37 @@ const TASK_MANIFEST_FILE: &str = "effigy.tasks.toml";
 const LEGACY_TASK_MANIFEST_FILE: &str = "underlay.tasks.toml";
 const DEFER_DEPTH_ENV: &str = "EFFIGY_DEFER_DEPTH";
 const LEGACY_ROOT_DEFER_TEMPLATE: &str = "composer global exec effigy -- {request} {args}";
+const BUILTIN_TASKS: [(&str, &str); 2] = [
+    (
+        "repo-pulse",
+        "Built-in repository/workspace health and structure signal report",
+    ),
+    ("tasks", "List discovered catalogs and available tasks"),
+];
 
 pub fn run_command(cmd: Command) -> Result<String, RunnerError> {
     match cmd {
-        Command::Help => Ok(String::new()),
+        Command::Help(_) => Ok(String::new()),
         Command::RepoPulse(args) => run_pulse(args),
         Command::Tasks(args) => run_tasks(args),
         Command::Task(task) => run_manifest_task(&task),
+    }
+}
+
+pub fn resolve_command_root(cmd: &Command) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let repo_override = match cmd {
+        Command::RepoPulse(args) => args.repo_override.clone(),
+        Command::Tasks(args) => args.repo_override.clone(),
+        Command::Task(task) => parse_task_runtime_args(&task.args)
+            .ok()
+            .and_then(|parsed| parsed.repo_override),
+        Command::Help(_) => None,
+    };
+
+    match resolve_target_root(cwd.clone(), repo_override) {
+        Ok(resolved) => resolved.resolved_root,
+        Err(_) => cwd,
     }
 }
 
@@ -281,17 +309,29 @@ pub fn run_pulse(args: PulseArgs) -> Result<String, RunnerError> {
 pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
     let cwd = std::env::current_dir().map_err(RunnerError::Cwd)?;
     let resolved = resolve_target_root(cwd, args.repo_override)?;
-    let catalogs = discover_catalogs(&resolved.resolved_root)?;
-    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    let catalogs = match discover_catalogs(&resolved.resolved_root) {
+        Ok(catalogs) => catalogs,
+        Err(RunnerError::TaskCatalogsMissing { .. }) => Vec::new(),
+        Err(error) => return Err(error),
+    };
+    let color_enabled =
+        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
     renderer.section("Task Catalogs")?;
-    renderer.key_values(&[
-        KeyValue::new("root", resolved.resolved_root.display().to_string()),
-        KeyValue::new("catalogs", catalogs.len().to_string()),
-    ])?;
+    renderer.key_values(&[KeyValue::new("catalogs", catalogs.len().to_string())])?;
+    renderer.text("")?;
+    if catalogs.is_empty() {
+        renderer.notice(
+            NoticeLevel::Info,
+            "no task catalogs found; showing built-in tasks only",
+        )?;
+        renderer.text("")?;
+    }
 
     if let Some(filter) = args.task_name {
         let selector = parse_task_selector(&filter)?;
         renderer.section(&format!("Task Matches: {filter}"))?;
+        renderer.text("")?;
 
         let matches = catalogs
             .iter()
@@ -307,8 +347,12 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                 Some((catalog, task))
             })
             .collect::<Vec<(&LoadedCatalog, &ManifestTask)>>();
+        let builtin_matches = BUILTIN_TASKS
+            .iter()
+            .filter(|(name, _)| selector.prefix.is_none() && selector.task_name == *name)
+            .collect::<Vec<&(&str, &str)>>();
 
-        if matches.is_empty() {
+        if matches.is_empty() && builtin_matches.is_empty() {
             renderer.notice(NoticeLevel::Warning, "no matches")?;
             let out = renderer.into_inner();
             return String::from_utf8(out).map_err(|error| {
@@ -335,6 +379,19 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
             ],
             rows,
         ))?;
+        renderer.text("")?;
+        if !builtin_matches.is_empty() {
+            let builtin_rows = builtin_matches
+                .into_iter()
+                .map(|(name, description)| vec![(*name).to_owned(), (*description).to_owned()])
+                .collect::<Vec<Vec<String>>>();
+            renderer.section("Built-in Task Matches")?;
+            renderer.table(&TableSpec::new(
+                vec!["task".to_owned(), "description".to_owned()],
+                builtin_rows,
+            ))?;
+            renderer.text("")?;
+        }
         renderer.summary(SummaryCounts {
             ok: 1,
             warn: 0,
@@ -346,44 +403,57 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
         });
     }
 
-    let mut ordered = catalogs.iter().collect::<Vec<&LoadedCatalog>>();
-    ordered.sort_by(|a, b| {
-        a.depth
-            .cmp(&b.depth)
-            .then_with(|| a.alias.cmp(&b.alias))
-            .then_with(|| a.manifest_path.cmp(&b.manifest_path))
-    });
+    if !catalogs.is_empty() {
+        let mut ordered = catalogs.iter().collect::<Vec<&LoadedCatalog>>();
+        ordered.sort_by(|a, b| {
+            a.depth
+                .cmp(&b.depth)
+                .then_with(|| a.alias.cmp(&b.alias))
+                .then_with(|| a.manifest_path.cmp(&b.manifest_path))
+        });
 
-    let mut rows: Vec<Vec<String>> = Vec::new();
-    for catalog in ordered {
-        if catalog.manifest.tasks.is_empty() {
-            rows.push(vec![
-                catalog.alias.clone(),
-                "<none>".to_owned(),
-                "<none>".to_owned(),
-                catalog.manifest_path.display().to_string(),
-            ]);
-            continue;
+        let mut rows: Vec<Vec<String>> = Vec::new();
+        for catalog in ordered {
+            if catalog.manifest.tasks.is_empty() {
+                rows.push(vec![
+                    catalog.alias.clone(),
+                    "<none>".to_owned(),
+                    "<none>".to_owned(),
+                    catalog.manifest_path.display().to_string(),
+                ]);
+                continue;
+            }
+            for (task_name, task_def) in &catalog.manifest.tasks {
+                rows.push(vec![
+                    catalog.alias.clone(),
+                    task_name.clone(),
+                    task_def.run.clone(),
+                    catalog.manifest_path.display().to_string(),
+                ]);
+            }
         }
-        for (task_name, task_def) in &catalog.manifest.tasks {
-            rows.push(vec![
-                catalog.alias.clone(),
-                task_name.clone(),
-                task_def.run.clone(),
-                catalog.manifest_path.display().to_string(),
-            ]);
-        }
+        renderer.table(&TableSpec::new(
+            vec![
+                "catalog".to_owned(),
+                "task".to_owned(),
+                "run".to_owned(),
+                "manifest".to_owned(),
+            ],
+            rows,
+        ))?;
+        renderer.text("")?;
     }
 
+    renderer.section("Built-in Tasks")?;
+    let builtin_rows = BUILTIN_TASKS
+        .iter()
+        .map(|(name, description)| vec![(*name).to_owned(), (*description).to_owned()])
+        .collect::<Vec<Vec<String>>>();
     renderer.table(&TableSpec::new(
-        vec![
-            "catalog".to_owned(),
-            "task".to_owned(),
-            "run".to_owned(),
-            "manifest".to_owned(),
-        ],
-        rows,
+        vec!["task".to_owned(), "description".to_owned()],
+        builtin_rows,
     ))?;
+    renderer.text("")?;
     renderer.summary(SummaryCounts {
         ok: 1,
         warn: 0,
@@ -745,17 +815,17 @@ fn render_deferral_trace(
     command: &str,
     cause: &RunnerError,
 ) -> String {
-    let mut trace = String::new();
-    trace.push_str("# Task Deferral\n\n");
-    trace.push_str(&format!("- request: {}\n", task.name));
-    trace.push_str(&format!("- defer-source: {}\n", deferral.source));
-    trace.push_str(&format!(
-        "- working-dir: {}\n",
-        deferral.working_dir.display()
-    ));
-    trace.push_str(&format!("- command: `{}`\n", command));
-    trace.push_str(&format!("- reason: {}\n", cause));
-    trace
+    let mut renderer = trace_renderer();
+    let _ = renderer.section("Task Deferral");
+    let _ = renderer.key_values(&[
+        KeyValue::new("request", task.name.clone()),
+        KeyValue::new("defer-source", deferral.source.clone()),
+        KeyValue::new("working-dir", deferral.working_dir.display().to_string()),
+        KeyValue::new("command", command.to_owned()),
+        KeyValue::new("reason", cause.to_string()),
+    ]);
+    let out = renderer.into_inner();
+    String::from_utf8_lossy(&out).to_string()
 }
 
 fn render_pulse_report(
@@ -771,7 +841,9 @@ fn render_pulse_report(
         owner,
         eta,
     } = report;
-    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    let color_enabled =
+        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
     if let (Some(resolved), Some(ctx)) = (resolved, ctx) {
         renderer.section("Root Resolution")?;
         renderer.key_values(&[
@@ -781,8 +853,11 @@ fn render_pulse_report(
             ),
             KeyValue::new("mode", format!("{:?}", resolved.resolution_mode)),
         ])?;
+        renderer.text("")?;
         renderer.bullet_list("evidence", &ctx.resolution_evidence)?;
+        renderer.text("")?;
         renderer.bullet_list("warnings", &ctx.resolution_warnings)?;
+        renderer.text("")?;
     }
 
     renderer.section("Pulse Report")?;
@@ -791,9 +866,13 @@ fn render_pulse_report(
         KeyValue::new("owner", owner),
         KeyValue::new("eta", eta),
     ])?;
+    renderer.text("")?;
     renderer.bullet_list("evidence", &evidence)?;
+    renderer.text("")?;
     renderer.bullet_list("risk", &risk)?;
+    renderer.text("")?;
     renderer.bullet_list("next-action", &next_action)?;
+    renderer.text("")?;
     if risk.is_empty() {
         renderer.notice(NoticeLevel::Success, "No high-priority risks detected.")?;
     } else {
@@ -802,6 +881,7 @@ fn render_pulse_report(
             &format!("Detected {} risk item(s).", risk.len()),
         )?;
     }
+    renderer.text("")?;
     renderer.summary(SummaryCounts {
         ok: evidence.len(),
         warn: risk.len(),
@@ -992,45 +1072,48 @@ fn render_task_resolution_trace(
     execution_cwd: &Path,
     command: &str,
 ) -> String {
-    let mut trace = String::new();
-    trace.push_str("# Task Resolution\n\n");
-    trace.push_str(&format!("- task: {}\n", selector.task_name));
+    let mut renderer = trace_renderer();
+    let _ = renderer.section("Task Resolution");
+    let mut values = vec![
+        KeyValue::new("task", selector.task_name.clone()),
+        KeyValue::new(
+            "resolved-root",
+            resolved.resolved_root.display().to_string(),
+        ),
+        KeyValue::new("root-mode", format!("{:?}", resolved.resolution_mode)),
+        KeyValue::new("catalog-alias", selection.catalog.alias.clone()),
+        KeyValue::new(
+            "catalog-path",
+            selection.catalog.manifest_path.display().to_string(),
+        ),
+        KeyValue::new("catalog-mode", format!("{:?}", selection.mode)),
+        KeyValue::new("execution-cwd", execution_cwd.display().to_string()),
+        KeyValue::new("command", command.to_owned()),
+    ];
     if let Some(prefix) = &selector.prefix {
-        trace.push_str(&format!("- prefix: {}\n", prefix));
+        values.insert(1, KeyValue::new("prefix", prefix.clone()));
     }
-    trace.push_str(&format!(
-        "- resolved-root: {}\n",
-        resolved.resolved_root.display()
-    ));
-    trace.push_str(&format!("- root-mode: {:?}\n", resolved.resolution_mode));
-    trace.push_str(&format!("- catalog-alias: {}\n", selection.catalog.alias));
-    trace.push_str(&format!(
-        "- catalog-path: {}\n",
-        selection.catalog.manifest_path.display()
-    ));
-    trace.push_str(&format!("- catalog-mode: {:?}\n", selection.mode));
-    trace.push_str(&format!("- execution-cwd: {}\n", execution_cwd.display()));
-    trace.push_str(&format!("- command: `{}`\n", command));
-
+    let _ = renderer.key_values(&values);
     if !resolved.evidence.is_empty() {
-        trace.push_str("- root-evidence:\n");
-        for item in &resolved.evidence {
-            trace.push_str(&format!("  - {}\n", item));
-        }
+        let _ = renderer.text("");
+        let _ = renderer.bullet_list("root-evidence", &resolved.evidence);
     }
     if !resolved.warnings.is_empty() {
-        trace.push_str("- root-warnings:\n");
-        for item in &resolved.warnings {
-            trace.push_str(&format!("  - {}\n", item));
-        }
+        let _ = renderer.text("");
+        let _ = renderer.bullet_list("root-warnings", &resolved.warnings);
     }
     if !selection.evidence.is_empty() {
-        trace.push_str("- catalog-evidence:\n");
-        for item in &selection.evidence {
-            trace.push_str(&format!("  - {}\n", item));
-        }
+        let _ = renderer.text("");
+        let _ = renderer.bullet_list("catalog-evidence", &selection.evidence);
     }
-    trace
+    let out = renderer.into_inner();
+    String::from_utf8_lossy(&out).to_string()
+}
+
+fn trace_renderer() -> PlainRenderer<Vec<u8>> {
+    let color_enabled =
+        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
+    PlainRenderer::new(Vec::<u8>::new(), color_enabled)
 }
 
 fn format_catalog(catalog: &LoadedCatalog) -> String {

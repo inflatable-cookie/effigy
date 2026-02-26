@@ -1,5 +1,5 @@
 use tabled::builder::Builder;
-use tabled::settings::Style;
+use tabled::settings::{Padding, Style};
 
 use crate::ui::widgets::TableSpec;
 
@@ -10,6 +10,8 @@ pub fn render_table(spec: &TableSpec) -> String {
         builder.push_record(row.iter().map(String::as_str));
     }
     let mut table = builder.build();
-    table.with(Style::rounded());
+    // Keep table structure clear without heavy grid chrome.
+    table.with(Style::blank());
+    table.with(Padding::new(0, 2, 0, 0));
     table.to_string()
 }

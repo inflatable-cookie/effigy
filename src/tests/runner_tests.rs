@@ -175,7 +175,7 @@ fn run_manifest_task_verbose_root_includes_resolution_trace() {
     )
     .expect("run");
 
-    assert!(out.contains("# Task Resolution"));
+    assert!(out.contains("Task Resolution"));
     assert!(out.contains("catalog-alias: farmyard"));
     assert!(out.contains("farmyard"));
 }
@@ -255,6 +255,24 @@ fn run_tasks_reads_legacy_manifest_when_effigy_manifest_missing() {
 }
 
 #[test]
+fn run_tasks_without_catalogs_still_lists_builtin_tasks() {
+    let root = temp_workspace("builtins-only");
+
+    let out = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: None,
+        })
+    })
+    .expect("run tasks");
+
+    assert!(out.contains("no task catalogs found; showing built-in tasks only"));
+    assert!(out.contains("Built-in Tasks"));
+    assert!(out.contains("repo-pulse"));
+    assert!(out.contains("tasks"));
+}
+
+#[test]
 fn run_pulse_renders_widget_sections() {
     let root = temp_workspace("pulse-render");
     fs::write(
@@ -273,12 +291,12 @@ fn run_pulse_renders_widget_sections() {
     })
     .expect("pulse");
 
-    assert!(out.contains("== Pulse Report =="));
+    assert!(out.contains("Pulse Report"));
     assert!(out.contains("repo:"));
     assert!(out.contains("evidence:"));
     assert!(out.contains("risk:"));
     assert!(out.contains("next-action:"));
-    assert!(out.contains("summary:"));
+    assert!(out.contains("summary  ok:"));
 }
 
 #[test]
@@ -291,10 +309,10 @@ fn run_pulse_verbose_renders_root_resolution_section() {
     })
     .expect("pulse");
 
-    assert!(out.contains("== Root Resolution =="));
+    assert!(out.contains("Root Resolution"));
     assert!(out.contains("resolved-root:"));
     assert!(out.contains("mode:"));
-    assert!(out.contains("== Pulse Report =="));
+    assert!(out.contains("Pulse Report"));
 }
 
 #[test]

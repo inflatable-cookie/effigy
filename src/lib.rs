@@ -3,7 +3,8 @@ pub mod runner;
 pub mod tasks;
 pub mod ui;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use ui::theme::Theme;
 use ui::{Renderer, UiResult};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,7 +12,14 @@ pub enum Command {
     RepoPulse(PulseArgs),
     Tasks(TasksArgs),
     Task(TaskInvocation),
-    Help,
+    Help(HelpTopic),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HelpTopic {
+    General,
+    RepoPulse,
+    Tasks,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,11 +65,11 @@ where
 {
     let mut args = args.into_iter();
     let Some(cmd) = args.next() else {
-        return Ok(Command::Help);
+        return Ok(Command::Help(HelpTopic::General));
     };
 
     if cmd == "--help" || cmd == "-h" {
-        return Ok(Command::Help);
+        return Ok(Command::Help(HelpTopic::General));
     }
 
     if cmd == "repo-pulse" {
@@ -96,7 +104,7 @@ where
             "--verbose-root" => {
                 verbose_root = true;
             }
-            "--help" | "-h" => return Ok(Command::Help),
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::RepoPulse)),
             other => return Err(CliParseError::UnknownArgument(other.to_owned())),
         }
     }
@@ -129,7 +137,7 @@ where
                 };
                 task_name = Some(name);
             }
-            "--help" | "-h" => return Ok(Command::Help),
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
             other => return Err(CliParseError::UnknownArgument(other.to_owned())),
         }
     }
@@ -140,58 +148,196 @@ where
     }))
 }
 
-pub fn render_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
-    renderer.section("effigy")?;
+pub fn render_help<R: Renderer>(renderer: &mut R, topic: HelpTopic) -> UiResult<()> {
+    match topic {
+        HelpTopic::General => render_general_help(renderer),
+        HelpTopic::RepoPulse => render_repo_pulse_help(renderer),
+        HelpTopic::Tasks => render_tasks_help(renderer),
+    }
+}
+
+pub fn render_cli_header<R: Renderer>(renderer: &mut R, root: &Path) -> UiResult<()> {
+    let no_color = std::env::var_os("NO_COLOR").is_some();
+    let color_mode = std::env::var("EFFIGY_COLOR")
+        .ok()
+        .unwrap_or_else(|| "auto".to_owned());
+    let use_color = !no_color && color_mode != "never";
+
+    let title_line = "EFFIGY".to_owned();
+    let path_line = root.display().to_string();
+    let combined_line = format!("{title_line}  {path_line}");
+    let version = format!(" v{} ", env!("CARGO_PKG_VERSION"));
+    let inner_width = combined_line.len();
+    let top = format!("╭{}╮", "─".repeat(inner_width + 2));
+    let middle = format!("│ {:<width$} │", combined_line, width = inner_width);
+    let bottom_fill = (inner_width + 2).saturating_sub(version.len());
+    let bottom = format!("╰{}{}╯", "─".repeat(bottom_fill), version);
+
+    renderer.text("")?;
+    if use_color {
+        let theme = Theme::default();
+        let accent = theme.accent;
+        let accent_soft = theme.accent_soft;
+        let muted = theme.muted;
+        let accent_on = format!("{}", accent.render());
+        let accent_soft_on = format!("{}", accent_soft.render());
+        let muted_on = format!("{}", muted.render());
+        let reset = format!("{}", accent.render_reset());
+        let spacer = "  ";
+        let trailing = inner_width.saturating_sub(title_line.len() + spacer.len() + path_line.len());
+        let trailing_spaces = " ".repeat(trailing);
+
+        renderer.text(&format!("{accent_on}{top}{reset}"))?;
+        renderer.text(&format!(
+            "{accent_on}│ {reset}{accent_on}{title_line}{reset}{muted_on}{spacer}{path_line}{trailing_spaces}{reset}{accent_on} │{reset}"
+        ))?;
+        renderer.text(&format!(
+            "{accent_on}╰{}{reset}{accent_soft_on}{version}{reset}{accent_on}╯{reset}",
+            "─".repeat(bottom_fill)
+        ))?;
+    } else {
+        renderer.text(&top)?;
+        renderer.text(&middle)?;
+        renderer.text(&bottom)?;
+    }
+    renderer.text("")?;
+    Ok(())
+}
+
+fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
+    renderer.section("effigy Help")?;
     renderer.notice(
         ui::NoticeLevel::Info,
         "Unified task runner for nested and multi-repo workspaces",
     )?;
+    renderer.text("")?;
 
-    renderer.section("Usage")?;
+    renderer.section("Quick Start")?;
     renderer.bullet_list(
-        "commands",
-        &vec![
-            "effigy <task> [task args]".to_owned(),
-            "effigy <catalog>:<task> [task args]".to_owned(),
-            "effigy repo-pulse [--repo <PATH>] [--verbose-root]".to_owned(),
-            "effigy tasks [--repo <PATH>] [--task <TASK_NAME>]".to_owned(),
+        "examples",
+        &[
+            "effigy tasks".to_owned(),
+            "effigy repo-pulse --repo /path/to/workspace".to_owned(),
+            "effigy <catalog>:<task>".to_owned(),
         ],
     )?;
+    renderer.text("")?;
 
-    renderer.section("Tasks")?;
-    renderer.key_values(&[
-        ui::KeyValue::new("repo-pulse", "Run built-in repository pulse checks"),
-        ui::KeyValue::new("tasks", "List discovered catalogs and available tasks"),
-        ui::KeyValue::new("<task>", "Resolve task across discovered catalogs"),
-        ui::KeyValue::new(
-            "<catalog>:<task>",
-            "Run a task from an explicit catalog alias",
-        ),
-    ])?;
+    renderer.section("Commands")?;
+    renderer.table(&ui::TableSpec::new(
+        vec!["Command".to_owned(), "Description".to_owned()],
+        vec![
+            vec![
+                "effigy tasks".to_owned(),
+                "List discovered catalogs and task commands".to_owned(),
+            ],
+            vec![
+                "effigy repo-pulse".to_owned(),
+                "Run repository/workspace health checks".to_owned(),
+            ],
+            vec![
+                "effigy <task>".to_owned(),
+                "Resolve task across discovered catalogs".to_owned(),
+            ],
+            vec![
+                "effigy <catalog>:<task>".to_owned(),
+                "Run task from explicit catalog alias".to_owned(),
+            ],
+        ],
+    ))?;
+    renderer.text("")?;
 
-    renderer.section("Options (task run)")?;
-    renderer.key_values(&[
-        ui::KeyValue::new("--repo <PATH>", "Override target repository path"),
-        ui::KeyValue::new(
-            "--verbose-root",
-            "Print root + catalog resolution trace for task execution",
-        ),
-    ])?;
+    renderer.section("Get Command Help")?;
+    renderer.bullet_list(
+        "topics",
+        &[
+            "effigy tasks --help".to_owned(),
+            "effigy repo-pulse --help".to_owned(),
+        ],
+    )?;
+    renderer.key_values(&[ui::KeyValue::new("-h, --help", "Print this help panel")])?;
+    Ok(())
+}
 
-    renderer.section("Options (repo-pulse)")?;
-    renderer.key_values(&[
-        ui::KeyValue::new("--repo <PATH>", "Override target repository path"),
-        ui::KeyValue::new("--verbose-root", "Print root resolution trace"),
-    ])?;
+fn render_repo_pulse_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
+    renderer.section("repo-pulse Help")?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "Inspect repository/workspace structure and report evidence, risk, and next actions",
+    )?;
+    renderer.text("")?;
 
-    renderer.section("Options (tasks)")?;
-    renderer.key_values(&[
-        ui::KeyValue::new("--repo <PATH>", "Override target repository path"),
-        ui::KeyValue::new("--task <NAME>", "Filter output to a single task name"),
-    ])?;
+    renderer.section("Usage")?;
+    renderer.text("effigy repo-pulse [--repo <PATH>] [--verbose-root]")?;
+    renderer.text("")?;
 
-    renderer.section("General")?;
-    renderer.key_values(&[ui::KeyValue::new("-h, --help", "Print help")])?;
+    renderer.section("Options")?;
+    renderer.table(&ui::TableSpec::new(
+        vec!["Option".to_owned(), "Description".to_owned()],
+        vec![
+            vec![
+                "--repo <PATH>".to_owned(),
+                "Override target repository path".to_owned(),
+            ],
+            vec![
+                "--verbose-root".to_owned(),
+                "Print root resolution evidence and warnings".to_owned(),
+            ],
+            vec!["-h, --help".to_owned(), "Print command help".to_owned()],
+        ],
+    ))?;
+    renderer.text("")?;
+
+    renderer.section("Examples")?;
+    renderer.bullet_list(
+        "commands",
+        &[
+            "effigy repo-pulse".to_owned(),
+            "effigy repo-pulse --repo /path/to/workspace".to_owned(),
+            "effigy repo-pulse --repo /path/to/workspace --verbose-root".to_owned(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn render_tasks_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
+    renderer.section("tasks Help")?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "List discovered task catalogs and optionally filter by a task name",
+    )?;
+    renderer.text("")?;
+
+    renderer.section("Usage")?;
+    renderer.text("effigy tasks [--repo <PATH>] [--task <TASK_NAME>]")?;
+    renderer.text("")?;
+
+    renderer.section("Options")?;
+    renderer.table(&ui::TableSpec::new(
+        vec!["Option".to_owned(), "Description".to_owned()],
+        vec![
+            vec![
+                "--repo <PATH>".to_owned(),
+                "Override target repository path".to_owned(),
+            ],
+            vec![
+                "--task <TASK_NAME>".to_owned(),
+                "Filter output to matching task entries".to_owned(),
+            ],
+            vec!["-h, --help".to_owned(), "Print command help".to_owned()],
+        ],
+    ))?;
+    renderer.text("")?;
+
+    renderer.section("Examples")?;
+    renderer.bullet_list(
+        "commands",
+        &[
+            "effigy tasks".to_owned(),
+            "effigy tasks --repo /path/to/workspace".to_owned(),
+            "effigy tasks --repo /path/to/workspace --task reset-db".to_owned(),
+        ],
+    )?;
     Ok(())
 }
 

@@ -64,7 +64,7 @@ effigy tasks [--repo <PATH>] [--task <TASK_NAME>]
 
 Effigy uses a shared widget renderer for normal CLI mode so command output stays consistent:
 
-- sections (`== Title ==`)
+- section headings with subtle underlines
 - semantic blocks (`success`, `warning`, `error`)
 - key/value lines
 - bullet lists

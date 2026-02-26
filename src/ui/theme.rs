@@ -1,4 +1,4 @@
-use anstyle::{AnsiColor, Color, Style};
+use anstyle::{Ansi256Color, AnsiColor, Color, Style};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
@@ -20,6 +20,7 @@ impl OutputMode {
 #[derive(Debug, Clone, Copy)]
 pub struct Theme {
     pub accent: Style,
+    pub accent_soft: Style,
     pub muted: Style,
     pub success: Style,
     pub warning: Style,
@@ -30,23 +31,22 @@ pub struct Theme {
 
 impl Default for Theme {
     fn default() -> Self {
+        // Gum-inspired palette: restrained neutral base with a vivid accent.
         Self {
             accent: Style::new()
-                .fg_color(Some(Color::Ansi(AnsiColor::Cyan)))
+                .fg_color(Some(Color::Ansi256(Ansi256Color(212))))
                 .bold(),
-            muted: Style::new().fg_color(Some(Color::Ansi(AnsiColor::BrightBlack))),
+            accent_soft: Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(218)))),
+            muted: Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(244)))),
             success: Style::new()
-                .fg_color(Some(Color::Ansi(AnsiColor::Green)))
-                .bold(),
+                .fg_color(Some(Color::Ansi256(Ansi256Color(42)))),
             warning: Style::new()
-                .fg_color(Some(Color::Ansi(AnsiColor::Yellow)))
-                .bold(),
+                .fg_color(Some(Color::Ansi256(Ansi256Color(214)))),
             error: Style::new()
-                .fg_color(Some(Color::Ansi(AnsiColor::Red)))
+                .fg_color(Some(Color::Ansi256(Ansi256Color(203))))
                 .bold(),
             label: Style::new()
-                .fg_color(Some(Color::Ansi(AnsiColor::Blue)))
-                .bold(),
+                .fg_color(Some(Color::Ansi256(Ansi256Color(111)))),
             value: Style::new().fg_color(Some(Color::Ansi(AnsiColor::White))),
         }
     }

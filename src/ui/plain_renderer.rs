@@ -101,19 +101,22 @@ impl<W: Write> Renderer for PlainRenderer<W> {
 
     fn section(&mut self, title: &str) -> UiResult<()> {
         let rendered = self.style_text(self.theme.accent, title);
-        writeln!(self.writer, "== {rendered} ==")?;
+        let underline = self.style_text(self.theme.muted, &"─".repeat(title.chars().count()));
+        writeln!(self.writer, "{rendered}")?;
+        writeln!(self.writer, "{underline}")?;
         Ok(())
     }
 
     fn notice(&mut self, level: NoticeLevel, body: &str) -> UiResult<()> {
         let (label, style) = match level {
-            NoticeLevel::Info => ("[info]", self.theme.accent),
-            NoticeLevel::Success => ("[ok]", self.theme.success),
-            NoticeLevel::Warning => ("[warn]", self.theme.warning),
-            NoticeLevel::Error => ("[error]", self.theme.error),
+            NoticeLevel::Info => ("info", self.theme.accent),
+            NoticeLevel::Success => ("ok", self.theme.success),
+            NoticeLevel::Warning => ("warn", self.theme.warning),
+            NoticeLevel::Error => ("error", self.theme.error),
         };
-        let label = self.style_text(style, label);
-        writeln!(self.writer, "{label} {body}")?;
+        let marker = self.style_text(style, "•");
+        let label = self.style_text(self.theme.muted, label);
+        writeln!(self.writer, "{marker} {label}: {body}")?;
         Ok(())
     }
 
@@ -152,10 +155,10 @@ impl<W: Write> Renderer for PlainRenderer<W> {
 
     fn step(&mut self, label: &str, state: StepState) -> UiResult<()> {
         let (symbol, style) = match state {
-            StepState::Pending => ("[ ]", self.theme.muted),
-            StepState::Running => ("[~]", self.theme.accent),
-            StepState::Done => ("[x]", self.theme.success),
-            StepState::Failed => ("[!]", self.theme.error),
+            StepState::Pending => ("·", self.theme.muted),
+            StepState::Running => ("◌", self.theme.accent),
+            StepState::Done => ("✓", self.theme.success),
+            StepState::Failed => ("✕", self.theme.error),
         };
         let symbol = self.style_text(style, symbol);
         writeln!(self.writer, "{symbol} {label}")?;
@@ -166,7 +169,7 @@ impl<W: Write> Renderer for PlainRenderer<W> {
         let ok = self.style_text(self.theme.success, &counts.ok.to_string());
         let warn = self.style_text(self.theme.warning, &counts.warn.to_string());
         let err = self.style_text(self.theme.error, &counts.err.to_string());
-        writeln!(self.writer, "summary: ok={ok} warn={warn} err={err}")?;
+        writeln!(self.writer, "summary  ok:{ok}  warn:{warn}  err:{err}")?;
         Ok(())
     }
 
@@ -230,7 +233,7 @@ mod tests {
         let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
         assert_eq!(
             rendered,
-            "== Task Catalogs ==\nsummary: ok=4 warn=1 err=0\n"
+            "Task Catalogs\n─────────────\nsummary  ok:4  warn:1  err:0\n"
         );
     }
 
@@ -243,7 +246,7 @@ mod tests {
         spinner.finish_success("Done");
 
         let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
-        assert_eq!(rendered, "[~] Scanning workspace\n");
+        assert_eq!(rendered, "◌ Scanning workspace\n");
     }
 
     #[test]
