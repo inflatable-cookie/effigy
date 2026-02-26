@@ -43,11 +43,11 @@ fn run_manifest_task_prefixed_uses_named_catalog() {
     fs::create_dir_all(&farmyard).expect("mkdir");
 
     write_manifest(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         "[tasks.ping]\nrun = \"printf root\"\n",
     );
     write_manifest(
-        &farmyard.join("effigy.tasks.toml"),
+        &farmyard.join("effigy.toml"),
         "[tasks.ping]\nrun = \"printf farmyard\"\n",
     );
 
@@ -71,11 +71,11 @@ fn run_manifest_task_unprefixed_prefers_nearest_catalog_in_scope() {
     fs::create_dir_all(&nested).expect("mkdir");
 
     write_manifest(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         "[tasks.ping]\nrun = \"printf root\"\n",
     );
     write_manifest(
-        &farmyard.join("effigy.tasks.toml"),
+        &farmyard.join("effigy.toml"),
         "[tasks.ping]\nrun = \"printf farmyard\"\n",
     );
 
@@ -100,11 +100,11 @@ fn run_manifest_task_unprefixed_reports_ambiguity_on_equal_shallow_depth() {
     fs::create_dir_all(&dairy).expect("mkdir dairy");
 
     write_manifest(
-        &farmyard.join("effigy.tasks.toml"),
+        &farmyard.join("effigy.toml"),
         "[tasks.reset-db]\nrun = \"printf farmyard\"\n",
     );
     write_manifest(
-        &dairy.join("effigy.tasks.toml"),
+        &dairy.join("effigy.toml"),
         "[tasks.reset-db]\nrun = \"printf dairy\"\n",
     );
 
@@ -130,7 +130,7 @@ fn run_manifest_task_unprefixed_reports_ambiguity_on_equal_shallow_depth() {
 fn run_manifest_task_unknown_prefix_returns_catalog_error() {
     let root = temp_workspace("unknown-prefix");
     write_manifest(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         "[tasks.reset-db]\nrun = \"printf root\"\n",
     );
 
@@ -158,11 +158,11 @@ fn run_manifest_task_verbose_root_includes_resolution_trace() {
     let farmyard = root.join("farmyard");
     fs::create_dir_all(&farmyard).expect("mkdir");
     write_manifest(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         "[tasks.ping]\nrun = \"printf root\"\n",
     );
     write_manifest(
-        &farmyard.join("effigy.tasks.toml"),
+        &farmyard.join("effigy.toml"),
         "[tasks.ping]\nrun = \"printf farmyard\"\n",
     );
 
@@ -186,11 +186,11 @@ fn run_tasks_lists_catalogs_and_tasks() {
     let farmyard = root.join("farmyard");
     fs::create_dir_all(&farmyard).expect("mkdir");
     write_manifest(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         "[tasks.dev]\nrun = \"printf root\"\n",
     );
     write_manifest(
-        &farmyard.join("effigy.tasks.toml"),
+        &farmyard.join("effigy.toml"),
         "[tasks.reset-db]\nrun = \"printf farmyard\"\n",
     );
 
@@ -213,11 +213,11 @@ fn run_tasks_with_task_filter_reports_only_matches() {
     let farmyard = root.join("farmyard");
     fs::create_dir_all(&farmyard).expect("mkdir");
     write_manifest(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         "[tasks.dev]\nrun = \"printf root\"\n",
     );
     write_manifest(
-        &farmyard.join("effigy.tasks.toml"),
+        &farmyard.join("effigy.toml"),
         "[tasks.reset-db]\nrun = \"printf farmyard\"\n",
     );
 
@@ -353,7 +353,7 @@ fn run_manifest_task_defers_when_unprefixed_task_missing() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("defer-missing");
     write_manifest(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         "[defer]\nrun = \"printf deferred\"\n",
     );
 
@@ -374,7 +374,7 @@ fn run_manifest_task_defers_and_supports_request_and_args_tokens() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("defer-tokens");
     write_manifest(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         "[defer]\nrun = \"test {request} = 'unknown-task' && test {args} = '--dry-run'\"\n",
     );
 
@@ -397,11 +397,11 @@ fn run_manifest_task_defers_to_prefixed_catalog_handler() {
     let farmyard = root.join("farmyard");
     fs::create_dir_all(&farmyard).expect("mkdir");
     write_manifest(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         "[defer]\nrun = \"false\"\n",
     );
     write_manifest(
-        &farmyard.join("effigy.tasks.toml"),
+        &farmyard.join("effigy.toml"),
         "[catalog]\nalias = \"farmyard\"\n[defer]\nrun = \"printf farmyard-deferred\"\n",
     );
 
@@ -422,7 +422,7 @@ fn run_manifest_task_deferral_loop_guard_fails() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("defer-loop");
     write_manifest(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         "[defer]\nrun = \"printf deferred\"\n",
     );
 
@@ -497,7 +497,7 @@ fn run_manifest_task_explicit_deferral_wins_over_implicit_legacy_fallback() {
     fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
     fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
     write_manifest(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         "[defer]\nrun = \"printf explicit\"\n",
     );
 
@@ -544,7 +544,7 @@ fn run_manifest_task_explicit_deferral_wins_over_implicit_legacy_fallback() {
 fn run_manifest_task_managed_tui_uses_default_profile_when_not_specified() {
     let root = temp_workspace("managed-default-profile");
     write_manifest(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
 
@@ -590,7 +590,7 @@ run = "$SHELL"
 fn run_manifest_task_managed_tui_accepts_named_profile_argument() {
     let root = temp_workspace("managed-named-profile");
     write_manifest(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
 
@@ -630,7 +630,7 @@ run = "vite dev --config admin"
 fn run_manifest_task_managed_tui_errors_for_unknown_profile() {
     let root = temp_workspace("managed-unknown-profile");
     write_manifest(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
 
@@ -663,6 +663,43 @@ run = "cargo run -p api"
         }
         other => panic!("unexpected error: {other}"),
     }
+}
+
+#[test]
+fn run_manifest_task_managed_stream_executes_selected_profile_processes() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-stream-runtime");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["api", "front"]
+
+[tasks.dev.processes.api]
+run = "printf api-ok"
+
+[tasks.dev.processes.front]
+run = "printf front-ok"
+"#,
+    );
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("managed stream run");
+
+    assert!(out.contains("Managed Task Runtime"));
+    assert!(out.contains("[api] api-ok"));
+    assert!(out.contains("[front] front-ok"));
+    assert!(out.contains("process `api` exit=0"));
+    assert!(out.contains("process `front` exit=0"));
 }
 
 fn write_manifest(path: &PathBuf, body: &str) {
