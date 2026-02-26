@@ -1,3 +1,4 @@
+pub mod process_manager;
 pub mod resolver;
 pub mod runner;
 pub mod tasks;
