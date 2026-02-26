@@ -60,6 +60,25 @@ effigy tasks [--repo <PATH>] [--task <TASK_NAME>]
 - `repo-pulse`: repository/workspace health and structure signal report.
 - `tasks`: enumerate discovered catalogs and task commands.
 
+## Output Conventions
+
+Effigy uses a shared widget renderer for normal CLI mode so command output stays consistent:
+
+- sections (`== Title ==`)
+- semantic blocks (`success`, `warning`, `error`)
+- key/value lines
+- bullet lists
+- tables for task/catalog listings
+- progress spinners with non-interactive fallback
+
+Colour/progress behavior is controlled by:
+
+- `EFFIGY_COLOR=auto|always|never` (default: `auto`)
+- `NO_COLOR` disables colour regardless of `EFFIGY_COLOR`
+- `CI` disables animated spinner behavior
+
+See [docs/guides/011-output-widgets-and-colour-modes.md](./docs/guides/011-output-widgets-and-colour-modes.md) for renderer usage and authoring rules.
+
 ## Task Catalogs
 
 Canonical manifest name:
@@ -88,7 +107,7 @@ Catalogs can define a fallback process used when no named task matches:
 
 ```toml
 [defer]
-run = "composer global run effigy {request} {args}"
+run = "composer global exec effigy -- {request} {args}"
 ```
 
 Deferral runs only for unresolved task requests and receives:
@@ -100,8 +119,11 @@ Deferral runs only for unresolved task requests and receives:
 
 Root resolution:
 1. use explicit `--repo` when provided,
-2. otherwise detect nearest marker root from cwd (`package.json`, `Cargo.toml`, `.git`),
+2. otherwise detect nearest marker root from cwd (`package.json`, `composer.json`, `Cargo.toml`, `.git`),
 3. optionally promote to parent workspace when membership signals indicate it.
+
+If no configured deferral matches and the resolved workspace root contains both `effigy.json` and `composer.json`, Effigy automatically defers to:
+- `composer global exec effigy -- {request} {args}`
 
 Task resolution:
 1. explicit prefix (`catalog:task`) selects one catalog,
@@ -143,5 +165,6 @@ Effigy uses the same style as Underlay:
 Start here:
 - `docs/architecture/`
 - `docs/guides/010-path-installation-and-release.md`
+- `docs/guides/011-output-widgets-and-colour-modes.md`
 - `docs/roadmap/README.md`
 - `docs/reports/README.md`

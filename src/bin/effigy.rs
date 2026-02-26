@@ -1,5 +1,5 @@
 use effigy::ui::{MessageBlock, OutputMode, PlainRenderer, Renderer};
-use effigy::{parse_command, usage_text, Command};
+use effigy::{parse_command, render_help, Command};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -12,7 +12,7 @@ fn main() {
                 &MessageBlock::new("Invalid command arguments", err.to_string())
                     .with_hint("Run `effigy --help` to see supported command forms"),
             );
-            let _ = renderer.text(usage_text());
+            let _ = render_help(&mut renderer);
             std::process::exit(2);
         }
     };
@@ -20,7 +20,7 @@ fn main() {
     match cmd {
         Command::Help => {
             let mut renderer = PlainRenderer::stdout(output_mode);
-            let _ = renderer.text(usage_text());
+            let _ = render_help(&mut renderer);
         }
         _ => match effigy::runner::run_command(cmd) {
             Ok(output) => {

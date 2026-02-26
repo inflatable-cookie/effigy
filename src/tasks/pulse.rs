@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub struct PulseTask;
+const ROOT_MARKERS: [&str; 4] = ["package.json", "composer.json", "Cargo.toml", ".git"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PulseCollected {
@@ -43,7 +44,7 @@ impl Task for PulseTask {
     fn collect(&self, ctx: &TaskContext) -> Result<Self::Collected, TaskError> {
         let repo_path = ctx.target_repo.clone();
         let mut marker_hits: Vec<String> = Vec::new();
-        for marker in ["package.json", "Cargo.toml", ".git"] {
+        for marker in ROOT_MARKERS {
             let marker_path = repo_path.join(marker);
             if marker_path.exists() {
                 marker_hits.push(marker.to_owned());
@@ -249,7 +250,7 @@ fn should_expect_root_task_surface(
     }
     marker_hits
         .iter()
-        .any(|m| m == "package.json" || m == "Cargo.toml")
+        .any(|m| m == "package.json" || m == "composer.json" || m == "Cargo.toml")
 }
 
 fn read_package_scripts(repo_root: &Path) -> (Vec<String>, Option<String>) {
@@ -312,9 +313,15 @@ fn find_subrepo_candidates(repo_root: &Path) -> Vec<String> {
             continue;
         }
 
-        let looks_like_repo = [".git", "package.json", "Cargo.toml", "AGENTS.md"]
-            .iter()
-            .any(|marker| path.join(marker).exists());
+        let looks_like_repo = [
+            ".git",
+            "package.json",
+            "composer.json",
+            "Cargo.toml",
+            "AGENTS.md",
+        ]
+        .iter()
+        .any(|marker| path.join(marker).exists());
         if looks_like_repo {
             candidates.push(name.to_owned());
         }

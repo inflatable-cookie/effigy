@@ -38,6 +38,21 @@ fn finds_subrepo_candidates_from_child_markers() {
 }
 
 #[test]
+fn finds_subrepo_candidates_from_composer_marker() {
+    let root = temp_dir("subrepos-composer");
+    let legacy = root.join("legacy");
+    fs::create_dir_all(&legacy).expect("mkdir legacy");
+    fs::write(
+        legacy.join("composer.json"),
+        "{ \"name\": \"legacy/app\" }\n",
+    )
+    .expect("write composer");
+
+    let candidates = find_subrepo_candidates(&root);
+    assert_eq!(candidates, vec!["legacy".to_owned()]);
+}
+
+#[test]
 fn task_surface_expectation_skips_umbrella_git_repo_without_effigy() {
     let marker_hits = vec![".git".to_owned()];
     let scripts: Vec<String> = Vec::new();
@@ -50,6 +65,17 @@ fn task_surface_expectation_skips_umbrella_git_repo_without_effigy() {
         &marker_hits,
         &scripts,
         true
+    ));
+}
+
+#[test]
+fn task_surface_expectation_accepts_composer_root_marker() {
+    let marker_hits = vec!["composer.json".to_owned()];
+    let scripts: Vec<String> = Vec::new();
+    assert!(should_expect_root_task_surface(
+        &marker_hits,
+        &scripts,
+        false
     ));
 }
 

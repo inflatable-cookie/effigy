@@ -17,5 +17,6 @@ Effigy is a Rust CLI task runner with two responsibility layers:
 
 - Catalogs are file-based (`effigy.tasks.toml`) so task ownership can live close to the code it operates on.
 - Execution is cwd-aware but explicit override friendly via `--repo`.
+- Root detection uses nearest marker semantics across `package.json`, `composer.json`, `Cargo.toml`, and `.git`.
 - Unprefixed task resolution is deterministic and fails loudly on ambiguity.
 - Task command payloads remain shell commands for incremental adoption.

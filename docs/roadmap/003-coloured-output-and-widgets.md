@@ -1,6 +1,6 @@
 # 003 - Coloured Output and Widget Layer
 
-Status: In Progress
+Status: Complete
 Owner: Platform
 Created: 2026-02-26
 Depends on: 001
@@ -18,7 +18,7 @@ Effigy currently emits mostly plain-text output. As commands expand, output shap
 - [x] Implement table rendering for list/report commands.
 - [x] Add colour-mode controls (`auto`, `always`, `never`) and environment handling.
 - [x] Migrate existing built-in commands to the new renderer.
-- [ ] Document authoring guidance for new command output.
+- [x] Document authoring guidance for new command output.
 
 ## 3) Non-Goals
 
@@ -177,7 +177,7 @@ Phase 003 migration scope:
 - [x] Migrate `tasks` and `repo-pulse` to renderer calls.
 - [x] Replace direct `println!` paths in command surfaces.
 - [x] Add integration tests for representative success/failure flows.
-- [ ] Update README and docs with output conventions.
+- [x] Update README and docs with output conventions.
 
 ## 9) Acceptance Criteria
 
@@ -201,4 +201,4 @@ Phase 003 migration scope:
 - [x] `src/ui` module with renderer contract and plain implementation.
 - [x] Table and spinner integrations.
 - [x] Migrated built-ins using widget API.
-- [ ] Documentation for output authoring conventions and mode flags.
+- [x] Documentation for output authoring conventions and mode flags.

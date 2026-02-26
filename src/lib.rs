@@ -4,6 +4,7 @@ pub mod tasks;
 pub mod ui;
 
 use std::path::PathBuf;
+use ui::{Renderer, UiResult};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -139,8 +140,59 @@ where
     }))
 }
 
-pub fn usage_text() -> &'static str {
-    "effigy\n\nUSAGE:\n  effigy <task> [task args]\n  effigy <catalog>:<task> [task args]\n  effigy repo-pulse [--repo <PATH>] [--verbose-root]\n  effigy tasks [--repo <PATH>] [--task <TASK_NAME>]\n\nTASKS:\n  repo-pulse        Run the built-in repository pulse task\n  tasks             List discovered catalogs and available tasks\n  <task>            Resolve task name across discovered effigy.tasks.toml catalogs\n  <catalog>:<task>  Run a task from an explicit catalog alias\n\nOPTIONS (task run):\n  --repo <PATH>     Override target repository path\n  --verbose-root    Print root + catalog resolution trace for task execution\n\nOPTIONS (repo-pulse):\n  --repo <PATH>     Override target repository path\n  --verbose-root    Print root resolution trace\n\nOPTIONS (tasks):\n  --repo <PATH>     Override target repository path\n  --task <NAME>     Filter output to a single task name\n\nGENERAL:\n  -h, --help        Print help\n"
+pub fn render_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
+    renderer.section("effigy")?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "Unified task runner for nested and multi-repo workspaces",
+    )?;
+
+    renderer.section("Usage")?;
+    renderer.bullet_list(
+        "commands",
+        &vec![
+            "effigy <task> [task args]".to_owned(),
+            "effigy <catalog>:<task> [task args]".to_owned(),
+            "effigy repo-pulse [--repo <PATH>] [--verbose-root]".to_owned(),
+            "effigy tasks [--repo <PATH>] [--task <TASK_NAME>]".to_owned(),
+        ],
+    )?;
+
+    renderer.section("Tasks")?;
+    renderer.key_values(&[
+        ui::KeyValue::new("repo-pulse", "Run built-in repository pulse checks"),
+        ui::KeyValue::new("tasks", "List discovered catalogs and available tasks"),
+        ui::KeyValue::new("<task>", "Resolve task across discovered catalogs"),
+        ui::KeyValue::new(
+            "<catalog>:<task>",
+            "Run a task from an explicit catalog alias",
+        ),
+    ])?;
+
+    renderer.section("Options (task run)")?;
+    renderer.key_values(&[
+        ui::KeyValue::new("--repo <PATH>", "Override target repository path"),
+        ui::KeyValue::new(
+            "--verbose-root",
+            "Print root + catalog resolution trace for task execution",
+        ),
+    ])?;
+
+    renderer.section("Options (repo-pulse)")?;
+    renderer.key_values(&[
+        ui::KeyValue::new("--repo <PATH>", "Override target repository path"),
+        ui::KeyValue::new("--verbose-root", "Print root resolution trace"),
+    ])?;
+
+    renderer.section("Options (tasks)")?;
+    renderer.key_values(&[
+        ui::KeyValue::new("--repo <PATH>", "Override target repository path"),
+        ui::KeyValue::new("--task <NAME>", "Filter output to a single task name"),
+    ])?;
+
+    renderer.section("General")?;
+    renderer.key_values(&[ui::KeyValue::new("-h, --help", "Print help")])?;
+    Ok(())
 }
 
 #[cfg(test)]

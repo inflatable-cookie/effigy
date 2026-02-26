@@ -27,6 +27,19 @@ fn resolves_nearest_root_candidate() {
 }
 
 #[test]
+fn resolves_nearest_root_candidate_from_composer_marker() {
+    let base = temp_dir("nearest-composer");
+    let repo = base.join("repo");
+    let nested = repo.join("app/src");
+    fs::create_dir_all(&nested).expect("create nested");
+    fs::write(repo.join("composer.json"), "{ \"name\": \"acme/repo\" }\n").expect("write composer");
+
+    let resolved = resolve_target_root(nested, None).expect("resolve");
+    assert_eq!(resolved.resolution_mode, ResolutionMode::AutoNearest);
+    assert_eq!(resolved.resolved_root, canonicalize_best_effort(repo));
+}
+
+#[test]
 fn promotes_to_workspace_parent_when_membership_matches() {
     let base = temp_dir("promote");
     let parent = base.join("workspace");

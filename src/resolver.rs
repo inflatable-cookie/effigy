@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::tasks::ResolutionMode;
 
+const ROOT_MARKERS: [&str; 4] = ["package.json", "composer.json", "Cargo.toml", ".git"];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedTarget {
     pub resolved_root: PathBuf,
@@ -86,9 +88,7 @@ fn find_nearest_candidate(cwd: &Path) -> Option<PathBuf> {
 }
 
 fn is_candidate_root(path: &Path) -> bool {
-    ["package.json", "Cargo.toml", ".git"]
-        .iter()
-        .any(|marker| path.join(marker).exists())
+    ROOT_MARKERS.iter().any(|marker| path.join(marker).exists())
 }
 
 fn maybe_promote_to_parent_workspace(child: &Path) -> Option<ResolvedTarget> {

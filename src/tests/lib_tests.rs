@@ -1,4 +1,5 @@
-use super::{parse_command, Command, PulseArgs, TaskInvocation, TasksArgs};
+use super::{parse_command, render_help, Command, PulseArgs, TaskInvocation, TasksArgs};
+use crate::ui::PlainRenderer;
 use std::path::PathBuf;
 
 #[test]
@@ -72,4 +73,15 @@ fn parse_tasks_with_filters() {
             task_name: Some("reset-db".to_owned()),
         })
     );
+}
+
+#[test]
+fn render_help_writes_structured_sections() {
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    render_help(&mut renderer).expect("help render");
+    let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
+    assert!(rendered.contains("== Usage =="));
+    assert!(rendered.contains("commands:"));
+    assert!(rendered.contains("== Tasks =="));
+    assert!(rendered.contains("-h, --help:"));
 }

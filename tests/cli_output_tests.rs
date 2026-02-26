@@ -46,8 +46,24 @@ fn cli_parse_error_includes_usage_in_stderr() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
     assert!(stderr.contains("Invalid command arguments"));
-    assert!(stderr.contains("USAGE:"));
+    assert!(stderr.contains("== Usage =="));
     assert!(!stderr.contains('\u{1b}'));
+}
+
+#[test]
+fn cli_help_supports_colorized_sections_when_forced() {
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--help")
+        .env("EFFIGY_COLOR", "always")
+        .env_remove("NO_COLOR")
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("== "));
+    assert!(stdout.contains("Usage"));
+    assert!(stdout.contains('\u{1b}'));
 }
 
 fn temp_workspace(name: &str) -> PathBuf {
