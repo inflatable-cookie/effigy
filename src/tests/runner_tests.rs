@@ -250,6 +250,97 @@ fn run_tasks_reads_legacy_manifest_when_effigy_manifest_missing() {
     assert!(out.contains("legacy"));
 }
 
+#[test]
+fn run_manifest_task_defers_when_unprefixed_task_missing() {
+    let root = temp_workspace("defer-missing");
+    write_manifest(
+        &root.join("effigy.tasks.toml"),
+        "[defer]\nrun = \"printf deferred\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "unknown-task".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("deferred run should succeed");
+
+    assert_eq!(out, "");
+}
+
+#[test]
+fn run_manifest_task_defers_and_supports_request_and_args_tokens() {
+    let root = temp_workspace("defer-tokens");
+    write_manifest(
+        &root.join("effigy.tasks.toml"),
+        "[defer]\nrun = \"test {request} = 'unknown-task' && test {args} = '--dry-run'\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "unknown-task".to_owned(),
+            args: vec!["--dry-run".to_owned()],
+        },
+        root,
+    )
+    .expect("deferred token substitution should succeed");
+
+    assert_eq!(out, "");
+}
+
+#[test]
+fn run_manifest_task_defers_to_prefixed_catalog_handler() {
+    let root = temp_workspace("defer-prefixed");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir");
+    write_manifest(
+        &root.join("effigy.tasks.toml"),
+        "[defer]\nrun = \"false\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.tasks.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[defer]\nrun = \"printf farmyard-deferred\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "farmyard:missing".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("prefixed deferral should succeed");
+
+    assert_eq!(out, "");
+}
+
+#[test]
+fn run_manifest_task_deferral_loop_guard_fails() {
+    let root = temp_workspace("defer-loop");
+    write_manifest(
+        &root.join("effigy.tasks.toml"),
+        "[defer]\nrun = \"printf deferred\"\n",
+    );
+
+    std::env::set_var("EFFIGY_DEFER_DEPTH", "1");
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "unknown-task".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("loop guard should fail");
+    std::env::remove_var("EFFIGY_DEFER_DEPTH");
+
+    match err {
+        RunnerError::DeferLoopDetected { depth } => assert_eq!(depth, 1),
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
 fn write_manifest(path: &PathBuf, body: &str) {
     fs::write(path, body).expect("write manifest");
 }

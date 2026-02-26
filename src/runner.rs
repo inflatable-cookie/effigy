@@ -60,6 +60,9 @@ pub enum RunnerError {
         stdout: String,
         stderr: String,
     },
+    DeferLoopDetected {
+        depth: u8,
+    },
 }
 
 impl std::fmt::Display for RunnerError {
@@ -131,6 +134,11 @@ impl std::fmt::Display for RunnerError {
                     )
                 }
             }
+            RunnerError::DeferLoopDetected { depth } => write!(
+                f,
+                "deferral loop detected ({} deferral hop(s)); refusing to defer again",
+                depth
+            ),
         }
     }
 }
@@ -153,6 +161,9 @@ impl From<ResolveError> for RunnerError {
 struct TaskManifest {
     #[serde(default)]
     catalog: Option<ManifestCatalog>,
+    #[serde(default)]
+    defer: Option<ManifestDefer>,
+    #[serde(default)]
     tasks: BTreeMap<String, ManifestTask>,
 }
 
@@ -166,12 +177,18 @@ struct ManifestCatalog {
     alias: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct ManifestDefer {
+    run: String,
+}
+
 #[derive(Debug)]
 struct LoadedCatalog {
     alias: String,
     catalog_root: PathBuf,
     manifest_path: PathBuf,
     manifest: TaskManifest,
+    defer_run: Option<String>,
     depth: usize,
 }
 
@@ -205,6 +222,7 @@ struct TaskRuntimeArgs {
 
 const TASK_MANIFEST_FILE: &str = "effigy.tasks.toml";
 const LEGACY_TASK_MANIFEST_FILE: &str = "underlay.tasks.toml";
+const DEFER_DEPTH_ENV: &str = "EFFIGY_DEFER_DEPTH";
 
 pub fn run_command(cmd: Command) -> Result<String, RunnerError> {
     match cmd {
@@ -353,7 +371,16 @@ fn run_manifest_task_with_cwd(task: &TaskInvocation, cwd: PathBuf) -> Result<Str
     let resolved = resolve_target_root(cwd, runtime_args.repo_override.clone())?;
     let selector = parse_task_selector(&task.name)?;
     let catalogs = discover_catalogs(&resolved.resolved_root)?;
-    let selection = select_catalog_and_task(&selector, &catalogs, &invocation_cwd)?;
+    let selection = match select_catalog_and_task(&selector, &catalogs, &invocation_cwd) {
+        Ok(selection) => selection,
+        Err(error) if should_attempt_deferral(&error) => {
+            if let Some(deferral) = select_deferral(&selector, &catalogs, &invocation_cwd) {
+                return run_deferred_request(task, &runtime_args, deferral, &error);
+            }
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
 
     let repo_for_task = selection.catalog.catalog_root.clone();
 
@@ -506,11 +533,140 @@ fn discover_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatalog>, Runner
             depth: catalog_depth(workspace_root, &catalog_root),
             catalog_root,
             manifest_path,
+            defer_run: manifest.defer.as_ref().map(|defer| defer.run.clone()),
             manifest,
         });
     }
 
     Ok(catalogs)
+}
+
+fn should_attempt_deferral(error: &RunnerError) -> bool {
+    matches!(
+        error,
+        RunnerError::TaskNotFoundAny { .. }
+            | RunnerError::TaskCatalogPrefixNotFound { .. }
+            | RunnerError::TaskNotFound { .. }
+    )
+}
+
+fn select_deferral<'a>(
+    selector: &TaskSelector,
+    catalogs: &'a [LoadedCatalog],
+    cwd: &Path,
+) -> Option<&'a LoadedCatalog> {
+    if let Some(prefix) = &selector.prefix {
+        if let Some(explicit) = catalogs.iter().find(|catalog| &catalog.alias == prefix) {
+            if explicit.defer_run.is_some() {
+                return Some(explicit);
+            }
+        }
+    }
+
+    let mut in_scope = catalogs
+        .iter()
+        .filter(|catalog| catalog.defer_run.is_some() && cwd.starts_with(&catalog.catalog_root))
+        .collect::<Vec<&LoadedCatalog>>();
+    in_scope.sort_by(|a, b| {
+        b.depth
+            .cmp(&a.depth)
+            .then_with(|| a.alias.cmp(&b.alias))
+            .then_with(|| a.manifest_path.cmp(&b.manifest_path))
+    });
+    if let Some(catalog) = in_scope.first() {
+        return Some(catalog);
+    }
+
+    let mut fallback = catalogs
+        .iter()
+        .filter(|catalog| catalog.defer_run.is_some())
+        .collect::<Vec<&LoadedCatalog>>();
+    fallback.sort_by(|a, b| {
+        a.depth
+            .cmp(&b.depth)
+            .then_with(|| a.alias.cmp(&b.alias))
+            .then_with(|| a.manifest_path.cmp(&b.manifest_path))
+    });
+    fallback.first().copied()
+}
+
+fn run_deferred_request(
+    task: &TaskInvocation,
+    runtime_args: &TaskRuntimeArgs,
+    catalog: &LoadedCatalog,
+    cause: &RunnerError,
+) -> Result<String, RunnerError> {
+    let current_depth = std::env::var(DEFER_DEPTH_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u8>().ok())
+        .unwrap_or(0);
+    if current_depth >= 1 {
+        return Err(RunnerError::DeferLoopDetected {
+            depth: current_depth,
+        });
+    }
+
+    let defer_template = catalog
+        .defer_run
+        .as_ref()
+        .expect("deferral selected only when defer_run exists");
+
+    let args_rendered = runtime_args
+        .passthrough
+        .iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<String>>()
+        .join(" ");
+    let request_rendered = shell_quote(&task.name);
+    let repo_rendered = shell_quote(&catalog.catalog_root.display().to_string());
+    let command = defer_template
+        .replace("{request}", &request_rendered)
+        .replace("{args}", &args_rendered)
+        .replace("{repo}", &repo_rendered);
+
+    let status = ProcessCommand::new("sh")
+        .arg("-lc")
+        .arg(&command)
+        .current_dir(&catalog.catalog_root)
+        .env(DEFER_DEPTH_ENV, (current_depth + 1).to_string())
+        .status()
+        .map_err(|error| RunnerError::TaskCommandLaunch {
+            command: command.clone(),
+            error,
+        })?;
+
+    if status.success() {
+        if runtime_args.verbose_root {
+            return Ok(render_deferral_trace(task, catalog, &command, cause));
+        }
+        return Ok(String::new());
+    }
+
+    Err(RunnerError::TaskCommandFailure {
+        command,
+        code: status.code(),
+        stdout: String::new(),
+        stderr: String::new(),
+    })
+}
+
+fn render_deferral_trace(
+    task: &TaskInvocation,
+    catalog: &LoadedCatalog,
+    command: &str,
+    cause: &RunnerError,
+) -> String {
+    let mut trace = String::new();
+    trace.push_str("# Task Deferral\n\n");
+    trace.push_str(&format!("- request: {}\n", task.name));
+    trace.push_str(&format!(
+        "- defer-catalog: {} ({})\n",
+        catalog.alias,
+        catalog.manifest_path.display()
+    ));
+    trace.push_str(&format!("- command: `{}`\n", command));
+    trace.push_str(&format!("- reason: {}\n", cause));
+    trace
 }
 
 fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, RunnerError> {

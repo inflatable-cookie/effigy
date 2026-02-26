@@ -82,6 +82,20 @@ Interpolation tokens:
 - `{repo}`: resolved catalog root path shell-quoted.
 - `{args}`: task passthrough args shell-quoted and joined.
 
+### Deferral fallback
+
+Catalogs can define a fallback process used when no named task matches:
+
+```toml
+[defer]
+run = "composer global run effigy {request} {args}"
+```
+
+Deferral runs only for unresolved task requests and receives:
+- `{request}`: original task request (`task` or `catalog:task`)
+- `{args}`: passthrough args
+- `{repo}`: catalog root path
+
 ## Resolution Model
 
 Root resolution:

@@ -20,9 +20,9 @@ Effigy has been extracted from Underlay, but needs first-class project structure
 
 ## 3) Non-Goals
 
-- [ ] No breaking rewrite of catalog schema in phase 001.
-- [ ] No plugin system in phase 001.
-- [ ] No remote task registry in phase 001.
+- [x] No breaking rewrite of catalog schema in phase 001.
+- [x] No plugin system in phase 001.
+- [x] No remote task registry in phase 001.
 
 ## 4) Execution Plan
 
