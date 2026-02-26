@@ -611,21 +611,25 @@ fn run_deferred_request(
         .as_ref()
         .expect("deferral selected only when defer_run exists");
 
-    let args_rendered = runtime_args
-        .passthrough
-        .iter()
-        .map(|arg| shell_quote(arg))
-        .collect::<Vec<String>>()
-        .join(" ");
-    let request_rendered = shell_quote(&task.name);
+    let args_rendered = runtime_args.passthrough.join(" ");
+    let request_rendered = task.name.clone();
     let repo_rendered = shell_quote(&catalog.catalog_root.display().to_string());
     let command = defer_template
         .replace("{request}", &request_rendered)
         .replace("{args}", &args_rendered)
         .replace("{repo}", &repo_rendered);
 
-    let status = ProcessCommand::new("sh")
-        .arg("-lc")
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "sh".to_owned());
+    let shell_arg = if shell.ends_with("zsh") || shell.ends_with("bash") {
+        "-ic"
+    } else {
+        "-lc"
+    };
+    let status = ProcessCommand::new(&shell)
+        .arg(shell_arg)
         .arg(&command)
         .current_dir(&catalog.catalog_root)
         .env(DEFER_DEPTH_ENV, (current_depth + 1).to_string())
