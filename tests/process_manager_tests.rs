@@ -199,6 +199,89 @@ fn supervisor_respects_process_start_delay() {
     );
 }
 
+#[test]
+fn supervisor_can_terminate_individual_process() {
+    let root = temp_workspace("supervisor-stop-process");
+    let supervisor = ProcessSupervisor::spawn(
+        root.clone(),
+        vec![ProcessSpec {
+            name: "sleeper".to_owned(),
+            run: "sleep 30".to_owned(),
+            cwd: root.clone(),
+            start_after_ms: 0,
+            pty: false,
+        }],
+    )
+    .expect("spawn");
+
+    supervisor
+        .terminate_process("sleeper")
+        .expect("terminate process");
+
+    let mut saw_exit = false;
+    for _ in 0..20 {
+        if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(100)) {
+            if event.kind == ProcessEventKind::Exit && event.process == "sleeper" {
+                saw_exit = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        saw_exit,
+        "expected sleeper exit event after terminate_process"
+    );
+}
+
+#[test]
+fn supervisor_can_restart_individual_process() {
+    let root = temp_workspace("supervisor-restart-process");
+    let supervisor = ProcessSupervisor::spawn(
+        root.clone(),
+        vec![ProcessSpec {
+            name: "service".to_owned(),
+            run: "echo booted; sleep 30".to_owned(),
+            cwd: root.clone(),
+            start_after_ms: 0,
+            pty: false,
+        }],
+    )
+    .expect("spawn");
+
+    let mut booted_count = 0usize;
+    for _ in 0..20 {
+        if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(100)) {
+            if event.kind == ProcessEventKind::Stdout
+                && event.process == "service"
+                && event.payload.contains("booted")
+            {
+                booted_count += 1;
+                break;
+            }
+        }
+    }
+
+    supervisor
+        .restart_process("service")
+        .expect("restart process");
+
+    for _ in 0..30 {
+        if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(120)) {
+            if event.kind == ProcessEventKind::Stdout
+                && event.process == "service"
+                && event.payload.contains("booted")
+            {
+                booted_count += 1;
+                break;
+            }
+        }
+    }
+    assert!(
+        booted_count >= 2,
+        "expected service to emit startup output after restart"
+    );
+}
+
 fn temp_workspace(name: &str) -> PathBuf {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)

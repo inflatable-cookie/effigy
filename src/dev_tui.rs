@@ -9,12 +9,12 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
+    Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
 };
 use ratatui::{Frame, Terminal};
 
@@ -44,6 +44,15 @@ enum LogEntryKind {
 enum ProcessExitState {
     Success,
     Failure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OptionsAction {
+    ToggleFollow,
+    Restart,
+    Stop,
+    Cancel,
+    Quit,
 }
 
 #[derive(Debug, Clone)]
@@ -135,29 +144,57 @@ pub fn run_dev_process_tui(
         .iter()
         .map(|name| (name.clone(), true))
         .collect();
+    let mut output_seen: HashMap<String, bool> = process_names
+        .iter()
+        .map(|name| (name.clone(), false))
+        .collect();
+    let mut restart_pending: HashMap<String, bool> = process_names
+        .iter()
+        .map(|name| (name.clone(), false))
+        .collect();
     let mut active_index: usize = 0;
     let mut input_line = String::new();
     let mut input_mode = InputMode::Command;
     let mut show_help = false;
+    let mut show_options = false;
+    let mut options_index = 0usize;
     let mut shutdown_summary: Option<String> = None;
     let mut shutdown_total: Option<usize> = None;
     let mut shutdown_forced: Option<usize> = None;
     let mut observed_non_zero: HashMap<String, String> = HashMap::new();
     let mut exit_states: HashMap<String, ProcessExitState> = HashMap::new();
+    let mut spinner_tick: usize = 0;
 
     let result: Result<(), DevTuiError> = loop {
         while let Some(event_item) = supervisor.next_event_timeout(Duration::from_millis(1)) {
             if let Some(buffer) = logs.get_mut(&event_item.process) {
                 let entry = match event_item.kind {
                     ProcessEventKind::Stdout => LogEntry {
-                        kind: LogEntryKind::Stdout,
+                        kind: {
+                            restart_pending.insert(event_item.process.clone(), false);
+                            output_seen.insert(event_item.process.clone(), true);
+                            LogEntryKind::Stdout
+                        },
                         line: event_item.payload,
                     },
                     ProcessEventKind::Stderr => LogEntry {
-                        kind: LogEntryKind::Stderr,
+                        kind: {
+                            restart_pending.insert(event_item.process.clone(), false);
+                            output_seen.insert(event_item.process.clone(), true);
+                            LogEntryKind::Stderr
+                        },
                         line: event_item.payload,
                     },
                     ProcessEventKind::Exit => {
+                        let pending_restart =
+                            *restart_pending.get(&event_item.process).unwrap_or(&false);
+                        if pending_restart
+                            && (is_expected_shutdown_diagnostic(&event_item.payload)
+                                || event_item.payload.trim() == "exit=0")
+                        {
+                            continue;
+                        }
+                        restart_pending.insert(event_item.process.clone(), false);
                         if event_item.payload.trim() == "exit=0"
                             || is_expected_shutdown_diagnostic(&event_item.payload)
                         {
@@ -182,6 +219,7 @@ pub fn run_dev_process_tui(
                 }
             }
         }
+        spinner_tick = spinner_tick.wrapping_add(1);
 
         let active = &process_names[active_index];
         let active_logs = logs
@@ -195,8 +233,6 @@ pub fn run_dev_process_tui(
         let scroll_offset = stored.min(max_offset);
         scroll_offsets.insert(active.clone(), scroll_offset);
         let is_follow = *follow_mode.get(active).unwrap_or(&true);
-        let status = format!("follow: {} (f)", if is_follow { "on" } else { "off" },);
-
         terminal.draw(|frame| {
             render_ui(
                 frame,
@@ -207,9 +243,12 @@ pub fn run_dev_process_tui(
                 is_follow,
                 &input_line,
                 input_mode,
-                &status,
                 &exit_states,
                 show_help,
+                show_options,
+                options_index,
+                *output_seen.get(active).unwrap_or(&false),
+                spinner_tick,
             )
         })?;
 
@@ -231,6 +270,128 @@ pub fn run_dev_process_tui(
                     };
                     if input_mode == InputMode::Insert {
                         show_help = false;
+                        show_options = false;
+                    }
+                    continue;
+                }
+                if show_options {
+                    let follow_active = *follow_mode
+                        .get(&process_names[active_index])
+                        .unwrap_or(&true);
+                    let actions = options_actions(follow_active);
+                    let active = process_names[active_index].clone();
+                    match key.code {
+                        KeyCode::Esc => {
+                            show_options = false;
+                        }
+                        KeyCode::Char('o') => {
+                            show_options = false;
+                        }
+                        KeyCode::Up => {
+                            options_index = options_index.saturating_sub(1);
+                        }
+                        KeyCode::Down => {
+                            let max = actions.len().saturating_sub(1);
+                            options_index = (options_index + 1).min(max);
+                        }
+                        KeyCode::Char('f') => {
+                            let should_quit = apply_options_action(
+                                OptionsAction::ToggleFollow,
+                                &active,
+                                &supervisor,
+                                &mut follow_mode,
+                                &mut scroll_offsets,
+                                max_offset,
+                                &mut exit_states,
+                                &mut observed_non_zero,
+                                &mut output_seen,
+                                &mut restart_pending,
+                                &mut logs,
+                            )?;
+                            if should_quit {
+                                break Ok(());
+                            }
+                        }
+                        KeyCode::Char('r') => {
+                            let should_quit = apply_options_action(
+                                OptionsAction::Restart,
+                                &active,
+                                &supervisor,
+                                &mut follow_mode,
+                                &mut scroll_offsets,
+                                max_offset,
+                                &mut exit_states,
+                                &mut observed_non_zero,
+                                &mut output_seen,
+                                &mut restart_pending,
+                                &mut logs,
+                            )?;
+                            show_options = false;
+                            if should_quit {
+                                break Ok(());
+                            }
+                        }
+                        KeyCode::Char('s') => {
+                            let should_quit = apply_options_action(
+                                OptionsAction::Stop,
+                                &active,
+                                &supervisor,
+                                &mut follow_mode,
+                                &mut scroll_offsets,
+                                max_offset,
+                                &mut exit_states,
+                                &mut observed_non_zero,
+                                &mut output_seen,
+                                &mut restart_pending,
+                                &mut logs,
+                            )?;
+                            show_options = false;
+                            if should_quit {
+                                break Ok(());
+                            }
+                        }
+                        KeyCode::Char('q') => {
+                            let should_quit = apply_options_action(
+                                OptionsAction::Quit,
+                                &active,
+                                &supervisor,
+                                &mut follow_mode,
+                                &mut scroll_offsets,
+                                max_offset,
+                                &mut exit_states,
+                                &mut observed_non_zero,
+                                &mut output_seen,
+                                &mut restart_pending,
+                                &mut logs,
+                            )?;
+                            show_options = false;
+                            if should_quit {
+                                break Ok(());
+                            }
+                        }
+                        KeyCode::Enter => {
+                            let action = actions[options_index];
+                            let should_quit = apply_options_action(
+                                action,
+                                &active,
+                                &supervisor,
+                                &mut follow_mode,
+                                &mut scroll_offsets,
+                                max_offset,
+                                &mut exit_states,
+                                &mut observed_non_zero,
+                                &mut output_seen,
+                                &mut restart_pending,
+                                &mut logs,
+                            )?;
+                            if should_quit {
+                                break Ok(());
+                            }
+                            if !matches!(action, OptionsAction::ToggleFollow) {
+                                show_options = false;
+                            }
+                        }
+                        _ => {}
                     }
                     continue;
                 }
@@ -262,9 +423,20 @@ pub fn run_dev_process_tui(
                     KeyCode::Char('i') => {
                         input_mode = InputMode::Insert;
                         show_help = false;
+                        show_options = false;
                     }
                     KeyCode::Char('h') => {
                         show_help = !show_help;
+                        if show_help {
+                            show_options = false;
+                        }
+                    }
+                    KeyCode::Char('o') => {
+                        show_options = !show_options;
+                        if show_options {
+                            show_help = false;
+                            options_index = 0;
+                        }
                     }
                     KeyCode::BackTab => {
                         active_index = if active_index == 0 {
@@ -282,17 +454,6 @@ pub fn run_dev_process_tui(
                         } else {
                             active_index - 1
                         };
-                    }
-                    KeyCode::Char('f') => {
-                        let active = &process_names[active_index];
-                        if let Some(follow) = follow_mode.get_mut(active) {
-                            *follow = !*follow;
-                        }
-                        if *follow_mode.get(active).unwrap_or(&false) {
-                            if let Some(offset) = scroll_offsets.get_mut(active) {
-                                *offset = max_offset;
-                            }
-                        }
                     }
                     KeyCode::Up => {
                         let active = &process_names[active_index];
@@ -344,6 +505,7 @@ pub fn run_dev_process_tui(
                     }
                     KeyCode::Esc => {
                         show_help = false;
+                        show_options = false;
                     }
                     _ => {}
                 }
@@ -449,9 +611,12 @@ fn render_ui(
     follow: bool,
     input_line: &str,
     input_mode: InputMode,
-    status: &str,
     exit_states: &HashMap<String, ProcessExitState>,
     show_help: bool,
+    show_options: bool,
+    options_index: usize,
+    active_output_seen: bool,
+    spinner_tick: usize,
 ) {
     let input_height = if input_mode == InputMode::Insert {
         3
@@ -530,8 +695,8 @@ fn render_ui(
             Line::from("up/down          scroll output line-by-line"),
             Line::from("pgup/pgdn        scroll output by page"),
             Line::from("home/end         jump to top/bottom (end re-enables follow)"),
-            Line::from("f               toggle follow for active tab"),
             Line::from("h               toggle this help"),
+            Line::from("o               open per-process options menu"),
             Line::from("ctrl+c          quit and shut down managed processes"),
             Line::from(""),
             Line::from(vec![Span::styled(
@@ -548,17 +713,43 @@ fn render_ui(
             Paragraph::new(help_lines).block(panel_block(Some("Help"), false, Color::Magenta));
         frame.render_widget(help, chunks[1]);
     } else {
-        let logs = Paragraph::new(lines)
-            .block(panel_block(None, false, Color::DarkGray))
-            .scroll((clamped_offset.min(u16::MAX as usize) as u16, 0));
+        let panel = panel_block(None, false, Color::DarkGray);
+        let logs = if !active_output_seen && !exit_states.contains_key(&process_names[active_index])
+        {
+            let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let spinner = spinner_frames[spinner_tick % spinner_frames.len()];
+            Paragraph::new(Line::from(vec![
+                Span::styled(spinner.to_owned(), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    " waiting for first output...",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]))
+            .block(panel)
+        } else {
+            Paragraph::new(lines)
+                .block(panel)
+                .scroll((clamped_offset.min(u16::MAX as usize) as u16, 0))
+        };
         frame.render_widget(logs, chunks[1]);
-        let mut scrollbar_state = ScrollbarState::new(total_lines.max(1))
-            .viewport_content_length(output_height.max(1))
-            .position(clamped_offset);
-        frame.render_stateful_widget(
-            Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
-            chunks[1],
-            &mut scrollbar_state,
+        if active_output_seen || exit_states.contains_key(&process_names[active_index]) {
+            let mut scrollbar_state = ScrollbarState::new(total_lines.max(1))
+                .viewport_content_length(output_height.max(1))
+                .position(clamped_offset);
+            frame.render_stateful_widget(
+                Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
+                chunks[1],
+                &mut scrollbar_state,
+            );
+        }
+    }
+
+    if show_options {
+        render_options_overlay(
+            frame,
+            process_names[active_index].as_str(),
+            options_index,
+            follow,
         );
     }
 
@@ -587,8 +778,6 @@ fn render_ui(
     let muted = Style::default().fg(Color::DarkGray);
     let active = Style::default().fg(Color::Yellow);
     let footer = Paragraph::new(Line::from(vec![
-        Span::styled(status.to_owned(), if follow { active } else { muted }),
-        Span::styled("  |  ", muted),
         Span::styled(
             format!("mode:{mode_label} (tab)"),
             if input_mode == InputMode::Insert {
@@ -599,6 +788,8 @@ fn render_ui(
         ),
         Span::styled("  |  ", muted),
         Span::styled("help (h)", if show_help { active } else { muted }),
+        Span::styled("  |  ", muted),
+        Span::styled("options (o)", if show_options { active } else { muted }),
     ]));
     frame.render_widget(footer, chunks[3]);
 }
@@ -630,6 +821,175 @@ fn panel_block<'a>(title: Option<&'a str>, show_version: bool, border_color: Col
         );
     }
     block
+}
+
+const OPTIONS_ACTIONS: [OptionsAction; 5] = [
+    OptionsAction::ToggleFollow,
+    OptionsAction::Restart,
+    OptionsAction::Stop,
+    OptionsAction::Cancel,
+    OptionsAction::Quit,
+];
+
+fn options_actions(_follow_enabled: bool) -> Vec<OptionsAction> {
+    OPTIONS_ACTIONS.to_vec()
+}
+
+fn options_action_label(action: OptionsAction, follow_enabled: bool) -> &'static str {
+    match action {
+        OptionsAction::ToggleFollow => {
+            if follow_enabled {
+                "Disable follow (f)"
+            } else {
+                "Enable follow (f)"
+            }
+        }
+        OptionsAction::Restart => "Restart process (r)",
+        OptionsAction::Stop => "Stop process (s)",
+        OptionsAction::Cancel => "Cancel (o)",
+        OptionsAction::Quit => "Quit (q)",
+    }
+}
+
+fn apply_options_action(
+    action: OptionsAction,
+    active: &str,
+    supervisor: &ProcessSupervisor,
+    follow_mode: &mut HashMap<String, bool>,
+    scroll_offsets: &mut HashMap<String, usize>,
+    max_offset: usize,
+    exit_states: &mut HashMap<String, ProcessExitState>,
+    observed_non_zero: &mut HashMap<String, String>,
+    output_seen: &mut HashMap<String, bool>,
+    restart_pending: &mut HashMap<String, bool>,
+    logs: &mut HashMap<String, VecDeque<LogEntry>>,
+) -> Result<bool, DevTuiError> {
+    match action {
+        OptionsAction::ToggleFollow => {
+            if let Some(follow) = follow_mode.get_mut(active) {
+                *follow = !*follow;
+                if *follow {
+                    if let Some(offset) = scroll_offsets.get_mut(active) {
+                        *offset = max_offset;
+                    }
+                }
+            }
+            Ok(false)
+        }
+        OptionsAction::Restart => {
+            match supervisor.restart_process(active) {
+                Ok(()) => {
+                    exit_states.remove(active);
+                    observed_non_zero.remove(active);
+                    output_seen.insert(active.to_owned(), false);
+                    restart_pending.insert(active.to_owned(), true);
+                    push_log_line(
+                        logs,
+                        active,
+                        LogEntryKind::Stdout,
+                        "[effigy] restarted process".to_owned(),
+                    );
+                }
+                Err(err) => push_log_line(
+                    logs,
+                    active,
+                    LogEntryKind::Stderr,
+                    format!("[effigy] restart failed: {err}"),
+                ),
+            }
+            Ok(false)
+        }
+        OptionsAction::Stop => {
+            match supervisor.terminate_process(active) {
+                Ok(()) => push_log_line(
+                    logs,
+                    active,
+                    LogEntryKind::Stdout,
+                    "[effigy] stop requested".to_owned(),
+                ),
+                Err(err) => push_log_line(
+                    logs,
+                    active,
+                    LogEntryKind::Stderr,
+                    format!("[effigy] stop failed: {err}"),
+                ),
+            }
+            Ok(false)
+        }
+        OptionsAction::Cancel => Ok(false),
+        OptionsAction::Quit => Ok(true),
+    }
+}
+
+fn render_options_overlay(
+    frame: &mut Frame<'_>,
+    process: &str,
+    selected: usize,
+    follow_enabled: bool,
+) {
+    let area = centered_rect(54, 44, frame.area());
+    frame.render_widget(Clear, area);
+    let rows = options_actions(follow_enabled)
+        .iter()
+        .enumerate()
+        .map(|(idx, action)| {
+            let marker = if idx == selected { "› " } else { "  " };
+            let style = if idx == selected {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+            Line::from(Span::styled(
+                format!("{marker}{}", options_action_label(*action, follow_enabled)),
+                style,
+            ))
+        })
+        .collect::<Vec<Line>>();
+    let block = panel_block(Some(" Options "), false, Color::Magenta);
+    let paragraph = Paragraph::new({
+        let mut lines = vec![Line::from(Span::styled(
+            format!("process: {process}"),
+            Style::default().fg(Color::DarkGray),
+        ))];
+        lines.push(Line::from(""));
+        lines.extend(rows);
+        lines
+    })
+    .block(block);
+    frame.render_widget(paragraph, area);
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
+fn push_log_line(
+    logs: &mut HashMap<String, VecDeque<LogEntry>>,
+    process: &str,
+    kind: LogEntryKind,
+    line: String,
+) {
+    if let Some(buffer) = logs.get_mut(process) {
+        buffer.push_back(LogEntry { kind, line });
+        while buffer.len() > MAX_LOG_LINES {
+            buffer.pop_front();
+        }
+    }
 }
 
 fn ansi_line(raw: &str, base: Style) -> Line<'static> {
