@@ -87,6 +87,17 @@ pub enum RunnerError {
         profile: String,
         process: String,
     },
+    TaskManagedProcessInvalidDefinition {
+        task: String,
+        process: String,
+        detail: String,
+    },
+    TaskManagedTaskReferenceInvalid {
+        task: String,
+        process: String,
+        reference: String,
+        detail: String,
+    },
     TaskMissingRunCommand {
         task: String,
         path: PathBuf,
@@ -192,6 +203,23 @@ impl std::fmt::Display for RunnerError {
                 f,
                 "managed task `{task}` profile `{profile}` references undefined process `{process}`"
             ),
+            RunnerError::TaskManagedProcessInvalidDefinition {
+                task,
+                process,
+                detail,
+            } => write!(
+                f,
+                "managed task `{task}` process `{process}` is invalid: {detail}"
+            ),
+            RunnerError::TaskManagedTaskReferenceInvalid {
+                task,
+                process,
+                reference,
+                detail,
+            } => write!(
+                f,
+                "managed task `{task}` process `{process}` task ref `{reference}` is invalid: {detail}"
+            ),
             RunnerError::TaskMissingRunCommand { task, path } => write!(
                 f,
                 "task `{task}` in {} is missing `run` command (required for non-managed tasks)",
@@ -258,7 +286,10 @@ struct ManifestTask {
 
 #[derive(Debug, serde::Deserialize)]
 struct ManifestManagedProcess {
-    run: String,
+    #[serde(default)]
+    run: Option<String>,
+    #[serde(default)]
+    task: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -347,6 +378,7 @@ struct ManagedTaskPlan {
 }
 
 const TASK_MANIFEST_FILE: &str = "effigy.toml";
+const COMPAT_TASK_MANIFEST_FILE: &str = "effigy.tasks.toml";
 const LEGACY_TASK_MANIFEST_FILE: &str = "underlay.tasks.toml";
 const DEFER_DEPTH_ENV: &str = "EFFIGY_DEFER_DEPTH";
 const LEGACY_ROOT_DEFER_TEMPLATE: &str = "composer global exec effigy -- {request} {args}";
@@ -612,7 +644,13 @@ fn run_manifest_task_with_cwd(task: &TaskInvocation, cwd: PathBuf) -> Result<Str
     };
 
     let repo_for_task = selection.catalog.catalog_root.clone();
-    if let Some(plan) = resolve_managed_task_plan(&selector, selection.task, &runtime_args)? {
+    if let Some(plan) = resolve_managed_task_plan(
+        &selector,
+        selection.task,
+        &runtime_args,
+        &catalogs,
+        &selection.catalog.catalog_root,
+    )? {
         return run_or_render_managed_task(
             &selector.task_name,
             &repo_for_task,
@@ -963,6 +1001,8 @@ fn resolve_managed_task_plan(
     selector: &TaskSelector,
     task: &ManifestTask,
     runtime_args: &TaskRuntimeArgs,
+    catalogs: &[LoadedCatalog],
+    task_scope_cwd: &Path,
 ) -> Result<Option<ManagedTaskPlan>, RunnerError> {
     let Some(mode) = task.mode.as_deref() else {
         return Ok(None);
@@ -1005,9 +1045,16 @@ fn resolve_managed_task_plan(
                 process: process_name.clone(),
             }
         })?;
+        let process_run = resolve_managed_process_run(
+            &selector.task_name,
+            process_name,
+            process,
+            catalogs,
+            task_scope_cwd,
+        )?;
         processes.push(ManagedProcessSpec {
             name: process_name.clone(),
-            run: process.run.clone(),
+            run: process_run,
         });
     }
 
@@ -1019,6 +1066,62 @@ fn resolve_managed_task_plan(
         shell_run: task.shell.as_ref().and_then(|s| s.run.clone()),
         passthrough: runtime_args.passthrough.iter().skip(1).cloned().collect(),
     }))
+}
+
+fn resolve_managed_process_run(
+    managed_task_name: &str,
+    process_name: &str,
+    process: &ManifestManagedProcess,
+    catalogs: &[LoadedCatalog],
+    task_scope_cwd: &Path,
+) -> Result<String, RunnerError> {
+    match (&process.run, &process.task) {
+        (Some(run), None) => Ok(run.clone()),
+        (None, Some(task_ref)) => {
+            let selector = parse_task_selector(task_ref).map_err(|error| {
+                RunnerError::TaskManagedTaskReferenceInvalid {
+                    task: managed_task_name.to_owned(),
+                    process: process_name.to_owned(),
+                    reference: task_ref.clone(),
+                    detail: error.to_string(),
+                }
+            })?;
+            let selection = select_catalog_and_task(&selector, catalogs, task_scope_cwd).map_err(
+                |error| RunnerError::TaskManagedTaskReferenceInvalid {
+                    task: managed_task_name.to_owned(),
+                    process: process_name.to_owned(),
+                    reference: task_ref.clone(),
+                    detail: error.to_string(),
+                },
+            )?;
+            let repo_rendered = shell_quote(&selection.catalog.catalog_root.display().to_string());
+            let run_template = selection.task.run.as_ref().ok_or_else(|| {
+                RunnerError::TaskManagedTaskReferenceInvalid {
+                    task: managed_task_name.to_owned(),
+                    process: process_name.to_owned(),
+                    reference: task_ref.clone(),
+                    detail: format!(
+                        "referenced task `{}` in {} has no `run` command",
+                        selector.task_name,
+                        selection.catalog.manifest_path.display()
+                    ),
+                }
+            })?;
+            Ok(run_template
+                .replace("{repo}", &repo_rendered)
+                .replace("{args}", ""))
+        }
+        (Some(_), Some(_)) => Err(RunnerError::TaskManagedProcessInvalidDefinition {
+            task: managed_task_name.to_owned(),
+            process: process_name.to_owned(),
+            detail: "define either `run` or `task`, not both".to_owned(),
+        }),
+        (None, None) => Err(RunnerError::TaskManagedProcessInvalidDefinition {
+            task: managed_task_name.to_owned(),
+            process: process_name.to_owned(),
+            detail: "missing both `run` and `task`".to_owned(),
+        }),
+    }
 }
 
 fn render_managed_task_plan(
@@ -1341,11 +1444,20 @@ fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Runner
             }
 
             if file_type.is_file()
+                && path.file_name().and_then(|n| n.to_str()) == Some(COMPAT_TASK_MANIFEST_FILE)
+            {
+                let catalog_root = path.parent().map(Path::to_path_buf).unwrap_or_default();
+                manifests_by_catalog.entry(catalog_root).or_insert(path);
+                continue;
+            }
+
+            if file_type.is_file()
                 && path.file_name().and_then(|n| n.to_str()) == Some(LEGACY_TASK_MANIFEST_FILE)
             {
                 let catalog_root = path.parent().map(Path::to_path_buf).unwrap_or_default();
                 manifests_by_catalog.entry(catalog_root).or_insert(path);
             }
+
         }
     }
 

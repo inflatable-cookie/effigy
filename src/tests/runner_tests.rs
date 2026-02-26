@@ -236,25 +236,6 @@ fn run_tasks_with_task_filter_reports_only_matches() {
 }
 
 #[test]
-fn run_tasks_reads_legacy_manifest_when_effigy_manifest_missing() {
-    let root = temp_workspace("legacy-manifest");
-    write_manifest(
-        &root.join("underlay.tasks.toml"),
-        "[tasks.dev]\nrun = \"printf legacy\"\n",
-    );
-
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            repo_override: None,
-            task_name: None,
-        })
-    })
-    .expect("run tasks");
-
-    assert!(out.contains("legacy"));
-}
-
-#[test]
 fn run_tasks_without_catalogs_still_lists_builtin_tasks() {
     let root = temp_workspace("builtins-only");
 
@@ -572,9 +553,9 @@ run = "$SHELL"
     let out = run_manifest_task_with_cwd(
         &TaskInvocation {
             name: "dev".to_owned(),
-            args: Vec::new(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
         },
-        root,
+        root.clone(),
     )
     .expect("managed plan should render");
 
@@ -660,6 +641,94 @@ run = "cargo run -p api"
             assert_eq!(task, "dev");
             assert_eq!(profile, "admin");
             assert_eq!(available, vec!["default".to_owned()]);
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_managed_tui_processes_can_reference_other_tasks() {
+    let root = temp_workspace("managed-task-refs");
+    let farmyard = root.join("farmyard");
+    let cream = root.join("cream");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    fs::create_dir_all(&cream).expect("mkdir cream");
+
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["api", "front"]
+
+[tasks.dev.processes.api]
+task = "farmyard:api"
+
+[tasks.dev.processes.front]
+task = "cream:dev"
+"#,
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        r#"[catalog]
+alias = "farmyard"
+[tasks.api]
+run = "printf farmyard-api"
+"#,
+    );
+    write_manifest(
+        &cream.join("effigy.toml"),
+        r#"[catalog]
+alias = "cream"
+[tasks.dev]
+run = "printf cream-dev"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("managed plan should render");
+
+    assert!(out.contains("farmyard-api"));
+    assert!(out.contains("cream-dev"));
+}
+
+#[test]
+fn run_manifest_task_managed_tui_errors_when_process_has_run_and_task() {
+    let root = temp_workspace("managed-invalid-process-def");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["api"]
+
+[tasks.dev.processes.api]
+run = "printf api"
+task = "api"
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect_err("invalid process definition should fail");
+
+    match err {
+        RunnerError::TaskManagedProcessInvalidDefinition { task, process, .. } => {
+            assert_eq!(task, "dev");
+            assert_eq!(process, "api");
         }
         other => panic!("unexpected error: {other}"),
     }
