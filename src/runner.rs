@@ -7,7 +7,7 @@ use std::process::Command as ProcessCommand;
 use crate::resolver::{resolve_target_root, ResolveError};
 use crate::tasks::pulse::PulseTask;
 use crate::tasks::{Task, TaskContext, TaskError};
-use crate::ui::theme::resolve_color_enabled;
+use crate::ui::theme::{resolve_color_enabled, Theme};
 use crate::ui::{
     KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer, SummaryCounts, TableSpec,
 };
@@ -834,7 +834,7 @@ fn render_pulse_report(
     ctx: Option<&TaskContext>,
 ) -> Result<String, RunnerError> {
     let crate::tasks::PulseReport {
-        repo,
+        repo: _,
         evidence,
         risk,
         next_action,
@@ -843,6 +843,9 @@ fn render_pulse_report(
     } = report;
     let color_enabled =
         resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
+    let theme = Theme::default();
+    let inline_code_on = format!("{}", theme.inline_code.render());
+    let inline_code_reset = format!("{}", theme.inline_code.render_reset());
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
     if let (Some(resolved), Some(ctx)) = (resolved, ctx) {
         renderer.section("Root Resolution")?;
@@ -862,7 +865,6 @@ fn render_pulse_report(
 
     renderer.section("Pulse Report")?;
     renderer.key_values(&[
-        KeyValue::new("repo", repo),
         KeyValue::new("owner", owner),
         KeyValue::new("eta", eta),
         KeyValue::new("signals", evidence.len().to_string()),
@@ -881,15 +883,35 @@ fn render_pulse_report(
     renderer.text("")?;
 
     renderer.section("Signals")?;
-    renderer.bullet_list("evidence", &evidence)?;
+    for item in &evidence {
+        let styled =
+            colorize_inline_code_segments(item, color_enabled, &inline_code_on, &inline_code_reset);
+        renderer.text(&format!("- {styled}"))?;
+    }
     renderer.text("")?;
 
     renderer.section("Risks")?;
-    renderer.bullet_list("risk-items", &risk)?;
+    if risk.is_empty() {
+        renderer.notice(NoticeLevel::Success, "No risk items.")?;
+    } else {
+        for item in &risk {
+            let styled = colorize_inline_code_segments(
+                item,
+                color_enabled,
+                &inline_code_on,
+                &inline_code_reset,
+            );
+            renderer.text(&format!("- {styled}"))?;
+        }
+    }
     renderer.text("")?;
 
     renderer.section("Actions")?;
-    renderer.bullet_list("next-actions", &next_action)?;
+    for item in &next_action {
+        let styled =
+            colorize_inline_code_segments(item, color_enabled, &inline_code_on, &inline_code_reset);
+        renderer.text(&format!("- {styled}"))?;
+    }
     renderer.text("")?;
 
     renderer.summary(SummaryCounts {
@@ -901,6 +923,40 @@ fn render_pulse_report(
     let out = renderer.into_inner();
     String::from_utf8(out)
         .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
+}
+
+fn colorize_inline_code_segments(text: &str, enabled: bool, on: &str, reset: &str) -> String {
+    if !enabled || !text.contains('`') {
+        return text.to_owned();
+    }
+
+    let mut out = String::new();
+    let mut remaining = text;
+    loop {
+        let Some(start_idx) = remaining.find('`') else {
+            out.push_str(remaining);
+            break;
+        };
+
+        out.push_str(&remaining[..start_idx]);
+        let after_start = &remaining[start_idx + 1..];
+        let Some(end_idx) = after_start.find('`') else {
+            out.push('`');
+            out.push_str(after_start);
+            break;
+        };
+
+        let code = &after_start[..end_idx];
+        out.push_str(on);
+        out.push('`');
+        out.push_str(code);
+        out.push('`');
+        out.push_str(reset);
+
+        remaining = &after_start[end_idx + 1..];
+    }
+
+    out
 }
 
 fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, RunnerError> {

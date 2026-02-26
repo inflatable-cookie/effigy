@@ -292,13 +292,16 @@ fn run_pulse_renders_widget_sections() {
     .expect("pulse");
 
     assert!(out.contains("Pulse Report"));
-    assert!(out.contains("repo:"));
+    assert!(!out.contains("repo:"));
     assert!(out.contains("signals:"));
     assert!(out.contains("Signals"));
     assert!(out.contains("Risks"));
     assert!(out.contains("Actions"));
-    assert!(out.contains("risk-items:"));
-    assert!(out.contains("next-actions:"));
+    assert!(out.contains("No risk items.") || out.contains("- Root "));
+    assert!(
+        out.contains("No high-priority structural gaps detected by pulse v0 signals.")
+            || out.contains("health:workspace")
+    );
     assert!(out.contains("summary  ok:"));
 }
 
@@ -316,6 +319,33 @@ fn run_pulse_verbose_renders_root_resolution_section() {
     assert!(out.contains("resolved-root:"));
     assert!(out.contains("mode:"));
     assert!(out.contains("Pulse Report"));
+}
+
+#[test]
+fn run_pulse_colorizes_inline_code_segments_when_color_enabled() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("pulse-inline-code-color");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "dev": "echo dev"
+  }
+}"#,
+    )
+    .expect("write package");
+
+    let _env = EnvGuard::set_many(&[
+        ("EFFIGY_COLOR", Some("always".to_owned())),
+        ("NO_COLOR", None),
+    ]);
+    let out = run_pulse(PulseArgs {
+        repo_override: Some(root),
+        verbose_root: false,
+    })
+    .expect("pulse");
+
+    assert!(out.contains("\u{1b}[38;5;117m`health:workspace`"));
 }
 
 #[test]

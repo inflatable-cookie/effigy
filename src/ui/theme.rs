@@ -22,6 +22,7 @@ pub struct Theme {
     pub accent: Style,
     pub accent_soft: Style,
     pub muted: Style,
+    pub inline_code: Style,
     pub success: Style,
     pub warning: Style,
     pub error: Style,
@@ -38,15 +39,13 @@ impl Default for Theme {
                 .bold(),
             accent_soft: Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(218)))),
             muted: Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(244)))),
-            success: Style::new()
-                .fg_color(Some(Color::Ansi256(Ansi256Color(42)))),
-            warning: Style::new()
-                .fg_color(Some(Color::Ansi256(Ansi256Color(214)))),
+            inline_code: Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(117)))),
+            success: Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(42)))),
+            warning: Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(214)))),
             error: Style::new()
                 .fg_color(Some(Color::Ansi256(Ansi256Color(203))))
                 .bold(),
-            label: Style::new()
-                .fg_color(Some(Color::Ansi256(Ansi256Color(111)))),
+            label: Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(111)))),
             value: Style::new().fg_color(Some(Color::Ansi(AnsiColor::White))),
         }
     }

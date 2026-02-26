@@ -184,7 +184,8 @@ pub fn render_cli_header<R: Renderer>(renderer: &mut R, root: &Path) -> UiResult
         let muted_on = format!("{}", muted.render());
         let reset = format!("{}", accent.render_reset());
         let spacer = "  ";
-        let trailing = inner_width.saturating_sub(title_line.len() + spacer.len() + path_line.len());
+        let trailing =
+            inner_width.saturating_sub(title_line.len() + spacer.len() + path_line.len());
         let trailing_spaces = " ".repeat(trailing);
 
         renderer.text(&format!("{accent_on}{top}{reset}"))?;

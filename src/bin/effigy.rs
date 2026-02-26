@@ -29,21 +29,23 @@ fn main() {
             let _ = render_help(&mut renderer, topic);
             let _ = renderer.text("");
         }
-        _ => match effigy::runner::run_command(cmd) {
-            Ok(output) => {
-                let mut renderer = PlainRenderer::stdout(output_mode);
-                let _ = render_cli_header(&mut renderer, &command_root);
-                if !output.trim().is_empty() {
-                    let _ = renderer.text(&output);
+        _ => {
+            let mut renderer = PlainRenderer::stdout(output_mode);
+            let _ = render_cli_header(&mut renderer, &command_root);
+            match effigy::runner::run_command(cmd) {
+                Ok(output) => {
+                    if !output.trim().is_empty() {
+                        let _ = renderer.text(&output);
+                    }
+                    let _ = renderer.text("");
                 }
-                let _ = renderer.text("");
+                Err(err) => {
+                    let mut err_renderer = PlainRenderer::stderr(output_mode);
+                    let _ = err_renderer
+                        .error_block(&MessageBlock::new("Task failed", err.to_string()));
+                    std::process::exit(1);
+                }
             }
-            Err(err) => {
-                let mut renderer = PlainRenderer::stderr(output_mode);
-                let _ = render_cli_header(&mut renderer, &command_root);
-                let _ = renderer.error_block(&MessageBlock::new("Task failed", err.to_string()));
-                std::process::exit(1);
-            }
-        },
+        }
     }
 }
