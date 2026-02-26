@@ -38,19 +38,6 @@ fn parse_repo_pulse_with_verbose_root() {
 }
 
 #[test]
-fn parse_pulse_alias_with_verbose_root() {
-    let cmd = parse_command(vec!["pulse".to_owned(), "--verbose-root".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::RepoPulse(PulseArgs {
-            repo_override: None,
-            verbose_root: true,
-        })
-    );
-}
-
-#[test]
 fn parse_runtime_task_passthrough() {
     let cmd = parse_command(vec![
         "snapshot".to_owned(),

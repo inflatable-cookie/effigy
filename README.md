@@ -58,7 +58,6 @@ effigy tasks [--repo <PATH>] [--task <TASK_NAME>]
 
 ### Built-in tasks
 - `repo-pulse`: repository/workspace health and structure signal report.
-- `pulse`: compatibility alias for `repo-pulse`.
 - `tasks`: enumerate discovered catalogs and task commands.
 
 ## Task Catalogs
