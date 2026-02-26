@@ -5,6 +5,7 @@ use super::{
 use crate::{TaskInvocation, TasksArgs};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -252,6 +253,7 @@ fn run_tasks_reads_legacy_manifest_when_effigy_manifest_missing() {
 
 #[test]
 fn run_manifest_task_defers_when_unprefixed_task_missing() {
+    let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("defer-missing");
     write_manifest(
         &root.join("effigy.tasks.toml"),
@@ -272,6 +274,7 @@ fn run_manifest_task_defers_when_unprefixed_task_missing() {
 
 #[test]
 fn run_manifest_task_defers_and_supports_request_and_args_tokens() {
+    let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("defer-tokens");
     write_manifest(
         &root.join("effigy.tasks.toml"),
@@ -292,6 +295,7 @@ fn run_manifest_task_defers_and_supports_request_and_args_tokens() {
 
 #[test]
 fn run_manifest_task_defers_to_prefixed_catalog_handler() {
+    let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("defer-prefixed");
     let farmyard = root.join("farmyard");
     fs::create_dir_all(&farmyard).expect("mkdir");
@@ -318,6 +322,7 @@ fn run_manifest_task_defers_to_prefixed_catalog_handler() {
 
 #[test]
 fn run_manifest_task_deferral_loop_guard_fails() {
+    let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("defer-loop");
     write_manifest(
         &root.join("effigy.tasks.toml"),
@@ -364,9 +369,15 @@ fn with_cwd<F, T>(cwd: &PathBuf, f: F) -> T
 where
     F: FnOnce() -> T,
 {
+    let _guard = test_lock().lock().expect("lock");
     let original = std::env::current_dir().expect("current dir");
     std::env::set_current_dir(cwd).expect("set cwd");
     let out = f();
     std::env::set_current_dir(original).expect("restore cwd");
     out
+}
+
+fn test_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }

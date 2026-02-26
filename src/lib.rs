@@ -1,6 +1,7 @@
 pub mod resolver;
 pub mod runner;
 pub mod tasks;
+pub mod ui;
 
 use std::path::PathBuf;
 
