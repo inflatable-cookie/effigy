@@ -6,24 +6,52 @@ use std::time::Duration;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    disable_raw_mode, enable_raw_mode, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Paragraph, Tabs, Wrap};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{
+    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
+};
 use ratatui::{Frame, Terminal};
 
-use crate::process_manager::{ProcessEventKind, ProcessManagerError, ProcessSpec, ProcessSupervisor};
+use crate::process_manager::{
+    ProcessEventKind, ProcessManagerError, ProcessSpec, ProcessSupervisor, ShutdownProgress,
+};
 
 const MAX_LOG_LINES: usize = 2000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputMode {
+    Command,
+    Insert,
+}
+
+#[derive(Debug, Clone)]
+enum LogEntryKind {
+    Stdout,
+    Stderr,
+    Exit,
+}
+
+#[derive(Debug, Clone)]
+struct LogEntry {
+    kind: LogEntryKind,
+    line: String,
+}
 
 #[derive(Debug)]
 pub enum DevTuiError {
     Io(io::Error),
     Process(ProcessManagerError),
     NoProcesses,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DevTuiOutcome {
+    pub non_zero_exits: Vec<(String, String)>,
 }
 
 impl std::fmt::Display for DevTuiError {
@@ -50,7 +78,11 @@ impl From<ProcessManagerError> for DevTuiError {
     }
 }
 
-pub fn run_dev_process_tui(repo_root: PathBuf, processes: Vec<ProcessSpec>) -> Result<(), DevTuiError> {
+pub fn run_dev_process_tui(
+    repo_root: PathBuf,
+    processes: Vec<ProcessSpec>,
+    tab_order: Vec<String>,
+) -> Result<DevTuiOutcome, DevTuiError> {
     if processes.is_empty() {
         return Err(DevTuiError::NoProcesses);
     }
@@ -59,6 +91,11 @@ pub fn run_dev_process_tui(repo_root: PathBuf, processes: Vec<ProcessSpec>) -> R
         .iter()
         .map(|process| process.name.clone())
         .collect::<Vec<String>>();
+    let process_names = if tab_order.is_empty() {
+        process_names
+    } else {
+        tab_order
+    };
     let expected = process_names.len();
     let supervisor = ProcessSupervisor::spawn(repo_root, processes)?;
 
@@ -69,26 +106,53 @@ pub fn run_dev_process_tui(repo_root: PathBuf, processes: Vec<ProcessSpec>) -> R
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
-    let mut logs: HashMap<String, VecDeque<String>> = process_names
+    let mut logs: HashMap<String, VecDeque<LogEntry>> = process_names
         .iter()
         .map(|name| (name.clone(), VecDeque::new()))
         .collect();
+    let mut scroll_offsets: HashMap<String, usize> = process_names
+        .iter()
+        .map(|name| (name.clone(), 0usize))
+        .collect();
+    let mut follow_mode: HashMap<String, bool> = process_names
+        .iter()
+        .map(|name| (name.clone(), true))
+        .collect();
     let mut active_index: usize = 0;
     let mut input_line = String::new();
+    let mut input_mode = InputMode::Command;
     let mut exit_count = 0usize;
+    let mut shutdown_summary: Option<String> = None;
+    let mut shutdown_forced: Option<usize> = None;
+    let mut observed_non_zero: HashMap<String, String> = HashMap::new();
 
-    let result = loop {
+    let result: Result<(), DevTuiError> = loop {
         while let Some(event_item) = supervisor.next_event_timeout(Duration::from_millis(1)) {
             if let Some(buffer) = logs.get_mut(&event_item.process) {
-                let line = match event_item.kind {
-                    ProcessEventKind::Stdout => event_item.payload,
-                    ProcessEventKind::Stderr => format!("[stderr] {}", event_item.payload),
+                let entry = match event_item.kind {
+                    ProcessEventKind::Stdout => LogEntry {
+                        kind: LogEntryKind::Stdout,
+                        line: event_item.payload,
+                    },
+                    ProcessEventKind::Stderr => LogEntry {
+                        kind: LogEntryKind::Stderr,
+                        line: event_item.payload,
+                    },
                     ProcessEventKind::Exit => {
                         exit_count += 1;
-                        format!("[exit] {}", event_item.payload)
+                        if event_item.payload.trim() == "exit=0" {
+                            observed_non_zero.remove(&event_item.process);
+                        } else {
+                            observed_non_zero
+                                .insert(event_item.process.clone(), event_item.payload.clone());
+                        }
+                        LogEntry {
+                            kind: LogEntryKind::Exit,
+                            line: event_item.payload,
+                        }
                     }
                 };
-                buffer.push_back(line);
+                buffer.push_back(entry);
                 while buffer.len() > MAX_LOG_LINES {
                     buffer.pop_front();
                 }
@@ -98,25 +162,81 @@ pub fn run_dev_process_tui(repo_root: PathBuf, processes: Vec<ProcessSpec>) -> R
         let active = &process_names[active_index];
         let active_logs = logs
             .get(active)
-            .map(|entries| entries.iter().cloned().collect::<Vec<String>>())
+            .map(|entries| entries.iter().cloned().collect::<Vec<LogEntry>>())
             .unwrap_or_default();
+        let size = terminal.size()?;
+        let output_height = size.height.saturating_sub(9) as usize;
+        let max_offset = active_logs.len().saturating_sub(output_height);
+        let stored = *scroll_offsets.get(active).unwrap_or(&0usize);
+        let scroll_offset = stored.min(max_offset);
+        scroll_offsets.insert(active.clone(), scroll_offset);
+        let is_follow = *follow_mode.get(active).unwrap_or(&true);
         let status = format!(
-            "task manager  tab {}/{}  exits {}/{}",
+            "task manager  tab {}/{}  exits {}/{}  follow:{}  mode:{}",
             active_index + 1,
             process_names.len(),
             exit_count,
-            expected
+            expected,
+            if is_follow { "on" } else { "off" },
+            if input_mode == InputMode::Insert {
+                "insert"
+            } else {
+                "command"
+            }
         );
 
-        terminal.draw(|frame| render_ui(frame, &process_names, active_index, &active_logs, &input_line, &status))?;
+        terminal.draw(|frame| {
+            render_ui(
+                frame,
+                &process_names,
+                active_index,
+                &active_logs,
+                scroll_offset,
+                is_follow,
+                &input_line,
+                input_mode,
+                &status,
+            )
+        })?;
 
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(key.code, KeyCode::Char('c'))
+                {
+                    break Ok(());
+                }
+                if input_mode == InputMode::Insert {
+                    match key.code {
+                        KeyCode::Enter => {
+                            if !input_line.is_empty() {
+                                let target = &process_names[active_index];
+                                let mut payload = input_line.clone();
+                                payload.push('\n');
+                                supervisor.send_input(target, &payload)?;
+                                input_line.clear();
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            input_line.pop();
+                        }
+                        KeyCode::Esc => {
+                            input_mode = InputMode::Command;
+                        }
+                        KeyCode::Char(c) => {
+                            input_line.push(c);
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
                 match key.code {
-                    KeyCode::Char('q') => break Ok(()),
+                    KeyCode::Char('i') => {
+                        input_mode = InputMode::Insert;
+                    }
                     KeyCode::Tab => {
                         active_index = (active_index + 1) % process_names.len();
                     }
@@ -127,47 +247,139 @@ pub fn run_dev_process_tui(repo_root: PathBuf, processes: Vec<ProcessSpec>) -> R
                             active_index - 1
                         };
                     }
-                    KeyCode::Enter => {
-                        if !input_line.is_empty() {
-                            let target = &process_names[active_index];
-                            let mut payload = input_line.clone();
-                            payload.push('\n');
-                            supervisor.send_input(target, &payload)?;
-                            input_line.clear();
+                    KeyCode::Up => {
+                        let active = &process_names[active_index];
+                        if let Some(follow) = follow_mode.get_mut(active) {
+                            *follow = false;
+                        }
+                        if let Some(offset) = scroll_offsets.get_mut(active) {
+                            *offset = offset.saturating_sub(1);
                         }
                     }
-                    KeyCode::Backspace => {
-                        input_line.pop();
-                    }
-                    KeyCode::Esc => {
-                        input_line.clear();
-                    }
-                    KeyCode::Char(c) => {
-                        if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
-                            break Ok(());
+                    KeyCode::Down => {
+                        let active = &process_names[active_index];
+                        if let Some(follow) = follow_mode.get_mut(active) {
+                            *follow = false;
                         }
-                        input_line.push(c);
+                        if let Some(offset) = scroll_offsets.get_mut(active) {
+                            *offset = offset.saturating_add(1).min(max_offset);
+                        }
                     }
+                    KeyCode::PageUp => {
+                        let active = &process_names[active_index];
+                        if let Some(follow) = follow_mode.get_mut(active) {
+                            *follow = false;
+                        }
+                        if let Some(offset) = scroll_offsets.get_mut(active) {
+                            *offset = offset.saturating_sub(10);
+                        }
+                    }
+                    KeyCode::PageDown => {
+                        let active = &process_names[active_index];
+                        if let Some(follow) = follow_mode.get_mut(active) {
+                            *follow = false;
+                        }
+                        if let Some(offset) = scroll_offsets.get_mut(active) {
+                            *offset = offset.saturating_add(10).min(max_offset);
+                        }
+                    }
+                    KeyCode::Home => {
+                        let active = &process_names[active_index];
+                        if let Some(follow) = follow_mode.get_mut(active) {
+                            *follow = false;
+                        }
+                        if let Some(offset) = scroll_offsets.get_mut(active) {
+                            *offset = 0;
+                        }
+                    }
+                    KeyCode::End => {
+                        let active = &process_names[active_index];
+                        if let Some(follow) = follow_mode.get_mut(active) {
+                            *follow = true;
+                        }
+                        if let Some(offset) = scroll_offsets.get_mut(active) {
+                            *offset = max_offset;
+                        }
+                    }
+                    KeyCode::Esc => {}
                     _ => {}
                 }
             }
         }
     };
 
-    supervisor.terminate_all();
+    supervisor.terminate_all_graceful_with_progress(Duration::from_secs(3), |progress| {
+        let label = match progress {
+            ShutdownProgress::SendingTerm => "Shutdown: sending SIGTERM to managed processes...",
+            ShutdownProgress::Waiting => "Shutdown: waiting for managed processes to exit...",
+            ShutdownProgress::ForceKilling => {
+                "Shutdown: forcing remaining managed processes to stop..."
+            }
+            ShutdownProgress::Complete { total, forced } => {
+                shutdown_summary = Some(format_shutdown_summary(total, forced));
+                shutdown_forced = Some(forced);
+                shutdown_summary.as_deref().unwrap_or("Shutdown: complete.")
+            }
+        };
+        let _ = draw_shutdown_status(&mut terminal, label);
+    });
+    let mut non_zero_map = observed_non_zero;
+    for (name, diagnostic) in supervisor
+        .exit_diagnostics()
+        .into_iter()
+        .filter(|(_, diagnostic)| diagnostic != "exit=0")
+    {
+        non_zero_map.insert(name, diagnostic);
+    }
+    let mut non_zero_exits = non_zero_map.into_iter().collect::<Vec<(String, String)>>();
+    non_zero_exits.sort_by(|a, b| a.0.cmp(&b.0));
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, EnableLineWrap)?;
     terminal.show_cursor()?;
+    if let Some(summary) = shutdown_summary {
+        println!("{summary}");
+    }
+    if let Some(forced) = shutdown_forced {
+        if forced > 0 {
+            eprintln!("{}", format_shutdown_warning(forced));
+        }
+    }
+    if !non_zero_exits.is_empty() {
+        eprintln!("warn: managed process exits:");
+        for (name, diagnostic) in &non_zero_exits {
+            eprintln!("  - {name}: {diagnostic}");
+        }
+    }
 
-    result
+    result?;
+    Ok(DevTuiOutcome { non_zero_exits })
+}
+
+fn draw_shutdown_status(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    status: &str,
+) -> Result<(), io::Error> {
+    terminal.draw(|frame| {
+        let area = frame.area();
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(area);
+        let footer = Paragraph::new(status.to_owned()).style(Style::default().fg(Color::Yellow));
+        frame.render_widget(footer, chunks[1]);
+    })?;
+    Ok(())
 }
 
 fn render_ui(
     frame: &mut Frame<'_>,
     process_names: &[String],
     active_index: usize,
-    active_logs: &[String],
+    active_logs: &[LogEntry],
+    scroll_offset: usize,
+    follow: bool,
     input_line: &str,
+    input_mode: InputMode,
     status: &str,
 ) {
     let chunks = Layout::default()
@@ -194,16 +406,178 @@ fn render_ui(
         );
     frame.render_widget(tabs, chunks[0]);
 
-    let logs = Paragraph::new(active_logs.join("\n"))
-        .block(Block::default().borders(Borders::ALL).title("Output"))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(logs, chunks[1]);
+    let output_height = chunks[1].height.saturating_sub(2) as usize;
+    let total_lines = active_logs.len();
+    let max_offset = total_lines.saturating_sub(output_height);
+    let clamped_offset = if follow {
+        max_offset
+    } else {
+        scroll_offset.min(max_offset)
+    };
 
-    let input = Paragraph::new(input_line.to_owned())
-        .block(Block::default().borders(Borders::ALL).title("Input (Enter sends to active tab)"));
+    let lines = active_logs
+        .iter()
+        .map(|entry| match entry.kind {
+            LogEntryKind::Stdout => ansi_line(&entry.line, Style::default()),
+            LogEntryKind::Stderr => {
+                let mut spans = vec![Span::styled("[stderr] ", Style::default().fg(Color::Red))];
+                spans.extend(ansi_line(&entry.line, Style::default()).spans);
+                Line::from(spans)
+            }
+            LogEntryKind::Exit => Line::from(vec![
+                Span::styled("[exit] ", Style::default().fg(Color::Yellow)),
+                Span::styled(entry.line.clone(), Style::default().fg(Color::Gray)),
+            ]),
+        })
+        .collect::<Vec<Line>>();
+
+    let logs = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title("Output"))
+        .scroll((clamped_offset.min(u16::MAX as usize) as u16, 0));
+    frame.render_widget(logs, chunks[1]);
+    let mut scrollbar_state = ScrollbarState::new(total_lines.max(1))
+        .viewport_content_length(output_height.max(1))
+        .position(clamped_offset);
+    frame.render_stateful_widget(
+        Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
+        chunks[1],
+        &mut scrollbar_state,
+    );
+
+    let input = Paragraph::new(input_line.to_owned()).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Input (i insert, Esc command, Enter send)"),
+    );
     frame.render_widget(input, chunks[2]);
 
-    let footer = Paragraph::new(format!("{status}  |  tab/backtab switch  |  q quit"))
-        .style(Style::default().fg(Color::DarkGray));
+    let footer = Paragraph::new(format!(
+        "{status}  |  i insert  |  tab/backtab switch  |  up/down/pgup/pgdn/home/end scroll  |  Ctrl+C quit"
+    ))
+    .style(if input_mode == InputMode::Insert {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    });
     frame.render_widget(footer, chunks[3]);
+}
+
+fn ansi_line(raw: &str, base: Style) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut style = base;
+    let mut buf = String::new();
+    let chars: Vec<char> = raw.chars().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i] == '\u{1b}' && i + 1 < chars.len() && chars[i + 1] == '[' {
+            if !buf.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut buf), style));
+            }
+            i += 2;
+            let mut code = String::new();
+            while i < chars.len() && chars[i] != 'm' {
+                code.push(chars[i]);
+                i += 1;
+            }
+            if i < chars.len() && chars[i] == 'm' {
+                style = apply_sgr(style, &code, base);
+            }
+        } else {
+            buf.push(chars[i]);
+        }
+        i += 1;
+    }
+    if !buf.is_empty() {
+        spans.push(Span::styled(buf, style));
+    }
+    if spans.is_empty() {
+        return Line::from("");
+    }
+    Line::from(spans)
+}
+
+fn apply_sgr(current: Style, sgr: &str, base: Style) -> Style {
+    let mut style = current;
+    let parts = if sgr.is_empty() {
+        vec!["0"]
+    } else {
+        sgr.split(';').collect::<Vec<&str>>()
+    };
+    for part in parts {
+        match part.parse::<u8>() {
+            Ok(0) => style = base,
+            Ok(1) => style = style.add_modifier(Modifier::BOLD),
+            Ok(2) => style = style.add_modifier(Modifier::DIM),
+            Ok(3) => style = style.add_modifier(Modifier::ITALIC),
+            Ok(4) => style = style.add_modifier(Modifier::UNDERLINED),
+            Ok(22) => style = style.remove_modifier(Modifier::BOLD | Modifier::DIM),
+            Ok(23) => style = style.remove_modifier(Modifier::ITALIC),
+            Ok(24) => style = style.remove_modifier(Modifier::UNDERLINED),
+            Ok(30) => style = style.fg(Color::Black),
+            Ok(31) => style = style.fg(Color::Red),
+            Ok(32) => style = style.fg(Color::Green),
+            Ok(33) => style = style.fg(Color::Yellow),
+            Ok(34) => style = style.fg(Color::Blue),
+            Ok(35) => style = style.fg(Color::Magenta),
+            Ok(36) => style = style.fg(Color::Cyan),
+            Ok(37) => style = style.fg(Color::Gray),
+            Ok(39) => style = style.fg(base.fg.unwrap_or(Color::Reset)),
+            Ok(90) => style = style.fg(Color::DarkGray),
+            Ok(91) => style = style.fg(Color::LightRed),
+            Ok(92) => style = style.fg(Color::LightGreen),
+            Ok(93) => style = style.fg(Color::LightYellow),
+            Ok(94) => style = style.fg(Color::LightBlue),
+            Ok(95) => style = style.fg(Color::LightMagenta),
+            Ok(96) => style = style.fg(Color::LightCyan),
+            Ok(97) => style = style.fg(Color::White),
+            _ => {}
+        }
+    }
+    style
+}
+
+fn format_shutdown_summary(total: usize, forced: usize) -> String {
+    let graceful = total.saturating_sub(forced);
+    if forced == 0 {
+        format!("effigy: shutdown complete ({graceful}/{total} graceful, 0 forced)")
+    } else {
+        format!("effigy: shutdown complete ({graceful}/{total} graceful, {forced} forced)")
+    }
+}
+
+fn format_shutdown_warning(forced: usize) -> String {
+    format!("warn: forced termination used for {forced} process(es).")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ansi_line_parses_basic_colour_sequence() {
+        let line = ansi_line("\u{1b}[31merror\u{1b}[0m ok", Style::default());
+        assert_eq!(line.spans.len(), 2);
+        assert_eq!(line.spans[0].content.as_ref(), "error");
+        assert_eq!(line.spans[1].content.as_ref(), " ok");
+    }
+
+    #[test]
+    fn format_shutdown_summary_reports_graceful_and_forced_counts() {
+        assert_eq!(
+            format_shutdown_summary(4, 0),
+            "effigy: shutdown complete (4/4 graceful, 0 forced)"
+        );
+        assert_eq!(
+            format_shutdown_summary(4, 1),
+            "effigy: shutdown complete (3/4 graceful, 1 forced)"
+        );
+    }
+
+    #[test]
+    fn format_shutdown_warning_reports_forced_count() {
+        assert_eq!(
+            format_shutdown_warning(2),
+            "warn: forced termination used for 2 process(es)."
+        );
+    }
 }

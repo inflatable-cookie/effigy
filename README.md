@@ -52,6 +52,7 @@ Planned steady-state:
 ```bash
 effigy <task> [task args]
 effigy <catalog>/<task> [task args]
+effigy dev [profile]
 effigy repo-pulse [--repo <PATH>] [--verbose-root]
 effigy tasks [--repo <PATH>] [--task <TASK_NAME>]
 ```
@@ -59,6 +60,7 @@ effigy tasks [--repo <PATH>] [--task <TASK_NAME>]
 ### Built-in tasks
 - `repo-pulse`: repository/workspace health and structure signal report.
 - `tasks`: enumerate discovered catalogs and task commands.
+- managed `mode = "tui"` tasks (for example `dev`) launch tabbed process manager on interactive terminals.
 
 ## Output Conventions
 
@@ -163,5 +165,6 @@ Start here:
 - `docs/architecture/`
 - `docs/guides/010-path-installation-and-release.md`
 - `docs/guides/011-output-widgets-and-colour-modes.md`
+- `docs/guides/012-dev-process-manager-tui.md`
 - `docs/roadmap/README.md`
 - `docs/reports/README.md`

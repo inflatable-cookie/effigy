@@ -1,16 +1,25 @@
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader, ErrorKind, Write};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+#[cfg(unix)]
+use nix::sys::signal::{kill, Signal};
+#[cfg(unix)]
+use nix::unistd::{setpgid, Pid};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessSpec {
     pub name: String,
     pub run: String,
+    pub cwd: PathBuf,
+    pub start_after_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,9 +80,17 @@ pub struct ProcessSupervisor {
     events_rx: Receiver<ProcessEvent>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShutdownProgress {
+    SendingTerm,
+    Waiting,
+    ForceKilling,
+    Complete { total: usize, forced: usize },
+}
+
 impl ProcessSupervisor {
     pub fn spawn(
-        repo_root: PathBuf,
+        _repo_root: PathBuf,
         processes: Vec<ProcessSpec>,
     ) -> Result<Self, ProcessManagerError> {
         let (events_tx, events_rx) = mpsc::channel::<ProcessEvent>();
@@ -81,13 +98,26 @@ impl ProcessSupervisor {
             HashMap::with_capacity(processes.len());
 
         for spec in processes {
-            let mut child = ProcessCommand::new("sh")
+            if spec.start_after_ms > 0 {
+                thread::sleep(Duration::from_millis(spec.start_after_ms));
+            }
+            let mut process = ProcessCommand::new("sh");
+            process
                 .arg("-lc")
                 .arg(&spec.run)
-                .current_dir(&repo_root)
+                .current_dir(&spec.cwd)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+                .stderr(Stdio::piped());
+            #[cfg(unix)]
+            unsafe {
+                process.pre_exec(|| {
+                    setpgid(Pid::from_raw(0), Pid::from_raw(0))
+                        .map_err(|error| std::io::Error::new(ErrorKind::Other, error.to_string()))
+                });
+            }
+            with_local_node_bin_path(&mut process, &spec.cwd);
+            let mut child = process
                 .spawn()
                 .map_err(|error| ProcessManagerError::Spawn {
                     process: spec.name.clone(),
@@ -144,17 +174,28 @@ impl ProcessSupervisor {
             {
                 let tx = events_tx.clone();
                 let process = spec.name.clone();
-                thread::spawn(move || {
-                    let status = child.lock().expect("child lock").wait();
-                    let payload = match status {
-                        Ok(status) => format!("exit={}", status.code().unwrap_or(-1)),
-                        Err(err) => format!("wait-error={err}"),
-                    };
-                    let _ = tx.send(ProcessEvent {
-                        process,
-                        kind: ProcessEventKind::Exit,
-                        payload,
-                    });
+                thread::spawn(move || loop {
+                    let status = child.lock().expect("child lock").try_wait();
+                    match status {
+                        Ok(Some(status)) => {
+                            let payload = format!("exit={}", status.code().unwrap_or(-1));
+                            let _ = tx.send(ProcessEvent {
+                                process: process.clone(),
+                                kind: ProcessEventKind::Exit,
+                                payload,
+                            });
+                            break;
+                        }
+                        Ok(None) => thread::sleep(Duration::from_millis(40)),
+                        Err(err) => {
+                            let _ = tx.send(ProcessEvent {
+                                process: process.clone(),
+                                kind: ProcessEventKind::Exit,
+                                payload: format!("wait-error={err}"),
+                            });
+                            break;
+                        }
+                    }
                 });
             }
         }
@@ -192,5 +233,113 @@ impl ProcessSupervisor {
         for child in self.processes.values() {
             let _ = child.lock().expect("child lock").kill();
         }
+    }
+
+    pub fn terminate_all_graceful(&self, timeout: Duration) {
+        self.terminate_all_graceful_with_progress(timeout, |_| {});
+    }
+
+    pub fn terminate_all_graceful_with_progress<F>(&self, timeout: Duration, mut on_progress: F)
+    where
+        F: FnMut(ShutdownProgress),
+    {
+        on_progress(ShutdownProgress::SendingTerm);
+        for child in self.processes.values() {
+            let mut child = child.lock().expect("child lock");
+            #[cfg(unix)]
+            {
+                let _ = signal_process_group(&mut child, Signal::SIGTERM);
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = child.kill();
+            }
+        }
+
+        on_progress(ShutdownProgress::Waiting);
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let all_exited = self.processes.values().all(|child| {
+                child
+                    .lock()
+                    .expect("child lock")
+                    .try_wait()
+                    .ok()
+                    .flatten()
+                    .is_some()
+            });
+            if all_exited {
+                on_progress(ShutdownProgress::Complete {
+                    total: self.processes.len(),
+                    forced: 0,
+                });
+                return;
+            }
+            thread::sleep(Duration::from_millis(40));
+        }
+
+        on_progress(ShutdownProgress::ForceKilling);
+        let mut forced = 0usize;
+        for child in self.processes.values() {
+            let mut child = child.lock().expect("child lock");
+            let still_running = child.try_wait().ok().flatten().is_none();
+            if !still_running {
+                continue;
+            }
+            #[cfg(unix)]
+            {
+                let _ = signal_process_group(&mut child, Signal::SIGKILL);
+                forced += 1;
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = child.kill();
+                forced += 1;
+            }
+        }
+        on_progress(ShutdownProgress::Complete {
+            total: self.processes.len(),
+            forced,
+        });
+    }
+
+    pub fn exit_diagnostics(&self) -> Vec<(String, String)> {
+        let mut diagnostics = self
+            .processes
+            .iter()
+            .map(|(name, child)| {
+                let diagnostic = match child.lock().expect("child lock").try_wait() {
+                    Ok(Some(status)) => format!("exit={}", status.code().unwrap_or(-1)),
+                    Ok(None) => "running".to_owned(),
+                    Err(err) => format!("wait-error={err}"),
+                };
+                (name.clone(), diagnostic)
+            })
+            .collect::<Vec<(String, String)>>();
+        diagnostics.sort_by(|a, b| a.0.cmp(&b.0));
+        diagnostics
+    }
+}
+
+fn with_local_node_bin_path(process: &mut ProcessCommand, cwd: &Path) {
+    let local_bin = cwd.join("node_modules/.bin");
+    if !local_bin.is_dir() {
+        return;
+    }
+    let local_rendered = local_bin.display().to_string();
+    let merged = match std::env::var("PATH") {
+        Ok(path) if !path.is_empty() => format!("{local_rendered}:{path}"),
+        _ => local_rendered,
+    };
+    process.env("PATH", merged);
+}
+
+#[cfg(unix)]
+fn signal_process_group(child: &mut Child, signal: Signal) -> Result<(), nix::Error> {
+    let pid = child.id() as i32;
+    if pid > 0 {
+        kill(Pid::from_raw(-pid), signal)
+    } else {
+        Ok(())
     }
 }

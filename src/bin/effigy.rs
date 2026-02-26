@@ -29,10 +29,10 @@ fn main() {
             let _ = render_help(&mut renderer, topic);
             let _ = renderer.text("");
         }
-        _ => {
+        Command::RepoPulse(args) => {
             let mut renderer = PlainRenderer::stdout(output_mode);
             let _ = render_cli_header(&mut renderer, &command_root);
-            match effigy::runner::run_command(cmd) {
+            match effigy::runner::run_command(Command::RepoPulse(args)) {
                 Ok(output) => {
                     if !output.trim().is_empty() {
                         let _ = renderer.text(&output);
@@ -47,5 +47,39 @@ fn main() {
                 }
             }
         }
+        Command::Tasks(args) => {
+            let mut renderer = PlainRenderer::stdout(output_mode);
+            let _ = render_cli_header(&mut renderer, &command_root);
+            match effigy::runner::run_command(Command::Tasks(args)) {
+                Ok(output) => {
+                    if !output.trim().is_empty() {
+                        let _ = renderer.text(&output);
+                    }
+                    let _ = renderer.text("");
+                }
+                Err(err) => {
+                    let mut err_renderer = PlainRenderer::stderr(output_mode);
+                    let _ = err_renderer
+                        .error_block(&MessageBlock::new("Task failed", err.to_string()));
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::Task(task) => match effigy::runner::run_command(Command::Task(task)) {
+            Ok(output) => {
+                if !output.trim().is_empty() {
+                    let mut renderer = PlainRenderer::stdout(output_mode);
+                    let _ = render_cli_header(&mut renderer, &command_root);
+                    let _ = renderer.text(&output);
+                    let _ = renderer.text("");
+                }
+            }
+            Err(err) => {
+                let mut err_renderer = PlainRenderer::stderr(output_mode);
+                let _ =
+                    err_renderer.error_block(&MessageBlock::new("Task failed", err.to_string()));
+                std::process::exit(1);
+            }
+        },
     }
 }

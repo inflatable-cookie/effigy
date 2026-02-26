@@ -1,6 +1,6 @@
 # 004 - Dev Process Manager TUI
 
-Status: Not Started
+Status: In Progress
 Owner: Platform
 Created: 2026-02-26
 Depends on: 001, 003
@@ -11,12 +11,12 @@ Effigy can launch commands, but local multi-process development still requires m
 
 ## 2) Goals
 
-- [ ] Add a process-manager TUI mode for task commands such as `effigy dev`.
-- [ ] Spawn multiple predefined child processes from task catalog configuration.
-- [ ] Support named TOML-driven profiles per managed task (for example `default`, `admin`).
-- [ ] Provide one tab per process with live output stream.
-- [ ] Support stdin passthrough to focused process tab (for flows like Vite `r + Enter` restart).
-- [ ] Provide an extra interactive shell tab to run ad-hoc commands while dev stack is running.
+- [x] Add a process-manager TUI mode for task commands such as `effigy dev`.
+- [x] Spawn multiple predefined child processes from task catalog configuration.
+- [x] Support named TOML-driven profiles per managed task (for example `default`, `admin`).
+- [x] Provide one tab per process with live output stream.
+- [x] Support stdin passthrough to focused process tab (for flows like Vite `r + Enter` restart).
+- [x] Provide an extra interactive shell tab to run ad-hoc commands while dev stack is running.
 - [ ] Keep process lifecycle deterministic (start order, shutdown order, signal handling, exit propagation).
 
 ## 3) Non-Goals
@@ -51,6 +51,7 @@ Roadmap target for catalog schema extensions:
 ```toml
 [tasks.dev]
 mode = "tui"
+shell = true
 
 [tasks.dev.profiles.default]
 processes = ["api", "front", "admin"]
@@ -67,9 +68,9 @@ run = "vite dev"
 [tasks.dev.processes.admin]
 run = "vite dev --config admin.vite.config.ts"
 
-[tasks.dev.shell]
-enabled = true
+[shell]
 run = "$SHELL"
+
 ```
 
 Notes:
@@ -81,31 +82,31 @@ Notes:
 ## 6) Execution Plan
 
 ### Phase 4.1 - Schema and Runner Wiring
-- [ ] Define managed-task schema for process groups (`mode=tui`, process map, profile map, shell options).
-- [ ] Define CLI profile binding for task passthrough (`effigy dev <profile>`).
-- [ ] Extend parser/runner selection path to route managed tasks to TUI runtime.
-- [ ] Add validation errors for malformed process definitions.
-- [ ] Add validation errors for missing/default/unknown profile references.
-- [ ] Add compatibility behavior when task is missing/invalid.
+- [x] Define managed-task schema for process groups (`mode=tui`, process map, profile map, shell options).
+- [x] Define CLI profile binding for task passthrough (`effigy dev <profile>`).
+- [x] Extend parser/runner selection path to route managed tasks to TUI runtime.
+- [x] Add validation errors for malformed process definitions.
+- [x] Add validation errors for missing/default/unknown profile references.
+- [x] Add compatibility behavior when task is missing/invalid.
 
 ### Phase 4.2 - Process Runtime Engine
-- [ ] Build async process supervisor (spawn, stdout/stderr capture, stdin pipe).
-- [ ] Expand profile-selected process IDs to runnable process specs.
+- [x] Build async process supervisor (spawn, stdout/stderr capture, stdin pipe).
+- [x] Expand profile-selected process IDs to runnable process specs.
 - [ ] Implement lifecycle policy: startup ordering, cancellation, and graceful shutdown.
-- [ ] Implement focus-based stdin dispatch to active process.
-- [ ] Implement shell-tab process with interactive stdin/stdout handling.
+- [x] Implement focus-based stdin dispatch to active process.
+- [x] Implement shell-tab process with interactive stdin/stdout handling.
 
 ### Phase 4.3 - Ratatui Interface
-- [ ] Add alternate-screen ratatui app shell.
-- [ ] Implement tab bar + per-tab scrollback view.
-- [ ] Implement status line (running/exited/error, pid where useful).
+- [x] Add alternate-screen ratatui app shell.
+- [x] Implement tab bar + per-tab scrollback view.
+- [x] Implement status line (running/exited/error, pid where useful).
 - [ ] Add keymap help overlay and deterministic key handling.
 
 ### Phase 4.4 - Dev Ergonomics and Safety
 - [ ] Add restart controls (focused process restart, full stack restart).
-- [ ] Add bounded scrollback ring buffer per process.
+- [x] Add bounded scrollback ring buffer per process.
 - [ ] Add exit summary and non-zero propagation rules.
-- [ ] Add no-color / CI fallback behavior (non-TUI rejection with clear message).
+- [x] Add no-color / CI fallback behavior (non-interactive fallback to managed plan output).
 
 ### Phase 4.5 - Validation and Docs
 - [ ] Add integration tests for process spawn/stop and stdin passthrough.
@@ -115,11 +116,11 @@ Notes:
 
 ## 7) Acceptance Criteria
 
-- [ ] `effigy dev` can launch and manage at least 3 configured processes concurrently.
-- [ ] `effigy dev <profile>` launches only the processes configured for that profile.
-- [ ] Each process has dedicated tabbed output view with preserved recent logs.
-- [ ] Focused tab receives stdin correctly (including interactive restart commands).
-- [ ] Shell tab supports ad-hoc commands without leaving the TUI.
+- [x] `effigy dev` can launch and manage at least 3 configured processes concurrently.
+- [x] `effigy dev <profile>` launches only the processes configured for that profile.
+- [x] Each process has dedicated tabbed output view with preserved recent logs.
+- [x] Focused tab receives stdin correctly (including interactive restart commands).
+- [x] Shell tab supports ad-hoc commands without leaving the TUI.
 - [ ] Graceful shutdown works from one key chord and cleans child processes reliably.
 
 ## 8) Risks and Mitigations
@@ -133,7 +134,7 @@ Notes:
 
 ## 9) Deliverables
 
-- [ ] Managed-task schema support in runner.
-- [ ] Process supervisor runtime.
-- [ ] Ratatui tabbed process manager.
+- [x] Managed-task schema support in runner.
+- [x] Process supervisor runtime.
+- [x] Ratatui tabbed process manager.
 - [ ] Docs + migration examples + validation report.

@@ -1,9 +1,10 @@
 use super::{
     next_available_process_name, parse_task_runtime_args, parse_task_selector,
-    run_manifest_task_with_cwd, run_pulse, run_tasks, RunnerError, TaskRuntimeArgs,
+    resolve_shell_tab_command, run_manifest_task_with_cwd, run_pulse, run_tasks, RunnerError,
+    TaskRuntimeArgs,
 };
-use crate::{PulseArgs, TaskInvocation, TasksArgs};
 use crate::process_manager::ProcessSpec;
+use crate::{PulseArgs, TaskInvocation, TasksArgs};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -155,6 +156,8 @@ fn run_manifest_task_unknown_prefix_returns_catalog_error() {
 
 #[test]
 fn run_manifest_task_verbose_root_includes_resolution_trace() {
+    let _guard = test_lock().lock().expect("lock");
+    let _env = EnvGuard::set_many(&[("EFFIGY_COLOR", None), ("NO_COLOR", None)]);
     let root = temp_workspace("verbose-trace");
     let farmyard = root.join("farmyard");
     fs::create_dir_all(&farmyard).expect("mkdir");
@@ -179,6 +182,59 @@ fn run_manifest_task_verbose_root_includes_resolution_trace() {
     assert!(out.contains("Task Resolution"));
     assert!(out.contains("catalog-alias: farmyard"));
     assert!(out.contains("farmyard"));
+}
+
+#[test]
+fn run_manifest_task_includes_local_node_modules_bin_in_path() {
+    let root = temp_workspace("local-node-bin-path");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.local]\nrun = \"local-tool\"\n",
+    );
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    let tool = local_bin.join("local-tool");
+    fs::write(&tool, "#!/bin/sh\nexit 0\n").expect("write local tool");
+    let mut perms = fs::metadata(&tool).expect("stat").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&tool, perms).expect("chmod");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "local".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("run local tool");
+
+    assert_eq!(out, "");
+}
+
+#[test]
+fn run_manifest_task_run_array_supports_task_reference_steps() {
+    let root = temp_workspace("run-array-task-refs");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.lint]
+run = "printf lint-ok"
+
+[tasks.validate]
+run = [{ task = "lint" }, "printf validate-ok"]
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: vec!["--verbose-root".to_owned()],
+        },
+        root,
+    )
+    .expect("run");
+
+    assert!(out.contains("printf lint-ok"));
+    assert!(out.contains("printf validate-ok"));
 }
 
 #[test]
@@ -399,10 +455,7 @@ fn run_manifest_task_defers_to_prefixed_catalog_handler() {
     let root = temp_workspace("defer-prefixed");
     let farmyard = root.join("farmyard");
     fs::create_dir_all(&farmyard).expect("mkdir");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[defer]\nrun = \"false\"\n",
-    );
+    write_manifest(&root.join("effigy.toml"), "[defer]\nrun = \"false\"\n");
     write_manifest(
         &farmyard.join("effigy.toml"),
         "[catalog]\nalias = \"farmyard\"\n[defer]\nrun = \"printf farmyard-deferred\"\n",
@@ -545,11 +598,17 @@ fn run_manifest_task_explicit_deferral_wins_over_implicit_root_deferral() {
 
 #[test]
 fn run_manifest_task_managed_tui_uses_default_profile_when_not_specified() {
+    let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("managed-default-profile");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     write_manifest(
         &root.join("effigy.toml"),
-        r#"[tasks.dev]
+        r#"[shell]
+run = "zsh -l"
+
+[tasks.dev]
 mode = "tui"
+shell = true
 
 [tasks.dev.profiles.default]
 processes = ["api", "front", "admin"]
@@ -565,10 +624,6 @@ run = "vite dev"
 
 [tasks.dev.processes.admin]
 run = "vite dev --config admin"
-
-[tasks.dev.shell]
-enabled = true
-run = "$SHELL"
 "#,
     );
 
@@ -586,12 +641,51 @@ run = "$SHELL"
     assert!(out.contains("api"));
     assert!(out.contains("front"));
     assert!(out.contains("admin"));
+    assert!(out.contains("fail-on-non-zero: enabled"));
     assert!(out.contains("shell-tab: enabled"));
+    assert!(out.contains("shell-run: zsh -l"));
+}
+
+#[test]
+fn run_manifest_task_managed_tui_supports_shell_boolean_and_global_shell_config() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-shell-global-config");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[shell]
+run = "bash -l"
+
+[tasks.dev]
+mode = "tui"
+shell = true
+
+[tasks.dev.profiles.default]
+processes = ["api"]
+
+[tasks.dev.processes.api]
+run = "cargo run -p api"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect("managed plan should render");
+
+    assert!(out.contains("shell-tab: enabled"));
+    assert!(out.contains("shell-run: bash -l"));
 }
 
 #[test]
 fn run_manifest_task_managed_tui_accepts_named_profile_argument() {
+    let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("managed-named-profile");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
@@ -627,6 +721,245 @@ run = "vite dev --config admin"
     assert!(out.contains("api"));
     assert!(out.contains("admin"));
     assert!(!out.contains("front"));
+}
+
+#[test]
+fn run_manifest_task_managed_tui_supports_independent_tab_order() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-tab-order");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles]
+default = { start = ["api", "jobs", "cream", "dairy"], tabs = ["dairy", "cream", "api", "jobs"] }
+
+[tasks.dev.processes.api]
+run = "printf api"
+
+[tasks.dev.processes.jobs]
+run = "printf jobs"
+
+[tasks.dev.processes.cream]
+run = "printf cream"
+
+[tasks.dev.processes.dairy]
+run = "printf dairy"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect("managed plan should render");
+
+    assert!(out.contains("tab-order: dairy, cream, api, jobs"));
+}
+
+#[test]
+fn run_manifest_task_managed_tui_supports_ranked_tab_order_map() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-tab-order-ranked");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles]
+default = { start = ["api", "jobs", "cream", "dairy"], tabs = { dairy = 1, cream = 2, api = 3, jobs = 4 } }
+
+[tasks.dev.processes.api]
+run = "printf api"
+
+[tasks.dev.processes.jobs]
+run = "printf jobs"
+
+[tasks.dev.processes.cream]
+run = "printf cream"
+
+[tasks.dev.processes.dairy]
+run = "printf dairy"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect("managed plan should render");
+
+    assert!(out.contains("tab-order: dairy, cream, api, jobs"));
+}
+
+#[test]
+fn run_manifest_task_managed_tui_supports_ranked_tab_order_map_with_task_refs() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-tab-order-ranked-refs");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let farmyard = root.join("farmyard");
+    let cream = root.join("cream");
+    let dairy = root.join("dairy");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    fs::create_dir_all(&cream).expect("mkdir cream");
+    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles]
+default = { start = ["farmyard/api", "farmyard/jobs", "cream/dev", "dairy/dev"], tabs = { "dairy/dev" = 1, "cream/dev" = 2, "farmyard/api" = 3, "farmyard/jobs" = 4 } }
+"#,
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        r#"[catalog]
+alias = "farmyard"
+[tasks.api]
+run = "printf farmyard-api"
+[tasks.jobs]
+run = "printf farmyard-jobs"
+"#,
+    );
+    write_manifest(
+        &cream.join("effigy.toml"),
+        r#"[catalog]
+alias = "cream"
+[tasks.dev]
+run = "printf cream-dev"
+"#,
+    );
+    write_manifest(
+        &dairy.join("effigy.toml"),
+        r#"[catalog]
+alias = "dairy"
+[tasks.dev]
+run = "printf dairy-dev"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect("managed plan should render");
+
+    assert!(out.contains("tab-order: dairy/dev, cream/dev, farmyard/api, farmyard/jobs"));
+}
+
+#[test]
+fn run_manifest_task_managed_tui_supports_single_definition_ordered_profile_entries() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-single-definition-ordered-profile");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let farmyard = root.join("farmyard");
+    let cream = root.join("cream");
+    let dairy = root.join("dairy");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    fs::create_dir_all(&cream).expect("mkdir cream");
+    fs::create_dir_all(&dairy).expect("mkdir dairy");
+
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles]
+default = { "farmyard/api" = { start = 1, tab = 3 }, "farmyard/jobs" = { start = 2, tab = 4, start_after_ms = 1200 }, "cream/dev" = { start = 3, tab = 2 }, "dairy/dev" = { start = 4, tab = 1 } }
+"#,
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        r#"[catalog]
+alias = "farmyard"
+[tasks.api]
+run = "printf farmyard-api"
+[tasks.jobs]
+run = "printf farmyard-jobs"
+"#,
+    );
+    write_manifest(
+        &cream.join("effigy.toml"),
+        r#"[catalog]
+alias = "cream"
+[tasks.dev]
+run = "printf cream-dev"
+"#,
+    );
+    write_manifest(
+        &dairy.join("effigy.toml"),
+        r#"[catalog]
+alias = "dairy"
+[tasks.dev]
+run = "printf dairy-dev"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect("managed plan should render");
+
+    assert!(out.contains("tab-order: dairy/dev, cream/dev, farmyard/api, farmyard/jobs"));
+    assert!(out.contains("start-after-ms"));
+    assert!(out.contains("1200"));
+}
+
+#[test]
+fn run_manifest_task_managed_tui_errors_when_tab_order_references_unknown_process() {
+    let root = temp_workspace("managed-tab-order-invalid");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["api"]
+tabs = ["api", "jobs"]
+
+[tasks.dev.processes.api]
+run = "printf api"
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect_err("invalid tab entry should fail");
+
+    match err {
+        RunnerError::TaskManagedProfileTabOrderInvalid {
+            task,
+            profile,
+            detail,
+        } => {
+            assert_eq!(task, "dev");
+            assert_eq!(profile, "default");
+            assert!(detail.contains("jobs"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
 }
 
 #[test]
@@ -670,7 +1003,9 @@ run = "cargo run -p api"
 
 #[test]
 fn run_manifest_task_managed_tui_processes_can_reference_other_tasks() {
+    let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("managed-task-refs");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     let farmyard = root.join("farmyard");
     let cream = root.join("cream");
     fs::create_dir_all(&farmyard).expect("mkdir farmyard");
@@ -719,6 +1054,8 @@ run = "printf cream-dev"
 
     assert!(out.contains("farmyard-api"));
     assert!(out.contains("cream-dev"));
+    assert!(out.contains(&farmyard.display().to_string()));
+    assert!(out.contains(&cream.display().to_string()));
 }
 
 #[test]
@@ -758,7 +1095,9 @@ task = "api"
 
 #[test]
 fn run_manifest_task_managed_tui_supports_compact_profile_task_refs() {
+    let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("managed-compact-profile-refs");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     let farmyard = root.join("farmyard");
     let cream = root.join("cream");
     fs::create_dir_all(&farmyard).expect("mkdir farmyard");
@@ -808,6 +1147,50 @@ run = "printf cream-dev"
 }
 
 #[test]
+fn run_manifest_task_managed_tui_process_run_array_supports_task_refs() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-process-run-array");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["combo"]
+
+[tasks.dev.processes.combo]
+run = ["printf start", { task = "farmyard/api" }, "printf done"]
+"#,
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        r#"[catalog]
+alias = "farmyard"
+[tasks.api]
+run = "printf farmyard-api"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect("managed plan should render");
+
+    assert!(out.contains("printf start"));
+    assert!(out.contains("farmyard-api"));
+    assert!(out.contains("printf done"));
+    assert!(out.contains("cd"));
+}
+
+#[test]
 fn run_manifest_task_managed_stream_executes_selected_profile_processes() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("managed-stream-runtime");
@@ -840,8 +1223,83 @@ run = "printf front-ok"
     assert!(out.contains("Managed Task Runtime"));
     assert!(out.contains("[api] api-ok"));
     assert!(out.contains("[front] front-ok"));
+    assert!(out.contains("fail-on-non-zero: enabled"));
     assert!(out.contains("process `api` exit=0"));
     assert!(out.contains("process `front` exit=0"));
+}
+
+#[test]
+fn run_manifest_task_managed_stream_fails_when_process_exits_non_zero_by_default() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-stream-fail-on-non-zero-default");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["api"]
+
+[tasks.dev.processes.api]
+run = "sh -lc 'exit 7'"
+"#,
+    );
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("managed stream should fail for non-zero exit by default");
+
+    match err {
+        RunnerError::TaskManagedNonZeroExit {
+            task,
+            profile,
+            processes,
+        } => {
+            assert_eq!(task, "dev");
+            assert_eq!(profile, "default");
+            assert_eq!(processes, vec![("api".to_owned(), "exit=7".to_owned())]);
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_managed_stream_allows_non_zero_when_disabled() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-stream-fail-on-non-zero-disabled");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+fail_on_non_zero = false
+
+[tasks.dev.profiles.default]
+processes = ["api"]
+
+[tasks.dev.processes.api]
+run = "sh -lc 'exit 9'"
+"#,
+    );
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("managed stream should allow non-zero when disabled");
+
+    assert!(out.contains("Managed Task Runtime"));
+    assert!(out.contains("fail-on-non-zero: disabled"));
+    assert!(out.contains("process `api` exit=9"));
 }
 
 #[test]
@@ -850,19 +1308,42 @@ fn next_available_process_name_avoids_shell_name_collisions() {
         ProcessSpec {
             name: "api".to_owned(),
             run: "printf api".to_owned(),
+            cwd: PathBuf::from("."),
+            start_after_ms: 0,
         },
         ProcessSpec {
             name: "shell".to_owned(),
             run: "sh".to_owned(),
+            cwd: PathBuf::from("."),
+            start_after_ms: 0,
         },
         ProcessSpec {
             name: "shell-2".to_owned(),
             run: "sh".to_owned(),
+            cwd: PathBuf::from("."),
+            start_after_ms: 0,
         },
     ];
 
     let name = next_available_process_name(&specs, "shell");
     assert_eq!(name, "shell-3");
+}
+
+#[test]
+fn resolve_shell_tab_command_normalizes_shell_env_templates() {
+    assert_eq!(resolve_shell_tab_command(None), "exec ${SHELL:-sh} -s");
+    assert_eq!(
+        resolve_shell_tab_command(Some("$SHELL".to_owned())),
+        "exec ${SHELL:-sh} -s"
+    );
+    assert_eq!(
+        resolve_shell_tab_command(Some("${SHELL}".to_owned())),
+        "exec ${SHELL:-sh} -s"
+    );
+    assert_eq!(
+        resolve_shell_tab_command(Some("bash -l".to_owned())),
+        "bash -l"
+    );
 }
 
 fn write_manifest(path: &PathBuf, body: &str) {
