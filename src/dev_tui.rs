@@ -1,8 +1,10 @@
 use std::collections::{HashMap, VecDeque};
 use std::io;
+use std::io::IsTerminal;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use anstyle::Style as AnsiStyle;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -21,9 +23,8 @@ use ratatui::{Frame, Terminal};
 use crate::process_manager::{
     ProcessEventKind, ProcessManagerError, ProcessSpec, ProcessSupervisor, ShutdownProgress,
 };
-use crate::ui::{
-    KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer, SummaryCounts, UiError,
-};
+use crate::ui::theme::{resolve_color_enabled, Theme};
+use crate::ui::{KeyValue, OutputMode, PlainRenderer, Renderer, UiError};
 
 const MAX_LOG_LINES: usize = 2000;
 
@@ -152,15 +153,20 @@ pub fn run_dev_process_tui(
         .iter()
         .map(|name| (name.clone(), false))
         .collect();
+    let mut process_started_at: HashMap<String, Instant> = process_names
+        .iter()
+        .map(|name| (name.clone(), Instant::now()))
+        .collect();
+    let mut process_restart_count: HashMap<String, usize> = process_names
+        .iter()
+        .map(|name| (name.clone(), 0usize))
+        .collect();
     let mut active_index: usize = 0;
     let mut input_line = String::new();
     let mut input_mode = InputMode::Command;
     let mut show_help = false;
     let mut show_options = false;
     let mut options_index = 0usize;
-    let mut shutdown_summary: Option<String> = None;
-    let mut shutdown_total: Option<usize> = None;
-    let mut shutdown_forced: Option<usize> = None;
     let mut observed_non_zero: HashMap<String, String> = HashMap::new();
     let mut exit_states: HashMap<String, ProcessExitState> = HashMap::new();
     let mut spinner_tick: usize = 0;
@@ -233,6 +239,12 @@ pub fn run_dev_process_tui(
         let scroll_offset = stored.min(max_offset);
         scroll_offsets.insert(active.clone(), scroll_offset);
         let is_follow = *follow_mode.get(active).unwrap_or(&true);
+        let now = Instant::now();
+        let active_elapsed = process_started_at
+            .get(active)
+            .map(|started| now.saturating_duration_since(*started))
+            .unwrap_or_default();
+        let active_restart_count = *process_restart_count.get(active).unwrap_or(&0);
         terminal.draw(|frame| {
             render_ui(
                 frame,
@@ -249,6 +261,8 @@ pub fn run_dev_process_tui(
                 options_index,
                 *output_seen.get(active).unwrap_or(&false),
                 spinner_tick,
+                active_elapsed,
+                active_restart_count,
             )
         })?;
 
@@ -307,6 +321,8 @@ pub fn run_dev_process_tui(
                                 &mut output_seen,
                                 &mut restart_pending,
                                 &mut logs,
+                                &mut process_started_at,
+                                &mut process_restart_count,
                             )?;
                             if should_quit {
                                 break Ok(());
@@ -325,6 +341,8 @@ pub fn run_dev_process_tui(
                                 &mut output_seen,
                                 &mut restart_pending,
                                 &mut logs,
+                                &mut process_started_at,
+                                &mut process_restart_count,
                             )?;
                             show_options = false;
                             if should_quit {
@@ -344,6 +362,8 @@ pub fn run_dev_process_tui(
                                 &mut output_seen,
                                 &mut restart_pending,
                                 &mut logs,
+                                &mut process_started_at,
+                                &mut process_restart_count,
                             )?;
                             show_options = false;
                             if should_quit {
@@ -363,6 +383,8 @@ pub fn run_dev_process_tui(
                                 &mut output_seen,
                                 &mut restart_pending,
                                 &mut logs,
+                                &mut process_started_at,
+                                &mut process_restart_count,
                             )?;
                             show_options = false;
                             if should_quit {
@@ -383,6 +405,8 @@ pub fn run_dev_process_tui(
                                 &mut output_seen,
                                 &mut restart_pending,
                                 &mut logs,
+                                &mut process_started_at,
+                                &mut process_restart_count,
                             )?;
                             if should_quit {
                                 break Ok(());
@@ -520,12 +544,7 @@ pub fn run_dev_process_tui(
             ShutdownProgress::ForceKilling => {
                 "Shutdown: forcing remaining managed processes to stop..."
             }
-            ShutdownProgress::Complete { total, forced } => {
-                shutdown_total = Some(total);
-                shutdown_summary = Some(format_shutdown_summary(total, forced));
-                shutdown_forced = Some(forced);
-                shutdown_summary.as_deref().unwrap_or("Shutdown: complete.")
-            }
+            ShutdownProgress::Complete { .. } => "Shutdown: complete.",
         };
         let _ = draw_shutdown_status(&mut terminal, label);
     });
@@ -545,41 +564,39 @@ pub fn run_dev_process_tui(
     execute!(terminal.backend_mut(), LeaveAlternateScreen, EnableLineWrap)?;
     terminal.show_cursor()?;
 
-    let total = shutdown_total.unwrap_or(process_names.len());
-    let forced = shutdown_forced.unwrap_or(0);
-    let graceful = total.saturating_sub(forced);
     let mut renderer = PlainRenderer::stdout(OutputMode::from_env());
-    renderer.section("Managed Session Ended")?;
-    renderer.key_values(&[
-        KeyValue::new("processes", total.to_string()),
-        KeyValue::new("graceful", graceful.to_string()),
-        KeyValue::new("forced", forced.to_string()),
-    ])?;
-    if forced > 0 {
-        renderer.notice(
-            NoticeLevel::Warning,
-            &format!("forced termination used for {forced} process(es)."),
-        )?;
-    }
-    if !non_zero_exits.is_empty() {
-        renderer.text("")?;
-        renderer.notice(NoticeLevel::Warning, "managed process exits:")?;
-        let items = non_zero_exits
-            .iter()
-            .map(|(name, diagnostic)| format!("{name}: {diagnostic}"))
-            .collect::<Vec<String>>();
-        renderer.bullet_list("exits", &items)?;
-    }
-    renderer.text("")?;
-    renderer.summary(SummaryCounts {
-        ok: graceful,
-        warn: if forced > 0 || !non_zero_exits.is_empty() {
-            1
+    renderer.section("Process Results")?;
+    let color_enabled =
+        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
+    let theme = Theme::default();
+    let diagnostics = supervisor.exit_diagnostics();
+    let now = Instant::now();
+    for (name, diagnostic) in diagnostics {
+        let elapsed = process_started_at
+            .get(&name)
+            .map(|started| format_elapsed(now.saturating_duration_since(*started)))
+            .unwrap_or_else(|| "0s".to_owned());
+        let status = if diagnostic == "exit=0" || is_expected_shutdown_diagnostic(&diagnostic) {
+            if color_enabled {
+                format!(
+                    "{} {}",
+                    styled_text(theme.success, "✓ OK"),
+                    styled_text(theme.muted, &elapsed)
+                )
+            } else {
+                format!("OK {elapsed}")
+            }
+        } else if color_enabled {
+            format!(
+                "{} {}",
+                styled_text(theme.error, &diagnostic),
+                styled_text(theme.muted, &elapsed)
+            )
         } else {
-            0
-        },
-        err: non_zero_exits.len(),
-    })?;
+            format!("{diagnostic} {elapsed}")
+        };
+        renderer.key_values(&[KeyValue::new(name, status)])?;
+    }
     renderer.text("")?;
 
     result?;
@@ -617,6 +634,8 @@ fn render_ui(
     options_index: usize,
     active_output_seen: bool,
     spinner_tick: usize,
+    active_elapsed: Duration,
+    active_restart_count: usize,
 ) {
     let input_height = if input_mode == InputMode::Insert {
         3
@@ -658,29 +677,27 @@ fn render_ui(
     frame.render_widget(tabs, chunks[0]);
 
     let output_height = chunks[1].height.saturating_sub(2) as usize;
-    let total_lines = active_logs.len();
+    let mut lines = Vec::with_capacity(active_logs.len() + 1);
+    lines.push(runtime_meta_line(active_elapsed, active_restart_count));
+    lines.extend(active_logs.iter().map(|entry| match entry.kind {
+        LogEntryKind::Stdout => ansi_line(&entry.line, Style::default()),
+        LogEntryKind::Stderr => {
+            let mut spans = vec![Span::styled("[stderr] ", Style::default().fg(Color::Red))];
+            spans.extend(ansi_line(&entry.line, Style::default()).spans);
+            Line::from(spans)
+        }
+        LogEntryKind::Exit => Line::from(vec![
+            Span::styled("[exit] ", Style::default().fg(Color::Yellow)),
+            Span::styled(entry.line.clone(), Style::default().fg(Color::Gray)),
+        ]),
+    }));
+    let total_lines = lines.len();
     let max_offset = total_lines.saturating_sub(output_height);
     let clamped_offset = if follow {
         max_offset
     } else {
         scroll_offset.min(max_offset)
     };
-
-    let lines = active_logs
-        .iter()
-        .map(|entry| match entry.kind {
-            LogEntryKind::Stdout => ansi_line(&entry.line, Style::default()),
-            LogEntryKind::Stderr => {
-                let mut spans = vec![Span::styled("[stderr] ", Style::default().fg(Color::Red))];
-                spans.extend(ansi_line(&entry.line, Style::default()).spans);
-                Line::from(spans)
-            }
-            LogEntryKind::Exit => Line::from(vec![
-                Span::styled("[exit] ", Style::default().fg(Color::Yellow)),
-                Span::styled(entry.line.clone(), Style::default().fg(Color::Gray)),
-            ]),
-        })
-        .collect::<Vec<Line>>();
 
     if show_help {
         let help_lines = vec![
@@ -718,13 +735,16 @@ fn render_ui(
         {
             let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let spinner = spinner_frames[spinner_tick % spinner_frames.len()];
-            Paragraph::new(Line::from(vec![
-                Span::styled(spinner.to_owned(), Style::default().fg(Color::Yellow)),
-                Span::styled(
-                    " waiting for first output...",
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]))
+            Paragraph::new(vec![
+                runtime_meta_line(active_elapsed, active_restart_count),
+                Line::from(vec![
+                    Span::styled(spinner.to_owned(), Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        " waiting for first output...",
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]),
+            ])
             .block(panel)
         } else {
             Paragraph::new(lines)
@@ -863,6 +883,8 @@ fn apply_options_action(
     output_seen: &mut HashMap<String, bool>,
     restart_pending: &mut HashMap<String, bool>,
     logs: &mut HashMap<String, VecDeque<LogEntry>>,
+    process_started_at: &mut HashMap<String, Instant>,
+    process_restart_count: &mut HashMap<String, usize>,
 ) -> Result<bool, DevTuiError> {
     match action {
         OptionsAction::ToggleFollow => {
@@ -883,6 +905,11 @@ fn apply_options_action(
                     observed_non_zero.remove(active);
                     output_seen.insert(active.to_owned(), false);
                     restart_pending.insert(active.to_owned(), true);
+                    process_started_at.insert(active.to_owned(), Instant::now());
+                    process_restart_count
+                        .entry(active.to_owned())
+                        .and_modify(|count| *count += 1)
+                        .or_insert(1);
                     push_log_line(
                         logs,
                         active,
@@ -1066,17 +1093,41 @@ fn apply_sgr(current: Style, sgr: &str, base: Style) -> Style {
     style
 }
 
-fn format_shutdown_summary(total: usize, forced: usize) -> String {
-    let graceful = total.saturating_sub(forced);
-    if forced == 0 {
-        format!("effigy: shutdown complete ({graceful}/{total} graceful, 0 forced)")
+fn is_expected_shutdown_diagnostic(diagnostic: &str) -> bool {
+    matches!(diagnostic, "signal=15" | "signal=9")
+}
+
+fn format_elapsed(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let secs = seconds % 60;
+    if hours > 0 {
+        format!("{hours}h{minutes:02}m{secs:02}s")
+    } else if minutes > 0 {
+        format!("{minutes}m{secs:02}s")
     } else {
-        format!("effigy: shutdown complete ({graceful}/{total} graceful, {forced} forced)")
+        format!("{secs}s")
     }
 }
 
-fn is_expected_shutdown_diagnostic(diagnostic: &str) -> bool {
-    matches!(diagnostic, "signal=15" | "signal=9")
+fn runtime_meta_line(elapsed: Duration, restart_count: usize) -> Line<'static> {
+    let label = if restart_count == 0 {
+        "started"
+    } else {
+        "restarted"
+    };
+    Line::from(vec![
+        Span::styled(format!("{label}: "), Style::default().fg(Color::LightBlue)),
+        Span::styled(
+            format!("{} ago", format_elapsed(elapsed)),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ])
+}
+
+fn styled_text(style: AnsiStyle, text: &str) -> String {
+    format!("{}{}{}", style.render(), text, style.render_reset())
 }
 
 #[cfg(test)]
@@ -1092,22 +1143,25 @@ mod tests {
     }
 
     #[test]
-    fn format_shutdown_summary_reports_graceful_and_forced_counts() {
-        assert_eq!(
-            format_shutdown_summary(4, 0),
-            "effigy: shutdown complete (4/4 graceful, 0 forced)"
-        );
-        assert_eq!(
-            format_shutdown_summary(4, 1),
-            "effigy: shutdown complete (3/4 graceful, 1 forced)"
-        );
-    }
-
-    #[test]
     fn expected_shutdown_diagnostics_are_ignored() {
         assert!(is_expected_shutdown_diagnostic("signal=15"));
         assert!(is_expected_shutdown_diagnostic("signal=9"));
         assert!(!is_expected_shutdown_diagnostic("exit=1"));
         assert!(!is_expected_shutdown_diagnostic("signal=11"));
+    }
+
+    #[test]
+    fn format_elapsed_uses_compact_human_time() {
+        assert_eq!(format_elapsed(Duration::from_secs(9)), "9s");
+        assert_eq!(format_elapsed(Duration::from_secs(65)), "1m05s");
+        assert_eq!(format_elapsed(Duration::from_secs(3665)), "1h01m05s");
+    }
+
+    #[test]
+    fn runtime_meta_line_marks_restart_state() {
+        let started = runtime_meta_line(Duration::from_secs(9), 0);
+        assert_eq!(started.spans[0].content.as_ref(), "started: ");
+        let restarted = runtime_meta_line(Duration::from_secs(9), 1);
+        assert_eq!(restarted.spans[0].content.as_ref(), "restarted: ");
     }
 }
