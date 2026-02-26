@@ -62,3 +62,7 @@ pub fn resolve_color_enabled(mode: OutputMode, is_tty: bool) -> bool {
         OutputMode::Auto => is_tty,
     }
 }
+
+pub fn is_ci_environment() -> bool {
+    std::env::var_os("CI").is_some()
+}

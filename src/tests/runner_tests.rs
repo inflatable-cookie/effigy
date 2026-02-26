@@ -228,8 +228,10 @@ fn run_tasks_with_task_filter_reports_only_matches() {
     })
     .expect("run tasks");
 
-    assert!(out.contains("farmyard:reset-db"));
-    assert!(!out.contains("root:reset-db"));
+    assert!(out.contains("Task Matches: reset-db"));
+    assert!(out.contains("farmyard"));
+    assert!(out.contains("reset-db"));
+    assert!(!out.contains("root      │ reset-db"));
 }
 
 #[test]

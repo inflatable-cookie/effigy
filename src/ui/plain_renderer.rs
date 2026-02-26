@@ -2,11 +2,12 @@ use std::io::{IsTerminal, Write};
 
 use anstream::{AutoStream, ColorChoice};
 use anstyle::Style;
+use indicatif::{ProgressBar, ProgressStyle};
 
-use crate::ui::progress::NoopSpinnerHandle;
+use crate::ui::progress::{IndicatifSpinnerHandle, NoopSpinnerHandle};
 use crate::ui::renderer::{Renderer, SpinnerHandle, UiResult};
 use crate::ui::table::render_table;
-use crate::ui::theme::{resolve_color_enabled, OutputMode, Theme};
+use crate::ui::theme::{is_ci_environment, resolve_color_enabled, OutputMode, Theme};
 use crate::ui::widgets::{
     KeyValue, MessageBlock, NoticeLevel, StepState, SummaryCounts, TableSpec,
 };
@@ -14,6 +15,7 @@ use crate::ui::widgets::{
 pub struct PlainRenderer<W: Write> {
     writer: W,
     color_enabled: bool,
+    progress_enabled: bool,
     theme: Theme,
 }
 
@@ -22,8 +24,14 @@ impl<W: Write> PlainRenderer<W> {
         Self {
             writer,
             color_enabled,
+            progress_enabled: false,
             theme: Theme::default(),
         }
+    }
+
+    pub fn with_progress_enabled(mut self, enabled: bool) -> Self {
+        self.progress_enabled = enabled;
+        self
     }
 
     pub fn with_theme(mut self, theme: Theme) -> Self {
@@ -63,7 +71,8 @@ impl PlainRenderer<AutoStream<std::io::Stdout>> {
         };
         let stream = AutoStream::new(std::io::stdout(), choice);
         let color_enabled = resolve_color_enabled(mode, std::io::stdout().is_terminal());
-        Self::new(stream, color_enabled)
+        let progress_enabled = std::io::stdout().is_terminal() && !is_ci_environment();
+        Self::new(stream, color_enabled).with_progress_enabled(progress_enabled)
     }
 }
 
@@ -76,7 +85,8 @@ impl PlainRenderer<AutoStream<std::io::Stderr>> {
         };
         let stream = AutoStream::new(std::io::stderr(), choice);
         let color_enabled = resolve_color_enabled(mode, std::io::stderr().is_terminal());
-        Self::new(stream, color_enabled)
+        let progress_enabled = std::io::stderr().is_terminal() && !is_ci_environment();
+        Self::new(stream, color_enabled).with_progress_enabled(progress_enabled)
     }
 }
 
@@ -147,8 +157,17 @@ impl<W: Write> Renderer for PlainRenderer<W> {
     }
 
     fn spinner(&mut self, label: &str) -> UiResult<Box<dyn SpinnerHandle>> {
+        if self.progress_enabled {
+            let spinner = ProgressBar::new_spinner();
+            if let Ok(style) = ProgressStyle::with_template("{spinner} {msg}") {
+                spinner.set_style(style);
+            }
+            spinner.set_message(label.to_owned());
+            spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+            return Ok(Box::new(IndicatifSpinnerHandle::new(spinner)));
+        }
         self.step(label, StepState::Running)?;
-        Ok(Box::<NoopSpinnerHandle>::default())
+        Ok(Box::new(NoopSpinnerHandle))
     }
 }
 
@@ -193,5 +212,17 @@ mod tests {
             rendered,
             "== Task Catalogs ==\nsummary: ok=4 warn=1 err=0\n"
         );
+    }
+
+    #[test]
+    fn spinner_falls_back_to_step_output_when_progress_disabled() {
+        let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false).with_progress_enabled(false);
+
+        let spinner = renderer.spinner("Scanning workspace").expect("spinner");
+        spinner.set_message("Still scanning");
+        spinner.finish_success("Done");
+
+        let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
+        assert_eq!(rendered, "[~] Scanning workspace\n");
     }
 }

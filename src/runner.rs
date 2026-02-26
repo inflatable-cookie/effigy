@@ -6,6 +6,7 @@ use std::process::Command as ProcessCommand;
 use crate::resolver::{resolve_target_root, ResolveError};
 use crate::tasks::pulse::PulseTask;
 use crate::tasks::{Task, TaskContext, TaskError};
+use crate::ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer, SummaryCounts, TableSpec};
 use crate::{Command, PulseArgs, TaskInvocation, TasksArgs};
 
 #[derive(Debug)]
@@ -13,6 +14,7 @@ pub enum RunnerError {
     Cwd(std::io::Error),
     Resolve(ResolveError),
     Task(TaskError),
+    Ui(String),
     TaskInvocation(String),
     TaskCatalogsMissing {
         root: PathBuf,
@@ -71,6 +73,7 @@ impl std::fmt::Display for RunnerError {
             RunnerError::Cwd(err) => write!(f, "failed to resolve current directory: {err}"),
             RunnerError::Resolve(err) => write!(f, "{err}"),
             RunnerError::Task(err) => write!(f, "{err}"),
+            RunnerError::Ui(msg) => write!(f, "ui render failed: {msg}"),
             RunnerError::TaskInvocation(msg) => write!(f, "{msg}"),
             RunnerError::TaskCatalogsMissing { root } => write!(
                 f,
@@ -148,6 +151,12 @@ impl std::error::Error for RunnerError {}
 impl From<TaskError> for RunnerError {
     fn from(value: TaskError) -> Self {
         Self::Task(value)
+    }
+}
+
+impl From<crate::ui::UiError> for RunnerError {
+    fn from(value: crate::ui::UiError) -> Self {
+        Self::Ui(value.to_string())
     }
 }
 
@@ -286,18 +295,16 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
     let cwd = std::env::current_dir().map_err(RunnerError::Cwd)?;
     let resolved = resolve_target_root(cwd, args.repo_override)?;
     let catalogs = discover_catalogs(&resolved.resolved_root)?;
-
-    let mut lines: Vec<String> = Vec::new();
-    lines.push("# Task Catalogs".to_owned());
-    lines.push(String::new());
-    lines.push(format!("- root: {}", resolved.resolved_root.display()));
-    lines.push(format!("- catalogs: {}", catalogs.len()));
-    lines.push(String::new());
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    renderer.section("Task Catalogs")?;
+    renderer.key_values(&[
+        KeyValue::new("root", resolved.resolved_root.display().to_string()),
+        KeyValue::new("catalogs", catalogs.len().to_string()),
+    ])?;
 
     if let Some(filter) = args.task_name {
         let selector = parse_task_selector(&filter)?;
-        lines.push(format!("## Task Matches: `{}`", filter));
-        lines.push(String::new());
+        renderer.section(&format!("Task Matches: {filter}"))?;
 
         let matches = catalogs
             .iter()
@@ -315,20 +322,41 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
             .collect::<Vec<(&LoadedCatalog, &ManifestTask)>>();
 
         if matches.is_empty() {
-            lines.push("- no matches".to_owned());
-            return Ok(lines.join("\n"));
+            renderer.notice(NoticeLevel::Warning, "no matches")?;
+            let out = renderer.into_inner();
+            return String::from_utf8(out).map_err(|error| {
+                RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}"))
+            });
         }
 
+        let mut rows: Vec<Vec<String>> = Vec::new();
         for (catalog, task) in matches {
-            lines.push(format!(
-                "- {}:{} -> `{}` ({})",
-                catalog.alias,
-                selector.task_name,
-                task.run,
-                catalog.manifest_path.display()
-            ));
+            rows.push(vec![
+                catalog.alias.clone(),
+                selector.task_name.clone(),
+                task.run.clone(),
+                catalog.manifest_path.display().to_string(),
+            ]);
         }
-        return Ok(lines.join("\n"));
+
+        renderer.table(&TableSpec::new(
+            vec![
+                "catalog".to_owned(),
+                "task".to_owned(),
+                "run".to_owned(),
+                "manifest".to_owned(),
+            ],
+            rows,
+        ))?;
+        renderer.summary(SummaryCounts {
+            ok: 1,
+            warn: 0,
+            err: 0,
+        })?;
+        let out = renderer.into_inner();
+        return String::from_utf8(out).map_err(|error| {
+            RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}"))
+        });
     }
 
     let mut ordered = catalogs.iter().collect::<Vec<&LoadedCatalog>>();
@@ -339,25 +367,44 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
             .then_with(|| a.manifest_path.cmp(&b.manifest_path))
     });
 
+    let mut rows: Vec<Vec<String>> = Vec::new();
     for catalog in ordered {
-        lines.push(format!(
-            "## {} ({})",
-            catalog.alias,
-            catalog.manifest_path.display()
-        ));
-        lines.push(String::new());
         if catalog.manifest.tasks.is_empty() {
-            lines.push("- _no tasks_".to_owned());
-            lines.push(String::new());
+            rows.push(vec![
+                catalog.alias.clone(),
+                "<none>".to_owned(),
+                "<none>".to_owned(),
+                catalog.manifest_path.display().to_string(),
+            ]);
             continue;
         }
         for (task_name, task_def) in &catalog.manifest.tasks {
-            lines.push(format!("- `{}`: `{}`", task_name, task_def.run));
+            rows.push(vec![
+                catalog.alias.clone(),
+                task_name.clone(),
+                task_def.run.clone(),
+                catalog.manifest_path.display().to_string(),
+            ]);
         }
-        lines.push(String::new());
     }
 
-    Ok(lines.join("\n"))
+    renderer.table(&TableSpec::new(
+        vec![
+            "catalog".to_owned(),
+            "task".to_owned(),
+            "run".to_owned(),
+            "manifest".to_owned(),
+        ],
+        rows,
+    ))?;
+    renderer.summary(SummaryCounts {
+        ok: 1,
+        warn: 0,
+        err: 0,
+    })?;
+    let out = renderer.into_inner();
+    String::from_utf8(out)
+        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
 }
 
 fn run_manifest_task(task: &TaskInvocation) -> Result<String, RunnerError> {
