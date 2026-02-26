@@ -1,8 +1,9 @@
 # Effigy Docs
 
-Effigy documentation is organized into three top-level categories:
+Effigy documentation is organized into four top-level categories:
 
 - `architecture/`: stable design and package/runtime boundaries.
+- `guides/`: operational runbooks and implementation guides.
 - `roadmap/`: numbered phase plans and progress tracking.
 - `reports/`: dated execution reports, checkpoints, and sweeps.
 

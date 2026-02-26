@@ -1,6 +1,6 @@
 # 001 - Effigy Foundation
 
-Status: In Progress
+Status: Complete
 Owner: Platform
 Created: 2026-02-26
 Depends on: none
@@ -14,9 +14,9 @@ Effigy has been extracted from Underlay, but needs first-class project structure
 - [x] Extract runner into standalone repository.
 - [x] Keep compatibility for legacy `underlay.tasks.toml` catalogs.
 - [x] Migrate active consuming repos to `effigy` invocation.
-- [ ] Establish direct PATH-first installation guidance.
-- [ ] Define versioning and release workflow.
-- [ ] Add docs and reporting skeleton mirroring Underlay style.
+- [x] Establish direct PATH-first installation guidance.
+- [x] Define versioning and release workflow.
+- [x] Add docs and reporting skeleton mirroring Underlay style.
 
 ## 3) Non-Goals
 
@@ -42,22 +42,22 @@ Effigy has been extracted from Underlay, but needs first-class project structure
 - [x] Create reports conventions and templates.
 
 ### Phase 1.4 - Packaging and PATH workflow
-- [ ] Document PATH installation options (`cargo install --path`, local bin link).
-- [ ] Add release checklist for publishable binary artifacts.
-- [ ] Add smoke test matrix for PATH + wrapper invocation.
+- [x] Document PATH installation options (`cargo install --path`, local bin link).
+- [x] Add release checklist for publishable binary artifacts.
+- [x] Add smoke test matrix for PATH + wrapper invocation.
 
 ## 5) Acceptance Criteria
 
 - [x] `cargo test` passes in `effigy`.
 - [x] Migrated repos can run `effigy tasks` through existing wrapper scripts.
 - [x] Underlay no longer contains the embedded runner crate.
-- [ ] PATH-based invocation is documented and validated.
+- [x] PATH-based invocation is documented and validated.
 
 ## 6) Risks and Mitigations
 
-- [ ] Risk: cargo-run wrappers hide lock/contention issues.
+- [x] Risk: cargo-run wrappers hide lock/contention issues.
   - Mitigation: document PATH-first execution and provide fallback wrapper guidance.
-- [ ] Risk: migration drift between repos.
+- [x] Risk: migration drift between repos.
   - Mitigation: keep a single report checklist with verification evidence.
 
 ## 7) Deliverables
@@ -65,4 +65,4 @@ Effigy has been extracted from Underlay, but needs first-class project structure
 - [x] Standalone `effigy` runner crate.
 - [x] Migrated consuming repos (initial set).
 - [x] Docs skeleton (`architecture`, `roadmap`, `reports`).
-- [ ] PATH + release runbook.
+- [x] PATH + release runbook.

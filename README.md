@@ -128,5 +128,6 @@ Effigy uses the same style as Underlay:
 
 Start here:
 - `docs/architecture/`
+- `docs/guides/010-path-installation-and-release.md`
 - `docs/roadmap/README.md`
 - `docs/reports/README.md`
