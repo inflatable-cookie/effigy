@@ -109,6 +109,18 @@ impl<W: Write> Renderer for PlainRenderer<W> {
         Ok(())
     }
 
+    fn bullet_list(&mut self, title: &str, items: &[String]) -> UiResult<()> {
+        writeln!(self.writer, "{title}:")?;
+        if items.is_empty() {
+            writeln!(self.writer, "- <none>")?;
+            return Ok(());
+        }
+        for item in items {
+            writeln!(self.writer, "- {item}")?;
+        }
+        Ok(())
+    }
+
     fn success_block(&mut self, block: &MessageBlock) -> UiResult<()> {
         self.write_block("[success]", self.theme.success, block)
     }
@@ -224,5 +236,31 @@ mod tests {
 
         let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
         assert_eq!(rendered, "[~] Scanning workspace\n");
+    }
+
+    #[test]
+    fn renders_bullet_list_and_table_without_color_when_disabled() {
+        let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+        renderer
+            .bullet_list(
+                "evidence",
+                &[
+                    "Detected root markers: package.json".to_owned(),
+                    "effigy link present: no".to_owned(),
+                ],
+            )
+            .expect("bullet list");
+        renderer
+            .table(&TableSpec::new(
+                vec!["catalog".to_owned(), "task".to_owned()],
+                vec![vec!["root".to_owned(), "dev".to_owned()]],
+            ))
+            .expect("table");
+
+        let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
+        assert!(rendered.contains("evidence:\n- Detected root markers: package.json"));
+        assert!(rendered.contains("catalog"));
+        assert!(rendered.contains("root"));
+        assert!(rendered.contains("dev"));
     }
 }

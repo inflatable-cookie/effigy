@@ -36,6 +36,7 @@ pub trait SpinnerHandle {
 pub trait Renderer {
     fn section(&mut self, title: &str) -> UiResult<()>;
     fn notice(&mut self, level: NoticeLevel, body: &str) -> UiResult<()>;
+    fn bullet_list(&mut self, title: &str, items: &[String]) -> UiResult<()>;
 
     fn success_block(&mut self, block: &MessageBlock) -> UiResult<()>;
     fn error_block(&mut self, block: &MessageBlock) -> UiResult<()>;

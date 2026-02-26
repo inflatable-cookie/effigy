@@ -1,6 +1,6 @@
 # 003 - Coloured Output and Widget Layer
 
-Status: Not Started
+Status: In Progress
 Owner: Platform
 Created: 2026-02-26
 Depends on: 001
@@ -13,11 +13,11 @@ Effigy currently emits mostly plain-text output. As commands expand, output shap
 
 - [x] Lock crate stack for normal-mode widgets.
 - [x] Define a stable internal widget contract (`ui::widgets`) that command logic can reuse.
-- [ ] Implement a plain renderer with consistent success/error/notice/section/summary output.
-- [ ] Implement progress and spinner integration for long-running tasks.
-- [ ] Implement table rendering for list/report commands.
-- [ ] Add colour-mode controls (`auto`, `always`, `never`) and environment handling.
-- [ ] Migrate existing built-in commands to the new renderer.
+- [x] Implement a plain renderer with consistent success/error/notice/section/summary output.
+- [x] Implement progress and spinner integration for long-running tasks.
+- [x] Implement table rendering for list/report commands.
+- [x] Add colour-mode controls (`auto`, `always`, `never`) and environment handling.
+- [x] Migrate existing built-in commands to the new renderer.
 - [ ] Document authoring guidance for new command output.
 
 ## 3) Non-Goals
@@ -162,26 +162,26 @@ Phase 003 migration scope:
 ## 8) Execution Plan
 
 ### Phase 3.1 - Foundation
-- [ ] Add `src/ui` modules and core types.
-- [ ] Add renderer trait + `PlainRenderer`.
-- [ ] Add theme tokens and colour-mode plumbing.
-- [ ] Add unit tests for deterministic text rendering (colour disabled snapshots).
+- [x] Add `src/ui` modules and core types.
+- [x] Add renderer trait + `PlainRenderer`.
+- [x] Add theme tokens and colour-mode plumbing.
+- [x] Add unit tests for deterministic text rendering (colour disabled snapshots).
 
 ### Phase 3.2 - Widget expansion
-- [ ] Add table adapter using `tabled`.
-- [ ] Add spinner/progress adapter using `indicatif`.
-- [ ] Add handling for non-TTY and CI fallback behavior.
-- [ ] Add tests for spinner no-op fallback when output is non-interactive.
+- [x] Add table adapter using `tabled`.
+- [x] Add spinner/progress adapter using `indicatif`.
+- [x] Add handling for non-TTY and CI fallback behavior.
+- [x] Add tests for spinner no-op fallback when output is non-interactive.
 
 ### Phase 3.3 - Command adoption
-- [ ] Migrate `tasks` and `repo-pulse` to renderer calls.
+- [x] Migrate `tasks` and `repo-pulse` to renderer calls.
 - [ ] Replace direct `println!` paths in command surfaces.
 - [ ] Add integration tests for representative success/failure flows.
 - [ ] Update README and docs with output conventions.
 
 ## 9) Acceptance Criteria
 
-- [ ] Commands use semantic widgets through `Renderer`, not ad-hoc formatting.
+- [x] Commands use semantic widgets through `Renderer`, not ad-hoc formatting.
 - [ ] Success/error/notice block styling is consistent across built-ins.
 - [ ] Tables and progress feedback are available in normal mode.
 - [ ] Output remains readable and deterministic with colour disabled.
@@ -198,7 +198,7 @@ Phase 003 migration scope:
 
 ## 11) Deliverables
 
-- [ ] `src/ui` module with renderer contract and plain implementation.
-- [ ] Table and spinner integrations.
-- [ ] Migrated built-ins using widget API.
+- [x] `src/ui` module with renderer contract and plain implementation.
+- [x] Table and spinner integrations.
+- [x] Migrated built-ins using widget API.
 - [ ] Documentation for output authoring conventions and mode flags.

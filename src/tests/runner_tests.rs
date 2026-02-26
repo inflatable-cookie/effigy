@@ -1,9 +1,10 @@
 use super::{
-    parse_task_runtime_args, parse_task_selector, run_manifest_task_with_cwd, run_tasks,
+    parse_task_runtime_args, parse_task_selector, run_manifest_task_with_cwd, run_pulse, run_tasks,
     RunnerError, TaskRuntimeArgs,
 };
-use crate::{TaskInvocation, TasksArgs};
+use crate::{PulseArgs, TaskInvocation, TasksArgs};
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -254,6 +255,49 @@ fn run_tasks_reads_legacy_manifest_when_effigy_manifest_missing() {
 }
 
 #[test]
+fn run_pulse_renders_widget_sections() {
+    let root = temp_workspace("pulse-render");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "health:workspace": "echo ok"
+  }
+}"#,
+    )
+    .expect("write package");
+
+    let out = run_pulse(PulseArgs {
+        repo_override: Some(root),
+        verbose_root: false,
+    })
+    .expect("pulse");
+
+    assert!(out.contains("== Pulse Report =="));
+    assert!(out.contains("repo:"));
+    assert!(out.contains("evidence:"));
+    assert!(out.contains("risk:"));
+    assert!(out.contains("next-action:"));
+    assert!(out.contains("summary:"));
+}
+
+#[test]
+fn run_pulse_verbose_renders_root_resolution_section() {
+    let root = temp_workspace("pulse-verbose");
+
+    let out = run_pulse(PulseArgs {
+        repo_override: Some(root),
+        verbose_root: true,
+    })
+    .expect("pulse");
+
+    assert!(out.contains("== Root Resolution =="));
+    assert!(out.contains("resolved-root:"));
+    assert!(out.contains("mode:"));
+    assert!(out.contains("== Pulse Report =="));
+}
+
+#[test]
 fn run_manifest_task_defers_when_unprefixed_task_missing() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("defer-missing");
@@ -348,6 +392,103 @@ fn run_manifest_task_deferral_loop_guard_fails() {
     }
 }
 
+#[test]
+fn run_manifest_task_implicitly_defers_to_legacy_root_when_no_configured_deferral() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("implicit-legacy-defer");
+    fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
+    fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    let composer_stub = bin_dir.join("composer");
+    let args_log = root.join("composer-args.log");
+    fs::write(
+        &composer_stub,
+        "#!/bin/sh\nprintf \"%s\\n\" \"$@\" > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\n",
+    )
+    .expect("write composer stub");
+    let mut perms = fs::metadata(&composer_stub)
+        .expect("metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&composer_stub, perms).expect("chmod");
+
+    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
+    let path = format!("{}:{}", bin_dir.display(), prior_path);
+    let _env = EnvGuard::set_many(&[
+        ("PATH", Some(path)),
+        ("SHELL", Some("/bin/sh".to_owned())),
+        (
+            "EFFIGY_TEST_COMPOSER_ARGS_FILE",
+            Some(args_log.display().to_string()),
+        ),
+    ]);
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "version".to_owned(),
+            args: vec!["--dry-run".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("implicit legacy deferral should succeed");
+
+    assert_eq!(out, "");
+    let args = fs::read_to_string(args_log).expect("read composer args");
+    assert_eq!(args, "global\nexec\neffigy\n--\nversion\n--dry-run\n");
+}
+
+#[test]
+fn run_manifest_task_explicit_deferral_wins_over_implicit_legacy_fallback() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("explicit-over-implicit");
+    fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
+    fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
+    write_manifest(
+        &root.join("effigy.tasks.toml"),
+        "[defer]\nrun = \"printf explicit\"\n",
+    );
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    let composer_stub = bin_dir.join("composer");
+    let marker = root.join("composer-called.log");
+    fs::write(
+        &composer_stub,
+        "#!/bin/sh\nprintf called > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit 99\n",
+    )
+    .expect("write composer stub");
+    let mut perms = fs::metadata(&composer_stub)
+        .expect("metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&composer_stub, perms).expect("chmod");
+
+    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
+    let path = format!("{}:{}", bin_dir.display(), prior_path);
+    let _env = EnvGuard::set_many(&[
+        ("PATH", Some(path)),
+        ("SHELL", Some("/bin/sh".to_owned())),
+        (
+            "EFFIGY_TEST_COMPOSER_ARGS_FILE",
+            Some(marker.display().to_string()),
+        ),
+    ]);
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "missing".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("explicit deferral should succeed");
+
+    assert_eq!(out, "");
+    assert!(!marker.exists(), "composer fallback should not be invoked");
+}
+
 fn write_manifest(path: &PathBuf, body: &str) {
     fs::write(path, body).expect("write manifest");
 }
@@ -382,4 +523,33 @@ where
 fn test_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+struct EnvGuard {
+    original: Vec<(String, Option<String>)>,
+}
+
+impl EnvGuard {
+    fn set_many(entries: &[(&str, Option<String>)]) -> Self {
+        let mut original = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            original.push(((*key).to_owned(), std::env::var(key).ok()));
+            match value {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+        Self { original }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        for (key, value) in &self.original {
+            match value {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
 }

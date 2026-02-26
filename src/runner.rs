@@ -222,6 +222,13 @@ struct TaskSelection<'a> {
     evidence: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+struct DeferredCommand {
+    template: String,
+    working_dir: PathBuf,
+    source: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TaskRuntimeArgs {
     repo_override: Option<PathBuf>,
@@ -232,6 +239,7 @@ struct TaskRuntimeArgs {
 const TASK_MANIFEST_FILE: &str = "effigy.tasks.toml";
 const LEGACY_TASK_MANIFEST_FILE: &str = "underlay.tasks.toml";
 const DEFER_DEPTH_ENV: &str = "EFFIGY_DEFER_DEPTH";
+const LEGACY_ROOT_DEFER_TEMPLATE: &str = "composer global exec effigy -- {request} {args}";
 
 pub fn run_command(cmd: Command) -> Result<String, RunnerError> {
     match cmd {
@@ -255,38 +263,17 @@ pub fn run_pulse(args: PulseArgs) -> Result<String, RunnerError> {
         target_repo: resolved.resolved_root.clone(),
         cwd,
         resolution_mode: resolved.resolution_mode,
-        resolution_evidence: resolved.evidence,
-        resolution_warnings: resolved.warnings,
+        resolution_evidence: resolved.evidence.clone(),
+        resolution_warnings: resolved.warnings.clone(),
     };
 
     let collected = task.collect(&ctx)?;
     let evaluated = task.evaluate(collected)?;
-    let report = task.render(evaluated).map_err(RunnerError::from)?;
-
-    if verbose_root {
-        let mut trace = String::new();
-        trace.push_str("# Root Resolution\n\n");
-        trace.push_str(&format!(
-            "- resolved-root: {}\n",
-            resolved.resolved_root.display()
-        ));
-        trace.push_str(&format!("- mode: {:?}\n", resolved.resolution_mode));
-        if !ctx.resolution_evidence.is_empty() {
-            trace.push_str("- evidence:\n");
-            for item in &ctx.resolution_evidence {
-                trace.push_str(&format!("  - {}\n", item));
-            }
-        }
-        if !ctx.resolution_warnings.is_empty() {
-            trace.push_str("- warnings:\n");
-            for item in &ctx.resolution_warnings {
-                trace.push_str(&format!("  - {}\n", item));
-            }
-        }
-        trace.push('\n');
-        trace.push_str(&report);
-        return Ok(trace);
-    }
+    let report = render_pulse_report(
+        evaluated,
+        verbose_root.then_some(&resolved),
+        verbose_root.then_some(&ctx),
+    )?;
 
     Ok(report)
 }
@@ -417,12 +404,21 @@ fn run_manifest_task_with_cwd(task: &TaskInvocation, cwd: PathBuf) -> Result<Str
     let runtime_args = parse_task_runtime_args(&task.args)?;
     let resolved = resolve_target_root(cwd, runtime_args.repo_override.clone())?;
     let selector = parse_task_selector(&task.name)?;
-    let catalogs = discover_catalogs(&resolved.resolved_root)?;
+    let catalogs = match discover_catalogs(&resolved.resolved_root) {
+        Ok(catalogs) => catalogs,
+        Err(RunnerError::TaskCatalogsMissing { .. }) => Vec::new(),
+        Err(error) => return Err(error),
+    };
     let selection = match select_catalog_and_task(&selector, &catalogs, &invocation_cwd) {
         Ok(selection) => selection,
         Err(error) if should_attempt_deferral(&error) => {
-            if let Some(deferral) = select_deferral(&selector, &catalogs, &invocation_cwd) {
-                return run_deferred_request(task, &runtime_args, deferral, &error);
+            if let Some(deferral) = select_deferral(
+                &selector,
+                &catalogs,
+                &invocation_cwd,
+                &resolved.resolved_root,
+            ) {
+                return run_deferred_request(task, &runtime_args, &deferral, &error);
             }
             return Err(error);
         }
@@ -601,11 +597,20 @@ fn select_deferral<'a>(
     selector: &TaskSelector,
     catalogs: &'a [LoadedCatalog],
     cwd: &Path,
-) -> Option<&'a LoadedCatalog> {
+    workspace_root: &Path,
+) -> Option<DeferredCommand> {
     if let Some(prefix) = &selector.prefix {
         if let Some(explicit) = catalogs.iter().find(|catalog| &catalog.alias == prefix) {
-            if explicit.defer_run.is_some() {
-                return Some(explicit);
+            if let Some(template) = explicit.defer_run.as_ref() {
+                return Some(DeferredCommand {
+                    template: template.clone(),
+                    working_dir: explicit.catalog_root.clone(),
+                    source: format!(
+                        "catalog {} ({})",
+                        explicit.alias,
+                        explicit.manifest_path.display()
+                    ),
+                });
             }
         }
     }
@@ -621,7 +626,17 @@ fn select_deferral<'a>(
             .then_with(|| a.manifest_path.cmp(&b.manifest_path))
     });
     if let Some(catalog) = in_scope.first() {
-        return Some(catalog);
+        if let Some(template) = catalog.defer_run.as_ref() {
+            return Some(DeferredCommand {
+                template: template.clone(),
+                working_dir: catalog.catalog_root.clone(),
+                source: format!(
+                    "catalog {} ({})",
+                    catalog.alias,
+                    catalog.manifest_path.display()
+                ),
+            });
+        }
     }
 
     let mut fallback = catalogs
@@ -634,13 +649,27 @@ fn select_deferral<'a>(
             .then_with(|| a.alias.cmp(&b.alias))
             .then_with(|| a.manifest_path.cmp(&b.manifest_path))
     });
-    fallback.first().copied()
+    if let Some(catalog) = fallback.first() {
+        if let Some(template) = catalog.defer_run.as_ref() {
+            return Some(DeferredCommand {
+                template: template.clone(),
+                working_dir: catalog.catalog_root.clone(),
+                source: format!(
+                    "catalog {} ({})",
+                    catalog.alias,
+                    catalog.manifest_path.display()
+                ),
+            });
+        }
+    }
+
+    infer_legacy_root_deferral(workspace_root)
 }
 
 fn run_deferred_request(
     task: &TaskInvocation,
     runtime_args: &TaskRuntimeArgs,
-    catalog: &LoadedCatalog,
+    deferral: &DeferredCommand,
     cause: &RunnerError,
 ) -> Result<String, RunnerError> {
     let current_depth = std::env::var(DEFER_DEPTH_ENV)
@@ -653,15 +682,11 @@ fn run_deferred_request(
         });
     }
 
-    let defer_template = catalog
-        .defer_run
-        .as_ref()
-        .expect("deferral selected only when defer_run exists");
-
     let args_rendered = runtime_args.passthrough.join(" ");
     let request_rendered = task.name.clone();
-    let repo_rendered = shell_quote(&catalog.catalog_root.display().to_string());
-    let command = defer_template
+    let repo_rendered = shell_quote(&deferral.working_dir.display().to_string());
+    let command = deferral
+        .template
         .replace("{request}", &request_rendered)
         .replace("{args}", &args_rendered)
         .replace("{repo}", &repo_rendered);
@@ -678,7 +703,7 @@ fn run_deferred_request(
     let status = ProcessCommand::new(&shell)
         .arg(shell_arg)
         .arg(&command)
-        .current_dir(&catalog.catalog_root)
+        .current_dir(&deferral.working_dir)
         .env(DEFER_DEPTH_ENV, (current_depth + 1).to_string())
         .status()
         .map_err(|error| RunnerError::TaskCommandLaunch {
@@ -688,7 +713,7 @@ fn run_deferred_request(
 
     if status.success() {
         if runtime_args.verbose_root {
-            return Ok(render_deferral_trace(task, catalog, &command, cause));
+            return Ok(render_deferral_trace(task, deferral, &command, cause));
         }
         return Ok(String::new());
     }
@@ -701,23 +726,91 @@ fn run_deferred_request(
     })
 }
 
+fn infer_legacy_root_deferral(workspace_root: &Path) -> Option<DeferredCommand> {
+    let has_effigy_json = workspace_root.join("effigy.json").is_file();
+    let has_composer_json = workspace_root.join("composer.json").is_file();
+    if has_effigy_json && has_composer_json {
+        return Some(DeferredCommand {
+            template: LEGACY_ROOT_DEFER_TEMPLATE.to_owned(),
+            working_dir: workspace_root.to_path_buf(),
+            source: "implicit legacy root fallback (composer.json + effigy.json)".to_owned(),
+        });
+    }
+    None
+}
+
 fn render_deferral_trace(
     task: &TaskInvocation,
-    catalog: &LoadedCatalog,
+    deferral: &DeferredCommand,
     command: &str,
     cause: &RunnerError,
 ) -> String {
     let mut trace = String::new();
     trace.push_str("# Task Deferral\n\n");
     trace.push_str(&format!("- request: {}\n", task.name));
+    trace.push_str(&format!("- defer-source: {}\n", deferral.source));
     trace.push_str(&format!(
-        "- defer-catalog: {} ({})\n",
-        catalog.alias,
-        catalog.manifest_path.display()
+        "- working-dir: {}\n",
+        deferral.working_dir.display()
     ));
     trace.push_str(&format!("- command: `{}`\n", command));
     trace.push_str(&format!("- reason: {}\n", cause));
     trace
+}
+
+fn render_pulse_report(
+    report: crate::tasks::PulseReport,
+    resolved: Option<&crate::resolver::ResolvedTarget>,
+    ctx: Option<&TaskContext>,
+) -> Result<String, RunnerError> {
+    let crate::tasks::PulseReport {
+        repo,
+        evidence,
+        risk,
+        next_action,
+        owner,
+        eta,
+    } = report;
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    if let (Some(resolved), Some(ctx)) = (resolved, ctx) {
+        renderer.section("Root Resolution")?;
+        renderer.key_values(&[
+            KeyValue::new(
+                "resolved-root",
+                resolved.resolved_root.display().to_string(),
+            ),
+            KeyValue::new("mode", format!("{:?}", resolved.resolution_mode)),
+        ])?;
+        renderer.bullet_list("evidence", &ctx.resolution_evidence)?;
+        renderer.bullet_list("warnings", &ctx.resolution_warnings)?;
+    }
+
+    renderer.section("Pulse Report")?;
+    renderer.key_values(&[
+        KeyValue::new("repo", repo),
+        KeyValue::new("owner", owner),
+        KeyValue::new("eta", eta),
+    ])?;
+    renderer.bullet_list("evidence", &evidence)?;
+    renderer.bullet_list("risk", &risk)?;
+    renderer.bullet_list("next-action", &next_action)?;
+    if risk.is_empty() {
+        renderer.notice(NoticeLevel::Success, "No high-priority risks detected.")?;
+    } else {
+        renderer.notice(
+            NoticeLevel::Warning,
+            &format!("Detected {} risk item(s).", risk.len()),
+        )?;
+    }
+    renderer.summary(SummaryCounts {
+        ok: evidence.len(),
+        warn: risk.len(),
+        err: 0,
+    })?;
+
+    let out = renderer.into_inner();
+    String::from_utf8(out)
+        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
 }
 
 fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, RunnerError> {
