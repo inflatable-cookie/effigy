@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 #[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as ProcessCommand, Stdio};
@@ -20,6 +22,7 @@ pub struct ProcessSpec {
     pub run: String,
     pub cwd: PathBuf,
     pub start_after_ms: u64,
+    pub pty: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,22 +104,11 @@ impl ProcessSupervisor {
             if spec.start_after_ms > 0 {
                 thread::sleep(Duration::from_millis(spec.start_after_ms));
             }
-            let mut process = ProcessCommand::new("sh");
-            process
-                .arg("-lc")
-                .arg(&spec.run)
-                .current_dir(&spec.cwd)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-            #[cfg(unix)]
-            unsafe {
-                process.pre_exec(|| {
-                    setpgid(Pid::from_raw(0), Pid::from_raw(0))
-                        .map_err(|error| std::io::Error::new(ErrorKind::Other, error.to_string()))
-                });
-            }
-            with_local_node_bin_path(&mut process, &spec.cwd);
+            let mut process = if spec.pty {
+                spawn_with_pty_wrapper(&spec)
+            } else {
+                spawn_plain_shell(&spec)
+            };
             let mut child = process
                 .spawn()
                 .map_err(|error| ProcessManagerError::Spawn {
@@ -178,7 +170,7 @@ impl ProcessSupervisor {
                     let status = child.lock().expect("child lock").try_wait();
                     match status {
                         Ok(Some(status)) => {
-                            let payload = format!("exit={}", status.code().unwrap_or(-1));
+                            let payload = format_exit_diagnostic(status);
                             let _ = tx.send(ProcessEvent {
                                 process: process.clone(),
                                 kind: ProcessEventKind::Exit,
@@ -309,7 +301,7 @@ impl ProcessSupervisor {
             .iter()
             .map(|(name, child)| {
                 let diagnostic = match child.lock().expect("child lock").try_wait() {
-                    Ok(Some(status)) => format!("exit={}", status.code().unwrap_or(-1)),
+                    Ok(Some(status)) => format_exit_diagnostic(status),
                     Ok(None) => "running".to_owned(),
                     Err(err) => format!("wait-error={err}"),
                 };
@@ -319,6 +311,72 @@ impl ProcessSupervisor {
         diagnostics.sort_by(|a, b| a.0.cmp(&b.0));
         diagnostics
     }
+}
+
+fn format_exit_diagnostic(status: std::process::ExitStatus) -> String {
+    #[cfg(unix)]
+    {
+        if let Some(code) = status.code() {
+            return format!("exit={code}");
+        }
+        if let Some(signal) = status.signal() {
+            return format!("signal={signal}");
+        }
+        "exit=unknown".to_owned()
+    }
+    #[cfg(not(unix))]
+    {
+        format!("exit={}", status.code().unwrap_or(-1))
+    }
+}
+
+fn spawn_plain_shell(spec: &ProcessSpec) -> ProcessCommand {
+    let mut process = ProcessCommand::new("sh");
+    process
+        .arg("-lc")
+        .arg(&spec.run)
+        .current_dir(&spec.cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    unsafe {
+        process.pre_exec(|| {
+            setpgid(Pid::from_raw(0), Pid::from_raw(0))
+                .map_err(|error| std::io::Error::new(ErrorKind::Other, error.to_string()))
+        });
+    }
+    with_local_node_bin_path(&mut process, &spec.cwd);
+    process
+}
+
+fn spawn_with_pty_wrapper(spec: &ProcessSpec) -> ProcessCommand {
+    #[cfg(target_os = "macos")]
+    {
+        let mut process = ProcessCommand::new("script");
+        process
+            .arg("-q")
+            .arg("/dev/null")
+            .arg("sh")
+            .arg("-lc")
+            .arg(&spec.run)
+            .current_dir(&spec.cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(unix)]
+        unsafe {
+            process.pre_exec(|| {
+                setpgid(Pid::from_raw(0), Pid::from_raw(0))
+                    .map_err(|error| std::io::Error::new(ErrorKind::Other, error.to_string()))
+            });
+        }
+        with_local_node_bin_path(&mut process, &spec.cwd);
+        return process;
+    }
+
+    #[allow(unreachable_code)]
+    spawn_plain_shell(spec)
 }
 
 fn with_local_node_bin_path(process: &mut ProcessCommand, cwd: &Path) {

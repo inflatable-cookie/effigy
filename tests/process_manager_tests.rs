@@ -14,12 +14,14 @@ fn supervisor_captures_output_and_exit_events() {
                 run: "printf alpha-out".to_owned(),
                 cwd: root.clone(),
                 start_after_ms: 0,
+                pty: false,
             },
             ProcessSpec {
                 name: "beta".to_owned(),
                 run: "printf beta-out 1>&2".to_owned(),
                 cwd: root.clone(),
                 start_after_ms: 0,
+                pty: false,
             },
         ],
     )
@@ -65,6 +67,7 @@ fn supervisor_forwards_input_to_target_process() {
             run: "IFS= read -r line; printf \"seen:%s\\n\" \"$line\"".to_owned(),
             cwd: root.clone(),
             start_after_ms: 0,
+            pty: false,
         }],
     )
     .expect("spawn");
@@ -95,6 +98,7 @@ fn supervisor_forwards_input_without_wait_lock_contention() {
             run: "while IFS= read -r line; do printf \"seen:%s\\n\" \"$line\"; done".to_owned(),
             cwd: root.clone(),
             start_after_ms: 0,
+            pty: false,
         }],
     )
     .expect("spawn");
@@ -139,6 +143,7 @@ fn supervisor_graceful_shutdown_terminates_long_running_process() {
             run: "sleep 30".to_owned(),
             cwd: root.clone(),
             start_after_ms: 0,
+            pty: false,
         }],
     )
     .expect("spawn");
@@ -172,6 +177,7 @@ fn supervisor_respects_process_start_delay() {
             run: "printf delayed-ready".to_owned(),
             cwd: root.clone(),
             start_after_ms: 150,
+            pty: false,
         }],
     )
     .expect("spawn");

@@ -1310,18 +1310,21 @@ fn next_available_process_name_avoids_shell_name_collisions() {
             run: "printf api".to_owned(),
             cwd: PathBuf::from("."),
             start_after_ms: 0,
+            pty: false,
         },
         ProcessSpec {
             name: "shell".to_owned(),
             run: "sh".to_owned(),
             cwd: PathBuf::from("."),
             start_after_ms: 0,
+            pty: false,
         },
         ProcessSpec {
             name: "shell-2".to_owned(),
             run: "sh".to_owned(),
             cwd: PathBuf::from("."),
             start_after_ms: 0,
+            pty: false,
         },
     ];
 

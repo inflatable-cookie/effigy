@@ -1848,6 +1848,7 @@ fn run_managed_task_tui(
             run: process.run,
             cwd: process.cwd,
             start_after_ms: process.start_after_ms,
+            pty: true,
         })
         .collect::<Vec<ProcessSpec>>();
     if shell_enabled {
@@ -1858,6 +1859,7 @@ fn run_managed_task_tui(
             run: shell_run,
             cwd: repo_root.to_path_buf(),
             start_after_ms: 0,
+            pty: true,
         });
         tab_order.push(shell_name);
     }
@@ -1903,6 +1905,7 @@ fn run_managed_task_runtime(
             run: process.run.clone(),
             cwd: process.cwd.clone(),
             start_after_ms: process.start_after_ms,
+            pty: true,
         })
         .collect::<Vec<ProcessSpec>>();
     let expected = specs.len();

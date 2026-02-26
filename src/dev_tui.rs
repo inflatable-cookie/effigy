@@ -36,6 +36,12 @@ enum LogEntryKind {
     Exit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessExitState {
+    Success,
+    Failure,
+}
+
 #[derive(Debug, Clone)]
 struct LogEntry {
     kind: LogEntryKind,
@@ -96,7 +102,6 @@ pub fn run_dev_process_tui(
     } else {
         tab_order
     };
-    let expected = process_names.len();
     let supervisor = ProcessSupervisor::spawn(repo_root, processes)?;
 
     enable_raw_mode()?;
@@ -121,10 +126,10 @@ pub fn run_dev_process_tui(
     let mut active_index: usize = 0;
     let mut input_line = String::new();
     let mut input_mode = InputMode::Command;
-    let mut exit_count = 0usize;
     let mut shutdown_summary: Option<String> = None;
     let mut shutdown_forced: Option<usize> = None;
     let mut observed_non_zero: HashMap<String, String> = HashMap::new();
+    let mut exit_states: HashMap<String, ProcessExitState> = HashMap::new();
 
     let result: Result<(), DevTuiError> = loop {
         while let Some(event_item) = supervisor.next_event_timeout(Duration::from_millis(1)) {
@@ -139,12 +144,17 @@ pub fn run_dev_process_tui(
                         line: event_item.payload,
                     },
                     ProcessEventKind::Exit => {
-                        exit_count += 1;
-                        if event_item.payload.trim() == "exit=0" {
+                        if event_item.payload.trim() == "exit=0"
+                            || is_expected_shutdown_diagnostic(&event_item.payload)
+                        {
                             observed_non_zero.remove(&event_item.process);
+                            exit_states
+                                .insert(event_item.process.clone(), ProcessExitState::Success);
                         } else {
                             observed_non_zero
                                 .insert(event_item.process.clone(), event_item.payload.clone());
+                            exit_states
+                                .insert(event_item.process.clone(), ProcessExitState::Failure);
                         }
                         LogEntry {
                             kind: LogEntryKind::Exit,
@@ -172,11 +182,7 @@ pub fn run_dev_process_tui(
         scroll_offsets.insert(active.clone(), scroll_offset);
         let is_follow = *follow_mode.get(active).unwrap_or(&true);
         let status = format!(
-            "task manager  tab {}/{}  exits {}/{}  follow:{}  mode:{}",
-            active_index + 1,
-            process_names.len(),
-            exit_count,
-            expected,
+            "follow:{}  mode:{}",
             if is_follow { "on" } else { "off" },
             if input_mode == InputMode::Insert {
                 "insert"
@@ -196,6 +202,7 @@ pub fn run_dev_process_tui(
                 &input_line,
                 input_mode,
                 &status,
+                &exit_states,
             )
         })?;
 
@@ -208,6 +215,14 @@ pub fn run_dev_process_tui(
                     && matches!(key.code, KeyCode::Char('c'))
                 {
                     break Ok(());
+                }
+                if matches!(key.code, KeyCode::Tab) {
+                    input_mode = if input_mode == InputMode::Insert {
+                        InputMode::Command
+                    } else {
+                        InputMode::Insert
+                    };
+                    continue;
                 }
                 if input_mode == InputMode::Insert {
                     match key.code {
@@ -237,10 +252,17 @@ pub fn run_dev_process_tui(
                     KeyCode::Char('i') => {
                         input_mode = InputMode::Insert;
                     }
-                    KeyCode::Tab => {
+                    KeyCode::BackTab => {
+                        active_index = if active_index == 0 {
+                            process_names.len() - 1
+                        } else {
+                            active_index - 1
+                        };
+                    }
+                    KeyCode::Right => {
                         active_index = (active_index + 1) % process_names.len();
                     }
-                    KeyCode::BackTab => {
+                    KeyCode::Left => {
                         active_index = if active_index == 0 {
                             process_names.len() - 1
                         } else {
@@ -327,7 +349,9 @@ pub fn run_dev_process_tui(
     for (name, diagnostic) in supervisor
         .exit_diagnostics()
         .into_iter()
-        .filter(|(_, diagnostic)| diagnostic != "exit=0")
+        .filter(|(_, diagnostic)| {
+            diagnostic != "exit=0" && !is_expected_shutdown_diagnostic(diagnostic)
+        })
     {
         non_zero_map.insert(name, diagnostic);
     }
@@ -381,29 +405,34 @@ fn render_ui(
     input_line: &str,
     input_mode: InputMode,
     status: &str,
+    exit_states: &HashMap<String, ProcessExitState>,
 ) {
+    let input_height = if input_mode == InputMode::Insert { 3 } else { 0 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
             Constraint::Min(1),
-            Constraint::Length(3),
+            Constraint::Length(input_height),
             Constraint::Length(1),
         ])
         .split(frame.area());
 
     let titles = process_names
         .iter()
-        .map(|name| Line::from(name.clone()))
+        .map(|name| {
+            let style = match exit_states.get(name) {
+                Some(ProcessExitState::Success) => Style::default().fg(Color::Green),
+                Some(ProcessExitState::Failure) => Style::default().fg(Color::Red),
+                None => Style::default(),
+            };
+            Line::from(Span::styled(name.clone(), style))
+        })
         .collect::<Vec<Line>>();
     let tabs = Tabs::new(titles)
         .select(active_index)
         .block(Block::default().borders(Borders::ALL).title("Processes"))
-        .highlight_style(
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(Style::default().add_modifier(Modifier::BOLD));
     frame.render_widget(tabs, chunks[0]);
 
     let output_height = chunks[1].height.saturating_sub(2) as usize;
@@ -444,15 +473,19 @@ fn render_ui(
         &mut scrollbar_state,
     );
 
-    let input = Paragraph::new(input_line.to_owned()).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Input (i insert, Esc command, Enter send)"),
-    );
+    let input = if input_mode == InputMode::Insert {
+        Paragraph::new(input_line.to_owned()).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Input (Esc command, Enter send)"),
+        )
+    } else {
+        Paragraph::new("")
+    };
     frame.render_widget(input, chunks[2]);
 
     let footer = Paragraph::new(format!(
-        "{status}  |  i insert  |  tab/backtab switch  |  up/down/pgup/pgdn/home/end scroll  |  Ctrl+C quit"
+        "{status}  |  tab toggle mode  |  left/right switch  |  up/down/pgup/pgdn/home/end scroll  |  Ctrl+C quit"
     ))
     .style(if input_mode == InputMode::Insert {
         Style::default().fg(Color::Yellow)
@@ -549,6 +582,10 @@ fn format_shutdown_warning(forced: usize) -> String {
     format!("warn: forced termination used for {forced} process(es).")
 }
 
+fn is_expected_shutdown_diagnostic(diagnostic: &str) -> bool {
+    matches!(diagnostic, "signal=15" | "signal=9")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -579,5 +616,13 @@ mod tests {
             format_shutdown_warning(2),
             "warn: forced termination used for 2 process(es)."
         );
+    }
+
+    #[test]
+    fn expected_shutdown_diagnostics_are_ignored() {
+        assert!(is_expected_shutdown_diagnostic("signal=15"));
+        assert!(is_expected_shutdown_diagnostic("signal=9"));
+        assert!(!is_expected_shutdown_diagnostic("exit=1"));
+        assert!(!is_expected_shutdown_diagnostic("signal=11"));
     }
 }
