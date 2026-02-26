@@ -865,13 +865,10 @@ fn render_pulse_report(
         KeyValue::new("repo", repo),
         KeyValue::new("owner", owner),
         KeyValue::new("eta", eta),
+        KeyValue::new("signals", evidence.len().to_string()),
+        KeyValue::new("risks", risk.len().to_string()),
+        KeyValue::new("actions", next_action.len().to_string()),
     ])?;
-    renderer.text("")?;
-    renderer.bullet_list("evidence", &evidence)?;
-    renderer.text("")?;
-    renderer.bullet_list("risk", &risk)?;
-    renderer.text("")?;
-    renderer.bullet_list("next-action", &next_action)?;
     renderer.text("")?;
     if risk.is_empty() {
         renderer.notice(NoticeLevel::Success, "No high-priority risks detected.")?;
@@ -882,6 +879,19 @@ fn render_pulse_report(
         )?;
     }
     renderer.text("")?;
+
+    renderer.section("Signals")?;
+    renderer.bullet_list("evidence", &evidence)?;
+    renderer.text("")?;
+
+    renderer.section("Risks")?;
+    renderer.bullet_list("risk-items", &risk)?;
+    renderer.text("")?;
+
+    renderer.section("Actions")?;
+    renderer.bullet_list("next-actions", &next_action)?;
+    renderer.text("")?;
+
     renderer.summary(SummaryCounts {
         ok: evidence.len(),
         warn: risk.len(),

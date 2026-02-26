@@ -293,9 +293,12 @@ fn run_pulse_renders_widget_sections() {
 
     assert!(out.contains("Pulse Report"));
     assert!(out.contains("repo:"));
-    assert!(out.contains("evidence:"));
-    assert!(out.contains("risk:"));
-    assert!(out.contains("next-action:"));
+    assert!(out.contains("signals:"));
+    assert!(out.contains("Signals"));
+    assert!(out.contains("Risks"));
+    assert!(out.contains("Actions"));
+    assert!(out.contains("risk-items:"));
+    assert!(out.contains("next-actions:"));
     assert!(out.contains("summary  ok:"));
 }
 
