@@ -3,7 +3,7 @@
 Effigy is a unified task runner for multi-repo and nested-workspace development.
 
 It provides:
-- built-in operational tasks (starting with `pulse`),
+- built-in operational tasks (starting with `repo-pulse`),
 - project-defined tasks in TOML catalogs,
 - deterministic task resolution across nested catalogs,
 - explicit catalog targeting (`catalog:task`) and unprefixed intelligent resolution (`task`).
@@ -39,7 +39,7 @@ Then use:
 
 ```bash
 bun effigy tasks
-bun effigy pulse
+bun effigy repo-pulse
 bun effigy farmyard:reset-db
 ```
 
@@ -52,12 +52,13 @@ Planned steady-state:
 ```bash
 effigy <task> [task args]
 effigy <catalog>:<task> [task args]
-effigy pulse [--repo <PATH>] [--verbose-root]
+effigy repo-pulse [--repo <PATH>] [--verbose-root]
 effigy tasks [--repo <PATH>] [--task <TASK_NAME>]
 ```
 
 ### Built-in tasks
-- `pulse`: repository/workspace health and structure signal report.
+- `repo-pulse`: repository/workspace health and structure signal report.
+- `pulse`: compatibility alias for `repo-pulse`.
 - `tasks`: enumerate discovered catalogs and task commands.
 
 ## Task Catalogs

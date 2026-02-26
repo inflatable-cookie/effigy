@@ -37,7 +37,7 @@ impl Task for PulseTask {
     type Evaluated = PulseReport;
 
     fn id(&self) -> &'static str {
-        "pulse"
+        "repo-pulse"
     }
 
     fn collect(&self, ctx: &TaskContext) -> Result<Self::Collected, TaskError> {
@@ -163,7 +163,7 @@ impl Task for PulseTask {
                         .to_owned(),
                 );
                 next_action.push(format!(
-                    "Add `{}` with scripts `list:repos` and `health:workspace`, then run `effigy pulse --repo {}`.",
+                    "Add `{}` with scripts `list:repos` and `health:workspace`, then run `effigy repo-pulse --repo {}`.",
                     collected.repo_path.join("package.json").display(),
                     collected.repo
                 ));

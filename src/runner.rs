@@ -209,7 +209,7 @@ const LEGACY_TASK_MANIFEST_FILE: &str = "underlay.tasks.toml";
 pub fn run_command(cmd: Command) -> Result<String, RunnerError> {
     match cmd {
         Command::Help => Ok(String::new()),
-        Command::Pulse(args) => run_pulse(args),
+        Command::RepoPulse(args) => run_pulse(args),
         Command::Tasks(args) => run_tasks(args),
         Command::Task(task) => run_manifest_task(&task),
     }

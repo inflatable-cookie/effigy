@@ -28,7 +28,7 @@ Effigy has been extracted from Underlay, but needs first-class project structure
 
 ### Phase 1.1 - Extraction and continuity
 - [x] Port runner code from Underlay.
-- [x] Preserve task semantics and built-in `pulse` behavior.
+- [x] Preserve task semantics and built-in `repo-pulse` behavior.
 - [x] Ensure tests pass in standalone crate.
 
 ### Phase 1.2 - Consumer migration

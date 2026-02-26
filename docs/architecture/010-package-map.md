@@ -14,7 +14,7 @@
 | `src/resolver.rs` | Root resolution and workspace promotion |
 | `src/runner.rs` | Catalog discovery, task selection, command execution |
 | `src/tasks/mod.rs` | Task trait contracts and shared task types |
-| `src/tasks/pulse.rs` | Built-in `pulse` task implementation |
+| `src/tasks/pulse.rs` | Built-in `repo-pulse` task implementation |
 | `src/bin/effigy.rs` | Binary entrypoint |
 
 ## Runtime artifacts

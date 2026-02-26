@@ -8,16 +8,16 @@ fn parse_defaults_to_help_without_command() {
 }
 
 #[test]
-fn parse_pulse_with_repo_override() {
+fn parse_repo_pulse_with_repo_override() {
     let cmd = parse_command(vec![
-        "pulse".to_owned(),
+        "repo-pulse".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
     ])
     .expect("parse should succeed");
     assert_eq!(
         cmd,
-        Command::Pulse(PulseArgs {
+        Command::RepoPulse(PulseArgs {
             repo_override: Some(PathBuf::from("/tmp/repo")),
             verbose_root: false,
         })
@@ -25,12 +25,25 @@ fn parse_pulse_with_repo_override() {
 }
 
 #[test]
-fn parse_pulse_with_verbose_root() {
+fn parse_repo_pulse_with_verbose_root() {
+    let cmd = parse_command(vec!["repo-pulse".to_owned(), "--verbose-root".to_owned()])
+        .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::RepoPulse(PulseArgs {
+            repo_override: None,
+            verbose_root: true,
+        })
+    );
+}
+
+#[test]
+fn parse_pulse_alias_with_verbose_root() {
     let cmd = parse_command(vec!["pulse".to_owned(), "--verbose-root".to_owned()])
         .expect("parse should succeed");
     assert_eq!(
         cmd,
-        Command::Pulse(PulseArgs {
+        Command::RepoPulse(PulseArgs {
             repo_override: None,
             verbose_root: true,
         })
