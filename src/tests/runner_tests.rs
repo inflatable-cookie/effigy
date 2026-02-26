@@ -1,8 +1,9 @@
 use super::{
-    parse_task_runtime_args, parse_task_selector, run_manifest_task_with_cwd, run_pulse, run_tasks,
-    RunnerError, TaskRuntimeArgs,
+    next_available_process_name, parse_task_runtime_args, parse_task_selector,
+    run_manifest_task_with_cwd, run_pulse, run_tasks, RunnerError, TaskRuntimeArgs,
 };
 use crate::{PulseArgs, TaskInvocation, TasksArgs};
+use crate::process_manager::ProcessSpec;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -31,7 +32,7 @@ fn parse_task_runtime_args_extracts_repo_verbose_and_passthrough() {
 
 #[test]
 fn parse_task_selector_supports_prefixed_task() {
-    let selector = parse_task_selector("farmyard:reset-db").expect("selector");
+    let selector = parse_task_selector("farmyard/reset-db").expect("selector");
     assert_eq!(selector.prefix, Some("farmyard".to_owned()));
     assert_eq!(selector.task_name, "reset-db");
 }
@@ -53,7 +54,7 @@ fn run_manifest_task_prefixed_uses_named_catalog() {
 
     let out = run_manifest_task_with_cwd(
         &TaskInvocation {
-            name: "farmyard:ping".to_owned(),
+            name: "farmyard/ping".to_owned(),
             args: Vec::new(),
         },
         root.clone(),
@@ -136,7 +137,7 @@ fn run_manifest_task_unknown_prefix_returns_catalog_error() {
 
     let err = run_manifest_task_with_cwd(
         &TaskInvocation {
-            name: "farmyard:reset-db".to_owned(),
+            name: "farmyard/reset-db".to_owned(),
             args: Vec::new(),
         },
         root,
@@ -168,7 +169,7 @@ fn run_manifest_task_verbose_root_includes_resolution_trace() {
 
     let out = run_manifest_task_with_cwd(
         &TaskInvocation {
-            name: "farmyard:ping".to_owned(),
+            name: "farmyard/ping".to_owned(),
             args: vec!["--verbose-root".to_owned()],
         },
         root,
@@ -372,6 +373,27 @@ fn run_manifest_task_defers_and_supports_request_and_args_tokens() {
 }
 
 #[test]
+fn run_manifest_task_defers_for_path_like_request_when_prefix_not_found() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("defer-path-like-request");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[defer]\nrun = \"test {request} = 'services/api/dev' && test {args} = '--watch'\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "services/api/dev".to_owned(),
+            args: vec!["--watch".to_owned()],
+        },
+        root,
+    )
+    .expect("path-like deferred request should succeed");
+
+    assert_eq!(out, "");
+}
+
+#[test]
 fn run_manifest_task_defers_to_prefixed_catalog_handler() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("defer-prefixed");
@@ -388,7 +410,7 @@ fn run_manifest_task_defers_to_prefixed_catalog_handler() {
 
     let out = run_manifest_task_with_cwd(
         &TaskInvocation {
-            name: "farmyard:missing".to_owned(),
+            name: "farmyard/missing".to_owned(),
             args: Vec::new(),
         },
         root,
@@ -425,10 +447,10 @@ fn run_manifest_task_deferral_loop_guard_fails() {
 }
 
 #[test]
-fn run_manifest_task_implicitly_defers_to_legacy_root_when_no_configured_deferral() {
+fn run_manifest_task_implicitly_defers_to_root_when_no_configured_deferral() {
     let _guard = test_lock().lock().expect("lock");
-    let root = temp_workspace("implicit-legacy-defer");
-    fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
+    let root = temp_workspace("implicit-root-defer");
+    fs::write(root.join("effigy.json"), "{}\n").expect("write effigy marker");
     fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
 
     let bin_dir = root.join("bin");
@@ -464,7 +486,7 @@ fn run_manifest_task_implicitly_defers_to_legacy_root_when_no_configured_deferra
         },
         root.clone(),
     )
-    .expect("implicit legacy deferral should succeed");
+    .expect("implicit root deferral should succeed");
 
     assert_eq!(out, "");
     let args = fs::read_to_string(args_log).expect("read composer args");
@@ -472,10 +494,10 @@ fn run_manifest_task_implicitly_defers_to_legacy_root_when_no_configured_deferra
 }
 
 #[test]
-fn run_manifest_task_explicit_deferral_wins_over_implicit_legacy_fallback() {
+fn run_manifest_task_explicit_deferral_wins_over_implicit_root_deferral() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("explicit-over-implicit");
-    fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
+    fs::write(root.join("effigy.json"), "{}\n").expect("write effigy marker");
     fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
     write_manifest(
         &root.join("effigy.toml"),
@@ -663,10 +685,10 @@ mode = "tui"
 processes = ["api", "front"]
 
 [tasks.dev.processes.api]
-task = "farmyard:api"
+task = "farmyard/api"
 
 [tasks.dev.processes.front]
-task = "cream:dev"
+task = "cream/dev"
 "#,
     );
     write_manifest(
@@ -748,8 +770,8 @@ fn run_manifest_task_managed_tui_supports_compact_profile_task_refs() {
 mode = "tui"
 
 [tasks.dev.profiles]
-default = ["farmyard:api", "cream:dev"]
-admin = ["farmyard:api"]
+default = ["farmyard/api", "cream/dev"]
+admin = ["farmyard/api"]
 "#,
     );
     write_manifest(
@@ -781,8 +803,8 @@ run = "printf cream-dev"
     assert!(out.contains("profile: default"));
     assert!(out.contains("farmyard-api"));
     assert!(out.contains("cream-dev"));
-    assert!(out.contains("farmyard:api"));
-    assert!(out.contains("cream:dev"));
+    assert!(out.contains("farmyard/api"));
+    assert!(out.contains("cream/dev"));
 }
 
 #[test]
@@ -820,6 +842,27 @@ run = "printf front-ok"
     assert!(out.contains("[front] front-ok"));
     assert!(out.contains("process `api` exit=0"));
     assert!(out.contains("process `front` exit=0"));
+}
+
+#[test]
+fn next_available_process_name_avoids_shell_name_collisions() {
+    let specs = vec![
+        ProcessSpec {
+            name: "api".to_owned(),
+            run: "printf api".to_owned(),
+        },
+        ProcessSpec {
+            name: "shell".to_owned(),
+            run: "sh".to_owned(),
+        },
+        ProcessSpec {
+            name: "shell-2".to_owned(),
+            run: "sh".to_owned(),
+        },
+    ];
+
+    let name = next_available_process_name(&specs, "shell");
+    assert_eq!(name, "shell-3");
 }
 
 fn write_manifest(path: &PathBuf, body: &str) {

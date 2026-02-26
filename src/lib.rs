@@ -1,3 +1,4 @@
+pub mod dev_tui;
 pub mod process_manager;
 pub mod resolver;
 pub mod runner;
@@ -224,7 +225,7 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
                 "Resolve task across discovered catalogs".to_owned(),
             ],
             vec![
-                "effigy <catalog>:<task>".to_owned(),
+                "effigy <catalog>/<task>".to_owned(),
                 "Run task from explicit catalog alias".to_owned(),
             ],
         ],

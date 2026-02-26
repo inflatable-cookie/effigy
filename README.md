@@ -6,7 +6,7 @@ It provides:
 - built-in operational tasks (starting with `repo-pulse`),
 - project-defined tasks in TOML catalogs,
 - deterministic task resolution across nested catalogs,
-- explicit catalog targeting (`catalog:task`) and unprefixed intelligent resolution (`task`).
+- explicit catalog targeting (`catalog/task`) and unprefixed intelligent resolution (`task`).
 
 ## Why Effigy
 
@@ -40,7 +40,7 @@ Then use:
 ```bash
 bun effigy tasks
 bun effigy repo-pulse
-bun effigy farmyard:reset-db
+bun effigy farmyard/reset-db
 ```
 
 Planned steady-state:
@@ -51,7 +51,7 @@ Planned steady-state:
 
 ```bash
 effigy <task> [task args]
-effigy <catalog>:<task> [task args]
+effigy <catalog>/<task> [task args]
 effigy repo-pulse [--repo <PATH>] [--verbose-root]
 effigy tasks [--repo <PATH>] [--task <TASK_NAME>]
 ```
@@ -108,7 +108,7 @@ run = "composer global exec effigy -- {request} {args}"
 ```
 
 Deferral runs only for unresolved task requests and receives:
-- `{request}`: original task request (`task` or `catalog:task`)
+- `{request}`: original task request (`task` or `catalog/task`)
 - `{args}`: passthrough args
 - `{repo}`: catalog root path
 
@@ -123,7 +123,7 @@ If no configured deferral matches and the resolved workspace root contains both 
 - `composer global exec effigy -- {request} {args}`
 
 Task resolution:
-1. explicit prefix (`catalog:task`) selects one catalog,
+1. explicit prefix (`catalog/task`) selects one catalog,
 2. unprefixed selects nearest in-scope catalog if cwd is inside matching catalogs,
 3. otherwise chooses shallowest depth from workspace root,
 4. ties fail explicitly as ambiguous.

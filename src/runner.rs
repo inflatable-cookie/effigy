@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::time::Duration;
 
+use crate::dev_tui::run_dev_process_tui;
 use crate::process_manager::{ProcessEventKind, ProcessManagerError, ProcessSpec, ProcessSupervisor};
 use crate::resolver::{resolve_target_root, ResolveError};
 use crate::tasks::pulse::PulseTask;
@@ -391,10 +392,8 @@ struct ManagedTaskPlan {
 }
 
 const TASK_MANIFEST_FILE: &str = "effigy.toml";
-const COMPAT_TASK_MANIFEST_FILE: &str = "effigy.tasks.toml";
-const LEGACY_TASK_MANIFEST_FILE: &str = "underlay.tasks.toml";
 const DEFER_DEPTH_ENV: &str = "EFFIGY_DEFER_DEPTH";
-const LEGACY_ROOT_DEFER_TEMPLATE: &str = "composer global exec effigy -- {request} {args}";
+const IMPLICIT_ROOT_DEFER_TEMPLATE: &str = "composer global exec effigy -- {request} {args}";
 const BUILTIN_TASKS: [(&str, &str); 2] = [
     (
         "repo-pulse",
@@ -758,10 +757,10 @@ fn parse_task_runtime_args(args: &[String]) -> Result<TaskRuntimeArgs, RunnerErr
 }
 
 fn parse_task_selector(raw: &str) -> Result<TaskSelector, RunnerError> {
-    if let Some((prefix, task_name)) = raw.split_once(':') {
+    if let Some((prefix, task_name)) = raw.split_once('/') {
         if prefix.trim().is_empty() || task_name.trim().is_empty() {
             return Err(RunnerError::TaskInvocation(
-                "task name must be `<task>` or `<catalog>:<task>`".to_owned(),
+                "task name must be `<task>` or `<catalog>/<task>`".to_owned(),
             ));
         }
         return Ok(TaskSelector {
@@ -915,7 +914,7 @@ fn select_deferral<'a>(
         }
     }
 
-    infer_legacy_root_deferral(workspace_root)
+    infer_implicit_root_deferral(workspace_root)
 }
 
 fn run_deferred_request(
@@ -978,14 +977,14 @@ fn run_deferred_request(
     })
 }
 
-fn infer_legacy_root_deferral(workspace_root: &Path) -> Option<DeferredCommand> {
+fn infer_implicit_root_deferral(workspace_root: &Path) -> Option<DeferredCommand> {
     let has_effigy_json = workspace_root.join("effigy.json").is_file();
     let has_composer_json = workspace_root.join("composer.json").is_file();
     if has_effigy_json && has_composer_json {
         return Some(DeferredCommand {
-            template: LEGACY_ROOT_DEFER_TEMPLATE.to_owned(),
+            template: IMPLICIT_ROOT_DEFER_TEMPLATE.to_owned(),
             working_dir: workspace_root.to_path_buf(),
-            source: "implicit legacy root fallback (composer.json + effigy.json)".to_owned(),
+            source: "implicit root deferral (composer.json + effigy.json)".to_owned(),
         });
     }
     None
@@ -1195,7 +1194,7 @@ fn resolve_direct_profile_entry(
         .replace("{args}", "");
     let name = selector
         .prefix
-        .map(|prefix| format!("{prefix}:{}", selector.task_name))
+        .map(|prefix| format!("{prefix}/{}", selector.task_name))
         .unwrap_or(selector.task_name);
     Ok((name, run))
 }
@@ -1266,6 +1265,13 @@ fn run_or_render_managed_task(
     manifest_path: &Path,
     plan: ManagedTaskPlan,
 ) -> Result<String, RunnerError> {
+    let should_tui = std::env::var("EFFIGY_MANAGED_TUI")
+        .ok()
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+    if should_tui {
+        return run_managed_task_tui(task_name, repo_root, plan);
+    }
+
     let should_stream = std::env::var("EFFIGY_MANAGED_STREAM")
         .ok()
         .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
@@ -1273,6 +1279,52 @@ fn run_or_render_managed_task(
         return run_managed_task_runtime(task_name, repo_root, plan);
     }
     render_managed_task_plan(task_name, repo_root, manifest_path, plan)
+}
+
+fn run_managed_task_tui(
+    task_name: &str,
+    repo_root: &Path,
+    plan: ManagedTaskPlan,
+) -> Result<String, RunnerError> {
+    let mut specs = plan
+        .processes
+        .into_iter()
+        .map(|process| ProcessSpec {
+            name: process.name,
+            run: process.run,
+        })
+        .collect::<Vec<ProcessSpec>>();
+    if plan.shell_enabled {
+        let shell_name = next_available_process_name(&specs, "shell");
+        let shell_run = plan
+            .shell_run
+            .filter(|run| !run.trim().is_empty())
+            .or_else(|| std::env::var("SHELL").ok())
+            .unwrap_or_else(|| "sh".to_owned());
+        specs.push(ProcessSpec {
+            name: shell_name,
+            run: shell_run,
+        });
+    }
+    run_dev_process_tui(repo_root.to_path_buf(), specs).map_err(|error| {
+        RunnerError::Ui(format!(
+            "managed tui runtime failed for task `{task_name}`: {error}"
+        ))
+    })?;
+    Ok(String::new())
+}
+
+fn next_available_process_name(existing: &[ProcessSpec], base: &str) -> String {
+    if !existing.iter().any(|spec| spec.name == base) {
+        return base.to_owned();
+    }
+    for idx in 2..100 {
+        let candidate = format!("{base}-{idx}");
+        if !existing.iter().any(|spec| spec.name == candidate) {
+            return candidate;
+        }
+    }
+    format!("{base}-100")
 }
 
 fn run_managed_task_runtime(
@@ -1517,21 +1569,6 @@ fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Runner
                 let catalog_root = path.parent().map(Path::to_path_buf).unwrap_or_default();
                 manifests_by_catalog.insert(catalog_root, path);
                 continue;
-            }
-
-            if file_type.is_file()
-                && path.file_name().and_then(|n| n.to_str()) == Some(COMPAT_TASK_MANIFEST_FILE)
-            {
-                let catalog_root = path.parent().map(Path::to_path_buf).unwrap_or_default();
-                manifests_by_catalog.entry(catalog_root).or_insert(path);
-                continue;
-            }
-
-            if file_type.is_file()
-                && path.file_name().and_then(|n| n.to_str()) == Some(LEGACY_TASK_MANIFEST_FILE)
-            {
-                let catalog_root = path.parent().map(Path::to_path_buf).unwrap_or_default();
-                manifests_by_catalog.entry(catalog_root).or_insert(path);
             }
 
         }
