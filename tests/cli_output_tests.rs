@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn cli_tasks_no_color_output_has_no_ansi_sequences() {
     let root = temp_workspace("cli-no-color");
     fs::write(
-        root.join("effigy.tasks.toml"),
+        root.join("effigy.toml"),
         "[tasks.dev]\nrun = \"printf root\"\n",
     )
     .expect("write manifest");
@@ -75,7 +75,7 @@ fn cli_help_supports_colorized_sections_when_forced() {
 fn cli_tasks_supports_colorized_output_when_forced() {
     let root = temp_workspace("cli-color-tasks");
     fs::write(
-        root.join("effigy.tasks.toml"),
+        root.join("effigy.toml"),
         "[tasks.dev]\nrun = \"printf root\"\n",
     )
     .expect("write manifest");
@@ -117,7 +117,7 @@ fn cli_repo_pulse_supports_colorized_output_when_forced() {
 fn cli_deferral_does_not_prepend_internal_header() {
     let root = temp_workspace("cli-defer-header");
     fs::write(
-        root.join("effigy.tasks.toml"),
+        root.join("effigy.toml"),
         "[defer]\nrun = \"printf deferred-runner-output\"\n",
     )
     .expect("write manifest");

@@ -12,7 +12,6 @@ Effigy has been extracted from Underlay, but needs first-class project structure
 ## 2) Goals
 
 - [x] Extract runner into standalone repository.
-- [x] Keep compatibility for legacy `underlay.tasks.toml` catalogs.
 - [x] Migrate active consuming repos to `effigy` invocation.
 - [x] Establish direct PATH-first installation guidance.
 - [x] Define versioning and release workflow.
@@ -33,7 +32,7 @@ Effigy has been extracted from Underlay, but needs first-class project structure
 
 ### Phase 1.2 - Consumer migration
 - [x] Migrate active repos from `underlay` runner invocation to `effigy`.
-- [x] Rename catalogs to `effigy.tasks.toml` where owned.
+- [x] Rename catalogs to `effigy.toml` where owned.
 - [x] Remove embedded runner crate from Underlay.
 
 ### Phase 1.3 - Documentation baseline

@@ -82,10 +82,7 @@ See [docs/guides/011-output-widgets-and-colour-modes.md](./docs/guides/011-outpu
 ## Task Catalogs
 
 Canonical manifest name:
-- `effigy.tasks.toml`
-
-Compatibility fallback:
-- `underlay.tasks.toml` is discovered only when `effigy.tasks.toml` is not present in the same catalog directory.
+- `effigy.toml`
 
 Example:
 

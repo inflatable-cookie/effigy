@@ -735,6 +735,57 @@ task = "api"
 }
 
 #[test]
+fn run_manifest_task_managed_tui_supports_compact_profile_task_refs() {
+    let root = temp_workspace("managed-compact-profile-refs");
+    let farmyard = root.join("farmyard");
+    let cream = root.join("cream");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    fs::create_dir_all(&cream).expect("mkdir cream");
+
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles]
+default = ["farmyard:api", "cream:dev"]
+admin = ["farmyard:api"]
+"#,
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        r#"[catalog]
+alias = "farmyard"
+[tasks.api]
+run = "printf farmyard-api"
+"#,
+    );
+    write_manifest(
+        &cream.join("effigy.toml"),
+        r#"[catalog]
+alias = "cream"
+[tasks.dev]
+run = "printf cream-dev"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect("managed compact plan should render");
+
+    assert!(out.contains("profile: default"));
+    assert!(out.contains("farmyard-api"));
+    assert!(out.contains("cream-dev"));
+    assert!(out.contains("farmyard:api"));
+    assert!(out.contains("cream:dev"));
+}
+
+#[test]
 fn run_manifest_task_managed_stream_executes_selected_profile_processes() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("managed-stream-runtime");

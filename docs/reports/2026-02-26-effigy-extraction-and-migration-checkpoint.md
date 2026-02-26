@@ -11,7 +11,7 @@ Related roadmap: 001 - Effigy Foundation
 
 ## Changes
 - Extracted runner into standalone `effigy` repository.
-- Preserved legacy catalog compatibility fallback.
+- Standardized catalog discovery on `effigy.toml`.
 - Migrated initial consumer repos to `effigy` command surface.
 - Removed embedded `underlay-cli` crate from Underlay.
 - Added architecture/roadmap/reports docs skeleton in Effigy.

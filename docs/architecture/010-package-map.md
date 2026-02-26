@@ -21,5 +21,4 @@
 
 | Artifact | Description |
 |---|---|
-| `effigy.tasks.toml` | Canonical task catalog manifest |
-| `underlay.tasks.toml` | Legacy manifest fallback (catalog-local precedence to canonical file) |
+| `effigy.toml` | Canonical task catalog manifest |

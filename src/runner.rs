@@ -293,9 +293,22 @@ struct ManifestManagedProcess {
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct ManifestManagedProfile {
-    #[serde(default)]
-    processes: Vec<String>,
+#[serde(untagged)]
+enum ManifestManagedProfile {
+    Table {
+        #[serde(default)]
+        processes: Vec<String>,
+    },
+    List(Vec<String>),
+}
+
+impl ManifestManagedProfile {
+    fn process_entries(&self) -> &[String] {
+        match self {
+            ManifestManagedProfile::Table { processes } => processes,
+            ManifestManagedProfile::List(entries) => entries,
+        }
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -1029,33 +1042,47 @@ fn resolve_managed_task_plan(
         }
     })?;
 
-    if profile.processes.is_empty() {
+    let profile_entries = profile.process_entries();
+    if profile_entries.is_empty() {
         return Err(RunnerError::TaskManagedProfileEmpty {
             task: selector.task_name.clone(),
             profile: profile_name,
         });
     }
 
-    let mut processes = Vec::with_capacity(profile.processes.len());
-    for process_name in &profile.processes {
-        let process = task.processes.get(process_name).ok_or_else(|| {
-            RunnerError::TaskManagedProcessNotFound {
-                task: selector.task_name.clone(),
-                profile: profile_name.clone(),
-                process: process_name.clone(),
-            }
-        })?;
-        let process_run = resolve_managed_process_run(
-            &selector.task_name,
-            process_name,
-            process,
-            catalogs,
-            task_scope_cwd,
-        )?;
-        processes.push(ManagedProcessSpec {
-            name: process_name.clone(),
-            run: process_run,
-        });
+    let mut processes = Vec::with_capacity(profile_entries.len());
+    if task.processes.is_empty() {
+        for (idx, entry) in profile_entries.iter().enumerate() {
+            let (name, run) = resolve_direct_profile_entry(
+                &selector.task_name,
+                entry,
+                idx + 1,
+                catalogs,
+                task_scope_cwd,
+            )?;
+            processes.push(ManagedProcessSpec { name, run });
+        }
+    } else {
+        for process_name in profile_entries {
+            let process = task.processes.get(process_name).ok_or_else(|| {
+                RunnerError::TaskManagedProcessNotFound {
+                    task: selector.task_name.clone(),
+                    profile: profile_name.clone(),
+                    process: process_name.clone(),
+                }
+            })?;
+            let process_run = resolve_managed_process_run(
+                &selector.task_name,
+                process_name,
+                process,
+                catalogs,
+                task_scope_cwd,
+            )?;
+            processes.push(ManagedProcessSpec {
+                name: process_name.clone(),
+                run: process_run,
+            });
+        }
     }
 
     Ok(Some(ManagedTaskPlan {
@@ -1122,6 +1149,55 @@ fn resolve_managed_process_run(
             detail: "missing both `run` and `task`".to_owned(),
         }),
     }
+}
+
+fn resolve_direct_profile_entry(
+    managed_task_name: &str,
+    entry: &str,
+    ordinal: usize,
+    catalogs: &[LoadedCatalog],
+    task_scope_cwd: &Path,
+) -> Result<(String, String), RunnerError> {
+    let selector = parse_task_selector(entry).map_err(|error| {
+        RunnerError::TaskManagedTaskReferenceInvalid {
+            task: managed_task_name.to_owned(),
+            process: format!("entry-{ordinal}"),
+            reference: entry.to_owned(),
+            detail: error.to_string(),
+        }
+    })?;
+    let selection = select_catalog_and_task(&selector, catalogs, task_scope_cwd).map_err(|error| {
+        RunnerError::TaskManagedTaskReferenceInvalid {
+            task: managed_task_name.to_owned(),
+            process: format!("entry-{ordinal}"),
+            reference: entry.to_owned(),
+            detail: error.to_string(),
+        }
+    })?;
+    let repo_rendered = shell_quote(&selection.catalog.catalog_root.display().to_string());
+    let run_template =
+        selection
+            .task
+            .run
+            .as_ref()
+            .ok_or_else(|| RunnerError::TaskManagedTaskReferenceInvalid {
+                task: managed_task_name.to_owned(),
+                process: format!("entry-{ordinal}"),
+                reference: entry.to_owned(),
+                detail: format!(
+                    "referenced task `{}` in {} has no `run` command",
+                    selector.task_name,
+                    selection.catalog.manifest_path.display()
+                ),
+            })?;
+    let run = run_template
+        .replace("{repo}", &repo_rendered)
+        .replace("{args}", "");
+    let name = selector
+        .prefix
+        .map(|prefix| format!("{prefix}:{}", selector.task_name))
+        .unwrap_or(selector.task_name);
+    Ok((name, run))
 }
 
 fn render_managed_task_plan(
