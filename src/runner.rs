@@ -2547,6 +2547,7 @@ fn run_managed_task_runtime(
                 ProcessEventKind::Stderr => {
                     renderer.text(&format!("[{} stderr] {}", event.process, event.payload))?;
                 }
+                ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {}
                 ProcessEventKind::Exit => {
                     exit_count += 1;
                     if event.payload != "exit=0" {

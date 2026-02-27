@@ -44,6 +44,7 @@ fn supervisor_captures_output_and_exit_events() {
                         saw_beta_err = true;
                     }
                 }
+                ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {}
                 ProcessEventKind::Exit => exits += 1,
             }
             if saw_alpha_out && saw_beta_err && exits >= 2 {

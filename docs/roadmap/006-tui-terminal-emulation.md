@@ -50,8 +50,8 @@ Implementation notes:
 ## 6) Execution Plan
 
 ### Phase 6.1 - Emulator Spike
-- [ ] Select emulator core crate and document tradeoffs (integration complexity, feature coverage, maintenance risk).
-- [ ] Build a single-pane proof of concept: raw PTY bytes -> emulator state -> ratatui render.
+- [x] Select emulator core crate and document tradeoffs (integration complexity, feature coverage, maintenance risk).
+- [x] Build a single-pane proof of concept: raw PTY bytes -> emulator state -> ratatui render.
 - [ ] Validate with `cargo nextest run` and one Vite process as baseline fixtures.
 
 ### Phase 6.2 - Process Manager Integration

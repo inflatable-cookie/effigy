@@ -19,6 +19,7 @@ use ratatui::widgets::{
     Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
 };
 use ratatui::{Frame, Terminal};
+use vt100::Parser as VtParser;
 
 use crate::process_manager::{
     ProcessEventKind, ProcessManagerError, ProcessSpec, ProcessSupervisor, ShutdownProgress,
@@ -28,6 +29,9 @@ use crate::ui::{KeyValue, OutputMode, PlainRenderer, Renderer, UiError};
 
 const MAX_LOG_LINES: usize = 2000;
 const MAX_EVENTS_PER_TICK: usize = 200;
+const VT_SPIKE_ROWS: u16 = 2000;
+const VT_SPIKE_COLS: u16 = 240;
+const VT_SPIKE_SCROLLBACK: usize = 8000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputMode {
@@ -171,6 +175,22 @@ pub fn run_dev_process_tui(
     let mut observed_non_zero: HashMap<String, String> = HashMap::new();
     let mut exit_states: HashMap<String, ProcessExitState> = HashMap::new();
     let mut spinner_tick: usize = 0;
+    let vt_emulator_enabled = std::env::var("EFFIGY_TUI_VT100")
+        .ok()
+        .is_none_or(|value| value != "0" && !value.eq_ignore_ascii_case("false"));
+    let mut vt_parsers: HashMap<String, VtParser> = process_names
+        .iter()
+        .map(|name| {
+            (
+                name.clone(),
+                VtParser::new(VT_SPIKE_ROWS, VT_SPIKE_COLS, VT_SPIKE_SCROLLBACK),
+            )
+        })
+        .collect();
+    let mut vt_saw_chunk: HashMap<String, bool> = process_names
+        .iter()
+        .map(|name| (name.clone(), false))
+        .collect();
 
     let result: Result<(), DevTuiError> = loop {
         let mut drained_events = 0usize;
@@ -181,12 +201,46 @@ pub fn run_dev_process_tui(
             drained_events += 1;
             if let Some(buffer) = logs.get_mut(&event_item.process) {
                 match event_item.kind {
+                    ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {
+                        restart_pending.insert(event_item.process.clone(), false);
+                        let had_output = *output_seen.get(&event_item.process).unwrap_or(&false);
+                        output_seen.insert(event_item.process.clone(), true);
+                        if vt_emulator_enabled {
+                            if !had_output {
+                                vt_parsers.insert(
+                                    event_item.process.clone(),
+                                    VtParser::new(
+                                        VT_SPIKE_ROWS,
+                                        VT_SPIKE_COLS,
+                                        VT_SPIKE_SCROLLBACK,
+                                    ),
+                                );
+                                vt_saw_chunk.insert(event_item.process.clone(), false);
+                            }
+                            if let Some(chunk) = event_item.chunk.as_ref() {
+                                if let Some(parser) = vt_parsers.get_mut(&event_item.process) {
+                                    parser.process(chunk);
+                                    vt_saw_chunk.insert(event_item.process.clone(), true);
+                                }
+                            }
+                        }
+                    }
                     ProcessEventKind::Stdout => {
+                        if vt_emulator_enabled
+                            && *vt_saw_chunk.get(&event_item.process).unwrap_or(&false)
+                        {
+                            continue;
+                        }
                         restart_pending.insert(event_item.process.clone(), false);
                         output_seen.insert(event_item.process.clone(), true);
                         ingest_log_payload(buffer, LogEntryKind::Stdout, &event_item.payload);
                     }
                     ProcessEventKind::Stderr => {
+                        if vt_emulator_enabled
+                            && *vt_saw_chunk.get(&event_item.process).unwrap_or(&false)
+                        {
+                            continue;
+                        }
                         restart_pending.insert(event_item.process.clone(), false);
                         output_seen.insert(event_item.process.clone(), true);
                         ingest_log_payload(buffer, LogEntryKind::Stderr, &event_item.payload);
@@ -227,17 +281,58 @@ pub fn run_dev_process_tui(
         spinner_tick = spinner_tick.wrapping_add(1);
 
         let active = &process_names[active_index];
-        let active_logs = logs
-            .get(active)
-            .map(|entries| entries.iter().cloned().collect::<Vec<LogEntry>>())
-            .unwrap_or_default();
         let size = terminal.size()?;
         let output_height = size.height.saturating_sub(9) as usize;
-        let max_offset = active_logs.len().saturating_sub(output_height);
-        let stored = *scroll_offsets.get(active).unwrap_or(&0usize);
-        let scroll_offset = stored.min(max_offset);
-        scroll_offsets.insert(active.clone(), scroll_offset);
+        let output_width = size.width.saturating_sub(4) as usize;
         let is_follow = *follow_mode.get(active).unwrap_or(&true);
+        let (active_logs, scroll_offset, max_offset, render_scroll_offset, scrollbar_total) =
+            if vt_emulator_enabled && *vt_saw_chunk.get(active).unwrap_or(&false) {
+                let parser = vt_parsers
+                    .get_mut(active)
+                    .expect("active vt parser missing unexpectedly");
+                let stored = *scroll_offsets.get(active).unwrap_or(&0usize);
+                let (mut rendered, clamped, max_vt) = vt_logs(
+                    parser,
+                    output_height.saturating_sub(1).max(1),
+                    output_width.max(1),
+                    stored,
+                    is_follow,
+                );
+                if let Some(buffer) = logs.get(active) {
+                    rendered.extend(buffer.iter().filter_map(|entry| {
+                        if matches!(entry.kind, LogEntryKind::Exit) {
+                            Some(entry.clone())
+                        } else {
+                            None
+                        }
+                    }));
+                }
+                scroll_offsets.insert(active.clone(), clamped);
+                (
+                    rendered,
+                    clamped,
+                    max_vt,
+                    0usize,
+                    max_vt.saturating_add(output_height.max(1)),
+                )
+            } else {
+                let rendered = logs
+                    .get(active)
+                    .map(|entries| entries.iter().cloned().collect::<Vec<LogEntry>>())
+                    .unwrap_or_default();
+                let max = rendered.len().saturating_sub(output_height);
+                let stored = *scroll_offsets.get(active).unwrap_or(&0usize);
+                let clamped = stored.min(max);
+                scroll_offsets.insert(active.clone(), clamped);
+                let render = if is_follow { max } else { clamped };
+                (
+                    rendered,
+                    clamped,
+                    max,
+                    render,
+                    output_height.max(1).saturating_add(max),
+                )
+            };
         let now = Instant::now();
         let active_elapsed = process_started_at
             .get(active)
@@ -251,6 +346,9 @@ pub fn run_dev_process_tui(
                 active_index,
                 &active_logs,
                 scroll_offset,
+                max_offset,
+                render_scroll_offset,
+                scrollbar_total,
                 is_follow,
                 &input_line,
                 input_mode,
@@ -624,6 +722,9 @@ fn render_ui(
     active_index: usize,
     active_logs: &[LogEntry],
     scroll_offset: usize,
+    max_offset: usize,
+    render_scroll_offset: usize,
+    scrollbar_total: usize,
     follow: bool,
     input_line: &str,
     input_mode: InputMode,
@@ -690,14 +791,6 @@ fn render_ui(
             Span::styled(entry.line.clone(), Style::default().fg(Color::Gray)),
         ]),
     }));
-    let total_lines = lines.len();
-    let max_offset = total_lines.saturating_sub(output_height);
-    let clamped_offset = if follow {
-        max_offset
-    } else {
-        scroll_offset.min(max_offset)
-    };
-
     if show_help {
         let help_lines = vec![
             Line::from(vec![Span::styled(
@@ -748,13 +841,13 @@ fn render_ui(
         } else {
             Paragraph::new(lines)
                 .block(panel)
-                .scroll((clamped_offset.min(u16::MAX as usize) as u16, 0))
+                .scroll((render_scroll_offset.min(u16::MAX as usize) as u16, 0))
         };
         frame.render_widget(logs, chunks[1]);
         if active_output_seen || exit_states.contains_key(&process_names[active_index]) {
-            let mut scrollbar_state = ScrollbarState::new(total_lines.max(1))
+            let mut scrollbar_state = ScrollbarState::new(scrollbar_total.max(1))
                 .viewport_content_length(output_height.max(1))
-                .position(clamped_offset);
+                .position(scroll_offset.min(max_offset));
             frame.render_stateful_widget(
                 Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
                 chunks[1],
@@ -1019,6 +1112,44 @@ fn push_log_line(
             },
         );
     }
+}
+
+fn vt_logs(
+    parser: &mut VtParser,
+    panel_rows: usize,
+    panel_cols: usize,
+    ui_scroll_offset: usize,
+    follow: bool,
+) -> (Vec<LogEntry>, usize, usize) {
+    let safe_rows = panel_rows.max(1);
+    parser.set_size(safe_rows as u16, panel_cols.max(1) as u16);
+    // vt100 0.15.x can panic when scrollback offset exceeds visible row count.
+    // Clamp to a safe range until we move to a parser version without this bug.
+    let max_offset = vt_max_scrollback(parser).min(safe_rows.saturating_sub(1));
+    let clamped = if follow {
+        max_offset
+    } else {
+        ui_scroll_offset.min(max_offset)
+    };
+    let vt_scrollback = max_offset.saturating_sub(clamped);
+    parser.set_scrollback(vt_scrollback);
+    let rows = parser
+        .screen()
+        .rows_formatted(0, panel_cols.max(1) as u16)
+        .map(|row| LogEntry {
+            kind: LogEntryKind::Stdout,
+            line: String::from_utf8_lossy(&row).into_owned(),
+        })
+        .collect::<Vec<LogEntry>>();
+    (rows, clamped, max_offset)
+}
+
+fn vt_max_scrollback(parser: &mut VtParser) -> usize {
+    let current = parser.screen().scrollback();
+    parser.set_scrollback(usize::MAX);
+    let max = parser.screen().scrollback();
+    parser.set_scrollback(current);
+    max
 }
 
 fn push_entry(buffer: &mut VecDeque<LogEntry>, entry: LogEntry) {
@@ -1385,5 +1516,26 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert_eq!(rendered, "hello red");
+    }
+
+    #[test]
+    fn vt_logs_trims_empty_padding_lines() {
+        let mut parser = VtParser::new(8, 40, 100);
+        parser.process(b"\n\nhello\nworld\n\n");
+        let (rows, _, _) = vt_logs(&mut parser, 8, 40, 0, true);
+        assert!(rows.iter().any(|line| line.line.contains("hello")));
+        assert!(rows.iter().any(|line| line.line.contains("world")));
+    }
+
+    #[test]
+    fn vt_logs_clamps_overscroll_without_panicking() {
+        let mut parser = VtParser::new(8, 40, 200);
+        for i in 0..200 {
+            parser.process(format!("line-{i}\n").as_bytes());
+        }
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            vt_logs(&mut parser, 8, 40, usize::MAX / 2, false)
+        }));
+        assert!(result.is_ok(), "overscroll should be clamped safely");
     }
 }
