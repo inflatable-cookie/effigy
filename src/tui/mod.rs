@@ -1,3 +1,4 @@
+pub(crate) mod core;
 pub mod multiprocess;
 
 pub use multiprocess::{

@@ -6,7 +6,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use vt100::Parser as VtParser;
 
-use super::{LogEntry, LogEntryKind, MAX_LOG_LINES};
+use super::config::MAX_LOG_LINES;
+use crate::tui::core::{LogEntry, LogEntryKind};
 
 pub(crate) fn vt_logs(
     parser: &mut VtParser,

@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 
+use crate::tui::core::ProcessExitState;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Tabs};
 use ratatui::Frame;
-
-use super::super::ProcessExitState;
 
 pub(super) fn render_tabs(
     frame: &mut Frame<'_>,

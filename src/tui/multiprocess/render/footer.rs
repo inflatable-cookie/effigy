@@ -3,7 +3,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use super::super::InputMode;
+use crate::tui::core::InputMode;
 
 pub(super) fn render_footer(
     frame: &mut Frame<'_>,

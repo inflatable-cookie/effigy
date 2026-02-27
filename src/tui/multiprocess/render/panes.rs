@@ -7,8 +7,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::Frame;
 
+use crate::tui::core::{InputMode, LogEntry, LogEntryKind, ProcessExitState};
+
 use super::super::terminal_text::{ansi_line, runtime_meta_line};
-use super::super::{InputMode, LogEntry, LogEntryKind, ProcessExitState};
 use super::header::panel_block;
 
 pub(super) fn render_output_pane(

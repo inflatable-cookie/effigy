@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crate::tui::core::{InputMode, LogEntry, ProcessExitState};
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::Frame;
 
-use super::{InputMode, LogEntry, OptionsAction, ProcessExitState};
+use super::OptionsAction;
 
 mod footer;
 mod header;
