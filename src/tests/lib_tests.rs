@@ -24,6 +24,7 @@ fn parse_repo_pulse_with_repo_override() {
         Command::RepoPulse(PulseArgs {
             repo_override: Some(PathBuf::from("/tmp/repo")),
             verbose_root: false,
+            output_json: false,
         })
     );
 }
@@ -37,6 +38,7 @@ fn parse_repo_pulse_with_verbose_root() {
         Command::RepoPulse(PulseArgs {
             repo_override: None,
             verbose_root: true,
+            output_json: false,
         })
     );
 }
@@ -111,6 +113,45 @@ fn command_requests_json_checks_task_or_global_mode() {
         args: vec!["--json".to_owned()],
     });
     assert!(command_requests_json(&cmd_with_json, false));
+
+    let cmd_tasks = Command::Tasks(TasksArgs {
+        repo_override: None,
+        task_name: None,
+        output_json: true,
+    });
+    assert!(command_requests_json(&cmd_tasks, false));
+
+    let cmd_pulse = Command::RepoPulse(PulseArgs {
+        repo_override: None,
+        verbose_root: false,
+        output_json: true,
+    });
+    assert!(command_requests_json(&cmd_pulse, false));
+}
+
+#[test]
+fn apply_global_json_flag_sets_non_task_command_json_mode() {
+    let tasks_cmd = Command::Tasks(TasksArgs {
+        repo_override: None,
+        task_name: None,
+        output_json: false,
+    });
+    let pulse_cmd = Command::RepoPulse(PulseArgs {
+        repo_override: None,
+        verbose_root: false,
+        output_json: false,
+    });
+
+    let tasks_applied = apply_global_json_flag(tasks_cmd, true);
+    let pulse_applied = apply_global_json_flag(pulse_cmd, true);
+    match tasks_applied {
+        Command::Tasks(args) => assert!(args.output_json),
+        other => panic!("expected tasks command, got: {other:?}"),
+    }
+    match pulse_applied {
+        Command::RepoPulse(args) => assert!(args.output_json),
+        other => panic!("expected pulse command, got: {other:?}"),
+    }
 }
 
 #[test]
@@ -128,6 +169,35 @@ fn parse_tasks_with_filters() {
         Command::Tasks(TasksArgs {
             repo_override: Some(PathBuf::from("/tmp/repo")),
             task_name: Some("reset-db".to_owned()),
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_tasks_supports_json_flag() {
+    let cmd = parse_command(vec!["tasks".to_owned(), "--json".to_owned()])
+        .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Tasks(TasksArgs {
+            repo_override: None,
+            task_name: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_repo_pulse_supports_json_flag() {
+    let cmd = parse_command(vec!["repo-pulse".to_owned(), "--json".to_owned()])
+        .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::RepoPulse(PulseArgs {
+            repo_override: None,
+            verbose_root: false,
+            output_json: true,
         })
     );
 }

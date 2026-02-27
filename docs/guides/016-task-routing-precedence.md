@@ -16,6 +16,15 @@ effigy catalogs --json --pretty false --resolve farmyard/api
 
 The `catalogs` output shows discovered catalogs plus routing precedence and resolution evidence.
 
+## Discovery Scope
+
+Catalog discovery walks the workspace tree recursively and includes symlinked directories.
+
+Notes:
+- symlinked catalogs are treated the same as physical directories for routing.
+- aliases must remain unique across all discovered manifests.
+- if duplicate aliases are found (including through symlinked paths), Effigy returns a catalog alias conflict error.
+
 ## JSON Output
 
 Use JSON output for automation, reports, or diffing:

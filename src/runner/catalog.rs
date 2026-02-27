@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -63,9 +63,14 @@ pub(super) fn discover_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatal
 
 fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, RunnerError> {
     let mut pending: Vec<PathBuf> = vec![workspace_root.to_path_buf()];
+    let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
     let mut manifests_by_catalog: HashMap<PathBuf, PathBuf> = HashMap::new();
 
     while let Some(dir) = pending.pop() {
+        let canonical_dir = fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+        if !visited_dirs.insert(canonical_dir) {
+            continue;
+        }
         let entries = fs::read_dir(&dir).map_err(|error| RunnerError::TaskCatalogReadDir {
             path: dir.clone(),
             error,
@@ -85,7 +90,12 @@ fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Runner
                     error,
                 })?;
 
-            if file_type.is_dir() {
+            let is_dir = file_type.is_dir()
+                || (file_type.is_symlink()
+                    && fs::metadata(&path)
+                        .map(|meta| meta.is_dir())
+                        .unwrap_or(false));
+            if is_dir {
                 if should_skip_dir(&path) {
                     continue;
                 }
@@ -93,9 +103,12 @@ fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Runner
                 continue;
             }
 
-            if file_type.is_file()
-                && path.file_name().and_then(|n| n.to_str()) == Some(TASK_MANIFEST_FILE)
-            {
+            let is_file = file_type.is_file()
+                || (file_type.is_symlink()
+                    && fs::metadata(&path)
+                        .map(|meta| meta.is_file())
+                        .unwrap_or(false));
+            if is_file && path.file_name().and_then(|n| n.to_str()) == Some(TASK_MANIFEST_FILE) {
                 let catalog_root = path.parent().map(Path::to_path_buf).unwrap_or_default();
                 manifests_by_catalog.insert(catalog_root, path);
                 continue;

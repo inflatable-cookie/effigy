@@ -4,6 +4,8 @@ use super::{
 };
 use crate::{PulseArgs, TaskInvocation, TasksArgs};
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -351,6 +353,7 @@ fn run_tasks_lists_catalogs_and_tasks() {
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: None,
+            output_json: false,
         })
     })
     .expect("run tasks");
@@ -375,6 +378,7 @@ jobs = "printf jobs"
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: None,
+            output_json: false,
         })
     })
     .expect("run tasks");
@@ -411,6 +415,7 @@ run = "printf dev"
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: None,
+            output_json: false,
         })
     })
     .expect("run tasks");
@@ -444,6 +449,7 @@ reset-db = [{ task = "drop-db" }, { task = "migrate-db" }]
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: Some("reset-db".to_owned()),
+            output_json: false,
         })
     })
     .expect("run tasks");
@@ -469,6 +475,7 @@ fn run_tasks_with_task_filter_reports_only_matches() {
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: Some("reset-db".to_owned()),
+            output_json: false,
         })
     })
     .expect("run tasks");
@@ -487,6 +494,7 @@ fn run_tasks_with_test_filter_shows_catalog_fallback_note() {
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: Some("test".to_owned()),
+            output_json: false,
         })
     })
     .expect("run tasks");
@@ -504,6 +512,7 @@ fn run_tasks_without_catalogs_still_lists_builtin_tasks() {
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: None,
+            output_json: false,
         })
     })
     .expect("run tasks");
@@ -515,6 +524,55 @@ fn run_tasks_without_catalogs_still_lists_builtin_tasks() {
     assert!(out.contains("test"));
     assert!(out.contains("<catalog>/test fallback"));
     assert!(out.contains("tasks"));
+}
+
+#[test]
+fn run_tasks_json_renders_machine_readable_payload() {
+    let root = temp_workspace("tasks-json");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf root\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[tasks.reset-db]\nrun = \"printf farmyard\"\n",
+    );
+
+    let out = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: None,
+            output_json: true,
+        })
+    })
+    .expect("run tasks json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["catalog_count"], 2);
+    assert!(parsed["catalog_tasks"].is_array());
+    assert!(parsed["builtin_tasks"].is_array());
+}
+
+#[test]
+fn run_tasks_json_filter_includes_builtin_matches_and_notes() {
+    let root = temp_workspace("tasks-json-filter");
+    let out = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: Some("test".to_owned()),
+            output_json: true,
+        })
+    })
+    .expect("run tasks json filter");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["filter"], "test");
+    assert!(parsed["builtin_matches"].is_array());
+    assert!(parsed["notes"]
+        .as_array()
+        .is_some_and(|items| !items.is_empty()));
 }
 
 #[test]
@@ -546,8 +604,206 @@ fn run_manifest_task_builtin_test_plan_renders_detection_summary() {
     assert!(out.contains("Target: root"));
     assert!(out.contains("runner:"));
     assert!(out.contains("available-suites:"));
+    assert!(out.contains("suite-source: auto-detected"));
     assert!(out.contains("vitest"));
     assert!(out.contains("fallback-chain"));
+}
+
+#[test]
+fn run_manifest_task_builtin_test_plan_marks_configured_suite_source() {
+    let root = temp_workspace("builtin-test-plan-configured-suite-source");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[test.suites]
+unit = "pnpm exec vitest run"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--plan".to_owned()],
+        },
+        root,
+    )
+    .expect("run configured suite test --plan");
+
+    assert!(out.contains("Test Plan"));
+    assert!(out.contains("available-suites: unit"));
+    assert!(out.contains("suite-source: configured"));
+    assert!(out.contains("test.suites.unit"));
+}
+
+#[test]
+fn run_manifest_task_builtin_test_plan_mixed_workspace_reports_configured_and_auto_detected_sources(
+) {
+    let root = temp_workspace("builtin-test-plan-mixed-suite-sources");
+    let farmyard = root.join("farmyard");
+    let dairy = root.join("dairy");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    fs::create_dir_all(&dairy).expect("mkdir dairy");
+
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf root\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        r#"[catalog]
+alias = "farmyard"
+[test.suites]
+unit = "pnpm exec vitest run"
+"#,
+    );
+    write_manifest(
+        &dairy.join("effigy.toml"),
+        r#"[catalog]
+alias = "dairy"
+"#,
+    );
+    fs::write(
+        dairy.join("package.json"),
+        r#"{
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}"#,
+    )
+    .expect("write dairy package");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--plan".to_owned()],
+        },
+        root,
+    )
+    .expect("run mixed-source test --plan");
+
+    assert!(out.contains("Target: farmyard"));
+    assert!(out.contains("available-suites: unit"));
+    assert!(out.contains("suite-source: configured"));
+    assert!(out.contains("test.suites.unit"));
+    assert!(out.contains("Target: dairy"));
+    assert!(out.contains("suite-source: auto-detected"));
+    assert!(out.contains("vitest"));
+}
+
+#[test]
+fn run_manifest_task_builtin_test_uses_configured_suites_as_source_of_truth() {
+    let root = temp_workspace("builtin-test-configured-suites-source-of-truth");
+    let configured_marker = root.join("configured-suite.log");
+    let vitest_marker = root.join("vitest-suite.log");
+    let manifest = format!(
+        r#"[test.suites]
+unit = "sh -lc 'printf configured > \"{}\"'"
+"#,
+        configured_marker.display()
+    );
+    write_manifest(&root.join("effigy.toml"), &manifest);
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "test": "vitest run"
+  }
+}"#,
+    )
+    .expect("write package");
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    let vitest = local_bin.join("vitest");
+    fs::write(
+        &vitest,
+        format!(
+            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
+            vitest_marker.display()
+        ),
+    )
+    .expect("write vitest");
+    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&vitest, perms).expect("chmod");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--verbose-results".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("run configured suite test");
+
+    assert!(out.contains("Test Results"));
+    assert!(out.contains("runner:unit"));
+    assert!(configured_marker.exists(), "configured suite should run");
+    assert!(
+        !vitest_marker.exists(),
+        "auto-detected vitest should not run"
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_test_with_configured_multi_suite_requires_explicit_suite() {
+    let root = temp_workspace("builtin-test-configured-multi-suite-ambiguous");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[test.suites]
+unit = "true"
+integration = "true"
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["user-service".to_owned()],
+        },
+        root,
+    )
+    .expect_err("configured multi-suite should be ambiguous");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("ambiguous"));
+            assert!(message.contains("unit"));
+            assert!(message.contains("integration"));
+            assert!(message.contains("effigy test unit user-service"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_builtin_test_supports_configured_custom_suite_selector() {
+    let root = temp_workspace("builtin-test-configured-custom-suite-selector");
+    let unit_marker = root.join("unit-suite.log");
+    let integration_marker = root.join("integration-suite.log");
+    let manifest = format!(
+        r#"[test.suites]
+unit = "sh -lc 'printf unit > \"{}\"'"
+integration = "sh -lc 'printf integration > \"{}\"'"
+"#,
+        unit_marker.display(),
+        integration_marker.display()
+    );
+    write_manifest(&root.join("effigy.toml"), &manifest);
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["unit".to_owned()],
+        },
+        root,
+    )
+    .expect("configured custom suite selector should run");
+
+    assert!(out.contains("Test Results"));
+    assert!(unit_marker.exists(), "selected suite should run");
+    assert!(
+        !integration_marker.exists(),
+        "non-selected suite should not run"
+    );
 }
 
 #[test]
@@ -680,6 +936,7 @@ fn run_manifest_task_builtin_test_with_named_args_errors_when_multi_suite_is_amb
             assert!(message.contains("vitest"));
             assert!(message.contains("cargo-"));
             assert!(message.contains("Try one of:"));
+            assert!(message.contains("Use `effigy test --plan <args>`"));
             assert!(message.contains("effigy test vitest user-service"));
             assert!(message.contains("effigy test cargo-"));
         }
@@ -835,6 +1092,7 @@ fn run_manifest_task_builtin_test_errors_for_unavailable_positional_suite_select
             assert!(message.contains("nextest"));
             assert!(message.contains("vitest"));
             assert!(message.contains("Try one of:"));
+            assert!(message.contains("Use `effigy test --plan <args>`"));
             assert!(message.contains("effigy test vitest"));
         }
         other => panic!("unexpected error: {other}"),
@@ -873,6 +1131,7 @@ fn run_manifest_task_builtin_test_mistyped_suite_suggests_nearest_runner() {
             assert!(message.contains("runner `viteest` is not available"));
             assert!(message.contains("Did you mean `vitest`?"));
             assert!(message.contains("Try: effigy test vitest user-service"));
+            assert!(message.contains("Use `effigy test --plan <args>`"));
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -1393,6 +1652,7 @@ max_parallel = 2
     let err = run_tasks(TasksArgs {
         repo_override: Some(root.clone()),
         task_name: None,
+            output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1417,6 +1677,7 @@ max_parallels = 2
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
+            output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1441,6 +1702,7 @@ jss = "pnpm"
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
+            output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1465,6 +1727,7 @@ cmd = "vitest run"
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
+            output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1490,6 +1753,7 @@ fial_on_non_zero = true
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
+            output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1519,6 +1783,7 @@ tas = "api"
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
+            output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1545,6 +1810,7 @@ run = [
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
+            output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1570,6 +1836,7 @@ aliass = "dup"
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
+            output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -2313,6 +2580,87 @@ max_parallel = 0
     assert_eq!(builtin_test_max_parallel(&catalogs, &root), 3);
 }
 
+#[cfg(unix)]
+#[test]
+fn discover_catalogs_includes_symlinked_catalog_directories() {
+    let root = temp_workspace("catalog-symlink-discovery");
+    let external = root.join("external");
+    let underlay_src = external.join("underlay");
+    fs::create_dir_all(&underlay_src).expect("mkdir underlay src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[catalog]
+alias = "acowtancy"
+"#,
+    );
+    write_manifest(
+        &underlay_src.join("effigy.toml"),
+        r#"[catalog]
+alias = "underlay"
+
+[tasks.ping]
+run = "printf underlay"
+"#,
+    );
+    symlink(&underlay_src, root.join("underlay")).expect("symlink underlay");
+
+    let catalogs = discover_catalogs(&root).expect("discover catalogs");
+    assert!(
+        catalogs.iter().any(|catalog| catalog.alias == "underlay"),
+        "symlinked underlay catalog should be discovered"
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "underlay/ping".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("run symlinked prefixed task");
+    assert_eq!(out, "");
+}
+
+#[cfg(unix)]
+#[test]
+fn discover_catalogs_reports_alias_conflict_for_symlinked_catalog() {
+    let root = temp_workspace("catalog-symlink-alias-conflict");
+    let dairy = root.join("dairy");
+    let external = root.join("external");
+    let underlay_src = external.join("underlay");
+    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    fs::create_dir_all(&underlay_src).expect("mkdir underlay src");
+
+    write_manifest(
+        &dairy.join("effigy.toml"),
+        r#"[catalog]
+alias = "dairy"
+"#,
+    );
+    write_manifest(
+        &underlay_src.join("effigy.toml"),
+        r#"[catalog]
+alias = "dairy"
+"#,
+    );
+    symlink(&underlay_src, root.join("underlay")).expect("symlink underlay");
+
+    let err = discover_catalogs(&root).expect_err("expected alias conflict");
+    match err {
+        RunnerError::TaskCatalogAliasConflict {
+            alias,
+            first_path,
+            second_path,
+        } => {
+            assert_eq!(alias, "dairy");
+            assert!(first_path.ends_with("effigy.toml"));
+            assert!(second_path.ends_with("effigy.toml"));
+            assert_ne!(first_path, second_path);
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
 #[test]
 fn run_pulse_renders_widget_sections() {
     let root = temp_workspace("pulse-render");
@@ -2329,6 +2677,7 @@ fn run_pulse_renders_widget_sections() {
     let out = run_pulse(PulseArgs {
         repo_override: Some(root),
         verbose_root: false,
+        output_json: false,
     })
     .expect("pulse");
 
@@ -2347,12 +2696,29 @@ fn run_pulse_renders_widget_sections() {
 }
 
 #[test]
+fn run_pulse_json_renders_machine_readable_payload() {
+    let root = temp_workspace("pulse-json");
+    let out = run_pulse(PulseArgs {
+        repo_override: Some(root),
+        verbose_root: false,
+        output_json: true,
+    })
+    .expect("pulse json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert!(parsed["report"].is_object());
+    assert!(parsed["root_resolution"].is_object());
+    assert!(parsed["report"]["evidence"].is_array());
+}
+
+#[test]
 fn run_pulse_verbose_renders_root_resolution_section() {
     let root = temp_workspace("pulse-verbose");
 
     let out = run_pulse(PulseArgs {
         repo_override: Some(root),
         verbose_root: true,
+        output_json: false,
     })
     .expect("pulse");
 
@@ -2389,6 +2755,7 @@ run = "echo dev"
     let out = run_pulse(PulseArgs {
         repo_override: Some(root),
         verbose_root: false,
+        output_json: false,
     })
     .expect("pulse");
 

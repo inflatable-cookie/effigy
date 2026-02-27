@@ -5,7 +5,7 @@ use std::process::Command as ProcessCommand;
 use std::sync::{Arc, Mutex};
 
 use crate::process_manager::ProcessSpec;
-use crate::testing::{detect_test_runner_detailed, detect_test_runner_plans, TestRunner};
+use crate::testing::{detect_test_runner_plans, TestRunner};
 use crate::tui::{run_multiprocess_tui, MultiProcessTuiOptions};
 use crate::ui::theme::resolve_color_enabled;
 use crate::ui::{KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer};
@@ -26,47 +26,47 @@ pub(super) fn try_run_builtin_test(
 ) -> Result<Option<String>, RunnerError> {
     let (flags, mut passthrough) = extract_builtin_test_flags(&runtime_args.passthrough);
     let targets = resolve_builtin_test_targets(selector, resolved_root, catalogs);
-    let package_manager = builtin_test_package_manager(catalogs, resolved_root);
-    let runner_overrides = builtin_test_runner_command_overrides(catalogs, resolved_root);
     let mut runnable = targets
         .iter()
         .flat_map(|target| {
-            let plans = detect_test_runner_plans(&target.root)
-                .into_iter()
-                .map(|plan| {
-                    apply_builtin_test_runner_config(plan, package_manager, &runner_overrides)
-                })
-                .collect::<Vec<crate::testing::TestRunnerPlan>>();
+            let plans = target.plans.clone();
             let multi = plans.len() > 1;
             plans
                 .into_iter()
                 .map(|plan| {
                     let name = if multi {
-                        format!("{}/{}", target.name, plan.runner.label())
+                        format!("{}/{}", target.name, plan.suite)
                     } else {
                         target.name.clone()
                     };
-                    (name, target.root.clone(), plan)
+                    (name, target.root.clone(), plan.command, plan.suite)
                 })
-                .collect::<Vec<(String, PathBuf, crate::testing::TestRunnerPlan)>>()
+                .collect::<Vec<(String, PathBuf, String, String)>>()
         })
-        .collect::<Vec<(String, PathBuf, crate::testing::TestRunnerPlan)>>();
+        .collect::<Vec<(String, PathBuf, String, String)>>();
     if runnable.is_empty() {
         return Ok(None);
     }
     let available_runners = runnable
         .iter()
-        .map(|(_, _, plan)| plan.runner.label().to_owned())
+        .map(|(_, _, _, suite)| suite.clone())
         .collect::<BTreeSet<String>>();
     let requested_suite_raw = passthrough.first().cloned();
-    let requested_suite = passthrough
-        .first()
-        .and_then(|candidate| normalize_builtin_test_suite(candidate))
-        .map(str::to_owned);
+    let requested_suite = passthrough.first().and_then(|candidate| {
+        normalize_builtin_test_suite(candidate)
+            .map(str::to_owned)
+            .or_else(|| {
+                if available_runners.contains(candidate) {
+                    Some(candidate.clone())
+                } else {
+                    None
+                }
+            })
+    });
 
     if let Some(selected) = requested_suite.as_ref() {
         passthrough.remove(0);
-        runnable.retain(|(_, _, plan)| plan.runner.label() == selected);
+        runnable.retain(|(_, _, _, suite)| suite == selected);
         if runnable.is_empty() {
             let available = if available_runners.is_empty() {
                 "<none>".to_owned()
@@ -90,7 +90,7 @@ pub(super) fn try_run_builtin_test(
                 .collect::<Vec<String>>()
                 .join(" | ");
             let message = format!(
-                "built-in `test` runner `{selected}` is not available in this target (available: {available}). Try one of: {suggested}"
+                "built-in `test` runner `{selected}` is not available in this target (available: {available}). Try one of: {suggested}. Use `effigy test --plan <args>` to preview suite routing before execution."
             );
             if flags.plan_mode {
                 return render_builtin_test_plan_recovery(
@@ -118,7 +118,7 @@ pub(super) fn try_run_builtin_test(
                 .collect::<Vec<String>>()
                 .join(", ");
             let message = format!(
-                "built-in `test` runner `{first}` is not available in this target (available: {available}). Did you mean `{suggested_suite}`? Try: {suggested}",
+                "built-in `test` runner `{first}` is not available in this target (available: {available}). Did you mean `{suggested_suite}`? Try: {suggested}. Use `effigy test --plan <args>` to preview suite routing before execution.",
             );
             if flags.plan_mode {
                 return render_builtin_test_plan_recovery(
@@ -143,7 +143,7 @@ pub(super) fn try_run_builtin_test(
             .collect::<Vec<String>>()
             .join(" | ");
         let message = format!(
-            "built-in `test` is ambiguous for arguments `{user_args}` because multiple suites are available ({available}); specify a suite first. Try one of: {suggested}",
+            "built-in `test` is ambiguous for arguments `{user_args}` because multiple suites are available ({available}); specify a suite first. Try one of: {suggested}. Use `effigy test --plan <args>` to preview suite routing before execution.",
         );
         if flags.plan_mode {
             return render_builtin_test_plan_recovery(
@@ -175,23 +175,17 @@ pub(super) fn try_run_builtin_test(
         ])?;
         renderer.text("")?;
         for target in &targets {
-            let selected_runner = target.detection.selected.as_ref().map(|plan| plan.runner);
-            let detected_plans = detect_test_runner_plans(&target.root)
-                .into_iter()
-                .map(|plan| {
-                    apply_builtin_test_runner_config(plan, package_manager, &runner_overrides)
-                })
-                .collect::<Vec<crate::testing::TestRunnerPlan>>();
-            let available_suites = detected_plans
+            let available_suites = target
+                .plans
                 .iter()
-                .map(|plan| plan.runner.label())
+                .map(|plan| plan.suite.as_str())
                 .collect::<BTreeSet<&str>>()
                 .into_iter()
                 .collect::<Vec<&str>>()
                 .join(", ");
-            let mut selected_plans = detected_plans.clone();
+            let mut selected_plans = target.plans.clone();
             if let Some(requested) = requested_suite.as_ref() {
-                selected_plans.retain(|plan| plan.runner.label() == requested);
+                selected_plans.retain(|plan| &plan.suite == requested);
             }
             renderer.section(&format!("Target: {}", target.name))?;
             if !selected_plans.is_empty() {
@@ -202,7 +196,7 @@ pub(super) fn try_run_builtin_test(
                     .join(" ");
                 let runners = selected_plans
                     .iter()
-                    .map(|plan| plan.runner.label())
+                    .map(|plan| plan.suite.as_str())
                     .collect::<Vec<&str>>()
                     .join(", ");
                 let commands = selected_plans
@@ -219,6 +213,7 @@ pub(super) fn try_run_builtin_test(
                     KeyValue::new("root", target.root.display().to_string()),
                     KeyValue::new("runner", runners),
                     KeyValue::new("available-suites", available_suites.clone()),
+                    KeyValue::new("suite-source", target.suite_source.clone()),
                 ])?;
                 renderer.text("")?;
                 renderer.bullet_list("command", &commands)?;
@@ -226,7 +221,7 @@ pub(super) fn try_run_builtin_test(
                 let mut evidence = Vec::<String>::new();
                 for plan in &selected_plans {
                     for line in &plan.evidence {
-                        evidence.push(format!("{}: {line}", plan.runner.label()));
+                        evidence.push(format!("{}: {line}", plan.suite));
                     }
                 }
                 renderer.bullet_list("evidence", &evidence)?;
@@ -235,6 +230,7 @@ pub(super) fn try_run_builtin_test(
                     KeyValue::new("root", target.root.display().to_string()),
                     KeyValue::new("runner", "<none>".to_owned()),
                     KeyValue::new("available-suites", available_suites.clone()),
+                    KeyValue::new("suite-source", target.suite_source.clone()),
                     KeyValue::new("command", "<none>".to_owned()),
                 ])?;
                 renderer.text("")?;
@@ -244,29 +240,7 @@ pub(super) fn try_run_builtin_test(
                 )?;
             }
             renderer.text("")?;
-            let candidate_lines = target
-                .detection
-                .candidates
-                .iter()
-                .map(|candidate| {
-                    let state = if candidate.available {
-                        if Some(candidate.runner) == selected_runner {
-                            "selected"
-                        } else {
-                            "available"
-                        }
-                    } else {
-                        "rejected"
-                    };
-                    format!(
-                        "{} -> {} ({state}): {}",
-                        candidate.runner.label(),
-                        candidate.command,
-                        candidate.reason
-                    )
-                })
-                .collect::<Vec<String>>();
-            renderer.bullet_list("fallback-chain", &candidate_lines)?;
+            renderer.bullet_list("fallback-chain", &target.fallback_chain)?;
             renderer.text("")?;
         }
         let out = renderer.into_inner();
@@ -282,15 +256,15 @@ pub(super) fn try_run_builtin_test(
         .join(" ");
     let runnable = runnable
         .into_iter()
-        .map(|(name, root, plan)| {
+        .map(|(name, root, command, suite)| {
             let command = if args_rendered.is_empty() {
-                plan.command.clone()
+                command
             } else {
-                format!("{} {}", plan.command, args_rendered)
+                format!("{command} {args_rendered}")
             };
             BuiltinTestRunnable {
                 name,
-                runner: plan.runner.label().to_owned(),
+                runner: suite,
                 root,
                 command,
             }
@@ -438,10 +412,19 @@ fn extract_builtin_test_flags(raw_args: &[String]) -> (BuiltinTestCliFlags, Vec<
 }
 
 #[derive(Debug, Clone)]
+struct BuiltinResolvedPlan {
+    suite: String,
+    command: String,
+    evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 struct BuiltinTestTarget {
     name: String,
     root: PathBuf,
-    detection: crate::testing::TestRunnerDetection,
+    plans: Vec<BuiltinResolvedPlan>,
+    fallback_chain: Vec<String>,
+    suite_source: String,
 }
 
 fn resolve_builtin_test_targets(
@@ -451,10 +434,26 @@ fn resolve_builtin_test_targets(
 ) -> Vec<BuiltinTestTarget> {
     if let Some(prefix) = selector.prefix.as_ref() {
         if let Some(catalog) = catalogs.iter().find(|catalog| &catalog.alias == prefix) {
+            let (plans, suite_source) = resolve_target_test_plans(catalogs, &catalog.catalog_root);
+            if plans.is_empty() {
+                return Vec::new();
+            }
             return vec![BuiltinTestTarget {
                 name: catalog.alias.clone(),
-                detection: detect_test_runner_detailed(&catalog.catalog_root),
                 root: catalog.catalog_root.clone(),
+                fallback_chain: plans
+                    .iter()
+                    .map(|plan| {
+                        format!(
+                            "{} -> {} (selected): {}",
+                            plan.suite,
+                            plan.command,
+                            plan.evidence.join("; ")
+                        )
+                    })
+                    .collect::<Vec<String>>(),
+                plans,
+                suite_source,
             }];
         }
         return Vec::new();
@@ -473,10 +472,26 @@ fn resolve_builtin_test_targets(
     let mut ordered = roots.into_iter().collect::<Vec<(PathBuf, String)>>();
     ordered.sort_by(|a, b| a.0.cmp(&b.0));
     for (root, name) in ordered {
+        let (plans, suite_source) = resolve_target_test_plans(catalogs, &root);
+        if plans.is_empty() {
+            continue;
+        }
         targets.push(BuiltinTestTarget {
             name,
-            detection: detect_test_runner_detailed(&root),
+            fallback_chain: plans
+                .iter()
+                .map(|plan| {
+                    format!(
+                        "{} -> {} (selected): {}",
+                        plan.suite,
+                        plan.command,
+                        plan.evidence.join("; ")
+                    )
+                })
+                .collect::<Vec<String>>(),
             root,
+            plans,
+            suite_source,
         });
     }
     targets
@@ -645,6 +660,41 @@ pub(super) fn builtin_test_max_parallel(catalogs: &[LoadedCatalog], resolved_roo
     configured.unwrap_or(DEFAULT_BUILTIN_TEST_MAX_PARALLEL)
 }
 
+fn resolve_target_test_plans(
+    catalogs: &[LoadedCatalog],
+    target_root: &Path,
+) -> (Vec<BuiltinResolvedPlan>, String) {
+    let configured = builtin_test_configured_suites(catalogs, target_root);
+    if !configured.is_empty() {
+        return (
+            configured
+                .into_iter()
+                .map(|(suite, command)| BuiltinResolvedPlan {
+                    suite: suite.clone(),
+                    command,
+                    evidence: vec![format!("test.suites.{suite}")],
+                })
+                .collect::<Vec<BuiltinResolvedPlan>>(),
+            "configured".to_owned(),
+        );
+    }
+
+    let package_manager = builtin_test_package_manager(catalogs, target_root);
+    let runner_overrides = builtin_test_runner_command_overrides(catalogs, target_root);
+    (
+        detect_test_runner_plans(target_root)
+            .into_iter()
+            .map(|plan| apply_builtin_test_runner_config(plan, package_manager, &runner_overrides))
+            .map(|plan| BuiltinResolvedPlan {
+                suite: plan.runner.label().to_owned(),
+                command: plan.command,
+                evidence: plan.evidence,
+            })
+            .collect::<Vec<BuiltinResolvedPlan>>(),
+        "auto-detected".to_owned(),
+    )
+}
+
 fn builtin_test_package_manager(
     catalogs: &[LoadedCatalog],
     target_root: &Path,
@@ -659,6 +709,31 @@ fn builtin_test_package_manager(
                 .as_ref()
                 .and_then(|pm| pm.js)
         })
+}
+
+fn builtin_test_configured_suites(
+    catalogs: &[LoadedCatalog],
+    target_root: &Path,
+) -> BTreeMap<String, String> {
+    catalogs
+        .iter()
+        .filter(|catalog| catalog.catalog_root == target_root)
+        .find_map(|catalog| {
+            catalog.manifest.test.as_ref().map(|test| {
+                test.suites
+                    .iter()
+                    .filter_map(|(raw_suite, suite)| {
+                        suite.run().map(|command| {
+                            let key = normalize_builtin_test_suite(raw_suite)
+                                .unwrap_or(raw_suite.as_str())
+                                .to_owned();
+                            (key, command.to_owned())
+                        })
+                    })
+                    .collect::<BTreeMap<String, String>>()
+            })
+        })
+        .unwrap_or_default()
 }
 
 fn builtin_test_runner_command_overrides(

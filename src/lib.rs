@@ -31,12 +31,14 @@ pub enum HelpTopic {
 pub struct PulseArgs {
     pub repo_override: Option<PathBuf>,
     pub verbose_root: bool,
+    pub output_json: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TasksArgs {
     pub repo_override: Option<PathBuf>,
     pub task_name: Option<String>,
+    pub output_json: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,10 +90,15 @@ pub fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Command {
         return cmd;
     }
 
-    if let Command::Task(task) = &mut cmd {
-        if !task.args.iter().any(|arg| arg == "--json") {
-            task.args.insert(0, "--json".to_owned());
+    match &mut cmd {
+        Command::Task(task) => {
+            if !task.args.iter().any(|arg| arg == "--json") {
+                task.args.insert(0, "--json".to_owned());
+            }
         }
+        Command::Tasks(args) => args.output_json = true,
+        Command::RepoPulse(args) => args.output_json = true,
+        Command::Help(_) => {}
     }
     cmd
 }
@@ -101,8 +108,10 @@ pub fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bool {
         return true;
     }
     match cmd {
+        Command::Tasks(args) => args.output_json,
+        Command::RepoPulse(args) => args.output_json,
         Command::Task(task) => task.args.iter().any(|arg| arg == "--json"),
-        _ => false,
+        Command::Help(_) => false,
     }
 }
 
@@ -162,6 +171,7 @@ where
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut verbose_root = false;
+    let mut output_json = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -174,6 +184,9 @@ where
             "--verbose-root" => {
                 verbose_root = true;
             }
+            "--json" => {
+                output_json = true;
+            }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::RepoPulse)),
             other => return Err(CliParseError::UnknownArgument(other.to_owned())),
         }
@@ -182,6 +195,7 @@ where
     Ok(Command::RepoPulse(PulseArgs {
         repo_override,
         verbose_root,
+        output_json,
     }))
 }
 
@@ -192,6 +206,7 @@ where
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut task_name: Option<String> = None;
+    let mut output_json = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -207,6 +222,9 @@ where
                 };
                 task_name = Some(name);
             }
+            "--json" => {
+                output_json = true;
+            }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
             other => return Err(CliParseError::UnknownArgument(other.to_owned())),
         }
@@ -215,6 +233,7 @@ where
     Ok(Command::Tasks(TasksArgs {
         repo_override,
         task_name,
+        output_json,
     }))
 }
 
@@ -351,7 +370,7 @@ fn render_repo_pulse_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.text("")?;
 
     renderer.section("Usage")?;
-    renderer.text("effigy repo-pulse [--repo <PATH>] [--verbose-root]")?;
+    renderer.text("effigy repo-pulse [--repo <PATH>] [--verbose-root] [--json]")?;
     renderer.text("")?;
 
     renderer.section("Options")?;
@@ -366,6 +385,10 @@ fn render_repo_pulse_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
                 "--verbose-root".to_owned(),
                 "Print root resolution evidence and warnings".to_owned(),
             ],
+            vec![
+                "--json".to_owned(),
+                "Render machine-readable report payload".to_owned(),
+            ],
             vec!["-h, --help".to_owned(), "Print command help".to_owned()],
         ],
     ))?;
@@ -378,6 +401,7 @@ fn render_repo_pulse_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy repo-pulse".to_owned(),
             "effigy repo-pulse --repo /path/to/workspace".to_owned(),
             "effigy repo-pulse --repo /path/to/workspace --verbose-root".to_owned(),
+            "effigy --json repo-pulse --repo /path/to/workspace".to_owned(),
         ],
     )?;
     Ok(())
@@ -392,7 +416,7 @@ fn render_tasks_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.text("")?;
 
     renderer.section("Usage")?;
-    renderer.text("effigy tasks [--repo <PATH>] [--task <TASK_NAME>]")?;
+    renderer.text("effigy tasks [--repo <PATH>] [--task <TASK_NAME>] [--json]")?;
     renderer.text("")?;
 
     renderer.section("Options")?;
@@ -407,6 +431,10 @@ fn render_tasks_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
                 "--task <TASK_NAME>".to_owned(),
                 "Filter output to matching task entries".to_owned(),
             ],
+            vec![
+                "--json".to_owned(),
+                "Render machine-readable task catalog payload".to_owned(),
+            ],
             vec!["-h, --help".to_owned(), "Print command help".to_owned()],
         ],
     ))?;
@@ -419,6 +447,7 @@ fn render_tasks_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy tasks".to_owned(),
             "effigy tasks --repo /path/to/workspace".to_owned(),
             "effigy tasks --repo /path/to/workspace --task reset-db".to_owned(),
+            "effigy --json tasks --repo /path/to/workspace --task test".to_owned(),
         ],
     )?;
     Ok(())

@@ -20,5 +20,6 @@ pub(super) fn run_builtin_repo_pulse(
     run_pulse(PulseArgs {
         repo_override: Some(target_root.to_path_buf()),
         verbose_root: runtime_args.verbose_root,
+        output_json: false,
     })
 }

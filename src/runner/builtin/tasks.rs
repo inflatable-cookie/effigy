@@ -40,5 +40,6 @@ pub(super) fn run_builtin_tasks(
     run_tasks(TasksArgs {
         repo_override: Some(target_root.to_path_buf()),
         task_name,
+        output_json: false,
     })
 }

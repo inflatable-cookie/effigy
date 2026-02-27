@@ -1,6 +1,8 @@
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
+use serde_json::json;
+
 use crate::process_manager::ProcessManagerError;
 use crate::resolver::{resolve_target_root, ResolveError};
 use crate::tasks::pulse::PulseTask;
@@ -370,6 +372,7 @@ pub fn run_pulse(args: PulseArgs) -> Result<String, RunnerError> {
     let PulseArgs {
         repo_override,
         verbose_root,
+        output_json,
     } = args;
     let cwd = std::env::current_dir().map_err(RunnerError::Cwd)?;
     let resolved = resolve_target_root(cwd.clone(), repo_override)?;
@@ -385,6 +388,26 @@ pub fn run_pulse(args: PulseArgs) -> Result<String, RunnerError> {
 
     let collected = task.collect(&ctx)?;
     let evaluated = task.evaluate(collected)?;
+    if output_json {
+        let payload = json!({
+            "report": {
+                "repo": evaluated.repo,
+                "owner": evaluated.owner,
+                "eta": evaluated.eta,
+                "evidence": evaluated.evidence,
+                "risk": evaluated.risk,
+                "next_action": evaluated.next_action,
+            },
+            "root_resolution": {
+                "resolved_root": resolved.resolved_root.display().to_string(),
+                "mode": format!("{:?}", resolved.resolution_mode),
+                "evidence": resolved.evidence,
+                "warnings": resolved.warnings,
+            }
+        });
+        return serde_json::to_string_pretty(&payload)
+            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+    }
     let report = render_pulse_report(
         evaluated,
         verbose_root.then_some(&resolved),
@@ -402,6 +425,96 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
         Err(RunnerError::TaskCatalogsMissing { .. }) => Vec::new(),
         Err(error) => return Err(error),
     };
+
+    if args.output_json {
+        if let Some(filter) = args.task_name {
+            let selector = parse_task_selector(&filter)?;
+            let matches = catalogs
+                .iter()
+                .filter_map(|catalog| {
+                    let task = catalog.manifest.tasks.get(&selector.task_name)?;
+                    if selector
+                        .prefix
+                        .as_ref()
+                        .is_some_and(|prefix| prefix != &catalog.alias)
+                    {
+                        return None;
+                    }
+                    Some(json!({
+                        "task": catalog_task_label(catalog, &selector.task_name),
+                        "run": task_run_preview(task),
+                        "manifest": catalog.manifest_path.display().to_string(),
+                    }))
+                })
+                .collect::<Vec<serde_json::Value>>();
+            let builtin_matches = BUILTIN_TASKS
+                .iter()
+                .filter(|(name, _)| selector.prefix.is_none() && selector.task_name == *name)
+                .map(|(name, description)| {
+                    json!({
+                        "task": *name,
+                        "description": *description,
+                    })
+                })
+                .collect::<Vec<serde_json::Value>>();
+            let payload = json!({
+                "catalog_count": catalogs.len(),
+                "filter": filter,
+                "matches": matches,
+                "builtin_matches": builtin_matches,
+                "notes": if selector.task_name == "test" {
+                    vec!["built-in fallback supports `<catalog>/test` when explicit `tasks.test` is not defined".to_owned()]
+                } else {
+                    Vec::<String>::new()
+                }
+            });
+            return serde_json::to_string_pretty(&payload)
+                .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+        }
+
+        let mut catalog_rows: Vec<serde_json::Value> = Vec::new();
+        let mut ordered = catalogs.iter().collect::<Vec<&LoadedCatalog>>();
+        ordered.sort_by(|a, b| {
+            a.depth
+                .cmp(&b.depth)
+                .then_with(|| a.alias.cmp(&b.alias))
+                .then_with(|| a.manifest_path.cmp(&b.manifest_path))
+        });
+        for catalog in ordered {
+            if catalog.manifest.tasks.is_empty() {
+                catalog_rows.push(json!({
+                    "task": null,
+                    "run": null,
+                    "manifest": catalog.manifest_path.display().to_string(),
+                }));
+                continue;
+            }
+            for (task_name, task_def) in &catalog.manifest.tasks {
+                catalog_rows.push(json!({
+                    "task": catalog_task_label(catalog, task_name),
+                    "run": task_run_preview(task_def),
+                    "manifest": catalog.manifest_path.display().to_string(),
+                }));
+            }
+        }
+        let builtin_rows = BUILTIN_TASKS
+            .iter()
+            .map(|(name, description)| {
+                json!({
+                    "task": *name,
+                    "description": *description,
+                })
+            })
+            .collect::<Vec<serde_json::Value>>();
+        let payload = json!({
+            "catalog_count": catalogs.len(),
+            "catalog_tasks": catalog_rows,
+            "builtin_tasks": builtin_rows,
+        });
+        return serde_json::to_string_pretty(&payload)
+            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+    }
+
     let color_enabled =
         resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);

@@ -77,8 +77,7 @@ pub(super) fn run_builtin_catalogs(
         if arg == "--pretty" {
             let Some(value) = runtime_args.passthrough.get(i + 1) else {
                 return Err(RunnerError::TaskInvocation(
-                    "catalogs argument --pretty requires a value (`true` or `false`)"
-                        .to_owned(),
+                    "catalogs argument --pretty requires a value (`true` or `false`)".to_owned(),
                 ));
             };
             pretty_json = match value.as_str() {
@@ -226,7 +225,10 @@ pub(super) fn run_builtin_catalogs(
         renderer.section(&format!("Resolution Probe: {}", probe.selector))?;
         if probe.status == "ok" {
             renderer.key_values(&[
-                KeyValue::new("catalog", probe.catalog.unwrap_or_else(|| "<none>".to_owned())),
+                KeyValue::new(
+                    "catalog",
+                    probe.catalog.unwrap_or_else(|| "<none>".to_owned()),
+                ),
                 KeyValue::new(
                     "catalog-root",
                     probe.catalog_root.unwrap_or_else(|| "<none>".to_owned()),

@@ -34,6 +34,8 @@ pub(super) struct ManifestTestConfig {
     pub(super) max_parallel: Option<usize>,
     #[serde(default)]
     pub(super) runners: BTreeMap<String, ManifestTestRunnerOverride>,
+    #[serde(default)]
+    pub(super) suites: BTreeMap<String, ManifestTestSuite>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -70,6 +72,27 @@ impl ManifestTestRunnerOverride {
         match self {
             ManifestTestRunnerOverride::Command(command) => Some(command.as_str()),
             ManifestTestRunnerOverride::Config(table) => table.command.as_deref(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(super) enum ManifestTestSuite {
+    Command(String),
+    Config(ManifestTestSuiteTable),
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ManifestTestSuiteTable {
+    pub(super) run: String,
+}
+
+impl ManifestTestSuite {
+    pub(super) fn run(&self) -> Option<&str> {
+        match self {
+            ManifestTestSuite::Command(command) => Some(command.as_str()),
+            ManifestTestSuite::Config(table) => Some(table.run.as_str()),
         }
     }
 }
@@ -114,6 +137,49 @@ impl<'de> serde::Deserialize<'de> for ManifestTestRunnerOverride {
         }
 
         deserializer.deserialize_any(OverrideVisitor)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ManifestTestSuite {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct SuiteVisitor;
+
+        impl<'de> Visitor<'de> for SuiteVisitor {
+            type Value = ManifestTestSuite;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("string command or table with `run` field")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(ManifestTestSuite::Command(value.to_owned()))
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(ManifestTestSuite::Command(value))
+            }
+
+            fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
+            where
+                M: de::MapAccess<'de>,
+            {
+                let table = <ManifestTestSuiteTable as serde::Deserialize>::deserialize(
+                    de::value::MapAccessDeserializer::new(map),
+                )?;
+                Ok(ManifestTestSuite::Config(table))
+            }
+        }
+
+        deserializer.deserialize_any(SuiteVisitor)
     }
 }
 

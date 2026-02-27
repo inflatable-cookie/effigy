@@ -115,6 +115,7 @@ See [docs/guides/011-output-widgets-and-colour-modes.md](./docs/guides/011-outpu
 
 Canonical manifest name:
 - `effigy.toml`
+- discovery scans the workspace tree recursively, including symlinked directories
 
 Example:
 
@@ -136,6 +137,10 @@ reset-db = [{ task = "drop-db" }, { task = "migrate-db" }]
 ```
 
 You can mix compact entries with full task tables in the same manifest.
+
+Discovery notes:
+- catalog aliases must be unique across all discovered manifests.
+- if two discovered manifests declare the same alias (including via symlinked paths), Effigy fails fast with an alias conflict error.
 
 Interpolation tokens:
 - `{repo}`: resolved catalog root path shell-quoted.

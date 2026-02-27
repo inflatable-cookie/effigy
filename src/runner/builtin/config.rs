@@ -129,6 +129,10 @@ pub(super) fn run_builtin_config(
     renderer.text("[test]")?;
     renderer.text("max_parallel = 3")?;
     renderer.text("")?;
+    renderer.text("[test.suites]")?;
+    renderer.text("unit = \"pnpm exec vitest run\"")?;
+    renderer.text("integration = \"cargo nextest run\"")?;
+    renderer.text("")?;
     renderer.text("[test.runners]")?;
     renderer.text("vitest = \"pnpm exec vitest run\"")?;
     renderer.text("\"cargo-nextest\" = \"cargo nextest run --workspace\"")?;
@@ -193,6 +197,10 @@ fn render_builtin_config_schema() -> String {
         "",
         "[test]",
         "max_parallel = 3",
+        "",
+        "[test.suites]",
+        "unit = \"pnpm exec vitest run\"",
+        "integration = \"cargo nextest run\"",
         "",
         "[test.runners]",
         "vitest = \"pnpm exec vitest run\"",
@@ -369,6 +377,10 @@ fn render_builtin_config_schema_test_target(minimal: bool, runner: Option<&str>)
     if !minimal {
         lines.push("[test]".to_owned());
         lines.push("max_parallel = 3".to_owned());
+        lines.push(String::new());
+        lines.push("[test.suites]".to_owned());
+        lines.push("unit = \"pnpm exec vitest run\"".to_owned());
+        lines.push("integration = \"cargo nextest run\"".to_owned());
         lines.push(String::new());
     }
     lines.push("[test.runners]".to_owned());
