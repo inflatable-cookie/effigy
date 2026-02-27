@@ -6,9 +6,10 @@ use crate::ui::Renderer;
 use crate::TaskInvocation;
 
 use super::render::trace_renderer;
+use super::util::{shell_quote, with_local_node_bin_path};
 use super::{
-    shell_quote, with_local_node_bin_path, DeferredCommand, LoadedCatalog, RunnerError,
-    TaskRuntimeArgs, TaskSelector, DEFER_DEPTH_ENV, IMPLICIT_ROOT_DEFER_TEMPLATE,
+    DeferredCommand, LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector, DEFER_DEPTH_ENV,
+    IMPLICIT_ROOT_DEFER_TEMPLATE,
 };
 
 pub(super) fn should_attempt_deferral(error: &RunnerError) -> bool {

@@ -10,10 +10,11 @@ use crate::ui::{
 };
 
 use super::catalog::select_catalog_and_task;
+use super::util::{parse_task_selector, shell_quote};
 use super::{
-    parse_task_selector, shell_quote, LoadedCatalog, ManagedProcessSpec, ManagedTaskPlan,
-    ManifestManagedProcess, ManifestManagedProfile, ManifestManagedRun, ManifestManagedRunStep,
-    ManifestTask, RunnerError, TaskRuntimeArgs, TaskSelector, DEFAULT_MANAGED_SHELL_RUN,
+    LoadedCatalog, ManagedProcessSpec, ManagedTaskPlan, ManifestManagedProcess,
+    ManifestManagedProfile, ManifestManagedRun, ManifestManagedRunStep, ManifestTask, RunnerError,
+    TaskRuntimeArgs, TaskSelector, DEFAULT_MANAGED_SHELL_RUN,
 };
 
 pub(super) fn resolve_managed_task_plan(

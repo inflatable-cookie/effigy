@@ -11,10 +11,10 @@ use crate::ui::theme::resolve_color_enabled;
 use crate::ui::{KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer};
 use crate::{render_help, HelpTopic, PulseArgs, TaskInvocation, TasksArgs};
 
+use super::util::{normalize_builtin_test_suite, shell_quote, with_local_node_bin_path};
 use super::{
-    normalize_builtin_test_suite, run_pulse, run_tasks, with_local_node_bin_path, LoadedCatalog,
-    ManifestJsPackageManager, RunnerError, TaskRuntimeArgs, TaskSelector, BUILTIN_TASKS,
-    DEFAULT_BUILTIN_TEST_MAX_PARALLEL,
+    run_pulse, run_tasks, LoadedCatalog, ManifestJsPackageManager, RunnerError, TaskRuntimeArgs,
+    TaskSelector, BUILTIN_TASKS, DEFAULT_BUILTIN_TEST_MAX_PARALLEL,
 };
 
 fn is_builtin_task(task_name: &str) -> bool {
@@ -220,20 +220,18 @@ fn try_run_builtin_test(
         renderer.text("")?;
         for target in &targets {
             let selected_runner = target.detection.selected.as_ref().map(|plan| plan.runner);
-            let available_suites = target
-                .detection
-                .candidates
+            let detected_plans = detect_test_runner_plans(&target.root)
+                .into_iter()
+                .map(|plan| apply_builtin_test_package_manager(plan, package_manager))
+                .collect::<Vec<crate::testing::TestRunnerPlan>>();
+            let available_suites = detected_plans
                 .iter()
-                .filter(|candidate| candidate.available)
-                .map(|candidate| candidate.runner.label())
+                .map(|plan| plan.runner.label())
                 .collect::<BTreeSet<&str>>()
                 .into_iter()
                 .collect::<Vec<&str>>()
                 .join(", ");
-            let mut selected_plans = detect_test_runner_plans(&target.root)
-                .into_iter()
-                .map(|plan| apply_builtin_test_package_manager(plan, package_manager))
-                .collect::<Vec<crate::testing::TestRunnerPlan>>();
+            let mut selected_plans = detected_plans.clone();
             if let Some(requested) = requested_suite.as_ref() {
                 selected_plans.retain(|plan| plan.runner.label() == requested);
             }
@@ -241,7 +239,7 @@ fn try_run_builtin_test(
             if !selected_plans.is_empty() {
                 let args_rendered = passthrough
                     .iter()
-                    .map(|arg| super::shell_quote(arg))
+                    .map(|arg| shell_quote(arg))
                     .collect::<Vec<String>>()
                     .join(" ");
                 let runners = selected_plans
@@ -321,7 +319,7 @@ fn try_run_builtin_test(
 
     let args_rendered = passthrough
         .iter()
-        .map(|arg| super::shell_quote(arg))
+        .map(|arg| shell_quote(arg))
         .collect::<Vec<String>>()
         .join(" ");
     let runnable = runnable
