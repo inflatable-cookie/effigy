@@ -963,7 +963,7 @@ max_parallel = 2
     );
 
     let err = run_tasks(TasksArgs {
-        repo_override: Some(root.join("farmyard")),
+        repo_override: Some(root.clone()),
         task_name: None,
     })
     .expect_err("expected manifest parse failure");
