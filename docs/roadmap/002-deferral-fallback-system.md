@@ -1,6 +1,6 @@
 # 002 - Deferral Fallback System
 
-Status: In Progress
+Status: Complete
 Owner: Platform
 Created: 2026-02-26
 Depends on: 001
@@ -15,7 +15,7 @@ Some repos still depend on a legacy task runner implementation. Effigy needs an 
 - [x] Defer unresolved task requests to configured command.
 - [x] Forward original request + passthrough args to deferred command.
 - [x] Add loop protection to prevent recursive re-entry.
-- [ ] Document migration guidance for PHP fallback usage.
+- [x] Document migration guidance for PHP fallback usage.
 
 ## 3) Non-Goals
 
@@ -37,15 +37,15 @@ Some repos still depend on a legacy task runner implementation. Effigy needs an 
 - [x] Add verbose trace output for deferral path.
 
 ### Phase 2.3 - Adoption docs
-- [ ] Add cookbook example for deferring to legacy PHP Effigy.
-- [ ] Add deprecation guidance for eventually removing deferral.
+- [x] Add cookbook example for deferring to legacy PHP Effigy.
+- [x] Add deprecation guidance for eventually removing deferral.
 
 ## 5) Acceptance Criteria
 
 - [x] Unresolved requests trigger configured deferral command.
 - [x] Matched tasks do not defer.
 - [x] Recursive deferral attempts are blocked.
-- [ ] Migration cookbook documented in guides.
+- [x] Migration cookbook documented in guides.
 
 ## 6) Risks and Mitigations
 
@@ -58,4 +58,4 @@ Some repos still depend on a legacy task runner implementation. Effigy needs an 
 
 - [x] Deferral schema and runtime behavior in runner.
 - [x] Test coverage for key deferral paths.
-- [ ] Cookbook docs for legacy PHP migration bridge.
+- [x] Cookbook docs for legacy PHP migration bridge.
