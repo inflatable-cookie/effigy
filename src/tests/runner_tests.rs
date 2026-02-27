@@ -1594,6 +1594,49 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
 }
 
 #[test]
+fn run_manifest_task_builtin_config_schema_minimal_prints_starter_template() {
+    let root = temp_workspace("builtin-config-schema-minimal");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "config".to_owned(),
+            args: vec!["--schema".to_owned(), "--minimal".to_owned()],
+        },
+        root,
+    )
+    .expect("run config --schema --minimal");
+
+    assert!(out.contains("Minimal strict-valid effigy.toml starter"));
+    assert!(out.contains("[package_manager]"));
+    assert!(out.contains("[test.runners]"));
+    assert!(out.contains("[tasks]"));
+    assert!(!out.contains("[tasks.dev.profiles.default]"));
+}
+
+#[test]
+fn run_manifest_task_builtin_config_minimal_requires_schema_flag() {
+    let root = temp_workspace("builtin-config-minimal-requires-schema");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "config".to_owned(),
+            args: vec!["--minimal".to_owned()],
+        },
+        root,
+    )
+    .expect_err("expected --minimal precondition failure");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("`--minimal` requires `--schema`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
 fn run_manifest_task_builtin_config_rejects_unknown_args() {
     let root = temp_workspace("builtin-config-unknown-args");
     write_manifest(&root.join("effigy.toml"), "");

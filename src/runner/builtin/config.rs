@@ -10,26 +10,35 @@ pub(super) fn run_builtin_config(
     task: &TaskInvocation,
     args: &[String],
 ) -> Result<Option<String>, RunnerError> {
-    if args.iter().any(|arg| arg == "--schema") {
-        if args.len() > 1 {
-            return Err(RunnerError::TaskInvocation(format!(
-                "unknown argument(s) for built-in `{}`: {}",
-                task.name,
-                args.iter()
-                    .filter(|arg| arg.as_str() != "--schema")
-                    .cloned()
-                    .collect::<Vec<String>>()
-                    .join(" ")
-            )));
+    let mut schema = false;
+    let mut minimal = false;
+    let mut unknown = Vec::<String>::new();
+    for arg in args {
+        match arg.as_str() {
+            "--schema" => schema = true,
+            "--minimal" => minimal = true,
+            _ => unknown.push(arg.clone()),
         }
-        return Ok(Some(render_builtin_config_schema()));
     }
-    if !args.is_empty() {
+
+    if !unknown.is_empty() {
         return Err(RunnerError::TaskInvocation(format!(
             "unknown argument(s) for built-in `{}`: {}",
             task.name,
-            args.join(" ")
+            unknown.join(" ")
         )));
+    }
+    if minimal && !schema {
+        return Err(RunnerError::TaskInvocation(
+            "`--minimal` requires `--schema` for built-in `config`".to_owned(),
+        ));
+    }
+    if schema {
+        return Ok(Some(if minimal {
+            render_builtin_config_schema_minimal()
+        } else {
+            render_builtin_config_schema()
+        }));
     }
 
     let color_enabled =
@@ -134,6 +143,23 @@ fn render_builtin_config_schema() -> String {
         "[tasks.dev.profiles.default]",
         "start = [\"api\"]",
         "tabs = [\"api\"]",
+        "",
+    ]
+    .join("\n")
+}
+
+fn render_builtin_config_schema_minimal() -> String {
+    [
+        "# Minimal strict-valid effigy.toml starter",
+        "",
+        "[package_manager]",
+        "js = \"pnpm\"",
+        "",
+        "[test.runners]",
+        "vitest = \"pnpm exec vitest run\"",
+        "",
+        "[tasks]",
+        "test = \"vitest run\"",
         "",
     ]
     .join("\n")
