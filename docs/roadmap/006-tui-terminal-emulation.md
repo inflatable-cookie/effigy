@@ -1,6 +1,6 @@
 # 006 - TUI Terminal Emulation
 
-Status: In Progress
+Status: Complete
 Owner: Platform
 Created: 2026-02-27
 Depends on: 004, 005
@@ -71,7 +71,7 @@ Implementation notes:
 
 ### Phase 6.5 - Hardening and Rollout
 - [x] Add targeted regression coverage for rewrite-heavy streams.
-- [ ] Add runtime diagnostics toggle for emulator/debug traces (disabled by default).
+- [x] Add runtime diagnostics toggle for emulator/debug traces (disabled by default).
 - [x] Update docs (`guides/012-dev-process-manager-tui.md`, `guides/013-testing-orchestration.md`) with behavior and limitations.
 
 ## 7) Acceptance Criteria

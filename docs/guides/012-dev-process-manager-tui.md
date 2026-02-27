@@ -82,6 +82,8 @@ task = "cream/dev"
   - disables TUI auto-launch and renders managed plan output.
 - `EFFIGY_MANAGED_TUI=1|true`
   - forces TUI launch.
+- `EFFIGY_TUI_DIAGNOSTICS=1|true`
+  - enables post-run TUI diagnostics summary (event/key/frame counters and recent trace lines) for debugging emulator/runtime behavior.
 
 ## 5) Validation Checklist
 

@@ -9,6 +9,7 @@ use crate::tui::core::{
 };
 
 use super::config::{EVENT_DRAIN_WAIT, VT_PARSER_COLS, VT_PARSER_ROWS, VT_PARSER_SCROLLBACK};
+use super::diagnostics::RuntimeDiagnostics;
 use super::render::options_actions;
 use super::state::{OptionsAction, SessionState};
 use super::terminal_text::{
@@ -24,6 +25,7 @@ pub(super) enum LoopControl {
 pub(super) fn drain_process_events(
     supervisor: &ProcessSupervisor,
     state: &mut SessionState,
+    diagnostics: &mut RuntimeDiagnostics,
     max_events: usize,
     vt_emulator_enabled: bool,
 ) {
@@ -52,11 +54,19 @@ pub(super) fn drain_process_events(
                                 ),
                             );
                             state.vt_saw_chunk.insert(event_item.process.clone(), false);
+                            diagnostics.record_vt_reset(&event_item.process);
                         }
                         if let Some(chunk) = event_item.chunk.as_ref() {
                             if let Some(parser) = state.vt_parsers.get_mut(&event_item.process) {
                                 parser.process(chunk);
                                 state.vt_saw_chunk.insert(event_item.process.clone(), true);
+                                match event_item.kind {
+                                    ProcessEventKind::StdoutChunk => diagnostics
+                                        .record_stdout_chunk(&event_item.process, chunk.len()),
+                                    ProcessEventKind::StderrChunk => diagnostics
+                                        .record_stderr_chunk(&event_item.process, chunk.len()),
+                                    _ => {}
+                                }
                             }
                         }
                     }
@@ -74,6 +84,7 @@ pub(super) fn drain_process_events(
                         .restart_pending
                         .insert(event_item.process.clone(), false);
                     state.output_seen.insert(event_item.process.clone(), true);
+                    diagnostics.record_stdout_lines(payload_line_count(&event_item.payload));
                     ingest_log_payload(buffer, LogEntryKind::Stdout, &event_item.payload);
                 }
                 ProcessEventKind::Stderr => {
@@ -89,9 +100,11 @@ pub(super) fn drain_process_events(
                         .restart_pending
                         .insert(event_item.process.clone(), false);
                     state.output_seen.insert(event_item.process.clone(), true);
+                    diagnostics.record_stderr_lines(payload_line_count(&event_item.payload));
                     ingest_log_payload(buffer, LogEntryKind::Stderr, &event_item.payload);
                 }
                 ProcessEventKind::Exit => {
+                    diagnostics.record_exit_event(&event_item.process, &event_item.payload);
                     let pending_restart = *state
                         .restart_pending
                         .get(&event_item.process)
@@ -138,9 +151,11 @@ pub(super) fn handle_key_event(
     key: &KeyEvent,
     supervisor: &ProcessSupervisor,
     state: &mut SessionState,
+    diagnostics: &mut RuntimeDiagnostics,
     options: MultiProcessTuiOptions,
     max_offset: usize,
 ) -> Result<LoopControl, MultiProcessTuiError> {
+    diagnostics.record_keypress(key);
     let active_process = state.active_process().to_owned();
     let active_is_shell = active_process == "shell";
 
@@ -397,6 +412,10 @@ fn all_processes_exited(
     process_count: usize,
 ) -> bool {
     process_count > 0 && exit_states.len() >= process_count
+}
+
+fn payload_line_count(raw: &str) -> usize {
+    raw.lines().count().max(1)
 }
 
 fn shell_key_input(key: &KeyEvent) -> Option<String> {

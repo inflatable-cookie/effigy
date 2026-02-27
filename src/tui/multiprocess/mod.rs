@@ -7,6 +7,7 @@ use crate::process_manager::{ProcessManagerError, ProcessSpec, ProcessSupervisor
 use crate::ui::UiError;
 
 mod config;
+mod diagnostics;
 mod events;
 mod lifecycle;
 mod render;
@@ -17,6 +18,7 @@ mod view_model;
 use config::{
     INPUT_POLL_WAIT, MAX_EVENTS_PER_TICK, VT_PARSER_COLS, VT_PARSER_ROWS, VT_PARSER_SCROLLBACK,
 };
+use diagnostics::RuntimeDiagnostics;
 use events::{drain_process_events, handle_key_event, LoopControl};
 use lifecycle::{init_terminal, shutdown_and_render_summary};
 use render::render_ui;
@@ -100,6 +102,7 @@ pub fn run_multiprocess_tui(
         VT_PARSER_COLS,
         VT_PARSER_SCROLLBACK,
     );
+    let mut diagnostics = RuntimeDiagnostics::from_env();
 
     let vt_emulator_enabled = std::env::var("EFFIGY_TUI_VT100")
         .ok()
@@ -109,6 +112,7 @@ pub fn run_multiprocess_tui(
         drain_process_events(
             &supervisor,
             &mut state,
+            &mut diagnostics,
             MAX_EVENTS_PER_TICK,
             vt_emulator_enabled,
         );
@@ -146,6 +150,7 @@ pub fn run_multiprocess_tui(
                 active_view.shell_cursor,
             )
         })?;
+        diagnostics.record_frame();
 
         if event::poll(INPUT_POLL_WAIT)? {
             if let Event::Key(key) = event::read()? {
@@ -156,6 +161,7 @@ pub fn run_multiprocess_tui(
                     &key,
                     &supervisor,
                     &mut state,
+                    &mut diagnostics,
                     options,
                     active_view.max_offset,
                 )? {
@@ -171,6 +177,7 @@ pub fn run_multiprocess_tui(
         &supervisor,
         state.observed_non_zero,
         &state.process_started_at,
+        &diagnostics,
     )?;
 
     result?;

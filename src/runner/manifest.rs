@@ -1,4 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
+use std::fmt;
+
+use serde::de::{self, SeqAccess, Visitor};
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,12 +21,14 @@ pub(super) struct TaskManifest {
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ManifestShellConfig {
     #[serde(default)]
     pub(super) run: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ManifestTestConfig {
     #[serde(default)]
     pub(super) max_parallel: Option<usize>,
@@ -32,6 +37,7 @@ pub(super) struct ManifestTestConfig {
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ManifestPackageManagerConfig {
     #[serde(default, alias = "js_ts", alias = "typescript")]
     pub(super) js: Option<ManifestJsPackageManager>,
@@ -46,14 +52,14 @@ pub(super) enum ManifestJsPackageManager {
     Direct,
 }
 
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
+#[derive(Debug)]
 pub(super) enum ManifestTestRunnerOverride {
     Command(String),
     Config(ManifestTestRunnerOverrideTable),
 }
 
 #[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ManifestTestRunnerOverrideTable {
     #[serde(default)]
     pub(super) command: Option<String>,
@@ -68,7 +74,51 @@ impl ManifestTestRunnerOverride {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for ManifestTestRunnerOverride {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct OverrideVisitor;
+
+        impl<'de> Visitor<'de> for OverrideVisitor {
+            type Value = ManifestTestRunnerOverride;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("string command or table with `command` field")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(ManifestTestRunnerOverride::Command(value.to_owned()))
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(ManifestTestRunnerOverride::Command(value))
+            }
+
+            fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
+            where
+                M: de::MapAccess<'de>,
+            {
+                let table = <ManifestTestRunnerOverrideTable as serde::Deserialize>::deserialize(
+                    de::value::MapAccessDeserializer::new(map),
+                )?;
+                Ok(ManifestTestRunnerOverride::Config(table))
+            }
+        }
+
+        deserializer.deserialize_any(OverrideVisitor)
+    }
+}
+
 #[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ManifestTask {
     #[serde(default)]
     pub(super) run: Option<ManifestManagedRun>,
@@ -84,8 +134,7 @@ pub(super) struct ManifestTask {
     pub(super) profiles: BTreeMap<String, ManifestManagedProfile>,
 }
 
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
+#[derive(Debug)]
 enum ManifestTaskDefinition {
     Run(String),
     RunSequence(Vec<ManifestManagedRunStep>),
@@ -108,7 +157,61 @@ impl ManifestTaskDefinition {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for ManifestTaskDefinition {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct TaskDefinitionVisitor;
+
+        impl<'de> Visitor<'de> for TaskDefinitionVisitor {
+            type Value = ManifestTaskDefinition;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("string command, sequence of run steps, or full task table")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(ManifestTaskDefinition::Run(value.to_owned()))
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(ManifestTaskDefinition::Run(value))
+            }
+
+            fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let sequence = <Vec<ManifestManagedRunStep> as serde::Deserialize>::deserialize(
+                    de::value::SeqAccessDeserializer::new(seq),
+                )?;
+                Ok(ManifestTaskDefinition::RunSequence(sequence))
+            }
+
+            fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
+            where
+                M: de::MapAccess<'de>,
+            {
+                let task = <ManifestTask as serde::Deserialize>::deserialize(
+                    de::value::MapAccessDeserializer::new(map),
+                )?;
+                Ok(ManifestTaskDefinition::Full(task))
+            }
+        }
+
+        deserializer.deserialize_any(TaskDefinitionVisitor)
+    }
+}
+
 #[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ManifestManagedProcess {
     #[serde(default)]
     pub(super) run: Option<ManifestManagedRun>,
@@ -116,26 +219,111 @@ pub(super) struct ManifestManagedProcess {
     pub(super) task: Option<String>,
 }
 
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
+#[derive(Debug)]
 pub(super) enum ManifestManagedRun {
     Command(String),
     Sequence(Vec<ManifestManagedRunStep>),
 }
 
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
+#[derive(Debug)]
 pub(super) enum ManifestManagedRunStep {
     Command(String),
     Step(ManifestManagedRunStepTable),
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ManifestManagedRunStepTable {
     #[serde(default)]
     pub(super) run: Option<String>,
     #[serde(default)]
     pub(super) task: Option<String>,
+}
+
+impl<'de> serde::Deserialize<'de> for ManifestManagedRun {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ManagedRunVisitor;
+
+        impl<'de> Visitor<'de> for ManagedRunVisitor {
+            type Value = ManifestManagedRun;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("string command or sequence of run steps")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(ManifestManagedRun::Command(value.to_owned()))
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(ManifestManagedRun::Command(value))
+            }
+
+            fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let steps = <Vec<ManifestManagedRunStep> as serde::Deserialize>::deserialize(
+                    de::value::SeqAccessDeserializer::new(seq),
+                )?;
+                Ok(ManifestManagedRun::Sequence(steps))
+            }
+        }
+
+        deserializer.deserialize_any(ManagedRunVisitor)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ManifestManagedRunStep {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ManagedRunStepVisitor;
+
+        impl<'de> Visitor<'de> for ManagedRunStepVisitor {
+            type Value = ManifestManagedRunStep;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("string command or run-step table")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(ManifestManagedRunStep::Command(value.to_owned()))
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(ManifestManagedRunStep::Command(value))
+            }
+
+            fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
+            where
+                M: de::MapAccess<'de>,
+            {
+                let step = <ManifestManagedRunStepTable as serde::Deserialize>::deserialize(
+                    de::value::MapAccessDeserializer::new(map),
+                )?;
+                Ok(ManifestManagedRunStep::Step(step))
+            }
+        }
+
+        deserializer.deserialize_any(ManagedRunStepVisitor)
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -290,11 +478,13 @@ where
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ManifestCatalog {
     pub(super) alias: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ManifestDefer {
     pub(super) run: String,
 }

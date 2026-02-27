@@ -18,6 +18,7 @@ use crate::ui::theme::{resolve_color_enabled, Theme};
 use crate::ui::{KeyValue, OutputMode, PlainRenderer, Renderer};
 
 use super::config::SHUTDOWN_GRACE_TIMEOUT;
+use super::diagnostics::RuntimeDiagnostics;
 use super::terminal_text::{format_elapsed, is_expected_shutdown_diagnostic, styled_text};
 use super::MultiProcessTuiError;
 
@@ -38,6 +39,7 @@ pub(super) fn shutdown_and_render_summary(
     supervisor: &ProcessSupervisor,
     observed_non_zero: HashMap<String, String>,
     process_started_at: &HashMap<String, Instant>,
+    diagnostics: &RuntimeDiagnostics,
 ) -> Result<Vec<(String, String)>, MultiProcessTuiError> {
     supervisor.terminate_all_graceful_with_progress(SHUTDOWN_GRACE_TIMEOUT, |progress| {
         let label = match progress {
@@ -73,9 +75,9 @@ pub(super) fn shutdown_and_render_summary(
     let color_enabled =
         resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
     let theme = Theme::default();
-    let diagnostics = supervisor.exit_diagnostics();
+    let process_diagnostics = supervisor.exit_diagnostics();
     let now = Instant::now();
-    for (name, diagnostic) in diagnostics {
+    for (name, diagnostic) in process_diagnostics {
         let elapsed = process_started_at
             .get(&name)
             .map(|started| format_elapsed(now.saturating_duration_since(*started)))
@@ -102,6 +104,27 @@ pub(super) fn shutdown_and_render_summary(
         renderer.key_values(&[KeyValue::new(name, status)])?;
     }
     renderer.text("")?;
+
+    if diagnostics.enabled() {
+        renderer.section("TUI Diagnostics")?;
+        renderer.key_values(&[
+            KeyValue::new("elapsed-ms", diagnostics.elapsed_ms().to_string()),
+            KeyValue::new("frames", diagnostics.frame_count().to_string()),
+            KeyValue::new("keypresses", diagnostics.keypress_count().to_string()),
+            KeyValue::new("stdout-chunks", diagnostics.stdout_chunks().to_string()),
+            KeyValue::new("stderr-chunks", diagnostics.stderr_chunks().to_string()),
+            KeyValue::new("stdout-lines", diagnostics.stdout_lines().to_string()),
+            KeyValue::new("stderr-lines", diagnostics.stderr_lines().to_string()),
+            KeyValue::new("exit-events", diagnostics.exit_events().to_string()),
+            KeyValue::new("vt-resets", diagnostics.vt_resets().to_string()),
+        ])?;
+        renderer.text("")?;
+        let traces = diagnostics.traces();
+        if !traces.is_empty() {
+            renderer.bullet_list("trace", &traces)?;
+            renderer.text("")?;
+        }
+    }
 
     Ok(non_zero_exits)
 }

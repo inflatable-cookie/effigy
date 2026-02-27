@@ -977,6 +977,183 @@ max_parallel = 2
 }
 
 #[test]
+fn run_tasks_rejects_unknown_test_config_field() {
+    let root = temp_workspace("reject-unknown-test-field");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[test]
+max_parallels = 2
+"#,
+    );
+
+    let err = run_tasks(TasksArgs {
+        repo_override: Some(root),
+        task_name: None,
+    })
+    .expect_err("expected manifest parse failure");
+
+    match err {
+        RunnerError::TaskManifestParse { error, .. } => {
+            assert!(error.to_string().contains("unknown field `max_parallels`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_tasks_rejects_unknown_package_manager_field() {
+    let root = temp_workspace("reject-unknown-package-manager-field");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[package_manager]
+jss = "pnpm"
+"#,
+    );
+
+    let err = run_tasks(TasksArgs {
+        repo_override: Some(root),
+        task_name: None,
+    })
+    .expect_err("expected manifest parse failure");
+
+    match err {
+        RunnerError::TaskManifestParse { error, .. } => {
+            assert!(error.to_string().contains("unknown field `jss`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_tasks_rejects_unknown_test_runner_override_field() {
+    let root = temp_workspace("reject-unknown-test-runner-override-field");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[test.runners.vitest]
+cmd = "vitest run"
+"#,
+    );
+
+    let err = run_tasks(TasksArgs {
+        repo_override: Some(root),
+        task_name: None,
+    })
+    .expect_err("expected manifest parse failure");
+
+    match err {
+        RunnerError::TaskManifestParse { error, .. } => {
+            assert!(error.to_string().contains("unknown field `cmd`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_tasks_rejects_unknown_task_field() {
+    let root = temp_workspace("reject-unknown-task-field");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+run = "printf dev"
+fial_on_non_zero = true
+"#,
+    );
+
+    let err = run_tasks(TasksArgs {
+        repo_override: Some(root),
+        task_name: None,
+    })
+    .expect_err("expected manifest parse failure");
+
+    match err {
+        RunnerError::TaskManifestParse { error, .. } => {
+            assert!(error
+                .to_string()
+                .contains("unknown field `fial_on_non_zero`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_tasks_rejects_unknown_process_field() {
+    let root = temp_workspace("reject-unknown-process-field");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "managed"
+[tasks.dev.processes.api]
+run = "printf api"
+tas = "api"
+"#,
+    );
+
+    let err = run_tasks(TasksArgs {
+        repo_override: Some(root),
+        task_name: None,
+    })
+    .expect_err("expected manifest parse failure");
+
+    match err {
+        RunnerError::TaskManifestParse { error, .. } => {
+            assert!(error.to_string().contains("unknown field `tas`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_tasks_rejects_unknown_run_step_field() {
+    let root = temp_workspace("reject-unknown-run-step-field");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.reset-db]
+run = [
+  { run = "echo one", rnu = "echo two" }
+]
+"#,
+    );
+
+    let err = run_tasks(TasksArgs {
+        repo_override: Some(root),
+        task_name: None,
+    })
+    .expect_err("expected manifest parse failure");
+
+    match err {
+        RunnerError::TaskManifestParse { error, .. } => {
+            assert!(error.to_string().contains("unknown field `rnu`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_tasks_rejects_unknown_catalog_field() {
+    let root = temp_workspace("reject-unknown-catalog-field");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[catalog]
+alias = "farmyard"
+aliass = "dup"
+"#,
+    );
+
+    let err = run_tasks(TasksArgs {
+        repo_override: Some(root),
+        task_name: None,
+    })
+    .expect_err("expected manifest parse failure");
+
+    match err {
+        RunnerError::TaskManifestParse { error, .. } => {
+            assert!(error.to_string().contains("unknown field `aliass`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
 fn run_manifest_task_builtin_health_falls_back_to_repo_pulse() {
     let root = temp_workspace("builtin-health-fallback");
     fs::write(
@@ -1394,6 +1571,48 @@ fn run_manifest_task_builtin_config_prints_reference() {
     assert!(out.contains("[test.runners]"));
     assert!(out.contains("[tasks]"));
     assert!(out.contains("Compact tasks entries are shorthand"));
+}
+
+#[test]
+fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
+    let root = temp_workspace("builtin-config-schema");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "config".to_owned(),
+            args: vec!["--schema".to_owned()],
+        },
+        root,
+    )
+    .expect("run config --schema");
+
+    assert!(out.contains("Canonical strict-valid effigy.toml schema template"));
+    assert!(out.contains("[package_manager]"));
+    assert!(out.contains("[test.runners]"));
+    assert!(out.contains("[tasks.dev.profiles.default]"));
+}
+
+#[test]
+fn run_manifest_task_builtin_config_rejects_unknown_args() {
+    let root = temp_workspace("builtin-config-unknown-args");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "config".to_owned(),
+            args: vec!["--wat".to_owned()],
+        },
+        root,
+    )
+    .expect_err("expected config argument failure");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("unknown argument(s) for built-in `config`: --wat"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
 }
 
 #[test]

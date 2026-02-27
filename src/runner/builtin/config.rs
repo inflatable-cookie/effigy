@@ -2,10 +2,36 @@ use std::io::IsTerminal;
 
 use crate::ui::theme::resolve_color_enabled;
 use crate::ui::{NoticeLevel, OutputMode, PlainRenderer, Renderer};
+use crate::TaskInvocation;
 
 use super::super::RunnerError;
 
-pub(super) fn run_builtin_config() -> Result<Option<String>, RunnerError> {
+pub(super) fn run_builtin_config(
+    task: &TaskInvocation,
+    args: &[String],
+) -> Result<Option<String>, RunnerError> {
+    if args.iter().any(|arg| arg == "--schema") {
+        if args.len() > 1 {
+            return Err(RunnerError::TaskInvocation(format!(
+                "unknown argument(s) for built-in `{}`: {}",
+                task.name,
+                args.iter()
+                    .filter(|arg| arg.as_str() != "--schema")
+                    .cloned()
+                    .collect::<Vec<String>>()
+                    .join(" ")
+            )));
+        }
+        return Ok(Some(render_builtin_config_schema()));
+    }
+    if !args.is_empty() {
+        return Err(RunnerError::TaskInvocation(format!(
+            "unknown argument(s) for built-in `{}`: {}",
+            task.name,
+            args.join(" ")
+        )));
+    }
+
     let color_enabled =
         resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
@@ -68,4 +94,47 @@ pub(super) fn run_builtin_config() -> Result<Option<String>, RunnerError> {
     String::from_utf8(out)
         .map(Some)
         .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
+}
+
+fn render_builtin_config_schema() -> String {
+    [
+        "# Canonical strict-valid effigy.toml schema template",
+        "",
+        "[package_manager]",
+        "js = \"pnpm\"",
+        "",
+        "[test]",
+        "max_parallel = 3",
+        "",
+        "[test.runners]",
+        "vitest = \"pnpm exec vitest run\"",
+        "\"cargo-nextest\" = \"cargo nextest run\"",
+        "\"cargo-test\" = \"cargo test\"",
+        "",
+        "[defer]",
+        "run = \"composer global exec effigy -- {request} {args}\"",
+        "",
+        "[shell]",
+        "run = \"exec ${SHELL:-/bin/zsh} -i\"",
+        "",
+        "[tasks]",
+        "api = \"cargo run -p api\"",
+        "reset-db = [\"sqlx database reset -y\", \"sqlx migrate run\"]",
+        "",
+        "[tasks.test]",
+        "run = \"bun test {args}\"",
+        "",
+        "[tasks.dev]",
+        "mode = \"managed\"",
+        "fail_on_non_zero = true",
+        "",
+        "[tasks.dev.processes.api]",
+        "run = \"cargo run -p api\"",
+        "",
+        "[tasks.dev.profiles.default]",
+        "start = [\"api\"]",
+        "tabs = [\"api\"]",
+        "",
+    ]
+    .join("\n")
 }

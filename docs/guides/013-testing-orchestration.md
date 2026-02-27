@@ -7,6 +7,7 @@ Effigy supports built-in test runner detection when a project does not define an
 - `effigy test`
 - `effigy test --plan`
 - `effigy test --verbose-results`
+- `effigy test --tui`
 
 ## Detection Order
 
@@ -43,3 +44,6 @@ If unset, Effigy defaults to `3` workers.
 Result rendering:
 - default is compact per-target status only,
 - `--verbose-results` includes runner/root/command details per target.
+
+TUI diagnostics:
+- set `EFFIGY_TUI_DIAGNOSTICS=1` when running `effigy test --tui` to emit post-run runtime diagnostics and recent trace lines for emulator/debug troubleshooting.

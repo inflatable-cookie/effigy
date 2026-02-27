@@ -7,6 +7,7 @@ Define the internal tuning contract for the multiprocess TUI runtime so performa
 ## Source of Truth
 
 - `src/tui/multiprocess/config.rs`
+- runtime toggle: `EFFIGY_TUI_DIAGNOSTICS=1|true` (enables diagnostics summary/traces)
 
 ## Current Knobs
 
