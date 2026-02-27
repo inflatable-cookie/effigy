@@ -60,7 +60,7 @@ run = "bun test {args}"
 
 Fanout concurrency:
 ```toml
-[builtin.test]
+[test]
 max_parallel = 2
 ```
 

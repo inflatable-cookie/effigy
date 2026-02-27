@@ -1,13 +1,16 @@
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct TaskManifest {
     #[serde(default)]
     pub(super) catalog: Option<ManifestCatalog>,
     #[serde(default)]
     pub(super) defer: Option<ManifestDefer>,
     #[serde(default)]
-    pub(super) builtin: Option<ManifestBuiltin>,
+    pub(super) test: Option<ManifestTestConfig>,
+    #[serde(default)]
+    pub(super) package_manager: Option<ManifestPackageManagerConfig>,
     #[serde(default)]
     pub(super) shell: Option<ManifestShellConfig>,
     #[serde(default, deserialize_with = "deserialize_tasks")]
@@ -21,17 +24,17 @@ pub(super) struct ManifestShellConfig {
 }
 
 #[derive(Debug, serde::Deserialize)]
-pub(super) struct ManifestBuiltin {
-    #[serde(default)]
-    pub(super) test: Option<ManifestBuiltinTest>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub(super) struct ManifestBuiltinTest {
+pub(super) struct ManifestTestConfig {
     #[serde(default)]
     pub(super) max_parallel: Option<usize>,
     #[serde(default)]
-    pub(super) package_manager: Option<ManifestJsPackageManager>,
+    pub(super) runners: BTreeMap<String, ManifestTestRunnerOverride>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub(super) struct ManifestPackageManagerConfig {
+    #[serde(default, alias = "js_ts", alias = "typescript")]
+    pub(super) js: Option<ManifestJsPackageManager>,
 }
 
 #[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]
@@ -41,6 +44,28 @@ pub(super) enum ManifestJsPackageManager {
     Pnpm,
     Npm,
     Direct,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+pub(super) enum ManifestTestRunnerOverride {
+    Command(String),
+    Config(ManifestTestRunnerOverrideTable),
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+pub(super) struct ManifestTestRunnerOverrideTable {
+    #[serde(default)]
+    pub(super) command: Option<String>,
+}
+
+impl ManifestTestRunnerOverride {
+    pub(super) fn command(&self) -> Option<&str> {
+        match self {
+            ManifestTestRunnerOverride::Command(command) => Some(command.as_str()),
+            ManifestTestRunnerOverride::Config(table) => table.command.as_deref(),
+        }
+    }
 }
 
 #[derive(Debug, serde::Deserialize, Default)]

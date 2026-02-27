@@ -113,6 +113,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("Commands"));
     assert!(rendered.contains("effigy help"));
     assert!(rendered.contains("Get Command Help"));
+    assert!(rendered.contains("effigy config"));
     assert!(rendered.contains("effigy health"));
     assert!(rendered.contains("effigy test"));
     assert!(rendered.contains("<catalog>/test fallback"));
@@ -142,9 +143,12 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("Migration"));
     assert!(rendered.contains("ambiguous in multi-suite repos"));
     assert!(rendered.contains("effigy test nextest user_service --nocapture"));
-    assert!(rendered.contains("[builtin.test]"));
+    assert!(rendered.contains("[package_manager]"));
+    assert!(rendered.contains("js = \"pnpm\""));
+    assert!(rendered.contains("[test]"));
     assert!(rendered.contains("max_parallel = 2"));
-    assert!(rendered.contains("package_manager = \"pnpm\""));
+    assert!(rendered.contains("[test.runners]"));
+    assert!(rendered.contains("vitest = \"pnpm exec vitest run\""));
     assert!(rendered.contains("[tasks.test]"));
 }
 

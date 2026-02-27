@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
@@ -27,12 +27,15 @@ pub(super) fn try_run_builtin_test(
     let (flags, mut passthrough) = extract_builtin_test_flags(&runtime_args.passthrough);
     let targets = resolve_builtin_test_targets(selector, resolved_root, catalogs);
     let package_manager = builtin_test_package_manager(catalogs, resolved_root);
+    let runner_overrides = builtin_test_runner_command_overrides(catalogs, resolved_root);
     let mut runnable = targets
         .iter()
         .flat_map(|target| {
             let plans = detect_test_runner_plans(&target.root)
                 .into_iter()
-                .map(|plan| apply_builtin_test_package_manager(plan, package_manager))
+                .map(|plan| {
+                    apply_builtin_test_runner_config(plan, package_manager, &runner_overrides)
+                })
                 .collect::<Vec<crate::testing::TestRunnerPlan>>();
             let multi = plans.len() > 1;
             plans
@@ -110,7 +113,9 @@ pub(super) fn try_run_builtin_test(
             let selected_runner = target.detection.selected.as_ref().map(|plan| plan.runner);
             let detected_plans = detect_test_runner_plans(&target.root)
                 .into_iter()
-                .map(|plan| apply_builtin_test_package_manager(plan, package_manager))
+                .map(|plan| {
+                    apply_builtin_test_runner_config(plan, package_manager, &runner_overrides)
+                })
                 .collect::<Vec<crate::testing::TestRunnerPlan>>();
             let available_suites = detected_plans
                 .iter()
@@ -516,9 +521,8 @@ pub(super) fn builtin_test_max_parallel(catalogs: &[LoadedCatalog], resolved_roo
         .find_map(|catalog| {
             catalog
                 .manifest
-                .builtin
+                .test
                 .as_ref()
-                .and_then(|builtin| builtin.test.as_ref())
                 .and_then(|test| test.max_parallel)
         })
         .filter(|value| *value > 0);
@@ -536,32 +540,63 @@ fn builtin_test_package_manager(
         .find_map(|catalog| {
             catalog
                 .manifest
-                .builtin
+                .package_manager
                 .as_ref()
-                .and_then(|builtin| builtin.test.as_ref())
-                .and_then(|test| test.package_manager)
+                .and_then(|pm| pm.js)
         })
 }
 
-fn apply_builtin_test_package_manager(
+fn builtin_test_runner_command_overrides(
+    catalogs: &[LoadedCatalog],
+    target_root: &Path,
+) -> BTreeMap<String, String> {
+    catalogs
+        .iter()
+        .filter(|catalog| catalog.catalog_root == target_root)
+        .find_map(|catalog| {
+            catalog.manifest.test.as_ref().map(|test| {
+                test.runners
+                    .iter()
+                    .filter_map(|(raw_runner, override_config)| {
+                        override_config.command().map(|command| {
+                            let key = normalize_builtin_test_suite(raw_runner)
+                                .unwrap_or(raw_runner.as_str())
+                                .to_owned();
+                            (key, command.to_owned())
+                        })
+                    })
+                    .collect::<BTreeMap<String, String>>()
+            })
+        })
+        .unwrap_or_default()
+}
+
+fn apply_builtin_test_runner_config(
     mut plan: crate::testing::TestRunnerPlan,
     package_manager: Option<ManifestJsPackageManager>,
+    runner_overrides: &BTreeMap<String, String>,
 ) -> crate::testing::TestRunnerPlan {
-    if plan.runner != TestRunner::Vitest {
-        return plan;
+    if plan.runner == TestRunner::Vitest {
+        if let Some(manager) = package_manager {
+            let (command, manager_label) = match manager {
+                ManifestJsPackageManager::Bun => ("bun x vitest run", "bun"),
+                ManifestJsPackageManager::Pnpm => ("pnpm exec vitest run", "pnpm"),
+                ManifestJsPackageManager::Npm => ("npx vitest run", "npm"),
+                ManifestJsPackageManager::Direct => ("vitest run", "direct"),
+            };
+            plan.command = command.to_owned();
+            plan.evidence
+                .push(format!("package_manager.js={manager_label}"));
+        }
     }
-    let Some(manager) = package_manager else {
-        return plan;
-    };
-    let (command, manager_label) = match manager {
-        ManifestJsPackageManager::Bun => ("bun x vitest run", "bun"),
-        ManifestJsPackageManager::Pnpm => ("pnpm exec vitest run", "pnpm"),
-        ManifestJsPackageManager::Npm => ("npx vitest run", "npm"),
-        ManifestJsPackageManager::Direct => ("vitest run", "direct"),
-    };
-    plan.command = command.to_owned();
-    plan.evidence
-        .push(format!("builtin.test.package_manager={manager_label}"));
+
+    if let Some(command) = runner_overrides.get(plan.runner.label()) {
+        plan.command = command.clone();
+        plan.evidence.push(format!(
+            "test.runners.{} command override applied",
+            plan.runner.label()
+        ));
+    }
     plan
 }
 

@@ -237,6 +237,10 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
                 "List discovered catalogs and task commands".to_owned(),
             ],
             vec![
+                "effigy config".to_owned(),
+                "Show supported effigy.toml configuration keys and examples".to_owned(),
+            ],
+            vec![
                 "effigy repo-pulse".to_owned(),
                 "Run repository/workspace health checks".to_owned(),
             ],
@@ -271,6 +275,7 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy tasks --help".to_owned(),
             "effigy repo-pulse --help".to_owned(),
             "effigy test --help".to_owned(),
+            "effigy config".to_owned(),
         ],
     )?;
     renderer.key_values(&[ui::KeyValue::new("-h, --help", "Print this help panel")])?;
@@ -416,9 +421,13 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
 
     renderer.section("Configuration")?;
     renderer.text("Root manifest (fanout concurrency):")?;
-    renderer.text("[builtin.test]")?;
+    renderer.text("[package_manager]")?;
+    renderer.text("js = \"pnpm\"  # optional: bun|pnpm|npm|direct")?;
+    renderer.text("[test]")?;
     renderer.text("max_parallel = 2")?;
-    renderer.text("package_manager = \"pnpm\"  # optional: bun|pnpm|npm|direct")?;
+    renderer.text("[test.runners]")?;
+    renderer.text("vitest = \"pnpm exec vitest run\"")?;
+    renderer.text("\"cargo-nextest\" = \"cargo nextest run --workspace\"")?;
     renderer.text("")?;
     renderer.text("Explicit override (wins over built-in detection):")?;
     renderer.text("[tasks.test]")?;

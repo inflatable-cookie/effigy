@@ -4,6 +4,7 @@ use crate::TaskInvocation;
 
 use super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector, BUILTIN_TASKS};
 
+mod config;
 mod help;
 mod pulse;
 mod tasks;
@@ -48,6 +49,7 @@ pub(super) fn try_run_builtin_task(
             pulse::run_builtin_repo_pulse(task, runtime_args, &target_root).map(Some)
         }
         "tasks" => tasks::run_builtin_tasks(task, runtime_args, &target_root).map(Some),
+        "config" => config::run_builtin_config(),
         "help" => help::run_builtin_help(),
         "test" => test::try_run_builtin_test(selector, task, runtime_args, &target_root, catalogs),
         _ => Ok(None),

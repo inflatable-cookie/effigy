@@ -953,6 +953,30 @@ alias = "farmyard"
 }
 
 #[test]
+fn run_tasks_rejects_legacy_builtin_config_group() {
+    let root = temp_workspace("reject-legacy-builtin-group");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[builtin.test]
+max_parallel = 2
+"#,
+    );
+
+    let err = run_tasks(TasksArgs {
+        repo_override: Some(root.join("farmyard")),
+        task_name: None,
+    })
+    .expect_err("expected manifest parse failure");
+
+    match err {
+        RunnerError::TaskManifestParse { error, .. } => {
+            assert!(error.to_string().contains("unknown field `builtin`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
 fn run_manifest_task_builtin_health_falls_back_to_repo_pulse() {
     let root = temp_workspace("builtin-health-fallback");
     fs::write(
@@ -1199,8 +1223,8 @@ fn run_manifest_task_builtin_test_plan_respects_configured_package_manager() {
     let root = temp_workspace("builtin-test-plan-package-manager");
     write_manifest(
         &root.join("effigy.toml"),
-        r#"[builtin.test]
-package_manager = "pnpm"
+        r#"[package_manager]
+js = "pnpm"
 "#,
     );
     fs::write(
@@ -1223,7 +1247,7 @@ package_manager = "pnpm"
     .expect("run test --plan");
 
     assert!(out.contains("pnpm exec vitest run"));
-    assert!(out.contains("builtin.test.package_manager=pnpm"));
+    assert!(out.contains("package_manager.js=pnpm"));
 }
 
 #[test]
@@ -1232,8 +1256,8 @@ fn run_manifest_task_builtin_test_exec_uses_configured_package_manager() {
     let root = temp_workspace("builtin-test-exec-package-manager");
     write_manifest(
         &root.join("effigy.toml"),
-        r#"[builtin.test]
-package_manager = "bun"
+        r#"[package_manager]
+js = "bun"
 "#,
     );
     fs::write(
@@ -1285,11 +1309,99 @@ package_manager = "bun"
 }
 
 #[test]
+fn run_manifest_task_builtin_test_plan_respects_runner_command_override() {
+    let root = temp_workspace("builtin-test-plan-runner-override");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[test.runners]
+vitest = "pnpm exec vitest run --config vitest.config.ts"
+"#,
+    );
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}"#,
+    )
+    .expect("write package");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--plan".to_owned(), "vitest".to_owned()],
+        },
+        root,
+    )
+    .expect("run test --plan");
+
+    assert!(out.contains("pnpm exec vitest run --config vitest.config.ts"));
+    assert!(out.contains("test.runners.vitest command override applied"));
+}
+
+#[test]
+fn run_manifest_task_builtin_test_runner_override_wins_over_package_manager() {
+    let root = temp_workspace("builtin-test-plan-override-precedence");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[package_manager]
+js = "bun"
+
+[test.runners]
+vitest = "npx vitest run --reporter=dot"
+"#,
+    );
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}"#,
+    )
+    .expect("write package");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--plan".to_owned(), "vitest".to_owned()],
+        },
+        root,
+    )
+    .expect("run test --plan");
+
+    assert!(out.contains("npx vitest run --reporter=dot"));
+    assert!(out.contains("package_manager.js=bun"));
+    assert!(out.contains("test.runners.vitest command override applied"));
+}
+
+#[test]
+fn run_manifest_task_builtin_config_prints_reference() {
+    let root = temp_workspace("builtin-config");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "config".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("run config");
+
+    assert!(out.contains("effigy.toml Reference"));
+    assert!(out.contains("[test.runners]"));
+    assert!(out.contains("[tasks]"));
+    assert!(out.contains("Compact tasks entries are shorthand"));
+}
+
+#[test]
 fn builtin_test_max_parallel_reads_root_manifest_config() {
     let root = temp_workspace("builtin-test-max-parallel-config");
     write_manifest(
         &root.join("effigy.toml"),
-        r#"[builtin.test]
+        r#"[test]
 max_parallel = 1
 "#,
     );
@@ -1302,7 +1414,7 @@ fn builtin_test_max_parallel_falls_back_when_invalid_or_missing() {
     let root = temp_workspace("builtin-test-max-parallel-default");
     write_manifest(
         &root.join("effigy.toml"),
-        r#"[builtin.test]
+        r#"[test]
 max_parallel = 0
 "#,
     );
