@@ -1098,6 +1098,42 @@ fn run_manifest_task_builtin_test_failure_keeps_rendered_results_summary() {
 }
 
 #[test]
+fn run_manifest_task_builtin_test_failure_with_suite_filter_shows_no_match_hint() {
+    let root = temp_workspace("builtin-test-filtered-failure-hint");
+    fs::write(
+        root.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write package");
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    let vitest = local_bin.join("vitest");
+    fs::write(&vitest, "#!/bin/sh\nexit 1\n").expect("write vitest");
+    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&vitest, perms).expect("chmod");
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["vitest".to_owned(), "user-service".to_owned()],
+        },
+        root,
+    )
+    .expect_err("filtered suite run should fail");
+
+    match err {
+        RunnerError::BuiltinTestNonZero { rendered, .. } => {
+            assert!(rendered.contains("Hint"));
+            assert!(rendered.contains("often means no tests matched"));
+            assert!(rendered.contains("vitest run 'user-service'"));
+            assert!(rendered.contains("Try again without the filter"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
 fn run_manifest_task_builtin_test_verbose_results_include_runner_root_and_command() {
     let root = temp_workspace("builtin-test-verbose-results");
     fs::write(
