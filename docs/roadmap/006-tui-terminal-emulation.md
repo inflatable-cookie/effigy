@@ -11,16 +11,16 @@ Effigy's TUI currently renders process output using line-oriented heuristics. To
 
 ## 2) Goals
 
-- [ ] Replace heuristic line-rewrite handling with a real terminal emulation model for TUI process panes.
-- [ ] Preserve correct behavior for cursor movement, clears, ANSI styling, and incremental redraw frames.
-- [ ] Keep process tab UX responsive under high output volume.
-- [ ] Maintain working process input passthrough for managed processes.
-- [ ] Keep deterministic process exit reporting and shutdown behavior.
+- [x] Replace heuristic line-rewrite handling with a real terminal emulation model for TUI process panes.
+- [x] Preserve correct behavior for cursor movement, clears, ANSI styling, and incremental redraw frames.
+- [x] Keep process tab UX responsive under high output volume.
+- [x] Maintain working process input passthrough for managed processes.
+- [x] Keep deterministic process exit reporting and shutdown behavior.
 
 ## 3) Non-Goals
 
 - [ ] No full-featured terminal multiplexer scope (splits, session persistence, detached daemon mode).
-- [ ] No shell feature re-introduction in this roadmap.
+- [x] No shell redesign scope in this roadmap beyond compatibility with the existing shell tab.
 - [ ] No requirement to support every exotic terminal escape extension in phase 006.
 
 ## 4) UX Contract
@@ -52,35 +52,35 @@ Implementation notes:
 ### Phase 6.1 - Emulator Spike
 - [x] Select emulator core crate and document tradeoffs (integration complexity, feature coverage, maintenance risk).
 - [x] Build a single-pane proof of concept: raw PTY bytes -> emulator state -> ratatui render.
-- [ ] Validate with `cargo nextest run` and one Vite process as baseline fixtures.
+- [x] Validate with `cargo nextest run` and one Vite process as baseline fixtures.
 
 ### Phase 6.2 - Process Manager Integration
-- [ ] Add emulator-backed output state per process tab.
-- [ ] Route PTY event stream to emulator state updates without blocking input handling.
-- [ ] Keep existing tab, mode, options, and shutdown controls unchanged at UX level.
+- [x] Add emulator-backed output state per process tab.
+- [x] Route PTY event stream to emulator state updates without blocking input handling.
+- [x] Keep existing tab, mode, options, and shutdown controls unchanged at UX level.
 
 ### Phase 6.3 - Scrollback and Viewport Correctness
-- [ ] Implement bounded scrollback policy with predictable memory limits.
-- [ ] Ensure scrollbar range/position reflects true rendered history.
-- [ ] Preserve copyable, readable historical output after process completion.
+- [x] Implement bounded scrollback policy with predictable memory limits.
+- [x] Ensure scrollbar range/position reflects true rendered history.
+- [x] Preserve copyable, readable historical output after process completion.
 
 ### Phase 6.4 - Test Runner TUI Adoption
-- [ ] Ensure built-in test TUI (`effigy test --tui` and auto-multi-suite TUI) uses emulator-backed panes.
-- [ ] Validate mixed suite fanout (`vitest` + `nextest`) in one invocation.
-- [ ] Confirm non-interactive fallback remains text-mode and unchanged.
+- [x] Ensure built-in test TUI (`effigy test --tui` and auto-multi-suite TUI) uses emulator-backed panes.
+- [x] Validate mixed suite fanout (`vitest` + `nextest`) in one invocation.
+- [x] Confirm non-interactive fallback remains text-mode and unchanged.
 
 ### Phase 6.5 - Hardening and Rollout
-- [ ] Add targeted regression coverage for rewrite-heavy streams.
+- [x] Add targeted regression coverage for rewrite-heavy streams.
 - [ ] Add runtime diagnostics toggle for emulator/debug traces (disabled by default).
-- [ ] Update docs (`guides/012-dev-process-manager-tui.md`, `guides/013-testing-orchestration.md`) with behavior and limitations.
+- [x] Update docs (`guides/012-dev-process-manager-tui.md`, `guides/013-testing-orchestration.md`) with behavior and limitations.
 
 ## 7) Acceptance Criteria
 
-- [ ] `nextest` output in TUI no longer duplicates or disappears due to control-sequence handling.
-- [ ] Scrollbar size and range track actual visible/scrollback content.
-- [ ] Input, tab switching, and quit controls remain responsive during heavy output.
-- [ ] `effigy test --tui` is stable for multi-suite runs with at least one rewrite-heavy runner.
-- [ ] Full suite passes with emulator mode enabled by default for TUI panes.
+- [x] `nextest` output in TUI no longer duplicates or disappears due to control-sequence handling.
+- [x] Scrollbar size and range track actual visible/scrollback content.
+- [x] Input, tab switching, and quit controls remain responsive during heavy output.
+- [x] `effigy test --tui` is stable for multi-suite runs with at least one rewrite-heavy runner.
+- [x] Full suite passes with emulator mode enabled by default for TUI panes.
 
 ## 8) Risks and Mitigations
 
@@ -93,7 +93,7 @@ Implementation notes:
 
 ## 9) Deliverables
 
-- [ ] Emulator-backed process output pipeline for TUI tabs.
-- [ ] Updated TUI rendering logic with accurate viewport/scrollback behavior.
-- [ ] Regression tests for rewrite-heavy output scenarios.
-- [ ] Updated TUI/testing guides and checkpoint report.
+- [x] Emulator-backed process output pipeline for TUI tabs.
+- [x] Updated TUI rendering logic with accurate viewport/scrollback behavior.
+- [x] Regression tests for rewrite-heavy output scenarios.
+- [x] Updated TUI/testing guides and checkpoint report.

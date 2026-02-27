@@ -11,11 +11,11 @@ Depends on: 005
 
 ## 2) Goals
 
-- [ ] Make named test execution deterministic in mixed-suite repositories.
-- [ ] Support positional suite targeting with minimal flag usage.
-- [ ] Preserve zero-config auto-detection for common ecosystems.
-- [ ] Keep project-level configuration simple and optional.
-- [ ] Add package-manager awareness for JS/TS runner execution where needed.
+- [x] Make named test execution deterministic in mixed-suite repositories.
+- [x] Support positional suite targeting with minimal flag usage.
+- [x] Preserve zero-config auto-detection for common ecosystems.
+- [x] Keep project-level configuration simple and optional.
+- [x] Add package-manager awareness for JS/TS runner execution where needed.
 
 ## 3) Non-Goals
 
@@ -57,15 +57,15 @@ Examples:
 
 ### Phase 7.3 - Hardening + Adoption
 - [ ] Validate behavior in mixed repositories (Underlay/Acowtancy-style layouts).
-- [ ] Tighten error messaging for unavailable suites and remediation steps.
-- [ ] Publish migration notes for teams moving from implicit fanout to explicit suite targeting.
+- [x] Tighten error messaging for unavailable suites and remediation steps.
+- [x] Publish migration notes for teams moving from implicit fanout to explicit suite targeting.
 
 ## 6) Acceptance Criteria
 
-- [ ] `effigy test <named-test>` errors in multi-suite contexts unless suite is explicitly targeted.
-- [ ] `effigy test <suite> <named-test>` executes only the selected suite.
-- [ ] Single-suite repositories retain simple `effigy test <named-test>` flow.
-- [ ] Help/docs clearly explain positional selection and ambiguity behavior.
+- [x] `effigy test <named-test>` errors in multi-suite contexts unless suite is explicitly targeted.
+- [x] `effigy test <suite> <named-test>` executes only the selected suite.
+- [x] Single-suite repositories retain simple `effigy test <named-test>` flow.
+- [x] Help/docs clearly explain positional selection and ambiguity behavior.
 
 ## 7) Risks and Mitigations
 
@@ -78,6 +78,6 @@ Examples:
 
 ## 8) Deliverables
 
-- [ ] Runner updates for positional suite selection and ambiguity handling.
-- [ ] Updated test coverage for multi-suite targeting behavior.
-- [ ] Updated help and README guidance.
+- [x] Runner updates for positional suite selection and ambiguity handling.
+- [x] Updated test coverage for multi-suite targeting behavior.
+- [x] Updated help and README guidance.

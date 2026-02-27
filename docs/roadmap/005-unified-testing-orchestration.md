@@ -11,12 +11,12 @@ Effigy can run project-defined test tasks, but teams still have to manually enco
 
 ## 2) Goals
 
-- [ ] Add a built-in `effigy test` task with convention-based auto-detection for common ecosystems.
-- [ ] Prefer `vitest` for TS/JS projects when available.
-- [ ] Prefer `cargo nextest run` for Rust projects when available, then fall back to `cargo test`.
-- [ ] Keep explicit project task configuration as the highest-priority override.
-- [ ] Provide `--plan` mode to show selected commands without executing them.
-- [ ] Support root + sub-repo resolution and aggregate pass/fail reporting.
+- [x] Add a built-in `effigy test` task with convention-based auto-detection for common ecosystems.
+- [x] Prefer `vitest` for TS/JS projects when available.
+- [x] Prefer `cargo nextest run` for Rust projects when available, then fall back to `cargo test`.
+- [x] Keep explicit project task configuration as the highest-priority override.
+- [x] Provide `--plan` mode to show selected commands without executing them.
+- [x] Support root + sub-repo resolution and aggregate pass/fail reporting.
 
 ## 3) Non-Goals
 
@@ -42,16 +42,6 @@ Expected behavior:
 
 ## 5) Config Model (Target)
 
-Auto mode:
-```toml
-[tasks.test]
-mode = "auto"
-
-[tasks.test.auto]
-prefer = ["vitest", "nextest"]
-allow_fallback = true
-```
-
 Explicit override (wins over auto):
 ```toml
 [tasks.test]
@@ -64,9 +54,19 @@ Fanout concurrency:
 max_parallel = 2
 ```
 
+Runner overrides:
+```toml
+[package_manager]
+js = "pnpm"
+
+[test.runners]
+vitest = "pnpm exec vitest run"
+"cargo-nextest" = "cargo nextest run --workspace"
+```
+
 Notes:
-- `run` always overrides `mode=auto`.
-- Auto mode can be omitted; built-in defaults apply.
+- `tasks.test.run` always overrides built-in detection.
+- Detection config is optional; built-in defaults apply.
 - Detection signals should be explicit and reported in `--plan` output.
 
 ## 6) Execution Plan
@@ -91,20 +91,20 @@ Notes:
 ### Phase 5.4 - Multi-Repo Orchestration
 - [x] Support workspace-aware fanout for root invocations.
 - [x] Execute per-target test commands with bounded parallelism.
-- [ ] Aggregate result summary by repo with clear non-zero propagation.
+- [x] Aggregate result summary by repo with clear non-zero propagation.
 
 ### Phase 5.5 - Hardening and Adoption
-- [ ] Add integration tests for detection + fallback chains.
-- [ ] Add docs and examples for explicit override vs auto mode.
+- [x] Add integration tests for detection + fallback chains.
+- [x] Add docs and examples for explicit override vs auto mode.
 - [ ] Validate on active repos (Acowtancy first) and publish checkpoint report.
 
 ## 7) Acceptance Criteria
 
-- [ ] `effigy test` runs meaningful defaults in common TS/JS and Rust repos without extra config.
-- [ ] `effigy test --plan` explains exactly what would run and why.
-- [ ] Explicit `tasks.test.run` overrides auto behavior.
-- [ ] Rust projects use `cargo nextest run` when available and fall back to `cargo test` when not.
-- [ ] Multi-target summaries are readable and return correct final exit code.
+- [x] `effigy test` runs meaningful defaults in common TS/JS and Rust repos without extra config.
+- [x] `effigy test --plan` explains exactly what would run and why.
+- [x] Explicit `tasks.test.run` overrides auto behavior.
+- [x] Rust projects use `cargo nextest run` when available and fall back to `cargo test` when not.
+- [x] Multi-target summaries are readable and return correct final exit code.
 
 ## 8) Risks and Mitigations
 
@@ -117,7 +117,7 @@ Notes:
 
 ## 9) Deliverables
 
-- [ ] Built-in `effigy test` auto-detection and execution path.
-- [ ] `--plan` explainability output for test selection.
-- [ ] Workspace fanout test orchestration and summary.
+- [x] Built-in `effigy test` auto-detection and execution path.
+- [x] `--plan` explainability output for test selection.
+- [x] Workspace fanout test orchestration and summary.
 - [ ] Documentation and adoption report.
