@@ -13,6 +13,10 @@ Examples:
 - `2026-02-26-effigy-extraction-checkpoint.md`
 - `2026-02-26-1545-path-install-smoke.md`
 
+## Thread reports
+
+When a feature spans multiple same-day checkpoints, add a consolidation report that links those checkpoints and provides one final validation matrix.
+
 ## Report template
 
 ```md

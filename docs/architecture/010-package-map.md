@@ -27,7 +27,13 @@
 | `src/runner/render.rs` | Runner-specific rendering and trace formatting |
 | `src/runner/util.rs` | Shared runner utility helpers (parse/select/shell/path) |
 | `src/tui/mod.rs` | Reusable TUI namespace exports |
+| `src/tui/core.rs` | Shared TUI primitives (input/log state models and key-navigation helpers) |
 | `src/tui/multiprocess/mod.rs` | Multi-process TUI orchestration |
+| `src/tui/multiprocess/config.rs` | Multiprocess runtime tuning constants (buffers, tick cadence, vt dimensions) |
+| `src/tui/multiprocess/state.rs` | Shared multi-process TUI runtime state and domain enums |
+| `src/tui/multiprocess/events.rs` | Process stream ingestion + keyboard interaction handling |
+| `src/tui/multiprocess/lifecycle.rs` | Terminal setup/teardown and post-run summary rendering |
+| `src/tui/multiprocess/view_model.rs` | Active-tab render data derivation (scroll/cursor/meta) |
 | `src/tui/multiprocess/render.rs` | TUI render orchestration and layout routing |
 | `src/tui/multiprocess/render/header.rs` | Header/tab chrome rendering |
 | `src/tui/multiprocess/render/panes.rs` | Output/input pane rendering + shell caret/scrollbar behavior |
