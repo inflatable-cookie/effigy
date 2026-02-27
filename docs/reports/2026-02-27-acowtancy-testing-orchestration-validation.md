@@ -13,6 +13,7 @@ Validate built-in `effigy test` behavior against an active multi-repo workspace 
 - Ran root and sub-repo `test --plan` coverage using current Effigy build.
 - Captured parsing blockers in project manifests that prevent full root fanout.
 - Captured execution startup evidence for Rust/nextest path in `farmyard`.
+- Re-ran after manifest fixes and captured root suite-targeted execution results.
 
 ## Validation
 
@@ -36,22 +37,27 @@ Validate built-in `effigy test` behavior against an active multi-repo workspace 
   - cwd: `/Users/betterthanclay/Dev/projects/acowtancy/farmyard`
   - result: execution path started successfully and entered Rust workspace compile + nextest path; terminated manually due compile-time cost for this checkpoint run.
 
+- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- test --plan`
+  - cwd: `/Users/betterthanclay/Dev/projects/acowtancy`
+  - result (after fix): pass; root fanout now detects `cream`/`dairy` (`vitest`) and `farmyard` (`cargo-nextest`) without manifest parse errors.
+
+- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- test vitest`
+  - cwd: `/Users/betterthanclay/Dev/projects/acowtancy`
+  - result (after fix): pass for orchestration path; suite-targeted fanout executed against `cream` + `dairy`, returned non-zero due real project test failure in `dairy` (`tests/summary-forms.test.ts` timeout), and produced ordered per-target summary (`cream: ok`, `dairy: exit=1`).
+
 ## Findings
 
 - Effigy test orchestration behavior is functional for valid manifests.
-- Root-level fanout validation in Acowtancy is currently blocked by invalid TOML in child manifests:
-  - `/Users/betterthanclay/Dev/projects/acowtancy/cream/effigy.toml`
-  - `/Users/betterthanclay/Dev/projects/acowtancy/dairy/effigy.toml`
-- Required fix in affected manifests:
-  - `js = "bun"` (string) instead of `js = bun`.
+- Root-level fanout validation is now unblocked after manifest corrections.
+- Real execution at root confirms:
+  - suite-targeted routing works (`vitest` fanout over matching targets),
+  - per-target aggregation renders correctly,
+  - non-zero propagation reflects real target test failures.
 
 ## Risks / Follow-ups
 
-- Until child manifest parse errors are fixed, root-level `effigy test` fanout in Acowtancy will fail before orchestration.
-- A short rerun should be performed immediately after manifest correction to close roadmap acceptance cleanly.
+- Remaining risk is project test health (for example current dairy timeout), not Effigy orchestration behavior.
 
 ## Next
 
-- Fix invalid `js` values in Acowtancy child manifests and rerun:
-  1. `effigy test --plan` at Acowtancy root
-  2. one full `effigy test` root run (or suite-targeted run) to confirm end-to-end fanout and summary
+- Optional: rerun full mixed-suite root execution (`effigy test`) when Rust compile budget is acceptable to capture one complete end-to-end baseline in this workspace.

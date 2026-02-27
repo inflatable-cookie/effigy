@@ -97,7 +97,7 @@ Notes:
 - [x] Add integration tests for detection + fallback chains.
 - [x] Add docs and examples for explicit override vs auto mode.
 - [x] Validate on active repos (Acowtancy first) and publish checkpoint report.
-- [ ] Fix active-repo manifest parse blockers and rerun root fanout validation.
+- [x] Fix active-repo manifest parse blockers and rerun root fanout validation.
 
 ## 7) Acceptance Criteria
 
