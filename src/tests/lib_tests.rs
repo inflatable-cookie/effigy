@@ -131,6 +131,7 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("<catalog>/test fallback"));
     assert!(rendered.contains("Detection Order"));
     assert!(rendered.contains("--verbose-results"));
+    assert!(rendered.contains("--tui"));
     assert!(rendered.contains("effigy farmyard/test"));
     assert!(rendered.contains("Named Test Selection"));
     assert!(rendered.contains("effigy test user-service"));

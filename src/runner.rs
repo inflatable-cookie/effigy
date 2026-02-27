@@ -13,7 +13,7 @@ use crate::process_manager::{
 use crate::resolver::{resolve_target_root, ResolveError};
 use crate::tasks::pulse::PulseTask;
 use crate::tasks::{Task, TaskContext, TaskError};
-use crate::testing::detect_test_runner_detailed;
+use crate::testing::{detect_test_runner_detailed, detect_test_runner_plans};
 use crate::ui::theme::{resolve_color_enabled, Theme};
 use crate::ui::{
     KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer, SummaryCounts, TableSpec,
@@ -1105,12 +1105,20 @@ fn try_run_builtin_test(
     let targets = resolve_builtin_test_targets(selector, resolved_root, catalogs);
     let runnable = targets
         .iter()
-        .filter_map(|target| {
-            target
-                .detection
-                .selected
-                .as_ref()
-                .map(|plan| (target.name.clone(), target.root.clone(), plan.clone()))
+        .flat_map(|target| {
+            let plans = detect_test_runner_plans(&target.root);
+            let multi = plans.len() > 1;
+            plans
+                .into_iter()
+                .map(|plan| {
+                    let name = if multi {
+                        format!("{}/{}", target.name, plan.runner.label())
+                    } else {
+                        target.name.clone()
+                    };
+                    (name, target.root.clone(), plan)
+                })
+                .collect::<Vec<(String, PathBuf, crate::testing::TestRunnerPlan)>>()
         })
         .collect::<Vec<(String, PathBuf, crate::testing::TestRunnerPlan)>>();
     if runnable.is_empty() {
@@ -1121,34 +1129,58 @@ fn try_run_builtin_test(
         let color_enabled =
             resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
         let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+        let runtime_mode = if should_run_builtin_test_tui(flags.tui, runnable.len()) {
+            "tui"
+        } else {
+            "text"
+        };
         renderer.section("Test Plan")?;
         renderer.key_values(&[
             KeyValue::new("request", task.name.clone()),
             KeyValue::new("root", resolved_root.display().to_string()),
             KeyValue::new("targets", runnable.len().to_string()),
+            KeyValue::new("runtime", runtime_mode.to_owned()),
         ])?;
         renderer.text("")?;
         for target in &targets {
             let selected_runner = target.detection.selected.as_ref().map(|plan| plan.runner);
+            let selected_plans = detect_test_runner_plans(&target.root);
             renderer.section(&format!("Target: {}", target.name))?;
-            if let Some(plan) = target.detection.selected.as_ref() {
+            if !selected_plans.is_empty() {
                 let args_rendered = passthrough
                     .iter()
                     .map(|arg| shell_quote(arg))
                     .collect::<Vec<String>>()
                     .join(" ");
-                let command = if args_rendered.is_empty() {
-                    plan.command.clone()
-                } else {
-                    format!("{} {}", plan.command, args_rendered)
-                };
+                let runners = selected_plans
+                    .iter()
+                    .map(|plan| plan.runner.label())
+                    .collect::<Vec<&str>>()
+                    .join(", ");
+                let commands = selected_plans
+                    .iter()
+                    .map(|plan| {
+                        if args_rendered.is_empty() {
+                            plan.command.clone()
+                        } else {
+                            format!("{} {}", plan.command, args_rendered)
+                        }
+                    })
+                    .collect::<Vec<String>>();
                 renderer.key_values(&[
                     KeyValue::new("root", target.root.display().to_string()),
-                    KeyValue::new("runner", plan.runner.label().to_owned()),
-                    KeyValue::new("command", command),
+                    KeyValue::new("runner", runners),
                 ])?;
                 renderer.text("")?;
-                renderer.bullet_list("evidence", &plan.evidence)?;
+                renderer.bullet_list("command", &commands)?;
+                renderer.text("")?;
+                let mut evidence = Vec::<String>::new();
+                for plan in &selected_plans {
+                    for line in &plan.evidence {
+                        evidence.push(format!("{}: {line}", plan.runner.label()));
+                    }
+                }
+                renderer.bullet_list("evidence", &evidence)?;
             } else {
                 renderer.key_values(&[
                     KeyValue::new("root", target.root.display().to_string()),
@@ -1198,8 +1230,29 @@ fn try_run_builtin_test(
         .map(|arg| shell_quote(arg))
         .collect::<Vec<String>>()
         .join(" ");
+    let runnable = runnable
+        .into_iter()
+        .map(|(name, root, plan)| {
+            let command = if args_rendered.is_empty() {
+                plan.command.clone()
+            } else {
+                format!("{} {}", plan.command, args_rendered)
+            };
+            BuiltinTestRunnable {
+                name,
+                runner: plan.runner.label().to_owned(),
+                root,
+                command,
+            }
+        })
+        .collect::<Vec<BuiltinTestRunnable>>();
     let max_parallel = builtin_test_max_parallel(catalogs, resolved_root);
-    let results = run_builtin_test_targets_parallel(runnable, &args_rendered, max_parallel)?;
+    let should_tui = should_run_builtin_test_tui(flags.tui, runnable.len());
+    let results = if should_tui {
+        run_builtin_test_targets_tui(runnable)?
+    } else {
+        run_builtin_test_targets_parallel(runnable, max_parallel)?
+    };
     let mut failures = results
         .iter()
         .filter_map(|result| {
@@ -1223,6 +1276,7 @@ fn extract_builtin_test_flags(raw_args: &[String]) -> (BuiltinTestCliFlags, Vec<
     let mut flags = BuiltinTestCliFlags {
         plan_mode: false,
         verbose_results: false,
+        tui: false,
     };
     let passthrough = raw_args
         .iter()
@@ -1232,6 +1286,9 @@ fn extract_builtin_test_flags(raw_args: &[String]) -> (BuiltinTestCliFlags, Vec<
                 None
             } else if arg == "--verbose-results" {
                 flags.verbose_results = true;
+                None
+            } else if arg == "--tui" {
+                flags.tui = true;
                 None
             } else {
                 Some(arg.clone())
@@ -1300,11 +1357,76 @@ struct BuiltinTestExecResult {
 struct BuiltinTestCliFlags {
     plan_mode: bool,
     verbose_results: bool,
+    tui: bool,
+}
+
+#[derive(Debug, Clone)]
+struct BuiltinTestRunnable {
+    name: String,
+    runner: String,
+    root: PathBuf,
+    command: String,
+}
+
+fn should_run_builtin_test_tui(force_tui: bool, suite_count: usize) -> bool {
+    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+        return false;
+    }
+    force_tui || suite_count > 1
+}
+
+fn run_builtin_test_targets_tui(
+    runnable: Vec<BuiltinTestRunnable>,
+) -> Result<Vec<BuiltinTestExecResult>, RunnerError> {
+    if runnable.is_empty() {
+        return Ok(Vec::new());
+    }
+    let tab_order = runnable
+        .iter()
+        .map(|suite| suite.name.clone())
+        .collect::<Vec<String>>();
+    let specs = runnable
+        .iter()
+        .map(|suite| ProcessSpec {
+            name: suite.name.clone(),
+            run: suite.command.clone(),
+            cwd: suite.root.clone(),
+            start_after_ms: 0,
+            pty: true,
+        })
+        .collect::<Vec<ProcessSpec>>();
+    let outcome = run_dev_process_tui(
+        std::env::current_dir().map_err(RunnerError::Cwd)?,
+        specs,
+        tab_order,
+    )
+    .map_err(|error| RunnerError::Ui(format!("builtin test tui runtime failed: {error}")))?;
+    let failures = outcome
+        .non_zero_exits
+        .into_iter()
+        .collect::<HashMap<String, String>>();
+
+    Ok(runnable
+        .into_iter()
+        .map(|suite| {
+            let diagnostic = failures.get(&suite.name);
+            let code = diagnostic
+                .and_then(|value| value.strip_prefix("exit="))
+                .and_then(|value| value.parse::<i32>().ok());
+            BuiltinTestExecResult {
+                name: suite.name,
+                runner: suite.runner,
+                root: suite.root,
+                command: suite.command,
+                success: diagnostic.is_none(),
+                code,
+            }
+        })
+        .collect::<Vec<BuiltinTestExecResult>>())
 }
 
 fn run_builtin_test_targets_parallel(
-    runnable: Vec<(String, PathBuf, crate::testing::TestRunnerPlan)>,
-    args_rendered: &str,
+    runnable: Vec<BuiltinTestRunnable>,
     max_parallel: usize,
 ) -> Result<Vec<BuiltinTestExecResult>, RunnerError> {
     if runnable.is_empty() {
@@ -1312,14 +1434,7 @@ fn run_builtin_test_targets_parallel(
     }
     let jobs = runnable
         .into_iter()
-        .map(|(name, root, plan)| {
-            let command = if args_rendered.is_empty() {
-                plan.command
-            } else {
-                format!("{} {}", plan.command, args_rendered)
-            };
-            (name, root, plan.runner.label().to_owned(), command)
-        })
+        .map(|job| (job.name, job.root, job.runner, job.command))
         .collect::<Vec<(String, PathBuf, String, String)>>();
     let worker_count = max_parallel.min(jobs.len()).max(1);
     let queue = Arc::new(Mutex::new(VecDeque::from(jobs)));

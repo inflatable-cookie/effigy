@@ -52,6 +52,19 @@ pub fn detect_test_runner(repo_root: &Path) -> Option<TestRunnerPlan> {
     detect_test_runner_detailed(repo_root).selected
 }
 
+pub fn detect_test_runner_plans(repo_root: &Path) -> Vec<TestRunnerPlan> {
+    let (vitest_plan, _) = detect_vitest(repo_root);
+    let (nextest_plan, _, fallback_plan, _) = detect_rust(repo_root);
+    let mut plans = Vec::<TestRunnerPlan>::new();
+    if let Some(plan) = vitest_plan {
+        plans.push(plan);
+    }
+    if let Some(plan) = nextest_plan.or(fallback_plan) {
+        plans.push(plan);
+    }
+    plans
+}
+
 pub fn detect_test_runner_detailed(repo_root: &Path) -> TestRunnerDetection {
     let (vitest_plan, vitest_candidate) = detect_vitest(repo_root);
     let (nextest_plan, nextest_candidate, fallback_plan, fallback_candidate) =
@@ -87,7 +100,7 @@ fn detect_vitest(repo_root: &Path) -> (Option<TestRunnerPlan>, TestRunnerCandida
             None,
             TestRunnerCandidate {
                 runner: TestRunner::Vitest,
-                command: "vitest".to_owned(),
+                command: "vitest run".to_owned(),
                 available: false,
                 reason: "no package/config/bin vitest markers found".to_owned(),
             },
@@ -97,12 +110,12 @@ fn detect_vitest(repo_root: &Path) -> (Option<TestRunnerPlan>, TestRunnerCandida
     (
         Some(TestRunnerPlan {
             runner: TestRunner::Vitest,
-            command: "vitest".to_owned(),
+            command: "vitest run".to_owned(),
             evidence: evidence.clone(),
         }),
         TestRunnerCandidate {
             runner: TestRunner::Vitest,
-            command: "vitest".to_owned(),
+            command: "vitest run".to_owned(),
             available: true,
             reason: evidence.join("; "),
         },

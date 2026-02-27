@@ -368,7 +368,7 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.text("")?;
 
     renderer.section("Usage")?;
-    renderer.text("effigy test [--plan] [--verbose-results] [runner args]")?;
+    renderer.text("effigy test [--plan] [--verbose-results] [--tui] [runner args]")?;
     renderer.text("effigy test --help")?;
     renderer.text("")?;
 
@@ -383,6 +383,11 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             vec![
                 "--verbose-results".to_owned(),
                 "Include runner/root/command fields in Test Results output".to_owned(),
+            ],
+            vec![
+                "--tui".to_owned(),
+                "Force TUI mode when interactive (auto-enabled when multiple suites are detected)"
+                    .to_owned(),
             ],
             vec!["-h, --help".to_owned(), "Print command help".to_owned()],
         ],
@@ -418,6 +423,7 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy farmyard/test".to_owned(),
             "effigy test --plan".to_owned(),
             "effigy test --verbose-results".to_owned(),
+            "effigy test --tui".to_owned(),
             "effigy test -- --runInBand".to_owned(),
             "effigy test -- --watch".to_owned(),
         ],

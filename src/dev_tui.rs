@@ -27,6 +27,7 @@ use crate::ui::theme::{resolve_color_enabled, Theme};
 use crate::ui::{KeyValue, OutputMode, PlainRenderer, Renderer, UiError};
 
 const MAX_LOG_LINES: usize = 2000;
+const MAX_EVENTS_PER_TICK: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputMode {
@@ -172,25 +173,24 @@ pub fn run_dev_process_tui(
     let mut spinner_tick: usize = 0;
 
     let result: Result<(), DevTuiError> = loop {
-        while let Some(event_item) = supervisor.next_event_timeout(Duration::from_millis(1)) {
+        let mut drained_events = 0usize;
+        while drained_events < MAX_EVENTS_PER_TICK {
+            let Some(event_item) = supervisor.next_event_timeout(Duration::from_millis(1)) else {
+                break;
+            };
+            drained_events += 1;
             if let Some(buffer) = logs.get_mut(&event_item.process) {
-                let entry = match event_item.kind {
-                    ProcessEventKind::Stdout => LogEntry {
-                        kind: {
-                            restart_pending.insert(event_item.process.clone(), false);
-                            output_seen.insert(event_item.process.clone(), true);
-                            LogEntryKind::Stdout
-                        },
-                        line: event_item.payload,
-                    },
-                    ProcessEventKind::Stderr => LogEntry {
-                        kind: {
-                            restart_pending.insert(event_item.process.clone(), false);
-                            output_seen.insert(event_item.process.clone(), true);
-                            LogEntryKind::Stderr
-                        },
-                        line: event_item.payload,
-                    },
+                match event_item.kind {
+                    ProcessEventKind::Stdout => {
+                        restart_pending.insert(event_item.process.clone(), false);
+                        output_seen.insert(event_item.process.clone(), true);
+                        ingest_log_payload(buffer, LogEntryKind::Stdout, &event_item.payload);
+                    }
+                    ProcessEventKind::Stderr => {
+                        restart_pending.insert(event_item.process.clone(), false);
+                        output_seen.insert(event_item.process.clone(), true);
+                        ingest_log_payload(buffer, LogEntryKind::Stderr, &event_item.payload);
+                    }
                     ProcessEventKind::Exit => {
                         let pending_restart =
                             *restart_pending.get(&event_item.process).unwrap_or(&false);
@@ -213,16 +213,15 @@ pub fn run_dev_process_tui(
                             exit_states
                                 .insert(event_item.process.clone(), ProcessExitState::Failure);
                         }
-                        LogEntry {
-                            kind: LogEntryKind::Exit,
-                            line: event_item.payload,
-                        }
+                        push_entry(
+                            buffer,
+                            LogEntry {
+                                kind: LogEntryKind::Exit,
+                                line: sanitize_log_text(&event_item.payload),
+                            },
+                        );
                     }
                 };
-                buffer.push_back(entry);
-                while buffer.len() > MAX_LOG_LINES {
-                    buffer.pop_front();
-                }
             }
         }
         spinner_tick = spinner_tick.wrapping_add(1);
@@ -1012,11 +1011,169 @@ fn push_log_line(
     line: String,
 ) {
     if let Some(buffer) = logs.get_mut(process) {
-        buffer.push_back(LogEntry { kind, line });
-        while buffer.len() > MAX_LOG_LINES {
-            buffer.pop_front();
+        push_entry(
+            buffer,
+            LogEntry {
+                kind,
+                line: sanitize_log_text(&line),
+            },
+        );
+    }
+}
+
+fn push_entry(buffer: &mut VecDeque<LogEntry>, entry: LogEntry) {
+    buffer.push_back(entry);
+    while buffer.len() > MAX_LOG_LINES {
+        buffer.pop_front();
+    }
+}
+
+fn ingest_log_payload(buffer: &mut VecDeque<LogEntry>, kind: LogEntryKind, payload: &str) {
+    let (normalized, cursor_up) = normalize_terminal_payload(payload);
+    let fragments = normalized
+        .split('\r')
+        .map(sanitize_log_text)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<String>>();
+    if fragments.is_empty() {
+        return;
+    }
+
+    if fragments.len() == 1 && !normalized.contains('\r') {
+        if cursor_up > 0 {
+            replace_last_renderable_line(buffer, kind, fragments[0].clone());
+        } else {
+            push_entry(
+                buffer,
+                LogEntry {
+                    kind,
+                    line: fragments[0].clone(),
+                },
+            );
+        }
+        return;
+    }
+
+    let mut append_on_first_rewrite = false;
+    let mut first = true;
+    for fragment in fragments {
+        if first {
+            if cursor_up > 0 {
+                replace_last_renderable_line(buffer, kind.clone(), fragment);
+            } else {
+                push_entry(
+                    buffer,
+                    LogEntry {
+                        kind: kind.clone(),
+                        line: fragment,
+                    },
+                );
+            }
+            first = false;
+            continue;
+        }
+        if append_on_first_rewrite {
+            push_entry(
+                buffer,
+                LogEntry {
+                    kind: kind.clone(),
+                    line: fragment,
+                },
+            );
+            append_on_first_rewrite = false;
+        } else {
+            replace_last_renderable_line(buffer, kind.clone(), fragment);
         }
     }
+}
+
+fn normalize_terminal_payload(raw: &str) -> (String, usize) {
+    let chars: Vec<char> = raw.chars().collect();
+    let mut out = String::new();
+    let mut i = 0usize;
+    let mut cursor_up = 0usize;
+    while i < chars.len() {
+        let ch = chars[i];
+        if ch == '\u{1b}' && i + 1 < chars.len() {
+            match chars[i + 1] {
+                '[' => {
+                    let start = i;
+                    i += 2;
+                    let mut params = String::new();
+                    while i < chars.len() {
+                        let final_byte = chars[i];
+                        if ('@'..='~').contains(&final_byte) {
+                            if final_byte == 'm' {
+                                out.extend(chars[start..=i].iter());
+                            } else if final_byte == 'A' {
+                                let count = params
+                                    .split(';')
+                                    .next()
+                                    .and_then(|value| {
+                                        if value.is_empty() {
+                                            Some(1usize)
+                                        } else {
+                                            value.parse::<usize>().ok()
+                                        }
+                                    })
+                                    .unwrap_or(1usize);
+                                cursor_up = cursor_up.saturating_add(count);
+                            }
+                            break;
+                        }
+                        params.push(final_byte);
+                        i += 1;
+                    }
+                }
+                ']' => {
+                    i += 2;
+                    while i < chars.len() {
+                        if chars[i] == '\u{0007}' {
+                            break;
+                        }
+                        if chars[i] == '\u{1b}' && i + 1 < chars.len() && chars[i + 1] == '\\' {
+                            i += 1;
+                            break;
+                        }
+                        i += 1;
+                    }
+                }
+                _ => {}
+            }
+        } else {
+            out.push(ch);
+        }
+        i += 1;
+    }
+    (out, cursor_up)
+}
+
+fn replace_last_renderable_line(buffer: &mut VecDeque<LogEntry>, kind: LogEntryKind, line: String) {
+    if let Some(last) = buffer.back_mut() {
+        if matches!(last.kind, LogEntryKind::Stdout | LogEntryKind::Stderr) {
+            last.kind = kind;
+            last.line = line;
+            return;
+        }
+    }
+    push_entry(buffer, LogEntry { kind, line });
+}
+
+fn sanitize_log_text(raw: &str) -> String {
+    raw.chars()
+        .filter(|ch| {
+            !matches!(
+                ch,
+                '\r'
+                    | '\u{0000}'..='\u{0008}'
+                    | '\u{000B}'
+                    | '\u{000C}'
+                    | '\u{000E}'..='\u{001A}'
+                    | '\u{001C}'..='\u{001F}'
+                    | '\u{007F}'
+            )
+        })
+        .collect()
 }
 
 fn ansi_line(raw: &str, base: Style) -> Line<'static> {
@@ -1032,12 +1189,16 @@ fn ansi_line(raw: &str, base: Style) -> Line<'static> {
             }
             i += 2;
             let mut code = String::new();
-            while i < chars.len() && chars[i] != 'm' {
+            while i < chars.len() {
+                let final_byte = chars[i];
+                if ('@'..='~').contains(&final_byte) {
+                    if final_byte == 'm' {
+                        style = apply_sgr(style, &code, base);
+                    }
+                    break;
+                }
                 code.push(chars[i]);
                 i += 1;
-            }
-            if i < chars.len() && chars[i] == 'm' {
-                style = apply_sgr(style, &code, base);
             }
         } else {
             buf.push(chars[i]);
@@ -1163,5 +1324,66 @@ mod tests {
         assert_eq!(started.spans[0].content.as_ref(), "started: ");
         let restarted = runtime_meta_line(Duration::from_secs(9), 1);
         assert_eq!(restarted.spans[0].content.as_ref(), "restarted: ");
+    }
+
+    #[test]
+    fn sanitize_log_text_removes_control_bytes_but_keeps_ansi() {
+        let raw = "a\u{0008}b\r\u{001b}[31merr\u{001b}[0m";
+        let sanitized = sanitize_log_text(raw);
+        assert_eq!(sanitized, "ab\u{001b}[31merr\u{001b}[0m");
+    }
+
+    #[test]
+    fn ingest_log_payload_carriage_return_overwrites_last_line() {
+        let mut buffer = VecDeque::new();
+        ingest_log_payload(
+            &mut buffer,
+            LogEntryKind::Stdout,
+            "building\rfinished\rdone",
+        );
+        assert_eq!(buffer.len(), 1);
+        let line = buffer.back().expect("line");
+        assert!(matches!(line.kind, LogEntryKind::Stdout));
+        assert_eq!(line.line, "done");
+    }
+
+    #[test]
+    fn ingest_log_payload_cursor_up_replaces_prior_line() {
+        let mut buffer = VecDeque::new();
+        ingest_log_payload(&mut buffer, LogEntryKind::Stdout, "line 1");
+        ingest_log_payload(&mut buffer, LogEntryKind::Stdout, "line 2");
+        ingest_log_payload(
+            &mut buffer,
+            LogEntryKind::Stdout,
+            "\u{1b}[1A\u{1b}[2K\rline 2 updated",
+        );
+        assert_eq!(buffer.len(), 2);
+        assert_eq!(buffer[0].line, "line 1");
+        assert_eq!(buffer[1].line, "line 2 updated");
+    }
+
+    #[test]
+    fn ingest_log_payload_cursor_up_without_replacement_does_not_drop_lines() {
+        let mut buffer = VecDeque::new();
+        ingest_log_payload(&mut buffer, LogEntryKind::Stdout, "line 1");
+        ingest_log_payload(&mut buffer, LogEntryKind::Stdout, "line 2");
+        ingest_log_payload(&mut buffer, LogEntryKind::Stdout, "\u{1b}[1A\u{1b}[2K");
+        assert_eq!(buffer.len(), 2);
+        assert_eq!(buffer[0].line, "line 1");
+        assert_eq!(buffer[1].line, "line 2");
+    }
+
+    #[test]
+    fn ansi_line_ignores_non_sgr_escape_sequences() {
+        let line = ansi_line(
+            "\u{1b}[2K\u{1b}[1Ahello \u{1b}[31mred\u{1b}[0m",
+            Style::default(),
+        );
+        let rendered = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(rendered, "hello red");
     }
 }

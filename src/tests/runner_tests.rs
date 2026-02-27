@@ -443,6 +443,8 @@ fn run_manifest_task_builtin_test_plan_renders_detection_summary() {
 
     assert!(out.contains("Test Plan"));
     assert!(out.contains("targets:"));
+    assert!(out.contains("runtime:"));
+    assert!(out.contains("text"));
     assert!(out.contains("Target: root"));
     assert!(out.contains("runner:"));
     assert!(out.contains("vitest"));
@@ -488,6 +490,62 @@ fn run_manifest_task_builtin_test_executes_local_vitest() {
     assert!(!out.contains("runner:vitest"));
     assert!(!out.contains("command:"));
     assert!(marker.exists(), "vitest stub should be invoked");
+}
+
+#[test]
+fn run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("builtin-test-multi-context");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "test": "vitest run"
+  }
+}"#,
+    )
+    .expect("write package");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write cargo toml");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub fn ok() -> bool { true }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn smoke() {\n        assert!(super::ok());\n    }\n}\n",
+    )
+    .expect("write lib");
+
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    let vitest = local_bin.join("vitest");
+    let vitest_marker = root.join("vitest-called.log");
+    fs::write(
+        &vitest,
+        format!(
+            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
+            vitest_marker.display()
+        ),
+    )
+    .expect("write vitest");
+    let mut vitest_perms = fs::metadata(&vitest).expect("stat").permissions();
+    vitest_perms.set_mode(0o755);
+    fs::set_permissions(&vitest, vitest_perms).expect("chmod");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: Vec::new(),
+        },
+        root.clone(),
+    )
+    .expect("run builtin multi-context test");
+
+    assert!(out.contains("Test Results"));
+    assert!(out.contains("root/vitest"));
+    assert!(out.contains("root/cargo-"));
+    assert!(vitest_marker.exists(), "vitest suite should run");
 }
 
 #[test]
@@ -949,7 +1007,36 @@ fn run_manifest_task_builtin_test_verbose_results_include_runner_root_and_comman
     assert!(out.contains("Test Results"));
     assert!(out.contains("runner:vitest"));
     assert!(out.contains("root:"));
-    assert!(out.contains("command:vitest '--run'"));
+    assert!(out.contains("command:vitest run '--run'"));
+}
+
+#[test]
+fn run_manifest_task_builtin_test_tui_flag_falls_back_to_text_when_non_interactive() {
+    let root = temp_workspace("builtin-test-tui-fallback");
+    fs::write(
+        root.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write package");
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    let vitest = local_bin.join("vitest");
+    fs::write(&vitest, "#!/bin/sh\nexit 0\n").expect("write vitest");
+    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&vitest, perms).expect("chmod");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--tui".to_owned()],
+        },
+        root,
+    )
+    .expect("run builtin test with tui flag");
+
+    assert!(out.contains("Test Results"));
+    assert!(out.contains("root"));
 }
 
 #[test]

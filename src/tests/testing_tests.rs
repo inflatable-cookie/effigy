@@ -20,7 +20,7 @@ fn detect_test_runner_prefers_vitest_when_package_json_references_it() {
 
     let plan = detect_test_runner(&root).expect("plan");
     assert_eq!(plan.runner, TestRunner::Vitest);
-    assert_eq!(plan.command, "vitest");
+    assert_eq!(plan.command, "vitest run");
     assert!(plan
         .evidence
         .iter()
@@ -34,7 +34,7 @@ fn detect_test_runner_detects_vitest_from_config_file() {
 
     let plan = detect_test_runner(&root).expect("plan");
     assert_eq!(plan.runner, TestRunner::Vitest);
-    assert_eq!(plan.command, "vitest");
+    assert_eq!(plan.command, "vitest run");
     assert!(plan
         .evidence
         .iter()
@@ -114,7 +114,7 @@ fn detect_test_runner_prefers_vitest_when_js_and_rust_markers_both_exist() {
 
     let plan = detect_test_runner(&root).expect("plan");
     assert_eq!(plan.runner, TestRunner::Vitest);
-    assert_eq!(plan.command, "vitest");
+    assert_eq!(plan.command, "vitest run");
 }
 
 #[test]
