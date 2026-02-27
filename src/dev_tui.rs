@@ -942,6 +942,13 @@ fn render_ui(
         frame.render_widget(help, chunks[1]);
     } else {
         let panel = panel_block(None, false, Color::DarkGray);
+        let shell_inactive_style = if active_is_shell && !shell_capture_mode {
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM)
+        } else {
+            Style::default()
+        };
         let logs = if !active_output_seen && !exit_states.contains_key(&process_names[active_index])
         {
             let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -957,9 +964,11 @@ fn render_ui(
                 ]),
             ])
             .block(panel)
+            .style(shell_inactive_style)
         } else {
             Paragraph::new(lines)
                 .block(panel)
+                .style(shell_inactive_style)
                 .scroll((render_scroll_offset.min(u16::MAX as usize) as u16, 0))
         };
         frame.render_widget(logs, chunks[1]);
