@@ -11,3 +11,5 @@ Status overview of all Effigy roadmaps.
 | 005 | [Unified Testing Orchestration](./005-unified-testing-orchestration.md) | In Progress | Add built-in `effigy test` auto-detection, runner fallback chains, and workspace-level test summaries |
 
 **Complete:** 2 | **In progress:** 3 | **Not started:** 0
+
+Backlog (unnumbered): [roadmap/backlog](./backlog/README.md)
