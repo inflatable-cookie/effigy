@@ -4,21 +4,16 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use anstyle::Style as AnsiStyle;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnableLineWrap, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::symbols::border;
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
-};
-use ratatui::{Frame, Terminal};
+use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::style::{Color, Style};
+use ratatui::widgets::Paragraph;
+use ratatui::Terminal;
 use vt100::Parser as VtParser;
 
 use crate::process_manager::{
@@ -27,11 +22,20 @@ use crate::process_manager::{
 use crate::ui::theme::{resolve_color_enabled, Theme};
 use crate::ui::{KeyValue, OutputMode, PlainRenderer, Renderer, UiError};
 
+mod render;
+mod terminal_text;
+
 const MAX_LOG_LINES: usize = 2000;
 const MAX_EVENTS_PER_TICK: usize = 200;
 const VT_SPIKE_ROWS: u16 = 2000;
 const VT_SPIKE_COLS: u16 = 240;
 const VT_SPIKE_SCROLLBACK: usize = 8000;
+
+use render::{options_actions, render_ui};
+use terminal_text::{
+    format_elapsed, ingest_log_payload, is_expected_shutdown_diagnostic, push_entry,
+    sanitize_log_text, styled_text, vt_logs,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputMode {
@@ -68,7 +72,7 @@ struct LogEntry {
 }
 
 #[derive(Debug)]
-pub enum DevTuiError {
+pub enum MultiProcessTuiError {
     Io(io::Error),
     Ui(UiError),
     Process(ProcessManagerError),
@@ -76,54 +80,54 @@ pub enum DevTuiError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DevTuiOutcome {
+pub struct MultiProcessTuiOutcome {
     pub non_zero_exits: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct DevTuiOptions {
+pub struct MultiProcessTuiOptions {
     pub esc_quit_on_complete: bool,
 }
 
-impl std::fmt::Display for DevTuiError {
+impl std::fmt::Display for MultiProcessTuiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DevTuiError::Io(err) => write!(f, "{err}"),
-            DevTuiError::Ui(err) => write!(f, "{err}"),
-            DevTuiError::Process(err) => write!(f, "{err}"),
-            DevTuiError::NoProcesses => write!(f, "managed TUI session has no processes"),
+            MultiProcessTuiError::Io(err) => write!(f, "{err}"),
+            MultiProcessTuiError::Ui(err) => write!(f, "{err}"),
+            MultiProcessTuiError::Process(err) => write!(f, "{err}"),
+            MultiProcessTuiError::NoProcesses => write!(f, "managed TUI session has no processes"),
         }
     }
 }
 
-impl std::error::Error for DevTuiError {}
+impl std::error::Error for MultiProcessTuiError {}
 
-impl From<io::Error> for DevTuiError {
+impl From<io::Error> for MultiProcessTuiError {
     fn from(value: io::Error) -> Self {
         Self::Io(value)
     }
 }
 
-impl From<ProcessManagerError> for DevTuiError {
+impl From<ProcessManagerError> for MultiProcessTuiError {
     fn from(value: ProcessManagerError) -> Self {
         Self::Process(value)
     }
 }
 
-impl From<UiError> for DevTuiError {
+impl From<UiError> for MultiProcessTuiError {
     fn from(value: UiError) -> Self {
         Self::Ui(value)
     }
 }
 
-pub fn run_dev_process_tui(
+pub fn run_multiprocess_tui(
     repo_root: PathBuf,
     processes: Vec<ProcessSpec>,
     tab_order: Vec<String>,
-    options: DevTuiOptions,
-) -> Result<DevTuiOutcome, DevTuiError> {
+    options: MultiProcessTuiOptions,
+) -> Result<MultiProcessTuiOutcome, MultiProcessTuiError> {
     if processes.is_empty() {
-        return Err(DevTuiError::NoProcesses);
+        return Err(MultiProcessTuiError::NoProcesses);
     }
 
     let process_names = processes
@@ -199,7 +203,7 @@ pub fn run_dev_process_tui(
         .map(|name| (name.clone(), false))
         .collect();
 
-    let result: Result<(), DevTuiError> = loop {
+    let result: Result<(), MultiProcessTuiError> = loop {
         let mut drained_events = 0usize;
         while drained_events < MAX_EVENTS_PER_TICK {
             let Some(event_item) = supervisor.next_event_timeout(Duration::from_millis(1)) else {
@@ -758,7 +762,7 @@ pub fn run_dev_process_tui(
     renderer.text("")?;
 
     result?;
-    Ok(DevTuiOutcome { non_zero_exits })
+    Ok(MultiProcessTuiOutcome { non_zero_exits })
 }
 
 fn draw_shutdown_status(
@@ -812,325 +816,6 @@ fn shell_key_input(key: &crossterm::event::KeyEvent) -> Option<String> {
     Some(mapped.to_owned())
 }
 
-fn render_ui(
-    frame: &mut Frame<'_>,
-    process_names: &[String],
-    active_index: usize,
-    active_logs: &[LogEntry],
-    scroll_offset: usize,
-    max_offset: usize,
-    render_scroll_offset: usize,
-    scrollbar_total: usize,
-    follow: bool,
-    active_process: &str,
-    input_line: &str,
-    input_mode: InputMode,
-    shell_capture_mode: bool,
-    exit_states: &HashMap<String, ProcessExitState>,
-    show_help: bool,
-    show_options: bool,
-    options_index: usize,
-    active_output_seen: bool,
-    spinner_tick: usize,
-    active_elapsed: Duration,
-    active_restart_count: usize,
-    shell_cursor: Option<(u16, u16)>,
-) {
-    let active_is_shell = active_process == "shell";
-    let input_height = if active_is_shell {
-        0
-    } else if input_mode == InputMode::Insert {
-        3
-    } else {
-        0
-    };
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(1),
-            Constraint::Length(input_height),
-            Constraint::Length(1),
-        ])
-        .split(frame.area());
-
-    let titles = process_names
-        .iter()
-        .enumerate()
-        .map(|(idx, name)| {
-            let label = if name == "shell" {
-                if shell_capture_mode {
-                    "shell [live]".to_owned()
-                } else {
-                    "shell".to_owned()
-                }
-            } else {
-                name.clone()
-            };
-            let style = match exit_states.get(name) {
-                Some(ProcessExitState::Success) => Style::default().fg(Color::Green),
-                Some(ProcessExitState::Failure) => Style::default().fg(Color::Red),
-                None => {
-                    if name == "shell" && shell_capture_mode && idx == active_index {
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD)
-                    } else if idx == active_index {
-                        Style::default().fg(Color::Magenta)
-                    } else {
-                        Style::default().fg(Color::DarkGray)
-                    }
-                }
-            };
-            Line::from(Span::styled(label, style))
-        })
-        .collect::<Vec<Line>>();
-    let tabs = Tabs::new(titles)
-        .select(active_index)
-        .block(panel_block(Some(" EFFIGY "), true, Color::Magenta))
-        .highlight_style(Style::default().add_modifier(Modifier::BOLD));
-    frame.render_widget(tabs, chunks[0]);
-
-    let output_height = chunks[1].height.saturating_sub(2) as usize;
-    let mut lines = Vec::with_capacity(active_logs.len() + 1);
-    if !active_is_shell {
-        lines.push(runtime_meta_line(active_elapsed, active_restart_count));
-    }
-    lines.extend(active_logs.iter().map(|entry| match entry.kind {
-        LogEntryKind::Stdout => ansi_line(&entry.line, Style::default()),
-        LogEntryKind::Stderr => {
-            let mut spans = vec![Span::styled("[stderr] ", Style::default().fg(Color::Red))];
-            spans.extend(ansi_line(&entry.line, Style::default()).spans);
-            Line::from(spans)
-        }
-        LogEntryKind::Exit => Line::from(vec![
-            Span::styled("[exit] ", Style::default().fg(Color::Yellow)),
-            Span::styled(entry.line.clone(), Style::default().fg(Color::Gray)),
-        ]),
-    }));
-    if show_help {
-        let help_lines = vec![
-            Line::from(vec![Span::styled(
-                "Command Mode",
-                Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
-            )]),
-            Line::from("tab             toggle insert/command mode"),
-            Line::from("tab             enter shell capture mode (shell tab)"),
-            Line::from("ctrl+g          toggle shell capture mode (shell tab)"),
-            Line::from("left/right       switch process tabs"),
-            Line::from("up/down          scroll output line-by-line"),
-            Line::from("pgup/pgdn        scroll output by page"),
-            Line::from("home/end         jump to top/bottom (end re-enables follow)"),
-            Line::from("h               toggle this help"),
-            Line::from("o               open per-process options menu"),
-            Line::from("ctrl+c          quit and shut down managed processes"),
-            Line::from(""),
-            Line::from(vec![Span::styled(
-                "Insert Mode",
-                Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
-            )]),
-            Line::from("type            send input text to active process"),
-            Line::from("enter           submit input"),
-            Line::from("esc             return to command mode"),
-        ];
-        let help =
-            Paragraph::new(help_lines).block(panel_block(Some("Help"), false, Color::Magenta));
-        frame.render_widget(help, chunks[1]);
-    } else {
-        let panel = panel_block(None, false, Color::DarkGray);
-        let shell_inactive_style = if active_is_shell && !shell_capture_mode {
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM)
-        } else {
-            Style::default()
-        };
-        let logs = if !active_output_seen && !exit_states.contains_key(&process_names[active_index])
-        {
-            let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            let spinner = spinner_frames[spinner_tick % spinner_frames.len()];
-            Paragraph::new(vec![
-                runtime_meta_line(active_elapsed, active_restart_count),
-                Line::from(vec![
-                    Span::styled(spinner.to_owned(), Style::default().fg(Color::Yellow)),
-                    Span::styled(
-                        " waiting for first output...",
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ]),
-            ])
-            .block(panel)
-            .style(shell_inactive_style)
-        } else {
-            Paragraph::new(lines)
-                .block(panel)
-                .style(shell_inactive_style)
-                .scroll((render_scroll_offset.min(u16::MAX as usize) as u16, 0))
-        };
-        frame.render_widget(logs, chunks[1]);
-        // Blink shell caret at ~500ms cadence (event loop ticks every ~50ms).
-        let show_shell_caret = (spinner_tick / 10).is_multiple_of(2);
-        if active_is_shell && shell_capture_mode && show_shell_caret {
-            if let Some((row, col)) = shell_cursor {
-                let inner_x = chunks[1].x.saturating_add(1);
-                let inner_y = chunks[1].y.saturating_add(1);
-                let inner_w = chunks[1].width.saturating_sub(2);
-                let inner_h = chunks[1].height.saturating_sub(2);
-                if inner_w > 0 && inner_h > 0 {
-                    let cursor_x = inner_x.saturating_add(col.min(inner_w.saturating_sub(1)));
-                    let cursor_y = inner_y.saturating_add(row.min(inner_h.saturating_sub(1)));
-                    frame.set_cursor_position((cursor_x, cursor_y));
-                }
-            }
-        }
-        if active_output_seen || exit_states.contains_key(&process_names[active_index]) {
-            let mut scrollbar_state = ScrollbarState::new(scrollbar_total.max(1))
-                .viewport_content_length(output_height.max(1))
-                .position(scroll_offset.min(max_offset));
-            frame.render_stateful_widget(
-                Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
-                chunks[1],
-                &mut scrollbar_state,
-            );
-        }
-    }
-
-    if show_options {
-        render_options_overlay(
-            frame,
-            process_names[active_index].as_str(),
-            options_index,
-            follow,
-        );
-    }
-
-    let input = if active_is_shell {
-        Paragraph::new("")
-    } else if input_mode == InputMode::Insert {
-        let mut spans = vec![Span::styled("> ", Style::default().fg(Color::Yellow))];
-        spans.push(Span::styled(
-            input_line.to_owned(),
-            Style::default().fg(Color::Gray),
-        ));
-        spans.push(Span::styled("▏", Style::default().fg(Color::Yellow)));
-        Paragraph::new(Line::from(spans)).block(panel_block(
-            Some("Input (Esc command, Enter send)"),
-            false,
-            Color::Magenta,
-        ))
-    } else {
-        Paragraph::new("")
-    };
-    frame.render_widget(input, chunks[2]);
-
-    let mode_label = if input_mode == InputMode::Insert {
-        "insert"
-    } else {
-        "command"
-    };
-    let muted = Style::default().fg(Color::DarkGray);
-    let active = Style::default().fg(Color::Yellow);
-    let mut footer_spans = vec![
-        Span::styled(
-            if active_is_shell {
-                format!(
-                    "mode:{} (ctrl+g)",
-                    if shell_capture_mode {
-                        "shell"
-                    } else {
-                        "command"
-                    }
-                )
-            } else {
-                format!("mode:{mode_label} (tab)")
-            },
-            if (active_is_shell && shell_capture_mode) || input_mode == InputMode::Insert {
-                active
-            } else {
-                muted
-            },
-        ),
-        Span::styled("  |  ", muted),
-        Span::styled("help (h)", if show_help { active } else { muted }),
-        Span::styled("  |  ", muted),
-        Span::styled("options (o)", if show_options { active } else { muted }),
-    ];
-    if active_is_shell {
-        footer_spans.push(Span::styled("  |  ", muted));
-        footer_spans.push(Span::styled(
-            if shell_capture_mode {
-                "shell: live (ctrl+g to exit)"
-            } else {
-                "shell: command (tab/ctrl+g to enter)"
-            },
-            active,
-        ));
-    }
-    let footer = Paragraph::new(Line::from(footer_spans));
-    frame.render_widget(footer, chunks[3]);
-}
-
-fn panel_block<'a>(title: Option<&'a str>, show_version: bool, border_color: Color) -> Block<'a> {
-    let mut block = Block::default()
-        .borders(Borders::ALL)
-        .border_set(border::ROUNDED)
-        .border_style(Style::default().fg(border_color));
-    if let Some(title) = title {
-        block = block.title_top(
-            Line::from(Span::styled(
-                title.to_owned(),
-                Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
-            ))
-            .left_aligned(),
-        );
-    }
-    if show_version {
-        let version = format!(" v{} ", env!("CARGO_PKG_VERSION"));
-        block = block.title_bottom(
-            Line::from(Span::styled(
-                version,
-                Style::default().fg(Color::LightMagenta),
-            ))
-            .right_aligned(),
-        );
-    }
-    block
-}
-
-const OPTIONS_ACTIONS: [OptionsAction; 5] = [
-    OptionsAction::ToggleFollow,
-    OptionsAction::Restart,
-    OptionsAction::Stop,
-    OptionsAction::Cancel,
-    OptionsAction::Quit,
-];
-
-fn options_actions(_follow_enabled: bool) -> Vec<OptionsAction> {
-    OPTIONS_ACTIONS.to_vec()
-}
-
-fn options_action_label(action: OptionsAction, follow_enabled: bool) -> &'static str {
-    match action {
-        OptionsAction::ToggleFollow => {
-            if follow_enabled {
-                "Disable follow (f)"
-            } else {
-                "Enable follow (f)"
-            }
-        }
-        OptionsAction::Restart => "Restart process (r)",
-        OptionsAction::Stop => "Stop process (s)",
-        OptionsAction::Cancel => "Cancel (o)",
-        OptionsAction::Quit => "Quit (q)",
-    }
-}
-
 fn apply_options_action(
     action: OptionsAction,
     active: &str,
@@ -1145,7 +830,7 @@ fn apply_options_action(
     logs: &mut HashMap<String, VecDeque<LogEntry>>,
     process_started_at: &mut HashMap<String, Instant>,
     process_restart_count: &mut HashMap<String, usize>,
-) -> Result<bool, DevTuiError> {
+) -> Result<bool, MultiProcessTuiError> {
     match action {
         OptionsAction::ToggleFollow => {
             if let Some(follow) = follow_mode.get_mut(active) {
@@ -1208,63 +893,6 @@ fn apply_options_action(
     }
 }
 
-fn render_options_overlay(
-    frame: &mut Frame<'_>,
-    process: &str,
-    selected: usize,
-    follow_enabled: bool,
-) {
-    let area = centered_rect(54, 44, frame.area());
-    frame.render_widget(Clear, area);
-    let rows = options_actions(follow_enabled)
-        .iter()
-        .enumerate()
-        .map(|(idx, action)| {
-            let marker = if idx == selected { "› " } else { "  " };
-            let style = if idx == selected {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default().fg(Color::Gray)
-            };
-            Line::from(Span::styled(
-                format!("{marker}{}", options_action_label(*action, follow_enabled)),
-                style,
-            ))
-        })
-        .collect::<Vec<Line>>();
-    let block = panel_block(Some(" Options "), false, Color::Magenta);
-    let paragraph = Paragraph::new({
-        let mut lines = vec![Line::from(Span::styled(
-            format!("process: {process}"),
-            Style::default().fg(Color::DarkGray),
-        ))];
-        lines.push(Line::from(""));
-        lines.extend(rows);
-        lines
-    })
-    .block(block);
-    frame.render_widget(paragraph, area);
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
-}
-
 fn push_log_line(
     logs: &mut HashMap<String, VecDeque<LogEntry>>,
     process: &str,
@@ -1282,430 +910,9 @@ fn push_log_line(
     }
 }
 
-fn vt_logs(
-    parser: &mut VtParser,
-    panel_rows: usize,
-    panel_cols: usize,
-    ui_scroll_offset: usize,
-    follow: bool,
-) -> (Vec<LogEntry>, usize, usize) {
-    let safe_rows = panel_rows.max(1);
-    parser.set_size(safe_rows as u16, panel_cols.max(1) as u16);
-    // vt100 0.15.x can panic when scrollback offset exceeds visible row count.
-    // Clamp to a safe range until we move to a parser version without this bug.
-    let max_offset = vt_max_scrollback(parser).min(safe_rows.saturating_sub(1));
-    let clamped = if follow {
-        max_offset
-    } else {
-        ui_scroll_offset.min(max_offset)
-    };
-    let vt_scrollback = max_offset.saturating_sub(clamped);
-    parser.set_scrollback(vt_scrollback);
-    let rows = parser
-        .screen()
-        .rows_formatted(0, panel_cols.max(1) as u16)
-        .map(|row| LogEntry {
-            kind: LogEntryKind::Stdout,
-            line: String::from_utf8_lossy(&row).into_owned(),
-        })
-        .collect::<Vec<LogEntry>>();
-    (rows, clamped, max_offset)
-}
-
-fn vt_max_scrollback(parser: &mut VtParser) -> usize {
-    let current = parser.screen().scrollback();
-    parser.set_scrollback(usize::MAX);
-    let max = parser.screen().scrollback();
-    parser.set_scrollback(current);
-    max
-}
-
-fn push_entry(buffer: &mut VecDeque<LogEntry>, entry: LogEntry) {
-    buffer.push_back(entry);
-    while buffer.len() > MAX_LOG_LINES {
-        buffer.pop_front();
-    }
-}
-
-fn ingest_log_payload(buffer: &mut VecDeque<LogEntry>, kind: LogEntryKind, payload: &str) {
-    let (normalized, cursor_up) = normalize_terminal_payload(payload);
-    let fragments = normalized
-        .split('\r')
-        .map(sanitize_log_text)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<String>>();
-    if fragments.is_empty() {
-        return;
-    }
-
-    if fragments.len() == 1 && !normalized.contains('\r') {
-        if cursor_up > 0 {
-            replace_last_renderable_line(buffer, kind, fragments[0].clone());
-        } else {
-            push_entry(
-                buffer,
-                LogEntry {
-                    kind,
-                    line: fragments[0].clone(),
-                },
-            );
-        }
-        return;
-    }
-
-    let mut append_on_first_rewrite = false;
-    let mut first = true;
-    for fragment in fragments {
-        if first {
-            if cursor_up > 0 {
-                replace_last_renderable_line(buffer, kind.clone(), fragment);
-            } else {
-                push_entry(
-                    buffer,
-                    LogEntry {
-                        kind: kind.clone(),
-                        line: fragment,
-                    },
-                );
-            }
-            first = false;
-            continue;
-        }
-        if append_on_first_rewrite {
-            push_entry(
-                buffer,
-                LogEntry {
-                    kind: kind.clone(),
-                    line: fragment,
-                },
-            );
-            append_on_first_rewrite = false;
-        } else {
-            replace_last_renderable_line(buffer, kind.clone(), fragment);
-        }
-    }
-}
-
-fn normalize_terminal_payload(raw: &str) -> (String, usize) {
-    let chars: Vec<char> = raw.chars().collect();
-    let mut out = String::new();
-    let mut i = 0usize;
-    let mut cursor_up = 0usize;
-    while i < chars.len() {
-        let ch = chars[i];
-        if ch == '\u{1b}' && i + 1 < chars.len() {
-            match chars[i + 1] {
-                '[' => {
-                    let start = i;
-                    i += 2;
-                    let mut params = String::new();
-                    while i < chars.len() {
-                        let final_byte = chars[i];
-                        if ('@'..='~').contains(&final_byte) {
-                            if final_byte == 'm' {
-                                out.extend(chars[start..=i].iter());
-                            } else if final_byte == 'A' {
-                                let count = params
-                                    .split(';')
-                                    .next()
-                                    .and_then(|value| {
-                                        if value.is_empty() {
-                                            Some(1usize)
-                                        } else {
-                                            value.parse::<usize>().ok()
-                                        }
-                                    })
-                                    .unwrap_or(1usize);
-                                cursor_up = cursor_up.saturating_add(count);
-                            }
-                            break;
-                        }
-                        params.push(final_byte);
-                        i += 1;
-                    }
-                }
-                ']' => {
-                    i += 2;
-                    while i < chars.len() {
-                        if chars[i] == '\u{0007}' {
-                            break;
-                        }
-                        if chars[i] == '\u{1b}' && i + 1 < chars.len() && chars[i + 1] == '\\' {
-                            i += 1;
-                            break;
-                        }
-                        i += 1;
-                    }
-                }
-                _ => {}
-            }
-        } else {
-            out.push(ch);
-        }
-        i += 1;
-    }
-    (out, cursor_up)
-}
-
-fn replace_last_renderable_line(buffer: &mut VecDeque<LogEntry>, kind: LogEntryKind, line: String) {
-    if let Some(last) = buffer.back_mut() {
-        if matches!(last.kind, LogEntryKind::Stdout | LogEntryKind::Stderr) {
-            last.kind = kind;
-            last.line = line;
-            return;
-        }
-    }
-    push_entry(buffer, LogEntry { kind, line });
-}
-
-fn sanitize_log_text(raw: &str) -> String {
-    raw.chars()
-        .filter(|ch| {
-            !matches!(
-                ch,
-                '\r'
-                    | '\u{0000}'..='\u{0008}'
-                    | '\u{000B}'
-                    | '\u{000C}'
-                    | '\u{000E}'..='\u{001A}'
-                    | '\u{001C}'..='\u{001F}'
-                    | '\u{007F}'
-            )
-        })
-        .collect()
-}
-
-fn ansi_line(raw: &str, base: Style) -> Line<'static> {
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut style = base;
-    let mut buf = String::new();
-    let chars: Vec<char> = raw.chars().collect();
-    let mut i = 0usize;
-    while i < chars.len() {
-        if chars[i] == '\u{1b}' && i + 1 < chars.len() && chars[i + 1] == '[' {
-            if !buf.is_empty() {
-                spans.push(Span::styled(std::mem::take(&mut buf), style));
-            }
-            i += 2;
-            let mut code = String::new();
-            while i < chars.len() {
-                let final_byte = chars[i];
-                if ('@'..='~').contains(&final_byte) {
-                    if final_byte == 'm' {
-                        style = apply_sgr(style, &code, base);
-                    }
-                    break;
-                }
-                code.push(chars[i]);
-                i += 1;
-            }
-        } else {
-            buf.push(chars[i]);
-        }
-        i += 1;
-    }
-    if !buf.is_empty() {
-        spans.push(Span::styled(buf, style));
-    }
-    if spans.is_empty() {
-        return Line::from("");
-    }
-    Line::from(spans)
-}
-
-fn apply_sgr(current: Style, sgr: &str, base: Style) -> Style {
-    let mut style = current;
-    let parts = if sgr.is_empty() {
-        vec!["0"]
-    } else {
-        sgr.split(';').collect::<Vec<&str>>()
-    };
-    for part in parts {
-        match part.parse::<u8>() {
-            Ok(0) => style = base,
-            Ok(1) => style = style.add_modifier(Modifier::BOLD),
-            Ok(2) => style = style.add_modifier(Modifier::DIM),
-            Ok(3) => style = style.add_modifier(Modifier::ITALIC),
-            Ok(4) => style = style.add_modifier(Modifier::UNDERLINED),
-            Ok(22) => style = style.remove_modifier(Modifier::BOLD | Modifier::DIM),
-            Ok(23) => style = style.remove_modifier(Modifier::ITALIC),
-            Ok(24) => style = style.remove_modifier(Modifier::UNDERLINED),
-            Ok(30) => style = style.fg(Color::Black),
-            Ok(31) => style = style.fg(Color::Red),
-            Ok(32) => style = style.fg(Color::Green),
-            Ok(33) => style = style.fg(Color::Yellow),
-            Ok(34) => style = style.fg(Color::Blue),
-            Ok(35) => style = style.fg(Color::Magenta),
-            Ok(36) => style = style.fg(Color::Cyan),
-            Ok(37) => style = style.fg(Color::Gray),
-            Ok(39) => style = style.fg(base.fg.unwrap_or(Color::Reset)),
-            Ok(90) => style = style.fg(Color::DarkGray),
-            Ok(91) => style = style.fg(Color::LightRed),
-            Ok(92) => style = style.fg(Color::LightGreen),
-            Ok(93) => style = style.fg(Color::LightYellow),
-            Ok(94) => style = style.fg(Color::LightBlue),
-            Ok(95) => style = style.fg(Color::LightMagenta),
-            Ok(96) => style = style.fg(Color::LightCyan),
-            Ok(97) => style = style.fg(Color::White),
-            _ => {}
-        }
-    }
-    style
-}
-
-fn is_expected_shutdown_diagnostic(diagnostic: &str) -> bool {
-    matches!(diagnostic, "signal=15" | "signal=9")
-}
-
-fn format_elapsed(elapsed: Duration) -> String {
-    let seconds = elapsed.as_secs();
-    let hours = seconds / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let secs = seconds % 60;
-    if hours > 0 {
-        format!("{hours}h{minutes:02}m{secs:02}s")
-    } else if minutes > 0 {
-        format!("{minutes}m{secs:02}s")
-    } else {
-        format!("{secs}s")
-    }
-}
-
-fn runtime_meta_line(elapsed: Duration, restart_count: usize) -> Line<'static> {
-    let label = if restart_count == 0 {
-        "started"
-    } else {
-        "restarted"
-    };
-    Line::from(vec![
-        Span::styled(format!("{label}: "), Style::default().fg(Color::LightBlue)),
-        Span::styled(
-            format!("{} ago", format_elapsed(elapsed)),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ])
-}
-
-fn styled_text(style: AnsiStyle, text: &str) -> String {
-    format!("{}{}{}", style.render(), text, style.render_reset())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ansi_line_parses_basic_colour_sequence() {
-        let line = ansi_line("\u{1b}[31merror\u{1b}[0m ok", Style::default());
-        assert_eq!(line.spans.len(), 2);
-        assert_eq!(line.spans[0].content.as_ref(), "error");
-        assert_eq!(line.spans[1].content.as_ref(), " ok");
-    }
-
-    #[test]
-    fn expected_shutdown_diagnostics_are_ignored() {
-        assert!(is_expected_shutdown_diagnostic("signal=15"));
-        assert!(is_expected_shutdown_diagnostic("signal=9"));
-        assert!(!is_expected_shutdown_diagnostic("exit=1"));
-        assert!(!is_expected_shutdown_diagnostic("signal=11"));
-    }
-
-    #[test]
-    fn format_elapsed_uses_compact_human_time() {
-        assert_eq!(format_elapsed(Duration::from_secs(9)), "9s");
-        assert_eq!(format_elapsed(Duration::from_secs(65)), "1m05s");
-        assert_eq!(format_elapsed(Duration::from_secs(3665)), "1h01m05s");
-    }
-
-    #[test]
-    fn runtime_meta_line_marks_restart_state() {
-        let started = runtime_meta_line(Duration::from_secs(9), 0);
-        assert_eq!(started.spans[0].content.as_ref(), "started: ");
-        let restarted = runtime_meta_line(Duration::from_secs(9), 1);
-        assert_eq!(restarted.spans[0].content.as_ref(), "restarted: ");
-    }
-
-    #[test]
-    fn sanitize_log_text_removes_control_bytes_but_keeps_ansi() {
-        let raw = "a\u{0008}b\r\u{001b}[31merr\u{001b}[0m";
-        let sanitized = sanitize_log_text(raw);
-        assert_eq!(sanitized, "ab\u{001b}[31merr\u{001b}[0m");
-    }
-
-    #[test]
-    fn ingest_log_payload_carriage_return_overwrites_last_line() {
-        let mut buffer = VecDeque::new();
-        ingest_log_payload(
-            &mut buffer,
-            LogEntryKind::Stdout,
-            "building\rfinished\rdone",
-        );
-        assert_eq!(buffer.len(), 1);
-        let line = buffer.back().expect("line");
-        assert!(matches!(line.kind, LogEntryKind::Stdout));
-        assert_eq!(line.line, "done");
-    }
-
-    #[test]
-    fn ingest_log_payload_cursor_up_replaces_prior_line() {
-        let mut buffer = VecDeque::new();
-        ingest_log_payload(&mut buffer, LogEntryKind::Stdout, "line 1");
-        ingest_log_payload(&mut buffer, LogEntryKind::Stdout, "line 2");
-        ingest_log_payload(
-            &mut buffer,
-            LogEntryKind::Stdout,
-            "\u{1b}[1A\u{1b}[2K\rline 2 updated",
-        );
-        assert_eq!(buffer.len(), 2);
-        assert_eq!(buffer[0].line, "line 1");
-        assert_eq!(buffer[1].line, "line 2 updated");
-    }
-
-    #[test]
-    fn ingest_log_payload_cursor_up_without_replacement_does_not_drop_lines() {
-        let mut buffer = VecDeque::new();
-        ingest_log_payload(&mut buffer, LogEntryKind::Stdout, "line 1");
-        ingest_log_payload(&mut buffer, LogEntryKind::Stdout, "line 2");
-        ingest_log_payload(&mut buffer, LogEntryKind::Stdout, "\u{1b}[1A\u{1b}[2K");
-        assert_eq!(buffer.len(), 2);
-        assert_eq!(buffer[0].line, "line 1");
-        assert_eq!(buffer[1].line, "line 2");
-    }
-
-    #[test]
-    fn ansi_line_ignores_non_sgr_escape_sequences() {
-        let line = ansi_line(
-            "\u{1b}[2K\u{1b}[1Ahello \u{1b}[31mred\u{1b}[0m",
-            Style::default(),
-        );
-        let rendered = line
-            .spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect::<String>();
-        assert_eq!(rendered, "hello red");
-    }
-
-    #[test]
-    fn vt_logs_trims_empty_padding_lines() {
-        let mut parser = VtParser::new(8, 40, 100);
-        parser.process(b"\n\nhello\nworld\n\n");
-        let (rows, _, _) = vt_logs(&mut parser, 8, 40, 0, true);
-        assert!(rows.iter().any(|line| line.line.contains("hello")));
-        assert!(rows.iter().any(|line| line.line.contains("world")));
-    }
-
-    #[test]
-    fn vt_logs_clamps_overscroll_without_panicking() {
-        let mut parser = VtParser::new(8, 40, 200);
-        for i in 0..200 {
-            parser.process(format!("line-{i}\n").as_bytes());
-        }
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            vt_logs(&mut parser, 8, 40, usize::MAX / 2, false)
-        }));
-        assert!(result.is_ok(), "overscroll should be clamped safely");
-    }
 
     #[test]
     fn all_processes_exited_requires_full_count() {

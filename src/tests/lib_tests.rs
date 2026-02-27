@@ -132,11 +132,18 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("Detection Order"));
     assert!(rendered.contains("--verbose-results"));
     assert!(rendered.contains("--tui"));
+    assert!(rendered.contains("[suite] [runner args]"));
+    assert!(rendered.contains("effigy test vitest user-service"));
     assert!(rendered.contains("effigy farmyard/test"));
     assert!(rendered.contains("Named Test Selection"));
     assert!(rendered.contains("effigy test user-service"));
+    assert!(rendered.contains("prefix the suite explicitly"));
+    assert!(rendered.contains("Migration"));
+    assert!(rendered.contains("ambiguous in multi-suite repos"));
+    assert!(rendered.contains("effigy test nextest user_service --nocapture"));
     assert!(rendered.contains("[builtin.test]"));
     assert!(rendered.contains("max_parallel = 2"));
+    assert!(rendered.contains("package_manager = \"pnpm\""));
     assert!(rendered.contains("[tasks.test]"));
 }
 

@@ -1,9 +1,9 @@
-pub mod dev_tui;
 pub mod process_manager;
 pub mod resolver;
 pub mod runner;
 pub mod tasks;
 pub mod testing;
+pub mod tui;
 pub mod ui;
 
 use std::path::{Path, PathBuf};
@@ -368,8 +368,13 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.text("")?;
 
     renderer.section("Usage")?;
-    renderer.text("effigy test [--plan] [--verbose-results] [--tui] [runner args]")?;
+    renderer.text("effigy test [--plan] [--verbose-results] [--tui] [suite] [runner args]")?;
     renderer.text("effigy test --help")?;
+    renderer.text("")?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "When multiple suites are detected and runner args are provided, prefix the suite explicitly (for example `effigy test vitest my-test`).",
+    )?;
     renderer.text("")?;
 
     renderer.section("Options")?;
@@ -409,6 +414,7 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.text("Root manifest (fanout concurrency):")?;
     renderer.text("[builtin.test]")?;
     renderer.text("max_parallel = 2")?;
+    renderer.text("package_manager = \"pnpm\"  # optional: bun|pnpm|npm|direct")?;
     renderer.text("")?;
     renderer.text("Explicit override (wins over built-in detection):")?;
     renderer.text("[tasks.test]")?;
@@ -420,6 +426,8 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         "commands",
         &[
             "effigy test".to_owned(),
+            "effigy test vitest".to_owned(),
+            "effigy test nextest user_service --nocapture".to_owned(),
             "effigy farmyard/test".to_owned(),
             "effigy test --plan".to_owned(),
             "effigy test --verbose-results".to_owned(),
@@ -435,9 +443,21 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         "patterns",
         &[
             "effigy test user-service".to_owned(),
+            "effigy test vitest user-service".to_owned(),
             "effigy farmyard/test billing".to_owned(),
             "effigy test -- tests/api/user.test.ts".to_owned(),
             "effigy test -- user_service --nocapture".to_owned(),
+        ],
+    )?;
+    renderer.text("")?;
+
+    renderer.section("Migration")?;
+    renderer.bullet_list(
+        "before/after",
+        &[
+            "before: effigy test user-service (ambiguous in multi-suite repos)".to_owned(),
+            "after: effigy test vitest user-service".to_owned(),
+            "after: effigy test nextest user_service --nocapture".to_owned(),
         ],
     )?;
     Ok(())

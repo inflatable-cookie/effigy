@@ -549,6 +549,124 @@ fn run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo() {
 }
 
 #[test]
+fn run_manifest_task_builtin_test_with_named_args_errors_when_multi_suite_is_ambiguous() {
+    let root = temp_workspace("builtin-test-multi-suite-ambiguous");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "test": "vitest run"
+  }
+}"#,
+    )
+    .expect("write package");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write cargo toml");
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["user-service".to_owned()],
+        },
+        root,
+    )
+    .expect_err("expected ambiguity error");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("ambiguous"));
+            assert!(message.contains("vitest"));
+            assert!(message.contains("cargo-"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_builtin_test_supports_positional_suite_selector() {
+    let root = temp_workspace("builtin-test-suite-selector");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "test": "vitest run"
+  }
+}"#,
+    )
+    .expect("write package");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write cargo toml");
+
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    let vitest = local_bin.join("vitest");
+    let vitest_marker = root.join("vitest-called.log");
+    fs::write(
+        &vitest,
+        format!(
+            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
+            vitest_marker.display()
+        ),
+    )
+    .expect("write vitest");
+    let mut vitest_perms = fs::metadata(&vitest).expect("stat").permissions();
+    vitest_perms.set_mode(0o755);
+    fs::set_permissions(&vitest, vitest_perms).expect("chmod");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["vitest".to_owned(), "user-service".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("run builtin suite-selected test");
+
+    assert!(out.contains("Test Results"));
+    assert!(out.contains("root/vitest"));
+    assert!(!out.contains("root/cargo-"));
+    assert!(vitest_marker.exists(), "vitest suite should run");
+}
+
+#[test]
+fn run_manifest_task_builtin_test_errors_for_unavailable_positional_suite_selector() {
+    let root = temp_workspace("builtin-test-suite-selector-unavailable");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "test": "vitest run"
+  }
+}"#,
+    )
+    .expect("write package");
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["nextest".to_owned()],
+        },
+        root,
+    )
+    .expect_err("suite should be unavailable");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("not available"));
+            assert!(message.contains("nextest"));
+            assert!(message.contains("vitest"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
 fn run_manifest_task_explicit_test_task_overrides_builtin_auto_detection() {
     let root = temp_workspace("builtin-test-explicit-override");
     write_manifest(
@@ -1037,6 +1155,96 @@ fn run_manifest_task_builtin_test_tui_flag_falls_back_to_text_when_non_interacti
 
     assert!(out.contains("Test Results"));
     assert!(out.contains("root"));
+}
+
+#[test]
+fn run_manifest_task_builtin_test_plan_respects_configured_package_manager() {
+    let root = temp_workspace("builtin-test-plan-package-manager");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[builtin.test]
+package_manager = "pnpm"
+"#,
+    );
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}"#,
+    )
+    .expect("write package");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--plan".to_owned()],
+        },
+        root,
+    )
+    .expect("run test --plan");
+
+    assert!(out.contains("pnpm exec vitest run"));
+    assert!(out.contains("builtin.test.package_manager=pnpm"));
+}
+
+#[test]
+fn run_manifest_task_builtin_test_exec_uses_configured_package_manager() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("builtin-test-exec-package-manager");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[builtin.test]
+package_manager = "bun"
+"#,
+    );
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}"#,
+    )
+    .expect("write package");
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    let bun_stub = bin_dir.join("bun");
+    let args_log = root.join("bun-args.log");
+    fs::write(
+        &bun_stub,
+        "#!/bin/sh\nprintf \"%s\\n\" \"$@\" > \"$EFFIGY_TEST_BUN_ARGS_FILE\"\n",
+    )
+    .expect("write bun stub");
+    let mut perms = fs::metadata(&bun_stub).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&bun_stub, perms).expect("chmod");
+
+    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
+    let path = format!("{}:{}", bin_dir.display(), prior_path);
+    let _env = EnvGuard::set_many(&[
+        ("PATH", Some(path)),
+        ("SHELL", Some("/bin/sh".to_owned())),
+        (
+            "EFFIGY_TEST_BUN_ARGS_FILE",
+            Some(args_log.display().to_string()),
+        ),
+    ]);
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["vitest".to_owned()],
+        },
+        root,
+    )
+    .expect("run builtin test");
+
+    assert!(out.contains("Test Results"));
+    let args = fs::read_to_string(args_log).expect("read bun args");
+    assert_eq!(args, "x\nvitest\nrun\n");
 }
 
 #[test]

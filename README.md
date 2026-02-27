@@ -53,9 +53,9 @@ Planned steady-state:
 effigy <task> [task args]
 effigy <catalog>/<task> [task args]
 effigy dev [profile]
-effigy test [runner args]
-effigy test --plan [runner args]
-effigy test --verbose-results [runner args]
+effigy test [suite] [runner args]
+effigy test --plan [suite] [runner args]
+effigy test --verbose-results [suite] [runner args]
 effigy repo-pulse [--repo <PATH>] [--verbose-root]
 effigy tasks [--repo <PATH>] [--task <TASK_NAME>]
 ```
@@ -73,11 +73,24 @@ Built-in `test` supports workspace fanout across discovered catalog roots. Confi
 ```toml
 [builtin.test]
 max_parallel = 2
+package_manager = "pnpm" # optional: bun|pnpm|npm|direct
 ```
 
 Notes:
 - this controls parallel workers for built-in `effigy test` fanout only,
 - explicit `[tasks.test]` definitions still override built-in detection entirely.
+- when runner args are provided and multiple suites are detected, prefix suite explicitly (for example `effigy test vitest user-service`).
+
+### Built-in test migration
+
+If you previously relied on implicit multi-suite forwarding for named tests, use explicit suite selection in mixed repos.
+
+- before: `effigy test user-service` (ambiguous when multiple suites exist)
+- after: `effigy test vitest user-service`
+- after: `effigy test nextest user_service --nocapture`
+
+Single-suite repos still support:
+- `effigy test user-service`
 
 ## Output Conventions
 
