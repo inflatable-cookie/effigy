@@ -384,6 +384,10 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         ui::NoticeLevel::Info,
         "Use `effigy test --plan ...` and check `available-suites` per target before running filtered tests.",
     )?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "When suite names are mistyped or unavailable, effigy suggests nearest suite aliases and copy-paste retry commands.",
+    )?;
     renderer.text("")?;
 
     renderer.section("Options")?;
@@ -457,6 +461,7 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         &[
             "effigy test user-service".to_owned(),
             "effigy test vitest user-service".to_owned(),
+            "effigy test viteest user-service  # suggests vitest".to_owned(),
             "effigy farmyard/test billing".to_owned(),
             "effigy test -- tests/api/user.test.ts".to_owned(),
             "effigy test -- user_service --nocapture".to_owned(),
@@ -471,6 +476,8 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "before: effigy test user-service (ambiguous in multi-suite repos)".to_owned(),
             "after: effigy test vitest user-service".to_owned(),
             "after: effigy test nextest user_service --nocapture".to_owned(),
+            "after: effigy test viteest user-service -> suggests `effigy test vitest user-service`"
+                .to_owned(),
         ],
     )?;
     Ok(())

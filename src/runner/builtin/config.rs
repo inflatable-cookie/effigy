@@ -153,13 +153,20 @@ pub(super) fn run_builtin_config(
     renderer.text("[tasks.dev.processes.api]")?;
     renderer.text("run = \"cargo run -p api\"")?;
     renderer.text("")?;
+    renderer.text("[tasks.dev.processes.validate-stack]")?;
+    renderer.text("task = \"../froyo/validate\"")?;
+    renderer.text("")?;
     renderer.text("[tasks.dev.profiles.default]")?;
-    renderer.text("start = [\"api\"]")?;
-    renderer.text("tabs = [\"api\"]")?;
+    renderer.text("start = [\"api\", \"validate-stack\"]")?;
+    renderer.text("tabs = [\"api\", \"validate-stack\"]")?;
     renderer.text("")?;
     renderer.notice(
         NoticeLevel::Info,
         "Compact tasks entries are shorthand for `run` commands; use table form for managed mode, profiles, and shell flags.",
+    )?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Cross-repo task references support aliases (`farmyard/api`) and relative paths from the current catalog (`../froyo/validate`).",
     )?;
 
     let out = renderer.into_inner();
@@ -212,9 +219,12 @@ fn render_builtin_config_schema() -> String {
         "[tasks.dev.processes.api]",
         "run = \"cargo run -p api\"",
         "",
+        "[tasks.dev.processes.validate-stack]",
+        "task = \"../froyo/validate\"",
+        "",
         "[tasks.dev.profiles.default]",
-        "start = [\"api\"]",
-        "tabs = [\"api\"]",
+        "start = [\"api\", \"validate-stack\"]",
+        "tabs = [\"api\", \"validate-stack\"]",
         "",
     ]
     .join("\n")
@@ -307,9 +317,12 @@ fn render_builtin_config_schema_target(target: &str, minimal: bool) -> Option<St
                 "[tasks.dev.processes.api]",
                 "run = \"cargo run -p api\"",
                 "",
+                "[tasks.dev.processes.validate-stack]",
+                "task = \"../froyo/validate\"",
+                "",
                 "[tasks.dev.profiles.default]",
-                "start = [\"api\"]",
-                "tabs = [\"api\"]",
+                "start = [\"api\", \"validate-stack\"]",
+                "tabs = [\"api\", \"validate-stack\"]",
                 "",
             ]
             .join("\n"),

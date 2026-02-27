@@ -701,6 +701,45 @@ fn run_manifest_task_builtin_test_errors_for_unavailable_positional_suite_select
             assert!(message.contains("not available"));
             assert!(message.contains("nextest"));
             assert!(message.contains("vitest"));
+            assert!(message.contains("Try one of:"));
+            assert!(message.contains("effigy test vitest"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_builtin_test_mistyped_suite_suggests_nearest_runner() {
+    let root = temp_workspace("builtin-test-mistyped-suite-suggestion");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "test": "vitest run"
+  }
+}"#,
+    )
+    .expect("write package");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write cargo toml");
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["viteest".to_owned(), "user-service".to_owned()],
+        },
+        root,
+    )
+    .expect_err("expected mistyped suite error");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("runner `viteest` is not available"));
+            assert!(message.contains("Did you mean `vitest`?"));
+            assert!(message.contains("Try: effigy test vitest user-service"));
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -1610,6 +1649,8 @@ fn run_manifest_task_builtin_config_prints_reference() {
     assert!(out.contains("[test.runners]"));
     assert!(out.contains("[tasks]"));
     assert!(out.contains("Compact tasks entries are shorthand"));
+    assert!(out.contains("task = \"../froyo/validate\""));
+    assert!(out.contains("Cross-repo task references support aliases"));
 }
 
 #[test]
@@ -1630,6 +1671,8 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
     assert!(out.contains("[package_manager]"));
     assert!(out.contains("[test.runners]"));
     assert!(out.contains("[tasks.dev.profiles.default]"));
+    assert!(out.contains("task = \"../froyo/validate\""));
+    assert!(out.contains("start = [\"api\", \"validate-stack\"]"));
 }
 
 #[test]

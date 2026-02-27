@@ -140,8 +140,11 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("effigy test user-service"));
     assert!(rendered.contains("prefix the suite explicitly"));
     assert!(rendered.contains("check `available-suites` per target"));
+    assert!(rendered.contains("suggests nearest suite aliases"));
     assert!(rendered.contains("Migration"));
     assert!(rendered.contains("ambiguous in multi-suite repos"));
+    assert!(rendered.contains("effigy test viteest user-service"));
+    assert!(rendered.contains("suggests `effigy test vitest user-service`"));
     assert!(rendered.contains("effigy test nextest user_service --nocapture"));
     assert!(rendered.contains("[package_manager]"));
     assert!(rendered.contains("js = \"pnpm\""));
