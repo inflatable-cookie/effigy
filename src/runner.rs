@@ -330,7 +330,7 @@ struct TaskManifest {
     defer: Option<ManifestDefer>,
     #[serde(default)]
     builtin: Option<ManifestBuiltin>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_tasks")]
     tasks: BTreeMap<String, ManifestTask>,
 }
 
@@ -346,7 +346,7 @@ struct ManifestBuiltinTest {
     max_parallel: Option<usize>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, Default)]
 struct ManifestTask {
     #[serde(default)]
     run: Option<ManifestManagedRun>,
@@ -358,6 +358,25 @@ struct ManifestTask {
     processes: BTreeMap<String, ManifestManagedProcess>,
     #[serde(default)]
     profiles: BTreeMap<String, ManifestManagedProfile>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+enum ManifestTaskDefinition {
+    Run(String),
+    Full(ManifestTask),
+}
+
+impl ManifestTaskDefinition {
+    fn into_manifest_task(self) -> ManifestTask {
+        match self {
+            ManifestTaskDefinition::Run(command) => ManifestTask {
+                run: Some(ManifestManagedRun::Command(command)),
+                ..ManifestTask::default()
+            },
+            ManifestTaskDefinition::Full(task) => task,
+        }
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -525,6 +544,20 @@ fn tab_entries_from_order(tabs: Option<&ManifestManagedTabOrder>) -> Option<Vec<
         }
         _ => None,
     }
+}
+
+fn deserialize_tasks<'de, D>(deserializer: D) -> Result<BTreeMap<String, ManifestTask>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let definitions =
+        <BTreeMap<String, ManifestTaskDefinition> as serde::Deserialize>::deserialize(
+            deserializer,
+        )?;
+    Ok(definitions
+        .into_iter()
+        .map(|(name, definition)| (name, definition.into_manifest_task()))
+        .collect())
 }
 
 #[derive(Debug, serde::Deserialize)]

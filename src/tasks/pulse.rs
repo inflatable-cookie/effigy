@@ -15,6 +15,8 @@ pub struct PulseCollected {
     resolution_warnings: Vec<String>,
     package_scripts: Vec<String>,
     package_parse_warning: Option<String>,
+    effigy_tasks: Vec<String>,
+    effigy_parse_warning: Option<String>,
     subrepo_candidates: Vec<String>,
     has_effigy_link: bool,
     is_coordination_repo: bool,
@@ -52,6 +54,7 @@ impl Task for PulseTask {
         }
 
         let (package_scripts, package_parse_warning) = read_package_scripts(&repo_path);
+        let (effigy_tasks, effigy_parse_warning) = read_effigy_tasks(&repo_path);
         let subrepo_candidates = find_subrepo_candidates(&repo_path);
         let has_effigy_link = repo_path.join("effigy").exists();
         let is_coordination_repo = ["strategy", "experiments", "projects"]
@@ -68,6 +71,8 @@ impl Task for PulseTask {
             resolution_warnings: ctx.resolution_warnings.clone(),
             package_scripts,
             package_parse_warning,
+            effigy_tasks,
+            effigy_parse_warning,
             subrepo_candidates,
             has_effigy_link,
             is_coordination_repo,
@@ -95,6 +100,14 @@ impl Task for PulseTask {
             evidence.push(format!(
                 "Root package.json scripts: {}",
                 collected.package_scripts.join(", ")
+            ));
+        }
+        if collected.effigy_tasks.is_empty() {
+            evidence.push("No root effigy.toml tasks detected.".to_owned());
+        } else {
+            evidence.push(format!(
+                "Root effigy.toml tasks: {}",
+                collected.effigy_tasks.join(", ")
             ));
         }
 
@@ -148,31 +161,30 @@ impl Task for PulseTask {
             risk.push("Target may not be a project root; pulse signal quality is low.".to_owned());
         }
 
-        let has_health_script = collected
-            .package_scripts
+        let has_health_task = collected
+            .effigy_tasks
             .iter()
-            .any(|script| script == "health:workspace" || script == "health");
+            .any(|task| task == "health" || task == "health-workspace");
         let should_expect_task_surface = should_expect_root_task_surface(
             &collected.marker_hits,
-            &collected.package_scripts,
+            &collected.effigy_tasks,
             collected.has_effigy_link,
         );
-        if !has_health_script && should_expect_task_surface {
-            if collected.package_scripts.is_empty() && collected.subrepo_candidates.len() >= 3 {
+        if !has_health_task && should_expect_task_surface {
+            if collected.effigy_tasks.is_empty() && collected.subrepo_candidates.len() >= 3 {
                 risk.push(
                     "Workspace appears to have multiple subrepos but no root task surface."
                         .to_owned(),
                 );
                 next_action.push(format!(
-                    "Add `{}` with scripts `list:repos` and `health:workspace`, then run `effigy repo-pulse --repo {}`.",
-                    collected.repo_path.join("package.json").display(),
-                    collected.repo
+                    "Add `{}` with root tasks (for example `tasks.list-repos` and `tasks.health`). Minimal health task: `[tasks.health] run = \"effigy repo-pulse {{args}}\"`.",
+                    collected.repo_path.join("effigy.toml").display()
                 ));
-            } else if !collected.package_scripts.is_empty() {
-                risk.push("Root package.json lacks a canonical health-check command.".to_owned());
+            } else if !collected.effigy_tasks.is_empty() {
+                risk.push("Root effigy.toml lacks a canonical health-check task.".to_owned());
                 next_action.push(format!(
-                    "Update `{}` to add `health:workspace` (or `health`) script and route it to repo smoke checks.",
-                    collected.repo_path.join("package.json").display()
+                    "Update `{}` to add `tasks.health` (or `tasks.health-workspace`). Minimal snippet: `[tasks.health] run = \"effigy repo-pulse {{args}}\"`.",
+                    collected.repo_path.join("effigy.toml").display()
                 ));
             }
         }
@@ -188,6 +200,9 @@ impl Task for PulseTask {
         }
 
         if let Some(parse_warning) = collected.package_parse_warning {
+            risk.push(parse_warning);
+        }
+        if let Some(parse_warning) = collected.effigy_parse_warning {
             risk.push(parse_warning);
         }
 
@@ -242,15 +257,52 @@ fn ctx_lines_from_mode(mode: ResolutionMode) -> [&'static str; 1] {
 
 fn should_expect_root_task_surface(
     marker_hits: &[String],
-    package_scripts: &[String],
+    effigy_tasks: &[String],
     has_effigy_link: bool,
 ) -> bool {
-    if !package_scripts.is_empty() || has_effigy_link {
+    if !effigy_tasks.is_empty() || has_effigy_link {
         return true;
     }
     marker_hits
         .iter()
         .any(|m| m == "package.json" || m == "composer.json" || m == "Cargo.toml")
+}
+
+fn read_effigy_tasks(repo_root: &Path) -> (Vec<String>, Option<String>) {
+    let effigy_path = repo_root.join("effigy.toml");
+    if !effigy_path.exists() {
+        return (Vec::new(), None);
+    }
+    let content = match fs::read_to_string(&effigy_path) {
+        Ok(content) => content,
+        Err(err) => {
+            return (
+                Vec::new(),
+                Some(format!("Unable to read {}: {}", effigy_path.display(), err)),
+            )
+        }
+    };
+
+    let value: toml::Value = match toml::from_str(&content) {
+        Ok(value) => value,
+        Err(err) => {
+            return (
+                Vec::new(),
+                Some(format!(
+                    "Unable to parse {} as TOML: {}",
+                    effigy_path.display(),
+                    err
+                )),
+            )
+        }
+    };
+
+    let Some(tasks) = value.get("tasks").and_then(|v| v.as_table()) else {
+        return (Vec::new(), None);
+    };
+    let mut names = tasks.keys().cloned().collect::<Vec<String>>();
+    names.sort();
+    (names, None)
 }
 
 fn read_package_scripts(repo_root: &Path) -> (Vec<String>, Option<String>) {

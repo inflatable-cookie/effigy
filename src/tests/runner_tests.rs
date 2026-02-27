@@ -865,6 +865,12 @@ fn run_pulse_verbose_renders_root_resolution_section() {
 fn run_pulse_colorizes_inline_code_segments_when_color_enabled() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("pulse-inline-code-color");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+run = "echo dev"
+"#,
+    );
     fs::write(
         root.join("package.json"),
         r#"{
@@ -885,7 +891,7 @@ fn run_pulse_colorizes_inline_code_segments_when_color_enabled() {
     })
     .expect("pulse");
 
-    assert!(out.contains("\u{1b}[38;5;117m`health:workspace`"));
+    assert!(out.contains("\u{1b}[38;5;117m`tasks.health`"));
 }
 
 #[test]

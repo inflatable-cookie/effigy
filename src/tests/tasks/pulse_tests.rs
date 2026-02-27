@@ -55,28 +55,20 @@ fn finds_subrepo_candidates_from_composer_marker() {
 #[test]
 fn task_surface_expectation_skips_umbrella_git_repo_without_effigy() {
     let marker_hits = vec![".git".to_owned()];
-    let scripts: Vec<String> = Vec::new();
+    let tasks: Vec<String> = Vec::new();
     assert!(!should_expect_root_task_surface(
         &marker_hits,
-        &scripts,
+        &tasks,
         false
     ));
-    assert!(should_expect_root_task_surface(
-        &marker_hits,
-        &scripts,
-        true
-    ));
+    assert!(should_expect_root_task_surface(&marker_hits, &tasks, true));
 }
 
 #[test]
 fn task_surface_expectation_accepts_composer_root_marker() {
     let marker_hits = vec!["composer.json".to_owned()];
-    let scripts: Vec<String> = Vec::new();
-    assert!(should_expect_root_task_surface(
-        &marker_hits,
-        &scripts,
-        false
-    ));
+    let tasks: Vec<String> = Vec::new();
+    assert!(should_expect_root_task_surface(&marker_hits, &tasks, false));
 }
 
 fn temp_dir(name: &str) -> PathBuf {
