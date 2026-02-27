@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use super::{
     CatalogSelectionMode, LoadedCatalog, RunnerError, TaskManifest, TaskSelection, TaskSelector,
@@ -127,7 +127,12 @@ pub(super) fn select_catalog_and_task<'a>(
             .collect::<Vec<String>>();
         available.sort();
 
-        let Some(catalog) = catalogs.iter().find(|c| &c.alias == prefix) else {
+        let selected_catalog = catalogs
+            .iter()
+            .find(|c| &c.alias == prefix)
+            .or_else(|| resolve_catalog_by_relative_prefix(prefix, catalogs, cwd));
+
+        let Some(catalog) = selected_catalog else {
             return Err(RunnerError::TaskCatalogPrefixNotFound {
                 prefix: prefix.clone(),
                 available,
@@ -144,7 +149,14 @@ pub(super) fn select_catalog_and_task<'a>(
             catalog,
             task,
             mode: CatalogSelectionMode::ExplicitPrefix,
-            evidence: vec![format!("selected catalog via explicit prefix `{prefix}`")],
+            evidence: vec![if catalog.alias == *prefix {
+                format!("selected catalog via explicit prefix `{prefix}`")
+            } else {
+                format!(
+                    "selected catalog via relative prefix `{prefix}` -> `{}`",
+                    catalog.alias
+                )
+            }],
         });
     }
 
@@ -247,4 +259,45 @@ fn default_alias(catalog_root: &Path, workspace_root: &Path) -> String {
         .and_then(|n| n.to_str())
         .map(|v| v.to_owned())
         .unwrap_or_else(|| "catalog".to_owned())
+}
+
+fn resolve_catalog_by_relative_prefix<'a>(
+    prefix: &str,
+    catalogs: &'a [LoadedCatalog],
+    cwd: &Path,
+) -> Option<&'a LoadedCatalog> {
+    if !is_relative_path_prefix(prefix) {
+        return None;
+    }
+
+    let resolved = normalize_path(if Path::new(prefix).is_absolute() {
+        PathBuf::from(prefix)
+    } else {
+        cwd.join(prefix)
+    });
+
+    catalogs
+        .iter()
+        .find(|catalog| normalize_path(catalog.catalog_root.clone()) == resolved)
+}
+
+fn is_relative_path_prefix(prefix: &str) -> bool {
+    prefix.starts_with('.')
+        || prefix.starts_with('/')
+        || prefix.contains('/')
+        || prefix.contains('\\')
+}
+
+fn normalize_path(path: PathBuf) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }

@@ -37,6 +37,13 @@ fn parse_task_selector_supports_prefixed_task() {
 }
 
 #[test]
+fn parse_task_selector_supports_relative_prefixed_task() {
+    let selector = parse_task_selector("../froyo/validate").expect("selector");
+    assert_eq!(selector.prefix, Some("../froyo".to_owned()));
+    assert_eq!(selector.task_name, "validate");
+}
+
+#[test]
 fn run_manifest_task_prefixed_uses_named_catalog() {
     let root = temp_workspace("prefixed");
     let farmyard = root.join("farmyard");
@@ -124,6 +131,35 @@ fn run_manifest_task_unprefixed_reports_ambiguity_on_equal_shallow_depth() {
         }
         other => panic!("unexpected error: {other}"),
     }
+}
+
+#[test]
+fn run_manifest_task_relative_prefix_resolves_catalog_by_path() {
+    let root = temp_workspace("relative-prefix-path");
+    let dairy = root.join("dairy");
+    let froyo = root.join("froyo");
+    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    fs::create_dir_all(&froyo).expect("mkdir froyo");
+
+    write_manifest(
+        &dairy.join("effigy.toml"),
+        "[catalog]\nalias = \"dairy\"\n[tasks.dev]\nrun = \"printf dairy\"\n",
+    );
+    write_manifest(
+        &froyo.join("effigy.toml"),
+        "[catalog]\nalias = \"froyo\"\n[tasks.validate]\nrun = \"printf froyo-validate\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "../froyo/validate".to_owned(),
+            args: Vec::new(),
+        },
+        dairy,
+    )
+    .expect("relative path task should resolve");
+
+    assert_eq!(out, "");
 }
 
 #[test]
@@ -581,6 +617,9 @@ fn run_manifest_task_builtin_test_with_named_args_errors_when_multi_suite_is_amb
             assert!(message.contains("ambiguous"));
             assert!(message.contains("vitest"));
             assert!(message.contains("cargo-"));
+            assert!(message.contains("Try one of:"));
+            assert!(message.contains("effigy test vitest user-service"));
+            assert!(message.contains("effigy test cargo-"));
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -2724,6 +2763,51 @@ run = "printf farmyard-api"
     assert!(out.contains("farmyard-api"));
     assert!(out.contains("printf done"));
     assert!(out.contains("cd"));
+}
+
+#[test]
+fn run_manifest_task_managed_tui_supports_relative_task_refs() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-relative-task-ref");
+    let dairy = root.join("dairy");
+    let froyo = root.join("froyo");
+    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    fs::create_dir_all(&froyo).expect("mkdir froyo");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+
+    write_manifest(
+        &dairy.join("effigy.toml"),
+        r#"[catalog]
+alias = "dairy"
+[tasks.dev]
+mode = "tui"
+[tasks.dev.profiles.default]
+processes = ["validate-stack"]
+[tasks.dev.processes.validate-stack]
+task = "../froyo/validate"
+"#,
+    );
+    write_manifest(
+        &froyo.join("effigy.toml"),
+        r#"[catalog]
+alias = "froyo"
+[tasks.validate]
+run = "printf froyo-validate"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dairy/dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect("managed plan should render");
+
+    assert!(out.contains("validate-stack"));
+    assert!(out.contains("froyo-validate"));
+    assert!(out.contains(&froyo.display().to_string()));
 }
 
 #[test]
