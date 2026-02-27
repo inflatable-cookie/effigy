@@ -80,6 +80,11 @@ pub struct DevTuiOutcome {
     pub non_zero_exits: Vec<(String, String)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DevTuiOptions {
+    pub esc_quit_on_complete: bool,
+}
+
 impl std::fmt::Display for DevTuiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -115,6 +120,7 @@ pub fn run_dev_process_tui(
     repo_root: PathBuf,
     processes: Vec<ProcessSpec>,
     tab_order: Vec<String>,
+    options: DevTuiOptions,
 ) -> Result<DevTuiOutcome, DevTuiError> {
     if processes.is_empty() {
         return Err(DevTuiError::NoProcesses);
@@ -370,6 +376,15 @@ pub fn run_dev_process_tui(
                 }
                 if key.modifiers.contains(KeyModifiers::CONTROL)
                     && matches!(key.code, KeyCode::Char('c'))
+                {
+                    break Ok(());
+                }
+                if matches!(key.code, KeyCode::Esc)
+                    && options.esc_quit_on_complete
+                    && !show_help
+                    && !show_options
+                    && input_mode == InputMode::Command
+                    && all_processes_exited(&exit_states, process_names.len())
                 {
                     break Ok(());
                 }
@@ -714,6 +729,13 @@ fn draw_shutdown_status(
         frame.render_widget(footer, chunks[1]);
     })?;
     Ok(())
+}
+
+fn all_processes_exited(
+    exit_states: &HashMap<String, ProcessExitState>,
+    process_count: usize,
+) -> bool {
+    process_count > 0 && exit_states.len() >= process_count
 }
 
 fn render_ui(
@@ -1537,5 +1559,14 @@ mod tests {
             vt_logs(&mut parser, 8, 40, usize::MAX / 2, false)
         }));
         assert!(result.is_ok(), "overscroll should be clamped safely");
+    }
+
+    #[test]
+    fn all_processes_exited_requires_full_count() {
+        let mut exits = HashMap::new();
+        exits.insert("a".to_owned(), ProcessExitState::Success);
+        assert!(!all_processes_exited(&exits, 2));
+        exits.insert("b".to_owned(), ProcessExitState::Failure);
+        assert!(all_processes_exited(&exits, 2));
     }
 }

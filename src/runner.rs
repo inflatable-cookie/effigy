@@ -6,7 +6,7 @@ use std::process::Command as ProcessCommand;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::dev_tui::run_dev_process_tui;
+use crate::dev_tui::{run_dev_process_tui, DevTuiOptions};
 use crate::process_manager::{
     ProcessEventKind, ProcessManagerError, ProcessSpec, ProcessSupervisor,
 };
@@ -1399,6 +1399,9 @@ fn run_builtin_test_targets_tui(
         std::env::current_dir().map_err(RunnerError::Cwd)?,
         specs,
         tab_order,
+        DevTuiOptions {
+            esc_quit_on_complete: true,
+        },
     )
     .map_err(|error| RunnerError::Ui(format!("builtin test tui runtime failed: {error}")))?;
     let failures = outcome
@@ -2472,12 +2475,17 @@ fn run_managed_task_tui(
             pty: true,
         })
         .collect::<Vec<ProcessSpec>>();
-    let outcome =
-        run_dev_process_tui(repo_root.to_path_buf(), specs, tab_order).map_err(|error| {
-            RunnerError::Ui(format!(
-                "managed tui runtime failed for task `{task_name}`: {error}"
-            ))
-        })?;
+    let outcome = run_dev_process_tui(
+        repo_root.to_path_buf(),
+        specs,
+        tab_order,
+        DevTuiOptions::default(),
+    )
+    .map_err(|error| {
+        RunnerError::Ui(format!(
+            "managed tui runtime failed for task `{task_name}`: {error}"
+        ))
+    })?;
     if fail_on_non_zero && !outcome.non_zero_exits.is_empty() {
         return Err(RunnerError::TaskManagedNonZeroExit {
             task: task_name.to_owned(),
