@@ -64,6 +64,48 @@ impl std::fmt::Display for CliParseError {
 
 impl std::error::Error for CliParseError {}
 
+pub fn strip_global_json_flag(args: Vec<String>) -> (Vec<String>, bool) {
+    let mut stripped = Vec::with_capacity(args.len());
+    let mut json_mode = false;
+    let mut passthrough_mode = false;
+    for arg in args {
+        if arg == "--" {
+            passthrough_mode = true;
+            stripped.push(arg);
+            continue;
+        }
+        if !passthrough_mode && arg == "--json" {
+            json_mode = true;
+            continue;
+        }
+        stripped.push(arg);
+    }
+    (stripped, json_mode)
+}
+
+pub fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Command {
+    if !json_mode {
+        return cmd;
+    }
+
+    if let Command::Task(task) = &mut cmd {
+        if !task.args.iter().any(|arg| arg == "--json") {
+            task.args.insert(0, "--json".to_owned());
+        }
+    }
+    cmd
+}
+
+pub fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bool {
+    if global_json_mode {
+        return true;
+    }
+    match cmd {
+        Command::Task(task) => task.args.iter().any(|arg| arg == "--json"),
+        _ => false,
+    }
+}
+
 pub fn parse_command<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
@@ -400,6 +442,10 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     )?;
     renderer.notice(
         ui::NoticeLevel::Info,
+        "If `[test.suites]` is defined in effigy.toml, those suites are used as source of truth and auto-detection is skipped.",
+    )?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
         "Use `effigy test --plan ...` and check `available-suites` per target before running filtered tests.",
     )?;
     renderer.notice(
@@ -447,6 +493,9 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.text("js = \"pnpm\"  # optional: bun|pnpm|npm|direct")?;
     renderer.text("[test]")?;
     renderer.text("max_parallel = 2")?;
+    renderer.text("[test.suites]")?;
+    renderer.text("unit = \"pnpm exec vitest run\"")?;
+    renderer.text("integration = \"cargo nextest run\"")?;
     renderer.text("[test.runners]")?;
     renderer.text("vitest = \"pnpm exec vitest run\"")?;
     renderer.text("\"cargo-nextest\" = \"cargo nextest run --workspace\"")?;

@@ -1,6 +1,6 @@
 use super::{
-    parse_command, render_cli_header, render_help, Command, HelpTopic, PulseArgs, TaskInvocation,
-    TasksArgs,
+    apply_global_json_flag, command_requests_json, parse_command, render_cli_header, render_help,
+    strip_global_json_flag, Command, HelpTopic, PulseArgs, TaskInvocation, TasksArgs,
 };
 use crate::ui::PlainRenderer;
 use std::path::PathBuf;
@@ -57,6 +57,60 @@ fn parse_runtime_task_passthrough() {
             args: vec!["--json".to_owned(), "--repo".to_owned(), ".".to_owned()],
         })
     );
+}
+
+#[test]
+fn strip_global_json_flag_removes_root_json_before_passthrough_delimiter() {
+    let (args, json_mode) = strip_global_json_flag(vec![
+        "tasks".to_owned(),
+        "--json".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--".to_owned(),
+        "--json".to_owned(),
+    ]);
+    assert!(json_mode);
+    assert_eq!(
+        args,
+        vec![
+            "tasks".to_owned(),
+            "--repo".to_owned(),
+            "/tmp/repo".to_owned(),
+            "--".to_owned(),
+            "--json".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn apply_global_json_flag_injects_task_arg_when_missing() {
+    let cmd = Command::Task(TaskInvocation {
+        name: "catalogs".to_owned(),
+        args: vec!["--resolve".to_owned(), "farmyard/api".to_owned()],
+    });
+    let applied = apply_global_json_flag(cmd, true);
+    match applied {
+        Command::Task(task) => {
+            assert_eq!(task.args.first(), Some(&"--json".to_owned()));
+        }
+        other => panic!("expected task command, got: {other:?}"),
+    }
+}
+
+#[test]
+fn command_requests_json_checks_task_or_global_mode() {
+    let cmd = Command::Task(TaskInvocation {
+        name: "catalogs".to_owned(),
+        args: vec!["--resolve".to_owned(), "farmyard/api".to_owned()],
+    });
+    assert!(!command_requests_json(&cmd, false));
+    assert!(command_requests_json(&cmd, true));
+
+    let cmd_with_json = Command::Task(TaskInvocation {
+        name: "catalogs".to_owned(),
+        args: vec!["--json".to_owned()],
+    });
+    assert!(command_requests_json(&cmd_with_json, false));
 }
 
 #[test]
@@ -151,6 +205,7 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("prefix the suite explicitly"));
     assert!(rendered.contains("check `available-suites` per target"));
     assert!(rendered.contains("suggests nearest suite aliases"));
+    assert!(rendered.contains("source of truth and auto-detection is skipped"));
     assert!(rendered.contains("Migration"));
     assert!(rendered.contains("ambiguous in multi-suite repos"));
     assert!(rendered.contains("effigy test viteest user-service"));
@@ -163,6 +218,8 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("js = \"pnpm\""));
     assert!(rendered.contains("[test]"));
     assert!(rendered.contains("max_parallel = 2"));
+    assert!(rendered.contains("[test.suites]"));
+    assert!(rendered.contains("unit = \"pnpm exec vitest run\""));
     assert!(rendered.contains("[test.runners]"));
     assert!(rendered.contains("vitest = \"pnpm exec vitest run\""));
     assert!(rendered.contains("[tasks.test]"));

@@ -24,6 +24,7 @@ cargo run --quiet --bin effigy -- catalogs --repo /Users/betterthanclay/Dev/proj
 ```
 
 Note: Effigy currently renders the standard CLI header preamble before command output in all modes, including JSON.
+Note: superseded by root `--json` mode in later updates; JSON-mode commands should now emit pure JSON with no preamble.
 
 ## Observed Results
 

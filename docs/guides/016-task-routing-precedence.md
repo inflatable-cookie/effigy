@@ -62,6 +62,36 @@ Notes:
 - On resolution failures, `resolve.status` is `error` and `resolve.error` contains the message.
 - `--pretty false` emits compact one-line JSON.
 
+## CI-safe JSON Assertions
+
+Capture clean JSON payload:
+
+```bash
+effigy --json catalogs --resolve farmyard/api > /tmp/effigy-catalogs.json
+```
+
+Assert probe success:
+
+```bash
+jq -e '.resolve.status == "ok"' /tmp/effigy-catalogs.json >/dev/null
+jq -e '.resolve.catalog == "farmyard"' /tmp/effigy-catalogs.json >/dev/null
+jq -e '.resolve.task == "api"' /tmp/effigy-catalogs.json >/dev/null
+```
+
+Assert top-level shape:
+
+```bash
+jq -e 'has("catalogs") and has("precedence") and has("resolve")' /tmp/effigy-catalogs.json >/dev/null
+jq -e '(.catalogs | type) == "array"' /tmp/effigy-catalogs.json >/dev/null
+jq -e '(.precedence | length) == 4' /tmp/effigy-catalogs.json >/dev/null
+```
+
+Compact mode fixture capture:
+
+```bash
+effigy --json catalogs --pretty false --resolve farmyard/api > /tmp/effigy-catalogs-compact.json
+```
+
 ## Precedence Order
 
 Effigy resolves in this order:
