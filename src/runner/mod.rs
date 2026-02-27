@@ -9,9 +9,9 @@ use crate::ui::theme::resolve_color_enabled;
 use crate::ui::{
     KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer, SummaryCounts, TableSpec,
 };
-use crate::{Command, PulseArgs, TasksArgs};
 #[cfg(test)]
 use crate::TaskInvocation;
+use crate::{Command, PulseArgs, TasksArgs};
 
 mod builtin;
 mod catalog;

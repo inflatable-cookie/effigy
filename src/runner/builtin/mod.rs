@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use crate::{TaskInvocation, BUILTIN_TASKS};
+use crate::TaskInvocation;
 
-use super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector};
+use super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector, BUILTIN_TASKS};
 
 mod help;
 mod pulse;
@@ -54,6 +54,7 @@ pub(super) fn try_run_builtin_task(
     }
 }
 
+#[cfg(test)]
 pub(super) fn builtin_test_max_parallel(catalogs: &[LoadedCatalog], resolved_root: &Path) -> usize {
     test::builtin_test_max_parallel(catalogs, resolved_root)
 }

@@ -9,127 +9,15 @@ use crate::testing::{detect_test_runner_detailed, detect_test_runner_plans, Test
 use crate::tui::{run_multiprocess_tui, MultiProcessTuiOptions};
 use crate::ui::theme::resolve_color_enabled;
 use crate::ui::{KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer};
-use crate::{render_help, HelpTopic, PulseArgs, TaskInvocation, TasksArgs};
+use crate::TaskInvocation;
 
-use super::util::{normalize_builtin_test_suite, shell_quote, with_local_node_bin_path};
-use super::{
-    run_pulse, run_tasks, LoadedCatalog, ManifestJsPackageManager, RunnerError, TaskRuntimeArgs,
-    TaskSelector, BUILTIN_TASKS, DEFAULT_BUILTIN_TEST_MAX_PARALLEL,
+use super::super::util::{normalize_builtin_test_suite, shell_quote, with_local_node_bin_path};
+use super::super::{
+    LoadedCatalog, ManifestJsPackageManager, RunnerError, TaskRuntimeArgs, TaskSelector,
+    DEFAULT_BUILTIN_TEST_MAX_PARALLEL,
 };
 
-fn is_builtin_task(task_name: &str) -> bool {
-    BUILTIN_TASKS.iter().any(|(name, _)| *name == task_name)
-}
-
-fn resolve_builtin_task_target_root(
-    selector: &TaskSelector,
-    resolved_root: &Path,
-    catalogs: &[LoadedCatalog],
-) -> Option<PathBuf> {
-    if let Some(prefix) = selector.prefix.as_ref() {
-        return catalogs
-            .iter()
-            .find(|catalog| &catalog.alias == prefix)
-            .map(|catalog| catalog.catalog_root.clone());
-    }
-    Some(resolved_root.to_path_buf())
-}
-
-pub(super) fn try_run_builtin_task(
-    selector: &TaskSelector,
-    task: &TaskInvocation,
-    runtime_args: &TaskRuntimeArgs,
-    resolved_root: &Path,
-    catalogs: &[LoadedCatalog],
-) -> Result<Option<String>, RunnerError> {
-    if !is_builtin_task(&selector.task_name) {
-        return Ok(None);
-    }
-
-    let Some(target_root) = resolve_builtin_task_target_root(selector, resolved_root, catalogs)
-    else {
-        return Ok(None);
-    };
-
-    match selector.task_name.as_str() {
-        "health" => run_builtin_repo_pulse(task, runtime_args, &target_root).map(Some),
-        "repo-pulse" => run_builtin_repo_pulse(task, runtime_args, &target_root).map(Some),
-        "tasks" => run_builtin_tasks(task, runtime_args, &target_root).map(Some),
-        "help" => run_builtin_help(),
-        "test" => try_run_builtin_test(selector, task, runtime_args, &target_root, catalogs),
-        _ => Ok(None),
-    }
-}
-
-fn run_builtin_repo_pulse(
-    task: &TaskInvocation,
-    runtime_args: &TaskRuntimeArgs,
-    target_root: &Path,
-) -> Result<String, RunnerError> {
-    if !runtime_args.passthrough.is_empty() {
-        return Err(RunnerError::TaskInvocation(format!(
-            "unknown argument(s) for built-in `{}`: {}",
-            task.name,
-            runtime_args.passthrough.join(" ")
-        )));
-    }
-    run_pulse(PulseArgs {
-        repo_override: Some(target_root.to_path_buf()),
-        verbose_root: runtime_args.verbose_root,
-    })
-}
-
-fn run_builtin_tasks(
-    task: &TaskInvocation,
-    runtime_args: &TaskRuntimeArgs,
-    target_root: &Path,
-) -> Result<String, RunnerError> {
-    if runtime_args.verbose_root {
-        return Err(RunnerError::TaskInvocation(format!(
-            "`--verbose-root` is not supported for built-in `{}`",
-            task.name
-        )));
-    }
-
-    let mut task_name: Option<String> = None;
-    let mut i = 0usize;
-    while i < runtime_args.passthrough.len() {
-        let arg = &runtime_args.passthrough[i];
-        if arg == "--task" {
-            let Some(value) = runtime_args.passthrough.get(i + 1) else {
-                return Err(RunnerError::TaskInvocation(
-                    "task argument --task requires a value".to_owned(),
-                ));
-            };
-            task_name = Some(value.clone());
-            i += 2;
-            continue;
-        }
-        return Err(RunnerError::TaskInvocation(format!(
-            "unknown argument(s) for built-in `{}`: {}",
-            task.name,
-            runtime_args.passthrough.join(" ")
-        )));
-    }
-
-    run_tasks(TasksArgs {
-        repo_override: Some(target_root.to_path_buf()),
-        task_name,
-    })
-}
-
-fn run_builtin_help() -> Result<Option<String>, RunnerError> {
-    let color_enabled =
-        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
-    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
-    render_help(&mut renderer, HelpTopic::General)?;
-    let out = renderer.into_inner();
-    String::from_utf8(out)
-        .map(Some)
-        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
-}
-
-fn try_run_builtin_test(
+pub(super) fn try_run_builtin_test(
     selector: &TaskSelector,
     task: &TaskInvocation,
     runtime_args: &TaskRuntimeArgs,
