@@ -33,6 +33,7 @@ admin = ["farmyard/api", "farmyard/jobs", "dairy/dev"]
 
 Profile entries support:
 - direct task references (`catalog/task`), or
+- relative path task references (`../repo/task`) resolved from the current catalog root, or
 - local process ids defined under `[tasks.dev.processes.<name>]`.
 - optional integrated shell tab when `shell = true`.
 
@@ -61,6 +62,24 @@ run = "cargo run -p farmyard-api"
 [tasks.dev.processes.front]
 task = "cream/dev"
 ```
+
+Example relative repo reference:
+
+```toml
+[catalog]
+alias = "dairy"
+
+[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["validate-stack"]
+
+[tasks.dev.processes.validate-stack]
+task = "../froyo/validate"
+```
+
+In this example, `../froyo/validate` resolves relative to `dairy` catalog root.
 
 ## 3) Runtime Behavior
 
