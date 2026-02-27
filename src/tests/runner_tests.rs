@@ -447,6 +447,7 @@ fn run_manifest_task_builtin_test_plan_renders_detection_summary() {
     assert!(out.contains("text"));
     assert!(out.contains("Target: root"));
     assert!(out.contains("runner:"));
+    assert!(out.contains("available-suites:"));
     assert!(out.contains("vitest"));
     assert!(out.contains("fallback-chain"));
 }

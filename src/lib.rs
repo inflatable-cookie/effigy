@@ -375,6 +375,10 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         ui::NoticeLevel::Info,
         "When multiple suites are detected and runner args are provided, prefix the suite explicitly (for example `effigy test vitest my-test`).",
     )?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "Use `effigy test --plan ...` and check `available-suites` per target before running filtered tests.",
+    )?;
     renderer.text("")?;
 
     renderer.section("Options")?;

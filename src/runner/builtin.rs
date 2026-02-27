@@ -220,6 +220,16 @@ fn try_run_builtin_test(
         renderer.text("")?;
         for target in &targets {
             let selected_runner = target.detection.selected.as_ref().map(|plan| plan.runner);
+            let available_suites = target
+                .detection
+                .candidates
+                .iter()
+                .filter(|candidate| candidate.available)
+                .map(|candidate| candidate.runner.label())
+                .collect::<BTreeSet<&str>>()
+                .into_iter()
+                .collect::<Vec<&str>>()
+                .join(", ");
             let mut selected_plans = detect_test_runner_plans(&target.root)
                 .into_iter()
                 .map(|plan| apply_builtin_test_package_manager(plan, package_manager))
@@ -252,6 +262,7 @@ fn try_run_builtin_test(
                 renderer.key_values(&[
                     KeyValue::new("root", target.root.display().to_string()),
                     KeyValue::new("runner", runners),
+                    KeyValue::new("available-suites", available_suites.clone()),
                 ])?;
                 renderer.text("")?;
                 renderer.bullet_list("command", &commands)?;
@@ -267,6 +278,7 @@ fn try_run_builtin_test(
                 renderer.key_values(&[
                     KeyValue::new("root", target.root.display().to_string()),
                     KeyValue::new("runner", "<none>".to_owned()),
+                    KeyValue::new("available-suites", available_suites.clone()),
                     KeyValue::new("command", "<none>".to_owned()),
                 ])?;
                 renderer.text("")?;

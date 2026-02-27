@@ -1,7 +1,6 @@
-use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::IsTerminal;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 
 use crate::process_manager::ProcessManagerError;
@@ -18,19 +17,29 @@ mod builtin;
 mod catalog;
 mod deferral;
 mod managed;
+mod manifest;
 mod model;
 mod render;
+mod util;
 
 use builtin::try_run_builtin_task;
 use catalog::{discover_catalogs, select_catalog_and_task};
 use deferral::{run_deferred_request, select_deferral, should_attempt_deferral};
 use managed::{render_task_run_spec, resolve_managed_task_plan, run_or_render_managed_task};
+use manifest::{
+    ManifestJsPackageManager, ManifestManagedProcess, ManifestManagedProfile, ManifestManagedRun,
+    ManifestManagedRunStep, ManifestTask, TaskManifest,
+};
 use model::{
     CatalogSelectionMode, DeferredCommand, LoadedCatalog, ManagedProcessSpec, ManagedTaskPlan,
     TaskRuntimeArgs, TaskSelection, TaskSelector, BUILTIN_TASKS, DEFAULT_BUILTIN_TEST_MAX_PARALLEL,
     DEFAULT_MANAGED_SHELL_RUN, DEFER_DEPTH_ENV, IMPLICIT_ROOT_DEFER_TEMPLATE, TASK_MANIFEST_FILE,
 };
 use render::{render_pulse_report, render_task_resolution_trace};
+use util::{
+    normalize_builtin_test_suite, parse_task_runtime_args, parse_task_selector, shell_quote,
+    with_local_node_bin_path,
+};
 
 #[derive(Debug)]
 pub enum RunnerError {
@@ -332,280 +341,6 @@ impl From<ProcessManagerError> for RunnerError {
     fn from(value: ProcessManagerError) -> Self {
         Self::ManagedProcess(value)
     }
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct TaskManifest {
-    #[serde(default)]
-    catalog: Option<ManifestCatalog>,
-    #[serde(default)]
-    defer: Option<ManifestDefer>,
-    #[serde(default)]
-    builtin: Option<ManifestBuiltin>,
-    #[serde(default)]
-    shell: Option<ManifestShellConfig>,
-    #[serde(default, deserialize_with = "deserialize_tasks")]
-    tasks: BTreeMap<String, ManifestTask>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct ManifestShellConfig {
-    #[serde(default)]
-    run: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct ManifestBuiltin {
-    #[serde(default)]
-    test: Option<ManifestBuiltinTest>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct ManifestBuiltinTest {
-    #[serde(default)]
-    max_parallel: Option<usize>,
-    #[serde(default)]
-    package_manager: Option<ManifestJsPackageManager>,
-}
-
-#[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-enum ManifestJsPackageManager {
-    Bun,
-    Pnpm,
-    Npm,
-    Direct,
-}
-
-#[derive(Debug, serde::Deserialize, Default)]
-struct ManifestTask {
-    #[serde(default)]
-    run: Option<ManifestManagedRun>,
-    #[serde(default)]
-    mode: Option<String>,
-    #[serde(default)]
-    fail_on_non_zero: Option<bool>,
-    #[serde(default)]
-    shell: Option<bool>,
-    #[serde(default)]
-    processes: BTreeMap<String, ManifestManagedProcess>,
-    #[serde(default)]
-    profiles: BTreeMap<String, ManifestManagedProfile>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-enum ManifestTaskDefinition {
-    Run(String),
-    RunSequence(Vec<ManifestManagedRunStep>),
-    Full(ManifestTask),
-}
-
-impl ManifestTaskDefinition {
-    fn into_manifest_task(self) -> ManifestTask {
-        match self {
-            ManifestTaskDefinition::Run(command) => ManifestTask {
-                run: Some(ManifestManagedRun::Command(command)),
-                ..ManifestTask::default()
-            },
-            ManifestTaskDefinition::RunSequence(sequence) => ManifestTask {
-                run: Some(ManifestManagedRun::Sequence(sequence)),
-                ..ManifestTask::default()
-            },
-            ManifestTaskDefinition::Full(task) => task,
-        }
-    }
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct ManifestManagedProcess {
-    #[serde(default)]
-    run: Option<ManifestManagedRun>,
-    #[serde(default)]
-    task: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-enum ManifestManagedRun {
-    Command(String),
-    Sequence(Vec<ManifestManagedRunStep>),
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-enum ManifestManagedRunStep {
-    Command(String),
-    Step(ManifestManagedRunStepTable),
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct ManifestManagedRunStepTable {
-    #[serde(default)]
-    run: Option<String>,
-    #[serde(default)]
-    task: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-enum ManifestManagedProfile {
-    Table(ManifestManagedProfileTable),
-    List(Vec<String>),
-    Ranked(BTreeMap<String, ManifestManagedProfileOrder>),
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManifestManagedProfileTable {
-    #[serde(default)]
-    processes: Vec<String>,
-    #[serde(default)]
-    start: Vec<String>,
-    #[serde(default)]
-    tabs: Option<ManifestManagedTabOrder>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-enum ManifestManagedProfileOrder {
-    Rank(usize),
-    Axes {
-        #[serde(default)]
-        start: Option<usize>,
-        #[serde(default)]
-        tab: Option<usize>,
-        #[serde(default)]
-        start_after_ms: Option<u64>,
-    },
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-enum ManifestManagedTabOrder {
-    List(Vec<String>),
-    Ranked(BTreeMap<String, usize>),
-}
-
-impl ManifestManagedProfile {
-    fn start_entries(&self) -> Vec<String> {
-        match self {
-            ManifestManagedProfile::Table(table) => {
-                if table.start.is_empty() {
-                    table.processes.clone()
-                } else {
-                    table.start.clone()
-                }
-            }
-            ManifestManagedProfile::List(entries) => entries.clone(),
-            ManifestManagedProfile::Ranked(ranked) => {
-                let mut entries = ranked
-                    .iter()
-                    .map(|(name, order)| (name.clone(), order.start_rank()))
-                    .collect::<Vec<(String, usize)>>();
-                entries.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
-                entries.into_iter().map(|(name, _)| name).collect()
-            }
-        }
-    }
-
-    fn tab_entries(&self) -> Option<Vec<String>> {
-        match self {
-            ManifestManagedProfile::Table(table) => tab_entries_from_order(table.tabs.as_ref()),
-            ManifestManagedProfile::List(_) => None,
-            ManifestManagedProfile::Ranked(ranked) => {
-                let mut entries = ranked
-                    .iter()
-                    .map(|(name, order)| (name.clone(), order.tab_rank()))
-                    .collect::<Vec<(String, usize)>>();
-                if entries.is_empty() {
-                    return None;
-                }
-                entries.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
-                Some(entries.into_iter().map(|(name, _)| name).collect())
-            }
-        }
-    }
-
-    fn start_delay_ms(&self) -> HashMap<String, u64> {
-        match self {
-            ManifestManagedProfile::Ranked(ranked) => ranked
-                .iter()
-                .filter_map(|(name, order)| {
-                    order.start_delay_ms().map(|delay| (name.clone(), delay))
-                })
-                .collect(),
-            _ => HashMap::new(),
-        }
-    }
-}
-
-impl ManifestManagedProfileOrder {
-    fn start_rank(&self) -> usize {
-        match self {
-            ManifestManagedProfileOrder::Rank(rank) => *rank,
-            ManifestManagedProfileOrder::Axes { start, tab, .. } => {
-                start.or(*tab).unwrap_or(usize::MAX)
-            }
-        }
-    }
-
-    fn tab_rank(&self) -> usize {
-        match self {
-            ManifestManagedProfileOrder::Rank(rank) => *rank,
-            ManifestManagedProfileOrder::Axes { start, tab, .. } => {
-                tab.or(*start).unwrap_or(usize::MAX)
-            }
-        }
-    }
-
-    fn start_delay_ms(&self) -> Option<u64> {
-        match self {
-            ManifestManagedProfileOrder::Rank(_) => None,
-            ManifestManagedProfileOrder::Axes { start_after_ms, .. } => *start_after_ms,
-        }
-    }
-}
-
-fn tab_entries_from_order(tabs: Option<&ManifestManagedTabOrder>) -> Option<Vec<String>> {
-    match tabs {
-        Some(ManifestManagedTabOrder::List(entries)) if !entries.is_empty() => {
-            Some(entries.clone())
-        }
-        Some(ManifestManagedTabOrder::Ranked(rankings)) if !rankings.is_empty() => {
-            let mut ordered = rankings
-                .iter()
-                .map(|(name, rank)| (name.clone(), *rank))
-                .collect::<Vec<(String, usize)>>();
-            ordered.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
-            Some(ordered.into_iter().map(|(name, _)| name).collect())
-        }
-        _ => None,
-    }
-}
-
-fn deserialize_tasks<'de, D>(deserializer: D) -> Result<BTreeMap<String, ManifestTask>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let definitions =
-        <BTreeMap<String, ManifestTaskDefinition> as serde::Deserialize>::deserialize(
-            deserializer,
-        )?;
-    Ok(definitions
-        .into_iter()
-        .map(|(name, definition)| (name, definition.into_manifest_task()))
-        .collect())
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct ManifestCatalog {
-    alias: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct ManifestDefer {
-    run: String,
 }
 
 pub fn run_command(cmd: Command) -> Result<String, RunnerError> {
@@ -931,97 +666,9 @@ fn run_manifest_task_with_cwd(task: &TaskInvocation, cwd: PathBuf) -> Result<Str
     })
 }
 
-fn normalize_builtin_test_suite(raw: &str) -> Option<&'static str> {
-    match raw {
-        "vitest" => Some("vitest"),
-        "nextest" | "cargo-nextest" => Some("cargo-nextest"),
-        "cargo-test" => Some("cargo-test"),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
-#[cfg(test)]
-fn builtin_test_max_parallel(catalogs: &[LoadedCatalog], resolved_root: &Path) -> usize {
+fn builtin_test_max_parallel(catalogs: &[LoadedCatalog], resolved_root: &std::path::Path) -> usize {
     builtin::builtin_test_max_parallel(catalogs, resolved_root)
-}
-
-fn parse_task_runtime_args(args: &[String]) -> Result<TaskRuntimeArgs, RunnerError> {
-    let mut repo: Option<PathBuf> = None;
-    let mut verbose_root = false;
-    let mut passthrough: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "--repo" {
-            let Some(value) = args.get(i + 1) else {
-                return Err(RunnerError::TaskInvocation(
-                    "task argument --repo requires a value".to_owned(),
-                ));
-            };
-            repo = Some(PathBuf::from(value));
-            i += 2;
-            continue;
-        }
-        if arg == "--verbose-root" {
-            verbose_root = true;
-            i += 1;
-            continue;
-        }
-        passthrough.push(arg.clone());
-        i += 1;
-    }
-    Ok(TaskRuntimeArgs {
-        repo_override: repo,
-        verbose_root,
-        passthrough,
-    })
-}
-
-fn parse_task_selector(raw: &str) -> Result<TaskSelector, RunnerError> {
-    if let Some((prefix, task_name)) = raw.split_once('/') {
-        if prefix.trim().is_empty() || task_name.trim().is_empty() {
-            return Err(RunnerError::TaskInvocation(
-                "task name must be `<task>` or `<catalog>/<task>`".to_owned(),
-            ));
-        }
-        return Ok(TaskSelector {
-            prefix: Some(prefix.trim().to_owned()),
-            task_name: task_name.trim().to_owned(),
-        });
-    }
-
-    if raw.trim().is_empty() {
-        return Err(RunnerError::TaskInvocation(
-            "task name is required".to_owned(),
-        ));
-    }
-
-    Ok(TaskSelector {
-        prefix: None,
-        task_name: raw.trim().to_owned(),
-    })
-}
-
-fn with_local_node_bin_path(process: &mut ProcessCommand, cwd: &Path) {
-    let local_bin = cwd.join("node_modules/.bin");
-    if !local_bin.is_dir() {
-        return;
-    }
-    let local_rendered = local_bin.display().to_string();
-    let merged = match std::env::var("PATH") {
-        Ok(path) if !path.is_empty() => format!("{local_rendered}:{path}"),
-        _ => local_rendered,
-    };
-    process.env("PATH", merged);
-}
-
-fn shell_quote(raw: &str) -> String {
-    if raw.is_empty() {
-        return "''".to_owned();
-    }
-    let escaped = raw.replace('\'', "'\"'\"'");
-    format!("'{escaped}'")
 }
 
 #[cfg(test)]

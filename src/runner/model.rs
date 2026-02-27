@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::{ManifestTask, TaskManifest};
+use super::manifest::{ManifestTask, TaskManifest};
 
 #[derive(Debug)]
 pub(super) struct LoadedCatalog {

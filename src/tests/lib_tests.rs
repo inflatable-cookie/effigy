@@ -138,6 +138,7 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("Named Test Selection"));
     assert!(rendered.contains("effigy test user-service"));
     assert!(rendered.contains("prefix the suite explicitly"));
+    assert!(rendered.contains("check `available-suites` per target"));
     assert!(rendered.contains("Migration"));
     assert!(rendered.contains("ambiguous in multi-suite repos"));
     assert!(rendered.contains("effigy test nextest user_service --nocapture"));
