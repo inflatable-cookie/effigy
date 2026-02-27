@@ -245,6 +245,10 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
                 "Run built-in auto-detected tests (or explicit tasks.test); supports <catalog>/test fallback".to_owned(),
             ],
             vec![
+                "effigy health".to_owned(),
+                "Run health checks (built-in alias to repo-pulse when no explicit health task exists)".to_owned(),
+            ],
+            vec![
                 "effigy test --plan".to_owned(),
                 "Preview detected test runner, fallback chain, and command".to_owned(),
             ],

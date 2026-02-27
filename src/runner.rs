@@ -364,6 +364,7 @@ struct ManifestTask {
 #[serde(untagged)]
 enum ManifestTaskDefinition {
     Run(String),
+    RunSequence(Vec<ManifestManagedRunStep>),
     Full(ManifestTask),
 }
 
@@ -372,6 +373,10 @@ impl ManifestTaskDefinition {
         match self {
             ManifestTaskDefinition::Run(command) => ManifestTask {
                 run: Some(ManifestManagedRun::Command(command)),
+                ..ManifestTask::default()
+            },
+            ManifestTaskDefinition::RunSequence(sequence) => ManifestTask {
+                run: Some(ManifestManagedRun::Sequence(sequence)),
                 ..ManifestTask::default()
             },
             ManifestTaskDefinition::Full(task) => task,
@@ -637,8 +642,12 @@ const TASK_MANIFEST_FILE: &str = "effigy.toml";
 const DEFER_DEPTH_ENV: &str = "EFFIGY_DEFER_DEPTH";
 const IMPLICIT_ROOT_DEFER_TEMPLATE: &str = "composer global exec effigy -- {request} {args}";
 const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize = 3;
-const BUILTIN_TASKS: [(&str, &str); 4] = [
+const BUILTIN_TASKS: [(&str, &str); 5] = [
     ("help", "Show general help (same as --help)"),
+    (
+        "health",
+        "Built-in health alias; falls back to repo-pulse when no explicit health task exists",
+    ),
     (
         "repo-pulse",
         "Built-in repository/workspace health and structure signal report",
@@ -1008,6 +1017,7 @@ fn try_run_builtin_task(
     };
 
     match selector.task_name.as_str() {
+        "health" => run_builtin_repo_pulse(task, runtime_args, &target_root).map(Some),
         "repo-pulse" => run_builtin_repo_pulse(task, runtime_args, &target_root).map(Some),
         "tasks" => run_builtin_tasks(task, runtime_args, &target_root).map(Some),
         "help" => run_builtin_help(),

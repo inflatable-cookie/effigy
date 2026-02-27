@@ -113,6 +113,17 @@ alias = "farmyard"
 run = "cargo run -p farmyard-db --bin reset_dev_db {args}"
 ```
 
+Compact task syntax is also supported for simple `run` tasks:
+
+```toml
+[tasks]
+api = "cargo run -p farmyard-api {args}"
+jobs = "cargo run -p farmyard-jobs {args}"
+reset-db = [{ task = "drop-db" }, { task = "migrate-db" }]
+```
+
+You can mix compact entries with full task tables in the same manifest.
+
 Interpolation tokens:
 - `{repo}`: resolved catalog root path shell-quoted.
 - `{args}`: task passthrough args shell-quoted and joined.

@@ -263,6 +263,97 @@ fn run_tasks_lists_catalogs_and_tasks() {
 }
 
 #[test]
+fn run_tasks_supports_compact_task_definitions() {
+    let root = temp_workspace("compact-tasks");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks]
+api = "printf api"
+jobs = "printf jobs"
+"#,
+    );
+
+    let out = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: None,
+        })
+    })
+    .expect("run tasks");
+
+    assert!(out.contains("api"));
+    assert!(out.contains("jobs"));
+    assert!(out.contains("printf api"));
+}
+
+#[test]
+fn run_tasks_supports_mixed_compact_and_table_task_definitions() {
+    let root = temp_workspace("mixed-compact-and-table");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks]
+api = "printf api"
+
+[tasks.dev]
+run = "printf dev"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "api".to_owned(),
+            args: Vec::new(),
+        },
+        root.clone(),
+    )
+    .expect("run compact task");
+    assert_eq!(out, "");
+
+    let tasks = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: None,
+        })
+    })
+    .expect("run tasks");
+    assert!(tasks.contains("api"));
+    assert!(tasks.contains("dev"));
+}
+
+#[test]
+fn run_tasks_supports_compact_sequence_task_definitions() {
+    let root = temp_workspace("compact-sequence-tasks");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks]
+drop-db = "printf drop-db"
+migrate-db = "printf migrate-db"
+reset-db = [{ task = "drop-db" }, { task = "migrate-db" }]
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "reset-db".to_owned(),
+            args: Vec::new(),
+        },
+        root.clone(),
+    )
+    .expect("run compact sequence task");
+    assert_eq!(out, "");
+
+    let tasks = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: Some("reset-db".to_owned()),
+        })
+    })
+    .expect("run tasks");
+    assert!(tasks.contains("reset-db"));
+    assert!(tasks.contains("<sequence:2>"));
+}
+
+#[test]
 fn run_tasks_with_task_filter_reports_only_matches() {
     let root = temp_workspace("task-filter");
     let farmyard = root.join("farmyard");
@@ -321,6 +412,7 @@ fn run_tasks_without_catalogs_still_lists_builtin_tasks() {
 
     assert!(out.contains("Built-in Tasks"));
     assert!(out.contains("help"));
+    assert!(out.contains("health"));
     assert!(out.contains("repo-pulse"));
     assert!(out.contains("test"));
     assert!(out.contains("<catalog>/test fallback"));
@@ -681,6 +773,80 @@ alias = "farmyard"
 
     assert!(out.contains("Commands"));
     assert!(out.contains("effigy help"));
+}
+
+#[test]
+fn run_manifest_task_builtin_health_falls_back_to_repo_pulse() {
+    let root = temp_workspace("builtin-health-fallback");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "dev": "echo dev"
+  }
+}"#,
+    )
+    .expect("write package");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "health".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("builtin health fallback");
+
+    assert!(out.contains("Pulse Report"));
+}
+
+#[test]
+fn run_manifest_task_prefixed_builtin_health_targets_catalog_root() {
+    let root = temp_workspace("builtin-health-prefixed");
+    let farmyard = root.join("farmyard");
+    let dairy = root.join("dairy");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    fs::create_dir_all(&dairy).expect("mkdir dairy");
+
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
+    );
+    write_manifest(
+        &dairy.join("effigy.toml"),
+        "[catalog]\nalias = \"dairy\"\n[tasks.admin]\nrun = \"printf admin\"\n",
+    );
+    fs::write(
+        farmyard.join("package.json"),
+        r#"{
+  "scripts": {
+    "farmyard-only": "echo ok"
+  }
+}"#,
+    )
+    .expect("write farmyard package");
+    fs::write(
+        dairy.join("package.json"),
+        r#"{
+  "scripts": {
+    "dairy-only": "echo ok"
+  }
+}"#,
+    )
+    .expect("write dairy package");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "farmyard/health".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("prefixed health fallback");
+
+    assert!(out.contains("Pulse Report"));
+    assert!(out.contains("farmyard-only"));
+    assert!(!out.contains("dairy-only"));
 }
 
 #[test]

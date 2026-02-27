@@ -177,13 +177,13 @@ impl Task for PulseTask {
                         .to_owned(),
                 );
                 next_action.push(format!(
-                    "Add `{}` with root tasks (for example `tasks.list-repos` and `tasks.health`). Minimal health task: `[tasks.health] run = \"effigy repo-pulse {{args}}\"`.",
+                    "Add `{}` with root tasks (for example `tasks.list-repos` and `tasks.health`) and route `tasks.health` to workspace smoke checks.",
                     collected.repo_path.join("effigy.toml").display()
                 ));
             } else if !collected.effigy_tasks.is_empty() {
                 risk.push("Root effigy.toml lacks a canonical health-check task.".to_owned());
                 next_action.push(format!(
-                    "Update `{}` to add `tasks.health` (or `tasks.health-workspace`). Minimal snippet: `[tasks.health] run = \"effigy repo-pulse {{args}}\"`.",
+                    "Update `{}` to add `tasks.health` (or `tasks.health-workspace`) and route it to repo smoke checks.",
                     collected.repo_path.join("effigy.toml").display()
                 ));
             }

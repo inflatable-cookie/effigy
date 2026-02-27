@@ -113,6 +113,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("Commands"));
     assert!(rendered.contains("effigy help"));
     assert!(rendered.contains("Get Command Help"));
+    assert!(rendered.contains("effigy health"));
     assert!(rendered.contains("effigy test"));
     assert!(rendered.contains("<catalog>/test fallback"));
     assert!(rendered.contains("effigy test --plan"));
