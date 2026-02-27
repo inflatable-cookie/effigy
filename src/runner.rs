@@ -330,8 +330,16 @@ struct TaskManifest {
     defer: Option<ManifestDefer>,
     #[serde(default)]
     builtin: Option<ManifestBuiltin>,
+    #[serde(default)]
+    shell: Option<ManifestShellConfig>,
     #[serde(default, deserialize_with = "deserialize_tasks")]
     tasks: BTreeMap<String, ManifestTask>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ManifestShellConfig {
+    #[serde(default)]
+    run: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -354,6 +362,8 @@ struct ManifestTask {
     mode: Option<String>,
     #[serde(default)]
     fail_on_non_zero: Option<bool>,
+    #[serde(default)]
+    shell: Option<bool>,
     #[serde(default)]
     processes: BTreeMap<String, ManifestManagedProcess>,
     #[serde(default)]
@@ -642,6 +652,7 @@ const TASK_MANIFEST_FILE: &str = "effigy.toml";
 const DEFER_DEPTH_ENV: &str = "EFFIGY_DEFER_DEPTH";
 const IMPLICIT_ROOT_DEFER_TEMPLATE: &str = "composer global exec effigy -- {request} {args}";
 const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize = 3;
+const DEFAULT_MANAGED_SHELL_RUN: &str = "exec ${SHELL:-/bin/zsh} -i";
 const BUILTIN_TASKS: [(&str, &str); 5] = [
     ("help", "Show general help (same as --help)"),
     (
@@ -1845,7 +1856,7 @@ fn render_deferral_trace(
 
 fn resolve_managed_task_plan(
     selector: &TaskSelector,
-    _catalog: &LoadedCatalog,
+    catalog: &LoadedCatalog,
     task: &ManifestTask,
     runtime_args: &TaskRuntimeArgs,
     catalogs: &[LoadedCatalog],
@@ -1925,6 +1936,29 @@ fn resolve_managed_task_plan(
                 start_after_ms: *start_delay_ms.get(process_name).unwrap_or(&0),
             });
         }
+    }
+
+    if task.shell.unwrap_or(false) {
+        let shell_name = "shell".to_owned();
+        if processes.iter().any(|process| process.name == shell_name) {
+            return Err(RunnerError::TaskManagedProcessInvalidDefinition {
+                task: selector.task_name.clone(),
+                process: shell_name,
+                detail: "reserved process name `shell` is already defined".to_owned(),
+            });
+        }
+        let shell_run = catalog
+            .manifest
+            .shell
+            .as_ref()
+            .and_then(|shell| shell.run.clone())
+            .unwrap_or_else(|| DEFAULT_MANAGED_SHELL_RUN.to_owned());
+        processes.push(ManagedProcessSpec {
+            name: "shell".to_owned(),
+            run: shell_run,
+            cwd: task_scope_cwd.to_path_buf(),
+            start_after_ms: 0,
+        });
     }
 
     let tab_order =

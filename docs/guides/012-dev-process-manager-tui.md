@@ -23,6 +23,7 @@ Recommended compact profile schema:
 ```toml
 [tasks.dev]
 mode = "tui"
+shell = true
 
 [tasks.dev.profiles]
 default = ["farmyard/api", "farmyard/jobs", "cream/dev", "dairy/dev"]
@@ -33,6 +34,17 @@ admin = ["farmyard/api", "farmyard/jobs", "dairy/dev"]
 Profile entries support:
 - direct task references (`catalog/task`), or
 - local process ids defined under `[tasks.dev.processes.<name>]`.
+- optional integrated shell tab when `shell = true`.
+
+Optional global shell command override:
+
+```toml
+[shell]
+run = "exec ${SHELL:-/bin/zsh} -i"
+```
+
+If omitted, Effigy uses:
+- `exec ${SHELL:-/bin/zsh} -i`
 
 Example mixed mode:
 
@@ -53,7 +65,12 @@ task = "cream/dev"
 ## 3) Runtime Behavior
 
 - One tab per managed process.
-- Active tab receives typed input; `Enter` sends input to that process.
+- When `shell = true`, includes an additional `shell` tab.
+- Non-shell tabs use input panel mode (`Tab` toggles command/insert; `Enter` sends input).
+- Shell tab uses direct terminal capture mode:
+  - `Ctrl+G` toggles shell capture on/off.
+  - when capture is on, keypresses go directly to shell (including `Tab` completion).
+  - shell tab label shows `shell [live]` when capture is active.
 - `Tab` / `Shift+Tab` cycles tabs.
 - `q` or `Ctrl+C` exits and terminates child processes.
 

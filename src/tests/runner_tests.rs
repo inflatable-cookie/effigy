@@ -1911,6 +1911,73 @@ run = "printf farmyard-api"
 }
 
 #[test]
+fn run_manifest_task_managed_tui_appends_shell_process_when_enabled() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-shell-enabled");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+shell = true
+
+[tasks.dev.profiles]
+default = ["api"]
+
+[tasks.dev.processes.api]
+run = "printf api"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("managed plan should include shell process");
+
+    assert!(out.contains("shell"));
+    assert!(out.contains("exec ${SHELL:-/bin/zsh} -i"));
+}
+
+#[test]
+fn run_manifest_task_managed_tui_uses_global_shell_run_override() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-shell-global-override");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[shell]
+run = "exec ${SHELL:-/bin/bash} -i"
+
+[tasks.dev]
+mode = "tui"
+shell = true
+
+[tasks.dev.profiles]
+default = ["api"]
+
+[tasks.dev.processes.api]
+run = "printf api"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("managed plan should include configured shell process");
+
+    assert!(out.contains("shell"));
+    assert!(out.contains("exec ${SHELL:-/bin/bash} -i"));
+}
+
+#[test]
 fn run_manifest_task_managed_stream_executes_selected_profile_processes() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("managed-stream-runtime");
