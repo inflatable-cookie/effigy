@@ -13,3 +13,4 @@ Use architecture docs as the source of truth, roadmap docs for execution plannin
 Notable guide additions:
 - `guides/013-testing-orchestration.md`
 - `guides/014-release-checklist-template.md`
+- `guides/016-task-routing-precedence.md`

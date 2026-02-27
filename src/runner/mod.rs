@@ -540,3 +540,7 @@ fn builtin_test_max_parallel(catalogs: &[LoadedCatalog], resolved_root: &std::pa
 #[cfg(test)]
 #[path = "../tests/runner_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/catalogs_contract_tests.rs"]
+mod catalogs_contract_tests;

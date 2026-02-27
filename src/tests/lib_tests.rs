@@ -86,6 +86,13 @@ fn parse_tasks_help_is_scoped() {
 }
 
 #[test]
+fn parse_catalogs_help_is_scoped() {
+    let cmd = parse_command(vec!["catalogs".to_owned(), "--help".to_owned()])
+        .expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Catalogs));
+}
+
+#[test]
 fn parse_repo_pulse_help_is_scoped() {
     let cmd = parse_command(vec!["repo-pulse".to_owned(), "--help".to_owned()])
         .expect("parse should succeed");
@@ -114,6 +121,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy help"));
     assert!(rendered.contains("Get Command Help"));
     assert!(rendered.contains("effigy config"));
+    assert!(rendered.contains("effigy catalogs"));
     assert!(rendered.contains("effigy health"));
     assert!(rendered.contains("effigy test"));
     assert!(rendered.contains("<catalog>/test fallback"));
@@ -136,6 +144,8 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("[suite] [runner args]"));
     assert!(rendered.contains("effigy test vitest user-service"));
     assert!(rendered.contains("effigy farmyard/test"));
+    assert!(rendered.contains("effigy test --plan user-service"));
+    assert!(rendered.contains("effigy test --plan viteest user-service"));
     assert!(rendered.contains("Named Test Selection"));
     assert!(rendered.contains("effigy test user-service"));
     assert!(rendered.contains("prefix the suite explicitly"));
@@ -146,6 +156,9 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("effigy test viteest user-service"));
     assert!(rendered.contains("suggests `effigy test vitest user-service`"));
     assert!(rendered.contains("effigy test nextest user_service --nocapture"));
+    assert!(rendered.contains("Error Recovery"));
+    assert!(rendered.contains("Ambiguity: `effigy test user-service`"));
+    assert!(rendered.contains("Unavailable or mistyped suite"));
     assert!(rendered.contains("[package_manager]"));
     assert!(rendered.contains("js = \"pnpm\""));
     assert!(rendered.contains("[test]"));
@@ -153,6 +166,18 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("[test.runners]"));
     assert!(rendered.contains("vitest = \"pnpm exec vitest run\""));
     assert!(rendered.contains("[tasks.test]"));
+}
+
+#[test]
+fn render_catalogs_help_shows_json_and_probe_options() {
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    render_help(&mut renderer, HelpTopic::Catalogs).expect("help render");
+    let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
+    assert!(rendered.contains("catalogs Help"));
+    assert!(rendered.contains("--resolve <SELECTOR>"));
+    assert!(rendered.contains("--json"));
+    assert!(rendered.contains("--pretty <true|false>"));
+    assert!(rendered.contains("effigy catalogs --json --pretty false --resolve farmyard/api"));
 }
 
 #[test]

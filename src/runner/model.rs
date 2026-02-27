@@ -71,8 +71,12 @@ pub(super) const IMPLICIT_ROOT_DEFER_TEMPLATE: &str =
     "composer global exec effigy -- {request} {args}";
 pub(super) const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize = 3;
 pub(super) const DEFAULT_MANAGED_SHELL_RUN: &str = "exec ${SHELL:-/bin/zsh} -i";
-pub(super) const BUILTIN_TASKS: [(&str, &str); 6] = [
+pub(super) const BUILTIN_TASKS: [(&str, &str); 7] = [
     ("help", "Show general help (same as --help)"),
+    (
+        "catalogs",
+        "Show catalog routing diagnostics (aliases, paths, and resolution precedence)",
+    ),
     (
         "config",
         "Show supported project effigy.toml configuration keys and examples",

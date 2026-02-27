@@ -65,6 +65,7 @@ pub(super) fn run_manifest_task_with_cwd(
                 &runtime_args,
                 &resolved.resolved_root,
                 &catalogs,
+                &invocation_cwd,
             )? {
                 return Ok(output);
             }

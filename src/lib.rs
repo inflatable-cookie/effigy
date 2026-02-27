@@ -23,6 +23,7 @@ pub enum HelpTopic {
     General,
     RepoPulse,
     Tasks,
+    Catalogs,
     Test,
 }
 
@@ -84,6 +85,16 @@ where
     }
     if cmd == "tasks" {
         return parse_tasks(args);
+    }
+    if cmd == "catalogs" {
+        let task_args = args.collect::<Vec<String>>();
+        if task_args.iter().any(|arg| arg == "--help" || arg == "-h") {
+            return Ok(Command::Help(HelpTopic::Catalogs));
+        }
+        return Ok(Command::Task(TaskInvocation {
+            name: cmd,
+            args: task_args,
+        }));
     }
     if cmd == "test" {
         let task_args = args.collect::<Vec<String>>();
@@ -170,6 +181,7 @@ pub fn render_help<R: Renderer>(renderer: &mut R, topic: HelpTopic) -> UiResult<
         HelpTopic::General => render_general_help(renderer),
         HelpTopic::RepoPulse => render_repo_pulse_help(renderer),
         HelpTopic::Tasks => render_tasks_help(renderer),
+        HelpTopic::Catalogs => render_catalogs_help(renderer),
         HelpTopic::Test => render_test_help(renderer),
     }
 }
@@ -237,6 +249,10 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
                 "List discovered catalogs and task commands".to_owned(),
             ],
             vec![
+                "effigy catalogs".to_owned(),
+                "Show catalog routing diagnostics and probe task resolution".to_owned(),
+            ],
+            vec![
                 "effigy config".to_owned(),
                 "Show supported effigy.toml configuration keys and examples".to_owned(),
             ],
@@ -273,6 +289,8 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         "topics",
         &[
             "effigy tasks --help".to_owned(),
+            "effigy catalogs --help".to_owned(),
+            "effigy catalogs --resolve farmyard/api".to_owned(),
             "effigy repo-pulse --help".to_owned(),
             "effigy test --help".to_owned(),
             "effigy config".to_owned(),
@@ -447,6 +465,8 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy test nextest user_service --nocapture".to_owned(),
             "effigy farmyard/test".to_owned(),
             "effigy test --plan".to_owned(),
+            "effigy test --plan user-service".to_owned(),
+            "effigy test --plan viteest user-service".to_owned(),
             "effigy test --verbose-results".to_owned(),
             "effigy test --tui".to_owned(),
             "effigy test -- --runInBand".to_owned(),
@@ -469,6 +489,16 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     )?;
     renderer.text("")?;
 
+    renderer.section("Error Recovery")?;
+    renderer.bullet_list(
+        "modes",
+        &[
+            "Ambiguity: `effigy test user-service` in multi-suite repos fails and suggests suite-first retries.".to_owned(),
+            "Unavailable or mistyped suite: `effigy test viteest user-service` fails with nearest suite alias and a copy-paste command.".to_owned(),
+        ],
+    )?;
+    renderer.text("")?;
+
     renderer.section("Migration")?;
     renderer.bullet_list(
         "before/after",
@@ -478,6 +508,54 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "after: effigy test nextest user_service --nocapture".to_owned(),
             "after: effigy test viteest user-service -> suggests `effigy test vitest user-service`"
                 .to_owned(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn render_catalogs_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
+    renderer.section("catalogs Help")?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "Inspect discovered catalogs, routing precedence, and optional resolution probes",
+    )?;
+    renderer.text("")?;
+
+    renderer.section("Usage")?;
+    renderer.text("effigy catalogs [--json] [--pretty true|false] [--resolve <SELECTOR>]")?;
+    renderer.text("")?;
+
+    renderer.section("Options")?;
+    renderer.table(&ui::TableSpec::new(
+        vec!["Option".to_owned(), "Description".to_owned()],
+        vec![
+            vec![
+                "--resolve <SELECTOR>".to_owned(),
+                "Probe resolution for one selector (for example `farmyard/api` or `../froyo/validate`)".to_owned(),
+            ],
+            vec![
+                "--json".to_owned(),
+                "Render machine-readable diagnostics payload".to_owned(),
+            ],
+            vec![
+                "--pretty <true|false>".to_owned(),
+                "When used with --json, toggle pretty formatting (default: true)".to_owned(),
+            ],
+            vec!["-h, --help".to_owned(), "Print command help".to_owned()],
+        ],
+    ))?;
+    renderer.text("")?;
+
+    renderer.section("Examples")?;
+    renderer.bullet_list(
+        "commands",
+        &[
+            "effigy catalogs".to_owned(),
+            "effigy catalogs --resolve farmyard/api".to_owned(),
+            "effigy catalogs --resolve ../froyo/validate".to_owned(),
+            "effigy catalogs --json".to_owned(),
+            "effigy catalogs --json --resolve farmyard/api".to_owned(),
+            "effigy catalogs --json --pretty false --resolve farmyard/api".to_owned(),
         ],
     )?;
     Ok(())

@@ -163,6 +163,68 @@ fn run_manifest_task_relative_prefix_resolves_catalog_by_path() {
 }
 
 #[test]
+fn run_manifest_task_relative_prefix_prefers_alias_collision_over_path_resolution() {
+    let root = temp_workspace("relative-prefix-alias-collision");
+    let dairy = root.join("dairy");
+    let alias_override = root.join("alias-override");
+    let froyo = root.join("froyo");
+    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    fs::create_dir_all(&alias_override).expect("mkdir alias-override");
+    fs::create_dir_all(&froyo).expect("mkdir froyo");
+
+    write_manifest(
+        &dairy.join("effigy.toml"),
+        "[catalog]\nalias = \"dairy\"\n[tasks.dev]\nrun = \"printf dairy\"\n",
+    );
+    write_manifest(
+        &alias_override.join("effigy.toml"),
+        "[catalog]\nalias = \"../froyo\"\n[tasks.validate]\nrun = \"printf alias\"\n",
+    );
+    write_manifest(
+        &froyo.join("effigy.toml"),
+        "[catalog]\nalias = \"froyo\"\n[tasks.validate]\nrun = \"printf froyo\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "../froyo/validate".to_owned(),
+            args: vec!["--verbose-root".to_owned()],
+        },
+        dairy,
+    )
+    .expect("relative prefix should resolve via alias first");
+
+    assert!(out.contains("catalog-alias: ../froyo"));
+    assert!(out.contains("selected catalog via explicit prefix `../froyo`"));
+}
+
+#[test]
+fn run_manifest_task_relative_prefix_supports_multi_parent_traversal() {
+    let root = temp_workspace("relative-prefix-multi-parent");
+    let app = root.join("apps/web/src");
+    let shared = root.join("shared");
+    fs::create_dir_all(&app).expect("mkdir app");
+    fs::create_dir_all(&shared).expect("mkdir shared");
+
+    write_manifest(
+        &shared.join("effigy.toml"),
+        "[catalog]\nalias = \"shared\"\n[tasks.lint]\nrun = \"printf shared-lint\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "../../../shared/lint".to_owned(),
+            args: vec!["--verbose-root".to_owned()],
+        },
+        app,
+    )
+    .expect("multi-parent relative task should resolve");
+
+    assert!(out.contains("catalog-alias: shared"));
+    assert!(out.contains("relative prefix `../../../shared` -> `shared`"));
+}
+
+#[test]
 fn run_manifest_task_unknown_prefix_returns_catalog_error() {
     let root = temp_workspace("unknown-prefix");
     write_manifest(
@@ -626,6 +688,40 @@ fn run_manifest_task_builtin_test_with_named_args_errors_when_multi_suite_is_amb
 }
 
 #[test]
+fn run_manifest_task_builtin_test_plan_with_named_args_in_multi_suite_returns_recovery_output() {
+    let root = temp_workspace("builtin-test-multi-suite-plan-recovery");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "test": "vitest run"
+  }
+}"#,
+    )
+    .expect("write package");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write cargo toml");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--plan".to_owned(), "user-service".to_owned()],
+        },
+        root,
+    )
+    .expect("plan should return recovery output");
+
+    assert!(out.contains("Test Plan"));
+    assert!(out.contains("runtime: plan-recovery"));
+    assert!(out.contains("available-suites:"));
+    assert!(out.contains("ambiguous"));
+    assert!(out.contains("Try one of:"));
+}
+
+#[test]
 fn run_manifest_task_builtin_test_supports_positional_suite_selector() {
     let root = temp_workspace("builtin-test-suite-selector");
     fs::write(
@@ -672,6 +768,43 @@ fn run_manifest_task_builtin_test_supports_positional_suite_selector() {
     assert!(out.contains("root/vitest"));
     assert!(!out.contains("root/cargo-"));
     assert!(vitest_marker.exists(), "vitest suite should run");
+}
+
+#[test]
+fn run_manifest_task_builtin_test_plan_mistyped_suite_returns_recovery_output() {
+    let root = temp_workspace("builtin-test-plan-mistyped-suite-recovery");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "test": "vitest run"
+  }
+}"#,
+    )
+    .expect("write package");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write cargo toml");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec![
+                "--plan".to_owned(),
+                "viteest".to_owned(),
+                "user-service".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect("plan should return typo recovery output");
+
+    assert!(out.contains("Test Plan"));
+    assert!(out.contains("runtime: plan-recovery"));
+    assert!(out.contains("Did you mean `vitest`?"));
+    assert!(out.contains("Try: effigy test vitest user-service"));
 }
 
 #[test]
@@ -1003,6 +1136,223 @@ run = "printf dairy-admin"
     assert!(out.contains("api"));
     assert!(!out.contains("admin"));
     assert!(!out.contains("root-only"));
+}
+
+#[test]
+fn run_manifest_task_relative_prefixed_builtin_tasks_target_catalog_root_only() {
+    let root = temp_workspace("builtin-tasks-relative-prefixed-catalog");
+    let dairy = root.join("dairy");
+    let froyo = root.join("froyo");
+    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    fs::create_dir_all(&froyo).expect("mkdir froyo");
+
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.root-only]
+run = "printf root"
+"#,
+    );
+    write_manifest(
+        &froyo.join("effigy.toml"),
+        r#"[catalog]
+alias = "froyo"
+[tasks.validate]
+run = "printf froyo-validate"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "../froyo/tasks".to_owned(),
+            args: Vec::new(),
+        },
+        dairy,
+    )
+    .expect("relative prefixed builtin tasks");
+
+    assert!(out.contains("Task Catalogs"));
+    assert!(out.contains("catalogs: 1"));
+    assert!(out.contains("validate"));
+    assert!(!out.contains("root-only"));
+}
+
+#[test]
+fn run_manifest_task_builtin_catalogs_renders_diagnostics_and_resolution_probe() {
+    let root = temp_workspace("builtin-catalogs");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.root]\nrun = \"printf root\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "catalogs".to_owned(),
+            args: vec!["--resolve".to_owned(), "farmyard/api".to_owned()],
+        },
+        root,
+    )
+    .expect("builtin catalogs");
+
+    assert!(out.contains("Catalog Diagnostics"));
+    assert!(out.contains("Routing Precedence"));
+    assert!(out.contains("Resolution Probe: farmyard/api"));
+    assert!(out.contains("catalog: farmyard"));
+}
+
+#[test]
+fn run_manifest_task_builtin_catalogs_json_renders_probe_payload() {
+    let root = temp_workspace("builtin-catalogs-json");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.root]\nrun = \"printf root\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "catalogs".to_owned(),
+            args: vec![
+                "--json".to_owned(),
+                "--resolve".to_owned(),
+                "farmyard/api".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect("builtin catalogs json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
+    assert!(parsed["catalogs"].is_array());
+    assert_eq!(parsed["resolve"]["status"], "ok");
+    assert_eq!(parsed["resolve"]["catalog"], "farmyard");
+    assert_eq!(parsed["resolve"]["task"], "api");
+    assert!(parsed["precedence"].is_array());
+}
+
+#[test]
+fn run_manifest_task_builtin_catalogs_json_reports_resolution_errors() {
+    let root = temp_workspace("builtin-catalogs-json-error");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.root]\nrun = \"printf root\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "catalogs".to_owned(),
+            args: vec![
+                "--json".to_owned(),
+                "--resolve".to_owned(),
+                "farmyard/api".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect("builtin catalogs json error");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
+    assert_eq!(parsed["resolve"]["status"], "error");
+    assert_eq!(parsed["resolve"]["catalog"], serde_json::Value::Null);
+    assert!(parsed["resolve"]["error"]
+        .as_str()
+        .is_some_and(|msg| msg.contains("prefix `farmyard` not found")));
+}
+
+#[test]
+fn run_manifest_task_builtin_catalogs_json_compact_output_has_no_newlines() {
+    let root = temp_workspace("builtin-catalogs-json-compact");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "catalogs".to_owned(),
+            args: vec![
+                "--json".to_owned(),
+                "--pretty".to_owned(),
+                "false".to_owned(),
+                "--resolve".to_owned(),
+                "farmyard/api".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect("builtin catalogs compact json");
+
+    assert!(!out.contains('\n'));
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
+    assert_eq!(parsed["resolve"]["status"], "ok");
+}
+
+#[test]
+fn run_manifest_task_builtin_catalogs_pretty_requires_json() {
+    let root = temp_workspace("builtin-catalogs-pretty-requires-json");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.root]\nrun = \"printf root\"\n",
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "catalogs".to_owned(),
+            args: vec!["--pretty".to_owned(), "false".to_owned()],
+        },
+        root,
+    )
+    .expect_err("expected --pretty requires --json");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("`--pretty` is only supported together with `--json`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_builtin_catalogs_rejects_invalid_pretty_value() {
+    let root = temp_workspace("builtin-catalogs-invalid-pretty");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.root]\nrun = \"printf root\"\n",
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "catalogs".to_owned(),
+            args: vec![
+                "--json".to_owned(),
+                "--pretty".to_owned(),
+                "nope".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect_err("expected invalid --pretty value");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("value `nope` is invalid"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
 }
 
 #[test]

@@ -89,9 +89,19 @@ pub(super) fn try_run_builtin_test(
                 })
                 .collect::<Vec<String>>()
                 .join(" | ");
-            return Err(RunnerError::TaskInvocation(format!(
+            let message = format!(
                 "built-in `test` runner `{selected}` is not available in this target (available: {available}). Try one of: {suggested}"
-            )));
+            );
+            if flags.plan_mode {
+                return render_builtin_test_plan_recovery(
+                    task,
+                    resolved_root,
+                    &available_runners,
+                    &message,
+                )
+                .map(Some);
+            }
+            return Err(RunnerError::TaskInvocation(message));
         }
     } else if !passthrough.is_empty() && available_runners.len() > 1 {
         let first = requested_suite_raw.unwrap_or_else(|| passthrough[0].clone());
@@ -107,9 +117,19 @@ pub(super) fn try_run_builtin_test(
                 .cloned()
                 .collect::<Vec<String>>()
                 .join(", ");
-            return Err(RunnerError::TaskInvocation(format!(
+            let message = format!(
                 "built-in `test` runner `{first}` is not available in this target (available: {available}). Did you mean `{suggested_suite}`? Try: {suggested}",
-            )));
+            );
+            if flags.plan_mode {
+                return render_builtin_test_plan_recovery(
+                    task,
+                    resolved_root,
+                    &available_runners,
+                    &message,
+                )
+                .map(Some);
+            }
+            return Err(RunnerError::TaskInvocation(message));
         }
         let available = available_runners
             .iter()
@@ -122,9 +142,19 @@ pub(super) fn try_run_builtin_test(
             .map(|suite| format!("effigy test {suite} {user_args}"))
             .collect::<Vec<String>>()
             .join(" | ");
-        return Err(RunnerError::TaskInvocation(format!(
+        let message = format!(
             "built-in `test` is ambiguous for arguments `{user_args}` because multiple suites are available ({available}); specify a suite first. Try one of: {suggested}",
-        )));
+        );
+        if flags.plan_mode {
+            return render_builtin_test_plan_recovery(
+                task,
+                resolved_root,
+                &available_runners,
+                &message,
+            )
+            .map(Some);
+        }
+        return Err(RunnerError::TaskInvocation(message));
     }
 
     if flags.plan_mode {
@@ -728,6 +758,40 @@ fn render_builtin_test_results(
         renderer.key_values(&[KeyValue::new(name, value)])?;
     }
     renderer.text("")?;
+    let out = renderer.into_inner();
+    String::from_utf8(out)
+        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
+}
+
+fn render_builtin_test_plan_recovery(
+    task: &TaskInvocation,
+    root: &Path,
+    available_runners: &BTreeSet<String>,
+    message: &str,
+) -> Result<String, RunnerError> {
+    let color_enabled =
+        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+    renderer.section("Test Plan")?;
+    renderer.key_values(&[
+        KeyValue::new("request", task.name.clone()),
+        KeyValue::new("root", root.display().to_string()),
+        KeyValue::new("runtime", "plan-recovery".to_owned()),
+        KeyValue::new(
+            "available-suites",
+            if available_runners.is_empty() {
+                "<none>".to_owned()
+            } else {
+                available_runners
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            },
+        ),
+    ])?;
+    renderer.text("")?;
+    renderer.notice(NoticeLevel::Warning, message)?;
     let out = renderer.into_inner();
     String::from_utf8(out)
         .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
