@@ -40,6 +40,9 @@ fn main() {
                     let _ = renderer.text("");
                 }
                 Err(err) => {
+                    if let Some(rendered) = err.rendered_output() {
+                        let _ = renderer.text(rendered);
+                    }
                     let mut err_renderer = PlainRenderer::stderr(output_mode);
                     let _ = err_renderer
                         .error_block(&MessageBlock::new("Task failed", err.to_string()));
@@ -58,6 +61,9 @@ fn main() {
                     let _ = renderer.text("");
                 }
                 Err(err) => {
+                    if let Some(rendered) = err.rendered_output() {
+                        let _ = renderer.text(rendered);
+                    }
                     let mut err_renderer = PlainRenderer::stderr(output_mode);
                     let _ = err_renderer
                         .error_block(&MessageBlock::new("Task failed", err.to_string()));
@@ -76,6 +82,9 @@ fn main() {
                     let _ = renderer.text("");
                 }
                 Err(err) => {
+                    if let Some(rendered) = err.rendered_output() {
+                        let _ = renderer.text(rendered);
+                    }
                     let mut err_renderer = PlainRenderer::stderr(output_mode);
                     let _ = err_renderer
                         .error_block(&MessageBlock::new("Task failed", err.to_string()));

@@ -3,6 +3,7 @@ pub mod process_manager;
 pub mod resolver;
 pub mod runner;
 pub mod tasks;
+pub mod testing;
 pub mod ui;
 
 use std::path::{Path, PathBuf};
@@ -22,6 +23,7 @@ pub enum HelpTopic {
     General,
     RepoPulse,
     Tasks,
+    Test,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,12 +75,25 @@ where
     if cmd == "--help" || cmd == "-h" {
         return Ok(Command::Help(HelpTopic::General));
     }
+    if cmd == "help" {
+        return Ok(Command::Help(HelpTopic::General));
+    }
 
     if cmd == "repo-pulse" {
         return parse_pulse(args);
     }
     if cmd == "tasks" {
         return parse_tasks(args);
+    }
+    if cmd == "test" {
+        let task_args = args.collect::<Vec<String>>();
+        if task_args.iter().any(|arg| arg == "--help" || arg == "-h") {
+            return Ok(Command::Help(HelpTopic::Test));
+        }
+        return Ok(Command::Task(TaskInvocation {
+            name: cmd,
+            args: task_args,
+        }));
     }
 
     Ok(Command::Task(TaskInvocation {
@@ -155,6 +170,7 @@ pub fn render_help<R: Renderer>(renderer: &mut R, topic: HelpTopic) -> UiResult<
         HelpTopic::General => render_general_help(renderer),
         HelpTopic::RepoPulse => render_repo_pulse_help(renderer),
         HelpTopic::Tasks => render_tasks_help(renderer),
+        HelpTopic::Test => render_test_help(renderer),
     }
 }
 
@@ -213,12 +229,24 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         Vec::new(),
         vec![
             vec![
+                "effigy help".to_owned(),
+                "Show general help (same as --help)".to_owned(),
+            ],
+            vec![
                 "effigy tasks".to_owned(),
                 "List discovered catalogs and task commands".to_owned(),
             ],
             vec![
                 "effigy repo-pulse".to_owned(),
                 "Run repository/workspace health checks".to_owned(),
+            ],
+            vec![
+                "effigy test".to_owned(),
+                "Run built-in auto-detected tests (or explicit tasks.test); supports <catalog>/test fallback".to_owned(),
+            ],
+            vec![
+                "effigy test --plan".to_owned(),
+                "Preview detected test runner, fallback chain, and command".to_owned(),
             ],
             vec![
                 "effigy <task>".to_owned(),
@@ -238,6 +266,7 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         &[
             "effigy tasks --help".to_owned(),
             "effigy repo-pulse --help".to_owned(),
+            "effigy test --help".to_owned(),
         ],
     )?;
     renderer.key_values(&[ui::KeyValue::new("-h, --help", "Print this help panel")])?;
@@ -321,6 +350,84 @@ fn render_tasks_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy tasks".to_owned(),
             "effigy tasks --repo /path/to/workspace".to_owned(),
             "effigy tasks --repo /path/to/workspace --task reset-db".to_owned(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
+    renderer.section("test Help")?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "Run explicit tasks.test when defined, otherwise use built-in test runner detection (including <catalog>/test fallback)",
+    )?;
+    renderer.text("")?;
+
+    renderer.section("Usage")?;
+    renderer.text("effigy test [--plan] [--verbose-results] [runner args]")?;
+    renderer.text("effigy test --help")?;
+    renderer.text("")?;
+
+    renderer.section("Options")?;
+    renderer.table(&ui::TableSpec::new(
+        vec!["Option".to_owned(), "Description".to_owned()],
+        vec![
+            vec![
+                "--plan".to_owned(),
+                "Print per-target detection plan and fallback chain without executing".to_owned(),
+            ],
+            vec![
+                "--verbose-results".to_owned(),
+                "Include runner/root/command fields in Test Results output".to_owned(),
+            ],
+            vec!["-h, --help".to_owned(), "Print command help".to_owned()],
+        ],
+    ))?;
+    renderer.text("")?;
+
+    renderer.section("Detection Order")?;
+    renderer.bullet_list(
+        "runners",
+        &[
+            "vitest (package/config/bin markers)".to_owned(),
+            "cargo nextest run (when Cargo.toml exists and cargo-nextest is available)".to_owned(),
+            "cargo test (Rust fallback)".to_owned(),
+        ],
+    )?;
+    renderer.text("")?;
+
+    renderer.section("Configuration")?;
+    renderer.text("Root manifest (fanout concurrency):")?;
+    renderer.text("[builtin.test]")?;
+    renderer.text("max_parallel = 2")?;
+    renderer.text("")?;
+    renderer.text("Explicit override (wins over built-in detection):")?;
+    renderer.text("[tasks.test]")?;
+    renderer.text("run = \"bun test {args}\"")?;
+    renderer.text("")?;
+
+    renderer.section("Examples")?;
+    renderer.bullet_list(
+        "commands",
+        &[
+            "effigy test".to_owned(),
+            "effigy farmyard/test".to_owned(),
+            "effigy test --plan".to_owned(),
+            "effigy test --verbose-results".to_owned(),
+            "effigy test -- --runInBand".to_owned(),
+            "effigy test -- --watch".to_owned(),
+        ],
+    )?;
+    renderer.text("")?;
+
+    renderer.section("Named Test Selection")?;
+    renderer.bullet_list(
+        "patterns",
+        &[
+            "effigy test user-service".to_owned(),
+            "effigy farmyard/test billing".to_owned(),
+            "effigy test -- tests/api/user.test.ts".to_owned(),
+            "effigy test -- user_service --nocapture".to_owned(),
         ],
     )?;
     Ok(())

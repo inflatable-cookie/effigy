@@ -1,6 +1,6 @@
 use super::{
-    parse_task_runtime_args, parse_task_selector, run_manifest_task_with_cwd, run_pulse, run_tasks,
-    RunnerError, TaskRuntimeArgs,
+    builtin_test_max_parallel, discover_catalogs, parse_task_runtime_args, parse_task_selector,
+    run_manifest_task_with_cwd, run_pulse, run_tasks, RunnerError, TaskRuntimeArgs,
 };
 use crate::{PulseArgs, TaskInvocation, TasksArgs};
 use std::fs;
@@ -291,6 +291,23 @@ fn run_tasks_with_task_filter_reports_only_matches() {
 }
 
 #[test]
+fn run_tasks_with_test_filter_shows_catalog_fallback_note() {
+    let root = temp_workspace("task-filter-test-note");
+
+    let out = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: Some("test".to_owned()),
+        })
+    })
+    .expect("run tasks");
+
+    assert!(out.contains("Task Matches: test"));
+    assert!(out.contains("Built-in Task Matches"));
+    assert!(out.contains("built-in fallback supports `<catalog>/test`"));
+}
+
+#[test]
 fn run_tasks_without_catalogs_still_lists_builtin_tasks() {
     let root = temp_workspace("builtins-only");
 
@@ -302,10 +319,497 @@ fn run_tasks_without_catalogs_still_lists_builtin_tasks() {
     })
     .expect("run tasks");
 
-    assert!(out.contains("no task catalogs found; showing built-in tasks only"));
     assert!(out.contains("Built-in Tasks"));
+    assert!(out.contains("help"));
     assert!(out.contains("repo-pulse"));
+    assert!(out.contains("test"));
+    assert!(out.contains("<catalog>/test fallback"));
     assert!(out.contains("tasks"));
+}
+
+#[test]
+fn run_manifest_task_builtin_test_plan_renders_detection_summary() {
+    let root = temp_workspace("builtin-test-plan");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}"#,
+    )
+    .expect("write package");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--plan".to_owned()],
+        },
+        root,
+    )
+    .expect("run test --plan");
+
+    assert!(out.contains("Test Plan"));
+    assert!(out.contains("targets:"));
+    assert!(out.contains("Target: root"));
+    assert!(out.contains("runner:"));
+    assert!(out.contains("vitest"));
+    assert!(out.contains("fallback-chain"));
+}
+
+#[test]
+fn run_manifest_task_builtin_test_executes_local_vitest() {
+    let root = temp_workspace("builtin-test-exec-vitest");
+    fs::write(
+        root.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write package");
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    let vitest = local_bin.join("vitest");
+    let marker = root.join("vitest-called.log");
+    fs::write(
+        &vitest,
+        format!(
+            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
+            marker.display()
+        ),
+    )
+    .expect("write vitest");
+    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&vitest, perms).expect("chmod");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--run".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("run builtin test");
+
+    assert!(out.contains("Test Results"));
+    assert!(out.contains("targets:"));
+    assert!(out.contains("root"));
+    assert!(!out.contains("runner:vitest"));
+    assert!(!out.contains("command:"));
+    assert!(marker.exists(), "vitest stub should be invoked");
+}
+
+#[test]
+fn run_manifest_task_explicit_test_task_overrides_builtin_auto_detection() {
+    let root = temp_workspace("builtin-test-explicit-override");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.test]\nrun = \"printf explicit > explicit-test.log\"\n",
+    );
+    fs::write(
+        root.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write package");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: Vec::new(),
+        },
+        root.clone(),
+    )
+    .expect("run explicit test task");
+
+    assert_eq!(out, "");
+    assert!(
+        root.join("explicit-test.log").exists(),
+        "explicit task should run before builtin test detection"
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_test_falls_through_to_deferral_when_no_detection_matches() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("builtin-test-defers");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[defer]\nrun = \"test {request} = 'test' && test {args} = '--watch'\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--watch".to_owned()],
+        },
+        root,
+    )
+    .expect("builtin test should defer when detection is unavailable");
+
+    assert_eq!(out, "");
+}
+
+#[test]
+fn run_manifest_task_builtin_test_fans_out_across_catalog_roots() {
+    let root = temp_workspace("builtin-test-fanout");
+    let farmyard = root.join("farmyard");
+    let dairy = root.join("dairy");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf root\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.ping]\nrun = \"printf ok\"\n",
+    );
+    write_manifest(
+        &dairy.join("effigy.toml"),
+        "[catalog]\nalias = \"dairy\"\n[tasks.ping]\nrun = \"printf ok\"\n",
+    );
+
+    fs::write(
+        farmyard.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write farmyard package");
+    fs::write(
+        dairy.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write dairy package");
+
+    let farmyard_bin = farmyard.join("node_modules/.bin");
+    fs::create_dir_all(&farmyard_bin).expect("mkdir farmyard bin");
+    let dairy_bin = dairy.join("node_modules/.bin");
+    fs::create_dir_all(&dairy_bin).expect("mkdir dairy bin");
+    let farmyard_marker = farmyard.join("vitest-called.log");
+    let dairy_marker = dairy.join("vitest-called.log");
+
+    let farmyard_vitest = farmyard_bin.join("vitest");
+    fs::write(
+        &farmyard_vitest,
+        format!(
+            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
+            farmyard_marker.display()
+        ),
+    )
+    .expect("write farmyard vitest");
+    let mut farmyard_perms = fs::metadata(&farmyard_vitest).expect("stat").permissions();
+    farmyard_perms.set_mode(0o755);
+    fs::set_permissions(&farmyard_vitest, farmyard_perms).expect("chmod");
+
+    let dairy_vitest = dairy_bin.join("vitest");
+    fs::write(
+        &dairy_vitest,
+        format!(
+            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
+            dairy_marker.display()
+        ),
+    )
+    .expect("write dairy vitest");
+    let mut dairy_perms = fs::metadata(&dairy_vitest).expect("stat").permissions();
+    dairy_perms.set_mode(0o755);
+    fs::set_permissions(&dairy_vitest, dairy_perms).expect("chmod");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("builtin test fanout");
+
+    assert!(out.contains("Test Results"));
+    assert!(out.contains("targets:"));
+    assert!(out.contains("dairy"));
+    assert!(out.contains("farmyard"));
+    assert!(!out.contains("runner:vitest"));
+    assert!(!out.contains("command:"));
+    assert!(farmyard_marker.exists(), "farmyard vitest should run");
+    assert!(dairy_marker.exists(), "dairy vitest should run");
+}
+
+#[test]
+fn run_manifest_task_prefixed_builtin_test_targets_catalog_root_only() {
+    let root = temp_workspace("builtin-test-prefixed-catalog");
+    let farmyard = root.join("farmyard");
+    let dairy = root.join("dairy");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf root\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.ping]\nrun = \"printf ok\"\n",
+    );
+    write_manifest(
+        &dairy.join("effigy.toml"),
+        "[catalog]\nalias = \"dairy\"\n[tasks.ping]\nrun = \"printf ok\"\n",
+    );
+
+    fs::write(
+        farmyard.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write farmyard package");
+    fs::write(
+        dairy.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write dairy package");
+
+    let farmyard_bin = farmyard.join("node_modules/.bin");
+    fs::create_dir_all(&farmyard_bin).expect("mkdir farmyard bin");
+    let dairy_bin = dairy.join("node_modules/.bin");
+    fs::create_dir_all(&dairy_bin).expect("mkdir dairy bin");
+    let farmyard_marker = farmyard.join("vitest-called.log");
+    let dairy_marker = dairy.join("vitest-called.log");
+
+    let farmyard_vitest = farmyard_bin.join("vitest");
+    fs::write(
+        &farmyard_vitest,
+        format!(
+            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
+            farmyard_marker.display()
+        ),
+    )
+    .expect("write farmyard vitest");
+    let mut farmyard_perms = fs::metadata(&farmyard_vitest).expect("stat").permissions();
+    farmyard_perms.set_mode(0o755);
+    fs::set_permissions(&farmyard_vitest, farmyard_perms).expect("chmod");
+
+    let dairy_vitest = dairy_bin.join("vitest");
+    fs::write(
+        &dairy_vitest,
+        format!(
+            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
+            dairy_marker.display()
+        ),
+    )
+    .expect("write dairy vitest");
+    let mut dairy_perms = fs::metadata(&dairy_vitest).expect("stat").permissions();
+    dairy_perms.set_mode(0o755);
+    fs::set_permissions(&dairy_vitest, dairy_perms).expect("chmod");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "farmyard/test".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("prefixed builtin test");
+
+    assert!(out.contains("Test Results"));
+    assert!(out.contains("farmyard"));
+    assert!(!out.contains("dairy"));
+    assert!(farmyard_marker.exists(), "farmyard vitest should run");
+    assert!(!dairy_marker.exists(), "dairy vitest should not run");
+}
+
+#[test]
+fn run_manifest_task_prefixed_builtin_tasks_targets_catalog_root_only() {
+    let root = temp_workspace("builtin-tasks-prefixed-catalog");
+    let farmyard = root.join("farmyard");
+    let dairy = root.join("dairy");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    fs::create_dir_all(&dairy).expect("mkdir dairy");
+
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.root-only]
+run = "printf root"
+"#,
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        r#"[catalog]
+alias = "farmyard"
+[tasks.api]
+run = "printf farmyard-api"
+"#,
+    );
+    write_manifest(
+        &dairy.join("effigy.toml"),
+        r#"[catalog]
+alias = "dairy"
+[tasks.admin]
+run = "printf dairy-admin"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "farmyard/tasks".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("prefixed builtin tasks");
+
+    assert!(out.contains("Task Catalogs"));
+    assert!(out.contains("catalogs: 1"));
+    assert!(out.contains("api"));
+    assert!(!out.contains("admin"));
+    assert!(!out.contains("root-only"));
+}
+
+#[test]
+fn run_manifest_task_prefixed_builtin_help_is_supported() {
+    let root = temp_workspace("builtin-help-prefixed-catalog");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        r#"[catalog]
+alias = "farmyard"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "farmyard/help".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("prefixed builtin help");
+
+    assert!(out.contains("Commands"));
+    assert!(out.contains("effigy help"));
+}
+
+#[test]
+fn run_manifest_task_builtin_test_failure_keeps_rendered_results_summary() {
+    let root = temp_workspace("builtin-test-fanout-failure-summary");
+    let farmyard = root.join("farmyard");
+    let dairy = root.join("dairy");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf root\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.ping]\nrun = \"printf ok\"\n",
+    );
+    write_manifest(
+        &dairy.join("effigy.toml"),
+        "[catalog]\nalias = \"dairy\"\n[tasks.ping]\nrun = \"printf ok\"\n",
+    );
+
+    fs::write(
+        farmyard.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write farmyard package");
+    fs::write(
+        dairy.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write dairy package");
+
+    let farmyard_bin = farmyard.join("node_modules/.bin");
+    fs::create_dir_all(&farmyard_bin).expect("mkdir farmyard bin");
+    let dairy_bin = dairy.join("node_modules/.bin");
+    fs::create_dir_all(&dairy_bin).expect("mkdir dairy bin");
+
+    let farmyard_vitest = farmyard_bin.join("vitest");
+    fs::write(&farmyard_vitest, "#!/bin/sh\nexit 1\n").expect("write farmyard vitest");
+    let mut farmyard_perms = fs::metadata(&farmyard_vitest).expect("stat").permissions();
+    farmyard_perms.set_mode(0o755);
+    fs::set_permissions(&farmyard_vitest, farmyard_perms).expect("chmod");
+
+    let dairy_vitest = dairy_bin.join("vitest");
+    fs::write(&dairy_vitest, "#!/bin/sh\nexit 0\n").expect("write dairy vitest");
+    let mut dairy_perms = fs::metadata(&dairy_vitest).expect("stat").permissions();
+    dairy_perms.set_mode(0o755);
+    fs::set_permissions(&dairy_vitest, dairy_perms).expect("chmod");
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("builtin test fanout should fail");
+
+    match err {
+        RunnerError::BuiltinTestNonZero { failures, rendered } => {
+            assert_eq!(failures, vec![("farmyard".to_owned(), Some(1))]);
+            assert!(rendered.contains("Test Results"));
+            assert!(rendered.contains("dairy"));
+            assert!(rendered.contains("ok"));
+            assert!(rendered.contains("farmyard"));
+            assert!(rendered.contains("exit=1"));
+            assert!(!rendered.contains("runner:vitest"));
+            assert!(!rendered.contains("command:"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_builtin_test_verbose_results_include_runner_root_and_command() {
+    let root = temp_workspace("builtin-test-verbose-results");
+    fs::write(
+        root.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write package");
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    let vitest = local_bin.join("vitest");
+    fs::write(&vitest, "#!/bin/sh\nexit 0\n").expect("write vitest");
+    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&vitest, perms).expect("chmod");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--verbose-results".to_owned(), "--run".to_owned()],
+        },
+        root,
+    )
+    .expect("run builtin test");
+
+    assert!(out.contains("Test Results"));
+    assert!(out.contains("runner:vitest"));
+    assert!(out.contains("root:"));
+    assert!(out.contains("command:vitest '--run'"));
+}
+
+#[test]
+fn builtin_test_max_parallel_reads_root_manifest_config() {
+    let root = temp_workspace("builtin-test-max-parallel-config");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[builtin.test]
+max_parallel = 1
+"#,
+    );
+    let catalogs = discover_catalogs(&root).expect("discover catalogs");
+    assert_eq!(builtin_test_max_parallel(&catalogs, &root), 1);
+}
+
+#[test]
+fn builtin_test_max_parallel_falls_back_when_invalid_or_missing() {
+    let root = temp_workspace("builtin-test-max-parallel-default");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[builtin.test]
+max_parallel = 0
+"#,
+    );
+    let catalogs = discover_catalogs(&root).expect("discover catalogs");
+    assert_eq!(builtin_test_max_parallel(&catalogs, &root), 3);
 }
 
 #[test]

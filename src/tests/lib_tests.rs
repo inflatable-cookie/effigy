@@ -93,14 +93,49 @@ fn parse_repo_pulse_help_is_scoped() {
 }
 
 #[test]
+fn parse_help_command_alias_is_general_help() {
+    let cmd = parse_command(vec!["help".to_owned()]).expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::General));
+}
+
+#[test]
+fn parse_test_help_is_scoped() {
+    let cmd =
+        parse_command(vec!["test".to_owned(), "--help".to_owned()]).expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Test));
+}
+
+#[test]
 fn render_help_writes_structured_sections() {
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
     render_help(&mut renderer, HelpTopic::General).expect("help render");
     let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
     assert!(rendered.contains("Commands"));
+    assert!(rendered.contains("effigy help"));
     assert!(rendered.contains("Get Command Help"));
+    assert!(rendered.contains("effigy test"));
+    assert!(rendered.contains("<catalog>/test fallback"));
+    assert!(rendered.contains("effigy test --plan"));
+    assert!(rendered.contains("effigy test --help"));
     assert!(!rendered.contains("Quick Start"));
     assert!(!rendered.contains("effigy Help"));
+}
+
+#[test]
+fn render_test_help_shows_detection_and_config() {
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    render_help(&mut renderer, HelpTopic::Test).expect("help render");
+    let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
+    assert!(rendered.contains("test Help"));
+    assert!(rendered.contains("<catalog>/test fallback"));
+    assert!(rendered.contains("Detection Order"));
+    assert!(rendered.contains("--verbose-results"));
+    assert!(rendered.contains("effigy farmyard/test"));
+    assert!(rendered.contains("Named Test Selection"));
+    assert!(rendered.contains("effigy test user-service"));
+    assert!(rendered.contains("[builtin.test]"));
+    assert!(rendered.contains("max_parallel = 2"));
+    assert!(rendered.contains("[tasks.test]"));
 }
 
 #[test]

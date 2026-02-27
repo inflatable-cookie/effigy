@@ -1,8 +1,9 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::dev_tui::run_dev_process_tui;
@@ -12,11 +13,12 @@ use crate::process_manager::{
 use crate::resolver::{resolve_target_root, ResolveError};
 use crate::tasks::pulse::PulseTask;
 use crate::tasks::{Task, TaskContext, TaskError};
+use crate::testing::detect_test_runner_detailed;
 use crate::ui::theme::{resolve_color_enabled, Theme};
 use crate::ui::{
     KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer, SummaryCounts, TableSpec,
 };
-use crate::{Command, PulseArgs, TaskInvocation, TasksArgs};
+use crate::{render_help, Command, HelpTopic, PulseArgs, TaskInvocation, TasksArgs};
 
 #[derive(Debug)]
 pub enum RunnerError {
@@ -114,6 +116,10 @@ pub enum RunnerError {
     TaskMissingRunCommand {
         task: String,
         path: PathBuf,
+    },
+    BuiltinTestNonZero {
+        failures: Vec<(String, Option<i32>)>,
+        rendered: String,
     },
     DeferLoopDetected {
         depth: u8,
@@ -259,6 +265,17 @@ impl std::fmt::Display for RunnerError {
                 "task `{task}` in {} is missing `run` command (required for non-managed tasks)",
                 path.display()
             ),
+            RunnerError::BuiltinTestNonZero { failures, .. } => {
+                let summary = failures
+                    .iter()
+                    .map(|(target, code)| match code {
+                        Some(value) => format!("{target}: exit={value}"),
+                        None => format!("{target}: terminated"),
+                    })
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                write!(f, "one or more built-in test targets failed: {summary}")
+            }
             RunnerError::DeferLoopDetected { depth } => write!(
                 f,
                 "deferral loop detected ({} deferral hop(s)); refusing to defer again",
@@ -269,6 +286,17 @@ impl std::fmt::Display for RunnerError {
 }
 
 impl std::error::Error for RunnerError {}
+
+impl RunnerError {
+    pub fn rendered_output(&self) -> Option<&str> {
+        match self {
+            RunnerError::BuiltinTestNonZero { rendered, .. } if !rendered.trim().is_empty() => {
+                Some(rendered.as_str())
+            }
+            _ => None,
+        }
+    }
+}
 
 impl From<TaskError> for RunnerError {
     fn from(value: TaskError) -> Self {
@@ -301,7 +329,21 @@ struct TaskManifest {
     #[serde(default)]
     defer: Option<ManifestDefer>,
     #[serde(default)]
+    builtin: Option<ManifestBuiltin>,
+    #[serde(default)]
     tasks: BTreeMap<String, ManifestTask>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ManifestBuiltin {
+    #[serde(default)]
+    test: Option<ManifestBuiltinTest>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ManifestBuiltinTest {
+    #[serde(default)]
+    max_parallel: Option<usize>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -561,10 +603,16 @@ struct ManagedTaskPlan {
 const TASK_MANIFEST_FILE: &str = "effigy.toml";
 const DEFER_DEPTH_ENV: &str = "EFFIGY_DEFER_DEPTH";
 const IMPLICIT_ROOT_DEFER_TEMPLATE: &str = "composer global exec effigy -- {request} {args}";
-const BUILTIN_TASKS: [(&str, &str); 2] = [
+const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize = 3;
+const BUILTIN_TASKS: [(&str, &str); 4] = [
+    ("help", "Show general help (same as --help)"),
     (
         "repo-pulse",
         "Built-in repository/workspace health and structure signal report",
+    ),
+    (
+        "test",
+        "Built-in test runner detection (vitest, cargo nextest, cargo test), supports <catalog>/test fallback, optional --plan",
     ),
     ("tasks", "List discovered catalogs and available tasks"),
 ];
@@ -637,13 +685,6 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
     renderer.section("Task Catalogs")?;
     renderer.key_values(&[KeyValue::new("catalogs", catalogs.len().to_string())])?;
     renderer.text("")?;
-    if catalogs.is_empty() {
-        renderer.notice(
-            NoticeLevel::Info,
-            "no task catalogs found; showing built-in tasks only",
-        )?;
-        renderer.text("")?;
-    }
 
     if let Some(filter) = args.task_name {
         let selector = parse_task_selector(&filter)?;
@@ -680,22 +721,13 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
         let mut rows: Vec<Vec<String>> = Vec::new();
         for (catalog, task) in matches {
             rows.push(vec![
-                catalog.alias.clone(),
-                selector.task_name.clone(),
+                catalog_task_label(catalog, &selector.task_name),
                 task_run_preview(task),
                 catalog.manifest_path.display().to_string(),
             ]);
         }
 
-        renderer.table(&TableSpec::new(
-            vec![
-                "catalog".to_owned(),
-                "task".to_owned(),
-                "run".to_owned(),
-                "manifest".to_owned(),
-            ],
-            rows,
-        ))?;
+        renderer.table(&TableSpec::new(Vec::new(), rows))?;
         renderer.text("")?;
         if !builtin_matches.is_empty() {
             let builtin_rows = builtin_matches
@@ -703,11 +735,15 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                 .map(|(name, description)| vec![(*name).to_owned(), (*description).to_owned()])
                 .collect::<Vec<Vec<String>>>();
             renderer.section("Built-in Task Matches")?;
-            renderer.table(&TableSpec::new(
-                vec!["task".to_owned(), "description".to_owned()],
-                builtin_rows,
-            ))?;
+            renderer.table(&TableSpec::new(Vec::new(), builtin_rows))?;
             renderer.text("")?;
+            if selector.task_name == "test" {
+                renderer.notice(
+                    NoticeLevel::Info,
+                    "built-in fallback supports `<catalog>/test` when explicit `tasks.test` is not defined",
+                )?;
+                renderer.text("")?;
+            }
         }
         renderer.summary(SummaryCounts {
             ok: 1,
@@ -733,7 +769,6 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
         for catalog in ordered {
             if catalog.manifest.tasks.is_empty() {
                 rows.push(vec![
-                    catalog.alias.clone(),
                     "<none>".to_owned(),
                     "<none>".to_owned(),
                     catalog.manifest_path.display().to_string(),
@@ -742,22 +777,13 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
             }
             for (task_name, task_def) in &catalog.manifest.tasks {
                 rows.push(vec![
-                    catalog.alias.clone(),
-                    task_name.clone(),
+                    catalog_task_label(catalog, task_name),
                     task_run_preview(task_def),
                     catalog.manifest_path.display().to_string(),
                 ]);
             }
         }
-        renderer.table(&TableSpec::new(
-            vec![
-                "catalog".to_owned(),
-                "task".to_owned(),
-                "run".to_owned(),
-                "manifest".to_owned(),
-            ],
-            rows,
-        ))?;
+        renderer.table(&TableSpec::new(Vec::new(), rows))?;
         renderer.text("")?;
     }
 
@@ -766,10 +792,7 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
         .iter()
         .map(|(name, description)| vec![(*name).to_owned(), (*description).to_owned()])
         .collect::<Vec<Vec<String>>>();
-    renderer.table(&TableSpec::new(
-        vec!["task".to_owned(), "description".to_owned()],
-        builtin_rows,
-    ))?;
+    renderer.table(&TableSpec::new(Vec::new(), builtin_rows))?;
     renderer.text("")?;
     renderer.summary(SummaryCounts {
         ok: 1,
@@ -794,6 +817,14 @@ fn task_run_preview(task: &ManifestTask) -> String {
     "<none>".to_owned()
 }
 
+fn catalog_task_label(catalog: &LoadedCatalog, task_name: &str) -> String {
+    if catalog.depth == 0 {
+        task_name.to_owned()
+    } else {
+        format!("{}/{}", catalog.alias, task_name)
+    }
+}
+
 fn run_manifest_task(task: &TaskInvocation) -> Result<String, RunnerError> {
     let cwd = std::env::current_dir().map_err(RunnerError::Cwd)?;
     run_manifest_task_with_cwd(task, cwd)
@@ -811,18 +842,28 @@ fn run_manifest_task_with_cwd(task: &TaskInvocation, cwd: PathBuf) -> Result<Str
     };
     let selection = match select_catalog_and_task(&selector, &catalogs, &invocation_cwd) {
         Ok(selection) => selection,
-        Err(error) if should_attempt_deferral(&error) => {
-            if let Some(deferral) = select_deferral(
+        Err(error) => {
+            if let Some(output) = try_run_builtin_task(
                 &selector,
-                &catalogs,
-                &invocation_cwd,
+                task,
+                &runtime_args,
                 &resolved.resolved_root,
-            ) {
-                return run_deferred_request(task, &runtime_args, &deferral, &error);
+                &catalogs,
+            )? {
+                return Ok(output);
+            }
+            if should_attempt_deferral(&error) {
+                if let Some(deferral) = select_deferral(
+                    &selector,
+                    &catalogs,
+                    &invocation_cwd,
+                    &resolved.resolved_root,
+                ) {
+                    return run_deferred_request(task, &runtime_args, &deferral, &error);
+                }
             }
             return Err(error);
         }
-        Err(error) => return Err(error),
     };
 
     let repo_for_task = selection.catalog.catalog_root.clone();
@@ -897,6 +938,460 @@ fn run_manifest_task_with_cwd(task: &TaskInvocation, cwd: PathBuf) -> Result<Str
         stdout: String::new(),
         stderr: String::new(),
     })
+}
+
+fn is_builtin_task(task_name: &str) -> bool {
+    BUILTIN_TASKS.iter().any(|(name, _)| *name == task_name)
+}
+
+fn resolve_builtin_task_target_root(
+    selector: &TaskSelector,
+    resolved_root: &Path,
+    catalogs: &[LoadedCatalog],
+) -> Option<PathBuf> {
+    if let Some(prefix) = selector.prefix.as_ref() {
+        return catalogs
+            .iter()
+            .find(|catalog| &catalog.alias == prefix)
+            .map(|catalog| catalog.catalog_root.clone());
+    }
+    Some(resolved_root.to_path_buf())
+}
+
+fn try_run_builtin_task(
+    selector: &TaskSelector,
+    task: &TaskInvocation,
+    runtime_args: &TaskRuntimeArgs,
+    resolved_root: &Path,
+    catalogs: &[LoadedCatalog],
+) -> Result<Option<String>, RunnerError> {
+    if !is_builtin_task(&selector.task_name) {
+        return Ok(None);
+    }
+
+    let Some(target_root) = resolve_builtin_task_target_root(selector, resolved_root, catalogs)
+    else {
+        return Ok(None);
+    };
+
+    match selector.task_name.as_str() {
+        "repo-pulse" => run_builtin_repo_pulse(task, runtime_args, &target_root).map(Some),
+        "tasks" => run_builtin_tasks(task, runtime_args, &target_root).map(Some),
+        "help" => run_builtin_help(),
+        "test" => try_run_builtin_test(selector, task, runtime_args, &target_root, catalogs),
+        _ => Ok(None),
+    }
+}
+
+fn run_builtin_repo_pulse(
+    task: &TaskInvocation,
+    runtime_args: &TaskRuntimeArgs,
+    target_root: &Path,
+) -> Result<String, RunnerError> {
+    if !runtime_args.passthrough.is_empty() {
+        return Err(RunnerError::TaskInvocation(format!(
+            "unknown argument(s) for built-in `{}`: {}",
+            task.name,
+            runtime_args.passthrough.join(" ")
+        )));
+    }
+    run_pulse(PulseArgs {
+        repo_override: Some(target_root.to_path_buf()),
+        verbose_root: runtime_args.verbose_root,
+    })
+}
+
+fn run_builtin_tasks(
+    task: &TaskInvocation,
+    runtime_args: &TaskRuntimeArgs,
+    target_root: &Path,
+) -> Result<String, RunnerError> {
+    if runtime_args.verbose_root {
+        return Err(RunnerError::TaskInvocation(format!(
+            "`--verbose-root` is not supported for built-in `{}`",
+            task.name
+        )));
+    }
+
+    let mut task_name: Option<String> = None;
+    let mut i = 0usize;
+    while i < runtime_args.passthrough.len() {
+        let arg = &runtime_args.passthrough[i];
+        if arg == "--task" {
+            let Some(value) = runtime_args.passthrough.get(i + 1) else {
+                return Err(RunnerError::TaskInvocation(
+                    "task argument --task requires a value".to_owned(),
+                ));
+            };
+            task_name = Some(value.clone());
+            i += 2;
+            continue;
+        }
+        return Err(RunnerError::TaskInvocation(format!(
+            "unknown argument(s) for built-in `{}`: {}",
+            task.name,
+            runtime_args.passthrough.join(" ")
+        )));
+    }
+
+    run_tasks(TasksArgs {
+        repo_override: Some(target_root.to_path_buf()),
+        task_name,
+    })
+}
+
+fn run_builtin_help() -> Result<Option<String>, RunnerError> {
+    let color_enabled =
+        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+    render_help(&mut renderer, HelpTopic::General)?;
+    let out = renderer.into_inner();
+    String::from_utf8(out)
+        .map(Some)
+        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
+}
+
+fn try_run_builtin_test(
+    selector: &TaskSelector,
+    task: &TaskInvocation,
+    runtime_args: &TaskRuntimeArgs,
+    resolved_root: &Path,
+    catalogs: &[LoadedCatalog],
+) -> Result<Option<String>, RunnerError> {
+    let (flags, passthrough) = extract_builtin_test_flags(&runtime_args.passthrough);
+    let targets = resolve_builtin_test_targets(selector, resolved_root, catalogs);
+    let runnable = targets
+        .iter()
+        .filter_map(|target| {
+            target
+                .detection
+                .selected
+                .as_ref()
+                .map(|plan| (target.name.clone(), target.root.clone(), plan.clone()))
+        })
+        .collect::<Vec<(String, PathBuf, crate::testing::TestRunnerPlan)>>();
+    if runnable.is_empty() {
+        return Ok(None);
+    }
+
+    if flags.plan_mode {
+        let color_enabled =
+            resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
+        let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+        renderer.section("Test Plan")?;
+        renderer.key_values(&[
+            KeyValue::new("request", task.name.clone()),
+            KeyValue::new("root", resolved_root.display().to_string()),
+            KeyValue::new("targets", runnable.len().to_string()),
+        ])?;
+        renderer.text("")?;
+        for target in &targets {
+            let selected_runner = target.detection.selected.as_ref().map(|plan| plan.runner);
+            renderer.section(&format!("Target: {}", target.name))?;
+            if let Some(plan) = target.detection.selected.as_ref() {
+                let args_rendered = passthrough
+                    .iter()
+                    .map(|arg| shell_quote(arg))
+                    .collect::<Vec<String>>()
+                    .join(" ");
+                let command = if args_rendered.is_empty() {
+                    plan.command.clone()
+                } else {
+                    format!("{} {}", plan.command, args_rendered)
+                };
+                renderer.key_values(&[
+                    KeyValue::new("root", target.root.display().to_string()),
+                    KeyValue::new("runner", plan.runner.label().to_owned()),
+                    KeyValue::new("command", command),
+                ])?;
+                renderer.text("")?;
+                renderer.bullet_list("evidence", &plan.evidence)?;
+            } else {
+                renderer.key_values(&[
+                    KeyValue::new("root", target.root.display().to_string()),
+                    KeyValue::new("runner", "<none>".to_owned()),
+                    KeyValue::new("command", "<none>".to_owned()),
+                ])?;
+                renderer.text("")?;
+                renderer.notice(
+                    NoticeLevel::Warning,
+                    "no supported test runner detected for this target",
+                )?;
+            }
+            renderer.text("")?;
+            let candidate_lines = target
+                .detection
+                .candidates
+                .iter()
+                .map(|candidate| {
+                    let state = if candidate.available {
+                        if Some(candidate.runner) == selected_runner {
+                            "selected"
+                        } else {
+                            "available"
+                        }
+                    } else {
+                        "rejected"
+                    };
+                    format!(
+                        "{} -> {} ({state}): {}",
+                        candidate.runner.label(),
+                        candidate.command,
+                        candidate.reason
+                    )
+                })
+                .collect::<Vec<String>>();
+            renderer.bullet_list("fallback-chain", &candidate_lines)?;
+            renderer.text("")?;
+        }
+        let out = renderer.into_inner();
+        return String::from_utf8(out).map(Some).map_err(|error| {
+            RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}"))
+        });
+    }
+
+    let args_rendered = passthrough
+        .iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<String>>()
+        .join(" ");
+    let max_parallel = builtin_test_max_parallel(catalogs, resolved_root);
+    let results = run_builtin_test_targets_parallel(runnable, &args_rendered, max_parallel)?;
+    let mut failures = results
+        .iter()
+        .filter_map(|result| {
+            if result.success {
+                None
+            } else {
+                Some((result.name.clone(), result.code))
+            }
+        })
+        .collect::<Vec<(String, Option<i32>)>>();
+    failures.sort_by(|a, b| a.0.cmp(&b.0));
+    let rendered = render_builtin_test_results(&results, flags.verbose_results)?;
+    if failures.is_empty() {
+        Ok(Some(rendered))
+    } else {
+        Err(RunnerError::BuiltinTestNonZero { failures, rendered })
+    }
+}
+
+fn extract_builtin_test_flags(raw_args: &[String]) -> (BuiltinTestCliFlags, Vec<String>) {
+    let mut flags = BuiltinTestCliFlags {
+        plan_mode: false,
+        verbose_results: false,
+    };
+    let passthrough = raw_args
+        .iter()
+        .filter_map(|arg| {
+            if arg == "--plan" {
+                flags.plan_mode = true;
+                None
+            } else if arg == "--verbose-results" {
+                flags.verbose_results = true;
+                None
+            } else {
+                Some(arg.clone())
+            }
+        })
+        .collect::<Vec<String>>();
+    (flags, passthrough)
+}
+
+#[derive(Debug, Clone)]
+struct BuiltinTestTarget {
+    name: String,
+    root: PathBuf,
+    detection: crate::testing::TestRunnerDetection,
+}
+
+fn resolve_builtin_test_targets(
+    selector: &TaskSelector,
+    resolved_root: &Path,
+    catalogs: &[LoadedCatalog],
+) -> Vec<BuiltinTestTarget> {
+    if let Some(prefix) = selector.prefix.as_ref() {
+        if let Some(catalog) = catalogs.iter().find(|catalog| &catalog.alias == prefix) {
+            return vec![BuiltinTestTarget {
+                name: catalog.alias.clone(),
+                detection: detect_test_runner_detailed(&catalog.catalog_root),
+                root: catalog.catalog_root.clone(),
+            }];
+        }
+        return Vec::new();
+    }
+
+    let mut targets = Vec::<BuiltinTestTarget>::new();
+    let mut roots = HashMap::<PathBuf, String>::new();
+    for catalog in catalogs {
+        roots
+            .entry(catalog.catalog_root.clone())
+            .or_insert_with(|| catalog.alias.clone());
+    }
+    if !roots.contains_key(resolved_root) {
+        roots.insert(resolved_root.to_path_buf(), "root".to_owned());
+    }
+    let mut ordered = roots.into_iter().collect::<Vec<(PathBuf, String)>>();
+    ordered.sort_by(|a, b| a.0.cmp(&b.0));
+    for (root, name) in ordered {
+        targets.push(BuiltinTestTarget {
+            name,
+            detection: detect_test_runner_detailed(&root),
+            root,
+        });
+    }
+    targets
+}
+
+#[derive(Debug)]
+struct BuiltinTestExecResult {
+    name: String,
+    runner: String,
+    root: PathBuf,
+    command: String,
+    success: bool,
+    code: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BuiltinTestCliFlags {
+    plan_mode: bool,
+    verbose_results: bool,
+}
+
+fn run_builtin_test_targets_parallel(
+    runnable: Vec<(String, PathBuf, crate::testing::TestRunnerPlan)>,
+    args_rendered: &str,
+    max_parallel: usize,
+) -> Result<Vec<BuiltinTestExecResult>, RunnerError> {
+    if runnable.is_empty() {
+        return Ok(Vec::new());
+    }
+    let jobs = runnable
+        .into_iter()
+        .map(|(name, root, plan)| {
+            let command = if args_rendered.is_empty() {
+                plan.command
+            } else {
+                format!("{} {}", plan.command, args_rendered)
+            };
+            (name, root, plan.runner.label().to_owned(), command)
+        })
+        .collect::<Vec<(String, PathBuf, String, String)>>();
+    let worker_count = max_parallel.min(jobs.len()).max(1);
+    let queue = Arc::new(Mutex::new(VecDeque::from(jobs)));
+
+    std::thread::scope(|scope| -> Result<Vec<BuiltinTestExecResult>, RunnerError> {
+        let mut handles = Vec::with_capacity(worker_count);
+        for _ in 0..worker_count {
+            let queue_ref = Arc::clone(&queue);
+            handles.push(scope.spawn(move || {
+                let mut local = Vec::<BuiltinTestExecResult>::new();
+                loop {
+                    let job = {
+                        let mut queue = queue_ref.lock().expect("test queue lock poisoned");
+                        queue.pop_front()
+                    };
+                    let Some((name, root, runner, command)) = job else {
+                        break;
+                    };
+                    let mut process = ProcessCommand::new("sh");
+                    process.arg("-lc").arg(&command).current_dir(&root);
+                    with_local_node_bin_path(&mut process, &root);
+                    let status =
+                        process
+                            .status()
+                            .map_err(|error| RunnerError::TaskCommandLaunch {
+                                command: command.clone(),
+                                error,
+                            })?;
+                    local.push(BuiltinTestExecResult {
+                        name,
+                        runner,
+                        root,
+                        command,
+                        success: status.success(),
+                        code: status.code(),
+                    });
+                }
+                Ok::<Vec<BuiltinTestExecResult>, RunnerError>(local)
+            }));
+        }
+
+        let mut combined = Vec::<BuiltinTestExecResult>::new();
+        for handle in handles {
+            let mut part = handle
+                .join()
+                .expect("builtin test worker thread panicked unexpectedly")?;
+            combined.append(&mut part);
+        }
+        Ok(combined)
+    })
+}
+
+fn builtin_test_max_parallel(catalogs: &[LoadedCatalog], resolved_root: &Path) -> usize {
+    let configured = catalogs
+        .iter()
+        .filter(|catalog| catalog.catalog_root == resolved_root)
+        .find_map(|catalog| {
+            catalog
+                .manifest
+                .builtin
+                .as_ref()
+                .and_then(|builtin| builtin.test.as_ref())
+                .and_then(|test| test.max_parallel)
+        })
+        .filter(|value| *value > 0);
+
+    configured.unwrap_or(DEFAULT_BUILTIN_TEST_MAX_PARALLEL)
+}
+
+fn render_builtin_test_results(
+    results: &[BuiltinTestExecResult],
+    verbose: bool,
+) -> Result<String, RunnerError> {
+    let color_enabled =
+        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+    renderer.text("")?;
+    renderer.text("")?;
+    renderer.section("Test Results")?;
+    renderer.key_values(&[KeyValue::new("targets", results.len().to_string())])?;
+    renderer.text("")?;
+    let mut ordered = results
+        .iter()
+        .map(|result| {
+            (
+                result.name.clone(),
+                result.runner.clone(),
+                result.root.display().to_string(),
+                result.command.clone(),
+                result.success,
+                result.code,
+            )
+        })
+        .collect::<Vec<(String, String, String, String, bool, Option<i32>)>>();
+    ordered.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, runner, root, command, success, code) in ordered {
+        let status = if success {
+            "ok".to_owned()
+        } else {
+            match code {
+                Some(value) => format!("exit={value}"),
+                None => "terminated".to_owned(),
+            }
+        };
+        let value = if verbose {
+            format!("{status}  runner:{runner}  root:{root}  command:{command}")
+        } else {
+            status
+        };
+        renderer.key_values(&[KeyValue::new(name, value)])?;
+    }
+    renderer.text("")?;
+    let out = renderer.into_inner();
+    String::from_utf8(out)
+        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
 }
 
 fn parse_task_runtime_args(args: &[String]) -> Result<TaskRuntimeArgs, RunnerError> {

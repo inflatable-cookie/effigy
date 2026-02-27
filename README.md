@@ -53,14 +53,31 @@ Planned steady-state:
 effigy <task> [task args]
 effigy <catalog>/<task> [task args]
 effigy dev [profile]
+effigy test [runner args]
+effigy test --plan [runner args]
+effigy test --verbose-results [runner args]
 effigy repo-pulse [--repo <PATH>] [--verbose-root]
 effigy tasks [--repo <PATH>] [--task <TASK_NAME>]
 ```
 
 ### Built-in tasks
 - `repo-pulse`: repository/workspace health and structure signal report.
+- `test`: built-in test runner auto-detection (`vitest`, `cargo nextest run`, `cargo test`) with `--plan` explainability.
 - `tasks`: enumerate discovered catalogs and task commands.
 - managed `mode = "tui"` tasks (for example `dev`) launch tabbed process manager on interactive terminals.
+
+### Built-in test fanout config
+
+Built-in `test` supports workspace fanout across discovered catalog roots. Configure concurrency in root `effigy.toml`:
+
+```toml
+[builtin.test]
+max_parallel = 2
+```
+
+Notes:
+- this controls parallel workers for built-in `effigy test` fanout only,
+- explicit `[tasks.test]` definitions still override built-in detection entirely.
 
 ## Output Conventions
 
@@ -166,5 +183,6 @@ Start here:
 - `docs/guides/010-path-installation-and-release.md`
 - `docs/guides/011-output-widgets-and-colour-modes.md`
 - `docs/guides/012-dev-process-manager-tui.md`
+- `docs/guides/013-testing-orchestration.md`
 - `docs/roadmap/README.md`
 - `docs/reports/README.md`
