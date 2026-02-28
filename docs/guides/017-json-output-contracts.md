@@ -5,11 +5,11 @@ Effigy supports root-level JSON mode via `--json`:
 ```bash
 effigy --json tasks
 effigy --json tasks --task test
+effigy --json tasks --resolve farmyard/api
+effigy --json tasks --task test --resolve farmyard/test
 effigy --json repo-pulse
-effigy --json catalogs --resolve farmyard/api
 effigy --json test --plan
 effigy --json test
-effigy --json catalogs --resolve test
 ```
 
 When JSON mode is active, the CLI preamble is suppressed and output is pure JSON.
@@ -30,8 +30,19 @@ Contract:
   "schema_version": 1,
   "catalog_count": 0,
   "catalog_tasks": [],
-  "builtin_tasks": []
+  "managed_profiles": [],
+  "builtin_tasks": [],
+  "catalogs": [],
+  "precedence": [],
+  "resolve": null
 }
+```
+
+`--resolve` attaches routing probe details to the same `effigy.tasks.v1` payload:
+
+```bash
+effigy --json tasks --resolve farmyard/api
+effigy --json tasks --resolve test
 ```
 
 ## Tasks (filtered)
@@ -51,10 +62,16 @@ Contract:
   "catalog_count": 0,
   "filter": "test",
   "matches": [],
+  "managed_profile_matches": [],
   "builtin_matches": [],
+  "catalogs": [],
+  "precedence": [],
+  "resolve": null,
   "notes": []
 }
 ```
+
+Managed profile rows in `managed_profiles` and `managed_profile_matches` use direct invocation labels in `task` (for example `dev front`, `dev admin`).
 
 ## Repo Pulse
 
@@ -84,26 +101,6 @@ Contract:
     "evidence": [],
     "warnings": []
   }
-}
-```
-
-## Catalogs
-
-Command:
-
-```bash
-effigy --json catalogs --resolve farmyard/api
-```
-
-Contract:
-
-```json
-{
-  "schema": "effigy.catalogs.v1",
-  "schema_version": 1,
-  "catalogs": [],
-  "precedence": [],
-  "resolve": null
 }
 ```
 
@@ -219,11 +216,12 @@ CI policy:
 - CI helper enables `--print-selected` so selected schema ids are visible in logs
 - CI uploads `json-contracts.log` and `json-contracts-selected.json` artifacts for each run
 - CI validates `json-contracts-selected.json` with `scripts/validate-json-contract-selection-artifact.sh` before artifact upload
+- CI runs `scripts/check-selection-artifact-validator-smoke.sh` to verify validator failure-path behavior stays intact
 
 Built-in selector probe example:
 
 ```bash
-effigy --json catalogs --resolve test
+effigy --json tasks --resolve test
 ```
 
 Expected `resolve` shape:

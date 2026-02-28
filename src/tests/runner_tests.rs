@@ -789,6 +789,7 @@ fn run_tasks_json_renders_machine_readable_payload() {
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
     assert_eq!(parsed["catalog_count"], 2);
     assert!(parsed["catalog_tasks"].is_array());
+    assert!(parsed["managed_profiles"].is_array());
     assert!(parsed["builtin_tasks"].is_array());
 }
 
@@ -809,9 +810,143 @@ fn run_tasks_json_filter_includes_builtin_matches_and_notes() {
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
     assert_eq!(parsed["filter"], "test");
     assert!(parsed["builtin_matches"].is_array());
+    assert!(parsed["managed_profile_matches"].is_array());
     assert!(parsed["notes"]
         .as_array()
         .is_some_and(|items| !items.is_empty()));
+}
+
+#[test]
+fn run_tasks_lists_managed_profiles_for_tui_tasks() {
+    let root = temp_workspace("tasks-managed-profiles-list");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles]
+default = ["api"]
+admin = ["api"]
+"#,
+    );
+
+    let out = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: None,
+            resolve_selector: None,
+            output_json: false,
+            pretty_json: true,
+        })
+    })
+    .expect("run tasks");
+
+    assert!(out.contains("Tasks"));
+    assert!(out.contains("dev admin"));
+    assert!(out.contains("<managed:tui profile:admin>"));
+    assert!(!out.contains("dev default"));
+}
+
+#[test]
+fn run_tasks_filter_lists_managed_profiles_for_matching_task() {
+    let root = temp_workspace("tasks-managed-profiles-filter");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles]
+default = ["api"]
+front = ["api"]
+"#,
+    );
+
+    let out = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: Some("dev".to_owned()),
+            resolve_selector: None,
+            output_json: false,
+            pretty_json: true,
+        })
+    })
+    .expect("run tasks --task dev");
+
+    assert!(out.contains("Task Matches: dev"));
+    assert!(out.contains("dev front"));
+    assert!(!out.contains("dev default"));
+}
+
+#[test]
+fn run_tasks_json_lists_managed_profiles_with_invocation_labels() {
+    let root = temp_workspace("tasks-managed-profiles-json-list");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles]
+default = ["api"]
+admin = ["api"]
+"#,
+    );
+
+    let out = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: None,
+            resolve_selector: None,
+            output_json: true,
+            pretty_json: true,
+        })
+    })
+    .expect("run tasks --json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    let tasks = parsed["managed_profiles"]
+        .as_array()
+        .expect("managed_profiles array")
+        .iter()
+        .filter_map(|row| row["task"].as_str())
+        .collect::<Vec<&str>>();
+    assert!(tasks.contains(&"dev admin"));
+    assert!(!tasks.contains(&"dev default"));
+}
+
+#[test]
+fn run_tasks_json_filter_lists_managed_profiles_with_invocation_labels() {
+    let root = temp_workspace("tasks-managed-profiles-json-filter");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles]
+default = ["api"]
+front = ["api"]
+"#,
+    );
+
+    let out = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: Some("dev".to_owned()),
+            resolve_selector: None,
+            output_json: true,
+            pretty_json: true,
+        })
+    })
+    .expect("run tasks --json --task dev");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    let tasks = parsed["managed_profile_matches"]
+        .as_array()
+        .expect("managed_profile_matches array")
+        .iter()
+        .filter_map(|row| row["task"].as_str())
+        .collect::<Vec<&str>>();
+    assert!(tasks.contains(&"dev front"));
+    assert!(!tasks.contains(&"dev default"));
 }
 
 #[test]
@@ -1768,7 +1903,6 @@ fn run_manifest_task_builtin_catalogs_renders_diagnostics_and_resolution_probe()
     )
     .expect("builtin catalogs");
 
-    assert!(out.contains("Catalogs"));
     assert!(out.contains("Resolution: farmyard/api"));
     assert!(out.contains("catalog: farmyard"));
 }
@@ -2601,6 +2735,66 @@ fn run_manifest_task_builtin_config_prints_reference() {
         "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
     ));
     assert!(out.contains("shell-like tokenization only"));
+}
+
+#[test]
+fn run_pulse_text_output_has_blank_line_between_sections() {
+    let root = temp_workspace("pulse-section-spacing");
+    let out = run_pulse(PulseArgs {
+        repo_override: Some(root),
+        verbose_root: false,
+        output_json: false,
+    })
+    .expect("run pulse text");
+
+    assert!(out.contains("\n\nSignals\n"));
+    assert!(out.contains("\n\nRisks\n"));
+    assert!(out.contains("\n\nActions\n"));
+}
+
+#[test]
+fn run_manifest_task_builtin_test_plan_has_blank_line_between_sections() {
+    let root = temp_workspace("builtin-test-plan-section-spacing");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}"#,
+    )
+    .expect("write package");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--plan".to_owned()],
+        },
+        root,
+    )
+    .expect("run test --plan");
+
+    assert!(out.contains("\n\nTarget Summary\n"));
+    assert!(out.contains("\n\nTarget: root\n"));
+}
+
+#[test]
+fn run_manifest_task_builtin_config_has_blank_line_between_sections() {
+    let root = temp_workspace("builtin-config-section-spacing");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "config".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("run config");
+
+    assert!(out.contains("\n\nGlobal\n"));
+    assert!(out.contains("\n\nBuilt-in Test\n"));
+    assert!(out.contains("\n\nTasks\n"));
 }
 
 #[test]

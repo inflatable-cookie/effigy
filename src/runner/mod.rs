@@ -41,6 +41,15 @@ use util::parse_task_reference_invocation;
 use util::{parse_task_runtime_args, parse_task_selector};
 
 #[derive(Debug)]
+struct ManagedProfileDisplayRow {
+    task: String,
+    run: String,
+    profile: String,
+    invocation: String,
+    parent_task: String,
+}
+
+#[derive(Debug)]
 pub enum RunnerError {
     Cwd(std::io::Error),
     Resolve(ResolveError),
@@ -503,7 +512,7 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
     if args.output_json {
         if let Some(filter) = args.task_name {
             let selector = parse_task_selector(&filter)?;
-            let matches = catalogs
+            let matched_tasks = catalogs
                 .iter()
                 .filter_map(|catalog| {
                     let task = catalog.manifest.tasks.get(&selector.task_name)?;
@@ -514,11 +523,35 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                     {
                         return None;
                     }
-                    Some(json!({
+                    Some((catalog, task))
+                })
+                .collect::<Vec<(&LoadedCatalog, &ManifestTask)>>();
+            let matches = matched_tasks
+                .iter()
+                .map(|(catalog, task)| {
+                    json!({
                         "task": catalog_task_label(catalog, &selector.task_name),
                         "run": task_run_preview(task),
                         "manifest": catalog.manifest_path.display().to_string(),
-                    }))
+                    })
+                })
+                .collect::<Vec<serde_json::Value>>();
+            let managed_profile_matches = matched_tasks
+                .iter()
+                .flat_map(|(catalog, task)| {
+                    managed_profile_display_rows(catalog, &selector.task_name, task)
+                        .into_iter()
+                        .map(|row| {
+                            json!({
+                                "task": row.task,
+                                "run": row.run,
+                                "manifest": catalog.manifest_path.display().to_string(),
+                                "profile": row.profile,
+                                "invocation": row.invocation,
+                                "parent_task": row.parent_task,
+                            })
+                        })
+                        .collect::<Vec<serde_json::Value>>()
                 })
                 .collect::<Vec<serde_json::Value>>();
             let builtin_matches = BUILTIN_TASKS
@@ -537,6 +570,7 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                 "catalog_count": catalogs.len(),
                 "filter": filter,
                 "matches": matches,
+                "managed_profile_matches": managed_profile_matches,
                 "builtin_matches": builtin_matches,
                 "catalogs": catalog_diagnostics,
                 "precedence": precedence,
@@ -557,7 +591,8 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
         }
 
         let mut catalog_rows: Vec<serde_json::Value> = Vec::new();
-        for catalog in ordered_catalogs {
+        let mut managed_profile_rows: Vec<serde_json::Value> = Vec::new();
+        for catalog in &ordered_catalogs {
             if catalog.manifest.tasks.is_empty() {
                 catalog_rows.push(json!({
                     "task": null,
@@ -572,6 +607,20 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                     "run": task_run_preview(task_def),
                     "manifest": catalog.manifest_path.display().to_string(),
                 }));
+                managed_profile_rows.extend(
+                    managed_profile_display_rows(catalog, task_name, task_def)
+                        .into_iter()
+                        .map(|row| {
+                            json!({
+                                "task": row.task,
+                                "run": row.run,
+                                "manifest": catalog.manifest_path.display().to_string(),
+                                "profile": row.profile,
+                                "invocation": row.invocation,
+                                "parent_task": row.parent_task,
+                            })
+                        }),
+                );
             }
         }
         let builtin_rows = BUILTIN_TASKS
@@ -588,6 +637,7 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
             "schema_version": 1,
             "catalog_count": catalogs.len(),
             "catalog_tasks": catalog_rows,
+            "managed_profiles": managed_profile_rows,
             "builtin_tasks": builtin_rows,
             "catalogs": catalog_diagnostics,
             "precedence": precedence,
@@ -650,6 +700,17 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                 "      {}",
                 style_text(color_enabled, theme.task_signature, &signature),
             ))?;
+            for row in managed_profile_display_rows(catalog, &selector.task_name, task) {
+                renderer.text(&format!(
+                    "- {} : {}",
+                    style_text(color_enabled, theme.task_name, &row.task),
+                    style_text(color_enabled, theme.muted, &manifest),
+                ))?;
+                renderer.text(&format!(
+                    "      {}",
+                    style_text(color_enabled, theme.task_signature, &row.run),
+                ))?;
+            }
         }
         if !builtin_matches.is_empty() || resolve_probe.is_some() {
             renderer.text("")?;
@@ -693,6 +754,39 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
         });
     }
 
+    if let Some(probe) = resolve_probe.as_ref() {
+        let theme = Theme::default();
+        renderer.section(&format!(
+            "Resolution: {}",
+            probe["selector"].as_str().unwrap_or("<selector>")
+        ))?;
+        renderer.key_values(&[
+            KeyValue::new("status", probe["status"].as_str().unwrap_or("<unknown>")),
+            KeyValue::new("catalog", probe["catalog"].as_str().unwrap_or("<none>")),
+            KeyValue::new("task", probe["task"].as_str().unwrap_or("<none>")),
+        ])?;
+        if let Some(error) = probe["error"].as_str() {
+            renderer.notice(NoticeLevel::Warning, error)?;
+        } else if let Some(evidence) = probe["evidence"].as_array() {
+            let lines = evidence
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_owned))
+                .collect::<Vec<String>>();
+            if !lines.is_empty() {
+                renderer.text(&format!(
+                    "{}:",
+                    style_text(color_enabled, theme.label, "evidence")
+                ))?;
+                for line in lines {
+                    renderer.text(&format!("- {line}"))?;
+                }
+            }
+        }
+        let out = renderer.into_inner();
+        return String::from_utf8(out)
+            .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")));
+    }
+
     renderer.section("Catalogs")?;
     renderer.key_values(&[KeyValue::new("count", catalogs.len().to_string())])?;
     let theme = Theme::default();
@@ -711,10 +805,11 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
     renderer.text("")?;
 
     renderer.section("Tasks")?;
+    let mut has_tasks = false;
     if ordered_catalogs.is_empty() {
         renderer.notice(NoticeLevel::Info, "none")?;
     } else {
-        for catalog in ordered_catalogs {
+        for catalog in &ordered_catalogs {
             if catalog.manifest.tasks.is_empty() {
                 continue;
             }
@@ -731,8 +826,23 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                     "      {}",
                     style_text(color_enabled, theme.task_signature, &signature),
                 ))?;
+                has_tasks = true;
+                for row in managed_profile_display_rows(catalog, task_name, task_def) {
+                    renderer.text(&format!(
+                        "- {} : {}",
+                        style_text(color_enabled, theme.task_name, &row.task),
+                        style_text(color_enabled, theme.muted, &manifest),
+                    ))?;
+                    renderer.text(&format!(
+                        "      {}",
+                        style_text(color_enabled, theme.task_signature, &row.run),
+                    ))?;
+                }
             }
         }
+    }
+    if !has_tasks {
+        renderer.notice(NoticeLevel::Info, "none")?;
     }
     renderer.text("")?;
 
@@ -749,6 +859,7 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
     }
 
     if let Some(probe) = resolve_probe {
+        let theme = Theme::default();
         renderer.section(&format!(
             "Resolution: {}",
             probe["selector"].as_str().unwrap_or("<selector>")
@@ -756,10 +867,6 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
         renderer.key_values(&[
             KeyValue::new("status", probe["status"].as_str().unwrap_or("<unknown>")),
             KeyValue::new("catalog", probe["catalog"].as_str().unwrap_or("<none>")),
-            KeyValue::new(
-                "catalog-root",
-                probe["catalog_root"].as_str().unwrap_or("<none>"),
-            ),
             KeyValue::new("task", probe["task"].as_str().unwrap_or("<none>")),
         ])?;
         if let Some(error) = probe["error"].as_str() {
@@ -770,7 +877,13 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                 .filter_map(|item| item.as_str().map(str::to_owned))
                 .collect::<Vec<String>>();
             if !lines.is_empty() {
-                renderer.bullet_list("evidence", &lines)?;
+                renderer.text(&format!(
+                    "{}:",
+                    style_text(color_enabled, theme.label, "evidence")
+                ))?;
+                for line in lines {
+                    renderer.text(&format!("- {line}"))?;
+                }
             }
         }
     }
@@ -783,6 +896,31 @@ fn relative_display_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .map(|relative| relative.display().to_string())
         .unwrap_or_else(|_| path.display().to_string())
+}
+
+fn managed_profile_display_rows(
+    catalog: &LoadedCatalog,
+    task_name: &str,
+    task: &ManifestTask,
+) -> Vec<ManagedProfileDisplayRow> {
+    let Some(mode) = task.mode.as_deref() else {
+        return Vec::new();
+    };
+    if task.profiles.is_empty() {
+        return Vec::new();
+    }
+    let parent_task = catalog_task_label(catalog, task_name);
+    task.profiles
+        .keys()
+        .filter(|profile| profile.as_str() != "default")
+        .map(|profile| ManagedProfileDisplayRow {
+            task: format!("{parent_task} {profile}"),
+            run: format!("<managed:{mode} profile:{profile}>"),
+            profile: profile.clone(),
+            invocation: format!("{parent_task} {profile}"),
+            parent_task: parent_task.clone(),
+        })
+        .collect()
 }
 
 fn style_text(enabled: bool, style: anstyle::Style, text: &str) -> String {
