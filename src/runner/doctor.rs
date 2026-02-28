@@ -225,7 +225,7 @@ pub(super) fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
     let rendered = if args.output_json {
         render_json(&report)?
     } else {
-        render_text(&report)
+        render_text(&report, args.verbose)
     };
 
     if summary.error > 0 {
@@ -271,7 +271,7 @@ fn summarize(statuses: &HashMap<String, DoctorSeverity>) -> DoctorSummary {
     }
 }
 
-fn render_text(report: &DoctorReport) -> String {
+fn render_text(report: &DoctorReport, verbose: bool) -> String {
     let color_enabled =
         resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
@@ -335,6 +335,21 @@ fn render_text(report: &DoctorReport) -> String {
                 "auto-fix",
                 if any_fixable { "available" } else { "no" },
             )]);
+            if verbose {
+                let _ = renderer.key_values(&[KeyValue::new("findings", items.len().to_string())]);
+                for (index, item) in items.iter().enumerate() {
+                    let _ = renderer.key_values(&[
+                        KeyValue::new("entry", (index + 1).to_string()),
+                        KeyValue::new("severity", item.severity.as_str()),
+                        KeyValue::new("entry-evidence", item.evidence.clone()),
+                        KeyValue::new("entry-remediation", item.remediation.clone()),
+                        KeyValue::new(
+                            "entry-auto-fix",
+                            if item.fixable { "available" } else { "no" },
+                        ),
+                    ]);
+                }
+            }
 
             if check_id == "workspace.root-resolution" {
                 if !report.root_evidence.is_empty() {
