@@ -1,0 +1,44 @@
+{
+  "schema": "effigy.json-contract-selection.v1",
+  "schema_version": 1,
+  "producer": "scripts/check-json-contracts.sh --print-selected=json",
+  "type": "object",
+  "required": [
+    "selected",
+    "count",
+    "changed_only_base",
+    "mode"
+  ],
+  "properties": {
+    "selected": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Schema ids selected for this run in deterministic index order."
+    },
+    "count": {
+      "type": "number",
+      "description": "Selected schema count. Must equal selected.length."
+    },
+    "changed_only_base": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Git base ref or commit used for changed-only selection; null when not in changed-only mode."
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "fast",
+        "full"
+      ],
+      "description": "Execution mode applied by checker."
+    }
+  },
+  "invariants": [
+    "count == len(selected)",
+    "all(selected[*] are strings)"
+  ]
+}

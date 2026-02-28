@@ -567,7 +567,8 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.text("")?;
     renderer.text("Task-ref chain with quoted args:")?;
     renderer.text("[tasks.validate]")?;
-    renderer.text("run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]")?;
+    renderer
+        .text("run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]")?;
     renderer.notice(
         ui::NoticeLevel::Info,
         "Task-ref chain parsing is shell-like tokenization only; Effigy does not perform shell expansion inside `task = \"...\"` values.",

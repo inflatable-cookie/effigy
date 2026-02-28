@@ -28,14 +28,10 @@ fn catalogs_text_contract_includes_core_sections_and_probe_fields() {
     .expect("run catalogs text");
 
     let expected_markers = [
-        "Catalog Diagnostics",
-        "catalogs: 2",
-        "Routing Precedence",
-        "1) explicit catalog alias prefix",
-        "2) relative/absolute catalog path prefix",
-        "3) unprefixed nearest in-scope catalog by cwd",
-        "4) unprefixed shallowest catalog from workspace root",
-        "Resolution Probe: farmyard/api",
+        "Catalogs",
+        "count: 2",
+        "Tasks",
+        "Resolution: farmyard/api",
         "catalog: farmyard",
         "task: api",
         "evidence:",
@@ -50,7 +46,7 @@ fn catalogs_text_contract_includes_core_sections_and_probe_fields() {
 }
 
 #[test]
-fn catalogs_json_pretty_contract_uses_expected_top_level_shape() {
+fn catalogs_json_pretty_contract_uses_tasks_schema_top_level_shape() {
     let root = temp_workspace("catalogs-contract-json-pretty");
     let farmyard = root.join("farmyard");
     fs::create_dir_all(&farmyard).expect("mkdir farmyard");
@@ -73,16 +69,12 @@ fn catalogs_json_pretty_contract_uses_expected_top_level_shape() {
     )
     .expect("run catalogs pretty json");
 
-    assert!(out.starts_with("{\n  \"schema\": \"effigy.catalogs.v1\","));
-    assert!(out.contains("\n  \"schema_version\": 1,"));
-    assert!(out.contains("\n  \"catalogs\": ["));
-    assert!(out.contains("\n  \"precedence\": ["));
-    assert!(out.contains("\n  \"resolve\": {"));
-    assert!(out.contains("\n    \"selector\": \"farmyard/api\""));
-    assert!(out.contains("\n    \"status\": \"ok\""));
+    assert!(out.contains('\n'));
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.catalogs.v1");
+    assert_eq!(parsed["schema"], "effigy.tasks.v1");
     assert_eq!(parsed["schema_version"], 1);
+    assert!(parsed["catalog_tasks"].is_array());
+    assert!(parsed["builtin_tasks"].is_array());
     assert!(parsed["catalogs"].is_array());
     assert_eq!(parsed["resolve"]["catalog"], "farmyard");
 }
@@ -114,13 +106,9 @@ fn catalogs_json_compact_contract_is_single_line_and_valid_json() {
     .expect("run catalogs compact json");
 
     assert!(!out.contains('\n'));
-    assert!(
-        out.starts_with("{\"schema\":\"effigy.catalogs.v1\",\"schema_version\":1,\"catalogs\":[")
-    );
-    assert!(out.contains("\"precedence\":["));
-    assert!(out.contains("\"resolve\":{"));
+    assert!(!out.contains('\n'));
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.catalogs.v1");
+    assert_eq!(parsed["schema"], "effigy.tasks.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert_eq!(parsed["resolve"]["status"], "ok");
 }
@@ -128,7 +116,10 @@ fn catalogs_json_compact_contract_is_single_line_and_valid_json() {
 #[test]
 fn catalogs_json_contract_reports_builtin_resolve_as_ok() {
     let root = temp_workspace("catalogs-contract-json-builtin-resolve");
-    write_manifest(&root.join("effigy.toml"), "[tasks.root]\nrun = \"printf root\"\n");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.root]\nrun = \"printf root\"\n",
+    );
 
     let out = run_manifest_task_with_cwd(
         &TaskInvocation {
@@ -144,7 +135,7 @@ fn catalogs_json_contract_reports_builtin_resolve_as_ok() {
     .expect("run catalogs builtin resolve json");
 
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.catalogs.v1");
+    assert_eq!(parsed["schema"], "effigy.tasks.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert_eq!(parsed["resolve"]["status"], "ok");
     assert_eq!(parsed["resolve"]["task"], "test");

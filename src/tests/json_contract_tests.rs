@@ -24,7 +24,9 @@ fn tasks_json_contract_has_versioned_top_level_shape() {
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: None,
+            resolve_selector: None,
             output_json: true,
+            pretty_json: true,
         })
     })
     .expect("run tasks json");
@@ -43,7 +45,9 @@ fn tasks_filtered_json_contract_has_versioned_shape_and_filter_fields() {
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: Some("test".to_owned()),
+            resolve_selector: None,
             output_json: true,
+            pretty_json: true,
         })
     })
     .expect("run filtered tasks json");

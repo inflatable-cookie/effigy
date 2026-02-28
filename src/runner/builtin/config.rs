@@ -164,7 +164,8 @@ pub(super) fn run_builtin_config(
     renderer.text("task = \"test vitest \\\"user service\\\"\"")?;
     renderer.text("")?;
     renderer.text("[tasks.validate]")?;
-    renderer.text("run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]")?;
+    renderer
+        .text("run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]")?;
     renderer.text("")?;
     renderer.text("[tasks.dev.profiles.default]")?;
     renderer.text("start = [\"api\", \"validate-stack\", \"tests\"]")?;
