@@ -28,6 +28,31 @@ If `tasks.test` exists in the selected catalog, that explicit task always wins:
 run = "bun test {args}"
 ```
 
+## Task Reference Chains
+
+Task-ref chains (`{ task = "..." }`) can target built-ins (including `test`) and include inline args.
+
+Examples:
+
+```toml
+[tasks.validate]
+run = [{ task = "test vitest" }, "printf validate-ok"]
+
+[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["api", "tests"]
+
+[tasks.dev.processes.tests]
+task = "test vitest \"user service\""
+```
+
+Notes:
+- inline args are parsed with shell-style quoting/escaping.
+- quote multi-word args inside the task string.
+- parsing is tokenization only; shell expansion features (for example globbing, variable expansion, command substitution) are not applied inside `task = "..."`.
+
 ## Workspace Fanout
 
 When built-in `test` is used from a workspace root, Effigy fans out across discovered catalog roots and aggregates results.

@@ -367,6 +367,93 @@ run = [{{ task = "capture hello-world" }}]
 }
 
 #[test]
+fn run_manifest_task_run_array_task_reference_supports_quoted_inline_args() {
+    let root = temp_workspace("run-array-task-ref-quoted-inline-args");
+    let marker = root.join("task-ref-quoted-inline-args.log");
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[tasks.capture]
+run = "sh -lc 'printf \"%s|%s\" \"$1\" \"$2\" > \"{}\"' sh {{args}}"
+
+[tasks.validate]
+run = [{{ task = 'capture alpha "two words"' }}]
+"#,
+            marker.display()
+        ),
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("run");
+
+    assert_eq!(out, "");
+    let body = fs::read_to_string(&marker).expect("read marker");
+    assert_eq!(body, "alpha|two words");
+}
+
+#[test]
+fn run_manifest_task_run_array_task_reference_rejects_unterminated_quoted_args() {
+    let root = temp_workspace("run-array-task-ref-unterminated-quote");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.validate]
+run = [{ task = 'test "unterminated' }]
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("expected unterminated quote error");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("run step task ref"));
+            assert!(message.contains("unterminated quote"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_run_array_task_reference_rejects_trailing_escape() {
+    let root = temp_workspace("run-array-task-ref-trailing-escape");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.validate]
+run = [{ task = "test vitest \\" }]
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("expected trailing escape error");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("run step task ref"));
+            assert!(message.contains("trailing escape"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
 fn run_manifest_task_run_array_supports_builtin_test_task_reference_steps() {
     let root = temp_workspace("run-array-builtin-test-task-ref");
     let marker = root.join("builtin-test-called.log");
@@ -481,7 +568,9 @@ fn run_tasks_lists_catalogs_and_tasks() {
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: None,
+            resolve_selector: None,
             output_json: false,
+            pretty_json: true,
         })
     })
     .expect("run tasks");
@@ -506,7 +595,9 @@ jobs = "printf jobs"
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: None,
+            resolve_selector: None,
             output_json: false,
+            pretty_json: true,
         })
     })
     .expect("run tasks");
@@ -543,7 +634,9 @@ run = "printf dev"
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: None,
+            resolve_selector: None,
             output_json: false,
+            pretty_json: true,
         })
     })
     .expect("run tasks");
@@ -577,7 +670,9 @@ reset-db = [{ task = "drop-db" }, { task = "migrate-db" }]
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: Some("reset-db".to_owned()),
+            resolve_selector: None,
             output_json: false,
+            pretty_json: true,
         })
     })
     .expect("run tasks");
@@ -603,7 +698,9 @@ fn run_tasks_with_task_filter_reports_only_matches() {
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: Some("reset-db".to_owned()),
+            resolve_selector: None,
             output_json: false,
+            pretty_json: true,
         })
     })
     .expect("run tasks");
@@ -622,7 +719,9 @@ fn run_tasks_with_test_filter_shows_catalog_fallback_note() {
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: Some("test".to_owned()),
+            resolve_selector: None,
             output_json: false,
+            pretty_json: true,
         })
     })
     .expect("run tasks");
@@ -640,12 +739,14 @@ fn run_tasks_without_catalogs_still_lists_builtin_tasks() {
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: None,
+            resolve_selector: None,
             output_json: false,
+            pretty_json: true,
         })
     })
     .expect("run tasks");
 
-    assert!(out.contains("Built-in Tasks"));
+    assert!(out.contains("Tasks"));
     assert!(out.contains("help"));
     assert!(out.contains("health"));
     assert!(out.contains("repo-pulse"));
@@ -672,7 +773,9 @@ fn run_tasks_json_renders_machine_readable_payload() {
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: None,
+            resolve_selector: None,
             output_json: true,
+            pretty_json: true,
         })
     })
     .expect("run tasks json");
@@ -690,7 +793,9 @@ fn run_tasks_json_filter_includes_builtin_matches_and_notes() {
         run_tasks(TasksArgs {
             repo_override: None,
             task_name: Some("test".to_owned()),
+            resolve_selector: None,
             output_json: true,
+            pretty_json: true,
         })
     })
     .expect("run tasks json filter");
@@ -1588,8 +1693,8 @@ run = "printf dairy-admin"
     )
     .expect("prefixed builtin tasks");
 
-    assert!(out.contains("Task Catalogs"));
-    assert!(out.contains("catalogs: 1"));
+    assert!(out.contains("Catalogs"));
+    assert!(out.contains("count: 1"));
     assert!(out.contains("api"));
     assert!(!out.contains("admin"));
     assert!(!out.contains("root-only"));
@@ -1627,8 +1732,8 @@ run = "printf froyo-validate"
     )
     .expect("relative prefixed builtin tasks");
 
-    assert!(out.contains("Task Catalogs"));
-    assert!(out.contains("catalogs: 1"));
+    assert!(out.contains("Catalogs"));
+    assert!(out.contains("count: 1"));
     assert!(out.contains("validate"));
     assert!(!out.contains("root-only"));
 }
@@ -1657,9 +1762,8 @@ fn run_manifest_task_builtin_catalogs_renders_diagnostics_and_resolution_probe()
     )
     .expect("builtin catalogs");
 
-    assert!(out.contains("Catalog Diagnostics"));
-    assert!(out.contains("Routing Precedence"));
-    assert!(out.contains("Resolution Probe: farmyard/api"));
+    assert!(out.contains("Catalogs"));
+    assert!(out.contains("Resolution: farmyard/api"));
     assert!(out.contains("catalog: farmyard"));
 }
 
@@ -1692,7 +1796,7 @@ fn run_manifest_task_builtin_catalogs_json_renders_probe_payload() {
     .expect("builtin catalogs json");
 
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
-    assert_eq!(parsed["schema"], "effigy.catalogs.v1");
+    assert_eq!(parsed["schema"], "effigy.tasks.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert!(parsed["catalogs"].is_array());
     assert_eq!(parsed["resolve"]["status"], "ok");
@@ -1723,7 +1827,7 @@ fn run_manifest_task_builtin_catalogs_json_reports_resolution_errors() {
     .expect("builtin catalogs json error");
 
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
-    assert_eq!(parsed["schema"], "effigy.catalogs.v1");
+    assert_eq!(parsed["schema"], "effigy.tasks.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert_eq!(parsed["resolve"]["status"], "error");
     assert_eq!(parsed["resolve"]["catalog"], serde_json::Value::Null);
@@ -1854,7 +1958,9 @@ max_parallel = 2
     let err = run_tasks(TasksArgs {
         repo_override: Some(root.clone()),
         task_name: None,
+        resolve_selector: None,
         output_json: false,
+        pretty_json: true,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1879,7 +1985,9 @@ max_parallels = 2
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
+        resolve_selector: None,
         output_json: false,
+        pretty_json: true,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1904,7 +2012,9 @@ jss = "pnpm"
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
+        resolve_selector: None,
         output_json: false,
+        pretty_json: true,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1929,7 +2039,9 @@ cmd = "vitest run"
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
+        resolve_selector: None,
         output_json: false,
+        pretty_json: true,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1955,7 +2067,9 @@ fial_on_non_zero = true
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
+        resolve_selector: None,
         output_json: false,
+        pretty_json: true,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1985,7 +2099,9 @@ tas = "api"
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
+        resolve_selector: None,
         output_json: false,
+        pretty_json: true,
     })
     .expect_err("expected manifest parse failure");
 
@@ -2012,7 +2128,9 @@ run = [
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
+        resolve_selector: None,
         output_json: false,
+        pretty_json: true,
     })
     .expect_err("expected manifest parse failure");
 
@@ -2038,7 +2156,9 @@ aliass = "dup"
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
+        resolve_selector: None,
         output_json: false,
+        pretty_json: true,
     })
     .expect_err("expected manifest parse failure");
 
@@ -2470,6 +2590,11 @@ fn run_manifest_task_builtin_config_prints_reference() {
     assert!(out.contains("Compact tasks entries are shorthand"));
     assert!(out.contains("task = \"../froyo/validate\""));
     assert!(out.contains("Cross-repo task references support aliases"));
+    assert!(out.contains("task = \"test vitest \\\"user service\\\"\""));
+    assert!(out.contains(
+        "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
+    ));
+    assert!(out.contains("shell-like tokenization only"));
 }
 
 #[test]
@@ -2491,7 +2616,11 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
     assert!(out.contains("[test.runners]"));
     assert!(out.contains("[tasks.dev.profiles.default]"));
     assert!(out.contains("task = \"../froyo/validate\""));
-    assert!(out.contains("start = [\"api\", \"validate-stack\"]"));
+    assert!(out.contains("task = \"test vitest \\\"user service\\\"\""));
+    assert!(out.contains(
+        "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
+    ));
+    assert!(out.contains("start = [\"api\", \"validate-stack\", \"tests\"]"));
 }
 
 #[test]
@@ -2536,6 +2665,33 @@ fn run_manifest_task_builtin_config_schema_target_prints_selected_section() {
     assert!(out.contains("(test target)"));
     assert!(out.contains("[test.runners]"));
     assert!(!out.contains("[tasks]"));
+}
+
+#[test]
+fn run_manifest_task_builtin_config_schema_target_tasks_includes_quoted_task_ref_examples() {
+    let root = temp_workspace("builtin-config-schema-target-tasks");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "config".to_owned(),
+            args: vec![
+                "--schema".to_owned(),
+                "--target".to_owned(),
+                "tasks".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect("run config --schema --target tasks");
+
+    assert!(out.contains("(tasks target)"));
+    assert!(out.contains("[tasks]"));
+    assert!(out.contains("task = \"../froyo/validate\""));
+    assert!(out.contains("task = \"test vitest \\\"user service\\\"\""));
+    assert!(out.contains(
+        "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
+    ));
 }
 
 #[test]
@@ -3684,6 +3840,46 @@ run = "printf cream-dev"
 }
 
 #[test]
+fn run_manifest_task_managed_tui_rejects_unterminated_quote_in_compact_profile_task_ref() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-compact-profile-ref-unterminated-quote");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles]
+default = ['test "unterminated']
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect_err("invalid compact profile task ref should fail");
+
+    match err {
+        RunnerError::TaskManagedTaskReferenceInvalid {
+            task,
+            process,
+            reference,
+            detail,
+        } => {
+            assert_eq!(task, "dev");
+            assert_eq!(process, "entry-1");
+            assert_eq!(reference, "test \"unterminated");
+            assert!(detail.contains("unterminated quote"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
 fn run_manifest_task_managed_tui_process_run_array_supports_task_refs() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("managed-process-run-array");
@@ -3725,6 +3921,92 @@ run = "printf farmyard-api"
     assert!(out.contains("farmyard-api"));
     assert!(out.contains("printf done"));
     assert!(out.contains("cd"));
+}
+
+#[test]
+fn run_manifest_task_managed_tui_rejects_unterminated_quote_in_process_task_ref() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-process-task-ref-unterminated-quote");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["tests"]
+
+[tasks.dev.processes.tests]
+task = 'test "unterminated'
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect_err("invalid process task ref should fail");
+
+    match err {
+        RunnerError::TaskManagedTaskReferenceInvalid {
+            task,
+            process,
+            reference,
+            detail,
+        } => {
+            assert_eq!(task, "dev");
+            assert_eq!(process, "tests");
+            assert_eq!(reference, "test \"unterminated");
+            assert!(detail.contains("unterminated quote"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_managed_tui_rejects_trailing_escape_in_process_task_ref() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-process-task-ref-trailing-escape");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["tests"]
+
+[tasks.dev.processes.tests]
+task = "test vitest \\"
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect_err("invalid process task ref should fail");
+
+    match err {
+        RunnerError::TaskManagedTaskReferenceInvalid {
+            task,
+            process,
+            reference,
+            detail,
+        } => {
+            assert_eq!(task, "dev");
+            assert_eq!(process, "tests");
+            assert_eq!(reference, "test vitest \\");
+            assert!(detail.contains("trailing escape"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
 }
 
 #[test]
