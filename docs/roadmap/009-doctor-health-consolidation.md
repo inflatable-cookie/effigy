@@ -143,3 +143,8 @@ Group: Project Health Delegation
 - [x] Explain mode extension (`effigy doctor <task> <args>`) with parity across text and JSON output.
 - [x] Removal of `repo-pulse` and built-in `health` command surfaces.
 - [x] Updated docs, contract tests, and migration guidance.
+
+## 10) Closeout Note (2026-02-28)
+
+- [x] Explain-mode follow-up is complete under `doctor` (`effigy doctor <task> <args>`), including text/JSON parity and reasoning fields.
+- [x] Release-note traceability: `docs/reports/2026-02-28-doctor-explain-mode-release-note.md`.
