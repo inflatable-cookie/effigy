@@ -35,12 +35,15 @@ Options:
 - `effigy doctor --json`
 - `effigy doctor --fix`
 - `effigy doctor --repo <PATH>`
+- `effigy doctor <task> <args>` (explain mode)
 
 Behavior:
 - `doctor` runs grouped checks in deterministic order and prints a summary with pass/warn/error counts.
 - `doctor` emits per-finding: stable check id, severity, evidence, remediation, and fix availability.
 - `doctor --fix` applies only checks explicitly marked safe and reports each attempted fix.
 - `doctor` implicitly checks whether a catalog/root `health` task exists and runs it if present.
+- `doctor <task> <args>` reports task-resolution candidates, selection evidence/mode, ambiguity conditions, and deferral reasoning.
+- `doctor <task> <args> --json` emits `effigy.doctor.explain.v1` for machine-readable explainability.
 - `doctor` exits non-zero when at least one `error` finding exists.
 - `doctor` is the only health-style built-in command; `health` and `repo-pulse` are removed.
 
@@ -104,6 +107,11 @@ Group: Project Health Delegation
 - [x] Update command discovery/help/docs to present only `doctor`.
 - [x] Add migration notes for teams/scripts moving from `repo-pulse`/`health` to `doctor`.
 
+### Phase 9.6 - Explain Mode Extension
+- [x] Add explain mode as `effigy doctor <task> <args>` for task resolution diagnostics.
+- [x] Include candidate catalogs, selection mode/evidence, ambiguity reasoning, and deferral reasoning.
+- [x] Add JSON explain payload schema (`effigy.doctor.explain.v1`) with text/JSON parity.
+
 ## 7) Acceptance Criteria
 
 - [x] `effigy doctor` is available as the canonical health/remediation built-in.
@@ -113,6 +121,7 @@ Group: Project Health Delegation
 - [x] `doctor --fix` applies only safe remediations and reports each action taken/skipped.
 - [x] Exit code semantics are deterministic: non-zero for any `error`, zero for warning/info only.
 - [x] JSON mode emits stable, schema-versioned output compatible with roadmap 008 contract direction.
+- [x] Explain mode is available via `effigy doctor <task> <args>` in text and JSON modes.
 
 ## 8) Risks and Mitigations
 
@@ -131,5 +140,6 @@ Group: Project Health Delegation
 - [x] Slice 1 checks including unsupported/unknown TOML key/value diagnostics.
 - [x] Delegated catalog/root `health` execution integrated into doctor sweep.
 - [x] Safe `--fix` baseline and reporting.
+- [x] Explain mode extension (`effigy doctor <task> <args>`) with parity across text and JSON output.
 - [x] Removal of `repo-pulse` and built-in `health` command surfaces.
 - [x] Updated docs, contract tests, and migration guidance.
