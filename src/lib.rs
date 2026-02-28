@@ -751,6 +751,10 @@ fn render_watch_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
                 "--json".to_owned(),
                 "Render JSON payload for bounded runs (`--once` or `--max-runs`).".to_owned(),
             ],
+            vec![
+                "lock scope".to_owned(),
+                "Effigy owner mode acquires `task:watch:<target>`; clear manually with `effigy unlock task:watch:<target>` when needed.".to_owned(),
+            ],
             vec!["-h, --help".to_owned(), "Print command help".to_owned()],
         ],
     ))?;
