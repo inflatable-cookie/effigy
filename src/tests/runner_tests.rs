@@ -2619,6 +2619,7 @@ fn run_doctor_fix_reports_skipped_when_manifest_invalid() {
             repo_override: None,
             output_json: false,
             fix: true,
+            verbose: false,
         })
     })
     .expect_err("doctor should still fail");
@@ -3471,6 +3472,41 @@ fn run_doctor_text_output_has_blank_line_between_sections() {
 }
 
 #[test]
+fn run_doctor_verbose_text_output_includes_per_finding_entries() {
+    let root = temp_workspace("doctor-verbose-entries");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.alpha]
+run = [{ task = "missing/task" }]
+
+[tasks.beta]
+run = [{ task = "missing/task" }]
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "doctor".to_owned(),
+            args: vec!["--verbose".to_owned()],
+        },
+        root,
+    )
+    .expect_err("doctor should fail for unresolved task references");
+
+    let rendered = match err {
+        RunnerError::DoctorNonZero { rendered, .. } => rendered,
+        other => panic!("unexpected error: {other}"),
+    };
+
+    assert!(rendered.contains("tasks.references.resolve"));
+    assert!(rendered.contains("findings: 2"));
+    assert!(rendered.contains("entry: 1"));
+    assert!(rendered.contains("entry: 2"));
+    assert!(rendered.contains("entry-evidence"));
+    assert!(rendered.contains("entry-remediation"));
+}
+
+#[test]
 fn run_doctor_groups_findings_in_severity_first_order() {
     let root = temp_workspace("doctor-severity-order");
     write_manifest(
@@ -3483,6 +3519,7 @@ fn run_doctor_groups_findings_in_severity_first_order() {
             repo_override: None,
             output_json: false,
             fix: false,
+            verbose: false,
         })
     })
     .expect_err("doctor should fail for unsupported manifest key");
@@ -3503,8 +3540,14 @@ fn run_doctor_groups_findings_in_severity_first_order() {
         .find("workspace.root-resolution")
         .expect("expected info finding");
 
-    assert!(error_idx < warning_idx, "error should be rendered before warning");
-    assert!(warning_idx < info_idx, "warning should be rendered before info");
+    assert!(
+        error_idx < warning_idx,
+        "error should be rendered before warning"
+    );
+    assert!(
+        warning_idx < info_idx,
+        "warning should be rendered before info"
+    );
 }
 
 #[test]
@@ -3524,6 +3567,7 @@ fn run_doctor_groups_same_severity_findings_in_alphabetical_order() {
             repo_override: None,
             output_json: false,
             fix: false,
+            verbose: false,
         })
     })
     .expect_err("doctor should fail for health execution and parse errors");
@@ -3566,6 +3610,7 @@ run = [{ task = "missing/task" }]
             repo_override: None,
             output_json: false,
             fix: true,
+            verbose: false,
         })
     })
     .expect_err("doctor should fail with unresolved task reference");

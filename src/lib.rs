@@ -31,6 +31,7 @@ pub struct DoctorArgs {
     pub repo_override: Option<PathBuf>,
     pub output_json: bool,
     pub fix: bool,
+    pub verbose: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -242,6 +243,7 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut fix = false;
+    let mut verbose = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -253,6 +255,7 @@ where
             }
             "--json" => output_json = true,
             "--fix" => fix = true,
+            "--verbose" => verbose = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Doctor)),
             other => return Err(CliParseError::UnknownArgument(other.to_owned())),
         }
@@ -262,6 +265,7 @@ where
         repo_override,
         output_json,
         fix,
+        verbose,
     }))
 }
 
@@ -380,7 +384,7 @@ fn render_doctor_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.text("")?;
 
     renderer.section("Usage")?;
-    renderer.text("effigy doctor [--repo <PATH>] [--fix] [--json]")?;
+    renderer.text("effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]")?;
     renderer.text("")?;
 
     renderer.section("Options")?;
@@ -394,6 +398,10 @@ fn render_doctor_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             vec![
                 "--fix".to_owned(),
                 "Apply safe automatic remediations when available".to_owned(),
+            ],
+            vec![
+                "--verbose".to_owned(),
+                "Include expanded per-finding detail in text output".to_owned(),
             ],
             vec![
                 "--json".to_owned(),
@@ -411,6 +419,7 @@ fn render_doctor_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy doctor".to_owned(),
             "effigy doctor --repo /path/to/workspace".to_owned(),
             "effigy doctor --fix".to_owned(),
+            "effigy doctor --verbose".to_owned(),
             "effigy --json doctor --repo /path/to/workspace".to_owned(),
         ],
     )?;

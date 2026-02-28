@@ -58,6 +58,22 @@ fn parse_doctor_with_repo_fix_and_json() {
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
             fix: true,
+            verbose: false,
+        })
+    );
+}
+
+#[test]
+fn parse_doctor_with_verbose_flag() {
+    let cmd = parse_command(vec!["doctor".to_owned(), "--verbose".to_owned()])
+        .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Doctor(DoctorArgs {
+            repo_override: None,
+            output_json: false,
+            fix: false,
+            verbose: true,
         })
     );
 }
@@ -177,6 +193,7 @@ fn command_requests_json_checks_task_or_global_mode() {
         repo_override: None,
         output_json: true,
         fix: false,
+        verbose: false,
     });
     assert!(command_requests_json(&cmd_doctor, false));
 }
@@ -194,6 +211,7 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         repo_override: None,
         output_json: false,
         fix: false,
+        verbose: false,
     });
 
     let tasks_applied = apply_global_json_flag(tasks_cmd, true);
@@ -304,8 +322,10 @@ fn render_doctor_help_shows_fix_and_json_options() {
     let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
     assert!(rendered.contains("doctor Help"));
     assert!(rendered.contains("--fix"));
+    assert!(rendered.contains("--verbose"));
     assert!(rendered.contains("--json"));
     assert!(rendered.contains("effigy doctor --fix"));
+    assert!(rendered.contains("effigy doctor --verbose"));
 }
 
 #[test]

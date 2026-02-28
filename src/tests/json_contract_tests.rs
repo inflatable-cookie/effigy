@@ -138,6 +138,7 @@ fn doctor_json_contract_has_versioned_top_level_shape() {
         repo_override: Some(root),
         output_json: true,
         fix: false,
+        verbose: false,
     })
     .expect("run doctor json");
 
@@ -163,6 +164,7 @@ fn doctor_json_contract_with_health_stdout_remains_valid_json() {
         repo_override: Some(root),
         output_json: true,
         fix: false,
+        verbose: false,
     })
     .expect("run doctor json");
 

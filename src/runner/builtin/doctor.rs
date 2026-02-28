@@ -18,11 +18,13 @@ pub(super) fn run_builtin_doctor(
 
     let mut output_json = false;
     let mut fix = false;
+    let mut verbose = false;
     let mut unknown = Vec::<String>::new();
     for arg in &runtime_args.passthrough {
         match arg.as_str() {
             "--json" => output_json = true,
             "--fix" => fix = true,
+            "--verbose" => verbose = true,
             _ => unknown.push(arg.clone()),
         }
     }
@@ -38,5 +40,6 @@ pub(super) fn run_builtin_doctor(
         repo_override: Some(target_root.to_path_buf()),
         output_json,
         fix,
+        verbose,
     })
 }
