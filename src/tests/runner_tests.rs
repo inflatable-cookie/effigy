@@ -3505,6 +3505,63 @@ fn run_doctor_explain_text_reports_resolution_selection() {
 }
 
 #[test]
+fn run_doctor_explain_text_snapshot_prefix_block_is_stable() {
+    let root = temp_workspace("doctor-explain-snapshot-prefix");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.root]\nrun = \"printf root\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.build]\nrun = \"printf farmyard\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "doctor".to_owned(),
+            args: vec!["farmyard/build".to_owned(), "--".to_owned(), "--watch".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("doctor explain run");
+
+    let (prefix_block, _) = out
+        .split_once("\ncandidate-catalogs:\n")
+        .expect("expected candidate-catalogs section");
+    let lines = prefix_block.lines().collect::<Vec<&str>>();
+    assert_eq!(lines.len(), 12);
+    assert_eq!(lines[0], "Doctor Explain");
+    assert_eq!(lines[1], "──────────────");
+    assert_eq!(lines[2], "request: farmyard/build");
+    assert_eq!(lines[3], "args: -- --watch");
+    assert!(
+        lines[4].starts_with("resolved-root: "),
+        "resolved-root line changed: {}",
+        lines[4]
+    );
+    assert!(
+        lines[4].contains("doctor-explain-snapshot-prefix"),
+        "resolved-root should include workspace marker: {}",
+        lines[4]
+    );
+    assert_eq!(lines[5], "selection-status: ok");
+    assert_eq!(lines[6], "selected-catalog: farmyard");
+    assert_eq!(lines[7], "selected-mode: explicit_prefix");
+    assert_eq!(
+        lines[8],
+        "selection-reasoning: selected catalog by explicit task prefix"
+    );
+    assert_eq!(lines[9], "deferral-considered: false");
+    assert_eq!(lines[10], "deferral-selected: false");
+    assert_eq!(
+        lines[11],
+        "deferral-reasoning: deferral was not considered because the selection outcome does not trigger deferral"
+    );
+}
+
+#[test]
 fn run_doctor_explain_text_reports_deferral_reasoning_on_missing_task() {
     let root = temp_workspace("doctor-explain-deferral");
     write_manifest(
