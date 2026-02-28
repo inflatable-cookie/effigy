@@ -42,7 +42,8 @@ Across `MINOR` bumps:
 
 - Human-readable output can evolve for readability.
 - Machine-readable assumptions must not rely on plain CLI text layout.
-- If/when machine integration is required, add explicit structured output mode and version it.
+- Machine integration should use `effigy --json` and validate `effigy.command.v1` envelope fields.
+- Command-specific payload schemas should be consumed from `result` (or `error.details`) and tracked via `docs/contracts/json-schema-index.json`.
 
 ## 5) Release Gating Checklist
 
