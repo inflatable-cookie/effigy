@@ -95,8 +95,8 @@ Error envelope:
 - [x] Ensure `catalogs` alias preserves JSON consistency.
 
 ### Phase 8.4 - Envelope Unification
-- [x] Introduce command envelope while preserving existing command-specific schemas in `result` (`--json` now returns `effigy.command.v1`).
-- [x] Add temporary compatibility policy (`--json-raw` retains legacy command-specific top-level schemas).
+- [x] Introduce command envelope while preserving existing command-specific schemas in `result` (`--json` returns `effigy.command.v1`).
+- [x] Remove legacy JSON mode flags and consolidate on the canonical envelope-only implementation.
 - [x] Publish schema versioning and migration notes.
 
 ### Phase 8.5 - Contracts and CI Validation

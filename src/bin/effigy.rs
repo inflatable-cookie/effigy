@@ -7,26 +7,16 @@ use serde_json::json;
 
 fn main() {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
-    let (args, global_json_mode, global_json_raw_mode) = strip_global_json_flags(raw_args);
+    let (args, global_json_mode) = strip_global_json_flags(raw_args);
     let output_mode = OutputMode::from_env();
     let parsed = match parse_command(args) {
         Ok(cmd) => cmd,
         Err(err) => {
             if global_json_mode {
-                if !global_json_raw_mode {
-                    emit_json_envelope_error(
-                        2,
-                        "cli",
-                        "parse",
-                        "CliParseError",
-                        &err.to_string(),
-                        Some(json!({
-                            "hint": "Run `effigy --help` to see supported command forms"
-                        })),
-                    );
-                }
-                emit_json_cli_error(
+                emit_json_envelope_error(
                     2,
+                    "cli",
+                    "parse",
                     "CliParseError",
                     &err.to_string(),
                     Some(json!({
@@ -51,7 +41,7 @@ fn main() {
     };
     let cmd = apply_global_json_flag(parsed, global_json_mode);
     let suppress_header = command_requests_json(&cmd, global_json_mode);
-    let emit_json_envelope = suppress_header && !global_json_raw_mode;
+    let emit_json_envelope = suppress_header;
     let (command_kind, command_name) = command_kind_and_name(&cmd);
     let command_root = effigy::runner::resolve_command_root(&cmd);
 
@@ -127,7 +117,14 @@ fn main() {
                         }
                     }
                     if suppress_header {
-                        emit_json_runner_error(1, &err);
+                        emit_json_envelope_error(
+                            1,
+                            command_kind,
+                            &command_name,
+                            "RunnerError",
+                            &err.to_string(),
+                            None,
+                        );
                     }
                     let mut err_renderer = PlainRenderer::stderr(output_mode);
                     let _ = err_renderer
@@ -170,7 +167,14 @@ fn main() {
                         }
                     }
                     if suppress_header {
-                        emit_json_runner_error(1, &err);
+                        emit_json_envelope_error(
+                            1,
+                            command_kind,
+                            &command_name,
+                            "RunnerError",
+                            &err.to_string(),
+                            None,
+                        );
                     }
                     let mut err_renderer = PlainRenderer::stderr(output_mode);
                     let _ = err_renderer
@@ -213,7 +217,14 @@ fn main() {
                         }
                     }
                     if suppress_header {
-                        emit_json_runner_error(1, &err);
+                        emit_json_envelope_error(
+                            1,
+                            command_kind,
+                            &command_name,
+                            "RunnerError",
+                            &err.to_string(),
+                            None,
+                        );
                     }
                     let mut err_renderer = PlainRenderer::stderr(output_mode);
                     let _ = err_renderer
@@ -292,51 +303,6 @@ fn emit_json_envelope_error(
             "kind": error_kind,
             "message": message,
             "details": details.unwrap_or(serde_json::Value::Null),
-        }
-    });
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| {
-            "{\"ok\":false,\"error\":{\"kind\":\"JsonEncodeError\"}}".to_owned()
-        })
-    );
-    std::process::exit(exit_code);
-}
-
-fn emit_json_cli_error(
-    exit_code: i32,
-    kind: &str,
-    message: &str,
-    details: Option<serde_json::Value>,
-) -> ! {
-    let payload = json!({
-        "schema": "effigy.command.error.v1",
-        "schema_version": 1,
-        "ok": false,
-        "error": {
-            "kind": kind,
-            "message": message,
-            "details": details.unwrap_or(serde_json::Value::Null),
-        }
-    });
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| {
-            "{\"ok\":false,\"error\":{\"kind\":\"JsonEncodeError\"}}".to_owned()
-        })
-    );
-    std::process::exit(exit_code);
-}
-
-fn emit_json_runner_error(exit_code: i32, err: &effigy::runner::RunnerError) -> ! {
-    let payload = json!({
-        "schema": "effigy.command.error.v1",
-        "schema_version": 1,
-        "ok": false,
-        "error": {
-            "kind": "RunnerError",
-            "message": err.to_string(),
-            "details": serde_json::Value::Null,
         }
     });
     println!(

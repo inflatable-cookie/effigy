@@ -226,35 +226,8 @@ assert_required_keys() {
   local schema="$1"
   local json_payload="$2"
   case "$schema" in
-    effigy.tasks.v1)
-      jq -e 'has("schema") and has("schema_version") and has("catalog_count") and has("catalog_tasks") and has("builtin_tasks") and has("catalogs") and has("precedence") and has("resolve")' <<<"$json_payload" >/dev/null
-      ;;
-    effigy.tasks.filtered.v1)
-      jq -e 'has("schema") and has("schema_version") and has("catalog_count") and has("filter") and has("matches") and has("builtin_matches") and has("notes") and has("catalogs") and has("precedence") and has("resolve")' <<<"$json_payload" >/dev/null
-      ;;
-    effigy.doctor.v1)
-      jq -e 'has("schema") and has("schema_version") and has("ok") and has("summary") and has("findings") and has("fixes") and has("root_resolution")' <<<"$json_payload" >/dev/null
-      ;;
-    effigy.test.plan.v1)
-      jq -e 'has("schema") and has("schema_version") and has("request") and has("root") and has("runtime") and has("targets") and has("recovery")' <<<"$json_payload" >/dev/null
-      ;;
-    effigy.test.results.v1)
-      jq -e 'has("schema") and has("schema_version") and has("targets") and has("failures") and has("hint")' <<<"$json_payload" >/dev/null
-      ;;
-    effigy.task.run.v1)
-      jq -e 'has("schema") and has("schema_version") and has("ok") and has("task") and has("selector") and has("command") and has("cwd") and has("exit_code") and has("stdout") and has("stderr")' <<<"$json_payload" >/dev/null
-      ;;
-    effigy.command.error.v1)
-      jq -e 'has("schema") and has("schema_version") and has("ok") and has("error") and (.error | type == "object") and (.error | has("kind")) and (.error | has("message")) and (.error | has("details"))' <<<"$json_payload" >/dev/null
-      ;;
     effigy.command.v1)
       jq -e 'has("schema") and has("schema_version") and has("ok") and has("command") and (.command | type == "object") and (.command | has("kind")) and (.command | has("name")) and has("result") and has("error")' <<<"$json_payload" >/dev/null
-      ;;
-    effigy.help.v1)
-      jq -e 'has("schema") and has("schema_version") and has("ok") and has("topic") and has("text")' <<<"$json_payload" >/dev/null
-      ;;
-    effigy.config.v1)
-      jq -e 'has("schema") and has("schema_version") and has("ok") and has("mode") and has("minimal") and has("target") and has("runner") and has("text")' <<<"$json_payload" >/dev/null
       ;;
     *)
       echo "[error] unknown schema in checker: $schema" >&2

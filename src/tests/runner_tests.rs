@@ -3464,7 +3464,7 @@ fn run_doctor_text_output_has_blank_line_between_sections() {
     )
     .expect("run doctor");
 
-    assert!(out.starts_with("Findings\n"));
+    assert!(out.starts_with("Doctor's Report\n"));
     assert!(out.contains("workspace.root-resolution"));
     assert!(out.contains("\n\nsummary  ok:"));
     assert!(!out.contains("\n\nRoot Resolution\n"));

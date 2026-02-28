@@ -6,17 +6,19 @@ Related roadmap: 008 - Universal JSON Command Coverage
 
 ## Summary
 
-`--json-envelope` has been removed.
+Legacy JSON mode flags have been removed.
 
 Canonical JSON mode is now:
 - `--json` for command-envelope output (`effigy.command.v1`).
-- `--json-raw` for legacy command-specific top-level schemas.
 
 ## Breaking Change
 
-- Removed global flag: `--json-envelope`.
-- Calling `effigy --json-envelope ...` now fails with:
+- Removed global flags:
+  - `--json-envelope`
+  - `--json-raw`
+- Calling removed flags now fails with:
   - `unknown argument: --json-envelope`
+  - `unknown argument: --json-raw`
   - exit code `2`
 
 ## Migration
@@ -35,14 +37,6 @@ After:
 effigy --json tasks
 effigy --json doctor
 effigy --json build --repo /path/to/workspace
-```
-
-If legacy consumers require the older top-level payload shapes:
-
-```bash
-effigy --json-raw tasks
-effigy --json-raw doctor
-effigy --json-raw build --repo /path/to/workspace
 ```
 
 ## Validation
