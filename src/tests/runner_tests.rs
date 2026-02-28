@@ -2620,6 +2620,7 @@ fn run_doctor_fix_reports_skipped_when_manifest_invalid() {
             output_json: false,
             fix: true,
             verbose: false,
+            explain: None,
         })
     })
     .expect_err("doctor should still fail");
@@ -3472,6 +3473,83 @@ fn run_doctor_text_output_has_blank_line_between_sections() {
 }
 
 #[test]
+fn run_doctor_explain_text_reports_resolution_selection() {
+    let root = temp_workspace("doctor-explain-selection");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.root]\nrun = \"printf root\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.build]\nrun = \"printf farmyard\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "doctor".to_owned(),
+            args: vec!["farmyard/build".to_owned()],
+        },
+        root,
+    )
+    .expect("doctor explain run");
+
+    assert!(out.contains("Doctor Explain"));
+    assert!(out.contains("selection-status: ok"));
+    assert!(out.contains("selected-catalog: farmyard"));
+    assert!(out.contains("selected-mode: explicit_prefix"));
+    assert!(out.contains("candidate-catalogs"));
+    assert!(out.contains("selection-evidence"));
+}
+
+#[test]
+fn run_doctor_explain_text_reports_deferral_reasoning_on_missing_task() {
+    let root = temp_workspace("doctor-explain-deferral");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[defer]\nrun = \"printf deferred\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "doctor".to_owned(),
+            args: vec!["missing-task".to_owned()],
+        },
+        root,
+    )
+    .expect("doctor explain missing");
+
+    assert!(out.contains("Doctor Explain"));
+    assert!(out.contains("selection-status: error"));
+    assert!(out.contains("deferral-considered: true"));
+    assert!(out.contains("deferral-selected: true"));
+    assert!(out.contains("deferral-source"));
+}
+
+#[test]
+fn run_doctor_explain_rejects_fix_mode() {
+    let root = temp_workspace("doctor-explain-fix-invalid");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "doctor".to_owned(),
+            args: vec!["--fix".to_owned(), "build".to_owned()],
+        },
+        root,
+    )
+    .expect_err("doctor explain --fix should fail");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("`--fix` is not supported with explain mode"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
 fn run_doctor_verbose_text_output_includes_per_finding_entries() {
     let root = temp_workspace("doctor-verbose-entries");
     write_manifest(
@@ -3520,6 +3598,7 @@ fn run_doctor_groups_findings_in_severity_first_order() {
             output_json: false,
             fix: false,
             verbose: false,
+            explain: None,
         })
     })
     .expect_err("doctor should fail for unsupported manifest key");
@@ -3568,6 +3647,7 @@ fn run_doctor_groups_same_severity_findings_in_alphabetical_order() {
             output_json: false,
             fix: false,
             verbose: false,
+            explain: None,
         })
     })
     .expect_err("doctor should fail for health execution and parse errors");
@@ -3611,6 +3691,7 @@ run = [{ task = "missing/task" }]
             output_json: false,
             fix: true,
             verbose: false,
+            explain: None,
         })
     })
     .expect_err("doctor should fail with unresolved task reference");

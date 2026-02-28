@@ -139,6 +139,7 @@ fn doctor_json_contract_has_versioned_top_level_shape() {
         output_json: true,
         fix: false,
         verbose: false,
+        explain: None,
     })
     .expect("run doctor json");
 
@@ -165,6 +166,7 @@ fn doctor_json_contract_with_health_stdout_remains_valid_json() {
         output_json: true,
         fix: false,
         verbose: false,
+        explain: None,
     })
     .expect("run doctor json");
 
@@ -173,6 +175,46 @@ fn doctor_json_contract_with_health_stdout_remains_valid_json() {
     assert_eq!(parsed["schema_version"], 1);
     assert_eq!(parsed["ok"], true);
     assert!(parsed["findings"].is_array());
+}
+
+#[test]
+fn doctor_explain_json_contract_has_selection_and_deferral_fields() {
+    let root = temp_workspace("doctor-explain-json-contract");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.root]\nrun = \"printf root\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.build]\nrun = \"printf farmyard\"\n",
+    );
+
+    let out = with_cwd(&root, || {
+        run_doctor(DoctorArgs {
+            repo_override: None,
+            output_json: true,
+            fix: false,
+            verbose: false,
+            explain: Some(TaskInvocation {
+                name: "farmyard/build".to_owned(),
+                args: vec!["--".to_owned(), "--watch".to_owned()],
+            }),
+        })
+    })
+    .expect("run doctor explain json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.doctor.explain.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["request"]["task"], "farmyard/build");
+    assert!(parsed["request"]["args"].is_array());
+    assert_eq!(parsed["selection"]["status"], "ok");
+    assert!(parsed["selection"]["evidence"].is_array());
+    assert!(parsed["candidates"].is_array());
+    assert!(parsed["deferral"]["considered"].is_boolean());
+    assert!(parsed["deferral"]["selected"].is_boolean());
 }
 
 #[test]

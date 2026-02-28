@@ -59,6 +59,7 @@ fn parse_doctor_with_repo_fix_and_json() {
             output_json: true,
             fix: true,
             verbose: false,
+            explain: None,
         })
     );
 }
@@ -74,6 +75,31 @@ fn parse_doctor_with_verbose_flag() {
             output_json: false,
             fix: false,
             verbose: true,
+            explain: None,
+        })
+    );
+}
+
+#[test]
+fn parse_doctor_with_explain_target_and_args() {
+    let cmd = parse_command(vec![
+        "doctor".to_owned(),
+        "farmyard/build".to_owned(),
+        "--".to_owned(),
+        "--watch".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Doctor(DoctorArgs {
+            repo_override: None,
+            output_json: false,
+            fix: false,
+            verbose: false,
+            explain: Some(TaskInvocation {
+                name: "farmyard/build".to_owned(),
+                args: vec!["--".to_owned(), "--watch".to_owned()],
+            }),
         })
     );
 }
@@ -194,6 +220,7 @@ fn command_requests_json_checks_task_or_global_mode() {
         output_json: true,
         fix: false,
         verbose: false,
+        explain: None,
     });
     assert!(command_requests_json(&cmd_doctor, false));
 }
@@ -212,6 +239,7 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         output_json: false,
         fix: false,
         verbose: false,
+        explain: None,
     });
 
     let tasks_applied = apply_global_json_flag(tasks_cmd, true);
@@ -326,6 +354,8 @@ fn render_doctor_help_shows_fix_and_json_options() {
     assert!(rendered.contains("--json"));
     assert!(rendered.contains("effigy doctor --fix"));
     assert!(rendered.contains("effigy doctor --verbose"));
+    assert!(rendered.contains("effigy doctor <task> <args>"));
+    assert!(rendered.contains("effigy doctor farmyard/build -- --watch"));
 }
 
 #[test]

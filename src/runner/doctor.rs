@@ -13,12 +13,15 @@ use crate::ui::{
 };
 use crate::{DoctorArgs, TaskInvocation};
 
-use super::catalog::{default_alias, discover_manifest_paths, select_catalog_and_task};
+use super::catalog::{
+    default_alias, discover_catalogs, discover_manifest_paths, select_catalog_and_task,
+};
+use super::deferral::{select_deferral, should_attempt_deferral};
 use super::execute::run_manifest_task_with_cwd;
-use super::util::parse_task_reference_invocation;
+use super::util::{parse_task_reference_invocation, parse_task_selector};
 use super::{
-    LoadedCatalog, ManifestJsPackageManager, ManifestManagedConcurrentEntry, ManifestManagedRun,
-    ManifestManagedRunStep, RunnerError, TaskManifest,
+    CatalogSelectionMode, LoadedCatalog, ManifestJsPackageManager, ManifestManagedConcurrentEntry,
+    ManifestManagedRun, ManifestManagedRunStep, RunnerError, TaskManifest,
 };
 
 const CHECK_IDS: [&str; 9] = [
@@ -115,6 +118,16 @@ struct DoctorFixAction {
 }
 
 pub(super) fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
+    if let Some(request) = args.explain.clone() {
+        return run_doctor_explain(
+            request,
+            args.repo_override,
+            args.output_json,
+            args.fix,
+            args.verbose,
+        );
+    }
+
     let cwd = std::env::current_dir().map_err(RunnerError::Cwd)?;
     let resolved = resolve_target_root(cwd.clone(), args.repo_override.clone())?;
 
@@ -236,6 +249,200 @@ pub(super) fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
     }
 
     Ok(rendered)
+}
+
+fn run_doctor_explain(
+    request: TaskInvocation,
+    repo_override: Option<PathBuf>,
+    output_json: bool,
+    fix: bool,
+    verbose: bool,
+) -> Result<String, RunnerError> {
+    if fix {
+        return Err(RunnerError::TaskInvocation(
+            "`--fix` is not supported with explain mode (`effigy doctor <task> <args>`)."
+                .to_owned(),
+        ));
+    }
+
+    let cwd = std::env::current_dir().map_err(RunnerError::Cwd)?;
+    let resolved = resolve_target_root(cwd.clone(), repo_override)?;
+    let catalogs = discover_catalogs(&resolved.resolved_root)?;
+    let selector = parse_task_selector(&request.name)?;
+
+    let mut candidates = catalogs
+        .iter()
+        .filter(|catalog| {
+            if selector
+                .prefix
+                .as_ref()
+                .is_some_and(|prefix| prefix != &catalog.alias)
+            {
+                return false;
+            }
+            catalog.manifest.tasks.contains_key(&selector.task_name)
+        })
+        .map(|catalog| {
+            format!(
+                "{} ({}) depth={} in_scope={} has_defer={}",
+                catalog.alias,
+                catalog.manifest_path.display(),
+                catalog.depth,
+                cwd.starts_with(&catalog.catalog_root),
+                catalog.defer_run.is_some()
+            )
+        })
+        .collect::<Vec<String>>();
+    candidates.sort();
+
+    let selection = select_catalog_and_task(&selector, &catalogs, &cwd);
+    let (selection_status, selected_catalog, selected_mode, selected_evidence, selection_error) =
+        match &selection {
+            Ok(value) => (
+                "ok".to_owned(),
+                Some(value.catalog.alias.clone()),
+                Some(format_selection_mode(value.mode.clone())),
+                value.evidence.clone(),
+                None,
+            ),
+            Err(error) => (
+                "error".to_owned(),
+                None,
+                None,
+                Vec::new(),
+                Some(error.to_string()),
+            ),
+        };
+
+    let ambiguity_candidates = match &selection {
+        Err(RunnerError::TaskAmbiguous { candidates, .. }) => candidates.clone(),
+        _ => Vec::new(),
+    };
+
+    let mut deferral_considered = false;
+    let mut deferral_selected = false;
+    let mut deferral_source: Option<String> = None;
+    let mut deferral_working_dir: Option<String> = None;
+    if let Err(error) = &selection {
+        deferral_considered = should_attempt_deferral(error);
+        if deferral_considered {
+            if let Some(deferral) =
+                select_deferral(&selector, &catalogs, &cwd, &resolved.resolved_root)
+            {
+                deferral_selected = true;
+                deferral_source = Some(deferral.source);
+                deferral_working_dir = Some(deferral.working_dir.display().to_string());
+            }
+        }
+    }
+
+    if output_json {
+        let payload = json!({
+            "schema": "effigy.doctor.explain.v1",
+            "schema_version": 1,
+            "request": {
+                "task": request.name,
+                "args": request.args,
+            },
+            "root_resolution": {
+                "resolved_root": resolved.resolved_root.display().to_string(),
+                "evidence": resolved.evidence,
+                "warnings": resolved.warnings,
+            },
+            "selection": {
+                "status": selection_status,
+                "catalog": selected_catalog,
+                "task": selector.task_name,
+                "mode": selected_mode,
+                "evidence": selected_evidence,
+                "error": selection_error,
+            },
+            "candidates": candidates,
+            "ambiguity_candidates": ambiguity_candidates,
+            "deferral": {
+                "considered": deferral_considered,
+                "selected": deferral_selected,
+                "source": deferral_source,
+                "working_dir": deferral_working_dir,
+            },
+        });
+        return serde_json::to_string_pretty(&payload)
+            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+    }
+
+    let color_enabled =
+        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+    let _ = renderer.section("Doctor Explain");
+    let _ = renderer.key_values(&[
+        KeyValue::new("request", request.name),
+        KeyValue::new("args", request.args.join(" ")),
+        KeyValue::new(
+            "resolved-root",
+            resolved.resolved_root.display().to_string(),
+        ),
+        KeyValue::new("selection-status", selection_status),
+        KeyValue::new(
+            "selected-catalog",
+            selected_catalog.unwrap_or_else(|| "<none>".to_owned()),
+        ),
+        KeyValue::new(
+            "selected-mode",
+            selected_mode.unwrap_or_else(|| "<none>".to_owned()),
+        ),
+        KeyValue::new("deferral-considered", deferral_considered.to_string()),
+        KeyValue::new("deferral-selected", deferral_selected.to_string()),
+    ]);
+    if let Some(source) = deferral_source {
+        let _ = renderer.key_values(&[KeyValue::new("deferral-source", source)]);
+    }
+    if let Some(working_dir) = deferral_working_dir {
+        let _ = renderer.key_values(&[KeyValue::new("deferral-working-dir", working_dir)]);
+    }
+    if let Some(error) = selection_error {
+        let _ = renderer.notice(NoticeLevel::Warning, &error);
+    }
+    let _ = renderer.text("");
+    let _ = renderer.bullet_list("candidate-catalogs", &candidates);
+    if !selected_evidence.is_empty() {
+        let _ = renderer.bullet_list("selection-evidence", &selected_evidence);
+    }
+    if !ambiguity_candidates.is_empty() {
+        let _ = renderer.bullet_list("ambiguity-candidates", &ambiguity_candidates);
+    }
+    if verbose {
+        let mut all_catalogs = catalogs
+            .iter()
+            .map(|catalog| {
+                format!(
+                    "{} ({}) depth={} has_defer={}",
+                    catalog.alias,
+                    catalog.manifest_path.display(),
+                    catalog.depth,
+                    catalog.defer_run.is_some()
+                )
+            })
+            .collect::<Vec<String>>();
+        all_catalogs.sort();
+        let _ = renderer.bullet_list("discovered-catalogs", &all_catalogs);
+        if !resolved.evidence.is_empty() {
+            let _ = renderer.bullet_list("root-resolution-evidence", &resolved.evidence);
+        }
+        if !resolved.warnings.is_empty() {
+            let _ = renderer.bullet_list("root-resolution-warnings", &resolved.warnings);
+        }
+    }
+
+    let out = renderer.into_inner();
+    Ok(String::from_utf8_lossy(&out).to_string())
+}
+
+fn format_selection_mode(mode: CatalogSelectionMode) -> String {
+    match mode {
+        CatalogSelectionMode::ExplicitPrefix => "explicit_prefix".to_owned(),
+        CatalogSelectionMode::CwdNearest => "cwd_nearest".to_owned(),
+        CatalogSelectionMode::RootShallowest => "root_shallowest".to_owned(),
+    }
 }
 
 fn add_finding(
