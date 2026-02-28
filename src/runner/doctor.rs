@@ -272,14 +272,47 @@ fn render_text(report: &DoctorReport) -> String {
     if report.findings.is_empty() {
         let _ = renderer.notice(NoticeLevel::Success, "No findings.");
     } else {
+        let mut grouped = Vec::<(String, Vec<&DoctorFinding>)>::new();
         for finding in &report.findings {
-            let _ = renderer.notice(finding.severity.to_notice_level(), &finding.check_id);
-            let _ = renderer.key_values(&[
-                KeyValue::new("evidence", finding.evidence.clone()),
-                KeyValue::new("remediation", finding.remediation.clone()),
-                KeyValue::new("auto-fix", if finding.fixable { "available" } else { "no" }),
-            ]);
-            if finding.check_id == "workspace.root-resolution" {
+            if let Some((_, items)) = grouped
+                .iter_mut()
+                .find(|(check_id, _)| check_id == &finding.check_id)
+            {
+                items.push(finding);
+            } else {
+                grouped.push((finding.check_id.clone(), vec![finding]));
+            }
+        }
+
+        for (check_id, items) in grouped {
+            let max_severity = items
+                .iter()
+                .map(|item| item.severity)
+                .max()
+                .unwrap_or(DoctorSeverity::Info);
+            let _ = renderer.notice(max_severity.to_notice_level(), &check_id);
+
+            let mut evidence_items = Vec::<String>::new();
+            let mut remediation_items = Vec::<String>::new();
+            let mut any_fixable = false;
+            for item in &items {
+                if !evidence_items.contains(&item.evidence) {
+                    evidence_items.push(item.evidence.clone());
+                }
+                if !remediation_items.contains(&item.remediation) {
+                    remediation_items.push(item.remediation.clone());
+                }
+                any_fixable = any_fixable || item.fixable;
+            }
+
+            let _ = renderer.bullet_list("evidence", &evidence_items);
+            let _ = renderer.bullet_list("remediation", &remediation_items);
+            let _ = renderer.key_values(&[KeyValue::new(
+                "auto-fix",
+                if any_fixable { "available" } else { "no" },
+            )]);
+
+            if check_id == "workspace.root-resolution" {
                 if !report.root_evidence.is_empty() {
                     let _ = renderer.bullet_list("root-resolution-trace", &report.root_evidence);
                 }
