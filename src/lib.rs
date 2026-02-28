@@ -32,6 +32,7 @@ pub struct DoctorArgs {
     pub output_json: bool,
     pub fix: bool,
     pub verbose: bool,
+    pub explain: Option<TaskInvocation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,8 +245,13 @@ where
     let mut output_json = false;
     let mut fix = false;
     let mut verbose = false;
+    let mut explain: Option<TaskInvocation> = None;
 
     while let Some(arg) = args.next() {
+        if let Some(request) = explain.as_mut() {
+            request.args.push(arg);
+            continue;
+        }
         match arg.as_str() {
             "--repo" => {
                 let Some(path) = args.next() else {
@@ -257,7 +263,12 @@ where
             "--fix" => fix = true,
             "--verbose" => verbose = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Doctor)),
-            other => return Err(CliParseError::UnknownArgument(other.to_owned())),
+            other => {
+                explain = Some(TaskInvocation {
+                    name: other.to_owned(),
+                    args: Vec::new(),
+                })
+            }
         }
     }
 
@@ -266,6 +277,7 @@ where
         output_json,
         fix,
         verbose,
+        explain,
     }))
 }
 
@@ -381,10 +393,15 @@ fn render_doctor_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         ui::NoticeLevel::Info,
         "Run remediation-first health checks for environment tooling, manifest validity, and task references.",
     )?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "Explain task resolution with `effigy doctor <task> <args>`.",
+    )?;
     renderer.text("")?;
 
     renderer.section("Usage")?;
     renderer.text("effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]")?;
+    renderer.text("effigy doctor <task> <args> [--json]")?;
     renderer.text("")?;
 
     renderer.section("Options")?;
@@ -420,6 +437,7 @@ fn render_doctor_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy doctor --repo /path/to/workspace".to_owned(),
             "effigy doctor --fix".to_owned(),
             "effigy doctor --verbose".to_owned(),
+            "effigy doctor farmyard/build -- --watch".to_owned(),
             "effigy --json doctor --repo /path/to/workspace".to_owned(),
         ],
     )?;
