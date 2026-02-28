@@ -3547,6 +3547,55 @@ fn run_doctor_groups_same_severity_findings_in_alphabetical_order() {
 }
 
 #[test]
+fn run_doctor_text_output_snapshot_mixed_findings_and_fix_actions() {
+    let root = temp_workspace("doctor-text-snapshot-mixed");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        r#"[catalog]
+alias = "farmyard"
+
+[tasks.build]
+run = [{ task = "missing/task" }]
+"#,
+    );
+
+    let err = with_cwd(&root, || {
+        run_doctor(DoctorArgs {
+            repo_override: None,
+            output_json: false,
+            fix: true,
+        })
+    })
+    .expect_err("doctor should fail with unresolved task reference");
+
+    let rendered = match err {
+        RunnerError::DoctorNonZero { rendered, .. } => rendered,
+        other => panic!("unexpected error: {other}"),
+    };
+
+    assert!(rendered.starts_with("Doctor's Report\n"));
+    assert!(rendered.contains("\n\nFix Actions\n"));
+    assert!(rendered.contains("status"));
+    assert!(rendered.contains("manifest.health_task_scaffold"));
+    assert!(rendered.contains("applied"));
+    assert!(rendered.contains("\n\nsummary  ok:"));
+
+    let error_idx = rendered
+        .find("tasks.references.resolve")
+        .expect("expected error check");
+    let discovery_idx = rendered
+        .find("health.task.discovery")
+        .expect("expected health discovery check");
+    let info_idx = rendered
+        .find("workspace.root-resolution")
+        .expect("expected info check");
+    assert!(error_idx < discovery_idx);
+    assert!(discovery_idx < info_idx);
+}
+
+#[test]
 fn run_manifest_task_defers_when_unprefixed_task_missing() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("defer-missing");
