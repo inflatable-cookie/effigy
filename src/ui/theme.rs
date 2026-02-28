@@ -22,6 +22,8 @@ pub struct Theme {
     pub accent: Style,
     pub accent_soft: Style,
     pub muted: Style,
+    pub task_name: Style,
+    pub task_signature: Style,
     pub inline_code: Style,
     pub success: Style,
     pub warning: Style,
@@ -39,6 +41,12 @@ impl Default for Theme {
                 .bold(),
             accent_soft: Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(218)))),
             muted: Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(244)))),
+            task_name: Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::White)))
+                .bold(),
+            task_signature: Style::new()
+                .fg_color(Some(Color::Ansi256(Ansi256Color(117))))
+                .dimmed(),
             inline_code: Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(117)))),
             success: Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(42)))),
             warning: Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(214)))),
