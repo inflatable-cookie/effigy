@@ -174,6 +174,26 @@ pub(super) fn try_run_builtin_test(
             KeyValue::new("runtime", runtime_mode.to_owned()),
         ])?;
         renderer.text("")?;
+        renderer.section("Target Summary")?;
+        let summary_lines = targets
+            .iter()
+            .map(|target| {
+                let available_suites = target
+                    .plans
+                    .iter()
+                    .map(|plan| plan.suite.as_str())
+                    .collect::<BTreeSet<&str>>()
+                    .into_iter()
+                    .collect::<Vec<&str>>()
+                    .join(", ");
+                format!(
+                    "{}: source={} suites={}",
+                    target.name, target.suite_source, available_suites
+                )
+            })
+            .collect::<Vec<String>>();
+        renderer.bullet_list("targets", &summary_lines)?;
+        renderer.text("")?;
         for target in &targets {
             let available_suites = target
                 .plans

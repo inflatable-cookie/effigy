@@ -680,6 +680,9 @@ alias = "dairy"
     )
     .expect("run mixed-source test --plan");
 
+    assert!(out.contains("Target Summary"));
+    assert!(out.contains("farmyard: source=configured suites=unit"));
+    assert!(out.contains("dairy: source=auto-detected suites=vitest"));
     assert!(out.contains("Target: farmyard"));
     assert!(out.contains("available-suites: unit"));
     assert!(out.contains("suite-source: configured"));
@@ -1652,7 +1655,7 @@ max_parallel = 2
     let err = run_tasks(TasksArgs {
         repo_override: Some(root.clone()),
         task_name: None,
-            output_json: false,
+        output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1677,7 +1680,7 @@ max_parallels = 2
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
-            output_json: false,
+        output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1702,7 +1705,7 @@ jss = "pnpm"
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
-            output_json: false,
+        output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1727,7 +1730,7 @@ cmd = "vitest run"
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
-            output_json: false,
+        output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1753,7 +1756,7 @@ fial_on_non_zero = true
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
-            output_json: false,
+        output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1783,7 +1786,7 @@ tas = "api"
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
-            output_json: false,
+        output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1810,7 +1813,7 @@ run = [
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
-            output_json: false,
+        output_json: false,
     })
     .expect_err("expected manifest parse failure");
 
@@ -1836,7 +1839,7 @@ aliass = "dup"
     let err = run_tasks(TasksArgs {
         repo_override: Some(root),
         task_name: None,
-            output_json: false,
+        output_json: false,
     })
     .expect_err("expected manifest parse failure");
 

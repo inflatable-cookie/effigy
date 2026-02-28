@@ -390,6 +390,8 @@ pub fn run_pulse(args: PulseArgs) -> Result<String, RunnerError> {
     let evaluated = task.evaluate(collected)?;
     if output_json {
         let payload = json!({
+            "schema": "effigy.repo-pulse.v1",
+            "schema_version": 1,
             "report": {
                 "repo": evaluated.repo,
                 "owner": evaluated.owner,
@@ -458,6 +460,8 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                 })
                 .collect::<Vec<serde_json::Value>>();
             let payload = json!({
+                "schema": "effigy.tasks.filtered.v1",
+                "schema_version": 1,
                 "catalog_count": catalogs.len(),
                 "filter": filter,
                 "matches": matches,
@@ -507,6 +511,8 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
             })
             .collect::<Vec<serde_json::Value>>();
         let payload = json!({
+            "schema": "effigy.tasks.v1",
+            "schema_version": 1,
             "catalog_count": catalogs.len(),
             "catalog_tasks": catalog_rows,
             "builtin_tasks": builtin_rows,
@@ -657,3 +663,7 @@ mod tests;
 #[cfg(test)]
 #[path = "../tests/catalogs_contract_tests.rs"]
 mod catalogs_contract_tests;
+
+#[cfg(test)]
+#[path = "../tests/json_contract_tests.rs"]
+mod json_contract_tests;

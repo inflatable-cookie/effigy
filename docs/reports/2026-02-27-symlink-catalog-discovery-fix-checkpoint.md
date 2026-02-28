@@ -28,6 +28,10 @@ Catalog discovery only descended into entries where `file_type.is_dir()` was tru
   - cwd: `/Users/betterthanclay/Dev/projects/effigy`
   - result: pass (new regression test).
 
+- command: `cargo test discover_catalogs_ -- --nocapture`
+  - cwd: `/Users/betterthanclay/Dev/projects/effigy`
+  - result: pass; combined symlink discovery tests executed (`discover_catalogs_includes_symlinked_catalog_directories`, `discover_catalogs_reports_alias_conflict_for_symlinked_catalog`).
+
 - command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- tasks --repo /Users/betterthanclay/Dev/projects/acowtancy --task underlay/check:types`
   - result (after fix): pass; `underlay/check:types` discovered from `/Users/betterthanclay/Dev/projects/acowtancy/underlay/effigy.toml`.
 

@@ -176,8 +176,8 @@ fn parse_tasks_with_filters() {
 
 #[test]
 fn parse_tasks_supports_json_flag() {
-    let cmd = parse_command(vec!["tasks".to_owned(), "--json".to_owned()])
-        .expect("parse should succeed");
+    let cmd =
+        parse_command(vec!["tasks".to_owned(), "--json".to_owned()]).expect("parse should succeed");
     assert_eq!(
         cmd,
         Command::Tasks(TasksArgs {
