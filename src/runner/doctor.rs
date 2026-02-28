@@ -56,6 +56,14 @@ impl DoctorSeverity {
             Self::Error => NoticeLevel::Error,
         }
     }
+
+    fn rank(self) -> u8 {
+        match self {
+            Self::Error => 3,
+            Self::Warning => 2,
+            Self::Info => 1,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -283,6 +291,22 @@ fn render_text(report: &DoctorReport) -> String {
                 grouped.push((finding.check_id.clone(), vec![finding]));
             }
         }
+        grouped.sort_by(|(left_id, left_items), (right_id, right_items)| {
+            let left_severity = left_items
+                .iter()
+                .map(|item| item.severity)
+                .max()
+                .unwrap_or(DoctorSeverity::Info);
+            let right_severity = right_items
+                .iter()
+                .map(|item| item.severity)
+                .max()
+                .unwrap_or(DoctorSeverity::Info);
+            right_severity
+                .rank()
+                .cmp(&left_severity.rank())
+                .then_with(|| left_id.cmp(right_id))
+        });
 
         for (check_id, items) in grouped {
             let max_severity = items

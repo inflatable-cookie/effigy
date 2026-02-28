@@ -3471,6 +3471,43 @@ fn run_doctor_text_output_has_blank_line_between_sections() {
 }
 
 #[test]
+fn run_doctor_groups_findings_in_severity_first_order() {
+    let root = temp_workspace("doctor-severity-order");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\nunknown_key = true\n",
+    );
+
+    let err = with_cwd(&root, || {
+        run_doctor(DoctorArgs {
+            repo_override: None,
+            output_json: false,
+            fix: false,
+        })
+    })
+    .expect_err("doctor should fail for unsupported manifest key");
+
+    let rendered = match err {
+        RunnerError::DoctorNonZero { rendered, .. } => rendered,
+        other => panic!("unexpected error: {other}"),
+    };
+
+    let error_idx = rendered
+        .find("manifest.parse")
+        .or_else(|| rendered.find("manifest.schema.unsupported_key"))
+        .expect("expected error finding");
+    let warning_idx = rendered
+        .find("health.task.discovery")
+        .expect("expected warning finding");
+    let info_idx = rendered
+        .find("workspace.root-resolution")
+        .expect("expected info finding");
+
+    assert!(error_idx < warning_idx, "error should be rendered before warning");
+    assert!(warning_idx < info_idx, "warning should be rendered before info");
+}
+
+#[test]
 fn run_manifest_task_defers_when_unprefixed_task_missing() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("defer-missing");
