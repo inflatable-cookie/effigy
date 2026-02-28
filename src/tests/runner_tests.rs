@@ -732,33 +732,6 @@ fn run_manifest_task_builtin_watch_once_executes_target_task() {
 }
 
 #[test]
-fn run_manifest_task_builtin_watch_bounded_json_reports_watch_schema() {
-    let root = temp_workspace("builtin-watch-json-bounded");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.build]\nrun = \"printf ok\"\n",
-    );
-
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "watch".to_owned(),
-            args: vec![
-                "--owner".to_owned(),
-                "effigy".to_owned(),
-                "--once".to_owned(),
-                "--json".to_owned(),
-                "build".to_owned(),
-            ],
-        },
-        root,
-    )
-    .expect("watch --once --json should succeed");
-
-    assert!(out.contains("\"schema\": \"effigy.watch.v1\""));
-    assert!(out.contains("\"runs\": 1"));
-}
-
-#[test]
 fn run_manifest_task_builtin_watch_rejects_concurrent_watch_owner_for_same_target() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("builtin-watch-lock-conflict");

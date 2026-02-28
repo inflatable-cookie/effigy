@@ -93,6 +93,8 @@ fn tasks_json_contract_with_resolve_has_diagnostics_and_probe_fields() {
     assert_eq!(parsed["resolve"]["status"], "ok");
     assert_eq!(parsed["resolve"]["catalog"], "farmyard");
     assert_eq!(parsed["resolve"]["task"], "api");
+    assert_eq!(parsed["resolve"]["lock_scopes"][0], "workspace");
+    assert_eq!(parsed["resolve"]["lock_scopes"][1], "task:api");
 }
 
 #[test]
@@ -124,6 +126,8 @@ fn tasks_filtered_json_contract_with_resolve_has_diagnostics_and_probe_fields() 
     assert_eq!(parsed["resolve"]["status"], "ok");
     assert_eq!(parsed["resolve"]["catalog"], "farmyard");
     assert_eq!(parsed["resolve"]["task"], "build");
+    assert_eq!(parsed["resolve"]["lock_scopes"][0], "workspace");
+    assert_eq!(parsed["resolve"]["lock_scopes"][1], "task:build");
 }
 
 #[test]
@@ -491,6 +495,36 @@ fn builtin_unlock_json_contract_has_versioned_shape() {
     assert_eq!(parsed["all"], false);
     assert!(parsed["removed"].is_array());
     assert!(parsed["missing"].is_array());
+}
+
+#[test]
+fn builtin_watch_bounded_json_contract_has_versioned_shape() {
+    let root = temp_workspace("watch-json-contract");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf ok\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "watch".to_owned(),
+            args: vec![
+                "--owner".to_owned(),
+                "effigy".to_owned(),
+                "--once".to_owned(),
+                "--json".to_owned(),
+                "build".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect("run watch --once --json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.watch.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["runs"], 1);
 }
 
 #[test]
