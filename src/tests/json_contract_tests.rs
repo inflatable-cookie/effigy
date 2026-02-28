@@ -220,6 +220,63 @@ fn doctor_explain_json_contract_has_selection_and_deferral_fields() {
 }
 
 #[test]
+fn doctor_explain_json_snapshot_prefix_is_stable() {
+    let root = temp_workspace("doctor-explain-json-snapshot");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.root]\nrun = \"printf root\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.build]\nrun = \"printf farmyard\"\n",
+    );
+
+    let out = with_cwd(&root, || {
+        run_doctor(DoctorArgs {
+            repo_override: None,
+            output_json: true,
+            fix: false,
+            verbose: false,
+            explain: Some(TaskInvocation {
+                name: "farmyard/build".to_owned(),
+                args: vec!["--".to_owned(), "--watch".to_owned()],
+            }),
+        })
+    })
+    .expect("run doctor explain json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    let keys = parsed
+        .as_object()
+        .expect("object")
+        .keys()
+        .cloned()
+        .collect::<Vec<String>>();
+    assert_eq!(
+        keys,
+        vec![
+            "ambiguity_candidates".to_owned(),
+            "candidates".to_owned(),
+            "deferral".to_owned(),
+            "reasoning".to_owned(),
+            "request".to_owned(),
+            "root_resolution".to_owned(),
+            "schema".to_owned(),
+            "schema_version".to_owned(),
+            "selection".to_owned(),
+        ]
+    );
+    assert_eq!(parsed["schema"], "effigy.doctor.explain.v1");
+    assert_eq!(parsed["request"]["task"], "farmyard/build");
+    assert_eq!(
+        parsed["reasoning"]["selection"],
+        "selected catalog by explicit task prefix"
+    );
+}
+
+#[test]
 fn builtin_test_plan_json_contract_has_versioned_shape_and_suite_source_fields() {
     let root = temp_workspace("test-plan-json-contract");
     fs::write(
