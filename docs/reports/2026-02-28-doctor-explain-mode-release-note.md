@@ -49,6 +49,8 @@ effigy --json doctor farmyard/build -- --watch
   - result: pass
 - `cargo test run_doctor_explain_text_snapshot_prefix_block_is_stable -- --nocapture`
   - result: pass
+- `cargo test --lib`
+  - result: pass (`236 passed, 0 failed`)
 
 ## Compatibility
 
