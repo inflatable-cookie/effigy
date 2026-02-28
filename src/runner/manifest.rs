@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
+use indexmap::IndexMap;
 use serde::de::{self, SeqAccess, Visitor};
 
 #[derive(Debug, serde::Deserialize)]
@@ -197,7 +198,7 @@ pub(super) struct ManifestTask {
     #[serde(default)]
     pub(super) processes: BTreeMap<String, ManifestManagedProcess>,
     #[serde(default)]
-    pub(super) profiles: BTreeMap<String, ManifestManagedProfile>,
+    pub(super) profiles: IndexMap<String, ManifestManagedProfile>,
 }
 
 #[derive(Debug)]
