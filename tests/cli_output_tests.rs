@@ -321,6 +321,101 @@ fn cli_json_mode_lock_conflict_wraps_runner_failure() {
 }
 
 #[test]
+fn cli_json_mode_watch_lock_conflict_has_unlock_remediation_hint() {
+    let root = temp_workspace("cli-json-watch-lock-conflict");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"sleep 2\"\n",
+    )
+    .expect("write manifest");
+
+    let root_for_thread = root.clone();
+    let join = std::thread::spawn(move || {
+        Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .arg("watch")
+            .arg("--owner")
+            .arg("effigy")
+            .arg("--once")
+            .arg("build")
+            .arg("--repo")
+            .arg(&root_for_thread)
+            .env("NO_COLOR", "1")
+            .output()
+            .expect("run holding watch command")
+    });
+
+    let watch_lock = root.join(".effigy/locks/task-watch-build.lock");
+    let start = std::time::Instant::now();
+    while !watch_lock.exists() {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(2),
+            "watch lock was not created in time"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("watch")
+        .arg("--owner")
+        .arg("effigy")
+        .arg("--once")
+        .arg("build")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run conflicting watch command");
+
+    let _ = join.join();
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["command"]["kind"], "task");
+    assert_eq!(parsed["command"]["name"], "watch");
+    assert_eq!(parsed["error"]["kind"], "RunnerError");
+    assert!(parsed["error"]["message"]
+        .as_str()
+        .is_some_and(|msg| msg.contains("task:watch:build")));
+    assert!(parsed["error"]["message"]
+        .as_str()
+        .is_some_and(|msg| msg.contains("effigy unlock task:watch:build")));
+}
+
+#[test]
+fn cli_json_mode_unlock_watch_lock_reports_unlock_payload() {
+    let root = temp_workspace("cli-json-unlock-watch-lock");
+    fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
+    fs::write(root.join(".effigy/locks/task-watch-build.lock"), "{}").expect("write watch lock");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("unlock")
+        .arg("task:watch:build")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run unlock");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["command"]["kind"], "task");
+    assert_eq!(parsed["command"]["name"], "unlock");
+    assert_eq!(parsed["result"]["schema"], "effigy.unlock.v1");
+    assert_eq!(parsed["result"]["all"], false);
+    assert!(parsed["result"]["removed"]
+        .as_array()
+        .is_some_and(|entries| entries.iter().any(|entry| entry == "task:watch:build")));
+}
+
+#[test]
 fn cli_json_mode_missing_task_wraps_runner_failure() {
     let root = temp_workspace("cli-json-missing-task");
     fs::write(
@@ -621,6 +716,10 @@ Built-in Tasks
 - doctor : Built-in remedial health checks for environment, manifests, and task references
 - test : Built-in test runner detection, supports <catalog>/test fallback, optional --plan
 - tasks : List discovered catalogs and available tasks
+- watch : Watch mode phase-1 runtime with owner policy, debounce, and include/exclude globs
+- init : Initialize baseline effigy.toml scaffold with dry-run/force controls
+- migrate : Migrate package scripts into [tasks] with preview/apply flow
+- unlock : Manually clear lock scopes (`workspace`, `task:*`, `profile:*/*`)
 
 ";
     assert_eq!(tail, expected);
@@ -762,6 +861,10 @@ Built-in Tasks
 - doctor : Built-in remedial health checks for environment, manifests, and task references
 - test : Built-in test runner detection, supports <catalog>/test fallback, optional --plan
 - tasks : List discovered catalogs and available tasks
+- watch : Watch mode phase-1 runtime with owner policy, debounce, and include/exclude globs
+- init : Initialize baseline effigy.toml scaffold with dry-run/force controls
+- migrate : Migrate package scripts into [tasks] with preview/apply flow
+- unlock : Manually clear lock scopes (`workspace`, `task:*`, `profile:*/*`)
 
 ";
     assert_eq!(tail, expected);
@@ -836,6 +939,7 @@ Resolution: cattle-grid/build
 status: ok
 catalog: cattle-grid
 task: build
+lock_scopes: workspace, task:build
 evidence:
 - selected catalog via explicit prefix `cattle-grid`
 
@@ -880,6 +984,7 @@ Resolution: dev front
 status: ok
 catalog: root
 task: dev
+lock_scopes: workspace, task:dev, profile:dev/front
 evidence:
 - selected shallowest catalog `root` by depth 0 from workspace root
 - managed profile `front` resolved via invocation `dev front`
@@ -926,6 +1031,7 @@ Resolution: dev missing-profile
 status: error
 catalog: <none>
 task: dev
+lock_scopes: workspace, task:dev, profile:dev/missing-profile
 • warn: managed profile `missing-profile` not found for task `dev`; available: default, front
 
 ";
@@ -1150,7 +1256,7 @@ fn cli_doctor_help_is_command_specific() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("doctor Help"));
-    assert!(stdout.contains("effigy doctor [--repo <PATH>] [--fix] [--json]"));
+    assert!(stdout.contains("effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]"));
     assert!(!stdout.contains("tasks Help"));
 }
 
