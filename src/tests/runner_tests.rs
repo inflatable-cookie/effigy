@@ -823,10 +823,10 @@ fn run_tasks_lists_managed_profiles_for_tui_tasks() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
+concurrent = [{ run = "printf api" }]
 
-[tasks.dev.profiles]
-default = ["api"]
-admin = ["api"]
+[tasks.dev.profiles.admin]
+concurrent = [{ run = "printf api" }]
 "#,
     );
 
@@ -854,10 +854,10 @@ fn run_tasks_filter_lists_managed_profiles_for_matching_task() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
+concurrent = [{ run = "printf api" }]
 
-[tasks.dev.profiles]
-default = ["api"]
-front = ["api"]
+[tasks.dev.profiles.front]
+concurrent = [{ run = "printf api" }]
 "#,
     );
 
@@ -884,10 +884,10 @@ fn run_tasks_json_lists_managed_profiles_with_invocation_labels() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
+concurrent = [{ run = "printf api" }]
 
-[tasks.dev.profiles]
-default = ["api"]
-admin = ["api"]
+[tasks.dev.profiles.admin]
+concurrent = [{ run = "printf api" }]
 "#,
     );
 
@@ -920,10 +920,10 @@ fn run_tasks_json_filter_lists_managed_profiles_with_invocation_labels() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
+concurrent = [{ run = "printf api" }]
 
-[tasks.dev.profiles]
-default = ["api"]
-front = ["api"]
+[tasks.dev.profiles.front]
+concurrent = [{ run = "printf api" }]
 "#,
     );
 
@@ -1908,6 +1908,36 @@ fn run_manifest_task_builtin_catalogs_renders_diagnostics_and_resolution_probe()
 }
 
 #[test]
+fn run_manifest_task_builtin_catalogs_resolve_supports_managed_profile_invocation() {
+    let root = temp_workspace("builtin-catalogs-resolve-managed-profile");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [{ run = "printf default-ok" }]
+
+[tasks.dev.profiles.front]
+concurrent = [{ run = "printf front-ok" }]
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "catalogs".to_owned(),
+            args: vec!["--resolve".to_owned(), "dev front".to_owned()],
+        },
+        root,
+    )
+    .expect("builtin catalogs managed profile resolve");
+
+    assert!(out.contains("Resolution: dev front"));
+    assert!(out.contains("status: ok"));
+    assert!(out.contains("catalog: root"));
+    assert!(out.contains("task: dev"));
+    assert!(out.contains("managed profile `front` resolved via invocation `dev front`"));
+}
+
+#[test]
 fn run_manifest_task_builtin_catalogs_json_renders_probe_payload() {
     let root = temp_workspace("builtin-catalogs-json");
     let farmyard = root.join("farmyard");
@@ -1943,6 +1973,49 @@ fn run_manifest_task_builtin_catalogs_json_renders_probe_payload() {
     assert_eq!(parsed["resolve"]["catalog"], "farmyard");
     assert_eq!(parsed["resolve"]["task"], "api");
     assert!(parsed["precedence"].is_array());
+}
+
+#[test]
+fn run_manifest_task_builtin_catalogs_json_resolve_supports_managed_profile_invocation() {
+    let root = temp_workspace("builtin-catalogs-json-resolve-managed-profile");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [{ run = "printf default-ok" }]
+
+[tasks.dev.profiles.front]
+concurrent = [{ run = "printf front-ok" }]
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "catalogs".to_owned(),
+            args: vec![
+                "--json".to_owned(),
+                "--resolve".to_owned(),
+                "dev front".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect("builtin catalogs json managed profile resolve");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
+    assert_eq!(parsed["resolve"]["selector"], "dev front");
+    assert_eq!(parsed["resolve"]["status"], "ok");
+    assert_eq!(parsed["resolve"]["catalog"], "root");
+    assert_eq!(parsed["resolve"]["task"], "dev");
+    let evidence = parsed["resolve"]["evidence"]
+        .as_array()
+        .expect("resolve evidence array")
+        .iter()
+        .filter_map(|line| line.as_str())
+        .collect::<Vec<&str>>();
+    assert!(evidence
+        .iter()
+        .any(|line| line.contains("managed profile `front` resolved via invocation `dev front`")));
 }
 
 #[test]
@@ -2229,10 +2302,8 @@ fn run_tasks_rejects_unknown_process_field() {
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
-mode = "managed"
-[tasks.dev.processes.api]
-run = "printf api"
-tas = "api"
+mode = "tui"
+concurrent = [{ run = "printf api", tas = "api" }]
 "#,
     );
 
@@ -2248,6 +2319,67 @@ tas = "api"
     match err {
         RunnerError::TaskManifestParse { error, .. } => {
             assert!(error.to_string().contains("unknown field `tas`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_tasks_rejects_legacy_managed_processes_block() {
+    let root = temp_workspace("reject-legacy-managed-processes-block");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.processes.api]
+run = "printf api"
+"#,
+    );
+
+    let err = run_tasks(TasksArgs {
+        repo_override: Some(root),
+        task_name: None,
+        resolve_selector: None,
+        output_json: false,
+        pretty_json: true,
+    })
+    .expect_err("expected manifest parse failure");
+
+    match err {
+        RunnerError::TaskManifestParse { error, .. } => {
+            assert!(error.to_string().contains("unknown field `processes`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_tasks_rejects_legacy_managed_profile_list_entry() {
+    let root = temp_workspace("reject-legacy-managed-profile-list-entry");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles]
+default = ["farmyard/api"]
+"#,
+    );
+
+    let err = run_tasks(TasksArgs {
+        repo_override: Some(root),
+        task_name: None,
+        resolve_selector: None,
+        output_json: false,
+        pretty_json: true,
+    })
+    .expect_err("expected manifest parse failure");
+
+    match err {
+        RunnerError::TaskManifestParse { error, .. } => {
+            let rendered = error.to_string();
+            assert!(rendered.contains("invalid type"));
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -2727,14 +2859,10 @@ fn run_manifest_task_builtin_config_prints_reference() {
     assert!(out.contains("effigy.toml Reference"));
     assert!(out.contains("[test.runners]"));
     assert!(out.contains("[tasks]"));
-    assert!(out.contains("Compact tasks entries are shorthand"));
-    assert!(out.contains("task = \"../froyo/validate\""));
-    assert!(out.contains("Cross-repo task references support aliases"));
     assert!(out.contains("task = \"test vitest \\\"user service\\\"\""));
     assert!(out.contains(
         "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
     ));
-    assert!(out.contains("shell-like tokenization only"));
 }
 
 #[test]
@@ -2814,13 +2942,12 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
     assert!(out.contains("Canonical strict-valid effigy.toml schema template"));
     assert!(out.contains("[package_manager]"));
     assert!(out.contains("[test.runners]"));
-    assert!(out.contains("[tasks.dev.profiles.default]"));
-    assert!(out.contains("task = \"../froyo/validate\""));
+    assert!(out.contains("concurrent = ["));
     assert!(out.contains("task = \"test vitest \\\"user service\\\"\""));
     assert!(out.contains(
         "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
     ));
-    assert!(out.contains("start = [\"api\", \"validate-stack\", \"tests\"]"));
+    assert!(out.contains("{ task = \"catalog-a/api\", start = 1, tab = 3 }"));
 }
 
 #[test]
@@ -2841,7 +2968,7 @@ fn run_manifest_task_builtin_config_schema_minimal_prints_starter_template() {
     assert!(out.contains("[package_manager]"));
     assert!(out.contains("[test.runners]"));
     assert!(out.contains("[tasks]"));
-    assert!(!out.contains("[tasks.dev.profiles.default]"));
+    assert!(!out.contains("concurrent = ["));
 }
 
 #[test]
@@ -2887,7 +3014,6 @@ fn run_manifest_task_builtin_config_schema_target_tasks_includes_quoted_task_ref
 
     assert!(out.contains("(tasks target)"));
     assert!(out.contains("[tasks]"));
-    assert!(out.contains("task = \"../froyo/validate\""));
     assert!(out.contains("task = \"test vitest \\\"user service\\\"\""));
     assert!(out.contains(
         "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
@@ -3481,6 +3607,162 @@ fn run_manifest_task_implicitly_defers_to_root_when_no_configured_deferral() {
 }
 
 #[test]
+fn run_manifest_task_does_not_implicitly_defer_without_effigy_json_marker() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("implicit-root-defer-missing-effigy-json");
+    fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    let composer_stub = bin_dir.join("composer");
+    let marker = root.join("composer-called.log");
+    fs::write(
+        &composer_stub,
+        "#!/bin/sh\nprintf called > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit 0\n",
+    )
+    .expect("write composer stub");
+    let mut perms = fs::metadata(&composer_stub)
+        .expect("metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&composer_stub, perms).expect("chmod");
+
+    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
+    let path = format!("{}:{}", bin_dir.display(), prior_path);
+    let _env = EnvGuard::set_many(&[
+        ("PATH", Some(path)),
+        ("SHELL", Some("/bin/sh".to_owned())),
+        (
+            "EFFIGY_TEST_COMPOSER_ARGS_FILE",
+            Some(marker.display().to_string()),
+        ),
+    ]);
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "version".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("implicit deferral should not run without effigy.json marker");
+
+    match err {
+        RunnerError::TaskNotFoundAny { .. } => {}
+        other => panic!("unexpected error: {other}"),
+    }
+    assert!(
+        !marker.exists(),
+        "composer fallback should not be invoked when effigy.json is missing"
+    );
+}
+
+#[test]
+fn run_manifest_task_does_not_implicitly_defer_without_composer_json_marker() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("implicit-root-defer-missing-composer-json");
+    fs::write(root.join("effigy.json"), "{}\n").expect("write effigy marker");
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    let composer_stub = bin_dir.join("composer");
+    let marker = root.join("composer-called.log");
+    fs::write(
+        &composer_stub,
+        "#!/bin/sh\nprintf called > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit 0\n",
+    )
+    .expect("write composer stub");
+    let mut perms = fs::metadata(&composer_stub)
+        .expect("metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&composer_stub, perms).expect("chmod");
+
+    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
+    let path = format!("{}:{}", bin_dir.display(), prior_path);
+    let _env = EnvGuard::set_many(&[
+        ("PATH", Some(path)),
+        ("SHELL", Some("/bin/sh".to_owned())),
+        (
+            "EFFIGY_TEST_COMPOSER_ARGS_FILE",
+            Some(marker.display().to_string()),
+        ),
+    ]);
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "version".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("implicit deferral should not run without composer.json marker");
+
+    match err {
+        RunnerError::TaskNotFoundAny { .. } => {}
+        other => panic!("unexpected error: {other}"),
+    }
+    assert!(
+        !marker.exists(),
+        "composer fallback should not be invoked when composer.json is missing"
+    );
+}
+
+#[test]
+fn run_manifest_task_does_not_implicitly_defer_when_markers_exist_only_in_nested_directory() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("implicit-root-defer-nested-markers-only");
+    let nested = root.join("nested");
+    fs::create_dir_all(&nested).expect("mkdir nested");
+    fs::write(nested.join("effigy.json"), "{}\n").expect("write nested effigy marker");
+    fs::write(nested.join("composer.json"), "{}\n").expect("write nested composer marker");
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    let composer_stub = bin_dir.join("composer");
+    let marker = root.join("composer-called.log");
+    fs::write(
+        &composer_stub,
+        "#!/bin/sh\nprintf called > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit 0\n",
+    )
+    .expect("write composer stub");
+    let mut perms = fs::metadata(&composer_stub)
+        .expect("metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&composer_stub, perms).expect("chmod");
+
+    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
+    let path = format!("{}:{}", bin_dir.display(), prior_path);
+    let _env = EnvGuard::set_many(&[
+        ("PATH", Some(path)),
+        ("SHELL", Some("/bin/sh".to_owned())),
+        (
+            "EFFIGY_TEST_COMPOSER_ARGS_FILE",
+            Some(marker.display().to_string()),
+        ),
+    ]);
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "version".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("implicit deferral should not run from nested marker files");
+
+    match err {
+        RunnerError::TaskNotFoundAny { .. } => {}
+        other => panic!("unexpected error: {other}"),
+    }
+    assert!(
+        !marker.exists(),
+        "composer fallback should not be invoked when markers are only nested"
+    );
+}
+
+#[test]
 fn run_manifest_task_explicit_deferral_wins_over_implicit_root_deferral() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("explicit-over-implicit");
@@ -3539,21 +3821,17 @@ fn run_manifest_task_managed_tui_uses_default_profile_when_not_specified() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles.default]
-processes = ["api", "front", "admin"]
+concurrent = [
+  { name = "api", run = "cargo run -p api", start = 1, tab = 1 },
+  { name = "front", run = "vite dev", start = 2, tab = 2 },
+  { name = "admin", run = "vite dev --config admin", start = 3, tab = 3 }
+]
 
 [tasks.dev.profiles.admin]
-processes = ["api", "admin"]
-
-[tasks.dev.processes.api]
-run = "cargo run -p api"
-
-[tasks.dev.processes.front]
-run = "vite dev"
-
-[tasks.dev.processes.admin]
-run = "vite dev --config admin"
+concurrent = [
+  { name = "api", run = "cargo run -p api", start = 1, tab = 1 },
+  { name = "admin", run = "vite dev --config admin", start = 2, tab = 2 }
+]
 "#,
     );
 
@@ -3583,21 +3861,17 @@ fn run_manifest_task_managed_tui_accepts_named_profile_argument() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles.default]
-processes = ["api", "front", "admin"]
+concurrent = [
+  { name = "api", run = "cargo run -p api", start = 1, tab = 1 },
+  { name = "front", run = "vite dev", start = 2, tab = 2 },
+  { name = "admin", run = "vite dev --config admin", start = 3, tab = 3 }
+]
 
 [tasks.dev.profiles.admin]
-processes = ["api", "admin"]
-
-[tasks.dev.processes.api]
-run = "cargo run -p api"
-
-[tasks.dev.processes.front]
-run = "vite dev"
-
-[tasks.dev.processes.admin]
-run = "vite dev --config admin"
+concurrent = [
+  { name = "api", run = "cargo run -p api", start = 1, tab = 1 },
+  { name = "admin", run = "vite dev --config admin", start = 2, tab = 2 }
+]
 "#,
     );
 
@@ -3617,6 +3891,128 @@ run = "vite dev --config admin"
 }
 
 #[test]
+fn run_manifest_task_managed_tui_supports_concurrent_entries() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-concurrent-entries");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [
+  { task = "api", start = 1, tab = 3 },
+  { run = "printf background", start = 2, tab = 2, start_after_ms = 250 },
+  { task = "front", start = 3, tab = 1 }
+]
+
+[tasks.api]
+run = "printf api"
+
+[tasks.front]
+run = "printf front"
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect("managed plan should render");
+
+    assert!(out.contains("Managed Task Plan"));
+    assert!(out.contains("profile: default"));
+    assert!(out.contains("tab-order: front, process-2, api"));
+    assert!(out.contains("printf api"));
+    assert!(out.contains("printf background"));
+    assert!(out.contains("printf front"));
+    assert!(out.contains("250"));
+}
+
+#[test]
+fn run_manifest_task_managed_tui_rejects_concurrent_entry_with_both_task_and_run() {
+    let root = temp_workspace("managed-concurrent-invalid-entry");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [
+  { task = "api", run = "printf oops", start = 1, tab = 1 }
+]
+
+[tasks.api]
+run = "printf api"
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root,
+    )
+    .expect_err("invalid concurrent entry should fail");
+
+    match err {
+        RunnerError::TaskManagedProcessInvalidDefinition { process, detail, .. } => {
+            assert_eq!(process, "api");
+            assert!(detail.contains("either `task` or `run`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_managed_tui_supports_profile_specific_concurrent_entries() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-concurrent-profile-specific");
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [
+  { run = "printf default-api", start = 1, tab = 2 },
+  { run = "printf default-front", start = 2, tab = 1 }
+]
+
+[tasks.dev.profiles.admin]
+concurrent = [
+  { run = "printf admin-api", start = 1, tab = 1 }
+]
+"#,
+    );
+
+    let out_default = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["--repo".to_owned(), root.display().to_string()],
+        },
+        root.clone(),
+    )
+    .expect("default managed plan should render");
+    assert!(out_default.contains("profile: default"));
+    assert!(out_default.contains("default-api"));
+    assert!(out_default.contains("default-front"));
+    assert!(!out_default.contains("admin-api"));
+
+    let out_admin = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["admin".to_owned()],
+        },
+        root,
+    )
+    .expect("admin managed plan should render");
+    assert!(out_admin.contains("profile: admin"));
+    assert!(out_admin.contains("admin-api"));
+    assert!(!out_admin.contains("default-front"));
+}
+
+#[test]
 fn run_manifest_task_managed_tui_supports_independent_tab_order() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("managed-tab-order");
@@ -3625,21 +4021,12 @@ fn run_manifest_task_managed_tui_supports_independent_tab_order() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles]
-default = { start = ["api", "jobs", "cream", "dairy"], tabs = ["dairy", "cream", "api", "jobs"] }
-
-[tasks.dev.processes.api]
-run = "printf api"
-
-[tasks.dev.processes.jobs]
-run = "printf jobs"
-
-[tasks.dev.processes.cream]
-run = "printf cream"
-
-[tasks.dev.processes.dairy]
-run = "printf dairy"
+concurrent = [
+  { name = "api", run = "printf api", start = 1, tab = 3 },
+  { name = "jobs", run = "printf jobs", start = 2, tab = 4 },
+  { name = "cream", run = "printf cream", start = 3, tab = 2 },
+  { name = "dairy", run = "printf dairy", start = 4, tab = 1 }
+]
 "#,
     );
 
@@ -3664,21 +4051,12 @@ fn run_manifest_task_managed_tui_supports_ranked_tab_order_map() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles]
-default = { start = ["api", "jobs", "cream", "dairy"], tabs = { dairy = 1, cream = 2, api = 3, jobs = 4 } }
-
-[tasks.dev.processes.api]
-run = "printf api"
-
-[tasks.dev.processes.jobs]
-run = "printf jobs"
-
-[tasks.dev.processes.cream]
-run = "printf cream"
-
-[tasks.dev.processes.dairy]
-run = "printf dairy"
+concurrent = [
+  { name = "api", run = "printf api", start = 1, tab = 3 },
+  { name = "jobs", run = "printf jobs", start = 2, tab = 4 },
+  { name = "cream", run = "printf cream", start = 3, tab = 2 },
+  { name = "dairy", run = "printf dairy", start = 4, tab = 1 }
+]
 "#,
     );
 
@@ -3709,9 +4087,12 @@ fn run_manifest_task_managed_tui_supports_ranked_tab_order_map_with_task_refs() 
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles]
-default = { start = ["farmyard/api", "farmyard/jobs", "cream/dev", "dairy/dev"], tabs = { "dairy/dev" = 1, "cream/dev" = 2, "farmyard/api" = 3, "farmyard/jobs" = 4 } }
+concurrent = [
+  { task = "farmyard/api", start = 1, tab = 3 },
+  { task = "farmyard/jobs", start = 2, tab = 4 },
+  { task = "cream/dev", start = 3, tab = 2 },
+  { task = "dairy/dev", start = 4, tab = 1 }
+]
 "#,
     );
     write_manifest(
@@ -3769,9 +4150,12 @@ fn run_manifest_task_managed_tui_supports_single_definition_ordered_profile_entr
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles]
-default = { "farmyard/api" = { start = 1, tab = 3 }, "farmyard/jobs" = { start = 2, tab = 4, start_after_ms = 1200 }, "cream/dev" = { start = 3, tab = 2 }, "dairy/dev" = { start = 4, tab = 1 } }
+concurrent = [
+  { task = "farmyard/api", start = 1, tab = 3 },
+  { task = "farmyard/jobs", start = 2, tab = 4, start_after_ms = 1200 },
+  { task = "cream/dev", start = 3, tab = 2 },
+  { task = "dairy/dev", start = 4, tab = 1 }
+]
 "#,
     );
     write_manifest(
@@ -3816,19 +4200,13 @@ run = "printf dairy-dev"
 }
 
 #[test]
-fn run_manifest_task_managed_tui_errors_when_tab_order_references_unknown_process() {
+fn run_manifest_task_managed_tui_errors_when_concurrent_entry_missing_task_and_run() {
     let root = temp_workspace("managed-tab-order-invalid");
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles.default]
-processes = ["api"]
-tabs = ["api", "jobs"]
-
-[tasks.dev.processes.api]
-run = "printf api"
+concurrent = [{ name = "jobs" }]
 "#,
     );
 
@@ -3839,17 +4217,13 @@ run = "printf api"
         },
         root,
     )
-    .expect_err("invalid tab entry should fail");
+    .expect_err("invalid concurrent entry should fail");
 
     match err {
-        RunnerError::TaskManagedProfileTabOrderInvalid {
-            task,
-            profile,
-            detail,
-        } => {
+        RunnerError::TaskManagedProcessInvalidDefinition { task, process, detail } => {
             assert_eq!(task, "dev");
-            assert_eq!(profile, "default");
-            assert!(detail.contains("jobs"));
+            assert_eq!(process, "jobs");
+            assert!(detail.contains("missing both `task` and `run`"));
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -3862,12 +4236,7 @@ fn run_manifest_task_managed_tui_errors_for_unknown_profile() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles.default]
-processes = ["api"]
-
-[tasks.dev.processes.api]
-run = "cargo run -p api"
+concurrent = [{ name = "api", run = "cargo run -p api" }]
 "#,
     );
 
@@ -3908,15 +4277,10 @@ fn run_manifest_task_managed_tui_processes_can_reference_other_tasks() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles.default]
-processes = ["api", "front"]
-
-[tasks.dev.processes.api]
-task = "farmyard/api"
-
-[tasks.dev.processes.front]
-task = "cream/dev"
+concurrent = [
+  { name = "api", task = "farmyard/api" },
+  { name = "front", task = "cream/dev" }
+]
 "#,
     );
     write_manifest(
@@ -3958,13 +4322,7 @@ fn run_manifest_task_managed_tui_errors_when_process_has_run_and_task() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles.default]
-processes = ["api"]
-
-[tasks.dev.processes.api]
-run = "printf api"
-task = "api"
+concurrent = [{ name = "api", run = "printf api", task = "api" }]
 "#,
     );
 
@@ -4000,10 +4358,10 @@ fn run_manifest_task_managed_tui_supports_compact_profile_task_refs() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
+concurrent = [{ task = "farmyard/api" }, { task = "cream/dev" }]
 
-[tasks.dev.profiles]
-default = ["farmyard/api", "cream/dev"]
-admin = ["farmyard/api"]
+[tasks.dev.profiles.admin]
+concurrent = [{ task = "farmyard/api" }]
 "#,
     );
     write_manifest(
@@ -4048,9 +4406,7 @@ fn run_manifest_task_managed_tui_rejects_unterminated_quote_in_compact_profile_t
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles]
-default = ['test "unterminated']
+concurrent = [{ name = "tests", task = 'test "unterminated' }]
 "#,
     );
 
@@ -4071,7 +4427,7 @@ default = ['test "unterminated']
             detail,
         } => {
             assert_eq!(task, "dev");
-            assert_eq!(process, "entry-1");
+            assert_eq!(process, "tests");
             assert_eq!(reference, "test \"unterminated");
             assert!(detail.contains("unterminated quote"));
         }
@@ -4091,11 +4447,9 @@ fn run_manifest_task_managed_tui_process_run_array_supports_task_refs() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
+concurrent = [{ name = "combo", task = "combo" }]
 
-[tasks.dev.profiles.default]
-processes = ["combo"]
-
-[tasks.dev.processes.combo]
+[tasks.combo]
 run = ["printf start", { task = "farmyard/api" }, "printf done"]
 "#,
     );
@@ -4132,12 +4486,7 @@ fn run_manifest_task_managed_tui_rejects_unterminated_quote_in_process_task_ref(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles.default]
-processes = ["tests"]
-
-[tasks.dev.processes.tests]
-task = 'test "unterminated'
+concurrent = [{ name = "tests", task = 'test "unterminated' }]
 "#,
     );
 
@@ -4175,12 +4524,7 @@ fn run_manifest_task_managed_tui_rejects_trailing_escape_in_process_task_ref() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles.default]
-processes = ["tests"]
-
-[tasks.dev.processes.tests]
-task = "test vitest \\"
+concurrent = [{ name = "tests", task = "test vitest \\" }]
 "#,
     );
 
@@ -4225,10 +4569,7 @@ fn run_manifest_task_managed_tui_supports_relative_task_refs() {
 alias = "dairy"
 [tasks.dev]
 mode = "tui"
-[tasks.dev.profiles.default]
-processes = ["validate-stack"]
-[tasks.dev.processes.validate-stack]
-task = "../froyo/validate"
+concurrent = [{ name = "validate-stack", task = "../froyo/validate" }]
 "#,
     );
     write_manifest(
@@ -4264,12 +4605,7 @@ fn run_manifest_task_managed_tui_appends_shell_process_when_enabled() {
         r#"[tasks.dev]
 mode = "tui"
 shell = true
-
-[tasks.dev.profiles]
-default = ["api"]
-
-[tasks.dev.processes.api]
-run = "printf api"
+concurrent = [{ name = "api", run = "printf api" }]
 "#,
     );
 
@@ -4299,12 +4635,7 @@ run = "exec ${SHELL:-/bin/bash} -i"
 [tasks.dev]
 mode = "tui"
 shell = true
-
-[tasks.dev.profiles]
-default = ["api"]
-
-[tasks.dev.processes.api]
-run = "printf api"
+concurrent = [{ name = "api", run = "printf api" }]
 "#,
     );
 
@@ -4329,15 +4660,10 @@ fn run_manifest_task_managed_stream_executes_selected_profile_processes() {
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles.default]
-processes = ["api", "front"]
-
-[tasks.dev.processes.api]
-run = "printf api-ok"
-
-[tasks.dev.processes.front]
-run = "printf front-ok"
+concurrent = [
+  { name = "api", run = "printf api-ok" },
+  { name = "front", run = "printf front-ok" }
+]
 "#,
     );
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
@@ -4360,6 +4686,78 @@ run = "printf front-ok"
 }
 
 #[test]
+fn run_manifest_task_managed_stream_uses_named_profile_concurrent_entries() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-stream-runtime-profile-specific");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [{ name = "default-only", run = "printf default-ok" }]
+
+[tasks.dev.profiles.front]
+concurrent = [{ name = "front-only", run = "printf front-ok" }]
+"#,
+    );
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["front".to_owned()],
+        },
+        root,
+    )
+    .expect("managed stream run with named profile");
+
+    assert!(out.contains("Managed Task Runtime"));
+    assert!(out.contains("profile: front"));
+    assert!(out.contains("[front-only] front-ok"));
+    assert!(out.contains("process `front-only` exit=0"));
+    assert!(!out.contains("default-only"));
+    assert!(!out.contains("default-ok"));
+}
+
+#[test]
+fn run_manifest_task_managed_stream_errors_for_unknown_profile_with_available_profiles() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-stream-unknown-profile");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [{ name = "default-only", run = "printf default-ok" }]
+
+[tasks.dev.profiles.front]
+concurrent = [{ name = "front-only", run = "printf front-ok" }]
+"#,
+    );
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["admin".to_owned()],
+        },
+        root,
+    )
+    .expect_err("unknown managed profile should fail");
+
+    match err {
+        RunnerError::TaskManagedProfileNotFound {
+            task,
+            profile,
+            available,
+        } => {
+            assert_eq!(task, "dev");
+            assert_eq!(profile, "admin");
+            assert_eq!(available, vec!["default".to_owned(), "front".to_owned()]);
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
 fn run_manifest_task_managed_stream_process_task_ref_supports_builtin_test() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("managed-stream-builtin-test-task-ref");
@@ -4372,12 +4770,7 @@ unit = "sh -lc 'printf called > \"{}\"'"
 
 [tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles.default]
-processes = ["tests"]
-
-[tasks.dev.processes.tests]
-task = "test"
+concurrent = [{{ name = "tests", task = "test" }}]
 "#,
             marker.display()
         ),
@@ -4411,12 +4804,7 @@ vitest = "sh -lc 'printf called > \"{}\"'"
 
 [tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles.default]
-processes = ["tests"]
-
-[tasks.dev.processes.tests]
-task = "test vitest"
+concurrent = [{{ name = "tests", task = "test vitest" }}]
 "#,
             marker.display()
         ),
@@ -4453,9 +4841,7 @@ unit = "sh -lc 'printf called > \"{}\"'"
 
 [tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles.default]
-processes = ["test"]
+concurrent = [{{ name = "tests", task = "test" }}]
 "#,
             marker.display()
         ),
@@ -4487,12 +4873,7 @@ fn run_manifest_task_managed_stream_fails_when_process_exits_non_zero_by_default
         &root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-
-[tasks.dev.profiles.default]
-processes = ["api"]
-
-[tasks.dev.processes.api]
-run = "sh -lc 'exit 7'"
+concurrent = [{ name = "api", run = "sh -lc 'exit 7'" }]
 "#,
     );
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
@@ -4529,12 +4910,7 @@ fn run_manifest_task_managed_stream_allows_non_zero_when_disabled() {
         r#"[tasks.dev]
 mode = "tui"
 fail_on_non_zero = false
-
-[tasks.dev.profiles.default]
-processes = ["api"]
-
-[tasks.dev.processes.api]
-run = "sh -lc 'exit 9'"
+concurrent = [{ name = "api", run = "sh -lc 'exit 9'" }]
 "#,
     );
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);

@@ -40,7 +40,7 @@ Then use:
 ```bash
 bun effigy tasks
 bun effigy repo-pulse
-bun effigy farmyard/reset-db
+bun effigy catalog-a/db:reset
 ```
 
 Planned steady-state:
@@ -73,7 +73,7 @@ Built-in `test` supports workspace fanout across discovered catalog roots. Confi
 ```toml
 [builtin.test]
 max_parallel = 2
-package_manager = "pnpm" # optional: bun|pnpm|npm|direct
+package_manager = "bun" # optional: bun|pnpm|npm|direct
 ```
 
 Notes:
@@ -121,19 +121,19 @@ Example:
 
 ```toml
 [catalog]
-alias = "farmyard"
+alias = "catalog-a"
 
-[tasks.reset-db]
-run = "cargo run -p farmyard-db --bin reset_dev_db {args}"
+[tasks."db:reset"]
+run = "cargo run -p app-db --bin reset_dev_db {args}"
 ```
 
 Compact task syntax is also supported for simple `run` tasks:
 
 ```toml
 [tasks]
-api = "cargo run -p farmyard-api {args}"
-jobs = "cargo run -p farmyard-jobs {args}"
-reset-db = [{ task = "drop-db" }, { task = "migrate-db" }]
+api = "cargo run -p app-api {args}"
+jobs = "cargo run -p app-jobs {args}"
+"db:reset" = [{ task = "db:drop" }, { task = "db:migrate" }]
 ```
 
 You can mix compact entries with full task tables in the same manifest.

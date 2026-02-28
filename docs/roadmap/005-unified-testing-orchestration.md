@@ -43,10 +43,7 @@ Expected behavior:
 ## 5) Config Model (Target)
 
 Explicit override (wins over auto):
-```toml
-[tasks.test]
-run = "bun test {args}"
-```
+- if a project defines `tasks.test`, that explicit task is executed instead of built-in detection.
 
 Fanout concurrency:
 ```toml
@@ -57,10 +54,10 @@ max_parallel = 2
 Runner overrides:
 ```toml
 [package_manager]
-js = "pnpm"
+js = "bun"
 
 [test.runners]
-vitest = "pnpm exec vitest run"
+vitest = "bun x vitest run"
 "cargo-nextest" = "cargo nextest run --workspace"
 ```
 

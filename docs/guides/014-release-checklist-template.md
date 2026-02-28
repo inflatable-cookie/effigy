@@ -25,9 +25,9 @@ Owner: `name/team`
 - [ ] Focused smoke checks pass in active workspace(s):
   - [ ] `effigy help`
   - [ ] `effigy tasks`
-  - [ ] `effigy farmyard/tasks`
+  - [ ] `effigy catalog-a/tasks`
   - [ ] `effigy test --plan`
-  - [ ] `effigy farmyard/test --plan`
+  - [ ] `effigy catalog-a/test --plan`
 
 ## 3) Versioning and Notes
 

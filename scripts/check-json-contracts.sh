@@ -180,10 +180,10 @@ assert_required_keys() {
   local json_payload="$2"
   case "$schema" in
     effigy.tasks.v1)
-      jq -e 'has("schema") and has("schema_version") and has("catalog_count") and has("catalog_tasks") and has("builtin_tasks")' <<<"$json_payload" >/dev/null
+      jq -e 'has("schema") and has("schema_version") and has("catalog_count") and has("catalog_tasks") and has("builtin_tasks") and has("catalogs") and has("precedence") and has("resolve")' <<<"$json_payload" >/dev/null
       ;;
     effigy.tasks.filtered.v1)
-      jq -e 'has("schema") and has("schema_version") and has("catalog_count") and has("filter") and has("matches") and has("builtin_matches") and has("notes")' <<<"$json_payload" >/dev/null
+      jq -e 'has("schema") and has("schema_version") and has("catalog_count") and has("filter") and has("matches") and has("builtin_matches") and has("notes") and has("catalogs") and has("precedence") and has("resolve")' <<<"$json_payload" >/dev/null
       ;;
     effigy.repo-pulse.v1)
       jq -e 'has("schema") and has("schema_version") and has("report") and has("root_resolution")' <<<"$json_payload" >/dev/null

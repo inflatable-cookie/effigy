@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fmt;
 
 use indexmap::IndexMap;
@@ -196,7 +196,7 @@ pub(super) struct ManifestTask {
     #[serde(default)]
     pub(super) shell: Option<bool>,
     #[serde(default)]
-    pub(super) processes: BTreeMap<String, ManifestManagedProcess>,
+    pub(super) concurrent: Vec<ManifestManagedConcurrentEntry>,
     #[serde(default)]
     pub(super) profiles: IndexMap<String, ManifestManagedProfile>,
 }
@@ -279,11 +279,19 @@ impl<'de> serde::Deserialize<'de> for ManifestTaskDefinition {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct ManifestManagedProcess {
+pub(super) struct ManifestManagedConcurrentEntry {
     #[serde(default)]
-    pub(super) run: Option<ManifestManagedRun>,
+    pub(super) name: Option<String>,
     #[serde(default)]
     pub(super) task: Option<String>,
+    #[serde(default)]
+    pub(super) run: Option<String>,
+    #[serde(default)]
+    pub(super) start: Option<usize>,
+    #[serde(default)]
+    pub(super) tab: Option<usize>,
+    #[serde(default)]
+    pub(super) start_after_ms: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -394,139 +402,19 @@ impl<'de> serde::Deserialize<'de> for ManifestManagedRunStep {
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-pub(super) enum ManifestManagedProfile {
-    Table(ManifestManagedProfileTable),
-    List(Vec<String>),
-    Ranked(BTreeMap<String, ManifestManagedProfileOrder>),
-}
-
-#[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct ManifestManagedProfileTable {
+pub(super) struct ManifestManagedProfile {
     #[serde(default)]
-    pub(super) processes: Vec<String>,
-    #[serde(default)]
-    pub(super) start: Vec<String>,
-    #[serde(default)]
-    pub(super) tabs: Option<ManifestManagedTabOrder>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-pub(super) enum ManifestManagedProfileOrder {
-    Rank(usize),
-    Axes {
-        #[serde(default)]
-        start: Option<usize>,
-        #[serde(default)]
-        tab: Option<usize>,
-        #[serde(default)]
-        start_after_ms: Option<u64>,
-    },
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-pub(super) enum ManifestManagedTabOrder {
-    List(Vec<String>),
-    Ranked(BTreeMap<String, usize>),
+    pub(super) concurrent: Vec<ManifestManagedConcurrentEntry>,
 }
 
 impl ManifestManagedProfile {
-    pub(super) fn start_entries(&self) -> Vec<String> {
-        match self {
-            ManifestManagedProfile::Table(table) => {
-                if table.start.is_empty() {
-                    table.processes.clone()
-                } else {
-                    table.start.clone()
-                }
-            }
-            ManifestManagedProfile::List(entries) => entries.clone(),
-            ManifestManagedProfile::Ranked(ranked) => {
-                let mut entries = ranked
-                    .iter()
-                    .map(|(name, order)| (name.clone(), order.start_rank()))
-                    .collect::<Vec<(String, usize)>>();
-                entries.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
-                entries.into_iter().map(|(name, _)| name).collect()
-            }
+    pub(super) fn concurrent_entries(&self) -> Option<&[ManifestManagedConcurrentEntry]> {
+        if self.concurrent.is_empty() {
+            None
+        } else {
+            Some(self.concurrent.as_slice())
         }
-    }
-
-    pub(super) fn tab_entries(&self) -> Option<Vec<String>> {
-        match self {
-            ManifestManagedProfile::Table(table) => tab_entries_from_order(table.tabs.as_ref()),
-            ManifestManagedProfile::List(_) => None,
-            ManifestManagedProfile::Ranked(ranked) => {
-                let mut entries = ranked
-                    .iter()
-                    .map(|(name, order)| (name.clone(), order.tab_rank()))
-                    .collect::<Vec<(String, usize)>>();
-                if entries.is_empty() {
-                    return None;
-                }
-                entries.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
-                Some(entries.into_iter().map(|(name, _)| name).collect())
-            }
-        }
-    }
-
-    pub(super) fn start_delay_ms(&self) -> HashMap<String, u64> {
-        match self {
-            ManifestManagedProfile::Ranked(ranked) => ranked
-                .iter()
-                .filter_map(|(name, order)| {
-                    order.start_delay_ms().map(|delay| (name.clone(), delay))
-                })
-                .collect(),
-            _ => HashMap::new(),
-        }
-    }
-}
-
-impl ManifestManagedProfileOrder {
-    fn start_rank(&self) -> usize {
-        match self {
-            ManifestManagedProfileOrder::Rank(rank) => *rank,
-            ManifestManagedProfileOrder::Axes { start, tab, .. } => {
-                start.or(*tab).unwrap_or(usize::MAX)
-            }
-        }
-    }
-
-    fn tab_rank(&self) -> usize {
-        match self {
-            ManifestManagedProfileOrder::Rank(rank) => *rank,
-            ManifestManagedProfileOrder::Axes { start, tab, .. } => {
-                tab.or(*start).unwrap_or(usize::MAX)
-            }
-        }
-    }
-
-    fn start_delay_ms(&self) -> Option<u64> {
-        match self {
-            ManifestManagedProfileOrder::Rank(_) => None,
-            ManifestManagedProfileOrder::Axes { start_after_ms, .. } => *start_after_ms,
-        }
-    }
-}
-
-fn tab_entries_from_order(tabs: Option<&ManifestManagedTabOrder>) -> Option<Vec<String>> {
-    match tabs {
-        Some(ManifestManagedTabOrder::List(entries)) if !entries.is_empty() => {
-            Some(entries.clone())
-        }
-        Some(ManifestManagedTabOrder::Ranked(rankings)) if !rankings.is_empty() => {
-            let mut ordered = rankings
-                .iter()
-                .map(|(name, rank)| (name.clone(), *rank))
-                .collect::<Vec<(String, usize)>>();
-            ordered.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
-            Some(ordered.into_iter().map(|(name, _)| name).collect())
-        }
-        _ => None,
     }
 }
 

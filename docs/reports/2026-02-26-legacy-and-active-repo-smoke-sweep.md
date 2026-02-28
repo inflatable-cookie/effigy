@@ -16,7 +16,7 @@ Related roadmap: 002-deferral-fallback-system
 ## Changes
 - No code changes in this sweep.
 - Captured runtime compatibility evidence after:
-- implicit root deferral fallback (`composer global exec effigy -- {request} {args}`) for unresolved task requests
+- implicit root deferral fallback (`<legacy defer process> {request} {args}`) for unresolved task requests
 - generalized `composer.json` root marker support
 
 ## Validation

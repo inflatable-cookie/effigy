@@ -1033,7 +1033,6 @@ fn render_builtin_test_results(
         resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
     renderer.text("")?;
-    renderer.text("")?;
     renderer.section("Test Results")?;
     renderer.key_values(&[KeyValue::new("targets", results.len().to_string())])?;
     renderer.text("")?;

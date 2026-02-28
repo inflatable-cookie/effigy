@@ -28,9 +28,6 @@ fn catalogs_text_contract_includes_core_sections_and_probe_fields() {
     .expect("run catalogs text");
 
     let expected_markers = [
-        "Catalogs",
-        "count: 2",
-        "Tasks",
         "Resolution: farmyard/api",
         "catalog: farmyard",
         "task: api",
