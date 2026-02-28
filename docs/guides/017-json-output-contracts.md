@@ -5,8 +5,8 @@ Effigy supports root-level JSON mode via `--json`:
 ```bash
 effigy --json tasks
 effigy --json tasks --task test
-effigy --json tasks --resolve farmyard/api
-effigy --json tasks --task test --resolve farmyard/test
+effigy --json tasks --resolve catalog-a/api
+effigy --json tasks --task test --resolve catalog-a/test
 effigy --json repo-pulse
 effigy --json test --plan
 effigy --json test
@@ -41,7 +41,7 @@ Contract:
 `--resolve` attaches routing probe details to the same `effigy.tasks.v1` payload:
 
 ```bash
-effigy --json tasks --resolve farmyard/api
+effigy --json tasks --resolve catalog-a/api
 effigy --json tasks --resolve test
 ```
 

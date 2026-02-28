@@ -350,10 +350,6 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
                 "Run health checks (built-in alias to repo-pulse when no explicit health task exists)".to_owned(),
             ],
             vec![
-                "effigy test --plan".to_owned(),
-                "Preview detected test runner, fallback chain, and command".to_owned(),
-            ],
-            vec![
                 "effigy <task>".to_owned(),
                 "Resolve task across discovered catalogs".to_owned(),
             ],
@@ -364,17 +360,9 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         ],
     ))?;
     renderer.text("")?;
-
-    renderer.section("Get Command Help")?;
-    renderer.bullet_list(
-        "topics",
-        &[
-            "effigy tasks --help".to_owned(),
-            "effigy tasks --resolve farmyard/api".to_owned(),
-            "effigy repo-pulse --help".to_owned(),
-            "effigy test --help  # includes task-ref chain examples".to_owned(),
-            "effigy config  # full effigy.toml task-ref examples".to_owned(),
-        ],
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "Use `effigy <built-in-task> --help` for task-specific flags and examples.",
     )?;
     renderer.key_values(&[ui::KeyValue::new("-h, --help", "Print this help panel")])?;
     Ok(())
@@ -430,7 +418,7 @@ fn render_tasks_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.section("tasks Help")?;
     renderer.notice(
         ui::NoticeLevel::Info,
-        "List discovered task catalogs, optionally filter tasks, and probe routing",
+        "List discovered task catalogs and task commands; use routing probes only when debugging selector resolution.",
     )?;
     renderer.text("")?;
 
@@ -454,7 +442,7 @@ fn render_tasks_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             ],
             vec![
                 "--resolve <SELECTOR>".to_owned(),
-                "Probe task routing (catalog refs like `farmyard/api` or built-ins like `test`)"
+                "Probe task routing evidence for a selector (for example `<catalog>/task` or `test`)"
                     .to_owned(),
             ],
             vec![
@@ -476,8 +464,8 @@ fn render_tasks_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         &[
             "effigy tasks".to_owned(),
             "effigy tasks --repo /path/to/workspace".to_owned(),
-            "effigy tasks --repo /path/to/workspace --task reset-db".to_owned(),
-            "effigy tasks --resolve farmyard/api".to_owned(),
+            "effigy tasks --repo /path/to/workspace --task db:reset".to_owned(),
+            "effigy tasks --resolve <catalog>/<task>".to_owned(),
             "effigy tasks --json --resolve test".to_owned(),
             "effigy --json tasks --repo /path/to/workspace --task test".to_owned(),
         ],
@@ -489,7 +477,11 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.section("test Help")?;
     renderer.notice(
         ui::NoticeLevel::Info,
-        "Run explicit tasks.test when defined, otherwise use built-in test runner detection (including <catalog>/test fallback)",
+        "Run built-in test runner detection by default (including <catalog>/test fallback).",
+    )?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "If `tasks.test` is defined, it takes precedence over built-in detection.",
     )?;
     renderer.text("")?;
 
@@ -511,7 +503,7 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     )?;
     renderer.notice(
         ui::NoticeLevel::Info,
-        "When suite names are mistyped or unavailable, effigy suggests nearest suite aliases and copy-paste retry commands.",
+        "When suite names are mistyped or unavailable, effigy suggests nearest suite names and copy-paste retry commands.",
     )?;
     renderer.text("")?;
 
@@ -551,19 +543,15 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.section("Configuration")?;
     renderer.text("Root manifest (fanout concurrency):")?;
     renderer.text("[package_manager]")?;
-    renderer.text("js = \"pnpm\"  # optional: bun|pnpm|npm|direct")?;
+    renderer.text("js = \"bun\"  # optional: bun|pnpm|npm|direct")?;
     renderer.text("[test]")?;
     renderer.text("max_parallel = 2")?;
     renderer.text("[test.suites]")?;
-    renderer.text("unit = \"pnpm exec vitest run\"")?;
+    renderer.text("unit = \"bun x vitest run\"")?;
     renderer.text("integration = \"cargo nextest run\"")?;
     renderer.text("[test.runners]")?;
-    renderer.text("vitest = \"pnpm exec vitest run\"")?;
+    renderer.text("vitest = \"bun x vitest run\"")?;
     renderer.text("\"cargo-nextest\" = \"cargo nextest run --workspace\"")?;
-    renderer.text("")?;
-    renderer.text("Explicit override (wins over built-in detection):")?;
-    renderer.text("[tasks.test]")?;
-    renderer.text("run = \"bun test {args}\"")?;
     renderer.text("")?;
     renderer.text("Task-ref chain with quoted args:")?;
     renderer.text("[tasks.validate]")?;
@@ -582,7 +570,7 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy test".to_owned(),
             "effigy test vitest".to_owned(),
             "effigy test nextest user_service --nocapture".to_owned(),
-            "effigy farmyard/test".to_owned(),
+            "effigy <catalog>/test".to_owned(),
             "effigy test --plan".to_owned(),
             "effigy test --plan user-service".to_owned(),
             "effigy test --plan viteest user-service".to_owned(),
@@ -601,7 +589,7 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy test user-service".to_owned(),
             "effigy test vitest user-service".to_owned(),
             "effigy test viteest user-service  # suggests vitest".to_owned(),
-            "effigy farmyard/test billing".to_owned(),
+            "effigy <catalog>/test billing".to_owned(),
             "effigy test -- tests/api/user.test.ts".to_owned(),
             "effigy test -- user_service --nocapture".to_owned(),
         ],
@@ -613,7 +601,7 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         "modes",
         &[
             "Ambiguity: `effigy test user-service` in multi-suite repos fails and suggests suite-first retries.".to_owned(),
-            "Unavailable or mistyped suite: `effigy test viteest user-service` fails with nearest suite alias and a copy-paste command.".to_owned(),
+            "Unavailable or mistyped suite: `effigy test viteest user-service` fails with nearest suite name and a copy-paste command.".to_owned(),
         ],
     )?;
     renderer.text("")?;

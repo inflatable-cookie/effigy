@@ -47,7 +47,7 @@ pub(super) struct TaskRuntimeArgs {
     pub(super) passthrough: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct ManagedProcessSpec {
     pub(super) name: String,
     pub(super) run: String,
@@ -87,7 +87,7 @@ pub(super) const BUILTIN_TASKS: [(&str, &str); 6] = [
     ),
     (
         "test",
-        "Built-in test runner detection (vitest, cargo nextest, cargo test), supports <catalog>/test fallback, optional --plan",
+        "Built-in test runner detection, supports <catalog>/test fallback, optional --plan",
     ),
     ("tasks", "List discovered catalogs and available tasks"),
 ];

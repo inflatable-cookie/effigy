@@ -88,7 +88,7 @@ fn strip_global_json_flag_removes_root_json_before_passthrough_delimiter() {
 fn apply_global_json_flag_injects_task_arg_when_missing() {
     let cmd = Command::Task(TaskInvocation {
         name: "catalogs".to_owned(),
-        args: vec!["--resolve".to_owned(), "farmyard/api".to_owned()],
+        args: vec!["--resolve".to_owned(), "catalog-a/api".to_owned()],
     });
     let applied = apply_global_json_flag(cmd, true);
     match applied {
@@ -103,7 +103,7 @@ fn apply_global_json_flag_injects_task_arg_when_missing() {
 fn command_requests_json_checks_task_or_global_mode() {
     let cmd = Command::Task(TaskInvocation {
         name: "catalogs".to_owned(),
-        args: vec!["--resolve".to_owned(), "farmyard/api".to_owned()],
+        args: vec!["--resolve".to_owned(), "catalog-a/api".to_owned()],
     });
     assert!(!command_requests_json(&cmd, false));
     assert!(command_requests_json(&cmd, true));
@@ -165,14 +165,14 @@ fn parse_tasks_with_filters() {
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "--task".to_owned(),
-        "reset-db".to_owned(),
+        "db:reset".to_owned(),
     ])
     .expect("parse should succeed");
     assert_eq!(
         cmd,
         Command::Tasks(TasksArgs {
             repo_override: Some(PathBuf::from("/tmp/repo")),
-            task_name: Some("reset-db".to_owned()),
+            task_name: Some("db:reset".to_owned()),
             resolve_selector: None,
             output_json: false,
             pretty_json: true,
@@ -251,15 +251,12 @@ fn render_help_writes_structured_sections() {
     let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
     assert!(rendered.contains("Commands"));
     assert!(rendered.contains("effigy help"));
-    assert!(rendered.contains("Get Command Help"));
     assert!(rendered.contains("effigy config"));
     assert!(rendered.contains("effigy health"));
     assert!(rendered.contains("effigy test"));
     assert!(rendered.contains("<catalog>/test fallback"));
-    assert!(rendered.contains("effigy test --plan"));
-    assert!(rendered.contains("effigy test --help"));
-    assert!(rendered.contains("task-ref chain examples"));
-    assert!(rendered.contains("full effigy.toml task-ref examples"));
+    assert!(!rendered.contains("effigy test --plan"));
+    assert!(rendered.contains("Use `effigy <built-in-task> --help`"));
     assert!(!rendered.contains("Quick Start"));
     assert!(!rendered.contains("effigy Help"));
 }
@@ -271,10 +268,10 @@ fn render_tasks_help_shows_resolve_and_json_options() {
     let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
     assert!(rendered.contains("tasks Help"));
     assert!(rendered.contains("--resolve <SELECTOR>"));
-    assert!(rendered.contains("built-ins like `test`"));
+    assert!(rendered.contains("routing probes only when debugging selector resolution"));
     assert!(rendered.contains("--json"));
     assert!(rendered.contains("--pretty <true|false>"));
-    assert!(rendered.contains("effigy tasks --resolve farmyard/api"));
+    assert!(rendered.contains("effigy tasks --resolve <catalog>/<task>"));
     assert!(rendered.contains("effigy tasks --json --resolve test"));
 }
 
@@ -284,20 +281,22 @@ fn render_test_help_shows_detection_and_config() {
     render_help(&mut renderer, HelpTopic::Test).expect("help render");
     let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
     assert!(rendered.contains("test Help"));
+    assert!(rendered.contains("built-in test runner detection by default"));
+    assert!(rendered.contains("`tasks.test` is defined, it takes precedence"));
     assert!(rendered.contains("<catalog>/test fallback"));
     assert!(rendered.contains("Detection Order"));
     assert!(rendered.contains("--verbose-results"));
     assert!(rendered.contains("--tui"));
     assert!(rendered.contains("[suite] [runner args]"));
     assert!(rendered.contains("effigy test vitest user-service"));
-    assert!(rendered.contains("effigy farmyard/test"));
+    assert!(rendered.contains("effigy <catalog>/test"));
     assert!(rendered.contains("effigy test --plan user-service"));
     assert!(rendered.contains("effigy test --plan viteest user-service"));
     assert!(rendered.contains("Named Test Selection"));
     assert!(rendered.contains("effigy test user-service"));
     assert!(rendered.contains("prefix the suite explicitly"));
     assert!(rendered.contains("check `available-suites` per target"));
-    assert!(rendered.contains("suggests nearest suite aliases"));
+    assert!(rendered.contains("suggests nearest suite names"));
     assert!(rendered.contains("source of truth and auto-detection is skipped"));
     assert!(rendered.contains("Migration"));
     assert!(rendered.contains("ambiguous in multi-suite repos"));
@@ -308,14 +307,14 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("Ambiguity: `effigy test user-service`"));
     assert!(rendered.contains("Unavailable or mistyped suite"));
     assert!(rendered.contains("[package_manager]"));
-    assert!(rendered.contains("js = \"pnpm\""));
+    assert!(rendered.contains("js = \"bun\""));
     assert!(rendered.contains("[test]"));
     assert!(rendered.contains("max_parallel = 2"));
     assert!(rendered.contains("[test.suites]"));
-    assert!(rendered.contains("unit = \"pnpm exec vitest run\""));
+    assert!(rendered.contains("unit = \"bun x vitest run\""));
     assert!(rendered.contains("[test.runners]"));
-    assert!(rendered.contains("vitest = \"pnpm exec vitest run\""));
-    assert!(rendered.contains("[tasks.test]"));
+    assert!(rendered.contains("vitest = \"bun x vitest run\""));
+    assert!(!rendered.contains("[tasks.test]"));
     assert!(rendered.contains("Task-ref chain with quoted args"));
     assert!(rendered.contains(
         "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"

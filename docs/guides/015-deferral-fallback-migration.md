@@ -15,11 +15,11 @@ Add to `effigy.toml`:
 
 ```toml
 [defer]
-run = "composer global exec effigy -- {request} {args}"
+run = "my-process {request} {args}"
 ```
 
 Token behavior:
-- `{request}`: original task request (`foo`, `farmyard/test`, etc.)
+- `{request}`: original task request (`foo`, `catalog-a/test`, etc.)
 - `{args}`: passthrough arguments after request
 - `{repo}`: shell-quoted catalog/repo path selected for deferral
 
@@ -29,10 +29,10 @@ If no explicit `[defer]` exists, Effigy automatically defers when all are true a
 - `composer.json` exists
 - `effigy.json` exists
 
-Implicit command:
+Implicit command template:
 
 ```bash
-composer global exec effigy -- {request} {args}
+<built-in legacy defer process> {request} {args}
 ```
 
 ## 4) Safety guard

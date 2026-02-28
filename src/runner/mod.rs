@@ -27,7 +27,7 @@ use builtin::try_run_builtin_task;
 use catalog::{discover_catalogs, select_catalog_and_task};
 use execute::{catalog_task_label, run_manifest_task, task_run_preview};
 use manifest::{
-    ManifestJsPackageManager, ManifestManagedProcess, ManifestManagedProfile, ManifestManagedRun,
+    ManifestJsPackageManager, ManifestManagedConcurrentEntry, ManifestManagedRun,
     ManifestManagedRunStep, ManifestTask, TaskManifest,
 };
 use model::{
@@ -36,9 +36,7 @@ use model::{
     DEFAULT_MANAGED_SHELL_RUN, DEFER_DEPTH_ENV, IMPLICIT_ROOT_DEFER_TEMPLATE, TASK_MANIFEST_FILE,
 };
 use render::render_pulse_report;
-#[cfg(test)]
-use util::parse_task_reference_invocation;
-use util::{parse_task_runtime_args, parse_task_selector};
+use util::{parse_task_reference_invocation, parse_task_runtime_args, parse_task_selector};
 
 #[derive(Debug)]
 struct ManagedProfileDisplayRow {
@@ -444,19 +442,63 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
     ];
 
     let resolve_probe = if let Some(raw_selector) = args.resolve_selector.clone() {
-        let selector = parse_task_selector(&raw_selector)?;
+        let (selector, selector_args) = parse_task_reference_invocation(&raw_selector)?;
         let selector_task_name = selector.task_name.clone();
         let cwd = std::env::current_dir().map_err(RunnerError::Cwd)?;
         match select_catalog_and_task(&selector, &catalogs, &cwd) {
-            Ok(selection) => Some(json!({
-                "selector": raw_selector,
-                "status": "ok",
-                "catalog": selection.catalog.alias,
-                "catalog_root": selection.catalog.catalog_root.display().to_string(),
-                "task": selector_task_name,
-                "evidence": selection.evidence,
-                "error": serde_json::Value::Null,
-            })),
+            Ok(selection) => {
+                if selection.task.mode.as_deref() == Some("tui") {
+                    let profile_name = selector_args
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "default".to_owned());
+                    if !concurrent_entries_for_profile(selection.task, &profile_name) {
+                        let available = available_concurrent_profiles(selection.task);
+                        let available_display = if available.is_empty() {
+                            "<none>".to_owned()
+                        } else {
+                            available.join(", ")
+                        };
+                        Some(json!({
+                            "selector": raw_selector,
+                            "status": "error",
+                            "catalog": serde_json::Value::Null,
+                            "catalog_root": serde_json::Value::Null,
+                            "task": selector_task_name,
+                            "evidence": Vec::<String>::new(),
+                            "error": format!(
+                                "managed profile `{profile_name}` not found for task `{}`; available: {}",
+                                selector_task_name,
+                                available_display
+                            ),
+                        }))
+                    } else {
+                        let mut evidence = selection.evidence.clone();
+                        evidence.push(format!(
+                            "managed profile `{profile_name}` resolved via invocation `{raw_selector}`"
+                        ));
+                        Some(json!({
+                            "selector": raw_selector,
+                            "status": "ok",
+                            "catalog": selection.catalog.alias,
+                            "catalog_root": selection.catalog.catalog_root.display().to_string(),
+                            "task": selector_task_name,
+                            "evidence": evidence,
+                            "error": serde_json::Value::Null,
+                        }))
+                    }
+                } else {
+                    Some(json!({
+                        "selector": raw_selector,
+                        "status": "ok",
+                        "catalog": selection.catalog.alias,
+                        "catalog_root": selection.catalog.catalog_root.display().to_string(),
+                        "task": selector_task_name,
+                        "evidence": selection.evidence,
+                        "error": serde_json::Value::Null,
+                    }))
+                }
+            }
             Err(error) => {
                 if BUILTIN_TASKS
                     .iter()
@@ -890,6 +932,36 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
     let out = renderer.into_inner();
     return String::from_utf8(out)
         .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")));
+}
+
+fn concurrent_entries_for_profile(task: &ManifestTask, profile_name: &str) -> bool {
+    if task
+        .profiles
+        .get(profile_name)
+        .and_then(|profile| profile.concurrent_entries())
+        .is_some()
+    {
+        return true;
+    }
+    profile_name == "default" && !task.concurrent.is_empty()
+}
+
+fn available_concurrent_profiles(task: &ManifestTask) -> Vec<String> {
+    let mut available = task
+        .profiles
+        .iter()
+        .filter_map(|(name, profile)| {
+            profile
+                .concurrent_entries()
+                .is_some()
+                .then_some(name.clone())
+        })
+        .collect::<Vec<String>>();
+    if !task.concurrent.is_empty() && !available.iter().any(|name| name == "default") {
+        available.push("default".to_owned());
+    }
+    available.sort();
+    available
 }
 
 fn relative_display_path(root: &Path, path: &Path) -> String {

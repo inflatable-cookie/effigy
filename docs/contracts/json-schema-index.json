@@ -10,9 +10,23 @@
       "status": "active"
     },
     {
+      "schema": "effigy.tasks.v1",
+      "schema_version": 1,
+      "command": "effigy --json tasks --resolve <selector>",
+      "surface": "top-level command",
+      "status": "active"
+    },
+    {
       "schema": "effigy.tasks.filtered.v1",
       "schema_version": 1,
       "command": "effigy --json tasks --task <name>",
+      "surface": "top-level command",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.tasks.filtered.v1",
+      "schema_version": 1,
+      "command": "effigy --json tasks --task <name> --resolve <selector>",
       "surface": "top-level command",
       "status": "active"
     },

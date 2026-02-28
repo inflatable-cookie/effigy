@@ -25,16 +25,26 @@ Recommended compact profile schema:
 mode = "tui"
 shell = true
 
-[tasks.dev.profiles]
-default = ["farmyard/api", "farmyard/jobs", "cream/dev", "dairy/dev"]
-admin = ["farmyard/api", "farmyard/jobs", "dairy/dev"]
+concurrent = [
+  { task = "catalog-a/api", start = 1, tab = 3 },
+  { task = "catalog-a/jobs", start = 2, tab = 4, start_after_ms = 1200 },
+  { task = "catalog-b/dev", start = 3, tab = 2 },
+  { run = "my-other-arbitrary-process", start = 4, tab = 1 }
+]
 
+[tasks.dev.profiles.admin]
+concurrent = [
+  { task = "catalog-a/api", start = 1, tab = 2 },
+  { task = "catalog-a/jobs", start = 2, tab = 3, start_after_ms = 1200 },
+  { task = "catalog-c/dev", start = 3, tab = 1 }
+]
 ```
 
 Profile entries support:
-- direct task references (`catalog/task`), or
-- relative path task references (`../repo/task`) resolved from the current catalog root, or
-- local process ids defined under `[tasks.dev.processes.<name>]`.
+- direct task references (`catalog/task`) via `task = "..."`, or
+- arbitrary process commands via `run = "..."`, or
+- relative path task references (`../repo/task`) via `task = "..."`, resolved from the current catalog root.
+- optional profile overrides via `[tasks.dev.profiles.<name>]` with their own `concurrent = [...]`.
 - optional integrated shell tab when `shell = true`.
 
 Optional global shell command override:
@@ -53,14 +63,10 @@ Example mixed mode:
 [tasks.dev]
 mode = "tui"
 
-[tasks.dev.profiles]
-default = ["api", "front"]
-
-[tasks.dev.processes.api]
-run = "cargo run -p farmyard-api"
-
-[tasks.dev.processes.front]
-task = "cream/dev"
+concurrent = [
+  { run = "cargo run -p app-api", start = 1, tab = 2 },
+  { task = "catalog-b/dev", start = 2, tab = 1 }
+]
 ```
 
 Example relative repo reference:
@@ -72,14 +78,12 @@ alias = "dairy"
 [tasks.dev]
 mode = "tui"
 
-[tasks.dev.profiles.default]
-processes = ["validate-stack"]
-
-[tasks.dev.processes.validate-stack]
-task = "../froyo/validate"
+concurrent = [
+  { task = "../shared/validate", start = 1, tab = 1 }
+]
 ```
 
-In this example, `../froyo/validate` resolves relative to `dairy` catalog root.
+In this example, `../shared/validate` resolves relative to `dairy` catalog root.
 
 ## 3) Runtime Behavior
 

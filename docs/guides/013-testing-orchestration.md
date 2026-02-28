@@ -21,12 +21,7 @@ Per target root:
 
 ## Explicit Override
 
-If `tasks.test` exists in the selected catalog, that explicit task always wins:
-
-```toml
-[tasks.test]
-run = "bun test {args}"
-```
+If `tasks.test` exists in the selected catalog, that explicit task always wins.
 
 ## Task Reference Chains
 
@@ -41,11 +36,10 @@ run = [{ task = "test vitest" }, "printf validate-ok"]
 [tasks.dev]
 mode = "tui"
 
-[tasks.dev.profiles.default]
-processes = ["api", "tests"]
-
-[tasks.dev.processes.tests]
-task = "test vitest \"user service\""
+concurrent = [
+  { run = "cargo run -p api", start = 1, tab = 2 },
+  { task = "test vitest \"user service\"", start = 2, tab = 1 }
+]
 ```
 
 Notes:

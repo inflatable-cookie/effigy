@@ -32,6 +32,9 @@ jobs:
       - name: Validate selection artifact contract
         run: ./scripts/validate-json-contract-selection-artifact.sh ./json-contracts-selected.json
 
+      - name: Validator smoke check (negative path)
+        run: ./scripts/check-selection-artifact-validator-smoke.sh
+
       - name: Upload JSON contracts artifact
         if: always()
         uses: actions/upload-artifact@v4

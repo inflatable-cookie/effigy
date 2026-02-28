@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -12,9 +13,9 @@ use crate::ui::{
 use super::catalog::select_catalog_and_task;
 use super::util::{parse_task_reference_invocation, render_task_selector, shell_quote};
 use super::{
-    LoadedCatalog, ManagedProcessSpec, ManagedTaskPlan, ManifestManagedProcess,
-    ManifestManagedProfile, ManifestManagedRun, ManifestManagedRunStep, ManifestTask, RunnerError,
-    TaskRuntimeArgs, TaskSelector, BUILTIN_TASKS, DEFAULT_MANAGED_SHELL_RUN,
+    LoadedCatalog, ManagedProcessSpec, ManagedTaskPlan, ManifestManagedConcurrentEntry,
+    ManifestManagedRun, ManifestManagedRunStep, ManifestTask, RunnerError, TaskRuntimeArgs,
+    TaskSelector, BUILTIN_TASKS, DEFAULT_MANAGED_SHELL_RUN,
 };
 
 pub(super) fn resolve_managed_task_plan(
@@ -40,66 +41,129 @@ pub(super) fn resolve_managed_task_plan(
         .first()
         .cloned()
         .unwrap_or_else(|| "default".to_owned());
-    let profile = task.profiles.get(&profile_name).ok_or_else(|| {
-        let mut available = task.profiles.keys().cloned().collect::<Vec<String>>();
-        available.sort();
-        RunnerError::TaskManagedProfileNotFound {
-            task: selector.task_name.clone(),
-            profile: profile_name.clone(),
-            available,
-        }
-    })?;
 
-    let profile_entries = profile.start_entries();
-    if profile_entries.is_empty() {
-        return Err(RunnerError::TaskManagedProfileEmpty {
+    if let Some(entries) = concurrent_entries_for_profile(task, &profile_name) {
+        return resolve_managed_concurrent_task_plan(
+            selector,
+            catalog,
+            task,
+            &profile_name,
+            entries,
+            &runtime_args.passthrough,
+            catalogs,
+            task_scope_cwd,
+        )
+        .map(Some);
+    }
+
+    if has_concurrent_schema(task) {
+        return Err(RunnerError::TaskManagedProfileNotFound {
             task: selector.task_name.clone(),
             profile: profile_name,
+            available: available_concurrent_profiles(task),
+        });
+    }
+    Err(RunnerError::TaskManagedProcessInvalidDefinition {
+        task: selector.task_name.clone(),
+        process: "concurrent".to_owned(),
+        detail: "managed `mode = \"tui\"` requires `concurrent = [...]` in `[tasks.<name>]` (default profile) and/or `[tasks.<name>.profiles.<profile>]`".to_owned(),
+    })
+}
+
+#[derive(Debug)]
+struct ConcurrentResolvedProcess {
+    spec: ManagedProcessSpec,
+    start_rank: usize,
+    tab_rank: usize,
+    index: usize,
+}
+
+fn resolve_managed_concurrent_task_plan(
+    selector: &TaskSelector,
+    catalog: &LoadedCatalog,
+    task: &ManifestTask,
+    profile_name: &str,
+    entries: &[ManifestManagedConcurrentEntry],
+    passthrough: &[String],
+    catalogs: &[LoadedCatalog],
+    task_scope_cwd: &Path,
+) -> Result<ManagedTaskPlan, RunnerError> {
+    if entries.is_empty() {
+        return Err(RunnerError::TaskManagedProfileEmpty {
+            task: selector.task_name.clone(),
+            profile: profile_name.to_owned(),
         });
     }
 
-    let start_delay_ms = profile.start_delay_ms();
-    let mut processes = Vec::with_capacity(profile_entries.len());
-    if task.processes.is_empty() {
-        for (idx, entry) in profile_entries.iter().enumerate() {
-            let (name, run, cwd) = resolve_direct_profile_entry(
+    let mut used_names = HashSet::<String>::new();
+    let mut resolved = Vec::<ConcurrentResolvedProcess>::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        let ordinal = index + 1;
+        let process_name = entry
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| entry.task.clone())
+            .unwrap_or_else(|| format!("process-{ordinal}"));
+        if !used_names.insert(process_name.clone()) {
+            return Err(RunnerError::TaskManagedProcessInvalidDefinition {
+                task: selector.task_name.clone(),
+                process: process_name,
+                detail: "duplicate process name; set unique `name` values in `concurrent` entries"
+                    .to_owned(),
+            });
+        }
+        let (run, cwd) = match (&entry.task, &entry.run) {
+            (Some(task_ref), None) => resolve_task_reference_run(
                 &selector.task_name,
-                entry,
-                idx + 1,
+                &process_name,
+                task_ref,
                 catalogs,
                 task_scope_cwd,
-            )?;
-            processes.push(ManagedProcessSpec {
-                name,
+            )?,
+            (None, Some(run)) => (run.clone(), task_scope_cwd.to_path_buf()),
+            (Some(_), Some(_)) => {
+                return Err(RunnerError::TaskManagedProcessInvalidDefinition {
+                    task: selector.task_name.clone(),
+                    process: process_name,
+                    detail: "define either `task` or `run`, not both".to_owned(),
+                });
+            }
+            (None, None) => {
+                return Err(RunnerError::TaskManagedProcessInvalidDefinition {
+                    task: selector.task_name.clone(),
+                    process: process_name,
+                    detail: "missing both `task` and `run`".to_owned(),
+                });
+            }
+        };
+        let start_rank = entry.start.unwrap_or(ordinal);
+        let tab_rank = entry.tab.unwrap_or(start_rank);
+        resolved.push(ConcurrentResolvedProcess {
+            spec: ManagedProcessSpec {
+                name: process_name,
                 run,
                 cwd,
-                start_after_ms: *start_delay_ms.get(entry).unwrap_or(&0),
-            });
-        }
-    } else {
-        for process_name in &profile_entries {
-            let process = task.processes.get(process_name).ok_or_else(|| {
-                RunnerError::TaskManagedProcessNotFound {
-                    task: selector.task_name.clone(),
-                    profile: profile_name.clone(),
-                    process: process_name.clone(),
-                }
-            })?;
-            let (process_run, process_cwd) = resolve_managed_process_run(
-                &selector.task_name,
-                process_name,
-                process,
-                catalogs,
-                task_scope_cwd,
-            )?;
-            processes.push(ManagedProcessSpec {
-                name: process_name.clone(),
-                run: process_run,
-                cwd: process_cwd,
-                start_after_ms: *start_delay_ms.get(process_name).unwrap_or(&0),
-            });
-        }
+                start_after_ms: entry.start_after_ms.unwrap_or(0),
+            },
+            start_rank,
+            tab_rank,
+            index,
+        });
     }
+
+    resolved.sort_by(|a, b| {
+        a.start_rank
+            .cmp(&b.start_rank)
+            .then_with(|| a.index.cmp(&b.index))
+            .then_with(|| a.spec.name.cmp(&b.spec.name))
+    });
+    let mut processes = resolved
+        .iter()
+        .map(|entry| entry.spec.clone())
+        .collect::<Vec<ManagedProcessSpec>>();
 
     if task.shell.unwrap_or(false) {
         let shell_name = "shell".to_owned();
@@ -124,178 +188,72 @@ pub(super) fn resolve_managed_task_plan(
         });
     }
 
-    let tab_order =
-        resolve_managed_tab_order(&selector.task_name, &profile_name, &processes, profile)?;
+    let mut tab_entries = resolved
+        .iter()
+        .map(|entry| (entry.spec.name.clone(), entry.tab_rank, entry.index))
+        .collect::<Vec<(String, usize, usize)>>();
+    tab_entries.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.2.cmp(&b.2)).then_with(|| a.0.cmp(&b.0)));
+    let mut tab_order = tab_entries
+        .into_iter()
+        .map(|(name, _, _)| name)
+        .collect::<Vec<String>>();
+    for process in &processes {
+        if !tab_order.iter().any(|name| name == &process.name) {
+            tab_order.push(process.name.clone());
+        }
+    }
 
-    Ok(Some(ManagedTaskPlan {
+    Ok(ManagedTaskPlan {
         mode: "tui".to_owned(),
-        profile: profile_name,
+        profile: profile_name.to_owned(),
         processes,
         tab_order,
         fail_on_non_zero: task.fail_on_non_zero.unwrap_or(true),
-        passthrough: runtime_args.passthrough.iter().skip(1).cloned().collect(),
-    }))
+        passthrough: passthrough.iter().skip(1).cloned().collect(),
+    })
 }
 
-fn resolve_managed_tab_order(
-    task_name: &str,
+fn concurrent_entries_for_profile<'a>(
+    task: &'a ManifestTask,
     profile_name: &str,
-    processes: &[ManagedProcessSpec],
-    profile: &ManifestManagedProfile,
-) -> Result<Vec<String>, RunnerError> {
-    let process_names = processes
+) -> Option<&'a [ManifestManagedConcurrentEntry]> {
+    if let Some(entries) = task
+        .profiles
+        .get(profile_name)
+        .and_then(|profile| profile.concurrent_entries())
+    {
+        return Some(entries);
+    }
+    if profile_name == "default" && !task.concurrent.is_empty() {
+        return Some(task.concurrent.as_slice());
+    }
+    None
+}
+
+fn has_concurrent_schema(task: &ManifestTask) -> bool {
+    !task.concurrent.is_empty()
+        || task
+            .profiles
+            .values()
+            .any(|profile| profile.concurrent_entries().is_some())
+}
+
+fn available_concurrent_profiles(task: &ManifestTask) -> Vec<String> {
+    let mut available = task
+        .profiles
         .iter()
-        .map(|process| process.name.clone())
+        .filter_map(|(name, profile)| {
+            profile
+                .concurrent_entries()
+                .is_some()
+                .then_some(name.clone())
+        })
         .collect::<Vec<String>>();
-    let Some(tab_entries) = profile.tab_entries() else {
-        return Ok(process_names);
-    };
-
-    let mut tab_order = Vec::with_capacity(process_names.len());
-    for tab in &tab_entries {
-        if !process_names.iter().any(|name| name == tab) {
-            return Err(RunnerError::TaskManagedProfileTabOrderInvalid {
-                task: task_name.to_owned(),
-                profile: profile_name.to_owned(),
-                detail: format!("tab `{tab}` is not a configured process in this profile"),
-            });
-        }
-        if tab_order.iter().any(|name| name == tab) {
-            return Err(RunnerError::TaskManagedProfileTabOrderInvalid {
-                task: task_name.to_owned(),
-                profile: profile_name.to_owned(),
-                detail: format!("tab `{tab}` is duplicated"),
-            });
-        }
-        tab_order.push(tab.to_owned());
+    if !task.concurrent.is_empty() && !available.iter().any(|name| name == "default") {
+        available.push("default".to_owned());
     }
-    for process_name in process_names {
-        if !tab_order.iter().any(|name| name == &process_name) {
-            tab_order.push(process_name);
-        }
-    }
-    Ok(tab_order)
-}
-
-fn resolve_managed_process_run(
-    managed_task_name: &str,
-    process_name: &str,
-    process: &ManifestManagedProcess,
-    catalogs: &[LoadedCatalog],
-    task_scope_cwd: &Path,
-) -> Result<(String, PathBuf), RunnerError> {
-    match (&process.run, &process.task) {
-        (Some(run), None) => resolve_managed_run_value(
-            managed_task_name,
-            process_name,
-            run,
-            catalogs,
-            task_scope_cwd,
-        ),
-        (None, Some(task_ref)) => resolve_task_reference_run(
-            managed_task_name,
-            process_name,
-            task_ref,
-            catalogs,
-            task_scope_cwd,
-        ),
-        (Some(_), Some(_)) => Err(RunnerError::TaskManagedProcessInvalidDefinition {
-            task: managed_task_name.to_owned(),
-            process: process_name.to_owned(),
-            detail: "define either `run` or `task`, not both".to_owned(),
-        }),
-        (None, None) => Err(RunnerError::TaskManagedProcessInvalidDefinition {
-            task: managed_task_name.to_owned(),
-            process: process_name.to_owned(),
-            detail: "missing both `run` and `task`".to_owned(),
-        }),
-    }
-}
-
-fn resolve_managed_run_value(
-    managed_task_name: &str,
-    process_name: &str,
-    run: &ManifestManagedRun,
-    catalogs: &[LoadedCatalog],
-    task_scope_cwd: &Path,
-) -> Result<(String, PathBuf), RunnerError> {
-    match run {
-        ManifestManagedRun::Command(command) => Ok((command.clone(), task_scope_cwd.to_path_buf())),
-        ManifestManagedRun::Sequence(steps) => {
-            if steps.is_empty() {
-                return Err(RunnerError::TaskManagedProcessInvalidDefinition {
-                    task: managed_task_name.to_owned(),
-                    process: process_name.to_owned(),
-                    detail: "run array must include at least one step".to_owned(),
-                });
-            }
-            let mut commands = Vec::with_capacity(steps.len());
-            for (idx, step) in steps.iter().enumerate() {
-                let step_num = idx + 1;
-                let step_command = match step {
-                    ManifestManagedRunStep::Command(command) => {
-                        if let Some(task_ref) = command
-                            .strip_prefix("task:")
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                        {
-                            let (task_run, task_cwd) = resolve_task_reference_run(
-                                managed_task_name,
-                                process_name,
-                                task_ref,
-                                catalogs,
-                                task_scope_cwd,
-                            )?;
-                            format!(
-                                "(cd {} && {})",
-                                shell_quote(&task_cwd.display().to_string()),
-                                task_run
-                            )
-                        } else {
-                            command.clone()
-                        }
-                    }
-                    ManifestManagedRunStep::Step(step) => match (&step.run, &step.task) {
-                        (Some(run), None) => run.clone(),
-                        (None, Some(task_ref)) => {
-                            let (task_run, task_cwd) = resolve_task_reference_run(
-                                managed_task_name,
-                                process_name,
-                                task_ref,
-                                catalogs,
-                                task_scope_cwd,
-                            )?;
-                            format!(
-                                "(cd {} && {})",
-                                shell_quote(&task_cwd.display().to_string()),
-                                task_run
-                            )
-                        }
-                        (Some(_), Some(_)) => {
-                            return Err(RunnerError::TaskManagedProcessInvalidDefinition {
-                                task: managed_task_name.to_owned(),
-                                process: process_name.to_owned(),
-                                detail: format!(
-                                    "run step {step_num} defines both `run` and `task`; choose one"
-                                ),
-                            });
-                        }
-                        (None, None) => {
-                            return Err(RunnerError::TaskManagedProcessInvalidDefinition {
-                                task: managed_task_name.to_owned(),
-                                process: process_name.to_owned(),
-                                detail: format!(
-                                    "run step {step_num} is missing both `run` and `task`"
-                                ),
-                            });
-                        }
-                    },
-                };
-                commands.push(step_command);
-            }
-            Ok((commands.join(" && "), task_scope_cwd.to_path_buf()))
-        }
-    }
+    available.sort();
+    available
 }
 
 fn resolve_task_reference_run(
@@ -575,83 +533,6 @@ fn resolve_effigy_invocation_prefix() -> Result<String, RunnerError> {
         ));
     }
     Ok(shell_quote(&executable.display().to_string()))
-}
-
-fn resolve_direct_profile_entry(
-    managed_task_name: &str,
-    entry: &str,
-    ordinal: usize,
-    catalogs: &[LoadedCatalog],
-    task_scope_cwd: &Path,
-) -> Result<(String, String, PathBuf), RunnerError> {
-    let (selector, ref_args) = parse_task_reference_invocation(entry).map_err(|error| {
-        RunnerError::TaskManagedTaskReferenceInvalid {
-            task: managed_task_name.to_owned(),
-            process: format!("entry-{ordinal}"),
-            reference: entry.to_owned(),
-            detail: error.to_string(),
-        }
-    })?;
-    let ref_args_rendered = ref_args
-        .iter()
-        .map(|arg| shell_quote(arg))
-        .collect::<Vec<String>>()
-        .join(" ");
-    let selector_rendered = render_task_selector(&selector);
-    let selection = match select_catalog_and_task(&selector, catalogs, task_scope_cwd) {
-        Ok(selection) => selection,
-        Err(error) => {
-            if is_builtin_task_selector(&selector) {
-                let run = render_builtin_task_reference_invocation(
-                    &selector_rendered,
-                    &ref_args_rendered,
-                )?;
-                let name = selector
-                    .prefix
-                    .map(|prefix| format!("{prefix}/{}", selector.task_name))
-                    .unwrap_or(selector.task_name);
-                return Ok((name, run, task_scope_cwd.to_path_buf()));
-            }
-            return Err(RunnerError::TaskManagedTaskReferenceInvalid {
-                task: managed_task_name.to_owned(),
-                process: format!("entry-{ordinal}"),
-                reference: entry.to_owned(),
-                detail: error.to_string(),
-            });
-        }
-    };
-    let run_spec = selection.task.run.as_ref().ok_or_else(|| {
-        RunnerError::TaskManagedTaskReferenceInvalid {
-            task: managed_task_name.to_owned(),
-            process: format!("entry-{ordinal}"),
-            reference: entry.to_owned(),
-            detail: format!(
-                "referenced task `{}` in {} has no `run` command",
-                selector.task_name,
-                selection.catalog.manifest_path.display()
-            ),
-        }
-    })?;
-    let run = render_task_run_spec(
-        &selector.task_name,
-        run_spec,
-        &ref_args_rendered,
-        &selection.catalog.catalog_root,
-        catalogs,
-        &selection.catalog.catalog_root,
-        0,
-    )
-    .map_err(|error| RunnerError::TaskManagedTaskReferenceInvalid {
-        task: managed_task_name.to_owned(),
-        process: format!("entry-{ordinal}"),
-        reference: entry.to_owned(),
-        detail: error.to_string(),
-    })?;
-    let name = selector
-        .prefix
-        .map(|prefix| format!("{prefix}/{}", selector.task_name))
-        .unwrap_or(selector.task_name);
-    Ok((name, run, selection.catalog.catalog_root.clone()))
 }
 
 fn render_managed_task_plan(

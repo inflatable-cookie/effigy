@@ -51,29 +51,18 @@ Roadmap target for catalog schema extensions:
 [tasks.dev]
 mode = "tui"
 
-[tasks.dev.profiles.default]
-processes = ["api", "front", "admin"]
-
-[tasks.dev.profiles.admin]
-processes = ["api", "admin"]
-
-[tasks.dev.processes.api]
-run = "cargo run -p farmyard-api"
-
-[tasks.dev.processes.front]
-run = "vite dev"
-
-[tasks.dev.processes.admin]
-run = "vite dev --config admin.vite.config.ts"
+concurrent = [
+  { run = "cargo run -p app-api", start = 1, tab = 3 },
+  { run = "vite dev", start = 2, tab = 2 },
+  { run = "vite dev --config admin.vite.config.ts", start = 3, tab = 1 }
+]
 
 
 ```
 
 Notes:
 - This roadmap defines the direction; exact schema can evolve during phase 4.1 if a cleaner manifest shape is identified.
-- `effigy dev` resolves `profiles.default`.
-- `effigy dev admin` resolves `profiles.admin`.
-- Unknown profiles fail with a validation error listing available profiles.
+- `effigy dev` uses the default `concurrent` plan.
 
 ## 6) Execution Plan
 

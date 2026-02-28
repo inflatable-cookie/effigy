@@ -217,7 +217,7 @@ Built-in Tasks
 - config : Show supported project effigy.toml configuration keys and examples
 - health : Built-in health alias; falls back to repo-pulse when no explicit health task exists
 - repo-pulse : Built-in repository/workspace health and structure signal report
-- test : Built-in test runner detection (vitest, cargo nextest, cargo test), supports <catalog>/test fallback, optional --plan
+- test : Built-in test runner detection, supports <catalog>/test fallback, optional --plan
 - tasks : List discovered catalogs and available tasks
 
 ";
@@ -267,11 +267,13 @@ fn cli_tasks_filtered_text_output_managed_profiles_matches_canonical_fixture_tai
         root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
+concurrent = [{ task = "farmyard/api" }]
 
-[tasks.dev.profiles]
-default = ["farmyard/api"]
-front = ["cream/dev"]
-admin = ["dairy/dev"]
+[tasks.dev.profiles.front]
+concurrent = [{ task = "cream/dev" }]
+
+[tasks.dev.profiles.admin]
+concurrent = [{ task = "dairy/dev" }]
 "#,
     )
     .expect("write manifest");
@@ -312,11 +314,13 @@ fn cli_tasks_text_output_managed_profiles_matches_canonical_fixture_tail() {
         root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
+concurrent = [{ task = "farmyard/api" }]
 
-[tasks.dev.profiles]
-default = ["farmyard/api"]
-front = ["cream/dev"]
-admin = ["dairy/dev"]
+[tasks.dev.profiles.front]
+concurrent = [{ task = "cream/dev" }]
+
+[tasks.dev.profiles.admin]
+concurrent = [{ task = "dairy/dev" }]
 "#,
     )
     .expect("write manifest");
@@ -355,7 +359,7 @@ Built-in Tasks
 - config : Show supported project effigy.toml configuration keys and examples
 - health : Built-in health alias; falls back to repo-pulse when no explicit health task exists
 - repo-pulse : Built-in repository/workspace health and structure signal report
-- test : Built-in test runner detection (vitest, cargo nextest, cargo test), supports <catalog>/test fallback, optional --plan
+- test : Built-in test runner detection, supports <catalog>/test fallback, optional --plan
 - tasks : List discovered catalogs and available tasks
 
 ";
@@ -369,11 +373,13 @@ fn cli_tasks_text_output_lists_managed_profiles_inline_with_tasks() {
         root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
+concurrent = [{ task = "farmyard/api" }]
 
-[tasks.dev.profiles]
-default = ["farmyard/api"]
-front = ["cream/dev"]
-admin = ["dairy/dev"]
+[tasks.dev.profiles.front]
+concurrent = [{ task = "cream/dev" }]
+
+[tasks.dev.profiles.admin]
+concurrent = [{ task = "dairy/dev" }]
 "#,
     )
     .expect("write manifest");
@@ -437,6 +443,100 @@ evidence:
 "
     );
     assert_eq!(tail, expected);
+}
+
+#[test]
+fn cli_tasks_resolve_managed_profile_invocation_is_concise() {
+    let root = temp_workspace("cli-text-fixture-tail-resolve-managed-profile");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [{ run = "printf default-ok" }]
+
+[tasks.dev.profiles.front]
+concurrent = [{ run = "printf front-ok" }]
+"#,
+    )
+    .expect("write manifest");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("tasks")
+        .arg("--repo")
+        .arg(&root)
+        .arg("--resolve")
+        .arg("dev front")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let anchor = "\nResolution: dev front\n";
+    let start = stdout
+        .find(anchor)
+        .expect("resolution section anchor");
+    let tail = &stdout[start + 1..];
+    let expected = "\
+Resolution: dev front
+─────────────────────
+status: ok
+catalog: root
+task: dev
+evidence:
+- selected shallowest catalog `root` by depth 0 from workspace root
+- managed profile `front` resolved via invocation `dev front`
+
+";
+    assert_eq!(tail, expected);
+    assert!(!stdout.contains("\nCatalogs\n"));
+    assert!(!stdout.contains("\nTasks\n"));
+}
+
+#[test]
+fn cli_tasks_resolve_managed_profile_missing_is_concise_with_available_profiles() {
+    let root = temp_workspace("cli-text-fixture-tail-resolve-managed-profile-missing");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [{ run = "printf default-ok" }]
+
+[tasks.dev.profiles.front]
+concurrent = [{ run = "printf front-ok" }]
+"#,
+    )
+    .expect("write manifest");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("tasks")
+        .arg("--repo")
+        .arg(&root)
+        .arg("--resolve")
+        .arg("dev missing-profile")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let anchor = "\nResolution: dev missing-profile\n";
+    let start = stdout
+        .find(anchor)
+        .expect("resolution section anchor");
+    let tail = &stdout[start + 1..];
+    let expected = "\
+Resolution: dev missing-profile
+───────────────────────────────
+status: error
+catalog: <none>
+task: dev
+• warn: managed profile `missing-profile` not found for task `dev`; available: default, front
+
+";
+    assert_eq!(tail, expected);
+    assert!(!stdout.contains("\nCatalogs\n"));
+    assert!(!stdout.contains("\nTasks\n"));
 }
 
 #[test]
