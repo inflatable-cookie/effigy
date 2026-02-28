@@ -1,6 +1,6 @@
 # 008 - Universal JSON Command Coverage
 
-Status: In Progress
+Status: Complete
 Owner: Platform
 Created: 2026-02-28
 Depends on: 001, 002, 003, 004, 005
@@ -11,11 +11,11 @@ Effigy initially supported JSON output for selected command paths (`tasks`, buil
 
 ## 2) Goals
 
-- [ ] Ensure all command interactions can emit JSON when `--json` is requested.
-- [ ] Standardize command-level success/error envelopes for reliable CI parsing.
-- [ ] Preserve non-zero exit code semantics while still returning machine-readable error payloads.
-- [ ] Support built-in and catalog task execution paths with structured output where feasible.
-- [ ] Keep existing command-specific JSON payloads available during migration.
+- [x] Ensure all command interactions can emit JSON when `--json` is requested.
+- [x] Standardize command-level success/error envelopes for reliable CI parsing.
+- [x] Preserve non-zero exit code semantics while still returning machine-readable error payloads.
+- [x] Support built-in and catalog task execution paths with structured output where feasible.
+- [x] Keep existing command-specific JSON payloads available during migration.
 
 ## 3) Non-Goals
 
