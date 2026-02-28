@@ -470,6 +470,11 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                             "catalog": serde_json::Value::Null,
                             "catalog_root": serde_json::Value::Null,
                             "task": selector_task_name,
+                            "lock_scopes": lock_scopes_for_task(
+                                &selector_task_name,
+                                selection.task,
+                                Some(&profile_name)
+                            ),
                             "evidence": Vec::<String>::new(),
                             "error": format!(
                                 "managed profile `{profile_name}` not found for task `{}`; available: {}",
@@ -488,6 +493,11 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                             "catalog": selection.catalog.alias,
                             "catalog_root": selection.catalog.catalog_root.display().to_string(),
                             "task": selector_task_name,
+                            "lock_scopes": lock_scopes_for_task(
+                                &selector_task_name,
+                                selection.task,
+                                Some(&profile_name)
+                            ),
                             "evidence": evidence,
                             "error": serde_json::Value::Null,
                         }))
@@ -499,6 +509,11 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                         "catalog": selection.catalog.alias,
                         "catalog_root": selection.catalog.catalog_root.display().to_string(),
                         "task": selector_task_name,
+                        "lock_scopes": lock_scopes_for_task(
+                            &selector_task_name,
+                            selection.task,
+                            None
+                        ),
                         "evidence": selection.evidence,
                         "error": serde_json::Value::Null,
                     }))
@@ -516,6 +531,7 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                         "catalog": serde_json::Value::Null,
                         "catalog_root": serde_json::Value::Null,
                         "task": selector_task_name.clone(),
+                        "lock_scopes": Vec::<String>::new(),
                         "evidence": vec![format!("resolved built-in task `{}`", selector_task_name)],
                         "error": serde_json::Value::Null,
                     }))
@@ -526,6 +542,7 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                         "catalog": serde_json::Value::Null,
                         "catalog_root": serde_json::Value::Null,
                         "task": selector_task_name,
+                        "lock_scopes": Vec::<String>::new(),
                         "evidence": Vec::<String>::new(),
                         "error": error.to_string(),
                     }))
@@ -790,6 +807,7 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
                 KeyValue::new("status", probe["status"].as_str().unwrap_or("<unknown>")),
                 KeyValue::new("catalog", probe["catalog"].as_str().unwrap_or("<none>")),
                 KeyValue::new("task", probe["task"].as_str().unwrap_or("<none>")),
+                KeyValue::new("lock_scopes", render_probe_lock_scopes(&probe)),
             ])?;
             if let Some(error) = probe["error"].as_str() {
                 renderer.notice(NoticeLevel::Warning, error)?;
@@ -811,6 +829,7 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
             KeyValue::new("status", probe["status"].as_str().unwrap_or("<unknown>")),
             KeyValue::new("catalog", probe["catalog"].as_str().unwrap_or("<none>")),
             KeyValue::new("task", probe["task"].as_str().unwrap_or("<none>")),
+            KeyValue::new("lock_scopes", render_probe_lock_scopes(probe)),
         ])?;
         if let Some(error) = probe["error"].as_str() {
             renderer.notice(NoticeLevel::Warning, error)?;
@@ -916,6 +935,7 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
             KeyValue::new("status", probe["status"].as_str().unwrap_or("<unknown>")),
             KeyValue::new("catalog", probe["catalog"].as_str().unwrap_or("<none>")),
             KeyValue::new("task", probe["task"].as_str().unwrap_or("<none>")),
+            KeyValue::new("lock_scopes", render_probe_lock_scopes(&probe)),
         ])?;
         if let Some(error) = probe["error"].as_str() {
             renderer.notice(NoticeLevel::Warning, error)?;
@@ -1006,6 +1026,34 @@ fn style_text(enabled: bool, style: anstyle::Style, text: &str) -> String {
         return text.to_owned();
     }
     format!("{}{}{}", style.render(), text, style.render_reset())
+}
+
+fn lock_scopes_for_task(
+    task_name: &str,
+    task: &ManifestTask,
+    profile: Option<&str>,
+) -> Vec<String> {
+    let mut scopes = vec!["workspace".to_owned(), format!("task:{task_name}")];
+    if task.mode.as_deref() == Some("tui") {
+        let profile_name = profile.unwrap_or("default");
+        scopes.push(format!("profile:{task_name}/{profile_name}"));
+    }
+    scopes
+}
+
+fn render_probe_lock_scopes(probe: &serde_json::Value) -> String {
+    let Some(scopes) = probe["lock_scopes"].as_array() else {
+        return "<none>".to_owned();
+    };
+    let rendered = scopes
+        .iter()
+        .filter_map(|value| value.as_str())
+        .map(str::to_owned)
+        .collect::<Vec<String>>();
+    if rendered.is_empty() {
+        return "<none>".to_owned();
+    }
+    rendered.join(", ")
 }
 
 fn run_manifest_task_with_cwd(task: &TaskInvocation, cwd: PathBuf) -> Result<String, RunnerError> {

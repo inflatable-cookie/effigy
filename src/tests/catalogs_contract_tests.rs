@@ -31,6 +31,7 @@ fn catalogs_text_contract_includes_core_sections_and_probe_fields() {
         "Resolution: farmyard/api",
         "catalog: farmyard",
         "task: api",
+        "lock_scopes: workspace, task:api",
         "evidence:",
         "selected catalog via explicit prefix `farmyard`",
     ];
@@ -74,6 +75,8 @@ fn catalogs_json_pretty_contract_uses_tasks_schema_top_level_shape() {
     assert!(parsed["builtin_tasks"].is_array());
     assert!(parsed["catalogs"].is_array());
     assert_eq!(parsed["resolve"]["catalog"], "farmyard");
+    assert_eq!(parsed["resolve"]["lock_scopes"][0], "workspace");
+    assert_eq!(parsed["resolve"]["lock_scopes"][1], "task:api");
 }
 
 #[test]
@@ -108,6 +111,8 @@ fn catalogs_json_compact_contract_is_single_line_and_valid_json() {
     assert_eq!(parsed["schema"], "effigy.tasks.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert_eq!(parsed["resolve"]["status"], "ok");
+    assert_eq!(parsed["resolve"]["lock_scopes"][0], "workspace");
+    assert_eq!(parsed["resolve"]["lock_scopes"][1], "task:api");
 }
 
 #[test]
@@ -137,6 +142,9 @@ fn catalogs_json_contract_reports_builtin_resolve_as_ok() {
     assert_eq!(parsed["resolve"]["status"], "ok");
     assert_eq!(parsed["resolve"]["task"], "test");
     assert!(parsed["resolve"]["catalog"].is_null());
+    assert!(parsed["resolve"]["lock_scopes"]
+        .as_array()
+        .is_some_and(|items| items.is_empty()));
     assert!(parsed["resolve"]["error"].is_null());
     assert!(parsed["resolve"]["evidence"]
         .as_array()

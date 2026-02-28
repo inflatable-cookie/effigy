@@ -80,6 +80,7 @@ Batch C phase-1 starts only when:
 - [x] Implement watch loop runner with debounce and glob filtering.
 - [x] Enforce explicit owner-policy guardrails for nested watchers.
 - [x] Emit deterministic conflict diagnostics with remediation guidance.
+- [x] Enforce lock-scope interop (`task:watch:<target>`) for concurrent watch-owner contention.
 
 ### Phase 11.3 - Init Scaffold
 - [x] Implement scaffold writer with safe file existence handling.
