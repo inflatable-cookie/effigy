@@ -57,11 +57,13 @@ effigy test [suite] [runner args]
 effigy test --plan [suite] [runner args]
 effigy test --verbose-results [suite] [runner args]
 effigy doctor [--repo <PATH>] [--fix] [--json]
+effigy doctor <task> <args> [--json]
 effigy tasks [--repo <PATH>] [--task <TASK_NAME>]
 ```
 
 ### Built-in tasks
 - `doctor`: remediation-first checks for environment tooling, manifest validity, task-reference resolution, and delegated `tasks.health` execution when present.
+- `doctor` explain mode: `effigy doctor <task> <args>` prints task-resolution candidates, selection evidence, ambiguity reasoning, and deferral consideration/selection.
 - `test`: built-in test runner auto-detection (`vitest`, `cargo nextest run`, `cargo test`) with `--plan` explainability.
 - `tasks`: enumerate discovered catalogs and task commands.
 - managed `mode = "tui"` tasks (for example `dev`) launch tabbed process manager on interactive terminals.

@@ -26,6 +26,13 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
+      "command": "effigy --json doctor farmyard/build -- --watch",
+      "surface": "top-level command",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
       "command": "effigy --json test --plan",
       "surface": "built-in task",
       "status": "active"

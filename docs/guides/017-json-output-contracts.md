@@ -57,6 +57,7 @@ Failure envelope shape:
 - `effigy.tasks.v1`
 - `effigy.tasks.filtered.v1`
 - `effigy.doctor.v1`
+- `effigy.doctor.explain.v1`
 - `effigy.config.v1`
 - `effigy.task.run.v1`
 - `effigy.test.plan.v1`
@@ -69,6 +70,7 @@ effigy --json tasks
 effigy --json tasks --task test
 effigy --json tasks --resolve catalog-a/api
 effigy --json doctor
+effigy --json doctor farmyard/build -- --watch
 effigy --json config
 effigy --json build --repo /path/to/workspace
 effigy --json test --plan
