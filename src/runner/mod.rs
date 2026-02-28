@@ -36,9 +36,9 @@ use model::{
     DEFAULT_MANAGED_SHELL_RUN, DEFER_DEPTH_ENV, IMPLICIT_ROOT_DEFER_TEMPLATE, TASK_MANIFEST_FILE,
 };
 use render::render_pulse_report;
-use util::{parse_task_runtime_args, parse_task_selector};
 #[cfg(test)]
 use util::parse_task_reference_invocation;
+use util::{parse_task_runtime_args, parse_task_selector};
 
 #[derive(Debug)]
 pub enum RunnerError {
@@ -584,15 +584,15 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
             })
             .collect::<Vec<serde_json::Value>>();
         let payload = json!({
-            "schema": "effigy.tasks.v1",
-                "schema_version": 1,
-                "catalog_count": catalogs.len(),
-                "catalog_tasks": catalog_rows,
-                "builtin_tasks": builtin_rows,
-                "catalogs": catalog_diagnostics,
-                "precedence": precedence,
-                "resolve": resolve_probe,
-            });
+        "schema": "effigy.tasks.v1",
+            "schema_version": 1,
+            "catalog_count": catalogs.len(),
+            "catalog_tasks": catalog_rows,
+            "builtin_tasks": builtin_rows,
+            "catalogs": catalog_diagnostics,
+            "precedence": precedence,
+            "resolve": resolve_probe,
+        });
         return if args.pretty_json {
             serde_json::to_string_pretty(&payload)
                 .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
@@ -667,10 +667,7 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
             ))?;
             renderer.key_values(&[
                 KeyValue::new("status", probe["status"].as_str().unwrap_or("<unknown>")),
-                KeyValue::new(
-                    "catalog",
-                    probe["catalog"].as_str().unwrap_or("<none>"),
-                ),
+                KeyValue::new("catalog", probe["catalog"].as_str().unwrap_or("<none>")),
                 KeyValue::new("task", probe["task"].as_str().unwrap_or("<none>")),
             ])?;
             if let Some(error) = probe["error"].as_str() {
@@ -734,7 +731,13 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
     }
     let builtin_rows = BUILTIN_TASKS
         .iter()
-        .map(|(name, description)| vec![(*name).to_owned(), (*description).to_owned(), "<built-in>".to_owned()])
+        .map(|(name, description)| {
+            vec![
+                (*name).to_owned(),
+                (*description).to_owned(),
+                "<built-in>".to_owned(),
+            ]
+        })
         .collect::<Vec<Vec<String>>>();
     task_rows.extend(builtin_rows);
     renderer.table(&TableSpec::new(Vec::new(), task_rows))?;

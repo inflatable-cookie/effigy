@@ -1,0 +1,42 @@
+name: JSON Contracts
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  json-contracts:
+    name: Validate JSON contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Validate JSON contracts
+        run: |
+          set -o pipefail
+          ./scripts/check-json-contracts-ci.sh | tee json-contracts.log
+          grep -m1 '^{"selected":' json-contracts.log > json-contracts-selected.json
+
+      - name: Validate selection artifact contract
+        run: ./scripts/validate-json-contract-selection-artifact.sh ./json-contracts-selected.json
+
+      - name: Upload JSON contracts artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: json-contracts-${{ github.run_id }}
+          path: |
+            json-contracts.log
+            json-contracts-selected.json

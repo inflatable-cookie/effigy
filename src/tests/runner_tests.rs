@@ -510,7 +510,10 @@ run = [{{ task = "test vitest" }}, "printf validate-ok"]
     .expect("run");
 
     assert!(out.contains("validate-ok"));
-    assert!(marker.exists(), "built-in test task ref with suite arg should execute");
+    assert!(
+        marker.exists(),
+        "built-in test task ref with suite arg should execute"
+    );
 }
 
 #[test]
@@ -547,7 +550,10 @@ unit = "sh -lc 'printf called > \"{}\"'"
     .expect("run");
 
     assert!(out.contains("validate-ok"));
-    assert!(marker.exists(), "prefixed built-in test task ref should execute");
+    assert!(
+        marker.exists(),
+        "prefixed built-in test task ref should execute"
+    );
 }
 
 #[test]
@@ -4273,7 +4279,10 @@ processes = ["test"]
 
     assert!(out.contains("Managed Task Runtime"));
     assert!(out.contains("root: ok"));
-    assert!(marker.exists(), "built-in test profile entry should execute");
+    assert!(
+        marker.exists(),
+        "built-in test profile entry should execute"
+    );
 }
 
 #[test]

@@ -47,7 +47,11 @@ fn parse_task_reference_invocation_table_valid_cases() {
             parse_task_reference_invocation(case.raw).expect("parse task reference invocation");
         assert_eq!(selector.prefix.as_deref(), case.prefix, "raw={}", case.raw);
         assert_eq!(selector.task_name, case.task, "raw={}", case.raw);
-        let expected = case.args.iter().map(|value| (*value).to_owned()).collect::<Vec<_>>();
+        let expected = case
+            .args
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<Vec<_>>();
         assert_eq!(args, expected, "raw={}", case.raw);
     }
 }

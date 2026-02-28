@@ -5,7 +5,6 @@ use crate::TaskInvocation;
 use super::catalog::resolve_catalog_by_prefix;
 use super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector, BUILTIN_TASKS};
 
-mod catalogs;
 mod config;
 mod help;
 mod pulse;
@@ -13,7 +12,7 @@ mod tasks;
 mod test;
 
 fn is_builtin_task(task_name: &str) -> bool {
-    BUILTIN_TASKS.iter().any(|(name, _)| *name == task_name)
+    BUILTIN_TASKS.iter().any(|(name, _)| *name == task_name) || task_name == "catalogs"
 }
 
 fn resolve_builtin_task_target_root(
@@ -51,8 +50,8 @@ pub(super) fn try_run_builtin_task(
         "health" | "repo-pulse" => {
             pulse::run_builtin_repo_pulse(task, runtime_args, &target_root).map(Some)
         }
-        "catalogs" => catalogs::run_builtin_catalogs(task, runtime_args, &target_root).map(Some),
-        "tasks" => tasks::run_builtin_tasks(task, runtime_args, &target_root).map(Some),
+        "catalogs" => tasks::run_builtin_tasks(task, runtime_args, &target_root, true).map(Some),
+        "tasks" => tasks::run_builtin_tasks(task, runtime_args, &target_root, false).map(Some),
         "config" => config::run_builtin_config(task, &runtime_args.passthrough),
         "help" => help::run_builtin_help(),
         "test" => test::try_run_builtin_test(selector, task, runtime_args, &target_root, catalogs),

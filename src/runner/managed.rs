@@ -10,9 +10,7 @@ use crate::ui::{
 };
 
 use super::catalog::select_catalog_and_task;
-use super::util::{
-    parse_task_reference_invocation, render_task_selector, shell_quote,
-};
+use super::util::{parse_task_reference_invocation, render_task_selector, shell_quote};
 use super::{
     LoadedCatalog, ManagedProcessSpec, ManagedTaskPlan, ManifestManagedProcess,
     ManifestManagedProfile, ManifestManagedRun, ManifestManagedRunStep, ManifestTask, RunnerError,
@@ -486,10 +484,7 @@ fn resolve_task_reference_step(
         .map(|arg| shell_quote(arg))
         .collect::<Vec<String>>()
         .join(" ");
-    let merged_args_rendered = match (
-        ref_args_rendered.is_empty(),
-        args_rendered.is_empty(),
-    ) {
+    let merged_args_rendered = match (ref_args_rendered.is_empty(), args_rendered.is_empty()) {
         (true, true) => String::new(),
         (false, true) => ref_args_rendered,
         (true, false) => args_rendered.to_owned(),
@@ -499,13 +494,15 @@ fn resolve_task_reference_step(
         Ok(selection) => selection,
         Err(error) => {
             if is_builtin_task_selector(&selector) {
-                let command =
-                    render_builtin_task_reference_invocation(&selector_rendered, &merged_args_rendered)
-                        .map_err(|detail| {
-                            RunnerError::TaskInvocation(format!(
-                                "task `{task_name}` run step task ref `{task_ref}` failed: {detail}"
-                            ))
-                        })?;
+                let command = render_builtin_task_reference_invocation(
+                    &selector_rendered,
+                    &merged_args_rendered,
+                )
+                .map_err(|detail| {
+                    RunnerError::TaskInvocation(format!(
+                        "task `{task_name}` run step task ref `{task_ref}` failed: {detail}"
+                    ))
+                })?;
                 return Ok(format!(
                     "(cd {} && {})",
                     shell_quote(&task_scope_cwd.display().to_string()),
@@ -572,8 +569,7 @@ fn resolve_effigy_invocation_prefix() -> Result<String, RunnerError> {
         .and_then(|parent| parent.file_name())
         .is_some_and(|name| name == "deps");
     if is_test_harness {
-        let manifest_path =
-            shell_quote(&format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR")));
+        let manifest_path = shell_quote(&format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR")));
         return Ok(format!(
             "cargo run --quiet --manifest-path {manifest_path} --bin effigy --"
         ));

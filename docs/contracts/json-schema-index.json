@@ -24,13 +24,6 @@
       "status": "active"
     },
     {
-      "schema": "effigy.catalogs.v1",
-      "schema_version": 1,
-      "command": "effigy --json catalogs",
-      "surface": "built-in task",
-      "status": "active"
-    },
-    {
       "schema": "effigy.test.plan.v1",
       "schema_version": 1,
       "command": "effigy --json test --plan",
