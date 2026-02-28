@@ -318,6 +318,22 @@ fn run_doctor_explain(
         Err(RunnerError::TaskAmbiguous { candidates, .. }) => candidates.clone(),
         _ => Vec::new(),
     };
+    let selection_reasoning = if let Some(mode) = selected_mode.as_deref() {
+        match mode {
+            "explicit_prefix" => "selected catalog by explicit task prefix".to_owned(),
+            "cwd_nearest" => {
+                "selected nearest in-scope catalog from current working directory".to_owned()
+            }
+            "root_shallowest" => {
+                "selected shallowest matching catalog from workspace root".to_owned()
+            }
+            _ => "selection completed".to_owned(),
+        }
+    } else if !ambiguity_candidates.is_empty() {
+        "selection failed due to ambiguity across matching catalogs".to_owned()
+    } else {
+        "selection failed because no unambiguous task target was resolved".to_owned()
+    };
 
     let mut deferral_considered = false;
     let mut deferral_selected = false;
@@ -335,6 +351,14 @@ fn run_doctor_explain(
             }
         }
     }
+    let deferral_reasoning = if !deferral_considered {
+        "deferral was not considered because the selection outcome does not trigger deferral"
+            .to_owned()
+    } else if deferral_selected {
+        "deferral was selected from configured or implicit fallback routing".to_owned()
+    } else {
+        "deferral was considered but no eligible fallback route was found".to_owned()
+    };
 
     if output_json {
         let payload = json!({
@@ -365,6 +389,10 @@ fn run_doctor_explain(
                 "source": deferral_source,
                 "working_dir": deferral_working_dir,
             },
+            "reasoning": {
+                "selection": selection_reasoning,
+                "deferral": deferral_reasoning,
+            },
         });
         return serde_json::to_string_pretty(&payload)
             .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
@@ -390,8 +418,10 @@ fn run_doctor_explain(
             "selected-mode",
             selected_mode.unwrap_or_else(|| "<none>".to_owned()),
         ),
+        KeyValue::new("selection-reasoning", selection_reasoning),
         KeyValue::new("deferral-considered", deferral_considered.to_string()),
         KeyValue::new("deferral-selected", deferral_selected.to_string()),
+        KeyValue::new("deferral-reasoning", deferral_reasoning),
     ]);
     if let Some(source) = deferral_source {
         let _ = renderer.key_values(&[KeyValue::new("deferral-source", source)]);

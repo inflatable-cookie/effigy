@@ -215,6 +215,8 @@ fn doctor_explain_json_contract_has_selection_and_deferral_fields() {
     assert!(parsed["candidates"].is_array());
     assert!(parsed["deferral"]["considered"].is_boolean());
     assert!(parsed["deferral"]["selected"].is_boolean());
+    assert!(parsed["reasoning"]["selection"].is_string());
+    assert!(parsed["reasoning"]["deferral"].is_string());
 }
 
 #[test]
