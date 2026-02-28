@@ -5,17 +5,17 @@ use serde_json::json;
 
 use crate::process_manager::ProcessManagerError;
 use crate::resolver::{resolve_target_root, ResolveError};
-use crate::tasks::pulse::PulseTask;
-use crate::tasks::{Task, TaskContext, TaskError};
+use crate::tasks::TaskError;
 use crate::ui::theme::{resolve_color_enabled, Theme};
 use crate::ui::{KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer};
 #[cfg(test)]
 use crate::TaskInvocation;
-use crate::{Command, PulseArgs, TasksArgs};
+use crate::{Command, DoctorArgs, TasksArgs};
 
 mod builtin;
 mod catalog;
 mod deferral;
+mod doctor;
 mod execute;
 mod managed;
 mod manifest;
@@ -35,7 +35,6 @@ use model::{
     TaskRuntimeArgs, TaskSelection, TaskSelector, BUILTIN_TASKS, DEFAULT_BUILTIN_TEST_MAX_PARALLEL,
     DEFAULT_MANAGED_SHELL_RUN, DEFER_DEPTH_ENV, IMPLICIT_ROOT_DEFER_TEMPLATE, TASK_MANIFEST_FILE,
 };
-use render::render_pulse_report;
 use util::{parse_task_reference_invocation, parse_task_runtime_args, parse_task_selector};
 
 #[derive(Debug)]
@@ -100,6 +99,9 @@ pub enum RunnerError {
         stdout: String,
         stderr: String,
     },
+    CommandJsonFailure {
+        rendered: String,
+    },
     ManagedProcess(ProcessManagerError),
     TaskManagedUnsupportedMode {
         task: String,
@@ -146,6 +148,10 @@ pub enum RunnerError {
     },
     BuiltinTestNonZero {
         failures: Vec<(String, Option<i32>)>,
+        rendered: String,
+    },
+    DoctorNonZero {
+        error_count: usize,
         rendered: String,
     },
     DeferLoopDetected {
@@ -222,6 +228,9 @@ impl std::fmt::Display for RunnerError {
                         code, stdout, stderr
                     )
                 }
+            }
+            RunnerError::CommandJsonFailure { .. } => {
+                write!(f, "command failed (json output available)")
             }
             RunnerError::ManagedProcess(error) => write!(f, "{error}"),
             RunnerError::TaskManagedUnsupportedMode { task, mode } => write!(
@@ -303,6 +312,10 @@ impl std::fmt::Display for RunnerError {
                     .join(", ");
                 write!(f, "one or more built-in test targets failed: {summary}")
             }
+            RunnerError::DoctorNonZero { error_count, .. } => write!(
+                f,
+                "doctor found {error_count} error finding(s)"
+            ),
             RunnerError::DeferLoopDetected { depth } => write!(
                 f,
                 "deferral loop detected ({} deferral hop(s)); refusing to defer again",
@@ -318,6 +331,12 @@ impl RunnerError {
     pub fn rendered_output(&self) -> Option<&str> {
         match self {
             RunnerError::BuiltinTestNonZero { rendered, .. } if !rendered.trim().is_empty() => {
+                Some(rendered.as_str())
+            }
+            RunnerError::DoctorNonZero { rendered, .. } if !rendered.trim().is_empty() => {
+                Some(rendered.as_str())
+            }
+            RunnerError::CommandJsonFailure { rendered } if !rendered.trim().is_empty() => {
                 Some(rendered.as_str())
             }
             _ => None,
@@ -352,7 +371,7 @@ impl From<ProcessManagerError> for RunnerError {
 pub fn run_command(cmd: Command) -> Result<String, RunnerError> {
     match cmd {
         Command::Help(_) => Ok(String::new()),
-        Command::RepoPulse(args) => run_pulse(args),
+        Command::Doctor(args) => run_doctor(args),
         Command::Tasks(args) => run_tasks(args),
         Command::Task(task) => run_manifest_task(&task),
     }
@@ -361,7 +380,7 @@ pub fn run_command(cmd: Command) -> Result<String, RunnerError> {
 pub fn resolve_command_root(cmd: &Command) -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_override = match cmd {
-        Command::RepoPulse(args) => args.repo_override.clone(),
+        Command::Doctor(args) => args.repo_override.clone(),
         Command::Tasks(args) => args.repo_override.clone(),
         Command::Task(task) => parse_task_runtime_args(&task.args)
             .ok()
@@ -375,55 +394,8 @@ pub fn resolve_command_root(cmd: &Command) -> PathBuf {
     }
 }
 
-pub fn run_pulse(args: PulseArgs) -> Result<String, RunnerError> {
-    let PulseArgs {
-        repo_override,
-        verbose_root,
-        output_json,
-    } = args;
-    let cwd = std::env::current_dir().map_err(RunnerError::Cwd)?;
-    let resolved = resolve_target_root(cwd.clone(), repo_override)?;
-
-    let task = PulseTask::default();
-    let ctx = TaskContext {
-        target_repo: resolved.resolved_root.clone(),
-        cwd,
-        resolution_mode: resolved.resolution_mode,
-        resolution_evidence: resolved.evidence.clone(),
-        resolution_warnings: resolved.warnings.clone(),
-    };
-
-    let collected = task.collect(&ctx)?;
-    let evaluated = task.evaluate(collected)?;
-    if output_json {
-        let payload = json!({
-            "schema": "effigy.repo-pulse.v1",
-            "schema_version": 1,
-            "report": {
-                "repo": evaluated.repo,
-                "owner": evaluated.owner,
-                "eta": evaluated.eta,
-                "evidence": evaluated.evidence,
-                "risk": evaluated.risk,
-                "next_action": evaluated.next_action,
-            },
-            "root_resolution": {
-                "resolved_root": resolved.resolved_root.display().to_string(),
-                "mode": format!("{:?}", resolved.resolution_mode),
-                "evidence": resolved.evidence,
-                "warnings": resolved.warnings,
-            }
-        });
-        return serde_json::to_string_pretty(&payload)
-            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
-    }
-    let report = render_pulse_report(
-        evaluated,
-        verbose_root.then_some(&resolved),
-        verbose_root.then_some(&ctx),
-    )?;
-
-    Ok(report)
+pub fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
+    doctor::run_doctor(args)
 }
 
 pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
@@ -825,8 +797,9 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
             }
         }
         let out = renderer.into_inner();
-        return String::from_utf8(out)
-            .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")));
+        return String::from_utf8(out).map_err(|error| {
+            RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}"))
+        });
     }
 
     renderer.section("Catalogs")?;

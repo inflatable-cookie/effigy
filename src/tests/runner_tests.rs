@@ -1,8 +1,8 @@
 use super::{
     builtin_test_max_parallel, discover_catalogs, parse_task_runtime_args, parse_task_selector,
-    run_manifest_task_with_cwd, run_pulse, run_tasks, RunnerError, TaskRuntimeArgs,
+    run_doctor, run_manifest_task_with_cwd, run_tasks, RunnerError, TaskRuntimeArgs,
 };
-use crate::{PulseArgs, TaskInvocation, TasksArgs};
+use crate::{DoctorArgs, TaskInvocation, TasksArgs};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
@@ -247,6 +247,58 @@ fn run_manifest_task_unknown_prefix_returns_catalog_error() {
         RunnerError::TaskCatalogPrefixNotFound { prefix, available } => {
             assert_eq!(prefix, "farmyard");
             assert_eq!(available, vec!["root".to_owned()]);
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_repo_pulse_shows_doctor_migration_message() {
+    let root = temp_workspace("repo-pulse-migration-message");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf ok\"\n",
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "repo-pulse".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("expected migration guidance");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("no longer a built-in command"));
+            assert!(message.contains("effigy doctor"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_health_without_definition_shows_doctor_migration_message() {
+    let root = temp_workspace("health-migration-message");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf ok\"\n",
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "health".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("expected migration guidance");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("no longer a built-in command"));
+            assert!(message.contains("define `tasks.health`"));
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -754,8 +806,7 @@ fn run_tasks_without_catalogs_still_lists_builtin_tasks() {
 
     assert!(out.contains("Tasks"));
     assert!(out.contains("help"));
-    assert!(out.contains("health"));
-    assert!(out.contains("repo-pulse"));
+    assert!(out.contains("doctor"));
     assert!(out.contains("test"));
     assert!(out.contains("<catalog>/test fallback"));
     assert!(out.contains("tasks"));
@@ -1251,6 +1302,47 @@ fn run_manifest_task_builtin_test_executes_local_vitest() {
     assert!(!out.contains("runner:vitest"));
     assert!(!out.contains("command:"));
     assert!(marker.exists(), "vitest stub should be invoked");
+}
+
+#[test]
+fn run_manifest_task_builtin_test_json_suppresses_child_process_output() {
+    let root = temp_workspace("builtin-test-json-suppresses-child-output");
+    fs::write(
+        root.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write package");
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    let vitest = local_bin.join("vitest");
+    fs::write(
+        &vitest,
+        "#!/bin/sh\nprintf noisy-stdout\nprintf noisy-stderr >&2\nexit 0\n",
+    )
+    .expect("write vitest");
+    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&vitest, perms).expect("chmod");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--json".to_owned(), "--run".to_owned()],
+        },
+        root,
+    )
+    .expect("run builtin test --json");
+
+    assert!(
+        !out.contains("noisy-stdout"),
+        "child stdout leaked into json output"
+    );
+    assert!(
+        !out.contains("noisy-stderr"),
+        "child stderr leaked into json output"
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.test.results.v1");
 }
 
 #[test]
@@ -2443,77 +2535,102 @@ aliass = "dup"
 }
 
 #[test]
-fn run_manifest_task_builtin_health_falls_back_to_repo_pulse() {
-    let root = temp_workspace("builtin-health-fallback");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "dev": "echo dev"
-  }
-}"#,
-    )
-    .expect("write package");
-
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "health".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("builtin health fallback");
-
-    assert!(out.contains("Pulse Report"));
-}
-
-#[test]
-fn run_manifest_task_prefixed_builtin_health_targets_catalog_root() {
-    let root = temp_workspace("builtin-health-prefixed");
+fn run_doctor_executes_discovered_health_task() {
+    let root = temp_workspace("doctor-health-delegation");
     let farmyard = root.join("farmyard");
-    let dairy = root.join("dairy");
     fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
 
     write_manifest(
         &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
+        "[catalog]\nalias = \"farmyard\"\n[tasks.health]\nrun = \"printf farmyard-health-ok\"\n",
     );
-    write_manifest(
-        &dairy.join("effigy.toml"),
-        "[catalog]\nalias = \"dairy\"\n[tasks.admin]\nrun = \"printf admin\"\n",
-    );
-    fs::write(
-        farmyard.join("package.json"),
-        r#"{
-  "scripts": {
-    "farmyard-only": "echo ok"
-  }
-}"#,
-    )
-    .expect("write farmyard package");
-    fs::write(
-        dairy.join("package.json"),
-        r#"{
-  "scripts": {
-    "dairy-only": "echo ok"
-  }
-}"#,
-    )
-    .expect("write dairy package");
 
     let out = run_manifest_task_with_cwd(
         &TaskInvocation {
-            name: "farmyard/health".to_owned(),
+            name: "doctor".to_owned(),
             args: Vec::new(),
         },
         root,
     )
-    .expect("prefixed health fallback");
+    .expect("doctor run");
 
-    assert!(out.contains("Pulse Report"));
-    assert!(out.contains("farmyard-only"));
-    assert!(!out.contains("dairy-only"));
+    assert!(out.contains("health.task.discovery"));
+    assert!(out.contains("health.task.execute"));
+    assert!(out.contains("health task executed successfully"));
+}
+
+#[test]
+fn run_doctor_reports_error_when_health_task_fails() {
+    let root = temp_workspace("doctor-health-failure");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.health]\nrun = \"sh -lc 'printf health-failed; exit 3'\"\n",
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "doctor".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("doctor should fail when health task fails");
+
+    match err {
+        RunnerError::DoctorNonZero { rendered, .. } => {
+            assert!(rendered.contains("health.task.execute"));
+            assert!(rendered.contains("health task execution failed"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_doctor_fix_scaffolds_health_task_when_missing() {
+    let root = temp_workspace("doctor-fix-scaffold-health");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf ok\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "doctor".to_owned(),
+            args: vec!["--fix".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("doctor --fix");
+
+    let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read manifest");
+    assert!(manifest.contains("health = \"printf health-check-placeholder\""));
+    assert!(out.contains("Fix Actions"));
+    assert!(out.contains("manifest.health_task_scaffold"));
+    assert!(out.contains("applied"));
+}
+
+#[test]
+fn run_doctor_fix_reports_skipped_when_manifest_invalid() {
+    let root = temp_workspace("doctor-fix-invalid-manifest");
+    fs::write(root.join("effigy.toml"), "[tasks\nbad = true\n").expect("write bad manifest");
+
+    let err = with_cwd(&root, || {
+        run_doctor(DoctorArgs {
+            repo_override: None,
+            output_json: false,
+            fix: true,
+        })
+    })
+    .expect_err("doctor should still fail");
+
+    match err {
+        RunnerError::DoctorNonZero { rendered, .. } => {
+            assert!(rendered.contains("Fix Actions"));
+            assert!(rendered.contains("manifest.health_task_scaffold"));
+            assert!(rendered.contains("skipped"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
 }
 
 #[test]
@@ -2863,21 +2980,6 @@ fn run_manifest_task_builtin_config_prints_reference() {
     assert!(out.contains(
         "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
     ));
-}
-
-#[test]
-fn run_pulse_text_output_has_blank_line_between_sections() {
-    let root = temp_workspace("pulse-section-spacing");
-    let out = run_pulse(PulseArgs {
-        repo_override: Some(root),
-        verbose_root: false,
-        output_json: false,
-    })
-    .expect("run pulse text");
-
-    assert!(out.contains("\n\nSignals\n"));
-    assert!(out.contains("\n\nRisks\n"));
-    assert!(out.contains("\n\nActions\n"));
 }
 
 #[test]
@@ -3346,104 +3448,26 @@ alias = "dairy"
 }
 
 #[test]
-fn run_pulse_renders_widget_sections() {
-    let root = temp_workspace("pulse-render");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "health:workspace": "echo ok"
-  }
-}"#,
-    )
-    .expect("write package");
-
-    let out = run_pulse(PulseArgs {
-        repo_override: Some(root),
-        verbose_root: false,
-        output_json: false,
-    })
-    .expect("pulse");
-
-    assert!(out.contains("Pulse Report"));
-    assert!(!out.contains("repo:"));
-    assert!(out.contains("signals:"));
-    assert!(out.contains("Signals"));
-    assert!(out.contains("Risks"));
-    assert!(out.contains("Actions"));
-    assert!(out.contains("No risk items.") || out.contains("- Root "));
-    assert!(
-        out.contains("No high-priority structural gaps detected by pulse v0 signals.")
-            || out.contains("health:workspace")
-    );
-    assert!(out.contains("summary  ok:"));
-}
-
-#[test]
-fn run_pulse_json_renders_machine_readable_payload() {
-    let root = temp_workspace("pulse-json");
-    let out = run_pulse(PulseArgs {
-        repo_override: Some(root),
-        verbose_root: false,
-        output_json: true,
-    })
-    .expect("pulse json");
-
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert!(parsed["report"].is_object());
-    assert!(parsed["root_resolution"].is_object());
-    assert!(parsed["report"]["evidence"].is_array());
-}
-
-#[test]
-fn run_pulse_verbose_renders_root_resolution_section() {
-    let root = temp_workspace("pulse-verbose");
-
-    let out = run_pulse(PulseArgs {
-        repo_override: Some(root),
-        verbose_root: true,
-        output_json: false,
-    })
-    .expect("pulse");
-
-    assert!(out.contains("Root Resolution"));
-    assert!(out.contains("resolved-root:"));
-    assert!(out.contains("mode:"));
-    assert!(out.contains("Pulse Report"));
-}
-
-#[test]
-fn run_pulse_colorizes_inline_code_segments_when_color_enabled() {
-    let _guard = test_lock().lock().expect("lock");
-    let root = temp_workspace("pulse-inline-code-color");
+fn run_doctor_text_output_has_blank_line_between_sections() {
+    let root = temp_workspace("doctor-section-spacing");
     write_manifest(
         &root.join("effigy.toml"),
-        r#"[tasks.dev]
-run = "echo dev"
-"#,
+        "[tasks.health]\nrun = \"printf ok\"\n",
     );
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "dev": "echo dev"
-  }
-}"#,
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "doctor".to_owned(),
+            args: Vec::new(),
+        },
+        root,
     )
-    .expect("write package");
+    .expect("run doctor");
 
-    let _env = EnvGuard::set_many(&[
-        ("EFFIGY_COLOR", Some("always".to_owned())),
-        ("NO_COLOR", None),
-    ]);
-    let out = run_pulse(PulseArgs {
-        repo_override: Some(root),
-        verbose_root: false,
-        output_json: false,
-    })
-    .expect("pulse");
-
-    assert!(out.contains("\u{1b}[38;5;117m`tasks.health`"));
+    assert!(out.starts_with("Findings\n"));
+    assert!(out.contains("workspace.root-resolution"));
+    assert!(out.contains("\n\nsummary  ok:"));
+    assert!(!out.contains("\n\nRoot Resolution\n"));
 }
 
 #[test]
@@ -3957,7 +3981,9 @@ run = "printf api"
     .expect_err("invalid concurrent entry should fail");
 
     match err {
-        RunnerError::TaskManagedProcessInvalidDefinition { process, detail, .. } => {
+        RunnerError::TaskManagedProcessInvalidDefinition {
+            process, detail, ..
+        } => {
             assert_eq!(process, "api");
             assert!(detail.contains("either `task` or `run`"));
         }
@@ -4220,7 +4246,11 @@ concurrent = [{ name = "jobs" }]
     .expect_err("invalid concurrent entry should fail");
 
     match err {
-        RunnerError::TaskManagedProcessInvalidDefinition { task, process, detail } => {
+        RunnerError::TaskManagedProcessInvalidDefinition {
+            task,
+            process,
+            detail,
+        } => {
             assert_eq!(task, "dev");
             assert_eq!(process, "jobs");
             assert!(detail.contains("missing both `task` and `run`"));

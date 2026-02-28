@@ -19,9 +19,10 @@
 | `src/runner/execute.rs` | Manifest task execution helpers and task run rendering snippets |
 | `src/runner/builtin/mod.rs` | Built-in task dispatch |
 | `src/runner/builtin/help.rs` | Built-in `help` rendering |
-| `src/runner/builtin/pulse.rs` | Built-in `repo-pulse`/`health` dispatch |
+| `src/runner/builtin/doctor.rs` | Built-in `doctor` dispatch |
 | `src/runner/builtin/tasks.rs` | Built-in `tasks` dispatch + argument parsing |
 | `src/runner/builtin/test.rs` | Built-in `test` detection/planning/fanout execution |
+| `src/runner/doctor.rs` | Doctor health checks, remediation findings, and report rendering |
 | `src/runner/managed.rs` | Managed process plan resolution + execution |
 | `src/runner/deferral.rs` | Deferral selection/execution pipeline |
 | `src/runner/render.rs` | Runner-specific rendering and trace formatting |
@@ -40,8 +41,7 @@
 | `src/tui/multiprocess/render/footer.rs` | Footer/status row rendering |
 | `src/tui/multiprocess/render/help_overlay.rs` | Help + options overlay rendering and options metadata |
 | `src/tui/multiprocess/terminal_text.rs` | ANSI/vt100 parsing + terminal text shaping |
-| `src/tasks/mod.rs` | Task trait contracts and shared task types |
-| `src/tasks/pulse.rs` | Built-in `repo-pulse` task implementation |
+| `src/tasks/mod.rs` | Shared task types (currently root-resolution mode enums) |
 | `src/bin/effigy.rs` | Binary entrypoint |
 
 ## Runtime artifacts

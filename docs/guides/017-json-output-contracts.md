@@ -1,25 +1,74 @@
 # JSON Output Contracts
 
-Effigy supports root-level JSON mode via `--json`:
+Effigy supports two JSON modes:
+- `--json`: canonical command envelope (`effigy.command.v1`) for CI/tooling.
+- `--json-raw`: legacy command-specific top-level schemas (for compatibility).
 
 ```bash
+effigy --json help
 effigy --json tasks
-effigy --json tasks --task test
-effigy --json tasks --resolve catalog-a/api
-effigy --json tasks --task test --resolve catalog-a/test
-effigy --json repo-pulse
+effigy --json doctor
 effigy --json test --plan
-effigy --json test
+effigy --json <catalog-or-root-task>
 ```
 
 When JSON mode is active, the CLI preamble is suppressed and output is pure JSON.
+
+## Canonical Mode (`--json`)
+
+Default command-level wrapper mode:
+
+```bash
+effigy --json help
+effigy --json build --repo /path/to/workspace
+```
+
+Contract:
+
+```json
+{
+  "schema": "effigy.command.v1",
+  "schema_version": 1,
+  "ok": true,
+  "command": {
+    "kind": "help",
+    "name": "general"
+  },
+  "result": {},
+  "error": null
+}
+```
+
+Failure envelope shape:
+
+```json
+{
+  "schema": "effigy.command.v1",
+  "schema_version": 1,
+  "ok": false,
+  "command": {
+    "kind": "task",
+    "name": "missing-task"
+  },
+  "result": null,
+  "error": {
+    "kind": "RunnerError",
+    "message": "...",
+    "details": null
+  }
+}
+```
+
+## Legacy Compatibility (`--json-raw`)
+
+Use only when existing tooling still expects command-specific top-level schemas.
 
 ## Tasks (unfiltered)
 
 Command:
 
 ```bash
-effigy --json tasks
+effigy --json-raw tasks
 ```
 
 Contract:
@@ -41,8 +90,8 @@ Contract:
 `--resolve` attaches routing probe details to the same `effigy.tasks.v1` payload:
 
 ```bash
-effigy --json tasks --resolve catalog-a/api
-effigy --json tasks --resolve test
+effigy --json-raw tasks --resolve catalog-a/api
+effigy --json-raw tasks --resolve test
 ```
 
 ## Tasks (filtered)
@@ -50,7 +99,7 @@ effigy --json tasks --resolve test
 Command:
 
 ```bash
-effigy --json tasks --task test
+effigy --json-raw tasks --task test
 ```
 
 Contract:
@@ -73,33 +122,119 @@ Contract:
 
 Managed profile rows in `managed_profiles` and `managed_profile_matches` use direct invocation labels in `task` (for example `dev front`, `dev admin`).
 
-## Repo Pulse
+## Doctor
 
 Command:
 
 ```bash
-effigy --json repo-pulse
+effigy --json-raw doctor
 ```
 
 Contract:
 
 ```json
 {
-  "schema": "effigy.repo-pulse.v1",
+  "schema": "effigy.doctor.v1",
   "schema_version": 1,
-  "report": {
-    "repo": "/abs/path",
-    "owner": "platform",
-    "eta": "phase-22",
-    "evidence": [],
-    "risk": [],
-    "next_action": []
+  "ok": true,
+  "summary": {
+    "checks": 9,
+    "pass": 9,
+    "warning": 0,
+    "error": 0
   },
+  "findings": [],
+  "fixes": [],
   "root_resolution": {
-    "resolved_root": "/abs/path",
-    "mode": "AutoNearest",
     "evidence": [],
     "warnings": []
+  }
+}
+```
+
+## Built-in Help
+
+Command:
+
+```bash
+effigy --json-raw help
+```
+
+Contract:
+
+```json
+{
+  "schema": "effigy.help.v1",
+  "schema_version": 1,
+  "ok": true,
+  "topic": "general",
+  "text": "..."
+}
+```
+
+## Built-in Config
+
+Command:
+
+```bash
+effigy --json-raw config
+```
+
+Contract:
+
+```json
+{
+  "schema": "effigy.config.v1",
+  "schema_version": 1,
+  "ok": true,
+  "mode": "reference",
+  "minimal": false,
+  "target": null,
+  "runner": null,
+  "text": "..."
+}
+```
+
+## Catalog Task Runs
+
+Command:
+
+```bash
+effigy --json-raw build --repo /path/to/workspace
+```
+
+Contract:
+
+```json
+{
+  "schema": "effigy.task.run.v1",
+  "schema_version": 1,
+  "ok": true,
+  "task": "build",
+  "selector": "build",
+  "command": "printf build-ok",
+  "cwd": "/abs/path",
+  "exit_code": 0,
+  "stdout": "build-ok",
+  "stderr": ""
+}
+```
+
+## Command Errors (JSON Raw Mode)
+
+Legacy `--json-raw` commands that fail emit machine-readable errors on stdout with non-zero exit codes.
+
+Contract:
+
+```json
+{
+  "schema": "effigy.command.error.v1",
+  "schema_version": 1,
+  "ok": false,
+  "error": {
+    "kind": "RunnerError",
+    "message": "...",
+    "details": null
   }
 }
 ```
@@ -109,7 +244,7 @@ Contract:
 Command:
 
 ```bash
-effigy --json test --plan
+effigy --json-raw test --plan
 ```
 
 Contract:
@@ -131,7 +266,7 @@ Contract:
 Command:
 
 ```bash
-effigy --json test
+effigy --json-raw test
 ```
 
 Contract:
@@ -170,7 +305,7 @@ Run locally or in CI:
 ./scripts/check-json-contracts.sh
 ```
 
-Fast mode (skip heavy execution surfaces such as `effigy --json test`):
+Fast mode (skip heavy execution surfaces such as `effigy --json-raw test`):
 
 ```bash
 ./scripts/check-json-contracts.sh --fast
@@ -221,7 +356,7 @@ CI policy:
 Built-in selector probe example:
 
 ```bash
-effigy --json tasks --resolve test
+effigy --json-raw tasks --resolve test
 ```
 
 Expected `resolve` shape:

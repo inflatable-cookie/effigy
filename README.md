@@ -3,7 +3,7 @@
 Effigy is a unified task runner for multi-repo and nested-workspace development.
 
 It provides:
-- built-in operational tasks (starting with `repo-pulse`),
+- built-in operational tasks (including `doctor`, `test`, `tasks`, `config`),
 - project-defined tasks in TOML catalogs,
 - deterministic task resolution across nested catalogs,
 - explicit catalog targeting (`catalog/task`) and unprefixed intelligent resolution (`task`).
@@ -39,7 +39,7 @@ Then use:
 
 ```bash
 bun effigy tasks
-bun effigy repo-pulse
+bun effigy doctor
 bun effigy catalog-a/db:reset
 ```
 
@@ -56,15 +56,22 @@ effigy dev [profile]
 effigy test [suite] [runner args]
 effigy test --plan [suite] [runner args]
 effigy test --verbose-results [suite] [runner args]
-effigy repo-pulse [--repo <PATH>] [--verbose-root]
+effigy doctor [--repo <PATH>] [--fix] [--json]
 effigy tasks [--repo <PATH>] [--task <TASK_NAME>]
 ```
 
 ### Built-in tasks
-- `repo-pulse`: repository/workspace health and structure signal report.
+- `doctor`: remediation-first checks for environment tooling, manifest validity, task-reference resolution, and delegated `tasks.health` execution when present.
 - `test`: built-in test runner auto-detection (`vitest`, `cargo nextest run`, `cargo test`) with `--plan` explainability.
 - `tasks`: enumerate discovered catalogs and task commands.
 - managed `mode = "tui"` tasks (for example `dev`) launch tabbed process manager on interactive terminals.
+
+### Health Command Migration (`repo-pulse` / built-in `health` -> `doctor`)
+
+- before: `effigy repo-pulse --repo <workspace>`
+- before: `effigy health`
+- after: `effigy doctor --repo <workspace>`
+- after (project-owned checks): define `tasks.health` in `effigy.toml`; `doctor` discovers and runs it automatically.
 
 ### Built-in test fanout config
 

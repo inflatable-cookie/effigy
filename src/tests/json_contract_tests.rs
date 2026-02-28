@@ -1,4 +1,6 @@
-use super::{run_manifest_task_with_cwd, run_pulse, run_tasks, PulseArgs, RunnerError, TasksArgs};
+use super::{
+    run_doctor, run_manifest_task_with_cwd, run_tasks, DoctorArgs, RunnerError, TasksArgs,
+};
 use crate::TaskInvocation;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -125,23 +127,50 @@ fn tasks_filtered_json_contract_with_resolve_has_diagnostics_and_probe_fields() 
 }
 
 #[test]
-fn repo_pulse_json_contract_has_versioned_top_level_shape() {
-    let root = temp_workspace("repo-pulse-json-contract");
-    let out = run_pulse(PulseArgs {
+fn doctor_json_contract_has_versioned_top_level_shape() {
+    let root = temp_workspace("doctor-json-contract");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.ok]\nrun = \"printf ok\"\n",
+    );
+
+    let out = run_doctor(DoctorArgs {
         repo_override: Some(root),
-        verbose_root: false,
         output_json: true,
+        fix: false,
     })
-    .expect("run repo-pulse json");
+    .expect("run doctor json");
 
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.repo-pulse.v1");
+    assert_eq!(parsed["schema"], "effigy.doctor.v1");
     assert_eq!(parsed["schema_version"], 1);
-    assert!(parsed["report"].is_object());
+    assert_eq!(parsed["ok"], true);
+    assert!(parsed["summary"].is_object());
+    assert!(parsed["findings"].is_array());
+    assert!(parsed["fixes"].is_array());
     assert!(parsed["root_resolution"].is_object());
-    assert!(parsed["report"]["evidence"].is_array());
-    assert!(parsed["report"]["risk"].is_array());
-    assert!(parsed["report"]["next_action"].is_array());
+}
+
+#[test]
+fn doctor_json_contract_with_health_stdout_remains_valid_json() {
+    let root = temp_workspace("doctor-json-contract-health-stdout");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.health]\nrun = \"printf healthy\"\n",
+    );
+
+    let out = run_doctor(DoctorArgs {
+        repo_override: Some(root),
+        output_json: true,
+        fix: false,
+    })
+    .expect("run doctor json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.doctor.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["ok"], true);
+    assert!(parsed["findings"].is_array());
 }
 
 #[test]
@@ -222,6 +251,107 @@ fn builtin_test_results_json_contract_has_versioned_shape_and_hint_fields() {
         parsed["hint"]["kind"],
         serde_json::Value::String("selected-suite-filter-no-match".to_owned())
     );
+}
+
+#[test]
+fn builtin_help_json_contract_has_versioned_shape() {
+    let root = temp_workspace("help-json-contract");
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "help".to_owned(),
+            args: vec!["--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run help --json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.help.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["topic"], "general");
+    assert!(parsed["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("Commands")));
+}
+
+#[test]
+fn builtin_config_json_contract_has_versioned_shape() {
+    let root = temp_workspace("config-json-contract");
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "config".to_owned(),
+            args: vec!["--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run config --json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.config.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["mode"], "reference");
+    assert!(parsed["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("effigy.toml Reference")));
+}
+
+#[test]
+fn catalog_task_run_json_contract_success_has_versioned_shape() {
+    let root = temp_workspace("task-run-json-contract-success");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf build-ok\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "build".to_owned(),
+            args: vec!["--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run build --json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.task.run.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["task"], "build");
+    assert_eq!(parsed["exit_code"], 0);
+    assert_eq!(parsed["stdout"], "build-ok");
+}
+
+#[test]
+fn catalog_task_run_json_contract_failure_has_versioned_shape() {
+    let root = temp_workspace("task-run-json-contract-failure");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.fail]\nrun = \"sh -lc 'printf fail-out; printf fail-err >&2; exit 9'\"\n",
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "fail".to_owned(),
+            args: vec!["--json".to_owned()],
+        },
+        root,
+    )
+    .expect_err("expected non-zero task failure");
+
+    let rendered = match err {
+        RunnerError::CommandJsonFailure { rendered } => rendered,
+        other => panic!("unexpected error: {other}"),
+    };
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.task.run.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["task"], "fail");
+    assert_eq!(parsed["exit_code"], 9);
+    assert_eq!(parsed["stdout"], "fail-out");
+    assert_eq!(parsed["stderr"], "fail-err");
 }
 
 fn write_manifest(path: &PathBuf, body: &str) {

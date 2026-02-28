@@ -5,51 +5,146 @@
     {
       "schema": "effigy.tasks.v1",
       "schema_version": 1,
-      "command": "effigy --json tasks",
+      "command": "effigy --json-raw tasks",
       "surface": "top-level command",
       "status": "active"
     },
     {
       "schema": "effigy.tasks.v1",
       "schema_version": 1,
-      "command": "effigy --json tasks --resolve <selector>",
+      "command": "effigy --json-raw tasks --resolve <selector>",
       "surface": "top-level command",
       "status": "active"
     },
     {
       "schema": "effigy.tasks.filtered.v1",
       "schema_version": 1,
-      "command": "effigy --json tasks --task <name>",
+      "command": "effigy --json-raw tasks --task <name>",
       "surface": "top-level command",
       "status": "active"
     },
     {
       "schema": "effigy.tasks.filtered.v1",
       "schema_version": 1,
-      "command": "effigy --json tasks --task <name> --resolve <selector>",
+      "command": "effigy --json-raw tasks --task <name> --resolve <selector>",
       "surface": "top-level command",
       "status": "active"
     },
     {
-      "schema": "effigy.repo-pulse.v1",
+      "schema": "effigy.doctor.v1",
       "schema_version": 1,
-      "command": "effigy --json repo-pulse",
+      "command": "effigy --json-raw doctor",
       "surface": "top-level command",
       "status": "active"
     },
     {
       "schema": "effigy.test.plan.v1",
       "schema_version": 1,
-      "command": "effigy --json test --plan",
+      "command": "effigy --json-raw test --plan",
       "surface": "built-in task",
       "status": "active"
     },
     {
       "schema": "effigy.test.results.v1",
       "schema_version": 1,
-      "command": "effigy --json test",
+      "command": "effigy --json-raw test",
       "surface": "built-in task",
       "status": "active"
+    },
+    {
+      "schema": "effigy.help.v1",
+      "schema_version": 1,
+      "command": "effigy --json-raw help",
+      "surface": "built-in task",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.config.v1",
+      "schema_version": 1,
+      "command": "effigy --json-raw config",
+      "surface": "built-in task",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.task.run.v1",
+      "schema_version": 1,
+      "command": "effigy --json-raw build --repo <fixture_task_success>",
+      "surface": "catalog task",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.task.run.v1",
+      "schema_version": 1,
+      "command": "effigy --json-raw fail --repo <fixture_task_failure>",
+      "surface": "catalog task",
+      "status": "active",
+      "expect_failure": true
+    },
+    {
+      "schema": "effigy.command.error.v1",
+      "schema_version": 1,
+      "command": "effigy --json-raw tasks --repo",
+      "surface": "top-level command",
+      "status": "active",
+      "expect_failure": true
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
+      "command": "effigy --json help",
+      "surface": "top-level command",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
+      "command": "effigy --json tasks",
+      "surface": "top-level command",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
+      "command": "effigy --json doctor",
+      "surface": "top-level command",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
+      "command": "effigy --json test --plan",
+      "surface": "built-in task",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
+      "command": "effigy --json config",
+      "surface": "built-in task",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
+      "command": "effigy --json build --repo <fixture_task_success>",
+      "surface": "catalog task",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
+      "command": "effigy --json tasks --repo",
+      "surface": "top-level command",
+      "status": "active",
+      "expect_failure": true
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
+      "command": "effigy --json missing-task --repo <fixture_task_success>",
+      "surface": "catalog task",
+      "status": "active",
+      "expect_failure": true
     }
   ]
 }

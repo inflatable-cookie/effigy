@@ -1,5 +1,3 @@
-pub mod pulse;
-
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,16 +14,6 @@ pub enum ResolutionMode {
     Explicit,
     AutoNearest,
     AutoPromoted,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PulseReport {
-    pub repo: String,
-    pub evidence: Vec<String>,
-    pub risk: Vec<String>,
-    pub next_action: Vec<String>,
-    pub owner: String,
-    pub eta: String,
 }
 
 pub trait Task {

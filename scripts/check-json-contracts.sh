@@ -64,8 +64,12 @@ jq -e '.version and (.schemas | type == "array")' "$INDEX_PATH" >/dev/null
 
 SELECTED_ROWS_FILE="$(mktemp)"
 OLD_ACTIVE_FILE="$(mktemp)"
+declare -a FIXTURE_DIRS=()
 cleanup() {
   rm -f "$SELECTED_ROWS_FILE" "$OLD_ACTIVE_FILE"
+  for fixture_dir in "${FIXTURE_DIRS[@]:-}"; do
+    rm -rf "$fixture_dir"
+  done
 }
 trap cleanup EXIT
 
@@ -150,6 +154,31 @@ fi
 
 run_effigy_json() {
   local command="$1"
+  local expect_failure="$2"
+
+  if [[ "$command" == *"<fixture_task_success>"* ]]; then
+    local fixture_success
+    fixture_success="$(mktemp -d)"
+    FIXTURE_DIRS+=("$fixture_success")
+    printf '{}\n' > "$fixture_success/package.json"
+    cat > "$fixture_success/effigy.toml" <<'TOML'
+[tasks.build]
+run = "printf build-ok"
+TOML
+    command="${command//<fixture_task_success>/$fixture_success}"
+  fi
+
+  if [[ "$command" == *"<fixture_task_failure>"* ]]; then
+    local fixture_failure
+    fixture_failure="$(mktemp -d)"
+    FIXTURE_DIRS+=("$fixture_failure")
+    printf '{}\n' > "$fixture_failure/package.json"
+    cat > "$fixture_failure/effigy.toml" <<'TOML'
+[tasks.fail]
+run = "sh -lc 'printf fail-out; printf fail-err >&2; exit 9'"
+TOML
+    command="${command//<fixture_task_failure>/$fixture_failure}"
+  fi
 
   # Replace index placeholders with deterministic fixture args.
   command="${command//<name>/test}"
@@ -160,7 +189,25 @@ run_effigy_json() {
   fi
 
   local args="${command#effigy }"
-  (cd "$ROOT_DIR" && cargo run --quiet --bin effigy -- $args)
+  local payload
+  local status
+  set +e
+  payload="$(cd "$ROOT_DIR" && cargo run --quiet --bin effigy -- $args)"
+  status=$?
+  set -e
+
+  if [[ "$expect_failure" == "true" ]]; then
+    if [[ "$status" -eq 0 ]]; then
+      echo "[error] expected command to fail but it succeeded: $command" >&2
+      return 1
+    fi
+  else
+    if [[ "$status" -ne 0 ]]; then
+      echo "[error] command failed unexpectedly (status=$status): $command" >&2
+      return 1
+    fi
+  fi
+  printf '%s' "$payload"
 }
 
 is_heavy_schema() {
@@ -185,14 +232,29 @@ assert_required_keys() {
     effigy.tasks.filtered.v1)
       jq -e 'has("schema") and has("schema_version") and has("catalog_count") and has("filter") and has("matches") and has("builtin_matches") and has("notes") and has("catalogs") and has("precedence") and has("resolve")' <<<"$json_payload" >/dev/null
       ;;
-    effigy.repo-pulse.v1)
-      jq -e 'has("schema") and has("schema_version") and has("report") and has("root_resolution")' <<<"$json_payload" >/dev/null
+    effigy.doctor.v1)
+      jq -e 'has("schema") and has("schema_version") and has("ok") and has("summary") and has("findings") and has("fixes") and has("root_resolution")' <<<"$json_payload" >/dev/null
       ;;
     effigy.test.plan.v1)
       jq -e 'has("schema") and has("schema_version") and has("request") and has("root") and has("runtime") and has("targets") and has("recovery")' <<<"$json_payload" >/dev/null
       ;;
     effigy.test.results.v1)
       jq -e 'has("schema") and has("schema_version") and has("targets") and has("failures") and has("hint")' <<<"$json_payload" >/dev/null
+      ;;
+    effigy.task.run.v1)
+      jq -e 'has("schema") and has("schema_version") and has("ok") and has("task") and has("selector") and has("command") and has("cwd") and has("exit_code") and has("stdout") and has("stderr")' <<<"$json_payload" >/dev/null
+      ;;
+    effigy.command.error.v1)
+      jq -e 'has("schema") and has("schema_version") and has("ok") and has("error") and (.error | type == "object") and (.error | has("kind")) and (.error | has("message")) and (.error | has("details"))' <<<"$json_payload" >/dev/null
+      ;;
+    effigy.command.v1)
+      jq -e 'has("schema") and has("schema_version") and has("ok") and has("command") and (.command | type == "object") and (.command | has("kind")) and (.command | has("name")) and has("result") and has("error")' <<<"$json_payload" >/dev/null
+      ;;
+    effigy.help.v1)
+      jq -e 'has("schema") and has("schema_version") and has("ok") and has("topic") and has("text")' <<<"$json_payload" >/dev/null
+      ;;
+    effigy.config.v1)
+      jq -e 'has("schema") and has("schema_version") and has("ok") and has("mode") and has("minimal") and has("target") and has("runner") and has("text")' <<<"$json_payload" >/dev/null
       ;;
     *)
       echo "[error] unknown schema in checker: $schema" >&2
@@ -209,6 +271,7 @@ while IFS= read -r row; do
   schema="$(jq -r '.schema' <<<"$row")"
   schema_version="$(jq -r '.schema_version' <<<"$row")"
   command="$(jq -r '.command' <<<"$row")"
+  expect_failure="$(jq -r '.expect_failure // false' <<<"$row")"
 
   if [[ "$MODE" == "fast" ]] && is_heavy_schema "$schema"; then
     echo "[skip] $schema :: skipped in --fast mode"
@@ -217,7 +280,7 @@ while IFS= read -r row; do
 
   echo "[check] $schema v$schema_version :: $command"
   checks=$((checks + 1))
-  if ! payload="$(run_effigy_json "$command")"; then
+  if ! payload="$(run_effigy_json "$command" "$expect_failure")"; then
     echo "  [fail] command execution failed" >&2
     failures=$((failures + 1))
     continue
@@ -231,6 +294,20 @@ while IFS= read -r row; do
 
   actual_schema="$(jq -r '.schema // empty' <<<"$payload")"
   actual_version="$(jq -r '.schema_version // empty' <<<"$payload")"
+  payload_for_schema="$payload"
+  if [[ "$actual_schema" == "effigy.command.v1" && "$schema" != "effigy.command.v1" ]]; then
+    nested_result_schema="$(jq -r '.result.schema // empty' <<<"$payload")"
+    nested_error_schema="$(jq -r '.error.details.schema // empty' <<<"$payload")"
+    if [[ -n "$nested_result_schema" ]]; then
+      payload_for_schema="$(jq '.result' <<<"$payload")"
+      actual_schema="$nested_result_schema"
+      actual_version="$(jq -r '.result.schema_version // empty' <<<"$payload")"
+    elif [[ -n "$nested_error_schema" ]]; then
+      payload_for_schema="$(jq '.error.details' <<<"$payload")"
+      actual_schema="$nested_error_schema"
+      actual_version="$(jq -r '.error.details.schema_version // empty' <<<"$payload")"
+    fi
+  fi
 
   if [[ "$actual_schema" != "$schema" ]]; then
     echo "  [fail] schema mismatch: expected=$schema actual=${actual_schema:-<missing>}" >&2
@@ -244,7 +321,7 @@ while IFS= read -r row; do
     continue
   fi
 
-  if ! assert_required_keys "$schema" "$payload"; then
+  if ! assert_required_keys "$schema" "$payload_for_schema"; then
     echo "  [fail] required keys missing for $schema" >&2
     failures=$((failures + 1))
     continue

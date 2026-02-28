@@ -6,8 +6,8 @@ use super::catalog::resolve_catalog_by_prefix;
 use super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector, BUILTIN_TASKS};
 
 mod config;
+mod doctor;
 mod help;
-mod pulse;
 mod tasks;
 mod test;
 
@@ -47,13 +47,11 @@ pub(super) fn try_run_builtin_task(
     };
 
     match selector.task_name.as_str() {
-        "health" | "repo-pulse" => {
-            pulse::run_builtin_repo_pulse(task, runtime_args, &target_root).map(Some)
-        }
+        "doctor" => doctor::run_builtin_doctor(task, runtime_args, &target_root).map(Some),
         "catalogs" => tasks::run_builtin_tasks(task, runtime_args, &target_root, true).map(Some),
         "tasks" => tasks::run_builtin_tasks(task, runtime_args, &target_root, false).map(Some),
         "config" => config::run_builtin_config(task, &runtime_args.passthrough),
-        "help" => help::run_builtin_help(),
+        "help" => help::run_builtin_help(task, &runtime_args.passthrough),
         "test" => test::try_run_builtin_test(selector, task, runtime_args, &target_root, catalogs),
         _ => Ok(None),
     }

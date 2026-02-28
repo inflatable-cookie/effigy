@@ -192,7 +192,11 @@ fn resolve_managed_concurrent_task_plan(
         .iter()
         .map(|entry| (entry.spec.name.clone(), entry.tab_rank, entry.index))
         .collect::<Vec<(String, usize, usize)>>();
-    tab_entries.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.2.cmp(&b.2)).then_with(|| a.0.cmp(&b.0)));
+    tab_entries.sort_by(|a, b| {
+        a.1.cmp(&b.1)
+            .then_with(|| a.2.cmp(&b.2))
+            .then_with(|| a.0.cmp(&b.0))
+    });
     let mut tab_order = tab_entries
         .into_iter()
         .map(|(name, _, _)| name)
