@@ -296,10 +296,10 @@ Task Matches: dev
 ─────────────────
 - dev : effigy.toml
       <managed:tui>
-- dev admin : effigy.toml
-      <managed:tui profile:admin>
 - dev front : effigy.toml
       <managed:tui profile:front>
+- dev admin : effigy.toml
+      <managed:tui profile:admin>
 
 ";
     assert_eq!(tail, expected);
@@ -344,10 +344,10 @@ Tasks
 ─────
 - dev : effigy.toml
       <managed:tui>
-- dev admin : effigy.toml
-      <managed:tui profile:admin>
 - dev front : effigy.toml
       <managed:tui profile:front>
+- dev admin : effigy.toml
+      <managed:tui profile:admin>
 
 Built-in Tasks
 ──────────────
