@@ -3499,6 +3499,7 @@ fn run_doctor_explain_text_reports_resolution_selection() {
     assert!(out.contains("selection-status: ok"));
     assert!(out.contains("selected-catalog: farmyard"));
     assert!(out.contains("selected-mode: explicit_prefix"));
+    assert!(out.contains("selection-reasoning:"));
     assert!(out.contains("candidate-catalogs"));
     assert!(out.contains("selection-evidence"));
 }
@@ -3524,6 +3525,7 @@ fn run_doctor_explain_text_reports_deferral_reasoning_on_missing_task() {
     assert!(out.contains("selection-status: error"));
     assert!(out.contains("deferral-considered: true"));
     assert!(out.contains("deferral-selected: true"));
+    assert!(out.contains("deferral-reasoning:"));
     assert!(out.contains("deferral-source"));
 }
 
