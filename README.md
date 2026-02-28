@@ -222,5 +222,6 @@ Start here:
 - `docs/guides/011-output-widgets-and-colour-modes.md`
 - `docs/guides/012-dev-process-manager-tui.md`
 - `docs/guides/013-testing-orchestration.md`
+- `docs/guides/018-doctor-explain-mode.md`
 - `docs/roadmap/README.md`
 - `docs/reports/README.md`
