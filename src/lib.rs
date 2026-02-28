@@ -24,6 +24,9 @@ pub enum HelpTopic {
     Doctor,
     Tasks,
     Test,
+    Watch,
+    Init,
+    Migrate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,6 +174,36 @@ where
             args: task_args,
         }));
     }
+    if cmd == "watch" {
+        let task_args = args.collect::<Vec<String>>();
+        if task_args.iter().any(|arg| arg == "--help" || arg == "-h") {
+            return Ok(Command::Help(HelpTopic::Watch));
+        }
+        return Ok(Command::Task(TaskInvocation {
+            name: cmd,
+            args: task_args,
+        }));
+    }
+    if cmd == "init" {
+        let task_args = args.collect::<Vec<String>>();
+        if task_args.iter().any(|arg| arg == "--help" || arg == "-h") {
+            return Ok(Command::Help(HelpTopic::Init));
+        }
+        return Ok(Command::Task(TaskInvocation {
+            name: cmd,
+            args: task_args,
+        }));
+    }
+    if cmd == "migrate" {
+        let task_args = args.collect::<Vec<String>>();
+        if task_args.iter().any(|arg| arg == "--help" || arg == "-h") {
+            return Ok(Command::Help(HelpTopic::Migrate));
+        }
+        return Ok(Command::Task(TaskInvocation {
+            name: cmd,
+            args: task_args,
+        }));
+    }
 
     Ok(Command::Task(TaskInvocation {
         name: cmd,
@@ -287,6 +320,9 @@ pub fn render_help<R: Renderer>(renderer: &mut R, topic: HelpTopic) -> UiResult<
         HelpTopic::Doctor => render_doctor_help(renderer),
         HelpTopic::Tasks => render_tasks_help(renderer),
         HelpTopic::Test => render_test_help(renderer),
+        HelpTopic::Watch => render_watch_help(renderer),
+        HelpTopic::Init => render_init_help(renderer),
+        HelpTopic::Migrate => render_migrate_help(renderer),
     }
 }
 
@@ -364,6 +400,24 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             vec![
                 "effigy test".to_owned(),
                 "Run built-in auto-detected tests (or explicit tasks.test); supports <catalog>/test fallback".to_owned(),
+            ],
+            vec![
+                "effigy watch".to_owned(),
+                "Watch mode phase-1 runtime with explicit owner policy and debounce/glob controls"
+                    .to_owned(),
+            ],
+            vec![
+                "effigy init".to_owned(),
+                "Initialize baseline effigy.toml scaffold with safe overwrite/dry-run controls"
+                    .to_owned(),
+            ],
+            vec![
+                "effigy migrate".to_owned(),
+                "Migrate package scripts into `[tasks]` with preview/apply flow".to_owned(),
+            ],
+            vec![
+                "effigy unlock".to_owned(),
+                "Manually clear lock scopes (`workspace`, `task:*`, `profile:*/*`)".to_owned(),
             ],
             vec![
                 "effigy <task>".to_owned(),
@@ -645,6 +699,159 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "after: effigy test nextest user_service --nocapture".to_owned(),
             "after: effigy test viteest user-service -> suggests `effigy test vitest user-service`"
                 .to_owned(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn render_watch_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
+    renderer.section("watch Help")?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "Run file-triggered reruns for non-watcher tasks with explicit watch-owner policy controls.",
+    )?;
+    renderer.text("")?;
+    renderer.section("Usage")?;
+    renderer.text(
+        "effigy watch --owner <effigy|external> [--debounce-ms <MS>] [--include <GLOB>] [--exclude <GLOB>] <task> [task args]",
+    )?;
+    renderer.text("effigy watch --owner effigy --once <task> [task args]")?;
+    renderer.text("")?;
+    renderer.section("Options")?;
+    renderer.table(&ui::TableSpec::new(
+        vec!["Option".to_owned(), "Description".to_owned()],
+        vec![
+            vec![
+                "--owner <effigy|external>".to_owned(),
+                "Required owner policy. `effigy` enables file-triggered reruns; `external` blocks nested loops and expects task-managed watching.".to_owned(),
+            ],
+            vec![
+                "--debounce-ms <MS>".to_owned(),
+                "Debounce quiet window before rerunning after detected changes (default: 400)."
+                    .to_owned(),
+            ],
+            vec![
+                "--include <GLOB>".to_owned(),
+                "Optional repeatable include glob set (defaults to all files).".to_owned(),
+            ],
+            vec![
+                "--exclude <GLOB>".to_owned(),
+                "Optional repeatable exclude glob set, merged with default excludes (`.git/**`, `node_modules/**`, `target/**`).".to_owned(),
+            ],
+            vec![
+                "--once".to_owned(),
+                "Run target once with watch policy checks, then exit (useful for CI/contracts)."
+                    .to_owned(),
+            ],
+            vec![
+                "--max-runs <N>".to_owned(),
+                "Stop after N executions (useful for bounded automation/testing).".to_owned(),
+            ],
+            vec![
+                "--json".to_owned(),
+                "Render JSON payload for bounded runs (`--once` or `--max-runs`).".to_owned(),
+            ],
+            vec!["-h, --help".to_owned(), "Print command help".to_owned()],
+        ],
+    ))?;
+    renderer.text("")?;
+    renderer.section("Phase-1 Scope")?;
+    renderer.bullet_list(
+        "phase-1 scope",
+        &[
+            "file-triggered reruns for non-watcher tasks".to_owned(),
+            "explicit watch-owner policy safeguards".to_owned(),
+            "debounce and include/exclude glob controls".to_owned(),
+            "fail-fast guidance when owner policy indicates external watcher ownership".to_owned(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn render_init_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
+    renderer.section("init Help")?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "Generate a baseline `effigy.toml` scaffold with minimal defaults and commented examples.",
+    )?;
+    renderer.text("")?;
+    renderer.section("Usage")?;
+    renderer.text("effigy init [--dry-run] [--force] [--json]")?;
+    renderer.text("")?;
+    renderer.section("Options")?;
+    renderer.table(&ui::TableSpec::new(
+        vec!["Option".to_owned(), "Description".to_owned()],
+        vec![
+            vec![
+                "--dry-run".to_owned(),
+                "Print scaffold content without writing to disk.".to_owned(),
+            ],
+            vec![
+                "--force".to_owned(),
+                "Overwrite existing `effigy.toml` if present.".to_owned(),
+            ],
+            vec![
+                "--json".to_owned(),
+                "Render machine-readable init report payload.".to_owned(),
+            ],
+            vec!["-h, --help".to_owned(), "Print command help".to_owned()],
+        ],
+    ))?;
+    renderer.text("")?;
+    renderer.section("Phase-1 Scope")?;
+    renderer.bullet_list(
+        "init scope",
+        &[
+            "generate minimal valid effigy.toml".to_owned(),
+            "include commented DAG and managed task examples".to_owned(),
+            "safe file existence handling (`--dry-run`/`--force`)".to_owned(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn render_migrate_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
+    renderer.section("migrate Help")?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "Import `package.json` scripts into `[tasks]` with preview-first, explicit apply flow.",
+    )?;
+    renderer.text("")?;
+    renderer.section("Usage")?;
+    renderer.text("effigy migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]")?;
+    renderer.text("")?;
+    renderer.section("Options")?;
+    renderer.table(&ui::TableSpec::new(
+        vec!["Option".to_owned(), "Description".to_owned()],
+        vec![
+            vec![
+                "--from <PATH>".to_owned(),
+                "Override source package file (default: <repo>/package.json).".to_owned(),
+            ],
+            vec![
+                "--script <NAME>".to_owned(),
+                "Repeatable script selector filter (defaults to all scripts).".to_owned(),
+            ],
+            vec![
+                "--apply".to_owned(),
+                "Write ready imports into `[tasks]` (preview-only by default).".to_owned(),
+            ],
+            vec![
+                "--json".to_owned(),
+                "Render machine-readable migration report payload.".to_owned(),
+            ],
+            vec!["-h, --help".to_owned(), "Print command help".to_owned()],
+        ],
+    ))?;
+    renderer.text("")?;
+    renderer.section("Phase-1 Scope")?;
+    renderer.bullet_list(
+        "phase-1 scope",
+        &[
+            "import package.json scripts only".to_owned(),
+            "preview + explicit apply flow".to_owned(),
+            "non-destructive source preservation".to_owned(),
+            "manual remediation hints for task-name conflicts".to_owned(),
         ],
     )?;
     Ok(())

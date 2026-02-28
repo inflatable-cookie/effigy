@@ -313,6 +313,18 @@ pub(super) struct ManifestManagedRunStepTable {
     pub(super) run: Option<String>,
     #[serde(default)]
     pub(super) task: Option<String>,
+    #[serde(default)]
+    pub(super) id: Option<String>,
+    #[serde(default)]
+    pub(super) depends_on: Vec<String>,
+    #[serde(default)]
+    pub(super) timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub(super) retry: Option<usize>,
+    #[serde(default)]
+    pub(super) retry_delay_ms: Option<u64>,
+    #[serde(default)]
+    pub(super) fail_fast: Option<bool>,
 }
 
 impl<'de> serde::Deserialize<'de> for ManifestManagedRun {

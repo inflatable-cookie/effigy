@@ -9,7 +9,8 @@ use std::os::unix::fs::symlink;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[test]
 fn parse_task_runtime_args_extracts_repo_verbose_and_passthrough() {
@@ -305,6 +306,493 @@ fn run_manifest_task_health_without_definition_shows_doctor_migration_message() 
 }
 
 #[test]
+fn run_manifest_task_builtin_watch_without_help_requires_owner_policy() {
+    let root = temp_workspace("builtin-watch-owner-required-legacy");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "watch".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("expected owner policy requirement");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("--owner <effigy|external>` is required"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {
+    let root = temp_workspace("builtin-init-create");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "init".to_owned(),
+            args: Vec::new(),
+        },
+        root.clone(),
+    )
+    .expect("init should create scaffold");
+    assert!(out.contains("Created effigy.toml"));
+
+    let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read created manifest");
+    assert!(manifest.contains("[tasks]"));
+    assert!(manifest.contains("ping = \"printf ok\""));
+    assert!(manifest.contains("# [tasks.dev]"));
+    assert!(manifest.contains("# [tasks.validate]"));
+
+    let listed = run_tasks(TasksArgs {
+        repo_override: Some(root),
+        task_name: Some("ping".to_owned()),
+        resolve_selector: None,
+        output_json: false,
+        pretty_json: true,
+    })
+    .expect("generated scaffold should parse and list tasks");
+    assert!(listed.contains("ping"));
+}
+
+#[test]
+fn run_manifest_task_builtin_init_refuses_overwrite_without_force() {
+    let root = temp_workspace("builtin-init-refuse-overwrite");
+    write_manifest(&root.join("effigy.toml"), "[tasks]\nold = \"printf old\"\n");
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "init".to_owned(),
+            args: Vec::new(),
+        },
+        root.clone(),
+    )
+    .expect_err("init should refuse overwrite");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("already exists"));
+            assert!(message.contains("`effigy init --force`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+
+    let existing = fs::read_to_string(root.join("effigy.toml")).expect("read existing");
+    assert!(existing.contains("old = \"printf old\""));
+}
+
+#[test]
+fn run_manifest_task_builtin_init_force_overwrites_existing_manifest() {
+    let root = temp_workspace("builtin-init-force-overwrite");
+    write_manifest(&root.join("effigy.toml"), "[tasks]\nold = \"printf old\"\n");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "init".to_owned(),
+            args: vec!["--force".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("init --force should overwrite");
+    assert!(out.contains("Overwrote effigy.toml"));
+
+    let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read overwritten");
+    assert!(manifest.contains("ping = \"printf ok\""));
+    assert!(!manifest.contains("old = \"printf old\""));
+}
+
+#[test]
+fn run_manifest_task_builtin_init_dry_run_prints_scaffold_without_writing() {
+    let root = temp_workspace("builtin-init-dry-run");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "init".to_owned(),
+            args: vec!["--dry-run".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("init --dry-run should render scaffold");
+
+    assert!(out.contains("[tasks]"));
+    assert!(out.contains("# [tasks.dev]"));
+    assert!(
+        !root.join("effigy.toml").exists(),
+        "dry-run should not write manifest"
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_init_json_reports_write_status() {
+    let root = temp_workspace("builtin-init-json");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "init".to_owned(),
+            args: vec!["--json".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("init --json should succeed");
+
+    assert!(out.contains("\"schema\": \"effigy.init.v1\""));
+    assert!(out.contains("\"written\": true"));
+    assert!(out.contains("\"dry_run\": false"));
+    assert!(out.contains("\"content\":"));
+    assert!(root.join("effigy.toml").exists());
+}
+
+#[test]
+fn run_manifest_task_builtin_migrate_preview_reports_candidates_without_writing() {
+    let root = temp_workspace("builtin-migrate-preview");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "build": "npm run compile",
+    "test": "vitest run"
+  }
+}
+"#,
+    )
+    .expect("write package scripts");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "migrate".to_owned(),
+            args: Vec::new(),
+        },
+        root.clone(),
+    )
+    .expect("migrate preview should succeed");
+
+    assert!(out.contains("Migrate Preview"));
+    assert!(out.contains("candidate scripts: 2"));
+    assert!(out.contains("+ tasks.build = \"npm run compile\""));
+    assert!(out.contains("+ tasks.test = \"vitest run\""));
+    assert!(out.contains("No files were modified."));
+    assert!(
+        !root.join("effigy.toml").exists(),
+        "preview mode should not write manifest"
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_migrate_apply_writes_ready_imports() {
+    let root = temp_workspace("builtin-migrate-apply");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "build": "npm run compile",
+    "test": "vitest run"
+  }
+}
+"#,
+    )
+    .expect("write package scripts");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "migrate".to_owned(),
+            args: vec!["--apply".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("migrate apply should succeed");
+
+    assert!(out.contains("mode: apply"));
+    assert!(out.contains("Applied: wrote"));
+    let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read migrated manifest");
+    assert!(manifest.contains("[tasks]"));
+    assert!(manifest.contains("build = \"npm run compile\""));
+    assert!(manifest.contains("test = \"vitest run\""));
+}
+
+#[test]
+fn run_manifest_task_builtin_migrate_preserves_package_source_file() {
+    let root = temp_workspace("builtin-migrate-preserves-source");
+    let source = r#"{
+  "scripts": {
+    "build": "npm run compile"
+  }
+}
+"#;
+    fs::write(root.join("package.json"), source).expect("write package scripts");
+
+    let _ = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "migrate".to_owned(),
+            args: vec!["--apply".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("migrate apply should succeed");
+
+    let package_after = fs::read_to_string(root.join("package.json")).expect("read package");
+    assert_eq!(package_after, source, "migration must be non-destructive");
+}
+
+#[test]
+fn run_manifest_task_builtin_migrate_conflicts_require_manual_remediation() {
+    let root = temp_workspace("builtin-migrate-conflicts");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks]\nbuild = \"printf old\"\n",
+    );
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "build": "npm run compile",
+    "lint": "eslint ."
+  }
+}
+"#,
+    )
+    .expect("write package scripts");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "migrate".to_owned(),
+            args: vec!["--apply".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("migrate apply with conflicts should succeed");
+
+    assert!(out.contains("Manual Remediation"));
+    assert!(out.contains("skip `build` (already defined in `[tasks]`)"));
+    assert!(out.contains("+ tasks.lint = \"eslint .\""));
+    let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read migrated manifest");
+    assert!(manifest.contains("build = \"printf old\""));
+    assert!(manifest.contains("lint = \"eslint .\""));
+}
+
+#[test]
+fn run_manifest_task_builtin_migrate_json_reports_schema_and_conflicts() {
+    let root = temp_workspace("builtin-migrate-json");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks]\nbuild = \"printf old\"\n",
+    );
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "build": "npm run compile",
+    "test": "vitest run"
+  }
+}
+"#,
+    )
+    .expect("write package scripts");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "migrate".to_owned(),
+            args: vec!["--json".to_owned()],
+        },
+        root,
+    )
+    .expect("migrate --json should succeed");
+    assert!(out.contains("\"schema\": \"effigy.migrate.v1\""));
+    assert!(out.contains("\"apply\": false"));
+    assert!(out.contains("\"name\": \"test\""));
+    assert!(out.contains("\"name\": \"build\""));
+}
+
+#[test]
+fn run_manifest_task_builtin_watch_help_renders_topic() {
+    let root = temp_workspace("builtin-watch-help");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "watch".to_owned(),
+            args: vec!["--help".to_owned()],
+        },
+        root,
+    )
+    .expect("run watch --help");
+    assert!(out.contains("watch Help"));
+    assert!(out.contains("--owner <effigy|external>"));
+    assert!(out.contains("--debounce-ms <MS>"));
+}
+
+#[test]
+fn run_manifest_task_builtin_watch_rejects_unknown_args() {
+    let root = temp_workspace("builtin-watch-unknown-arg");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "watch".to_owned(),
+            args: vec!["--wat".to_owned()],
+        },
+        root,
+    )
+    .expect_err("expected watch unknown-arg failure");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("unknown argument(s) for built-in `watch`: --wat"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_builtin_watch_requires_explicit_owner_policy() {
+    let root = temp_workspace("builtin-watch-owner-required");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf ok\"\n",
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "watch".to_owned(),
+            args: vec!["build".to_owned(), "--once".to_owned()],
+        },
+        root,
+    )
+    .expect_err("expected owner-policy failure");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("--owner <effigy|external>` is required"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_builtin_watch_external_owner_rejects_nested_loop() {
+    let root = temp_workspace("builtin-watch-owner-external");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf ok\"\n",
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "watch".to_owned(),
+            args: vec![
+                "--owner".to_owned(),
+                "external".to_owned(),
+                "build".to_owned(),
+                "--once".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect_err("expected external-owner failure");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("watch owner `external`"));
+            assert!(message.contains("Run the task directly"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_builtin_watch_once_executes_target_task() {
+    let root = temp_workspace("builtin-watch-once-exec");
+    let marker = root.join("watch-once.log");
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            "[tasks.build]\nrun = \"printf watched > '{}'\"\n",
+            marker.display()
+        ),
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "watch".to_owned(),
+            args: vec![
+                "--owner".to_owned(),
+                "effigy".to_owned(),
+                "--once".to_owned(),
+                "build".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect("watch once should run task");
+
+    assert!(out.contains("watch complete after 1 run(s)."));
+    assert!(marker.exists(), "watch --once should execute the target");
+}
+
+#[test]
+fn run_manifest_task_builtin_watch_bounded_json_reports_watch_schema() {
+    let root = temp_workspace("builtin-watch-json-bounded");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf ok\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "watch".to_owned(),
+            args: vec![
+                "--owner".to_owned(),
+                "effigy".to_owned(),
+                "--once".to_owned(),
+                "--json".to_owned(),
+                "build".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect("watch --once --json should succeed");
+
+    assert!(out.contains("\"schema\": \"effigy.watch.v1\""));
+    assert!(out.contains("\"runs\": 1"));
+}
+
+#[test]
+fn run_manifest_task_builtin_init_help_renders_topic() {
+    let root = temp_workspace("builtin-init-help");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "init".to_owned(),
+            args: vec!["--help".to_owned()],
+        },
+        root,
+    )
+    .expect("run init --help");
+    assert!(out.contains("init Help"));
+    assert!(out.contains("effigy init [--dry-run] [--force] [--json]"));
+}
+
+#[test]
+fn run_manifest_task_builtin_migrate_help_json_uses_help_schema() {
+    let root = temp_workspace("builtin-migrate-help-json");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "migrate".to_owned(),
+            args: vec!["--help".to_owned(), "--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run migrate --help --json");
+    assert!(out.contains("\"schema\": \"effigy.help.v1\""));
+    assert!(out.contains("\"topic\": \"migrate\""));
+}
+
+#[test]
 fn run_manifest_task_verbose_root_includes_resolution_trace() {
     let _guard = test_lock().lock().expect("lock");
     let _env = EnvGuard::set_many(&[("EFFIGY_COLOR", None), ("NO_COLOR", None)]);
@@ -385,6 +873,368 @@ run = [{ task = "lint" }, "printf validate-ok"]
 
     assert!(out.contains("printf lint-ok"));
     assert!(out.contains("printf validate-ok"));
+}
+
+#[test]
+fn run_manifest_task_run_array_accepts_dag_metadata() {
+    let root = temp_workspace("run-array-dag-metadata");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.validate]
+run = [
+  { id = "lint", run = "printf lint-ok" },
+  { id = "build", run = "printf build-ok", depends_on = ["lint"] },
+  { run = "printf validate-ok" }
+]
+"#,
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: vec!["--verbose-root".to_owned()],
+        },
+        root,
+    )
+    .expect("run");
+
+    assert!(out.contains("printf lint-ok"));
+    assert!(out.contains("printf build-ok"));
+    assert!(out.contains("printf validate-ok"));
+}
+
+#[test]
+fn run_manifest_task_run_array_rejects_depends_on_without_id() {
+    let root = temp_workspace("run-array-depends-on-without-id");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.validate]
+run = [
+  { id = "lint", run = "printf lint-ok" },
+  { run = "printf build-ok", depends_on = ["lint"] }
+]
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("expected depends_on without id error");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("defines `depends_on` but is missing a non-empty `id`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_run_array_rejects_missing_dependency_step() {
+    let root = temp_workspace("run-array-missing-dependency-step");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.validate]
+run = [
+  { id = "build", run = "printf build-ok", depends_on = ["lint"] }
+]
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("expected missing dependency error");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("depends on missing step `lint`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_run_array_rejects_duplicate_step_ids() {
+    let root = temp_workspace("run-array-duplicate-step-ids");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.validate]
+run = [
+  { id = "lint", run = "printf lint-ok" },
+  { id = "lint", run = "printf lint-again" }
+]
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("expected duplicate id error");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("duplicate step id `lint`"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_run_array_rejects_dependency_cycles() {
+    let root = temp_workspace("run-array-dependency-cycles");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.validate]
+run = [
+  { id = "lint", run = "printf lint-ok", depends_on = ["build"] },
+  { id = "build", run = "printf build-ok", depends_on = ["lint"] }
+]
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("expected cycle error");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("contains dependency cycle"));
+            assert!(
+                message.contains("build -> lint -> build")
+                    || message.contains("lint -> build -> lint")
+            );
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_run_array_rejects_self_dependency_cycle() {
+    let root = temp_workspace("run-array-self-dependency-cycle");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.validate]
+run = [
+  { id = "lint", run = "printf lint-ok", depends_on = ["lint"] }
+]
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("expected self cycle error");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("cannot depend on itself"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_run_array_executes_ready_steps_in_parallel() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("run-array-parallel-ready-steps");
+    let marker = root.join("parallel-ready.log");
+    let _env = EnvGuard::set_many(&[("EFFIGY_DAG_MAX_PARALLEL", Some("2".to_owned()))]);
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[tasks.validate]
+run = [
+  {{ id = "seed", run = "printf seed > \"{}\"" }},
+  {{ id = "a", run = "sh -lc 'sleep 0.7; printf a >> \"{}\"'", depends_on = ["seed"] }},
+  {{ id = "b", run = "sh -lc 'sleep 0.7; printf b >> \"{}\"'", depends_on = ["seed"] }}
+]
+"#,
+            marker.display(),
+            marker.display(),
+            marker.display()
+        ),
+    );
+
+    let start = Instant::now();
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: Vec::new(),
+        },
+        root.clone(),
+    )
+    .expect("run");
+    let elapsed = start.elapsed();
+
+    let body = fs::read_to_string(marker).expect("read marker");
+    assert!(body.contains('a'));
+    assert!(body.contains('b'));
+    assert!(
+        elapsed < Duration::from_millis(1200),
+        "expected parallel schedule, elapsed={elapsed:?}"
+    );
+}
+
+#[test]
+fn run_manifest_task_run_array_honors_parallel_cap() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("run-array-parallel-cap");
+    let marker = root.join("parallel-cap.log");
+    let _env = EnvGuard::set_many(&[("EFFIGY_DAG_MAX_PARALLEL", Some("1".to_owned()))]);
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[tasks.validate]
+run = [
+  {{ id = "seed", run = "printf seed > \"{}\"" }},
+  {{ id = "a", run = "sh -lc 'sleep 0.7; printf a >> \"{}\"'", depends_on = ["seed"] }},
+  {{ id = "b", run = "sh -lc 'sleep 0.7; printf b >> \"{}\"'", depends_on = ["seed"] }}
+]
+"#,
+            marker.display(),
+            marker.display(),
+            marker.display()
+        ),
+    );
+
+    let start = Instant::now();
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: Vec::new(),
+        },
+        root.clone(),
+    )
+    .expect("run");
+    let elapsed = start.elapsed();
+
+    let body = fs::read_to_string(marker).expect("read marker");
+    assert!(body.contains('a'));
+    assert!(body.contains('b'));
+    assert!(
+        elapsed >= Duration::from_millis(1200),
+        "expected capped schedule, elapsed={elapsed:?}"
+    );
+}
+
+#[test]
+fn run_manifest_task_run_array_retries_failing_step() {
+    let root = temp_workspace("run-array-retry-step");
+    let marker = root.join("retry.marker");
+    let out_file = root.join("retry.out");
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[tasks.validate]
+run = [
+  {{ id = "flaky", run = "sh -lc 'if [ -f \"{}\" ]; then printf ok > \"{}\"; exit 0; else touch \"{}\"; exit 7; fi'", retry = 1, retry_delay_ms = 10 }}
+]
+"#,
+            marker.display(),
+            out_file.display(),
+            marker.display()
+        ),
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("retry should recover");
+    assert_eq!(out, "");
+    let body = fs::read_to_string(out_file).expect("read retry output");
+    assert_eq!(body, "ok");
+}
+
+#[test]
+fn run_manifest_task_run_array_enforces_timeout_ms() {
+    let root = temp_workspace("run-array-timeout-step");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.validate]
+run = [
+  { id = "slow", run = "sleep 1", timeout_ms = 100 }
+]
+"#,
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect_err("timeout should fail");
+
+    match err {
+        RunnerError::TaskCommandFailure { code, .. } => {
+            assert_eq!(code, Some(124));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_run_array_fail_fast_false_allows_other_ready_steps() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("run-array-fail-fast-false");
+    let marker = root.join("fail-fast-false.out");
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[tasks.validate]
+run = [
+  {{ id = "seed", run = "printf seed > \"{}\"" }},
+  {{ id = "bad", run = "sh -lc 'sleep 0.1; exit 9'", depends_on = ["seed"], fail_fast = false }},
+  {{ id = "good", run = "printf good >> \"{}\"", depends_on = ["seed"] }}
+]
+"#,
+            marker.display(),
+            marker.display()
+        ),
+    );
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: Vec::new(),
+        },
+        root.clone(),
+    )
+    .expect_err("overall command should fail");
+
+    match err {
+        RunnerError::TaskCommandFailure { .. } => {}
+        other => panic!("unexpected error: {other}"),
+    }
+    let body = fs::read_to_string(marker).expect("read marker");
+    assert!(body.contains("good"));
 }
 
 #[test]
@@ -2980,7 +3830,7 @@ fn run_manifest_task_builtin_config_prints_reference() {
     assert!(out.contains("[tasks]"));
     assert!(out.contains("task = \"test vitest \\\"user service\\\"\""));
     assert!(out.contains(
-        "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
+        "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]"
     ));
 }
 
@@ -3049,7 +3899,7 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
     assert!(out.contains("concurrent = ["));
     assert!(out.contains("task = \"test vitest \\\"user service\\\"\""));
     assert!(out.contains(
-        "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
+        "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]"
     ));
     assert!(out.contains("{ task = \"catalog-a/api\", start = 1, tab = 3 }"));
 }
@@ -3120,7 +3970,7 @@ fn run_manifest_task_builtin_config_schema_target_tasks_includes_quoted_task_ref
     assert!(out.contains("[tasks]"));
     assert!(out.contains("task = \"test vitest \\\"user service\\\"\""));
     assert!(out.contains(
-        "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
+        "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]"
     ));
 }
 
@@ -3521,7 +4371,11 @@ fn run_doctor_explain_text_snapshot_prefix_block_is_stable() {
     let out = run_manifest_task_with_cwd(
         &TaskInvocation {
             name: "doctor".to_owned(),
-            args: vec!["farmyard/build".to_owned(), "--".to_owned(), "--watch".to_owned()],
+            args: vec![
+                "farmyard/build".to_owned(),
+                "--".to_owned(),
+                "--watch".to_owned(),
+            ],
         },
         root.clone(),
     )
@@ -5267,6 +6121,112 @@ concurrent = [{ name = "api", run = "sh -lc 'exit 9'" }]
     assert!(out.contains("Managed Task Runtime"));
     assert!(out.contains("fail-on-non-zero: disabled"));
     assert!(out.contains("process `api` exit=9"));
+}
+
+#[test]
+fn run_manifest_task_rejects_live_lock_conflict() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("lock-conflict-live");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+run = "sleep 1"
+"#,
+    );
+
+    let root_for_thread = root.clone();
+    let join = thread::spawn(move || {
+        run_manifest_task_with_cwd(
+            &TaskInvocation {
+                name: "dev".to_owned(),
+                args: Vec::new(),
+            },
+            root_for_thread,
+        )
+    });
+
+    std::thread::sleep(Duration::from_millis(120));
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: Vec::new(),
+        },
+        root.clone(),
+    )
+    .expect_err("second run should conflict on lock");
+
+    match err {
+        RunnerError::TaskLockConflict {
+            scope, remediation, ..
+        } => {
+            assert_eq!(scope, "workspace");
+            assert!(remediation.contains("effigy unlock workspace"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+
+    join.join()
+        .expect("thread join")
+        .expect("first run should complete");
+}
+
+#[test]
+fn run_manifest_task_reclaims_stale_lock_from_dead_pid() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("lock-stale-reclaim");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+run = "printf ok"
+"#,
+    );
+
+    let locks_dir = root.join(".effigy/locks");
+    fs::create_dir_all(&locks_dir).expect("create locks dir");
+    fs::write(
+        locks_dir.join("workspace.lock"),
+        r#"{"scope":"workspace","pid":999999,"started_at_epoch_ms":0}"#,
+    )
+    .expect("write stale lock");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("stale lock should be reclaimed");
+
+    assert_eq!(out, "");
+}
+
+#[test]
+fn run_manifest_task_builtin_unlock_clears_explicit_scopes() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("unlock-explicit-scopes");
+    fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
+    fs::write(root.join(".effigy/locks/workspace.lock"), "{}").expect("write workspace lock");
+    fs::write(root.join(".effigy/locks/task-dev.lock"), "{}").expect("write task lock");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "unlock".to_owned(),
+            args: vec![
+                "--repo".to_owned(),
+                root.display().to_string(),
+                "workspace".to_owned(),
+                "task:dev".to_owned(),
+            ],
+        },
+        root.clone(),
+    )
+    .expect("unlock should run");
+
+    assert!(out.contains("removed: 2"));
+    assert!(!root.join(".effigy/locks/workspace.lock").exists());
+    assert!(!root.join(".effigy/locks/task-dev.lock").exists());
 }
 
 fn write_manifest(path: &PathBuf, body: &str) {

@@ -327,6 +327,40 @@ fn parse_test_help_is_scoped() {
 }
 
 #[test]
+fn parse_watch_help_is_scoped() {
+    let cmd =
+        parse_command(vec!["watch".to_owned(), "--help".to_owned()]).expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Watch));
+}
+
+#[test]
+fn parse_init_help_is_scoped() {
+    let cmd =
+        parse_command(vec!["init".to_owned(), "--help".to_owned()]).expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Init));
+}
+
+#[test]
+fn parse_migrate_help_is_scoped() {
+    let cmd = parse_command(vec!["migrate".to_owned(), "--help".to_owned()])
+        .expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Migrate));
+}
+
+#[test]
+fn parse_watch_passthrough_without_help() {
+    let cmd = parse_command(vec!["watch".to_owned(), "services/api/dev".to_owned()])
+        .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Task(TaskInvocation {
+            name: "watch".to_owned(),
+            args: vec!["services/api/dev".to_owned()],
+        })
+    );
+}
+
+#[test]
 fn render_help_writes_structured_sections() {
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
     render_help(&mut renderer, HelpTopic::General).expect("help render");
@@ -336,6 +370,9 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy config"));
     assert!(rendered.contains("effigy doctor"));
     assert!(rendered.contains("effigy test"));
+    assert!(rendered.contains("effigy watch"));
+    assert!(rendered.contains("effigy init"));
+    assert!(rendered.contains("effigy migrate"));
     assert!(rendered.contains("<catalog>/test fallback"));
     assert!(!rendered.contains("effigy test --plan"));
     assert!(rendered.contains("Use `effigy <built-in-task> --help`"));
@@ -417,6 +454,43 @@ fn render_test_help_shows_detection_and_config() {
         "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
     ));
     assert!(rendered.contains("Task-ref chain parsing is shell-like tokenization only"));
+}
+
+#[test]
+fn render_watch_help_shows_phase_scope() {
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    render_help(&mut renderer, HelpTopic::Watch).expect("help render");
+    let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
+    assert!(rendered.contains("watch Help"));
+    assert!(rendered.contains("--owner <effigy|external>"));
+    assert!(rendered.contains("--debounce-ms <MS>"));
+    assert!(rendered.contains("file-triggered reruns for non-watcher tasks"));
+}
+
+#[test]
+fn render_init_help_shows_phase_scope() {
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    render_help(&mut renderer, HelpTopic::Init).expect("help render");
+    let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
+    assert!(rendered.contains("init Help"));
+    assert!(rendered.contains("effigy init [--dry-run] [--force] [--json]"));
+    assert!(rendered.contains("generate minimal valid effigy.toml"));
+    assert!(rendered.contains("--dry-run"));
+    assert!(rendered.contains("--force"));
+}
+
+#[test]
+fn render_migrate_help_shows_phase_scope() {
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    render_help(&mut renderer, HelpTopic::Migrate).expect("help render");
+    let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
+    assert!(rendered.contains("migrate Help"));
+    assert!(
+        rendered.contains("effigy migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]")
+    );
+    assert!(rendered.contains("import package.json scripts only"));
+    assert!(rendered.contains("--apply"));
+    assert!(rendered.contains("--script <NAME>"));
 }
 
 #[test]

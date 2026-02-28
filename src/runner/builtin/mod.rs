@@ -8,8 +8,12 @@ use super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector, BUILTIN_T
 mod config;
 mod doctor;
 mod help;
+mod init;
+mod migrate;
 mod tasks;
 mod test;
+mod unlock;
+mod watch;
 
 fn is_builtin_task(task_name: &str) -> bool {
     BUILTIN_TASKS.iter().any(|(name, _)| *name == task_name) || task_name == "catalogs"
@@ -52,6 +56,10 @@ pub(super) fn try_run_builtin_task(
         "tasks" => tasks::run_builtin_tasks(task, runtime_args, &target_root, false).map(Some),
         "config" => config::run_builtin_config(task, &runtime_args.passthrough),
         "help" => help::run_builtin_help(task, &runtime_args.passthrough),
+        "watch" => watch::run_builtin_watch(task, runtime_args, &target_root),
+        "init" => init::run_builtin_init(task, &runtime_args.passthrough, &target_root),
+        "migrate" => migrate::run_builtin_migrate(task, &runtime_args.passthrough, &target_root),
+        "unlock" => unlock::run_builtin_unlock(task, &runtime_args.passthrough, &target_root),
         "test" => test::try_run_builtin_test(selector, task, runtime_args, &target_root, catalogs),
         _ => Ok(None),
     }

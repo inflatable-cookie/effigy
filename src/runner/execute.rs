@@ -9,6 +9,7 @@ use crate::TaskInvocation;
 
 use super::catalog::select_catalog_and_task;
 use super::deferral::{run_deferred_request, select_deferral, should_attempt_deferral};
+use super::locking::{acquire_scopes, LockScope};
 use super::managed::{render_task_run_spec, resolve_managed_task_plan, run_or_render_managed_task};
 use super::render::render_task_resolution_trace;
 use super::util::{
@@ -110,6 +111,17 @@ pub(super) fn run_manifest_task_with_cwd(
         &catalogs,
         &selection.catalog.catalog_root,
     )? {
+        let _lock_guards = acquire_scopes(
+            &resolved.resolved_root,
+            &[
+                LockScope::Workspace,
+                LockScope::Task(selector.task_name.clone()),
+                LockScope::Profile {
+                    task: selector.task_name.clone(),
+                    profile: plan.profile.clone(),
+                },
+            ],
+        )?;
         return run_or_render_managed_task(
             &selector.task_name,
             &repo_for_task,
@@ -141,6 +153,13 @@ pub(super) fn run_manifest_task_with_cwd(
         &catalogs,
         &selection.catalog.catalog_root,
         0,
+    )?;
+    let _lock_guards = acquire_scopes(
+        &resolved.resolved_root,
+        &[
+            LockScope::Workspace,
+            LockScope::Task(selector.task_name.clone()),
+        ],
     )?;
 
     let mut process = ProcessCommand::new("sh");

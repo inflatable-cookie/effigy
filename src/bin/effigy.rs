@@ -53,6 +53,9 @@ fn main() {
                     HelpTopic::Doctor => "doctor",
                     HelpTopic::Tasks => "tasks",
                     HelpTopic::Test => "test",
+                    HelpTopic::Watch => "watch",
+                    HelpTopic::Init => "init",
+                    HelpTopic::Migrate => "migrate",
                 };
                 let mut help_renderer = PlainRenderer::new(Vec::<u8>::new(), false);
                 let _ = render_help(&mut help_renderer, topic);
@@ -244,6 +247,9 @@ fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
                 HelpTopic::Doctor => "doctor",
                 HelpTopic::Tasks => "tasks",
                 HelpTopic::Test => "test",
+                HelpTopic::Watch => "watch",
+                HelpTopic::Init => "init",
+                HelpTopic::Migrate => "migrate",
             };
             ("help", name.to_owned())
         }
