@@ -61,7 +61,7 @@ pub(super) fn discover_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatal
     Ok(catalogs)
 }
 
-fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, RunnerError> {
+pub(super) fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, RunnerError> {
     let mut pending: Vec<PathBuf> = vec![workspace_root.to_path_buf()];
     let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
     let mut manifests_by_catalog: HashMap<PathBuf, PathBuf> = HashMap::new();
@@ -121,7 +121,7 @@ fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Runner
     Ok(manifests)
 }
 
-fn should_skip_dir(path: &Path) -> bool {
+pub(super) fn should_skip_dir(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|n| n.to_str()),
         Some(".git" | "node_modules" | "target" | ".next")
@@ -259,7 +259,7 @@ fn catalog_depth(workspace_root: &Path, catalog_root: &Path) -> usize {
         .unwrap_or(usize::MAX)
 }
 
-fn default_alias(catalog_root: &Path, workspace_root: &Path) -> String {
+pub(super) fn default_alias(catalog_root: &Path, workspace_root: &Path) -> String {
     if catalog_root == workspace_root {
         return "root".to_owned();
     }

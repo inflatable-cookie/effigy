@@ -39,7 +39,7 @@ Then run directly:
 
 ```bash
 effigy tasks --repo /abs/path/to/workspace
-effigy repo-pulse --repo /abs/path/to/workspace
+effigy doctor --repo /abs/path/to/workspace
 ```
 
 ## 3) Fallback Strategy
@@ -72,9 +72,9 @@ For now, version is controlled in `Cargo.toml`.
 
 | Mode | Command | Expected |
 |---|---|---|
-| Source run | `cargo run --manifest-path ../effigy/Cargo.toml --bin effigy -- repo-pulse --repo .` | Pulse report rendered, exit 0 |
+| Source run | `cargo run --manifest-path ../effigy/Cargo.toml --bin effigy -- doctor --repo .` | Doctor report rendered, exit 0 |
 | PATH binary | `effigy --help` | Usage shown, exit 0 |
-| PATH binary | `effigy repo-pulse --repo <workspace>` | Pulse report rendered, exit 0 |
+| PATH binary | `effigy doctor --repo <workspace>` | Doctor report rendered, exit 0 |
 | Wrapper fallback | `bun effigy tasks` | Catalogs listed, exit 0 |
 
 ## 7) Notes

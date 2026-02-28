@@ -12,7 +12,7 @@ use ui::{Renderer, UiResult};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    RepoPulse(PulseArgs),
+    Doctor(DoctorArgs),
     Tasks(TasksArgs),
     Task(TaskInvocation),
     Help(HelpTopic),
@@ -21,16 +21,16 @@ pub enum Command {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelpTopic {
     General,
-    RepoPulse,
+    Doctor,
     Tasks,
     Test,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PulseArgs {
+pub struct DoctorArgs {
     pub repo_override: Option<PathBuf>,
-    pub verbose_root: bool,
     pub output_json: bool,
+    pub fix: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,14 +78,20 @@ impl std::fmt::Display for CliParseError {
 
 impl std::error::Error for CliParseError {}
 
-pub fn strip_global_json_flag(args: Vec<String>) -> (Vec<String>, bool) {
+pub fn strip_global_json_flags(args: Vec<String>) -> (Vec<String>, bool, bool) {
     let mut stripped = Vec::with_capacity(args.len());
     let mut json_mode = false;
+    let mut json_raw_mode = false;
     let mut passthrough_mode = false;
     for arg in args {
         if arg == "--" {
             passthrough_mode = true;
             stripped.push(arg);
+            continue;
+        }
+        if !passthrough_mode && arg == "--json-raw" {
+            json_mode = true;
+            json_raw_mode = true;
             continue;
         }
         if !passthrough_mode && arg == "--json" {
@@ -94,6 +100,11 @@ pub fn strip_global_json_flag(args: Vec<String>) -> (Vec<String>, bool) {
         }
         stripped.push(arg);
     }
+    (stripped, json_mode, json_raw_mode)
+}
+
+pub fn strip_global_json_flag(args: Vec<String>) -> (Vec<String>, bool) {
+    let (stripped, json_mode, _) = strip_global_json_flags(args);
     (stripped, json_mode)
 }
 
@@ -109,7 +120,7 @@ pub fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Command {
             }
         }
         Command::Tasks(args) => args.output_json = true,
-        Command::RepoPulse(args) => args.output_json = true,
+        Command::Doctor(args) => args.output_json = true,
         Command::Help(_) => {}
     }
     cmd
@@ -121,7 +132,7 @@ pub fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bool {
     }
     match cmd {
         Command::Tasks(args) => args.output_json,
-        Command::RepoPulse(args) => args.output_json,
+        Command::Doctor(args) => args.output_json,
         Command::Task(task) => task.args.iter().any(|arg| arg == "--json"),
         Command::Help(_) => false,
     }
@@ -139,12 +150,15 @@ where
     if cmd == "--help" || cmd == "-h" {
         return Ok(Command::Help(HelpTopic::General));
     }
+    if cmd.starts_with('-') {
+        return Err(CliParseError::UnknownArgument(cmd));
+    }
     if cmd == "help" {
         return Ok(Command::Help(HelpTopic::General));
     }
 
-    if cmd == "repo-pulse" {
-        return parse_pulse(args);
+    if cmd == "doctor" {
+        return parse_doctor(args);
     }
     if cmd == "tasks" {
         return parse_tasks(args);
@@ -166,41 +180,6 @@ where
     Ok(Command::Task(TaskInvocation {
         name: cmd,
         args: args.collect(),
-    }))
-}
-
-fn parse_pulse<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut verbose_root = false;
-    let mut output_json = false;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => {
-                let Some(path) = args.next() else {
-                    return Err(CliParseError::MissingRepoValue);
-                };
-                repo_override = Some(PathBuf::from(path));
-            }
-            "--verbose-root" => {
-                verbose_root = true;
-            }
-            "--json" => {
-                output_json = true;
-            }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::RepoPulse)),
-            other => return Err(CliParseError::UnknownArgument(other.to_owned())),
-        }
-    }
-
-    Ok(Command::RepoPulse(PulseArgs {
-        repo_override,
-        verbose_root,
-        output_json,
     }))
 }
 
@@ -262,10 +241,41 @@ where
     }))
 }
 
+fn parse_doctor<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut fix = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => {
+                let Some(path) = args.next() else {
+                    return Err(CliParseError::MissingRepoValue);
+                };
+                repo_override = Some(PathBuf::from(path));
+            }
+            "--json" => output_json = true,
+            "--fix" => fix = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Doctor)),
+            other => return Err(CliParseError::UnknownArgument(other.to_owned())),
+        }
+    }
+
+    Ok(Command::Doctor(DoctorArgs {
+        repo_override,
+        output_json,
+        fix,
+    }))
+}
+
 pub fn render_help<R: Renderer>(renderer: &mut R, topic: HelpTopic) -> UiResult<()> {
     match topic {
         HelpTopic::General => render_general_help(renderer),
-        HelpTopic::RepoPulse => render_repo_pulse_help(renderer),
+        HelpTopic::Doctor => render_doctor_help(renderer),
         HelpTopic::Tasks => render_tasks_help(renderer),
         HelpTopic::Test => render_test_help(renderer),
     }
@@ -338,16 +348,13 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
                 "Show supported effigy.toml configuration keys and examples".to_owned(),
             ],
             vec![
-                "effigy repo-pulse".to_owned(),
-                "Run repository/workspace health checks".to_owned(),
+                "effigy doctor".to_owned(),
+                "Run remedial-first health checks for environment, manifests, and task references"
+                    .to_owned(),
             ],
             vec![
                 "effigy test".to_owned(),
                 "Run built-in auto-detected tests (or explicit tasks.test); supports <catalog>/test fallback".to_owned(),
-            ],
-            vec![
-                "effigy health".to_owned(),
-                "Run health checks (built-in alias to repo-pulse when no explicit health task exists)".to_owned(),
             ],
             vec![
                 "effigy <task>".to_owned(),
@@ -364,20 +371,24 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         ui::NoticeLevel::Info,
         "Use `effigy <built-in-task> --help` for task-specific flags and examples.",
     )?;
-    renderer.key_values(&[ui::KeyValue::new("-h, --help", "Print this help panel")])?;
+    renderer.key_values(&[
+        ui::KeyValue::new("-h, --help", "Print this help panel"),
+        ui::KeyValue::new("--json", "Render command-envelope JSON for CI/tooling"),
+        ui::KeyValue::new("--json-raw", "Render legacy command-specific JSON payloads"),
+    ])?;
     Ok(())
 }
 
-fn render_repo_pulse_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
-    renderer.section("repo-pulse Help")?;
+fn render_doctor_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
+    renderer.section("doctor Help")?;
     renderer.notice(
         ui::NoticeLevel::Info,
-        "Inspect repository/workspace structure and report evidence, risk, and next actions",
+        "Run remediation-first health checks for environment tooling, manifest validity, and task references.",
     )?;
     renderer.text("")?;
 
     renderer.section("Usage")?;
-    renderer.text("effigy repo-pulse [--repo <PATH>] [--verbose-root] [--json]")?;
+    renderer.text("effigy doctor [--repo <PATH>] [--fix] [--json]")?;
     renderer.text("")?;
 
     renderer.section("Options")?;
@@ -389,12 +400,12 @@ fn render_repo_pulse_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
                 "Override target repository path".to_owned(),
             ],
             vec![
-                "--verbose-root".to_owned(),
-                "Print root resolution evidence and warnings".to_owned(),
+                "--fix".to_owned(),
+                "Apply safe automatic remediations when available".to_owned(),
             ],
             vec![
                 "--json".to_owned(),
-                "Render machine-readable report payload".to_owned(),
+                "Render machine-readable doctor report payload".to_owned(),
             ],
             vec!["-h, --help".to_owned(), "Print command help".to_owned()],
         ],
@@ -405,10 +416,10 @@ fn render_repo_pulse_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.bullet_list(
         "commands",
         &[
-            "effigy repo-pulse".to_owned(),
-            "effigy repo-pulse --repo /path/to/workspace".to_owned(),
-            "effigy repo-pulse --repo /path/to/workspace --verbose-root".to_owned(),
-            "effigy --json repo-pulse --repo /path/to/workspace".to_owned(),
+            "effigy doctor".to_owned(),
+            "effigy doctor --repo /path/to/workspace".to_owned(),
+            "effigy doctor --fix".to_owned(),
+            "effigy --json doctor --repo /path/to/workspace".to_owned(),
         ],
     )?;
     Ok(())

@@ -26,10 +26,10 @@ Within a given `PATCH` line:
   - `effigy <task>`
   - `effigy <catalog>/<task>`
   - `effigy tasks`
-  - `effigy repo-pulse`
+  - `effigy doctor`
   - `effigy test`
 - Config parsing must remain backward compatible for existing supported keys.
-- Built-in task names remain reserved and stable (`help`, `tasks`, `repo-pulse`, `test`).
+- Built-in task names remain reserved and stable (`help`, `config`, `doctor`, `tasks`, `test`).
 
 Across `MINOR` bumps:
 

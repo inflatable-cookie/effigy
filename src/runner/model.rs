@@ -71,19 +71,15 @@ pub(super) const IMPLICIT_ROOT_DEFER_TEMPLATE: &str =
     "composer global exec effigy -- {request} {args}";
 pub(super) const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize = 3;
 pub(super) const DEFAULT_MANAGED_SHELL_RUN: &str = "exec ${SHELL:-/bin/zsh} -i";
-pub(super) const BUILTIN_TASKS: [(&str, &str); 6] = [
+pub(super) const BUILTIN_TASKS: [(&str, &str); 5] = [
     ("help", "Show general help (same as --help)"),
     (
         "config",
         "Show supported project effigy.toml configuration keys and examples",
     ),
     (
-        "health",
-        "Built-in health alias; falls back to repo-pulse when no explicit health task exists",
-    ),
-    (
-        "repo-pulse",
-        "Built-in repository/workspace health and structure signal report",
+        "doctor",
+        "Built-in remedial health checks for environment, manifests, and task references",
     ),
     (
         "test",

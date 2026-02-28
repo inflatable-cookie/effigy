@@ -317,7 +317,7 @@ pub(super) fn try_run_builtin_test(
     let results = if should_tui {
         run_builtin_test_targets_tui(runnable)?
     } else {
-        run_builtin_test_targets_parallel(runnable, max_parallel)?
+        run_builtin_test_targets_parallel(runnable, max_parallel, flags.output_json)?
     };
     let mut failures = results
         .iter()
@@ -820,6 +820,7 @@ fn run_builtin_test_targets_tui(
 fn run_builtin_test_targets_parallel(
     runnable: Vec<BuiltinTestRunnable>,
     max_parallel: usize,
+    capture_output: bool,
 ) -> Result<Vec<BuiltinTestExecResult>, RunnerError> {
     if runnable.is_empty() {
         return Ok(Vec::new());
@@ -848,13 +849,22 @@ fn run_builtin_test_targets_parallel(
                     let mut process = ProcessCommand::new("sh");
                     process.arg("-lc").arg(&command).current_dir(&root);
                     with_local_node_bin_path(&mut process, &root);
-                    let status =
+                    let status = if capture_output {
+                        process
+                            .output()
+                            .map_err(|error| RunnerError::TaskCommandLaunch {
+                                command: command.clone(),
+                                error,
+                            })?
+                            .status
+                    } else {
                         process
                             .status()
                             .map_err(|error| RunnerError::TaskCommandLaunch {
                                 command: command.clone(),
                                 error,
-                            })?;
+                            })?
+                    };
                     local.push(BuiltinTestExecResult {
                         name,
                         runner,

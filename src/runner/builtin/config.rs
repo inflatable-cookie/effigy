@@ -1,5 +1,7 @@
 use std::io::IsTerminal;
 
+use serde_json::json;
+
 use crate::ui::theme::{resolve_color_enabled, Theme};
 use crate::ui::{NoticeLevel, OutputMode, PlainRenderer, Renderer};
 use crate::TaskInvocation;
@@ -12,6 +14,7 @@ pub(super) fn run_builtin_config(
 ) -> Result<Option<String>, RunnerError> {
     let mut schema = false;
     let mut minimal = false;
+    let mut output_json = false;
     let mut target: Option<String> = None;
     let mut runner: Option<String> = None;
     let mut unknown = Vec::<String>::new();
@@ -21,6 +24,7 @@ pub(super) fn run_builtin_config(
         match arg.as_str() {
             "--schema" => schema = true,
             "--minimal" => minimal = true,
+            "--json" => output_json = true,
             "--target" => {
                 let Some(value) = args.get(i + 1) else {
                     return Err(RunnerError::TaskInvocation(
@@ -72,8 +76,11 @@ pub(super) fn run_builtin_config(
         ));
     }
     if schema {
-        let color_enabled =
-            resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
+        let color_enabled = if output_json {
+            false
+        } else {
+            resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal())
+        };
         if let Some(section) = target.as_deref() {
             let selected = if section == "test" {
                 let normalized_runner = match runner.as_deref() {
@@ -92,7 +99,23 @@ pub(super) fn run_builtin_config(
                     ))
                 })?
             };
-            return Ok(Some(style_schema_comments(selected, color_enabled)));
+            let text = style_schema_comments(selected, color_enabled);
+            if output_json {
+                let payload = json!({
+                    "schema": "effigy.config.v1",
+                    "schema_version": 1,
+                    "ok": true,
+                    "mode": "schema",
+                    "minimal": minimal,
+                    "target": section,
+                    "runner": runner,
+                    "text": text,
+                });
+                return serde_json::to_string_pretty(&payload)
+                    .map(Some)
+                    .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+            }
+            return Ok(Some(text));
         }
         if runner.is_some() {
             return Err(RunnerError::TaskInvocation(
@@ -104,11 +127,30 @@ pub(super) fn run_builtin_config(
         } else {
             render_builtin_config_schema()
         };
-        return Ok(Some(style_schema_comments(rendered, color_enabled)));
+        let text = style_schema_comments(rendered, color_enabled);
+        if output_json {
+            let payload = json!({
+                "schema": "effigy.config.v1",
+                "schema_version": 1,
+                "ok": true,
+                "mode": "schema",
+                "minimal": minimal,
+                "target": serde_json::Value::Null,
+                "runner": serde_json::Value::Null,
+                "text": text,
+            });
+            return serde_json::to_string_pretty(&payload)
+                .map(Some)
+                .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+        }
+        return Ok(Some(text));
     }
 
-    let color_enabled =
-        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
+    let color_enabled = if output_json {
+        false
+    } else {
+        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal())
+    };
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
     renderer.section("effigy.toml Reference")?;
     renderer.notice(
@@ -119,47 +161,74 @@ pub(super) fn run_builtin_config(
 
     renderer.section("Global")?;
     renderer.text("[defer]")?;
-    renderer.text(&muted_comment(color_enabled, "# Fallback command for unresolved task requests."))?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Fallback command for unresolved task requests.",
+    ))?;
     renderer.text("run = \"my-process {request} {args}\"")?;
     renderer.text("")?;
     renderer.text("[shell]")?;
-    renderer.text(&muted_comment(color_enabled, "# Interactive shell command used by managed shell tabs."))?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Interactive shell command used by managed shell tabs.",
+    ))?;
     renderer.text("run = \"exec ${SHELL:-/bin/zsh} -i\"")?;
     renderer.text("")?;
 
     renderer.section("Built-in Test")?;
     renderer.text("[package_manager]")?;
-    renderer.text(&muted_comment(color_enabled, "# Preferred JS/TS package manager for built-in test runners."))?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Preferred JS/TS package manager for built-in test runners.",
+    ))?;
     renderer.text("js = \"bun\"  # applies to JS/TS tooling")?;
     renderer.text("")?;
     renderer.text("[test]")?;
-    renderer.text(&muted_comment(color_enabled, "# Built-in test fanout and execution behavior."))?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Built-in test fanout and execution behavior.",
+    ))?;
     renderer.text("max_parallel = 3")?;
     renderer.text("")?;
     renderer.text("[test.suites]")?;
-    renderer.text(&muted_comment(color_enabled, "# Optional named suite commands used as source of truth."))?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Optional named suite commands used as source of truth.",
+    ))?;
     renderer.text("unit = \"bun x vitest run\"")?;
     renderer.text("integration = \"cargo nextest run\"")?;
     renderer.text("")?;
     renderer.text("[test.runners]")?;
-    renderer.text(&muted_comment(color_enabled, "# Per-runner command overrides for built-in detection."))?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Per-runner command overrides for built-in detection.",
+    ))?;
     renderer.text("vitest = \"bun x vitest run\"")?;
     renderer.text("\"cargo-nextest\" = \"cargo nextest run --workspace\"")?;
     renderer.text("\"cargo-test\" = \"cargo test --workspace\"")?;
     renderer.text("")?;
     renderer.text("[test.runners.vitest]")?;
-    renderer.text(&muted_comment(color_enabled, "# Optional nested override example for a single runner."))?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Optional nested override example for a single runner.",
+    ))?;
     renderer.text("command = \"bun x vitest run\"")?;
     renderer.text("")?;
 
     renderer.section("Tasks")?;
     renderer.text("[tasks]")?;
-    renderer.text(&muted_comment(color_enabled, "# Compact task command mappings."))?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Compact task command mappings.",
+    ))?;
     renderer.text("api = \"cargo run -p api\"")?;
     renderer.text("\"db:reset\" = [\"sqlx database reset -y\", \"sqlx migrate run\"]")?;
     renderer.text("")?;
     renderer.text("[tasks.dev]")?;
-    renderer.text(&muted_comment(color_enabled, "# Managed dev task configuration."))?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Managed dev task configuration.",
+    ))?;
     renderer.text("mode = \"tui\"")?;
     renderer.text("fail_on_non_zero = true")?;
     renderer.text(&muted_comment(
@@ -184,15 +253,33 @@ pub(super) fn run_builtin_config(
     renderer.text("]")?;
     renderer.text("")?;
     renderer.text("[tasks.validate]")?;
-    renderer.text(&muted_comment(color_enabled, "# Example task-ref chain combining built-ins and shell commands."))?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Example task-ref chain combining built-ins and shell commands.",
+    ))?;
     renderer
         .text("run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]")?;
     renderer.text("")?;
 
     let out = renderer.into_inner();
-    String::from_utf8(out)
-        .map(Some)
-        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
+    let rendered = String::from_utf8(out)
+        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))?;
+    if output_json {
+        let payload = json!({
+            "schema": "effigy.config.v1",
+            "schema_version": 1,
+            "ok": true,
+            "mode": "reference",
+            "minimal": false,
+            "target": serde_json::Value::Null,
+            "runner": serde_json::Value::Null,
+            "text": rendered,
+        });
+        return serde_json::to_string_pretty(&payload)
+            .map(Some)
+            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+    }
+    Ok(Some(rendered))
 }
 
 fn muted_comment(color_enabled: bool, line: &str) -> String {

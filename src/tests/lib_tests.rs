@@ -1,6 +1,7 @@
 use super::{
     apply_global_json_flag, command_requests_json, parse_command, render_cli_header, render_help,
-    strip_global_json_flag, Command, HelpTopic, PulseArgs, TaskInvocation, TasksArgs,
+    strip_global_json_flag, strip_global_json_flags, Command, DoctorArgs, HelpTopic,
+    TaskInvocation, TasksArgs,
 };
 use crate::ui::PlainRenderer;
 use std::path::PathBuf;
@@ -12,7 +13,7 @@ fn parse_defaults_to_help_without_command() {
 }
 
 #[test]
-fn parse_repo_pulse_with_repo_override() {
+fn parse_repo_pulse_is_treated_as_task_selector_after_builtin_removal() {
     let cmd = parse_command(vec![
         "repo-pulse".to_owned(),
         "--repo".to_owned(),
@@ -21,24 +22,42 @@ fn parse_repo_pulse_with_repo_override() {
     .expect("parse should succeed");
     assert_eq!(
         cmd,
-        Command::RepoPulse(PulseArgs {
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            verbose_root: false,
-            output_json: false,
+        Command::Task(TaskInvocation {
+            name: "repo-pulse".to_owned(),
+            args: vec!["--repo".to_owned(), "/tmp/repo".to_owned()],
         })
     );
 }
 
 #[test]
-fn parse_repo_pulse_with_verbose_root() {
+fn parse_repo_pulse_help_flag_is_passthrough_after_builtin_removal() {
     let cmd = parse_command(vec!["repo-pulse".to_owned(), "--verbose-root".to_owned()])
         .expect("parse should succeed");
     assert_eq!(
         cmd,
-        Command::RepoPulse(PulseArgs {
-            repo_override: None,
-            verbose_root: true,
-            output_json: false,
+        Command::Task(TaskInvocation {
+            name: "repo-pulse".to_owned(),
+            args: vec!["--verbose-root".to_owned()],
+        })
+    );
+}
+
+#[test]
+fn parse_doctor_with_repo_fix_and_json() {
+    let cmd = parse_command(vec![
+        "doctor".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--fix".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Doctor(DoctorArgs {
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+            fix: true,
         })
     );
 }
@@ -85,6 +104,33 @@ fn strip_global_json_flag_removes_root_json_before_passthrough_delimiter() {
 }
 
 #[test]
+fn strip_global_json_flags_supports_json_and_raw() {
+    let (args, json_mode, json_raw_mode) = strip_global_json_flags(vec![
+        "--json-raw".to_owned(),
+        "tasks".to_owned(),
+        "--json".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+    ]);
+    assert!(json_mode);
+    assert!(json_raw_mode);
+    assert_eq!(
+        args,
+        vec![
+            "tasks".to_owned(),
+            "--repo".to_owned(),
+            "/tmp/repo".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn parse_command_rejects_unknown_global_flag_token() {
+    let err = parse_command(vec!["--json-envelope".to_owned()]).expect_err("parse should fail");
+    assert_eq!(err.to_string(), "unknown argument: --json-envelope");
+}
+
+#[test]
 fn apply_global_json_flag_injects_task_arg_when_missing() {
     let cmd = Command::Task(TaskInvocation {
         name: "catalogs".to_owned(),
@@ -123,12 +169,12 @@ fn command_requests_json_checks_task_or_global_mode() {
     });
     assert!(command_requests_json(&cmd_tasks, false));
 
-    let cmd_pulse = Command::RepoPulse(PulseArgs {
+    let cmd_doctor = Command::Doctor(DoctorArgs {
         repo_override: None,
-        verbose_root: false,
         output_json: true,
+        fix: false,
     });
-    assert!(command_requests_json(&cmd_pulse, false));
+    assert!(command_requests_json(&cmd_doctor, false));
 }
 
 #[test]
@@ -140,21 +186,21 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         output_json: false,
         pretty_json: true,
     });
-    let pulse_cmd = Command::RepoPulse(PulseArgs {
+    let doctor_cmd = Command::Doctor(DoctorArgs {
         repo_override: None,
-        verbose_root: false,
         output_json: false,
+        fix: false,
     });
 
     let tasks_applied = apply_global_json_flag(tasks_cmd, true);
-    let pulse_applied = apply_global_json_flag(pulse_cmd, true);
+    let doctor_applied = apply_global_json_flag(doctor_cmd, true);
     match tasks_applied {
         Command::Tasks(args) => assert!(args.output_json),
         other => panic!("expected tasks command, got: {other:?}"),
     }
-    match pulse_applied {
-        Command::RepoPulse(args) => assert!(args.output_json),
-        other => panic!("expected pulse command, got: {other:?}"),
+    match doctor_applied {
+        Command::Doctor(args) => assert!(args.output_json),
+        other => panic!("expected doctor command, got: {other:?}"),
     }
 }
 
@@ -197,20 +243,6 @@ fn parse_tasks_supports_json_flag() {
 }
 
 #[test]
-fn parse_repo_pulse_supports_json_flag() {
-    let cmd = parse_command(vec!["repo-pulse".to_owned(), "--json".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::RepoPulse(PulseArgs {
-            repo_override: None,
-            verbose_root: false,
-            output_json: true,
-        })
-    );
-}
-
-#[test]
 fn parse_tasks_help_is_scoped() {
     let cmd =
         parse_command(vec!["tasks".to_owned(), "--help".to_owned()]).expect("parse should succeed");
@@ -225,10 +257,10 @@ fn parse_catalogs_help_is_tasks_help_alias() {
 }
 
 #[test]
-fn parse_repo_pulse_help_is_scoped() {
-    let cmd = parse_command(vec!["repo-pulse".to_owned(), "--help".to_owned()])
+fn parse_doctor_help_is_scoped() {
+    let cmd = parse_command(vec!["doctor".to_owned(), "--help".to_owned()])
         .expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::RepoPulse));
+    assert_eq!(cmd, Command::Help(HelpTopic::Doctor));
 }
 
 #[test]
@@ -252,13 +284,24 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("Commands"));
     assert!(rendered.contains("effigy help"));
     assert!(rendered.contains("effigy config"));
-    assert!(rendered.contains("effigy health"));
+    assert!(rendered.contains("effigy doctor"));
     assert!(rendered.contains("effigy test"));
     assert!(rendered.contains("<catalog>/test fallback"));
     assert!(!rendered.contains("effigy test --plan"));
     assert!(rendered.contains("Use `effigy <built-in-task> --help`"));
     assert!(!rendered.contains("Quick Start"));
     assert!(!rendered.contains("effigy Help"));
+}
+
+#[test]
+fn render_doctor_help_shows_fix_and_json_options() {
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    render_help(&mut renderer, HelpTopic::Doctor).expect("help render");
+    let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
+    assert!(rendered.contains("doctor Help"));
+    assert!(rendered.contains("--fix"));
+    assert!(rendered.contains("--json"));
+    assert!(rendered.contains("effigy doctor --fix"));
 }
 
 #[test]
