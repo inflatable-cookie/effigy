@@ -78,20 +78,14 @@ impl std::fmt::Display for CliParseError {
 
 impl std::error::Error for CliParseError {}
 
-pub fn strip_global_json_flags(args: Vec<String>) -> (Vec<String>, bool, bool) {
+pub fn strip_global_json_flags(args: Vec<String>) -> (Vec<String>, bool) {
     let mut stripped = Vec::with_capacity(args.len());
     let mut json_mode = false;
-    let mut json_raw_mode = false;
     let mut passthrough_mode = false;
     for arg in args {
         if arg == "--" {
             passthrough_mode = true;
             stripped.push(arg);
-            continue;
-        }
-        if !passthrough_mode && arg == "--json-raw" {
-            json_mode = true;
-            json_raw_mode = true;
             continue;
         }
         if !passthrough_mode && arg == "--json" {
@@ -100,12 +94,11 @@ pub fn strip_global_json_flags(args: Vec<String>) -> (Vec<String>, bool, bool) {
         }
         stripped.push(arg);
     }
-    (stripped, json_mode, json_raw_mode)
+    (stripped, json_mode)
 }
 
 pub fn strip_global_json_flag(args: Vec<String>) -> (Vec<String>, bool) {
-    let (stripped, json_mode, _) = strip_global_json_flags(args);
-    (stripped, json_mode)
+    strip_global_json_flags(args)
 }
 
 pub fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Command {
@@ -374,7 +367,6 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.key_values(&[
         ui::KeyValue::new("-h, --help", "Print this help panel"),
         ui::KeyValue::new("--json", "Render command-envelope JSON for CI/tooling"),
-        ui::KeyValue::new("--json-raw", "Render legacy command-specific JSON payloads"),
     ])?;
     Ok(())
 }

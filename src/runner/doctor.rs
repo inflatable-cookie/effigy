@@ -268,7 +268,7 @@ fn render_text(report: &DoctorReport) -> String {
         resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
 
-    let _ = renderer.section("Findings");
+    let _ = renderer.section("Doctor's Report");
     if report.findings.is_empty() {
         let _ = renderer.notice(NoticeLevel::Success, "No findings.");
     } else {

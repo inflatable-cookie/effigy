@@ -104,16 +104,14 @@ fn strip_global_json_flag_removes_root_json_before_passthrough_delimiter() {
 }
 
 #[test]
-fn strip_global_json_flags_supports_json_and_raw() {
-    let (args, json_mode, json_raw_mode) = strip_global_json_flags(vec![
-        "--json-raw".to_owned(),
+fn strip_global_json_flags_supports_json() {
+    let (args, json_mode) = strip_global_json_flags(vec![
         "tasks".to_owned(),
         "--json".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
     ]);
     assert!(json_mode);
-    assert!(json_raw_mode);
     assert_eq!(
         args,
         vec![
@@ -128,6 +126,12 @@ fn strip_global_json_flags_supports_json_and_raw() {
 fn parse_command_rejects_unknown_global_flag_token() {
     let err = parse_command(vec!["--json-envelope".to_owned()]).expect_err("parse should fail");
     assert_eq!(err.to_string(), "unknown argument: --json-envelope");
+}
+
+#[test]
+fn parse_command_rejects_removed_json_raw_flag_token() {
+    let err = parse_command(vec!["--json-raw".to_owned()]).expect_err("parse should fail");
+    assert_eq!(err.to_string(), "unknown argument: --json-raw");
 }
 
 #[test]
