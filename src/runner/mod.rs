@@ -1,5 +1,5 @@
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
@@ -7,8 +7,8 @@ use crate::process_manager::ProcessManagerError;
 use crate::resolver::{resolve_target_root, ResolveError};
 use crate::tasks::pulse::PulseTask;
 use crate::tasks::{Task, TaskContext, TaskError};
-use crate::ui::theme::resolve_color_enabled;
-use crate::ui::{KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer, TableSpec};
+use crate::ui::theme::{resolve_color_enabled, Theme};
+use crate::ui::{KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer};
 #[cfg(test)]
 use crate::TaskInvocation;
 use crate::{Command, PulseArgs, TasksArgs};
@@ -636,28 +636,41 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
             });
         }
 
-        let mut rows: Vec<Vec<String>> = Vec::new();
+        let theme = Theme::default();
         for (catalog, task) in matches {
-            rows.push(vec![
-                catalog_task_label(catalog, &selector.task_name),
-                task_run_preview(task),
-                catalog.manifest_path.display().to_string(),
-            ]);
+            let task_label = catalog_task_label(catalog, &selector.task_name);
+            let manifest = relative_display_path(&resolved.resolved_root, &catalog.manifest_path);
+            let signature = task_run_preview(task);
+            renderer.text(&format!(
+                "- {} : {}",
+                style_text(color_enabled, theme.task_name, &task_label),
+                style_text(color_enabled, theme.muted, &manifest),
+            ))?;
+            renderer.text(&format!(
+                "      {}",
+                style_text(color_enabled, theme.task_signature, &signature),
+            ))?;
         }
-
-        renderer.table(&TableSpec::new(Vec::new(), rows))?;
+        if !builtin_matches.is_empty() || resolve_probe.is_some() {
+            renderer.text("")?;
+        }
         if !builtin_matches.is_empty() {
-            let builtin_rows = builtin_matches
-                .into_iter()
-                .map(|(name, description)| vec![(*name).to_owned(), (*description).to_owned()])
-                .collect::<Vec<Vec<String>>>();
             renderer.section("Built-in Task Matches")?;
-            renderer.table(&TableSpec::new(Vec::new(), builtin_rows))?;
+            for (name, description) in builtin_matches {
+                renderer.text(&format!(
+                    "- {} : {}",
+                    style_text(color_enabled, theme.task_name, name),
+                    style_text(color_enabled, theme.muted, description),
+                ))?;
+            }
             if selector.task_name == "test" {
                 renderer.notice(
                     NoticeLevel::Info,
                     "built-in fallback supports `<catalog>/test` when explicit `tasks.test` is not defined",
                 )?;
+            }
+            if resolve_probe.is_some() {
+                renderer.text("")?;
             }
         }
         if let Some(probe) = resolve_probe {
@@ -682,65 +695,58 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
 
     renderer.section("Catalogs")?;
     renderer.key_values(&[KeyValue::new("count", catalogs.len().to_string())])?;
-    let catalog_rows = if ordered_catalogs.is_empty() {
-        vec![vec![
-            "<none>".to_owned(),
-            "<none>".to_owned(),
-            "<none>".to_owned(),
-            "<none>".to_owned(),
-            "<none>".to_owned(),
-        ]]
+    let theme = Theme::default();
+    if ordered_catalogs.is_empty() {
+        renderer.notice(NoticeLevel::Info, "none")?;
     } else {
-        ordered_catalogs
-            .iter()
-            .map(|catalog| {
-                vec![
-                    catalog.alias.clone(),
-                    catalog.catalog_root.display().to_string(),
-                    catalog.depth.to_string(),
-                    catalog.manifest_path.display().to_string(),
-                    if catalog.defer_run.is_some() {
-                        "yes".to_owned()
-                    } else {
-                        "no".to_owned()
-                    },
-                ]
-            })
-            .collect::<Vec<Vec<String>>>()
-    };
-    renderer.table(&TableSpec::new(Vec::new(), catalog_rows))?;
-
-    renderer.section("Tasks")?;
-    let mut task_rows: Vec<Vec<String>> = Vec::new();
-    for catalog in ordered_catalogs {
-        if catalog.manifest.tasks.is_empty() {
-            task_rows.push(vec![
-                "<none>".to_owned(),
-                "<none>".to_owned(),
-                catalog.manifest_path.display().to_string(),
-            ]);
-            continue;
-        }
-        for (task_name, task_def) in &catalog.manifest.tasks {
-            task_rows.push(vec![
-                catalog_task_label(catalog, task_name),
-                task_run_preview(task_def),
-                catalog.manifest_path.display().to_string(),
-            ]);
+        for catalog in &ordered_catalogs {
+            let manifest = relative_display_path(&resolved.resolved_root, &catalog.manifest_path);
+            renderer.text(&format!(
+                "- {} : {}",
+                style_text(color_enabled, theme.task_name, &catalog.alias),
+                style_text(color_enabled, theme.muted, &manifest),
+            ))?;
         }
     }
-    let builtin_rows = BUILTIN_TASKS
-        .iter()
-        .map(|(name, description)| {
-            vec![
-                (*name).to_owned(),
-                (*description).to_owned(),
-                "<built-in>".to_owned(),
-            ]
-        })
-        .collect::<Vec<Vec<String>>>();
-    task_rows.extend(builtin_rows);
-    renderer.table(&TableSpec::new(Vec::new(), task_rows))?;
+    renderer.text("")?;
+
+    renderer.section("Tasks")?;
+    if ordered_catalogs.is_empty() {
+        renderer.notice(NoticeLevel::Info, "none")?;
+    } else {
+        for catalog in ordered_catalogs {
+            if catalog.manifest.tasks.is_empty() {
+                continue;
+            }
+            let manifest = relative_display_path(&resolved.resolved_root, &catalog.manifest_path);
+            for (task_name, task_def) in &catalog.manifest.tasks {
+                let task_label = catalog_task_label(catalog, task_name);
+                let signature = task_run_preview(task_def);
+                renderer.text(&format!(
+                    "- {} : {}",
+                    style_text(color_enabled, theme.task_name, &task_label),
+                    style_text(color_enabled, theme.muted, &manifest),
+                ))?;
+                renderer.text(&format!(
+                    "      {}",
+                    style_text(color_enabled, theme.task_signature, &signature),
+                ))?;
+            }
+        }
+    }
+    renderer.text("")?;
+
+    renderer.section("Built-in Tasks")?;
+    for (name, description) in BUILTIN_TASKS {
+        renderer.text(&format!(
+            "- {} : {}",
+            style_text(color_enabled, theme.task_name, name),
+            style_text(color_enabled, theme.muted, description),
+        ))?;
+    }
+    if resolve_probe.is_some() {
+        renderer.text("")?;
+    }
 
     if let Some(probe) = resolve_probe {
         renderer.section(&format!(
@@ -769,8 +775,21 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
         }
     }
     let out = renderer.into_inner();
-    String::from_utf8(out)
-        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
+    return String::from_utf8(out)
+        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")));
+}
+
+fn relative_display_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .map(|relative| relative.display().to_string())
+        .unwrap_or_else(|_| path.display().to_string())
+}
+
+fn style_text(enabled: bool, style: anstyle::Style, text: &str) -> String {
+    if !enabled {
+        return text.to_owned();
+    }
+    format!("{}{}{}", style.render(), text, style.render_reset())
 }
 
 #[cfg(test)]
