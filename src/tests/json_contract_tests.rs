@@ -401,6 +401,130 @@ fn builtin_config_json_contract_has_versioned_shape() {
 }
 
 #[test]
+fn builtin_init_json_contract_has_versioned_shape() {
+    let root = temp_workspace("init-json-contract");
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "init".to_owned(),
+            args: vec!["--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run init --json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.init.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["written"], true);
+    assert_eq!(parsed["dry_run"], false);
+    assert!(parsed["path"]
+        .as_str()
+        .is_some_and(|path| path.ends_with("effigy.toml")));
+    assert!(parsed["content"]
+        .as_str()
+        .is_some_and(|text| text.contains("[tasks]")));
+}
+
+#[test]
+fn builtin_migrate_json_contract_has_versioned_shape() {
+    let root = temp_workspace("migrate-json-contract");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "build": "npm run compile",
+    "test": "vitest run"
+  }
+}
+"#,
+    )
+    .expect("write package scripts");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks]\nbuild = \"printf old\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "migrate".to_owned(),
+            args: vec!["--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run migrate --json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.migrate.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["apply"], false);
+    assert_eq!(parsed["written"], false);
+    assert!(parsed["added"].is_array());
+    assert!(parsed["conflicts"].is_array());
+}
+
+#[test]
+fn builtin_unlock_json_contract_has_versioned_shape() {
+    let root = temp_workspace("unlock-json-contract");
+    fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
+    fs::write(root.join(".effigy/locks/workspace.lock"), "{}").expect("write workspace lock");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "unlock".to_owned(),
+            args: vec![
+                "--repo".to_owned(),
+                root.display().to_string(),
+                "--json".to_owned(),
+                "workspace".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect("run unlock --json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.unlock.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["all"], false);
+    assert!(parsed["removed"].is_array());
+    assert!(parsed["missing"].is_array());
+}
+
+#[test]
+fn task_run_json_contract_reclaims_stale_lock_and_remains_valid_payload() {
+    let root = temp_workspace("task-run-json-stale-lock-reclaim");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf build-ok\"\n",
+    );
+    fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
+    fs::write(
+        root.join(".effigy/locks/workspace.lock"),
+        r#"{"scope":"workspace","pid":999999,"started_at_epoch_ms":0}"#,
+    )
+    .expect("write stale lock");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "build".to_owned(),
+            args: vec!["--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run build --json with stale lock");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.task.run.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["task"], "build");
+    assert_eq!(parsed["exit_code"], 0);
+}
+
+#[test]
 fn catalog_task_run_json_contract_success_has_versioned_shape() {
     let root = temp_workspace("task-run-json-contract-success");
     write_manifest(

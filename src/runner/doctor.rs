@@ -1635,10 +1635,95 @@ fn validate_manifest_schema(
                     for (index, step) in array.iter().enumerate() {
                         if let Some(step_table) = step.as_table() {
                             for key in step_table.keys() {
-                                if !matches!(key.as_str(), "run" | "task") {
+                                if !matches!(
+                                    key.as_str(),
+                                    "run"
+                                        | "task"
+                                        | "id"
+                                        | "depends_on"
+                                        | "timeout_ms"
+                                        | "retry"
+                                        | "retry_delay_ms"
+                                        | "fail_fast"
+                                ) {
                                     push_unsupported_key(
                                         manifest_path,
                                         &format!("tasks.{task_name}.run[{index}].{key}"),
+                                        findings,
+                                        statuses,
+                                    );
+                                }
+                            }
+                            if let Some(depends_on) = step_table.get("depends_on") {
+                                let Some(deps) = depends_on.as_array() else {
+                                    push_unsupported_value(
+                                        manifest_path,
+                                        &format!("tasks.{task_name}.run[{index}].depends_on"),
+                                        value_type(depends_on),
+                                        "expected array of strings",
+                                        findings,
+                                        statuses,
+                                    );
+                                    continue;
+                                };
+                                for (dep_index, dep) in deps.iter().enumerate() {
+                                    if !dep.is_str() {
+                                        push_unsupported_value(
+                                            manifest_path,
+                                            &format!(
+                                                "tasks.{task_name}.run[{index}].depends_on[{dep_index}]"
+                                            ),
+                                            value_type(dep),
+                                            "expected string",
+                                            findings,
+                                            statuses,
+                                        );
+                                    }
+                                }
+                            }
+                            if let Some(timeout_ms) = step_table.get("timeout_ms") {
+                                if !timeout_ms.is_integer() {
+                                    push_unsupported_value(
+                                        manifest_path,
+                                        &format!("tasks.{task_name}.run[{index}].timeout_ms"),
+                                        value_type(timeout_ms),
+                                        "expected integer",
+                                        findings,
+                                        statuses,
+                                    );
+                                }
+                            }
+                            if let Some(retry) = step_table.get("retry") {
+                                if !retry.is_integer() {
+                                    push_unsupported_value(
+                                        manifest_path,
+                                        &format!("tasks.{task_name}.run[{index}].retry"),
+                                        value_type(retry),
+                                        "expected integer",
+                                        findings,
+                                        statuses,
+                                    );
+                                }
+                            }
+                            if let Some(retry_delay_ms) = step_table.get("retry_delay_ms") {
+                                if !retry_delay_ms.is_integer() {
+                                    push_unsupported_value(
+                                        manifest_path,
+                                        &format!("tasks.{task_name}.run[{index}].retry_delay_ms"),
+                                        value_type(retry_delay_ms),
+                                        "expected integer",
+                                        findings,
+                                        statuses,
+                                    );
+                                }
+                            }
+                            if let Some(fail_fast) = step_table.get("fail_fast") {
+                                if !fail_fast.is_bool() {
+                                    push_unsupported_value(
+                                        manifest_path,
+                                        &format!("tasks.{task_name}.run[{index}].fail_fast"),
+                                        value_type(fail_fast),
+                                        "expected boolean",
                                         findings,
                                         statuses,
                                     );

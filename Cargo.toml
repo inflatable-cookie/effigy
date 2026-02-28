@@ -18,3 +18,5 @@ crossterm = "0.29"
 nix = { version = "0.29", default-features = false, features = ["process", "signal"] }
 vt100 = "0.15.2"
 indexmap = { version = "2", features = ["serde"] }
+globset = "0.4"
+walkdir = "2"

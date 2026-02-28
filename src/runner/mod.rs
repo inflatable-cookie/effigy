@@ -8,7 +8,6 @@ use crate::resolver::{resolve_target_root, ResolveError};
 use crate::tasks::TaskError;
 use crate::ui::theme::{resolve_color_enabled, Theme};
 use crate::ui::{KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer};
-#[cfg(test)]
 use crate::TaskInvocation;
 use crate::{Command, DoctorArgs, TasksArgs};
 
@@ -17,6 +16,7 @@ mod catalog;
 mod deferral;
 mod doctor;
 mod execute;
+mod locking;
 mod managed;
 mod manifest;
 mod model;
@@ -98,6 +98,17 @@ pub enum RunnerError {
         code: Option<i32>,
         stdout: String,
         stderr: String,
+    },
+    TaskLockConflict {
+        scope: String,
+        lock_path: PathBuf,
+        holder_pid: Option<u32>,
+        holder_started_at_epoch_ms: Option<u128>,
+        remediation: String,
+    },
+    TaskLockIo {
+        path: PathBuf,
+        error: std::io::Error,
     },
     CommandJsonFailure {
         rendered: String,
@@ -228,6 +239,28 @@ impl std::fmt::Display for RunnerError {
                         code, stdout, stderr
                     )
                 }
+            }
+            RunnerError::TaskLockConflict {
+                scope,
+                lock_path,
+                holder_pid,
+                holder_started_at_epoch_ms,
+                remediation,
+            } => {
+                let pid = holder_pid
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "<unknown>".to_owned());
+                let started = holder_started_at_epoch_ms
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "<unknown>".to_owned());
+                write!(
+                    f,
+                    "lock conflict for `{scope}` (holder_pid={pid}, started_at_epoch_ms={started}, lock={}); {remediation}",
+                    lock_path.display()
+                )
+            }
+            RunnerError::TaskLockIo { path, error } => {
+                write!(f, "lock I/O failed at {}: {error}", path.display())
             }
             RunnerError::CommandJsonFailure { .. } => {
                 write!(f, "command failed (json output available)")
@@ -975,7 +1008,6 @@ fn style_text(enabled: bool, style: anstyle::Style, text: &str) -> String {
     format!("{}{}{}", style.render(), text, style.render_reset())
 }
 
-#[cfg(test)]
 fn run_manifest_task_with_cwd(task: &TaskInvocation, cwd: PathBuf) -> Result<String, RunnerError> {
     execute::run_manifest_task_with_cwd(task, cwd)
 }

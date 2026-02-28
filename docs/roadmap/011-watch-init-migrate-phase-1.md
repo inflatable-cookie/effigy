@@ -1,6 +1,6 @@
 # 011 - Watch Mode, Init, and Migrate (Phase 1)
 
-Status: Not Started
+Status: Complete
 Owner: Platform
 Created: 2026-02-28
 Depends on: 001, 002, 003, 004, 008, 010
@@ -16,12 +16,12 @@ Without these, adoption cost stays high and teams duplicate migration/watch conv
 
 ## 2) Goals
 
-- [ ] Implement watch mode phase-1 for non-watcher task reruns.
-- [ ] Enforce explicit watch-owner policy to avoid nested watcher conflicts.
-- [ ] Add `effigy init` to generate valid baseline `effigy.toml` scaffolding.
-- [ ] Add `effigy migrate` phase-1 flow for `package.json` script import.
-- [ ] Ensure migrate supports preview + confirm before writes.
-- [ ] Keep migration non-destructive (source scripts preserved).
+- [x] Implement watch mode phase-1 for non-watcher task reruns.
+- [x] Enforce explicit watch-owner policy to avoid nested watcher conflicts.
+- [x] Add `effigy init` to generate valid baseline `effigy.toml` scaffolding.
+- [x] Add `effigy migrate` phase-1 flow for `package.json` script import.
+- [x] Ensure migrate supports preview + confirm before writes.
+- [x] Keep migration non-destructive (source scripts preserved).
 
 ## 3) Non-Goals
 
@@ -46,66 +46,66 @@ Batch C phase-1 starts only when:
 
 ### Watch Mode (Phase 1)
 
-- [ ] File-triggered rerun for non-watcher tasks.
-- [ ] Explicit watch-owner policy to prevent nested watcher conflicts.
-- [ ] Debounce support.
-- [ ] Include/exclude glob controls.
-- [ ] Actionable diagnostics for ownership conflicts and invalid watch config.
+- [x] File-triggered rerun for non-watcher tasks.
+- [x] Explicit watch-owner policy to prevent nested watcher conflicts.
+- [x] Debounce support.
+- [x] Include/exclude glob controls.
+- [x] Actionable diagnostics for ownership conflicts and invalid watch config.
 
 ### Init Helper (Phase 1)
 
-- [ ] Add `effigy init`.
-- [ ] Generate minimal valid `effigy.toml`.
-- [ ] Include commented examples for:
+- [x] Add `effigy init`.
+- [x] Generate minimal valid `effigy.toml`.
+- [x] Include commented examples for:
   - DAG-style task wiring,
   - managed dev task (`mode = "tui"`).
-- [ ] Ensure generated scaffold validates immediately with existing parser/contracts.
+- [x] Ensure generated scaffold validates immediately with existing parser/contracts.
 
 ### Migrate Helper (Phase 1)
 
-- [ ] Add `effigy migrate`.
-- [ ] Read from `package.json` scripts only.
-- [ ] Provide preview output before applying writes.
-- [ ] Require explicit confirmation/apply step.
-- [ ] Preserve existing source scripts unchanged (non-destructive).
+- [x] Add `effigy migrate`.
+- [x] Read from `package.json` scripts only.
+- [x] Provide preview output before applying writes.
+- [x] Require explicit confirmation/apply step.
+- [x] Preserve existing source scripts unchanged (non-destructive).
 
 ## 6) Execution Plan
 
 ### Phase 11.1 - Contract and CLI Surface
-- [ ] Define command UX and flags for `watch`, `init`, and `migrate`.
-- [ ] Add help surfaces and examples for all three.
-- [ ] Add JSON support decisions/shape for migrate preview output.
+- [x] Define command UX and flags for `watch`, `init`, and `migrate`.
+- [x] Add help surfaces and examples for all three.
+- [x] Add JSON support decisions/shape for migrate preview output.
 
 ### Phase 11.2 - Watch Runtime (Owner-Policy First)
-- [ ] Implement watch loop runner with debounce and glob filtering.
-- [ ] Enforce explicit owner-policy guardrails for nested watchers.
-- [ ] Emit deterministic conflict diagnostics with remediation guidance.
+- [x] Implement watch loop runner with debounce and glob filtering.
+- [x] Enforce explicit owner-policy guardrails for nested watchers.
+- [x] Emit deterministic conflict diagnostics with remediation guidance.
 
 ### Phase 11.3 - Init Scaffold
-- [ ] Implement scaffold writer with safe file existence handling.
-- [ ] Add baseline template with commented examples.
-- [ ] Validate generated output against manifest parser and docs contract.
+- [x] Implement scaffold writer with safe file existence handling.
+- [x] Add baseline template with commented examples.
+- [x] Validate generated output against manifest parser and docs contract.
 
 ### Phase 11.4 - Migrate (Package Scripts)
-- [ ] Parse `package.json` scripts into candidate task mappings.
-- [ ] Render preview table/diff-like summary.
-- [ ] Add explicit apply path for writing `effigy.toml` updates.
-- [ ] Preserve source scripts and annotate migration decisions.
+- [x] Parse `package.json` scripts into candidate task mappings.
+- [x] Render preview table/diff-like summary.
+- [x] Add explicit apply path for writing `effigy.toml` updates.
+- [x] Preserve source scripts and annotate migration decisions.
 
 ### Phase 11.5 - Tests and Docs
-- [ ] Add contract tests for watch owner-policy and rerun behavior.
-- [ ] Add init snapshot tests for generated scaffold.
-- [ ] Add migrate preview/apply tests with non-destructive guarantees.
-- [ ] Publish usage guides and migration playbook with before/after examples.
+- [x] Add contract tests for watch owner-policy and rerun behavior.
+- [x] Add init snapshot tests for generated scaffold.
+- [x] Add migrate preview/apply tests with non-destructive guarantees.
+- [x] Publish usage guides and migration playbook with before/after examples.
 
 ## 7) Acceptance Criteria
 
-- [ ] `watch` reruns targeted tasks on changes with configurable debounce/globs.
-- [ ] Watch owner-policy prevents nested watcher conflicts deterministically.
-- [ ] `effigy init` creates a valid baseline `effigy.toml` scaffold.
-- [ ] `effigy migrate` can preview and apply `package.json` script import safely.
-- [ ] Migration does not mutate or delete `package.json` scripts.
-- [ ] Tests/docs cover phase-1 behavior and operator remediation paths.
+- [x] `watch` reruns targeted tasks on changes with configurable debounce/globs.
+- [x] Watch owner-policy prevents nested watcher conflicts deterministically.
+- [x] `effigy init` creates a valid baseline `effigy.toml` scaffold.
+- [x] `effigy migrate` can preview and apply `package.json` script import safely.
+- [x] Migration does not mutate or delete `package.json` scripts.
+- [x] Tests/docs cover phase-1 behavior and operator remediation paths.
 
 ## 8) Risks and Mitigations
 
@@ -120,7 +120,7 @@ Batch C phase-1 starts only when:
 
 ## 9) Deliverables
 
-- [ ] Phase-1 watch mode with owner-policy safeguards.
-- [ ] `effigy init` baseline scaffold command.
-- [ ] `effigy migrate` package-script preview/apply helper.
-- [ ] Tests and docs for onboarding/watch/migration flows.
+- [x] Phase-1 watch mode with owner-policy safeguards.
+- [x] `effigy init` baseline scaffold command.
+- [x] `effigy migrate` package-script preview/apply helper.
+- [x] Tests and docs for onboarding/watch/migration flows.

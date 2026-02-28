@@ -255,10 +255,11 @@ pub(super) fn run_builtin_config(
     renderer.text("[tasks.validate]")?;
     renderer.text(&muted_comment(
         color_enabled,
-        "# Example task-ref chain combining built-ins and shell commands.",
+        "# Example DAG-style run sequence with explicit step ids and dependencies.",
     ))?;
-    renderer
-        .text("run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]")?;
+    renderer.text(
+        "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
+    )?;
     renderer.text("")?;
 
     let out = renderer.into_inner();
@@ -373,8 +374,8 @@ fn render_builtin_config_schema() -> String {
         "]",
         "",
         "[tasks.validate]",
-        "# Example task-ref chain combining built-ins and shell commands.",
-        "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]",
+        "# Example DAG-style run sequence with explicit step ids and dependencies.",
+        "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
         "",
     ]
     .join("\n")
@@ -486,8 +487,8 @@ fn render_builtin_config_schema_target(target: &str, minimal: bool) -> Option<St
                 "]",
                 "",
                 "[tasks.validate]",
-                "# Example task-ref chain combining built-ins and shell commands.",
-                "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]",
+                "# Example DAG-style run sequence with explicit step ids and dependencies.",
+                "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
                 "",
             ]
             .join("\n"),

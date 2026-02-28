@@ -22,3 +22,5 @@ Notable guide additions:
 - `guides/014-release-checklist-template.md`
 - `guides/016-task-routing-precedence.md`
 - `guides/017-json-output-contracts.md`
+- `guides/019-watch-init-migrate-phase-1.md`
+- `guides/020-dag-lock-policy-baseline.md`

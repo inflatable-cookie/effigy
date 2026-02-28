@@ -71,7 +71,7 @@ pub(super) const IMPLICIT_ROOT_DEFER_TEMPLATE: &str =
     "composer global exec effigy -- {request} {args}";
 pub(super) const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize = 3;
 pub(super) const DEFAULT_MANAGED_SHELL_RUN: &str = "exec ${SHELL:-/bin/zsh} -i";
-pub(super) const BUILTIN_TASKS: [(&str, &str); 5] = [
+pub(super) const BUILTIN_TASKS: [(&str, &str); 9] = [
     ("help", "Show general help (same as --help)"),
     (
         "config",
@@ -86,4 +86,20 @@ pub(super) const BUILTIN_TASKS: [(&str, &str); 5] = [
         "Built-in test runner detection, supports <catalog>/test fallback, optional --plan",
     ),
     ("tasks", "List discovered catalogs and available tasks"),
+    (
+        "watch",
+        "Watch mode phase-1 runtime with owner policy, debounce, and include/exclude globs",
+    ),
+    (
+        "init",
+        "Initialize baseline effigy.toml scaffold with dry-run/force controls",
+    ),
+    (
+        "migrate",
+        "Migrate package scripts into [tasks] with preview/apply flow",
+    ),
+    (
+        "unlock",
+        "Manually clear lock scopes (`workspace`, `task:*`, `profile:*/*`)",
+    ),
 ];
