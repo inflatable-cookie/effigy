@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "generated_by": "manual",
+  "schemas": [
+    {
+      "schema": "effigy.tasks.v1",
+      "schema_version": 1,
+      "command": "effigy --json tasks",
+      "surface": "top-level command",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.tasks.filtered.v1",
+      "schema_version": 1,
+      "command": "effigy --json tasks --task <name>",
+      "surface": "top-level command",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.repo-pulse.v1",
+      "schema_version": 1,
+      "command": "effigy --json repo-pulse",
+      "surface": "top-level command",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.catalogs.v1",
+      "schema_version": 1,
+      "command": "effigy --json catalogs",
+      "surface": "built-in task",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.test.plan.v1",
+      "schema_version": 1,
+      "command": "effigy --json test --plan",
+      "surface": "built-in task",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.test.results.v1",
+      "schema_version": 1,
+      "command": "effigy --json test",
+      "surface": "built-in task",
+      "status": "active"
+    }
+  ]
+}
