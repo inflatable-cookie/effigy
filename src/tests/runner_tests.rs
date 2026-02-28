@@ -759,6 +759,69 @@ fn run_manifest_task_builtin_watch_bounded_json_reports_watch_schema() {
 }
 
 #[test]
+fn run_manifest_task_builtin_watch_rejects_concurrent_watch_owner_for_same_target() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("builtin-watch-lock-conflict");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"sleep 2\"\n",
+    );
+
+    let root_for_thread = root.clone();
+    let join = thread::spawn(move || {
+        run_manifest_task_with_cwd(
+            &TaskInvocation {
+                name: "watch".to_owned(),
+                args: vec![
+                    "--owner".to_owned(),
+                    "effigy".to_owned(),
+                    "--once".to_owned(),
+                    "build".to_owned(),
+                ],
+            },
+            root_for_thread,
+        )
+    });
+
+    let watch_lock = root.join(".effigy/locks/task-watch-build.lock");
+    let started = Instant::now();
+    while !watch_lock.exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "watch lock was not created in time"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "watch".to_owned(),
+            args: vec![
+                "--owner".to_owned(),
+                "effigy".to_owned(),
+                "--once".to_owned(),
+                "build".to_owned(),
+            ],
+        },
+        root.clone(),
+    )
+    .expect_err("second watch owner should conflict on watch scope lock");
+
+    match err {
+        RunnerError::TaskLockConflict {
+            scope, remediation, ..
+        } => {
+            assert_eq!(scope, "task:watch:build");
+            assert!(remediation.contains("effigy unlock task:watch:build"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+
+    let first = join.join().expect("thread join");
+    first.expect("first watch should complete");
+}
+
+#[test]
 fn run_manifest_task_builtin_init_help_renders_topic() {
     let root = temp_workspace("builtin-init-help");
     write_manifest(&root.join("effigy.toml"), "");

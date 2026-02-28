@@ -37,7 +37,7 @@ Batch C phase-1 starts only when:
 
 - [ ] Gate 1: manifest schema freeze for Milestone 1 is stable.
   - reason: `init` and `migrate` must generate currently valid schema.
-- [ ] Gate 2: lock contract freeze is stable.
+- [x] Gate 2: lock contract freeze is stable.
   - reason: watch mode must interoperate with lock scopes safely.
 - [x] Gate 3 (preferred): doctor/json baseline freeze.
   - reason: reduce cross-batch command-surface churn while onboarding commands are added.

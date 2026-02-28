@@ -11,6 +11,7 @@ use crate::ui::theme::resolve_color_enabled;
 use crate::ui::{OutputMode, PlainRenderer};
 use crate::{render_help, HelpTopic, TaskInvocation};
 
+use super::super::locking::{acquire_scopes, LockScope};
 use super::super::{run_manifest_task_with_cwd, RunnerError, TaskRuntimeArgs};
 
 const DEFAULT_DEBOUNCE_MS: u64 = 400;
@@ -89,6 +90,8 @@ pub(super) fn run_builtin_watch(
                 .to_owned(),
         ));
     }
+    let watch_scope = LockScope::Task(format!("watch:{}", target.name));
+    let _watch_lock = acquire_scopes(target_root, &[watch_scope])?;
 
     let matcher = build_matcher(&request.include, &request.exclude)?;
     let max_runs = request.max_runs;
