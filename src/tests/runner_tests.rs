@@ -3508,6 +3508,45 @@ fn run_doctor_groups_findings_in_severity_first_order() {
 }
 
 #[test]
+fn run_doctor_groups_same_severity_findings_in_alphabetical_order() {
+    let root = temp_workspace("doctor-same-severity-order");
+    let broken = root.join("broken");
+    fs::create_dir_all(&broken).expect("mkdir broken");
+
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.health]\nrun = \"sh -lc 'printf health-failed; exit 3'\"\n",
+    );
+    fs::write(broken.join("effigy.toml"), "[tasks\nbad = true\n").expect("write bad manifest");
+
+    let err = with_cwd(&root, || {
+        run_doctor(DoctorArgs {
+            repo_override: None,
+            output_json: false,
+            fix: false,
+        })
+    })
+    .expect_err("doctor should fail for health execution and parse errors");
+
+    let rendered = match err {
+        RunnerError::DoctorNonZero { rendered, .. } => rendered,
+        other => panic!("unexpected error: {other}"),
+    };
+
+    let health_error_idx = rendered
+        .find("health.task.execute")
+        .expect("expected health execute error finding");
+    let parse_error_idx = rendered
+        .find("manifest.parse")
+        .expect("expected manifest parse error finding");
+
+    assert!(
+        health_error_idx < parse_error_idx,
+        "same-severity error groups should be ordered alphabetically by check_id"
+    );
+}
+
+#[test]
 fn run_manifest_task_defers_when_unprefixed_task_missing() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_workspace("defer-missing");
