@@ -11,8 +11,10 @@ Status overview of all Effigy roadmaps.
 | 005 | [Unified Testing Orchestration](./005-unified-testing-orchestration.md) | Complete | Add built-in `effigy test` auto-detection, runner fallback chains, and workspace-level test summaries |
 | 006 | [TUI Terminal Emulation](./006-tui-terminal-emulation.md) | Complete | Replace heuristic line rendering with emulator-backed PTY screen rendering for stable rewrite-heavy output |
 | 007 | [Test Runner Selection and Environment Policy](./007-test-runner-selection-and-environment-policy.md) | Complete | Add positional suite targeting, ambiguity guards for named tests, and focused environment policy for test execution |
+| 008 | [Universal JSON Command Coverage](./008-universal-json-command-coverage.md) | Complete | Standardize envelope-based JSON output across command paths for CI/tooling consumption |
 | 009 | [Doctor Health Consolidation](./009-doctor-health-consolidation.md) | Complete | Consolidate health checks and remediation into canonical `doctor`, with `repo-pulse`/`health` surface removal |
+| 010 | [DAG Lock and Policy Baseline](./010-dag-lock-policy-baseline.md) | In Progress | Add DAG execution, lock scopes, and node-level timeout/retry/fail-fast policy semantics |
 
-**Complete:** 8 | **In progress:** 0 | **Not started:** 0
+**Complete:** 9 | **In progress:** 1 | **Not started:** 0
 
 Backlog (unnumbered): [roadmap/backlog](./backlog/README.md)
