@@ -10,11 +10,13 @@ use crate::ui::{
 };
 
 use super::catalog::select_catalog_and_task;
-use super::util::{parse_task_selector, shell_quote};
+use super::util::{
+    parse_task_reference_invocation, render_task_selector, shell_quote,
+};
 use super::{
     LoadedCatalog, ManagedProcessSpec, ManagedTaskPlan, ManifestManagedProcess,
     ManifestManagedProfile, ManifestManagedRun, ManifestManagedRunStep, ManifestTask, RunnerError,
-    TaskRuntimeArgs, TaskSelector, DEFAULT_MANAGED_SHELL_RUN,
+    TaskRuntimeArgs, TaskSelector, BUILTIN_TASKS, DEFAULT_MANAGED_SHELL_RUN,
 };
 
 pub(super) fn resolve_managed_task_plan(
@@ -305,7 +307,7 @@ fn resolve_task_reference_run(
     catalogs: &[LoadedCatalog],
     task_scope_cwd: &Path,
 ) -> Result<(String, PathBuf), RunnerError> {
-    let selector = parse_task_selector(task_ref).map_err(|error| {
+    let (selector, ref_args) = parse_task_reference_invocation(task_ref).map_err(|error| {
         RunnerError::TaskManagedTaskReferenceInvalid {
             task: managed_task_name.to_owned(),
             process: process_name.to_owned(),
@@ -313,15 +315,30 @@ fn resolve_task_reference_run(
             detail: error.to_string(),
         }
     })?;
-    let selection =
-        select_catalog_and_task(&selector, catalogs, task_scope_cwd).map_err(|error| {
-            RunnerError::TaskManagedTaskReferenceInvalid {
+    let ref_args_rendered = ref_args
+        .iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<String>>()
+        .join(" ");
+    let selector_rendered = render_task_selector(&selector);
+    let selection = match select_catalog_and_task(&selector, catalogs, task_scope_cwd) {
+        Ok(selection) => selection,
+        Err(error) => {
+            if is_builtin_task_selector(&selector) {
+                let command = render_builtin_task_reference_invocation(
+                    &selector_rendered,
+                    &ref_args_rendered,
+                )?;
+                return Ok((command, task_scope_cwd.to_path_buf()));
+            }
+            return Err(RunnerError::TaskManagedTaskReferenceInvalid {
                 task: managed_task_name.to_owned(),
                 process: process_name.to_owned(),
                 reference: task_ref.to_owned(),
                 detail: error.to_string(),
-            }
-        })?;
+            });
+        }
+    };
     let run_spec = selection.task.run.as_ref().ok_or_else(|| {
         RunnerError::TaskManagedTaskReferenceInvalid {
             task: managed_task_name.to_owned(),
@@ -337,7 +354,7 @@ fn resolve_task_reference_run(
     let run_rendered = render_task_run_spec(
         &selector.task_name,
         run_spec,
-        "",
+        &ref_args_rendered,
         &selection.catalog.catalog_root,
         catalogs,
         &selection.catalog.catalog_root,
@@ -458,17 +475,48 @@ fn resolve_task_reference_step(
     task_scope_cwd: &Path,
     depth: usize,
 ) -> Result<String, RunnerError> {
-    let selector = parse_task_selector(task_ref).map_err(|error| {
+    let (selector, ref_args) = parse_task_reference_invocation(task_ref).map_err(|error| {
         RunnerError::TaskInvocation(format!(
             "task `{task_name}` run step task ref `{task_ref}` is invalid: {error}"
         ))
     })?;
-    let selection =
-        select_catalog_and_task(&selector, catalogs, task_scope_cwd).map_err(|error| {
-            RunnerError::TaskInvocation(format!(
+    let selector_rendered = render_task_selector(&selector);
+    let ref_args_rendered = ref_args
+        .iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<String>>()
+        .join(" ");
+    let merged_args_rendered = match (
+        ref_args_rendered.is_empty(),
+        args_rendered.is_empty(),
+    ) {
+        (true, true) => String::new(),
+        (false, true) => ref_args_rendered,
+        (true, false) => args_rendered.to_owned(),
+        (false, false) => format!("{ref_args_rendered} {args_rendered}"),
+    };
+    let selection = match select_catalog_and_task(&selector, catalogs, task_scope_cwd) {
+        Ok(selection) => selection,
+        Err(error) => {
+            if is_builtin_task_selector(&selector) {
+                let command =
+                    render_builtin_task_reference_invocation(&selector_rendered, &merged_args_rendered)
+                        .map_err(|detail| {
+                            RunnerError::TaskInvocation(format!(
+                                "task `{task_name}` run step task ref `{task_ref}` failed: {detail}"
+                            ))
+                        })?;
+                return Ok(format!(
+                    "(cd {} && {})",
+                    shell_quote(&task_scope_cwd.display().to_string()),
+                    command
+                ));
+            }
+            return Err(RunnerError::TaskInvocation(format!(
                 "task `{task_name}` run step task ref `{task_ref}` failed: {error}"
-            ))
-        })?;
+            )));
+        }
+    };
     let run_spec = selection.task.run.as_ref().ok_or_else(|| {
         RunnerError::TaskInvocation(format!(
             "task `{task_name}` run step task ref `{task_ref}` has no `run` command in {}",
@@ -478,7 +526,7 @@ fn resolve_task_reference_step(
     let nested = render_task_run_spec(
         &selector.task_name,
         run_spec,
-        args_rendered,
+        &merged_args_rendered,
         &selection.catalog.catalog_root,
         catalogs,
         &selection.catalog.catalog_root,
@@ -491,6 +539,48 @@ fn resolve_task_reference_step(
     ))
 }
 
+fn is_builtin_task_selector(selector: &TaskSelector) -> bool {
+    BUILTIN_TASKS
+        .iter()
+        .any(|(name, _)| *name == selector.task_name.as_str())
+}
+
+fn render_builtin_task_reference_invocation(
+    task_ref: &str,
+    args_rendered: &str,
+) -> Result<String, RunnerError> {
+    let executable = resolve_effigy_invocation_prefix()?;
+    let task = shell_quote(task_ref);
+    if args_rendered.is_empty() {
+        Ok(format!("{executable} {task}"))
+    } else {
+        Ok(format!("{executable} {task} {args_rendered}"))
+    }
+}
+
+fn resolve_effigy_invocation_prefix() -> Result<String, RunnerError> {
+    if let Ok(explicit) = std::env::var("EFFIGY_EXECUTABLE") {
+        let trimmed = explicit.trim();
+        if !trimmed.is_empty() {
+            return Ok(shell_quote(trimmed));
+        }
+    }
+
+    let executable = std::env::current_exe().map_err(RunnerError::Cwd)?;
+    let is_test_harness = executable
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .is_some_and(|name| name == "deps");
+    if is_test_harness {
+        let manifest_path =
+            shell_quote(&format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR")));
+        return Ok(format!(
+            "cargo run --quiet --manifest-path {manifest_path} --bin effigy --"
+        ));
+    }
+    Ok(shell_quote(&executable.display().to_string()))
+}
+
 fn resolve_direct_profile_entry(
     managed_task_name: &str,
     entry: &str,
@@ -498,7 +588,7 @@ fn resolve_direct_profile_entry(
     catalogs: &[LoadedCatalog],
     task_scope_cwd: &Path,
 ) -> Result<(String, String, PathBuf), RunnerError> {
-    let selector = parse_task_selector(entry).map_err(|error| {
+    let (selector, ref_args) = parse_task_reference_invocation(entry).map_err(|error| {
         RunnerError::TaskManagedTaskReferenceInvalid {
             task: managed_task_name.to_owned(),
             process: format!("entry-{ordinal}"),
@@ -506,15 +596,34 @@ fn resolve_direct_profile_entry(
             detail: error.to_string(),
         }
     })?;
-    let selection =
-        select_catalog_and_task(&selector, catalogs, task_scope_cwd).map_err(|error| {
-            RunnerError::TaskManagedTaskReferenceInvalid {
+    let ref_args_rendered = ref_args
+        .iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<String>>()
+        .join(" ");
+    let selector_rendered = render_task_selector(&selector);
+    let selection = match select_catalog_and_task(&selector, catalogs, task_scope_cwd) {
+        Ok(selection) => selection,
+        Err(error) => {
+            if is_builtin_task_selector(&selector) {
+                let run = render_builtin_task_reference_invocation(
+                    &selector_rendered,
+                    &ref_args_rendered,
+                )?;
+                let name = selector
+                    .prefix
+                    .map(|prefix| format!("{prefix}/{}", selector.task_name))
+                    .unwrap_or(selector.task_name);
+                return Ok((name, run, task_scope_cwd.to_path_buf()));
+            }
+            return Err(RunnerError::TaskManagedTaskReferenceInvalid {
                 task: managed_task_name.to_owned(),
                 process: format!("entry-{ordinal}"),
                 reference: entry.to_owned(),
                 detail: error.to_string(),
-            }
-        })?;
+            });
+        }
+    };
     let run_spec = selection.task.run.as_ref().ok_or_else(|| {
         RunnerError::TaskManagedTaskReferenceInvalid {
             task: managed_task_name.to_owned(),
@@ -530,7 +639,7 @@ fn resolve_direct_profile_entry(
     let run = render_task_run_spec(
         &selector.task_name,
         run_spec,
-        "",
+        &ref_args_rendered,
         &selection.catalog.catalog_root,
         catalogs,
         &selection.catalog.catalog_root,

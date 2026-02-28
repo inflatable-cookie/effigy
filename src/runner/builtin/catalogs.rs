@@ -13,6 +13,7 @@ use super::super::catalog::{discover_catalogs, select_catalog_and_task};
 use super::super::util::parse_task_selector;
 use super::super::RunnerError;
 use super::super::TaskRuntimeArgs;
+use super::super::BUILTIN_TASKS;
 
 #[derive(Serialize)]
 struct CatalogDiagnosticRow {
@@ -36,6 +37,8 @@ struct CatalogResolutionProbe {
 
 #[derive(Serialize)]
 struct CatalogDiagnosticsJson {
+    schema: &'static str,
+    schema_version: usize,
     catalogs: Vec<CatalogDiagnosticRow>,
     precedence: Vec<String>,
     resolve: Option<CatalogResolutionProbe>,
@@ -126,6 +129,7 @@ pub(super) fn run_builtin_catalogs(
 
     let resolve_probe = if let Some(raw_selector) = resolve.clone() {
         let selector = parse_task_selector(&raw_selector)?;
+        let selector_task_name = selector.task_name.clone();
         let cwd = std::env::current_dir().map_err(RunnerError::Cwd)?;
         match select_catalog_and_task(&selector, &catalogs, &cwd) {
             Ok(selection) => Some(CatalogResolutionProbe {
@@ -133,19 +137,39 @@ pub(super) fn run_builtin_catalogs(
                 status: "ok".to_owned(),
                 catalog: Some(selection.catalog.alias.clone()),
                 catalog_root: Some(selection.catalog.catalog_root.display().to_string()),
-                task: Some(selector.task_name),
+                task: Some(selector_task_name),
                 evidence: selection.evidence.clone(),
                 error: None,
             }),
-            Err(error) => Some(CatalogResolutionProbe {
-                selector: raw_selector,
-                status: "error".to_owned(),
-                catalog: None,
-                catalog_root: None,
-                task: Some(selector.task_name),
-                evidence: Vec::new(),
-                error: Some(error.to_string()),
-            }),
+            Err(error) => {
+                if BUILTIN_TASKS
+                    .iter()
+                    .any(|(name, _)| *name == selector_task_name.as_str())
+                {
+                    Some(CatalogResolutionProbe {
+                        selector: raw_selector,
+                        status: "ok".to_owned(),
+                        catalog: None,
+                        catalog_root: None,
+                        task: Some(selector_task_name.clone()),
+                        evidence: vec![format!(
+                            "resolved built-in task `{}`",
+                            selector_task_name
+                        )],
+                        error: None,
+                    })
+                } else {
+                    Some(CatalogResolutionProbe {
+                        selector: raw_selector,
+                        status: "error".to_owned(),
+                        catalog: None,
+                        catalog_root: None,
+                        task: Some(selector_task_name),
+                        evidence: Vec::new(),
+                        error: Some(error.to_string()),
+                    })
+                }
+            }
         }
     } else {
         None
@@ -160,6 +184,8 @@ pub(super) fn run_builtin_catalogs(
 
     if output_json {
         let payload = CatalogDiagnosticsJson {
+            schema: "effigy.catalogs.v1",
+            schema_version: 1,
             catalogs: ordered,
             precedence,
             resolve: resolve_probe,

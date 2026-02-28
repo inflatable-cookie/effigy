@@ -10,7 +10,9 @@ Use the built-in diagnostic task:
 effigy catalogs
 effigy catalogs --resolve farmyard/api
 effigy catalogs --resolve ../froyo/validate
+effigy catalogs --resolve test
 effigy catalogs --json
+effigy catalogs --json --resolve test
 effigy catalogs --json --pretty false --resolve farmyard/api
 ```
 
@@ -32,6 +34,7 @@ Use JSON output for automation, reports, or diffing:
 ```bash
 effigy catalogs --json
 effigy catalogs --json --resolve farmyard/api
+effigy catalogs --json --resolve test
 effigy catalogs --json --pretty false --resolve ../froyo/validate
 ```
 
@@ -69,6 +72,7 @@ Schema (stable keys):
 Notes:
 - `resolve` is `null` when `--resolve` is not passed.
 - On resolution failures, `resolve.status` is `error` and `resolve.error` contains the message.
+- Built-in selectors (for example `test`) return `resolve.status = "ok"` with `catalog = null` and evidence showing built-in resolution.
 - `--pretty false` emits compact one-line JSON.
 
 ## CI-safe JSON Assertions

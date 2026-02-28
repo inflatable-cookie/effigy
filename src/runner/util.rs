@@ -69,6 +69,28 @@ pub(super) fn parse_task_selector(raw: &str) -> Result<TaskSelector, RunnerError
     })
 }
 
+pub(super) fn parse_task_reference_invocation(
+    raw: &str,
+) -> Result<(TaskSelector, Vec<String>), RunnerError> {
+    let mut parts = raw.split_whitespace();
+    let Some(selector_raw) = parts.next() else {
+        return Err(RunnerError::TaskInvocation(
+            "task reference is required".to_owned(),
+        ));
+    };
+    let selector = parse_task_selector(selector_raw)?;
+    let args = parts.map(str::to_owned).collect::<Vec<String>>();
+    Ok((selector, args))
+}
+
+pub(super) fn render_task_selector(selector: &TaskSelector) -> String {
+    selector
+        .prefix
+        .as_ref()
+        .map(|prefix| format!("{prefix}/{}", selector.task_name))
+        .unwrap_or_else(|| selector.task_name.clone())
+}
+
 pub(super) fn with_local_node_bin_path(process: &mut ProcessCommand, cwd: &Path) {
     let local_bin = cwd.join("node_modules/.bin");
     if !local_bin.is_dir() {

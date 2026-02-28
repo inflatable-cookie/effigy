@@ -3,6 +3,7 @@
 Effigy documentation is organized into four top-level categories:
 
 - `architecture/`: stable design and package/runtime boundaries.
+- `contracts/`: machine-readable schema/index contracts for tooling consumers.
 - `guides/`: operational runbooks and implementation guides.
 - `roadmap/`: numbered phase plans and progress tracking.
 - `roadmap/backlog/`: unnumbered exploratory plans not yet scheduled.

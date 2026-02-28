@@ -336,6 +336,134 @@ run = [{ task = "lint" }, "printf validate-ok"]
 }
 
 #[test]
+fn run_manifest_task_run_array_task_reference_supports_inline_args() {
+    let root = temp_workspace("run-array-task-ref-inline-args");
+    let marker = root.join("task-ref-inline-args.log");
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[tasks.capture]
+run = "sh -lc 'printf %s \"$1\" > \"{}\"' sh {{args}}"
+
+[tasks.validate]
+run = [{{ task = "capture hello-world" }}]
+"#,
+            marker.display()
+        ),
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: Vec::new(),
+        },
+        root,
+    )
+    .expect("run");
+
+    assert_eq!(out, "");
+    let body = fs::read_to_string(&marker).expect("read marker");
+    assert_eq!(body, "hello-world");
+}
+
+#[test]
+fn run_manifest_task_run_array_supports_builtin_test_task_reference_steps() {
+    let root = temp_workspace("run-array-builtin-test-task-ref");
+    let marker = root.join("builtin-test-called.log");
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[test.suites]
+unit = "sh -lc 'printf called > \"{}\"'"
+
+[tasks.validate]
+run = [{{ task = "test" }}, "printf validate-ok"]
+"#,
+            marker.display()
+        ),
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: vec!["--verbose-root".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("run");
+
+    assert!(out.contains("validate-ok"));
+    assert!(marker.exists(), "built-in test task ref should execute");
+}
+
+#[test]
+fn run_manifest_task_run_array_supports_builtin_test_task_reference_with_inline_suite_arg() {
+    let root = temp_workspace("run-array-builtin-test-task-ref-inline-suite");
+    let marker = root.join("builtin-test-called.log");
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[test.suites]
+vitest = "sh -lc 'printf called > \"{}\"'"
+
+[tasks.validate]
+run = [{{ task = "test vitest" }}, "printf validate-ok"]
+"#,
+            marker.display()
+        ),
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: vec!["--verbose-root".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("run");
+
+    assert!(out.contains("validate-ok"));
+    assert!(marker.exists(), "built-in test task ref with suite arg should execute");
+}
+
+#[test]
+fn run_manifest_task_run_array_supports_prefixed_builtin_test_task_reference_steps() {
+    let root = temp_workspace("run-array-prefixed-builtin-test-task-ref");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    let marker = farmyard.join("builtin-test-called.log");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.validate]
+run = [{ task = "farmyard/test" }, "printf validate-ok"]
+"#,
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        &format!(
+            r#"[catalog]
+alias = "farmyard"
+[test.suites]
+unit = "sh -lc 'printf called > \"{}\"'"
+"#,
+            marker.display()
+        ),
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: vec!["--verbose-root".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("run");
+
+    assert!(out.contains("validate-ok"));
+    assert!(marker.exists(), "prefixed built-in test task ref should execute");
+}
+
+#[test]
 fn run_tasks_lists_catalogs_and_tasks() {
     let root = temp_workspace("list-tasks");
     let farmyard = root.join("farmyard");
@@ -607,6 +735,35 @@ fn run_manifest_task_builtin_test_plan_renders_detection_summary() {
     assert!(out.contains("suite-source: auto-detected"));
     assert!(out.contains("vitest"));
     assert!(out.contains("fallback-chain"));
+}
+
+#[test]
+fn run_manifest_task_builtin_test_plan_json_has_versioned_schema() {
+    let root = temp_workspace("builtin-test-plan-json-schema");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}"#,
+    )
+    .expect("write package");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec!["--plan".to_owned(), "--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run test --plan --json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.test.plan.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert!(parsed["targets"].is_array());
+    assert_eq!(parsed["recovery"], serde_json::Value::Null);
 }
 
 #[test]
@@ -979,6 +1136,44 @@ fn run_manifest_task_builtin_test_plan_with_named_args_in_multi_suite_returns_re
     assert!(out.contains("available-suites:"));
     assert!(out.contains("ambiguous"));
     assert!(out.contains("Try one of:"));
+}
+
+#[test]
+fn run_manifest_task_builtin_test_plan_json_recovery_has_versioned_schema() {
+    let root = temp_workspace("builtin-test-plan-json-recovery-schema");
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "scripts": {
+    "test": "vitest run"
+  }
+}"#,
+    )
+    .expect("write package");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write cargo toml");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "test".to_owned(),
+            args: vec![
+                "--plan".to_owned(),
+                "--json".to_owned(),
+                "user-service".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect("plan recovery should return json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.test.plan.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["runtime"], "plan-recovery");
+    assert!(parsed["recovery"].is_object());
 }
 
 #[test]
@@ -1497,6 +1692,8 @@ fn run_manifest_task_builtin_catalogs_json_renders_probe_payload() {
     .expect("builtin catalogs json");
 
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.catalogs.v1");
+    assert_eq!(parsed["schema_version"], 1);
     assert!(parsed["catalogs"].is_array());
     assert_eq!(parsed["resolve"]["status"], "ok");
     assert_eq!(parsed["resolve"]["catalog"], "farmyard");
@@ -1526,6 +1723,8 @@ fn run_manifest_task_builtin_catalogs_json_reports_resolution_errors() {
     .expect("builtin catalogs json error");
 
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.catalogs.v1");
+    assert_eq!(parsed["schema_version"], 1);
     assert_eq!(parsed["resolve"]["status"], "error");
     assert_eq!(parsed["resolve"]["catalog"], serde_json::Value::Null);
     assert!(parsed["resolve"]["error"]
@@ -3676,6 +3875,123 @@ run = "printf front-ok"
     assert!(out.contains("fail-on-non-zero: enabled"));
     assert!(out.contains("process `api` exit=0"));
     assert!(out.contains("process `front` exit=0"));
+}
+
+#[test]
+fn run_manifest_task_managed_stream_process_task_ref_supports_builtin_test() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-stream-builtin-test-task-ref");
+    let marker = root.join("builtin-test-called.log");
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[test.suites]
+unit = "sh -lc 'printf called > \"{}\"'"
+
+[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["tests"]
+
+[tasks.dev.processes.tests]
+task = "test"
+"#,
+            marker.display()
+        ),
+    );
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["default".to_owned()],
+        },
+        root,
+    )
+    .expect("run managed stream with builtin test task ref");
+
+    assert!(out.contains("Managed Task Runtime"));
+    assert!(out.contains("root: ok"));
+    assert!(marker.exists(), "built-in test task ref should execute");
+}
+
+#[test]
+fn run_manifest_task_managed_stream_process_task_ref_supports_builtin_test_with_inline_suite_arg() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-stream-builtin-test-task-ref-inline-suite");
+    let marker = root.join("builtin-test-called.log");
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[test.suites]
+vitest = "sh -lc 'printf called > \"{}\"'"
+
+[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["tests"]
+
+[tasks.dev.processes.tests]
+task = "test vitest"
+"#,
+            marker.display()
+        ),
+    );
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["default".to_owned()],
+        },
+        root,
+    )
+    .expect("run managed stream with builtin test task ref and suite arg");
+
+    assert!(out.contains("Managed Task Runtime"));
+    assert!(out.contains("root: ok"));
+    assert!(
+        marker.exists(),
+        "built-in test task ref with suite arg should execute"
+    );
+}
+
+#[test]
+fn run_manifest_task_managed_stream_profile_entry_supports_builtin_test() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_workspace("managed-stream-builtin-test-profile-entry");
+    let marker = root.join("builtin-test-called.log");
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[test.suites]
+unit = "sh -lc 'printf called > \"{}\"'"
+
+[tasks.dev]
+mode = "tui"
+
+[tasks.dev.profiles.default]
+processes = ["test"]
+"#,
+            marker.display()
+        ),
+    );
+    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["default".to_owned()],
+        },
+        root,
+    )
+    .expect("run managed stream with builtin profile entry");
+
+    assert!(out.contains("Managed Task Runtime"));
+    assert!(out.contains("root: ok"));
+    assert!(marker.exists(), "built-in test profile entry should execute");
 }
 
 #[test]

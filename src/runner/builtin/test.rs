@@ -10,6 +10,7 @@ use crate::tui::{run_multiprocess_tui, MultiProcessTuiOptions};
 use crate::ui::theme::resolve_color_enabled;
 use crate::ui::{KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer};
 use crate::TaskInvocation;
+use serde_json::json;
 
 use super::super::util::{normalize_builtin_test_suite, shell_quote, with_local_node_bin_path};
 use super::super::{
@@ -98,6 +99,7 @@ pub(super) fn try_run_builtin_test(
                     resolved_root,
                     &available_runners,
                     &message,
+                    flags.output_json,
                 )
                 .map(Some);
             }
@@ -126,6 +128,7 @@ pub(super) fn try_run_builtin_test(
                     resolved_root,
                     &available_runners,
                     &message,
+                    flags.output_json,
                 )
                 .map(Some);
             }
@@ -151,6 +154,7 @@ pub(super) fn try_run_builtin_test(
                 resolved_root,
                 &available_runners,
                 &message,
+                flags.output_json,
             )
             .map(Some);
         }
@@ -158,6 +162,24 @@ pub(super) fn try_run_builtin_test(
     }
 
     if flags.plan_mode {
+        if flags.output_json {
+            let runtime_mode = if should_run_builtin_test_tui(flags.tui, runnable.len()) {
+                "tui"
+            } else {
+                "text"
+            };
+            let payload = build_builtin_test_plan_payload(
+                task,
+                resolved_root,
+                &targets,
+                requested_suite.as_deref(),
+                &passthrough,
+                runtime_mode,
+            );
+            return serde_json::to_string_pretty(&payload)
+                .map(Some)
+                .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+        }
         let color_enabled =
             resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
         let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
@@ -309,16 +331,37 @@ pub(super) fn try_run_builtin_test(
         .collect::<Vec<(String, Option<i32>)>>();
     failures.sort_by(|a, b| a.0.cmp(&b.0));
     let rendered = render_builtin_test_results(&results, flags.verbose_results)?;
-    if failures.is_empty() {
-        Ok(Some(rendered))
-    } else {
-        let rendered = append_builtin_test_filter_hint(
-            rendered,
+    let rendered_json = if flags.output_json {
+        Some(render_builtin_test_results_json(
             &results,
+            &targets,
             requested_suite.as_deref(),
             &passthrough,
-        );
-        Err(RunnerError::BuiltinTestNonZero { failures, rendered })
+        )?)
+    } else {
+        None
+    };
+    if failures.is_empty() {
+        if let Some(json) = rendered_json {
+            Ok(Some(json))
+        } else {
+            Ok(Some(rendered))
+        }
+    } else {
+        if let Some(json) = rendered_json {
+            Err(RunnerError::BuiltinTestNonZero {
+                failures,
+                rendered: json,
+            })
+        } else {
+            let rendered = append_builtin_test_filter_hint(
+                rendered,
+                &results,
+                requested_suite.as_deref(),
+                &passthrough,
+            );
+            Err(RunnerError::BuiltinTestNonZero { failures, rendered })
+        }
     }
 }
 
@@ -405,11 +448,179 @@ fn append_builtin_test_filter_hint(
     rendered
 }
 
+fn build_builtin_test_plan_payload(
+    task: &TaskInvocation,
+    resolved_root: &Path,
+    targets: &[BuiltinTestTarget],
+    requested_suite: Option<&str>,
+    passthrough: &[String],
+    runtime_mode: &str,
+) -> serde_json::Value {
+    let args_rendered = passthrough
+        .iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<String>>()
+        .join(" ");
+    let target_values = targets
+        .iter()
+        .map(|target| {
+            let available = target
+                .plans
+                .iter()
+                .map(|plan| plan.suite.clone())
+                .collect::<BTreeSet<String>>()
+                .into_iter()
+                .collect::<Vec<String>>();
+            let mut selected_plans = target.plans.clone();
+            if let Some(requested) = requested_suite {
+                selected_plans.retain(|plan| plan.suite == requested);
+            }
+            let selected_suites = selected_plans
+                .iter()
+                .map(|plan| plan.suite.clone())
+                .collect::<Vec<String>>();
+            let commands = selected_plans
+                .iter()
+                .map(|plan| {
+                    if args_rendered.is_empty() {
+                        plan.command.clone()
+                    } else {
+                        format!("{} {}", plan.command, args_rendered)
+                    }
+                })
+                .collect::<Vec<String>>();
+            let evidence = selected_plans
+                .iter()
+                .flat_map(|plan| {
+                    plan.evidence
+                        .iter()
+                        .map(|line| format!("{}: {line}", plan.suite))
+                        .collect::<Vec<String>>()
+                })
+                .collect::<Vec<String>>();
+            json!({
+                "name": target.name,
+                "root": target.root.display().to_string(),
+                "suite_source": target.suite_source,
+                "available_suites": available,
+                "selected_suites": selected_suites,
+                "commands": commands,
+                "evidence": evidence,
+                "fallback_chain": target.fallback_chain,
+            })
+        })
+        .collect::<Vec<serde_json::Value>>();
+    json!({
+        "schema": "effigy.test.plan.v1",
+        "schema_version": 1,
+        "request": task.name,
+        "root": resolved_root.display().to_string(),
+        "runtime": runtime_mode,
+        "targets": target_values,
+        "recovery": serde_json::Value::Null,
+    })
+}
+
+fn build_builtin_test_filter_hint_payload(
+    results: &[BuiltinTestExecResult],
+    requested_suite: Option<&str>,
+    passthrough: &[String],
+) -> Option<serde_json::Value> {
+    if requested_suite.is_none() || passthrough.is_empty() {
+        return None;
+    }
+    let failed = results
+        .iter()
+        .filter(|result| !result.success)
+        .map(|result| result.command.clone())
+        .collect::<Vec<String>>();
+    if failed.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "kind": "selected-suite-filter-no-match",
+        "message": "Selected suite failed while using a test filter. This often means no tests matched.",
+        "failed_commands": failed,
+        "suggestion": "Try again without the filter to verify suite execution.",
+    }))
+}
+
+fn render_builtin_test_results_json(
+    results: &[BuiltinTestExecResult],
+    targets: &[BuiltinTestTarget],
+    requested_suite: Option<&str>,
+    passthrough: &[String],
+) -> Result<String, RunnerError> {
+    let suite_source_by_root = targets
+        .iter()
+        .map(|target| {
+            (
+                target.root.display().to_string(),
+                target.suite_source.clone(),
+                target
+                    .plans
+                    .iter()
+                    .map(|plan| plan.suite.clone())
+                    .collect::<BTreeSet<String>>()
+                    .into_iter()
+                    .collect::<Vec<String>>(),
+            )
+        })
+        .collect::<Vec<(String, String, Vec<String>)>>();
+    let mut failures = results
+        .iter()
+        .filter(|result| !result.success)
+        .map(|result| {
+            json!({
+                "target": result.name,
+                "suite": result.runner,
+                "code": result.code,
+            })
+        })
+        .collect::<Vec<serde_json::Value>>();
+    failures.sort_by(|a, b| {
+        a.get("target")
+            .and_then(|v| v.as_str())
+            .cmp(&b.get("target").and_then(|v| v.as_str()))
+    });
+    let target_values = results
+        .iter()
+        .map(|result| {
+            let root_rendered = result.root.display().to_string();
+            let (suite_source, available_suites) = suite_source_by_root
+                .iter()
+                .find(|(root, _, _)| root == &root_rendered)
+                .map(|(_, source, suites)| (source.clone(), suites.clone()))
+                .unwrap_or_else(|| ("unknown".to_owned(), vec![result.runner.clone()]));
+            json!({
+                "target": result.name,
+                "suite": result.runner,
+                "root": root_rendered,
+                "suite_source": suite_source,
+                "available_suites": available_suites,
+                "command": result.command,
+                "success": result.success,
+                "code": result.code,
+            })
+        })
+        .collect::<Vec<serde_json::Value>>();
+    let payload = json!({
+        "schema": "effigy.test.results.v1",
+        "schema_version": 1,
+        "targets": target_values,
+        "failures": failures,
+        "hint": build_builtin_test_filter_hint_payload(results, requested_suite, passthrough),
+    });
+    serde_json::to_string_pretty(&payload)
+        .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
+}
+
 fn extract_builtin_test_flags(raw_args: &[String]) -> (BuiltinTestCliFlags, Vec<String>) {
     let mut flags = BuiltinTestCliFlags {
         plan_mode: false,
         verbose_results: false,
         tui: false,
+        output_json: false,
     };
     let passthrough = raw_args
         .iter()
@@ -422,6 +633,9 @@ fn extract_builtin_test_flags(raw_args: &[String]) -> (BuiltinTestCliFlags, Vec<
                 None
             } else if arg == "--tui" {
                 flags.tui = true;
+                None
+            } else if arg == "--json" {
+                flags.output_json = true;
                 None
             } else {
                 Some(arg.clone())
@@ -532,6 +746,7 @@ struct BuiltinTestCliFlags {
     plan_mode: bool,
     verbose_results: bool,
     tui: bool,
+    output_json: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -863,7 +1078,24 @@ fn render_builtin_test_plan_recovery(
     root: &Path,
     available_runners: &BTreeSet<String>,
     message: &str,
+    output_json: bool,
 ) -> Result<String, RunnerError> {
+    if output_json {
+        let payload = json!({
+            "schema": "effigy.test.plan.v1",
+            "schema_version": 1,
+            "request": task.name,
+            "root": root.display().to_string(),
+            "runtime": "plan-recovery",
+            "targets": [],
+            "recovery": {
+                "message": message,
+                "available_suites": available_runners.iter().cloned().collect::<Vec<String>>(),
+            }
+        });
+        return serde_json::to_string_pretty(&payload)
+            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+    }
     let color_enabled =
         resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);

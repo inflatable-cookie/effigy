@@ -609,7 +609,7 @@ fn render_catalogs_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         vec![
             vec![
                 "--resolve <SELECTOR>".to_owned(),
-                "Probe resolution for one selector (for example `farmyard/api` or `../froyo/validate`)".to_owned(),
+                "Probe resolution for one selector (catalog task refs like `farmyard/api` or built-ins like `test`)".to_owned(),
             ],
             vec![
                 "--json".to_owned(),
@@ -631,8 +631,10 @@ fn render_catalogs_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy catalogs".to_owned(),
             "effigy catalogs --resolve farmyard/api".to_owned(),
             "effigy catalogs --resolve ../froyo/validate".to_owned(),
+            "effigy catalogs --resolve test".to_owned(),
             "effigy catalogs --json".to_owned(),
             "effigy catalogs --json --resolve farmyard/api".to_owned(),
+            "effigy catalogs --json --resolve test".to_owned(),
             "effigy catalogs --json --pretty false --resolve farmyard/api".to_owned(),
         ],
     )?;

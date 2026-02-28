@@ -302,8 +302,11 @@ fn render_catalogs_help_shows_json_and_probe_options() {
     let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
     assert!(rendered.contains("catalogs Help"));
     assert!(rendered.contains("--resolve <SELECTOR>"));
+    assert!(rendered.contains("built-ins like `test`"));
     assert!(rendered.contains("--json"));
     assert!(rendered.contains("--pretty <true|false>"));
+    assert!(rendered.contains("effigy catalogs --resolve test"));
+    assert!(rendered.contains("effigy catalogs --json --resolve test"));
     assert!(rendered.contains("effigy catalogs --json --pretty false --resolve farmyard/api"));
 }
 
