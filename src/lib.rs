@@ -23,7 +23,6 @@ pub enum HelpTopic {
     General,
     RepoPulse,
     Tasks,
-    Catalogs,
     Test,
 }
 
@@ -38,7 +37,9 @@ pub struct PulseArgs {
 pub struct TasksArgs {
     pub repo_override: Option<PathBuf>,
     pub task_name: Option<String>,
+    pub resolve_selector: Option<String>,
     pub output_json: bool,
+    pub pretty_json: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +52,9 @@ pub struct TaskInvocation {
 pub enum CliParseError {
     MissingRepoValue,
     MissingTaskNameValue,
+    MissingResolveSelectorValue,
+    MissingPrettyValue,
+    InvalidPrettyValue(String),
     UnknownArgument(String),
 }
 
@@ -59,6 +63,14 @@ impl std::fmt::Display for CliParseError {
         match self {
             CliParseError::MissingRepoValue => write!(f, "--repo requires a value"),
             CliParseError::MissingTaskNameValue => write!(f, "--task requires a value"),
+            CliParseError::MissingResolveSelectorValue => write!(f, "--resolve requires a value"),
+            CliParseError::MissingPrettyValue => {
+                write!(f, "--pretty requires a value (`true` or `false`)")
+            }
+            CliParseError::InvalidPrettyValue(value) => write!(
+                f,
+                "--pretty value `{value}` is invalid (expected `true` or `false`)"
+            ),
             CliParseError::UnknownArgument(arg) => write!(f, "unknown argument: {arg}"),
         }
     }
@@ -138,14 +150,7 @@ where
         return parse_tasks(args);
     }
     if cmd == "catalogs" {
-        let task_args = args.collect::<Vec<String>>();
-        if task_args.iter().any(|arg| arg == "--help" || arg == "-h") {
-            return Ok(Command::Help(HelpTopic::Catalogs));
-        }
-        return Ok(Command::Task(TaskInvocation {
-            name: cmd,
-            args: task_args,
-        }));
+        return parse_tasks(args);
     }
     if cmd == "test" {
         let task_args = args.collect::<Vec<String>>();
@@ -206,7 +211,9 @@ where
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut task_name: Option<String> = None;
+    let mut resolve_selector: Option<String> = None;
     let mut output_json = false;
+    let mut pretty_json = true;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -222,8 +229,24 @@ where
                 };
                 task_name = Some(name);
             }
+            "--resolve" => {
+                let Some(selector) = args.next() else {
+                    return Err(CliParseError::MissingResolveSelectorValue);
+                };
+                resolve_selector = Some(selector);
+            }
             "--json" => {
                 output_json = true;
+            }
+            "--pretty" => {
+                let Some(value) = args.next() else {
+                    return Err(CliParseError::MissingPrettyValue);
+                };
+                pretty_json = match value.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err(CliParseError::InvalidPrettyValue(value)),
+                };
             }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
             other => return Err(CliParseError::UnknownArgument(other.to_owned())),
@@ -233,7 +256,9 @@ where
     Ok(Command::Tasks(TasksArgs {
         repo_override,
         task_name,
+        resolve_selector,
         output_json,
+        pretty_json,
     }))
 }
 
@@ -242,7 +267,6 @@ pub fn render_help<R: Renderer>(renderer: &mut R, topic: HelpTopic) -> UiResult<
         HelpTopic::General => render_general_help(renderer),
         HelpTopic::RepoPulse => render_repo_pulse_help(renderer),
         HelpTopic::Tasks => render_tasks_help(renderer),
-        HelpTopic::Catalogs => render_catalogs_help(renderer),
         HelpTopic::Test => render_test_help(renderer),
     }
 }
@@ -307,11 +331,7 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             ],
             vec![
                 "effigy tasks".to_owned(),
-                "List discovered catalogs and task commands".to_owned(),
-            ],
-            vec![
-                "effigy catalogs".to_owned(),
-                "Show catalog routing diagnostics and probe task resolution".to_owned(),
+                "List discovered catalogs/task commands and probe routing".to_owned(),
             ],
             vec![
                 "effigy config".to_owned(),
@@ -350,11 +370,10 @@ fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         "topics",
         &[
             "effigy tasks --help".to_owned(),
-            "effigy catalogs --help".to_owned(),
-            "effigy catalogs --resolve farmyard/api".to_owned(),
+            "effigy tasks --resolve farmyard/api".to_owned(),
             "effigy repo-pulse --help".to_owned(),
-            "effigy test --help".to_owned(),
-            "effigy config".to_owned(),
+            "effigy test --help  # includes task-ref chain examples".to_owned(),
+            "effigy config  # full effigy.toml task-ref examples".to_owned(),
         ],
     )?;
     renderer.key_values(&[ui::KeyValue::new("-h, --help", "Print this help panel")])?;
@@ -411,12 +430,14 @@ fn render_tasks_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.section("tasks Help")?;
     renderer.notice(
         ui::NoticeLevel::Info,
-        "List discovered task catalogs and optionally filter by a task name",
+        "List discovered task catalogs, optionally filter tasks, and probe routing",
     )?;
     renderer.text("")?;
 
     renderer.section("Usage")?;
-    renderer.text("effigy tasks [--repo <PATH>] [--task <TASK_NAME>] [--json]")?;
+    renderer.text(
+        "effigy tasks [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json] [--pretty true|false]",
+    )?;
     renderer.text("")?;
 
     renderer.section("Options")?;
@@ -432,8 +453,17 @@ fn render_tasks_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
                 "Filter output to matching task entries".to_owned(),
             ],
             vec![
+                "--resolve <SELECTOR>".to_owned(),
+                "Probe task routing (catalog refs like `farmyard/api` or built-ins like `test`)"
+                    .to_owned(),
+            ],
+            vec![
                 "--json".to_owned(),
                 "Render machine-readable task catalog payload".to_owned(),
+            ],
+            vec![
+                "--pretty <true|false>".to_owned(),
+                "When used with --json, toggle pretty formatting (default: true)".to_owned(),
             ],
             vec!["-h, --help".to_owned(), "Print command help".to_owned()],
         ],
@@ -447,6 +477,8 @@ fn render_tasks_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy tasks".to_owned(),
             "effigy tasks --repo /path/to/workspace".to_owned(),
             "effigy tasks --repo /path/to/workspace --task reset-db".to_owned(),
+            "effigy tasks --resolve farmyard/api".to_owned(),
+            "effigy tasks --json --resolve test".to_owned(),
             "effigy --json tasks --repo /path/to/workspace --task test".to_owned(),
         ],
     )?;
@@ -533,6 +565,14 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.text("[tasks.test]")?;
     renderer.text("run = \"bun test {args}\"")?;
     renderer.text("")?;
+    renderer.text("Task-ref chain with quoted args:")?;
+    renderer.text("[tasks.validate]")?;
+    renderer.text("run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]")?;
+    renderer.notice(
+        ui::NoticeLevel::Info,
+        "Task-ref chain parsing is shell-like tokenization only; Effigy does not perform shell expansion inside `task = \"...\"` values.",
+    )?;
+    renderer.text("")?;
 
     renderer.section("Examples")?;
     renderer.bullet_list(
@@ -586,56 +626,6 @@ fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "after: effigy test nextest user_service --nocapture".to_owned(),
             "after: effigy test viteest user-service -> suggests `effigy test vitest user-service`"
                 .to_owned(),
-        ],
-    )?;
-    Ok(())
-}
-
-fn render_catalogs_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
-    renderer.section("catalogs Help")?;
-    renderer.notice(
-        ui::NoticeLevel::Info,
-        "Inspect discovered catalogs, routing precedence, and optional resolution probes",
-    )?;
-    renderer.text("")?;
-
-    renderer.section("Usage")?;
-    renderer.text("effigy catalogs [--json] [--pretty true|false] [--resolve <SELECTOR>]")?;
-    renderer.text("")?;
-
-    renderer.section("Options")?;
-    renderer.table(&ui::TableSpec::new(
-        vec!["Option".to_owned(), "Description".to_owned()],
-        vec![
-            vec![
-                "--resolve <SELECTOR>".to_owned(),
-                "Probe resolution for one selector (catalog task refs like `farmyard/api` or built-ins like `test`)".to_owned(),
-            ],
-            vec![
-                "--json".to_owned(),
-                "Render machine-readable diagnostics payload".to_owned(),
-            ],
-            vec![
-                "--pretty <true|false>".to_owned(),
-                "When used with --json, toggle pretty formatting (default: true)".to_owned(),
-            ],
-            vec!["-h, --help".to_owned(), "Print command help".to_owned()],
-        ],
-    ))?;
-    renderer.text("")?;
-
-    renderer.section("Examples")?;
-    renderer.bullet_list(
-        "commands",
-        &[
-            "effigy catalogs".to_owned(),
-            "effigy catalogs --resolve farmyard/api".to_owned(),
-            "effigy catalogs --resolve ../froyo/validate".to_owned(),
-            "effigy catalogs --resolve test".to_owned(),
-            "effigy catalogs --json".to_owned(),
-            "effigy catalogs --json --resolve farmyard/api".to_owned(),
-            "effigy catalogs --json --resolve test".to_owned(),
-            "effigy catalogs --json --pretty false --resolve farmyard/api".to_owned(),
         ],
     )?;
     Ok(())

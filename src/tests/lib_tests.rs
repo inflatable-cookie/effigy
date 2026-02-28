@@ -117,7 +117,9 @@ fn command_requests_json_checks_task_or_global_mode() {
     let cmd_tasks = Command::Tasks(TasksArgs {
         repo_override: None,
         task_name: None,
+        resolve_selector: None,
         output_json: true,
+        pretty_json: true,
     });
     assert!(command_requests_json(&cmd_tasks, false));
 
@@ -134,7 +136,9 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
     let tasks_cmd = Command::Tasks(TasksArgs {
         repo_override: None,
         task_name: None,
+        resolve_selector: None,
         output_json: false,
+        pretty_json: true,
     });
     let pulse_cmd = Command::RepoPulse(PulseArgs {
         repo_override: None,
@@ -169,7 +173,9 @@ fn parse_tasks_with_filters() {
         Command::Tasks(TasksArgs {
             repo_override: Some(PathBuf::from("/tmp/repo")),
             task_name: Some("reset-db".to_owned()),
+            resolve_selector: None,
             output_json: false,
+            pretty_json: true,
         })
     );
 }
@@ -183,7 +189,9 @@ fn parse_tasks_supports_json_flag() {
         Command::Tasks(TasksArgs {
             repo_override: None,
             task_name: None,
+            resolve_selector: None,
             output_json: true,
+            pretty_json: true,
         })
     );
 }
@@ -210,10 +218,10 @@ fn parse_tasks_help_is_scoped() {
 }
 
 #[test]
-fn parse_catalogs_help_is_scoped() {
+fn parse_catalogs_help_is_tasks_help_alias() {
     let cmd = parse_command(vec!["catalogs".to_owned(), "--help".to_owned()])
         .expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Catalogs));
+    assert_eq!(cmd, Command::Help(HelpTopic::Tasks));
 }
 
 #[test]
@@ -245,14 +253,29 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy help"));
     assert!(rendered.contains("Get Command Help"));
     assert!(rendered.contains("effigy config"));
-    assert!(rendered.contains("effigy catalogs"));
     assert!(rendered.contains("effigy health"));
     assert!(rendered.contains("effigy test"));
     assert!(rendered.contains("<catalog>/test fallback"));
     assert!(rendered.contains("effigy test --plan"));
     assert!(rendered.contains("effigy test --help"));
+    assert!(rendered.contains("task-ref chain examples"));
+    assert!(rendered.contains("full effigy.toml task-ref examples"));
     assert!(!rendered.contains("Quick Start"));
     assert!(!rendered.contains("effigy Help"));
+}
+
+#[test]
+fn render_tasks_help_shows_resolve_and_json_options() {
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+    render_help(&mut renderer, HelpTopic::Tasks).expect("help render");
+    let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
+    assert!(rendered.contains("tasks Help"));
+    assert!(rendered.contains("--resolve <SELECTOR>"));
+    assert!(rendered.contains("built-ins like `test`"));
+    assert!(rendered.contains("--json"));
+    assert!(rendered.contains("--pretty <true|false>"));
+    assert!(rendered.contains("effigy tasks --resolve farmyard/api"));
+    assert!(rendered.contains("effigy tasks --json --resolve test"));
 }
 
 #[test]
@@ -293,21 +316,11 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("[test.runners]"));
     assert!(rendered.contains("vitest = \"pnpm exec vitest run\""));
     assert!(rendered.contains("[tasks.test]"));
-}
-
-#[test]
-fn render_catalogs_help_shows_json_and_probe_options() {
-    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
-    render_help(&mut renderer, HelpTopic::Catalogs).expect("help render");
-    let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
-    assert!(rendered.contains("catalogs Help"));
-    assert!(rendered.contains("--resolve <SELECTOR>"));
-    assert!(rendered.contains("built-ins like `test`"));
-    assert!(rendered.contains("--json"));
-    assert!(rendered.contains("--pretty <true|false>"));
-    assert!(rendered.contains("effigy catalogs --resolve test"));
-    assert!(rendered.contains("effigy catalogs --json --resolve test"));
-    assert!(rendered.contains("effigy catalogs --json --pretty false --resolve farmyard/api"));
+    assert!(rendered.contains("Task-ref chain with quoted args"));
+    assert!(rendered.contains(
+        "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
+    ));
+    assert!(rendered.contains("Task-ref chain parsing is shell-like tokenization only"));
 }
 
 #[test]

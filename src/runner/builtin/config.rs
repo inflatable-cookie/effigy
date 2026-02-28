@@ -160,9 +160,15 @@ pub(super) fn run_builtin_config(
     renderer.text("[tasks.dev.processes.validate-stack]")?;
     renderer.text("task = \"../froyo/validate\"")?;
     renderer.text("")?;
+    renderer.text("[tasks.dev.processes.tests]")?;
+    renderer.text("task = \"test vitest \\\"user service\\\"\"")?;
+    renderer.text("")?;
+    renderer.text("[tasks.validate]")?;
+    renderer.text("run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]")?;
+    renderer.text("")?;
     renderer.text("[tasks.dev.profiles.default]")?;
-    renderer.text("start = [\"api\", \"validate-stack\"]")?;
-    renderer.text("tabs = [\"api\", \"validate-stack\"]")?;
+    renderer.text("start = [\"api\", \"validate-stack\", \"tests\"]")?;
+    renderer.text("tabs = [\"api\", \"validate-stack\", \"tests\"]")?;
     renderer.text("")?;
     renderer.notice(
         NoticeLevel::Info,
@@ -171,6 +177,14 @@ pub(super) fn run_builtin_config(
     renderer.notice(
         NoticeLevel::Info,
         "Cross-repo task references support aliases (`farmyard/api`) and relative paths from the current catalog (`../froyo/validate`).",
+    )?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Task refs can include inline args; quote multi-word args (for example `task = \"test vitest \\\"user service\\\"\"`).",
+    )?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Task-ref chain parsing is shell-like tokenization only; Effigy does not perform shell expansion inside `task = \"...\"` values.",
     )?;
 
     let out = renderer.into_inner();
@@ -230,9 +244,15 @@ fn render_builtin_config_schema() -> String {
         "[tasks.dev.processes.validate-stack]",
         "task = \"../froyo/validate\"",
         "",
+        "[tasks.dev.processes.tests]",
+        "task = \"test vitest \\\"user service\\\"\"",
+        "",
+        "[tasks.validate]",
+        "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]",
+        "",
         "[tasks.dev.profiles.default]",
-        "start = [\"api\", \"validate-stack\"]",
-        "tabs = [\"api\", \"validate-stack\"]",
+        "start = [\"api\", \"validate-stack\", \"tests\"]",
+        "tabs = [\"api\", \"validate-stack\", \"tests\"]",
         "",
     ]
     .join("\n")
@@ -328,9 +348,15 @@ fn render_builtin_config_schema_target(target: &str, minimal: bool) -> Option<St
                 "[tasks.dev.processes.validate-stack]",
                 "task = \"../froyo/validate\"",
                 "",
+                "[tasks.dev.processes.tests]",
+                "task = \"test vitest \\\"user service\\\"\"",
+                "",
+                "[tasks.validate]",
+                "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]",
+                "",
                 "[tasks.dev.profiles.default]",
-                "start = [\"api\", \"validate-stack\"]",
-                "tabs = [\"api\", \"validate-stack\"]",
+                "start = [\"api\", \"validate-stack\", \"tests\"]",
+                "tabs = [\"api\", \"validate-stack\", \"tests\"]",
                 "",
             ]
             .join("\n"),
