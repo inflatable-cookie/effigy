@@ -55,6 +55,8 @@ A version can be tagged for channel publication only if all are true:
   - `tasks`
   - prefixed built-ins (`farmyard/tasks`, `farmyard/test`)
   - `test --plan`
+- [x] Install validation from release tag is automated:
+  - `./scripts/check-release-install-from-tag.sh --tag <tag>`
 - [ ] Release notes drafted with change summary and migration notes (if needed).
 - [ ] Rollback candidate tag identified (previous known-good).
 - [ ] Distribution metadata validated (crate metadata, install docs, checksum path).

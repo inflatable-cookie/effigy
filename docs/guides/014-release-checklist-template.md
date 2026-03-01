@@ -53,6 +53,8 @@ Owner: `name/team`
 - [ ] `Cargo.toml` metadata verified.
 - [ ] Tag points to intended commit.
 - [ ] Publish command executed/queued.
+- [ ] Install validated from git tag:
+  - [ ] `./scripts/check-release-install-from-tag.sh --tag v0.__.__`
 - [ ] Install validated from published crate.
 
 ### Homebrew

@@ -5,6 +5,15 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to validate for install checks (for manual runs)"
+        required: false
+        type: string
+      repo_url:
+        description: "Git repository URL to install from"
+        required: false
+        type: string
 
 jobs:
   release-gates:
@@ -21,4 +30,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run release gate checks
-        run: ./scripts/check-release-gates.sh
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          RELEASE_REPO_URL: ${{ github.event.inputs.repo_url || format('https://github.com/{0}.git', github.repository) }}
+        run: ./scripts/check-release-gates.sh --tag "$RELEASE_TAG" --repo-url "$RELEASE_REPO_URL"

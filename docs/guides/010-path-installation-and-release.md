@@ -62,11 +62,13 @@ For now, version is controlled in `Cargo.toml`.
 ## 5) Release Checklist
 
 1. Run release gates in one pass: `cargo qa-release`.
-2. CLI help and core commands run from installed PATH binary.
-3. Wrapper fallback still operational in at least one consumer repo.
-4. Update roadmap/report docs with validation evidence.
-5. Bump `Cargo.toml` version if required.
-6. Commit, tag, and push release branch.
+2. Validate install from the release tag:
+   - `./scripts/check-release-install-from-tag.sh --tag v0.__.__`
+3. CLI help and core commands run from installed PATH binary.
+4. Wrapper fallback still operational in at least one consumer repo.
+5. Update roadmap/report docs with validation evidence.
+6. Bump `Cargo.toml` version if required.
+7. Commit, tag, and push release branch.
 
 ## 6) Smoke Matrix
 
