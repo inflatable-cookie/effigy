@@ -97,3 +97,4 @@ effigy unlock --all
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
+- [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)
