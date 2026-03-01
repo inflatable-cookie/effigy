@@ -113,4 +113,7 @@ cargo test
 - Contributor onboarding (15 min): [`030-contributor-onboarding-15-minutes.md`](./030-contributor-onboarding-15-minutes.md)
 - Docs navigation cleanup note: [`031-docs-navigation-cleanup.md`](./031-docs-navigation-cleanup.md)
 - Docs consistency sweep + changelog: [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md)
+- Style and terminology guide: [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
+- Task and command glossary: [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)
+- Guide ownership + update triggers: [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
 - Docs flow map (legacy navigation map): [`028-docs-flow-map.md`](./028-docs-flow-map.md)

@@ -55,6 +55,9 @@ If you are extending behavior:
 - [`guides/030-contributor-onboarding-15-minutes.md`](./guides/030-contributor-onboarding-15-minutes.md) (fast contributor onboarding path)
 - [`guides/031-docs-navigation-cleanup.md`](./guides/031-docs-navigation-cleanup.md) (navigation cleanup notes)
 - [`guides/032-docs-consistency-sweep-and-changelog.md`](./guides/032-docs-consistency-sweep-and-changelog.md) (consistency/changelog sweep)
+- [`guides/033-style-and-terminology-guide.md`](./guides/033-style-and-terminology-guide.md) (docs writing standard)
+- [`guides/034-task-and-command-glossary.md`](./guides/034-task-and-command-glossary.md) (canonical terminology)
+- [`guides/035-guide-ownership-and-update-triggers.md`](./guides/035-guide-ownership-and-update-triggers.md) (docs update trigger matrix)
 - [`guides/028-docs-flow-map.md`](./guides/028-docs-flow-map.md) (legacy navigation map)
 
 ## JSON Contract Notes

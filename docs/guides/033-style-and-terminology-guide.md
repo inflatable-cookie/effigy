@@ -112,3 +112,4 @@ Before finalizing a guide update:
 - `031-docs-navigation-cleanup.md`
 - `032-docs-consistency-sweep-and-changelog.md`
 - `034-task-and-command-glossary.md`
+- `035-guide-ownership-and-update-triggers.md`
