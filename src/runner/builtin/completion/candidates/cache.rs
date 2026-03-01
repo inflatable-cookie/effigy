@@ -50,6 +50,7 @@ enum CacheLookup {
     Hit {
         candidates: Vec<String>,
         manifest_count: usize,
+        cache_age_ms: u128,
     },
     MissInitial,
     MissTtl,
@@ -58,7 +59,7 @@ enum CacheLookup {
 
 pub(super) fn load_completion_candidates_with_cache(
     repo_root: &Path,
-) -> Result<(Vec<String>, CompletionCandidatesCacheState, usize), RunnerError> {
+) -> Result<(Vec<String>, CompletionCandidatesCacheState, usize, Option<u128>), RunnerError> {
     let now = Instant::now();
     let cache = COMPLETION_CANDIDATES_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
@@ -66,11 +67,13 @@ pub(super) fn load_completion_candidates_with_cache(
         CacheLookup::Hit {
             candidates,
             manifest_count,
+            cache_age_ms,
         } => {
             return Ok((
                 candidates,
                 CompletionCandidatesCacheState::Hit,
                 manifest_count,
+                Some(cache_age_ms),
             ))
         }
         CacheLookup::MissInitial => CompletionCandidatesCacheState::MissInitial,
@@ -90,7 +93,7 @@ pub(super) fn load_completion_candidates_with_cache(
         .lock()
         .map_err(|_| RunnerError::Ui("completion candidate cache lock poisoned".to_owned()))?;
     map.insert(repo_root.to_path_buf(), snapshot);
-    Ok((candidates, miss_reason, manifest_count))
+    Ok((candidates, miss_reason, manifest_count, None))
 }
 
 fn read_cached_completion_candidates(
@@ -113,6 +116,7 @@ fn read_cached_completion_candidates(
     Ok(CacheLookup::Hit {
         candidates: snapshot.candidates.clone(),
         manifest_count: snapshot.manifest_stamps.len(),
+        cache_age_ms: now.duration_since(snapshot.created_at).as_millis(),
     })
 }
 
