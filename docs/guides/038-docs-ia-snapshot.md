@@ -49,9 +49,19 @@ This snapshot captures the current documentation information architecture for gu
   - `028-docs-flow-map.md` (supplemental/legacy)
 - numbering continuity is tracked in `031` and `032`.
 
+## Expected Outcome
+
+- maintainers can quickly identify docs impacted by behavior, schema, workflow, or navigation changes
+- contributors can map update triggers without scanning every guide
+- docs planning and review use one shared IA snapshot
+
 ## Related Guides
 
-- `031-docs-navigation-cleanup.md`
-- `032-docs-consistency-sweep-and-changelog.md`
-- `035-guide-ownership-and-update-triggers.md`
-- `037-documentation-contribution-playbook.md`
+- [`031-docs-navigation-cleanup.md`](./031-docs-navigation-cleanup.md)
+- [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md)
+- [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
+- [`037-documentation-contribution-playbook.md`](./037-documentation-contribution-playbook.md)
+
+## Next Step
+
+After major docs or behavior changes, refresh this snapshot and confirm trigger mappings still align with [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md).

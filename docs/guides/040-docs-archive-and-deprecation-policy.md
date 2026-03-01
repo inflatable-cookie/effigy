@@ -91,9 +91,19 @@ Maintain a lightweight archive list in one place (recommended: `docs/guides/READ
 - [ ] `./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)` passed
 ```
 
+## Expected Outcome
+
+- deprecated guides remain discoverable without polluting primary onboarding paths
+- replacement guidance stays explicit and link-safe during transitions
+- archive/deprecation changes are auditable through checklist-driven PRs
+
 ## Related Guides
 
-- `031-docs-navigation-cleanup.md`
-- `032-docs-consistency-sweep-and-changelog.md`
-- `035-guide-ownership-and-update-triggers.md`
-- `039-docs-drift-monitoring.md`
+- [`031-docs-navigation-cleanup.md`](./031-docs-navigation-cleanup.md)
+- [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md)
+- [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
+- [`039-docs-drift-monitoring.md`](./039-docs-drift-monitoring.md)
+
+## Next Step
+
+When deprecating a guide, record the decision and replacement path in the next dated report under `docs/reports/` and cross-link it from index updates.
