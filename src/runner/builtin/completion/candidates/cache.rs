@@ -59,7 +59,15 @@ enum CacheLookup {
 
 pub(super) fn load_completion_candidates_with_cache(
     repo_root: &Path,
-) -> Result<(Vec<String>, CompletionCandidatesCacheState, usize, Option<u128>), RunnerError> {
+) -> Result<
+    (
+        Vec<String>,
+        CompletionCandidatesCacheState,
+        usize,
+        Option<u128>,
+    ),
+    RunnerError,
+> {
     let now = Instant::now();
     let cache = COMPLETION_CANDIDATES_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 

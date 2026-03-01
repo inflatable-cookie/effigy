@@ -67,8 +67,8 @@ Effigy is still evolving, so distribution planning should be staged and reversib
 - [x] Add upgrade guide for existing projects using `bun effigy` wrappers.
 
 ### Phase E - Optional Wrapper Evaluation
-- [ ] Reassess need for npm wrapper after crates + brew are stable.
-- [ ] If needed, implement thin wrapper policy with strict binary delegation.
+- [x] Reassess need for npm wrapper after crates + brew are stable.
+- [x] If needed, implement thin wrapper policy with strict binary delegation.
 
 ## 6) Acceptance Criteria
 
