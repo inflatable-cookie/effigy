@@ -6,7 +6,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[test]
 fn tasks_json_contract_has_versioned_top_level_shape() {
@@ -459,10 +460,87 @@ fn builtin_completion_candidates_json_contract_has_versioned_shape() {
     assert_eq!(parsed["schema_version"], 1);
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["prefix"], "farm");
+    assert_eq!(parsed["cache_hit"], false);
+    assert_eq!(parsed["manifest_count"], 2);
     let candidates = parsed["candidates"].as_array().expect("candidates array");
     assert!(candidates
         .iter()
         .any(|value| value.as_str() == Some("farmyard/api")));
+}
+
+#[test]
+fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_rerun() {
+    let root = temp_workspace("completion-candidates-cache-hit");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf root\"\n",
+    );
+
+    let first = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["candidates".to_owned(), "--json".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("run completion candidates first");
+    let first_parsed: serde_json::Value = serde_json::from_str(&first).expect("parse first json");
+    assert_eq!(first_parsed["cache_hit"], false);
+
+    let second = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["candidates".to_owned(), "--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run completion candidates second");
+    let second_parsed: serde_json::Value =
+        serde_json::from_str(&second).expect("parse second json");
+    assert_eq!(second_parsed["cache_hit"], true);
+}
+
+#[test]
+fn builtin_completion_candidates_json_contract_invalidates_cache_on_manifest_mtime_change() {
+    let root = temp_workspace("completion-candidates-mtime-invalidation");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf root\"\n",
+    );
+
+    let first = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["candidates".to_owned(), "--json".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("run completion candidates first");
+    let first_parsed: serde_json::Value = serde_json::from_str(&first).expect("parse first json");
+    assert_eq!(first_parsed["cache_hit"], false);
+
+    thread::sleep(Duration::from_millis(1100));
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf root\"\n[tasks.deploy]\nrun = \"printf deploy\"\n",
+    );
+
+    let second = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["candidates".to_owned(), "--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run completion candidates after manifest change");
+    let second_parsed: serde_json::Value =
+        serde_json::from_str(&second).expect("parse second json");
+    assert_eq!(second_parsed["cache_hit"], false);
+    assert!(second_parsed["candidates"]
+        .as_array()
+        .expect("candidates array")
+        .iter()
+        .any(|value| value.as_str() == Some("deploy")));
 }
 
 #[test]
