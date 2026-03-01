@@ -13,8 +13,10 @@ If you want one fast path:
 6. [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 7. [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
 8. [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
-9. [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
-10. [`030-contributor-onboarding-15-minutes.md`](./030-contributor-onboarding-15-minutes.md)
+
+Operations quick links:
+- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md) (canonical docs QA source of truth)
+- [`030-contributor-onboarding-15-minutes.md`](./030-contributor-onboarding-15-minutes.md) (fast contributor onboarding path)
 
 ## By Persona
 
@@ -91,7 +93,7 @@ effigy --json test --plan
 cargo test
 ```
 
-## Topic Index
+## Core Topics (010-020)
 
 - Installation and release: [`010-path-installation-and-release.md`](./010-path-installation-and-release.md)
 - Output rendering and colour modes: [`011-output-widgets-and-colour-modes.md`](./011-output-widgets-and-colour-modes.md)
@@ -104,18 +106,11 @@ cargo test
 - Doctor explain mode: [`018-doctor-explain-mode.md`](./018-doctor-explain-mode.md)
 - Watch/init/migrate phase-1: [`019-watch-init-migrate-phase-1.md`](./019-watch-init-migrate-phase-1.md)
 - DAG lock/policy baseline: [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
-- Command cookbook: [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
-- Manifest cookbook: [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- Troubleshooting recipes: [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
-- CI and automation recipes: [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
-- Command reference matrix: [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- JSON payload examples: [`026-json-payload-examples.md`](./026-json-payload-examples.md)
-- Copy/paste snippets: [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
-- Migration quick paths: [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
-- Docs QA checklist: [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+
+## Operations Guides
+
+- Docs QA source of truth: [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
 - Contributor onboarding (15 min): [`030-contributor-onboarding-15-minutes.md`](./030-contributor-onboarding-15-minutes.md)
 - Docs navigation cleanup note: [`031-docs-navigation-cleanup.md`](./031-docs-navigation-cleanup.md)
-
-## Supplemental
-
+- Docs consistency sweep + changelog: [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md)
 - Docs flow map (legacy navigation map): [`028-docs-flow-map.md`](./028-docs-flow-map.md)

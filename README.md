@@ -142,15 +142,12 @@ See [`docs/guides/017-json-output-contracts.md`](./docs/guides/017-json-output-c
 Start with:
 - Docs index: [`docs/README.md`](./docs/README.md)
 - Guides landing page: [`docs/guides/README.md`](./docs/guides/README.md)
-- Command cookbook: [`docs/guides/021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md)
-- Manifest cookbook: [`docs/guides/022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
+- Contributor onboarding (15 min): [`docs/guides/030-contributor-onboarding-15-minutes.md`](./docs/guides/030-contributor-onboarding-15-minutes.md)
 - Troubleshooting recipes: [`docs/guides/023-troubleshooting-and-failure-recipes.md`](./docs/guides/023-troubleshooting-and-failure-recipes.md)
 - CI and automation recipes: [`docs/guides/024-ci-and-automation-recipes.md`](./docs/guides/024-ci-and-automation-recipes.md)
-- Command reference matrix: [`docs/guides/025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
-- Copy/paste snippets: [`docs/guides/027-copy-paste-snippets.md`](./docs/guides/027-copy-paste-snippets.md)
-- Migration quick paths: [`docs/guides/028-migration-quick-paths.md`](./docs/guides/028-migration-quick-paths.md)
 - Docs QA checklist: [`docs/guides/029-docs-qa-checklist-and-validation.md`](./docs/guides/029-docs-qa-checklist-and-validation.md)
-- Contributor onboarding (15 min): [`docs/guides/030-contributor-onboarding-15-minutes.md`](./docs/guides/030-contributor-onboarding-15-minutes.md)
+- Navigation cleanup note: [`docs/guides/031-docs-navigation-cleanup.md`](./docs/guides/031-docs-navigation-cleanup.md)
+- Style and terminology guide: [`docs/guides/033-style-and-terminology-guide.md`](./docs/guides/033-style-and-terminology-guide.md)
 
 ## Development
 
