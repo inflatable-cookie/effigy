@@ -80,6 +80,15 @@ pub(crate) fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.text("vitest = \"bun x vitest run\"")?;
     renderer.text("\"cargo-nextest\" = \"cargo nextest run --workspace\"")?;
     renderer.text("")?;
+    renderer.text("Task-ref chain with quoted args:")?;
+    renderer.text("[tasks.validate]")?;
+    renderer
+        .text("run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]")?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Task-ref chain parsing is shell-like tokenization only; Effigy does not perform shell expansion inside `task = \"...\"` values.",
+    )?;
+    renderer.text("")?;
 
     renderer.section("Examples")?;
     renderer.bullet_list(
@@ -87,12 +96,53 @@ pub(crate) fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         &[
             "effigy test".to_owned(),
             "effigy test vitest".to_owned(),
+            "effigy test vitest user-service".to_owned(),
             "effigy test nextest user_service --nocapture".to_owned(),
             "effigy <catalog>/test".to_owned(),
             "effigy test --plan".to_owned(),
+            "effigy test --plan user-service".to_owned(),
+            "effigy test --plan viteest user-service".to_owned(),
             "effigy test --verbose-results".to_owned(),
             "effigy test --tui".to_owned(),
             "effigy test -- --runInBand".to_owned(),
+            "effigy test -- --watch".to_owned(),
+        ],
+    )?;
+    renderer.text("")?;
+
+    renderer.section("Named Test Selection")?;
+    renderer.bullet_list(
+        "patterns",
+        &[
+            "effigy test user-service".to_owned(),
+            "effigy test vitest user-service".to_owned(),
+            "effigy test viteest user-service  # suggests vitest".to_owned(),
+            "effigy <catalog>/test billing".to_owned(),
+            "effigy test -- tests/api/user.test.ts".to_owned(),
+            "effigy test -- user_service --nocapture".to_owned(),
+        ],
+    )?;
+    renderer.text("")?;
+
+    renderer.section("Error Recovery")?;
+    renderer.bullet_list(
+        "modes",
+        &[
+            "Ambiguity: `effigy test user-service` in multi-suite repos fails and suggests suite-first retries.".to_owned(),
+            "Unavailable or mistyped suite: `effigy test viteest user-service` fails with nearest suite name and a copy-paste command.".to_owned(),
+        ],
+    )?;
+    renderer.text("")?;
+
+    renderer.section("Migration")?;
+    renderer.bullet_list(
+        "before/after",
+        &[
+            "before: effigy test user-service (ambiguous in multi-suite repos)".to_owned(),
+            "after: effigy test vitest user-service".to_owned(),
+            "after: effigy test nextest user_service --nocapture".to_owned(),
+            "after: effigy test viteest user-service -> suggests `effigy test vitest user-service`"
+                .to_owned(),
         ],
     )?;
     Ok(())
