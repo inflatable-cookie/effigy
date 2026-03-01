@@ -18,7 +18,6 @@ pub(super) struct TaskCacheCheck {
     pub(super) hit: bool,
     pub(super) reason: String,
     pub(super) fingerprint: String,
-    pub(super) outputs_exist: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,7 +110,6 @@ pub(super) fn check_task_cache(
             hit: false,
             reason: "cache disabled".to_owned(),
             fingerprint: String::new(),
-            outputs_exist: false,
         });
     };
 
@@ -138,7 +136,6 @@ pub(super) fn check_task_cache(
         hit,
         reason,
         fingerprint: snapshot.fingerprint,
-        outputs_exist: snapshot.outputs_exist,
     })
 }
 
