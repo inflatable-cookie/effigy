@@ -8,10 +8,17 @@ use super::super::super::super::catalog::discover_catalogs;
 use super::super::super::super::RunnerError;
 use super::super::scripts::command_names;
 
-const CANDIDATE_CACHE_TTL: Duration = Duration::from_secs(2);
+const COMPLETION_CANDIDATES_CACHE_TTL_ENV: &str = "EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS";
+const DEFAULT_CANDIDATE_CACHE_TTL_MS: u64 = 2_000;
+const MIN_CANDIDATE_CACHE_TTL_MS: u64 = 100;
+const MAX_CANDIDATE_CACHE_TTL_MS: u64 = 60_000;
 
 pub(super) fn completion_candidates_cache_ttl_ms() -> u64 {
-    CANDIDATE_CACHE_TTL.as_millis() as u64
+    parse_completion_candidates_cache_ttl_ms(
+        std::env::var(COMPLETION_CANDIDATES_CACHE_TTL_ENV)
+            .ok()
+            .as_deref(),
+    )
 }
 
 #[derive(Clone)]
@@ -121,7 +128,9 @@ fn read_cached_completion_candidates(
     let Some(snapshot) = map.get(repo_root) else {
         return Ok(CacheLookup::MissInitial);
     };
-    if now.duration_since(snapshot.created_at) > CANDIDATE_CACHE_TTL {
+    if now.duration_since(snapshot.created_at)
+        > Duration::from_millis(completion_candidates_cache_ttl_ms())
+    {
         return Ok(CacheLookup::MissTtl);
     }
     if !manifest_stamps_unchanged(&snapshot.manifest_stamps) {
@@ -197,4 +206,46 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(PRIME);
     }
     hash
+}
+
+fn parse_completion_candidates_cache_ttl_ms(raw: Option<&str>) -> u64 {
+    raw.and_then(|value| value.parse::<u64>().ok())
+        .map(|value| value.clamp(MIN_CANDIDATE_CACHE_TTL_MS, MAX_CANDIDATE_CACHE_TTL_MS))
+        .unwrap_or(DEFAULT_CANDIDATE_CACHE_TTL_MS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_completion_candidates_cache_ttl_ms;
+
+    #[test]
+    fn completion_candidates_cache_ttl_defaults_when_unset() {
+        assert_eq!(parse_completion_candidates_cache_ttl_ms(None), 2_000);
+    }
+
+    #[test]
+    fn completion_candidates_cache_ttl_uses_valid_override() {
+        assert_eq!(parse_completion_candidates_cache_ttl_ms(Some("750")), 750);
+    }
+
+    #[test]
+    fn completion_candidates_cache_ttl_clamps_below_min() {
+        assert_eq!(parse_completion_candidates_cache_ttl_ms(Some("5")), 100);
+    }
+
+    #[test]
+    fn completion_candidates_cache_ttl_clamps_above_max() {
+        assert_eq!(
+            parse_completion_candidates_cache_ttl_ms(Some("999999")),
+            60_000
+        );
+    }
+
+    #[test]
+    fn completion_candidates_cache_ttl_ignores_invalid_override() {
+        assert_eq!(
+            parse_completion_candidates_cache_ttl_ms(Some("not-a-number")),
+            2_000
+        );
+    }
 }
