@@ -9,6 +9,8 @@ Primary contract checks in this repo:
 - `./scripts/check-json-contracts.sh`
 - `./scripts/validate-json-contract-selection-artifact.sh`
 - `./scripts/check-selection-artifact-validator-smoke.sh`
+- `./scripts/check-release-gates.sh`
+- `./scripts/check-release-smoke.sh`
 
 Primary JSON mode entrypoint:
 - `effigy --json <command>`
@@ -19,6 +21,7 @@ Before debugging CI, run locally:
 
 ```sh
 cargo qa
+cargo qa-release
 ./scripts/check-json-contracts-ci.sh
 ./scripts/check-json-contracts.sh --fast --print-selected=json
 ./scripts/check-json-contracts.sh --full --print-selected=text
@@ -213,6 +216,35 @@ Use this fast path before pushing changes that touch command behavior, JSON sche
 ```sh
 cargo qa
 ```
+
+## 11) Recipe: Tag-Driven Release Gates
+
+Run consolidated release checks on tags:
+
+```yaml
+name: Release Gates
+
+on:
+  push:
+    tags: [v*]
+  workflow_dispatch:
+
+jobs:
+  release-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/check-release-gates.sh
+```
+
+What `check-release-gates.sh` enforces:
+- `cargo fmt --check`
+- full `cargo test`
+- docs + JSON quality gates (`check-quality-gates.sh --all --ci`)
+- release binary build
+- release smoke checks (`help`, `tasks`, `farmyard/tasks`, `test --plan`, `farmyard/test --plan`)
 
 ## Related Guides
 

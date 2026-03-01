@@ -20,6 +20,8 @@ Owner: `name/team`
 
 ## 2) Quality Gates
 
+- [ ] Consolidated release gate pass:
+  - [ ] `cargo qa-release`
 - [ ] `cargo fmt` clean.
 - [ ] `cargo test` passes.
 - [ ] Local quality gates pass:

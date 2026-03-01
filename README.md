@@ -65,6 +65,7 @@ cargo qa
 cargo qa-docs
 cargo qa-json
 cargo qa-json-ci
+cargo qa-release
 ```
 
 Fallback:
@@ -74,6 +75,7 @@ Fallback:
 ./scripts/check-quality-gates.sh --docs-only
 ./scripts/check-quality-gates.sh --json-only
 ./scripts/check-quality-gates.sh --json-only --ci
+./scripts/check-release-gates.sh
 ```
 
 ## Task Catalog Basics
