@@ -125,7 +125,32 @@ run = "exec ${SHELL:-/bin/zsh} -i"
 
 Use when you need predictable interactive shell startup behavior in TUI shell tabs.
 
-## 10) Multi-Catalog Monorepo Baseline
+## 10) Explicit Task Cache (Phase 1)
+
+```toml
+[tasks.build]
+run = "cargo build --workspace"
+
+[tasks.build.cache]
+enabled = true
+inputs = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
+outputs = ["target/debug/my-app"]
+env = ["RUSTFLAGS", "CARGO_PROFILE_DEV_DEBUG"]
+```
+
+Use this for deterministic local up-to-date checks.
+
+Phase-1 guardrails:
+- cache is opt-in only (`enabled = true`)
+- no implicit input/output discovery
+- cache hit requires matching fingerprint and declared outputs to exist
+
+Inspection and invalidation:
+- `effigy cache inspect build`
+- `effigy cache invalidate build`
+- `effigy cache invalidate --all`
+
+## 11) Multi-Catalog Monorepo Baseline
 
 Root `effigy.toml`:
 

@@ -5,8 +5,8 @@ use crate::TaskInvocation;
 use super::catalog::resolve_catalog_by_prefix;
 use super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector, BUILTIN_TASKS};
 
-mod config;
 mod cache;
+mod config;
 mod doctor;
 mod help;
 mod init;
@@ -61,7 +61,9 @@ pub(super) fn try_run_builtin_task(
         "init" => init::run_builtin_init(task, &runtime_args.passthrough, &target_root),
         "migrate" => migrate::run_builtin_migrate(task, &runtime_args.passthrough, &target_root),
         "unlock" => unlock::run_builtin_unlock(task, &runtime_args.passthrough, &target_root),
-        "cache" => cache::run_builtin_cache(task, runtime_args, &target_root, catalogs, invocation_cwd),
+        "cache" => {
+            cache::run_builtin_cache(task, runtime_args, &target_root, catalogs, invocation_cwd)
+        }
         "test" => test::try_run_builtin_test(selector, task, runtime_args, &target_root, catalogs),
         _ => Ok(None),
     }

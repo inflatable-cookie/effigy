@@ -15,6 +15,7 @@ This matrix is a quick operator reference for Effigy commands, key flags, JSON p
 | `effigy migrate` | Import `package.json` scripts into `[tasks]` | `--from`, `--script`, `--apply`, `--json` | `effigy.migrate.v1` | `019-watch-init-migrate-phase-1.md` |
 | `effigy config` | Render config reference or schema snippets | `--schema`, `--minimal`, `--target`, `--runner`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy unlock` | Clear lock scopes manually | `--all`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
+| `effigy cache` | Inspect and invalidate phase-1 cache metadata | `inspect`, `invalidate`, `--all`, `--json` | `effigy.cache.v1` | `022-manifest-cookbook.md` |
 | `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules | passthrough args, `--json` | `effigy.task.run.v1` | `022-manifest-cookbook.md` |
 
 ## 2) Global JSON Envelope
@@ -47,6 +48,8 @@ effigy init [--dry-run] [--force] [--json]
 effigy migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]
 effigy config [--schema] [--minimal] [--target <section>] [--runner <runner>] [--json]
 effigy unlock [--all | <scope>...] [--json]
+effigy cache inspect [<selector>] [--json]
+effigy cache invalidate [<selector>...] [--all] [--json]
 ```
 
 ## 4) Scope Notes and Constraints
@@ -57,6 +60,8 @@ effigy unlock [--all | <scope>...] [--json]
 - `config --minimal` requires `--schema`.
 - `config --runner` requires `--schema --target test`.
 - `unlock` accepts either explicit scopes or `--all` (not both).
+- `cache` phase-1 works only for tasks with explicit `[tasks.<name>.cache]` opt-in.
+- `cache invalidate` accepts selectors or `--all` (not both).
 
 ## 5) Common Recipes
 

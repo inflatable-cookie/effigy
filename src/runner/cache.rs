@@ -300,7 +300,10 @@ fn collect_env_stamps(keys: &[String]) -> Vec<DeclaredEnvStamp> {
     env
 }
 
-fn resolve_declared_matches(catalog_root: &Path, declaration: &str) -> Result<Vec<PathBuf>, RunnerError> {
+fn resolve_declared_matches(
+    catalog_root: &Path,
+    declaration: &str,
+) -> Result<Vec<PathBuf>, RunnerError> {
     if has_glob_magic(declaration) {
         return resolve_glob_matches(catalog_root, declaration);
     }
@@ -325,7 +328,9 @@ fn resolve_glob_matches(catalog_root: &Path, pattern: &str) -> Result<Vec<PathBu
             }
             let relative = path.strip_prefix(catalog_root).ok()?;
             let relative_rendered = relative.to_string_lossy().replace('\\', "/");
-            matcher.is_match(&relative_rendered).then_some(path.to_path_buf())
+            matcher
+                .is_match(&relative_rendered)
+                .then_some(path.to_path_buf())
         })
         .collect::<Vec<PathBuf>>();
     matches.sort();
@@ -445,7 +450,10 @@ fn load_cache_store(workspace_root: &Path) -> Result<TaskCacheStore, RunnerError
         error,
     })?;
     serde_json::from_str::<TaskCacheStore>(&raw).map_err(|error| {
-        RunnerError::TaskInvocation(format!("failed to parse task cache store {}: {error}", path.display()))
+        RunnerError::TaskInvocation(format!(
+            "failed to parse task cache store {}: {error}",
+            path.display()
+        ))
     })
 }
 

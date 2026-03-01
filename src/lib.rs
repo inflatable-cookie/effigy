@@ -163,40 +163,10 @@ where
     if cmd == "catalogs" {
         return parse_tasks(args);
     }
-    if cmd == "test" {
+    if let Some(topic) = builtin_help_topic(&cmd) {
         let task_args = args.collect::<Vec<String>>();
         if task_args.iter().any(|arg| arg == "--help" || arg == "-h") {
-            return Ok(Command::Help(HelpTopic::Test));
-        }
-        return Ok(Command::Task(TaskInvocation {
-            name: cmd,
-            args: task_args,
-        }));
-    }
-    if cmd == "watch" {
-        let task_args = args.collect::<Vec<String>>();
-        if task_args.iter().any(|arg| arg == "--help" || arg == "-h") {
-            return Ok(Command::Help(HelpTopic::Watch));
-        }
-        return Ok(Command::Task(TaskInvocation {
-            name: cmd,
-            args: task_args,
-        }));
-    }
-    if cmd == "init" {
-        let task_args = args.collect::<Vec<String>>();
-        if task_args.iter().any(|arg| arg == "--help" || arg == "-h") {
-            return Ok(Command::Help(HelpTopic::Init));
-        }
-        return Ok(Command::Task(TaskInvocation {
-            name: cmd,
-            args: task_args,
-        }));
-    }
-    if cmd == "migrate" {
-        let task_args = args.collect::<Vec<String>>();
-        if task_args.iter().any(|arg| arg == "--help" || arg == "-h") {
-            return Ok(Command::Help(HelpTopic::Migrate));
+            return Ok(Command::Help(topic));
         }
         return Ok(Command::Task(TaskInvocation {
             name: cmd,
@@ -208,6 +178,16 @@ where
         name: cmd,
         args: args.collect(),
     }))
+}
+
+fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
+    match cmd {
+        "test" => Some(HelpTopic::Test),
+        "watch" => Some(HelpTopic::Watch),
+        "init" => Some(HelpTopic::Init),
+        "migrate" => Some(HelpTopic::Migrate),
+        _ => None,
+    }
 }
 
 fn parse_tasks<I>(args: I) -> Result<Command, CliParseError>

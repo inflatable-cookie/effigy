@@ -114,6 +114,16 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Run
         "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
     )?;
     renderer.text("")?;
+    renderer.text("[tasks.build.cache]")?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Phase-1 task cache contract: explicit opt-in declarations only.",
+    ))?;
+    renderer.text("enabled = true")?;
+    renderer.text("inputs = [\"src/**/*.rs\", \"Cargo.toml\"]")?;
+    renderer.text("outputs = [\"target/build-artifact\"]")?;
+    renderer.text("env = [\"RUSTFLAGS\", \"NODE_ENV\"]")?;
+    renderer.text("")?;
 
     let out = renderer.into_inner();
     String::from_utf8(out)

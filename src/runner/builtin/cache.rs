@@ -5,7 +5,8 @@ use serde_json::json;
 use crate::TaskInvocation;
 
 use super::super::cache::{
-    cache_entries, cache_entry, cache_entry_key, invalidate_all_cache_entries, invalidate_cache_keys,
+    cache_entries, cache_entry, cache_entry_key, invalidate_all_cache_entries,
+    invalidate_cache_keys,
 };
 use super::super::catalog::select_catalog_and_task;
 use super::super::util::parse_task_selector;
@@ -30,7 +31,11 @@ pub(super) fn run_builtin_cache(
         ));
     }
 
-    if runtime_args.passthrough.iter().any(|arg| arg == "--help" || arg == "-h") {
+    if runtime_args
+        .passthrough
+        .iter()
+        .any(|arg| arg == "--help" || arg == "-h")
+    {
         return Ok(Some(render_cache_help()));
     }
 
@@ -97,7 +102,8 @@ fn run_inspect(
     }
 
     if let Some(selector_raw) = selectors.first() {
-        let (manifest_path, task_name) = resolve_cache_selector(selector_raw, catalogs, invocation_cwd)?;
+        let (manifest_path, task_name) =
+            resolve_cache_selector(selector_raw, catalogs, invocation_cwd)?;
         let entry = cache_entry(target_root, &manifest_path, &task_name)?;
         if output_json {
             let payload = json!({
@@ -120,7 +126,10 @@ fn run_inspect(
             Some(entry) => {
                 lines.push("status: present".to_owned());
                 lines.push(format!("fingerprint: {}", entry.fingerprint));
-                lines.push(format!("updated_at_epoch_ms: {}", entry.updated_at_epoch_ms));
+                lines.push(format!(
+                    "updated_at_epoch_ms: {}",
+                    entry.updated_at_epoch_ms
+                ));
                 lines.push(format!("command: {}", entry.command));
                 lines.push(format!("outputs_exist: {}", entry.outputs_exist));
             }

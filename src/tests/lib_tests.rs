@@ -373,6 +373,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy watch"));
     assert!(rendered.contains("effigy init"));
     assert!(rendered.contains("effigy migrate"));
+    assert!(rendered.contains("effigy cache"));
     assert!(rendered.contains("<catalog>/test fallback"));
     assert!(!rendered.contains("effigy test --plan"));
     assert!(rendered.contains("Use `effigy <built-in-task> --help`"));
