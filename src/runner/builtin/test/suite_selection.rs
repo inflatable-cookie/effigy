@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::super::super::util::normalize_builtin_test_suite;
-use super::BuiltinTestRunnable;
+use super::planning::BuiltinTestRunnable;
 
 #[derive(Debug, Clone)]
 pub(super) struct BuiltinSuiteSelection {

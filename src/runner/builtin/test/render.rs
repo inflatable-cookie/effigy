@@ -8,11 +8,9 @@ use crate::TaskInvocation;
 use serde_json::json;
 
 use super::super::super::util::shell_quote;
+use super::planning::{BuiltinTestCliFlags, BuiltinTestTarget};
 use super::suite_selection::{render_available_suites, BuiltinSuiteSelectionError};
-use super::{
-    execution::should_run_builtin_test_tui, BuiltinTestCliFlags, BuiltinTestExecResult,
-    BuiltinTestTarget, RunnerError,
-};
+use super::{execution::should_run_builtin_test_tui, BuiltinTestExecResult, RunnerError};
 
 pub(super) fn render_suite_selection_failure(
     task: &TaskInvocation,
