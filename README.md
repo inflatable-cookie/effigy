@@ -4,7 +4,7 @@ Effigy is a unified task runner for monorepos and nested workspaces.
 
 It gives you one command surface for:
 - project tasks from `effigy.toml`,
-- built-in workflow commands (`tasks`, `doctor`, `test`, `watch`, `init`, `migrate`, `config`, `unlock`, `cache`),
+- built-in workflow commands (`tasks`, `doctor`, `test`, `watch`, `init`, `migrate`, `config`, `unlock`, `cache`, `completion`),
 - deterministic task resolution across catalogs.
 
 ## Quick Start (2 Minutes)
@@ -58,6 +58,7 @@ effigy --json tasks
 effigy unlock --all
 effigy cache inspect
 effigy cache invalidate build
+effigy completion zsh > ~/.zfunc/_effigy
 ```
 
 ## Contributor Commands

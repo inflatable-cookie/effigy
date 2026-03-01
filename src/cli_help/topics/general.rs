@@ -50,6 +50,10 @@ pub(crate) fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()>
                     .to_owned(),
             ],
             vec![
+                "effigy completion".to_owned(),
+                "Generate shell completion scripts for `bash`, `zsh`, and `fish`".to_owned(),
+            ],
+            vec![
                 "effigy <task>".to_owned(),
                 "Resolve task across discovered catalogs".to_owned(),
             ],

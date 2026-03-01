@@ -6,6 +6,7 @@ use super::catalog::resolve_catalog_by_prefix;
 use super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector, BUILTIN_TASKS};
 
 mod cache;
+mod completion;
 mod config;
 mod doctor;
 mod help;
@@ -64,6 +65,7 @@ pub(super) fn try_run_builtin_task(
         "cache" => {
             cache::run_builtin_cache(task, runtime_args, &target_root, catalogs, invocation_cwd)
         }
+        "completion" => completion::run_builtin_completion(task, runtime_args, &target_root),
         "test" => test::try_run_builtin_test(selector, task, runtime_args, &target_root, catalogs),
         _ => Ok(None),
     }
