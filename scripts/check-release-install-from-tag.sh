@@ -77,5 +77,6 @@ run_step_quiet "installed binary tasks fixture check" "$INSTALLED_BIN" tasks --r
 run_step_quiet "installed binary prefixed builtin tasks check" "$INSTALLED_BIN" farmyard/tasks --repo "$FIXTURE_DIR"
 run_step_quiet "installed binary json help check" "$INSTALLED_BIN" --json help
 run_step_quiet "installed binary completion check" "$INSTALLED_BIN" completion bash
+run_step_quiet "installed binary completion candidates check" "$INSTALLED_BIN" completion candidates --repo "$FIXTURE_DIR"
 
 echo "[ok] release install validation from tag passed"

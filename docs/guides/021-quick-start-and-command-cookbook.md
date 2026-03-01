@@ -91,6 +91,7 @@ Shell completion:
 effigy completion bash > ~/.local/share/bash-completion/completions/effigy
 effigy completion zsh > ~/.zfunc/_effigy
 effigy completion fish > ~/.config/fish/completions/effigy.fish
+effigy completion candidates --prefix farm
 ```
 
 ## 4) JSON Mode (Automation-Safe)

@@ -59,6 +59,7 @@ effigy unlock --all
 effigy cache inspect
 effigy cache invalidate build
 effigy completion zsh > ~/.zfunc/_effigy
+effigy completion candidates --prefix app
 ```
 
 ## Contributor Commands

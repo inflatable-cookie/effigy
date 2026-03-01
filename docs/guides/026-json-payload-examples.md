@@ -350,7 +350,23 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
 }
 ```
 
-## 13) Task Run (`effigy.task.run.v1`)
+## 13) Completion Candidates (`effigy.completion.candidates.v1`)
+
+```json
+{
+  "schema": "effigy.completion.candidates.v1",
+  "schema_version": 1,
+  "ok": true,
+  "repo": "/workspace",
+  "prefix": "farm",
+  "candidates": [
+    "farmyard/api",
+    "farmyard/build"
+  ]
+}
+```
+
+## 14) Task Run (`effigy.task.run.v1`)
 
 ```json
 {
