@@ -1,22 +1,22 @@
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command as ProcessCommand;
 
 use crate::resolver::resolve_target_root;
 use crate::TaskInvocation;
 
+#[path = "execute/cache_hit.rs"]
+mod cache_hit;
 #[path = "execute/json_payload.rs"]
 mod json_payload;
+#[path = "execute/process_run.rs"]
+mod process_run;
 
-use super::cache::{check_task_cache, update_task_cache_entry};
+use super::cache::check_task_cache;
 use super::catalog::select_catalog_and_task;
 use super::deferral::{run_deferred_request, select_deferral, should_attempt_deferral};
 use super::locking::{acquire_scopes, LockScope};
 use super::managed::{render_task_run_spec, resolve_managed_task_plan, run_or_render_managed_task};
-use super::render::render_task_resolution_trace;
-use super::util::{
-    parse_task_runtime_args, parse_task_selector, shell_quote, with_local_node_bin_path,
-};
+use super::util::{parse_task_runtime_args, parse_task_selector, shell_quote};
 use super::{
     discover_catalogs, try_run_builtin_task, LoadedCatalog, ManifestManagedRun, ManifestTask,
     RunnerError,
@@ -173,105 +173,31 @@ pub(super) fn run_manifest_task_with_cwd(
         &command,
     )?;
     if cache_check.enabled && cache_check.hit {
-        if output_json {
-            return json_payload::render_task_cache_hit_json(
-                &selector.task_name,
-                &selector,
-                &repo_for_task,
-                &command,
-                &cache_check.reason,
-                &cache_check.fingerprint,
-            );
-        }
-        if runtime_args.verbose_root {
-            let trace = render_task_resolution_trace(
-                &resolved,
-                &selector,
-                &selection,
-                &repo_for_task,
-                &command,
-            );
-            return Ok(format!(
-                "{trace}\ncache: hit ({})\nfingerprint: {}",
-                cache_check.reason, cache_check.fingerprint
-            ));
-        }
-        return Ok(format!(
-            "cache hit: skipped `{}` ({})",
-            selector.task_name, cache_check.reason
-        ));
+        let cache_hit_context = cache_hit::CacheHitContext {
+            resolved: &resolved,
+            selector: &selector,
+            selection: &selection,
+            repo_for_task: &repo_for_task,
+            command: &command,
+            reason: &cache_check.reason,
+            fingerprint: &cache_check.fingerprint,
+        };
+        return cache_hit::render_cache_hit_output(
+            output_json,
+            runtime_args.verbose_root,
+            &cache_hit_context,
+        );
     }
 
-    let mut process = ProcessCommand::new("sh");
-    process.arg("-lc").arg(&command).current_dir(&repo_for_task);
-    with_local_node_bin_path(&mut process, &repo_for_task);
-    if output_json {
-        let output = process
-            .output()
-            .map_err(|error| RunnerError::TaskCommandLaunch {
-                command: command.clone(),
-                error,
-            })?;
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let rendered = json_payload::render_task_command_json(
-            &selector.task_name,
-            &selector,
-            &repo_for_task,
-            &command,
-            output.status.code(),
-            &stdout,
-            &stderr,
-        )?;
-        if output.status.success() {
-            update_task_cache_entry(
-                &resolved.resolved_root,
-                &selection.catalog.catalog_root,
-                &selection.catalog.manifest_path,
-                &selector.task_name,
-                selection.task,
-                &command,
-            )?;
-            return Ok(rendered);
-        }
-        return Err(RunnerError::CommandJsonFailure { rendered });
-    }
-
-    let status = process
-        .status()
-        .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: command.clone(),
-            error,
-        })?;
-
-    if status.success() {
-        update_task_cache_entry(
-            &resolved.resolved_root,
-            &selection.catalog.catalog_root,
-            &selection.catalog.manifest_path,
-            &selector.task_name,
-            selection.task,
-            &command,
-        )?;
-        if runtime_args.verbose_root {
-            let trace = render_task_resolution_trace(
-                &resolved,
-                &selector,
-                &selection,
-                &repo_for_task,
-                &command,
-            );
-            return Ok(trace);
-        }
-        return Ok(String::new());
-    }
-
-    Err(RunnerError::TaskCommandFailure {
-        command,
-        code: status.code(),
-        stdout: String::new(),
-        stderr: String::new(),
-    })
+    let process_run_context = process_run::ProcessRunContext {
+        resolved: &resolved,
+        selector: &selector,
+        selection: &selection,
+        resolved_root: &resolved.resolved_root,
+        repo_for_task: &repo_for_task,
+        command: &command,
+    };
+    process_run::run_task_process(output_json, runtime_args.verbose_root, &process_run_context)
 }
 
 fn strip_task_json_flag(args: &[String]) -> (Vec<String>, bool) {

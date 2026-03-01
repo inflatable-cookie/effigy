@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::fs::{self, FileType};
 use std::path::{Component, Path, PathBuf};
 
 use super::{
@@ -90,12 +90,7 @@ pub(super) fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathB
                     error,
                 })?;
 
-            let is_dir = file_type.is_dir()
-                || (file_type.is_symlink()
-                    && fs::metadata(&path)
-                        .map(|meta| meta.is_dir())
-                        .unwrap_or(false));
-            if is_dir {
+            if file_type_matches(&file_type, &path, EntryKind::Directory) {
                 if should_skip_dir(&path) {
                     continue;
                 }
@@ -103,12 +98,9 @@ pub(super) fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathB
                 continue;
             }
 
-            let is_file = file_type.is_file()
-                || (file_type.is_symlink()
-                    && fs::metadata(&path)
-                        .map(|meta| meta.is_file())
-                        .unwrap_or(false));
-            if is_file && path.file_name().and_then(|n| n.to_str()) == Some(TASK_MANIFEST_FILE) {
+            if file_type_matches(&file_type, &path, EntryKind::File)
+                && path.file_name().and_then(|n| n.to_str()) == Some(TASK_MANIFEST_FILE)
+            {
                 let catalog_root = path.parent().map(Path::to_path_buf).unwrap_or_default();
                 manifests_by_catalog.insert(catalog_root, path);
                 continue;
@@ -149,25 +141,20 @@ pub(super) fn select_catalog_and_task<'a>(
             });
         };
 
-        let Some(task) = catalog.manifest.tasks.get(&selector.task_name) else {
-            return Err(RunnerError::TaskNotFound {
-                name: selector.task_name.clone(),
-                path: catalog.manifest_path.clone(),
-            });
-        };
-        return Ok(TaskSelection {
+        let evidence = vec![if catalog.alias == *prefix {
+            format!("selected catalog via explicit prefix `{prefix}`")
+        } else {
+            format!(
+                "selected catalog via relative prefix `{prefix}` -> `{}`",
+                catalog.alias
+            )
+        }];
+        return build_task_selection(
+            selector,
             catalog,
-            task,
-            mode: CatalogSelectionMode::ExplicitPrefix,
-            evidence: vec![if catalog.alias == *prefix {
-                format!("selected catalog via explicit prefix `{prefix}`")
-            } else {
-                format!(
-                    "selected catalog via relative prefix `{prefix}` -> `{}`",
-                    catalog.alias
-                )
-            }],
-        });
+            CatalogSelectionMode::ExplicitPrefix,
+            evidence,
+        );
     }
 
     let matches = catalogs
@@ -206,17 +193,12 @@ pub(super) fn select_catalog_and_task<'a>(
             selected.alias,
             cwd.display()
         )];
-        let task = selected
-            .manifest
-            .tasks
-            .get(&selector.task_name)
-            .expect("task existence already validated");
-        return Ok(TaskSelection {
-            catalog: selected,
-            task,
-            mode: CatalogSelectionMode::CwdNearest,
+        return build_task_selection(
+            selector,
+            selected,
+            CatalogSelectionMode::CwdNearest,
             evidence,
-        });
+        );
     }
 
     let min_depth = matches.iter().map(|c| c.depth).min().unwrap_or_default();
@@ -235,17 +217,12 @@ pub(super) fn select_catalog_and_task<'a>(
         "selected shallowest catalog `{}` by depth {} from workspace root",
         selected.alias, selected.depth
     )];
-    let task = selected
-        .manifest
-        .tasks
-        .get(&selector.task_name)
-        .expect("task existence already validated");
-    Ok(TaskSelection {
-        catalog: selected,
-        task,
-        mode: CatalogSelectionMode::RootShallowest,
+    build_task_selection(
+        selector,
+        selected,
+        CatalogSelectionMode::RootShallowest,
         evidence,
-    })
+    )
 }
 
 pub(super) fn format_catalog(catalog: &LoadedCatalog) -> String {
@@ -321,4 +298,48 @@ fn normalize_path(path: PathBuf) -> PathBuf {
         }
     }
     out
+}
+
+fn build_task_selection<'a>(
+    selector: &TaskSelector,
+    catalog: &'a LoadedCatalog,
+    mode: CatalogSelectionMode,
+    evidence: Vec<String>,
+) -> Result<TaskSelection<'a>, RunnerError> {
+    let Some(task) = catalog.manifest.tasks.get(&selector.task_name) else {
+        return Err(RunnerError::TaskNotFound {
+            name: selector.task_name.clone(),
+            path: catalog.manifest_path.clone(),
+        });
+    };
+    Ok(TaskSelection {
+        catalog,
+        task,
+        mode,
+        evidence,
+    })
+}
+
+#[derive(Clone, Copy)]
+enum EntryKind {
+    Directory,
+    File,
+}
+
+fn file_type_matches(file_type: &FileType, path: &Path, want: EntryKind) -> bool {
+    if matches!(want, EntryKind::Directory) && file_type.is_dir() {
+        return true;
+    }
+    if matches!(want, EntryKind::File) && file_type.is_file() {
+        return true;
+    }
+    if !file_type.is_symlink() {
+        return false;
+    }
+    fs::metadata(path)
+        .map(|meta| match want {
+            EntryKind::Directory => meta.is_dir(),
+            EntryKind::File => meta.is_file(),
+        })
+        .unwrap_or(false)
 }
