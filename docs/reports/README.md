@@ -31,6 +31,7 @@ When a feature spans multiple same-day checkpoints, add a consolidation report t
 ## Recent Validation Reports
 
 - [`2026-03-01-release-gates-automation-checkpoint.md`](./2026-03-01-release-gates-automation-checkpoint.md)
+- [`2026-03-01-release-tag-install-validation-checkpoint.md`](./2026-03-01-release-tag-install-validation-checkpoint.md)
 
 ## Report template
 

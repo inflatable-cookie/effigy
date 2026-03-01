@@ -76,6 +76,7 @@ Fallback:
 ./scripts/check-quality-gates.sh --json-only
 ./scripts/check-quality-gates.sh --json-only --ci
 ./scripts/check-release-gates.sh
+./scripts/check-release-install-from-tag.sh --tag v0.__.__
 ```
 
 ## Task Catalog Basics

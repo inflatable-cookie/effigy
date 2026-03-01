@@ -11,6 +11,7 @@ Primary contract checks in this repo:
 - `./scripts/check-selection-artifact-validator-smoke.sh`
 - `./scripts/check-release-gates.sh`
 - `./scripts/check-release-smoke.sh`
+- `./scripts/check-release-install-from-tag.sh`
 
 Primary JSON mode entrypoint:
 - `effigy --json <command>`
@@ -22,6 +23,7 @@ Before debugging CI, run locally:
 ```sh
 cargo qa
 cargo qa-release
+./scripts/check-release-install-from-tag.sh --tag v0.__.__
 ./scripts/check-json-contracts-ci.sh
 ./scripts/check-json-contracts.sh --fast --print-selected=json
 ./scripts/check-json-contracts.sh --full --print-selected=text
@@ -245,6 +247,7 @@ What `check-release-gates.sh` enforces:
 - docs + JSON quality gates (`check-quality-gates.sh --all --ci`)
 - release binary build
 - release smoke checks (`help`, `tasks`, `farmyard/tasks`, `test --plan`, `farmyard/test --plan`)
+- install validation from the pushed tag (`check-release-install-from-tag.sh`)
 
 ## Related Guides
 

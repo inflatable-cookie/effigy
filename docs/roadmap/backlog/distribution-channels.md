@@ -53,6 +53,8 @@ Effigy is still evolving, so distribution planning should be staged and reversib
 - [x] Finalize crate metadata and publish readiness checks.
 - [x] Add tag-driven release checklist for crates publication.
 - [ ] Validate `cargo install` flows from tag and from crates.io.
+  - [x] tag-based install validation automated in release gates
+  - [ ] crates.io install validation (pending first publish cycle)
 
 ### Phase C - Homebrew Path
 - [ ] Create and validate tap repository/formula workflow.
