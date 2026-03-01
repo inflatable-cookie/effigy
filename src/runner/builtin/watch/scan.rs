@@ -14,7 +14,7 @@ pub(super) struct WatchMatcher {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct FileStamp {
+pub(super) struct FileStamp {
     modified: Option<SystemTime>,
     size: u64,
 }
