@@ -551,12 +551,11 @@ fn builtin_completion_candidates_json_contract_expires_cache_after_ttl() {
 }
 
 #[test]
-fn builtin_completion_candidates_json_contract_invalidates_cache_on_manifest_mtime_change() {
+fn builtin_completion_candidates_json_contract_invalidates_cache_on_manifest_change_with_preserved_mtime(
+) {
     let root = temp_workspace("completion-candidates-mtime-invalidation");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.build]\nrun = \"printf root\"\n",
-    );
+    let manifest_path = root.join("effigy.toml");
+    write_manifest(&manifest_path, "[tasks.build]\nrun = \"printf root\"\n");
 
     let first = run_manifest_task_with_cwd(
         &TaskInvocation {
@@ -572,11 +571,21 @@ fn builtin_completion_candidates_json_contract_invalidates_cache_on_manifest_mti
     assert!(first_parsed["cache_age_ms"].is_null());
     assert!(first_parsed["cache_ttl_ms"].is_null());
 
-    thread::sleep(Duration::from_millis(1100));
+    let original_modified = fs::metadata(&manifest_path)
+        .expect("manifest metadata")
+        .modified()
+        .expect("manifest modified");
     write_manifest(
-        &root.join("effigy.toml"),
+        &manifest_path,
         "[tasks.build]\nrun = \"printf root\"\n[tasks.deploy]\nrun = \"printf deploy\"\n",
     );
+    let manifest_file = fs::OpenOptions::new()
+        .write(true)
+        .open(&manifest_path)
+        .expect("open manifest for timestamp reset");
+    manifest_file
+        .set_times(fs::FileTimes::new().set_modified(original_modified))
+        .expect("restore manifest modified time");
 
     let second = run_manifest_task_with_cwd(
         &TaskInvocation {

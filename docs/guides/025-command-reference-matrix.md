@@ -69,6 +69,7 @@ effigy completion candidates [--repo <PATH>] [--prefix <value>] [--json]
 - `completion candidates` includes built-ins plus discovered `<task>` and `<catalog>/<task>` selectors.
 - `completion candidates` JSON payload reports `cache_hit`, `cache_state`, `cache_age_ms` (on hit), `cache_ttl_ms` (on hit), and `manifest_count` for memoized candidate scans.
 - `cache_state` values: `miss_initial`, `hit`, `miss_ttl`, `miss_manifest_change`.
+- `miss_manifest_change` is triggered from manifest stamp drift (mtime/size/content digest), so cache invalidation is not dependent on timestamp granularity alone.
 
 ## 5) Common Recipes
 
