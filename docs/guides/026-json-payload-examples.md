@@ -325,7 +325,32 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
 }
 ```
 
-## 12) Task Run (`effigy.task.run.v1`)
+## 12) Completion (`effigy.completion.v1`)
+
+```json
+{
+  "schema": "effigy.completion.v1",
+  "schema_version": 1,
+  "ok": true,
+  "shell": "bash",
+  "script": "# bash completion for effigy\n...",
+  "commands": [
+    "help",
+    "tasks",
+    "doctor",
+    "test",
+    "watch",
+    "init",
+    "migrate",
+    "config",
+    "unlock",
+    "cache",
+    "completion"
+  ]
+}
+```
+
+## 13) Task Run (`effigy.task.run.v1`)
 
 ```json
 {

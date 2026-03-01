@@ -85,6 +85,14 @@ effigy unlock task:watch:test
 effigy unlock --all
 ```
 
+Shell completion:
+
+```sh
+effigy completion bash > ~/.local/share/bash-completion/completions/effigy
+effigy completion zsh > ~/.zfunc/_effigy
+effigy completion fish > ~/.config/fish/completions/effigy.fish
+```
+
 ## 4) JSON Mode (Automation-Safe)
 
 Canonical JSON mode:

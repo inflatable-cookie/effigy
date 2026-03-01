@@ -829,6 +829,58 @@ fn run_manifest_task_builtin_migrate_help_json_uses_help_schema() {
 }
 
 #[test]
+fn run_manifest_task_builtin_completion_help_renders_topic() {
+    let root = temp_workspace("builtin-completion-help");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["--help".to_owned()],
+        },
+        root,
+    )
+    .expect("run completion --help");
+    assert!(out.contains("completion Help"));
+    assert!(out.contains("effigy completion <bash|zsh|fish> [--json]"));
+}
+
+#[test]
+fn run_manifest_task_builtin_completion_bash_outputs_script() {
+    let root = temp_workspace("builtin-completion-bash");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["bash".to_owned()],
+        },
+        root,
+    )
+    .expect("run completion bash");
+    assert!(out.contains("complete -F _effigy effigy"));
+    assert!(out.contains("cache completion"));
+}
+
+#[test]
+fn run_manifest_task_builtin_completion_json_uses_completion_schema() {
+    let root = temp_workspace("builtin-completion-json");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["zsh".to_owned(), "--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run completion zsh --json");
+    assert!(out.contains("\"schema\": \"effigy.completion.v1\""));
+    assert!(out.contains("\"shell\": \"zsh\""));
+    assert!(out.contains("\"commands\""));
+}
+
+#[test]
 fn run_manifest_task_verbose_root_includes_resolution_trace() {
     let _guard = test_lock().lock().expect("lock");
     let _env = EnvGuard::set_many(&[("EFFIGY_COLOR", None), ("NO_COLOR", None)]);

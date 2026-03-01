@@ -405,6 +405,28 @@ fn builtin_config_json_contract_has_versioned_shape() {
 }
 
 #[test]
+fn builtin_completion_json_contract_has_versioned_shape() {
+    let root = temp_workspace("completion-json-contract");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["bash".to_owned(), "--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run completion --json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.completion.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["shell"], "bash");
+    assert!(parsed["script"].is_string());
+    assert!(parsed["commands"].is_array());
+}
+
+#[test]
 fn builtin_init_json_contract_has_versioned_shape() {
     let root = temp_workspace("init-json-contract");
     let out = run_manifest_task_with_cwd(

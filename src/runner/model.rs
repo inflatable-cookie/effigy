@@ -71,7 +71,7 @@ pub(super) const IMPLICIT_ROOT_DEFER_TEMPLATE: &str =
     "composer global exec effigy -- {request} {args}";
 pub(super) const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize = 3;
 pub(super) const DEFAULT_MANAGED_SHELL_RUN: &str = "exec ${SHELL:-/bin/zsh} -i";
-pub(super) const BUILTIN_TASKS: [(&str, &str); 10] = [
+pub(super) const BUILTIN_TASKS: [(&str, &str); 11] = [
     ("help", "Show general help (same as --help)"),
     (
         "config",
@@ -105,5 +105,9 @@ pub(super) const BUILTIN_TASKS: [(&str, &str); 10] = [
     (
         "cache",
         "Inspect and invalidate phase-1 task cache metadata (`inspect`, `invalidate`)",
+    ),
+    (
+        "completion",
+        "Generate shell completion scripts (`bash`, `zsh`, `fish`)",
     ),
 ];

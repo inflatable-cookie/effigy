@@ -16,6 +16,7 @@ This matrix is a quick operator reference for Effigy commands, key flags, JSON p
 | `effigy config` | Render config reference or schema snippets | `--schema`, `--minimal`, `--target`, `--runner`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy unlock` | Clear lock scopes manually | `--all`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
 | `effigy cache` | Inspect and invalidate phase-1 cache metadata | `inspect`, `invalidate`, `--all`, `--json` | `effigy.cache.v1` | `022-manifest-cookbook.md` |
+| `effigy completion` | Generate shell completion scripts | `bash\|zsh\|fish`, `--json` | `effigy.completion.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules | passthrough args, `--json` | `effigy.task.run.v1` | `022-manifest-cookbook.md` |
 
 ## 2) Global JSON Envelope
@@ -50,6 +51,7 @@ effigy config [--schema] [--minimal] [--target <section>] [--runner <runner>] [-
 effigy unlock [--all | <scope>...] [--json]
 effigy cache inspect [<selector>] [--json]
 effigy cache invalidate [<selector>...] [--all] [--json]
+effigy completion <bash|zsh|fish> [--json]
 ```
 
 ## 4) Scope Notes and Constraints
@@ -62,6 +64,7 @@ effigy cache invalidate [<selector>...] [--all] [--json]
 - `unlock` accepts either explicit scopes or `--all` (not both).
 - `cache` phase-1 works only for tasks with explicit `[tasks.<name>.cache]` opt-in.
 - `cache invalidate` accepts selectors or `--all` (not both).
+- `completion` command list is sourced from the built-in command index (`BUILTIN_TASKS`) to reduce drift with command discovery output.
 
 ## 5) Common Recipes
 
