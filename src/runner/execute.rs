@@ -7,6 +7,7 @@ use serde_json::json;
 use crate::resolver::resolve_target_root;
 use crate::TaskInvocation;
 
+use super::cache::{check_task_cache, update_task_cache_entry};
 use super::catalog::select_catalog_and_task;
 use super::deferral::{run_deferred_request, select_deferral, should_attempt_deferral};
 use super::locking::{acquire_scopes, LockScope};
@@ -162,6 +163,44 @@ pub(super) fn run_manifest_task_with_cwd(
         ],
     )?;
 
+    let cache_check = check_task_cache(
+        &resolved.resolved_root,
+        &selection.catalog.catalog_root,
+        &selection.catalog.manifest_path,
+        &selector.task_name,
+        selection.task,
+        &command,
+    )?;
+    if cache_check.enabled && cache_check.hit {
+        if output_json {
+            return render_task_cache_hit_json(
+                &selector.task_name,
+                &selector,
+                &repo_for_task,
+                &command,
+                &cache_check.reason,
+                &cache_check.fingerprint,
+            );
+        }
+        if runtime_args.verbose_root {
+            let trace = render_task_resolution_trace(
+                &resolved,
+                &selector,
+                &selection,
+                &repo_for_task,
+                &command,
+            );
+            return Ok(format!(
+                "{trace}\ncache: hit ({})\nfingerprint: {}",
+                cache_check.reason, cache_check.fingerprint
+            ));
+        }
+        return Ok(format!(
+            "cache hit: skipped `{}` ({})",
+            selector.task_name, cache_check.reason
+        ));
+    }
+
     let mut process = ProcessCommand::new("sh");
     process.arg("-lc").arg(&command).current_dir(&repo_for_task);
     with_local_node_bin_path(&mut process, &repo_for_task);
@@ -184,6 +223,14 @@ pub(super) fn run_manifest_task_with_cwd(
             &stderr,
         )?;
         if output.status.success() {
+            update_task_cache_entry(
+                &resolved.resolved_root,
+                &selection.catalog.catalog_root,
+                &selection.catalog.manifest_path,
+                &selector.task_name,
+                selection.task,
+                &command,
+            )?;
             return Ok(rendered);
         }
         return Err(RunnerError::CommandJsonFailure { rendered });
@@ -197,6 +244,14 @@ pub(super) fn run_manifest_task_with_cwd(
         })?;
 
     if status.success() {
+        update_task_cache_entry(
+            &resolved.resolved_root,
+            &selection.catalog.catalog_root,
+            &selection.catalog.manifest_path,
+            &selector.task_name,
+            selection.task,
+            &command,
+        )?;
         if runtime_args.verbose_root {
             let trace = render_task_resolution_trace(
                 &resolved,
@@ -216,6 +271,41 @@ pub(super) fn run_manifest_task_with_cwd(
         stdout: String::new(),
         stderr: String::new(),
     })
+}
+
+fn render_task_cache_hit_json(
+    task_name: &str,
+    selector: &super::TaskSelector,
+    cwd: &std::path::Path,
+    command: &str,
+    reason: &str,
+    fingerprint: &str,
+) -> Result<String, RunnerError> {
+    let selector_rendered = selector
+        .prefix
+        .as_ref()
+        .map(|prefix| format!("{prefix}/{}", selector.task_name))
+        .unwrap_or_else(|| selector.task_name.clone());
+    let payload = json!({
+        "schema": "effigy.task.run.v1",
+        "schema_version": 1,
+        "ok": true,
+        "task": task_name,
+        "selector": selector_rendered,
+        "command": command,
+        "cwd": cwd.display().to_string(),
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "cached": true,
+        "cache": {
+            "status": "hit",
+            "reason": reason,
+            "fingerprint": fingerprint,
+        },
+    });
+    serde_json::to_string_pretty(&payload)
+        .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
 }
 
 fn strip_task_json_flag(args: &[String]) -> (Vec<String>, bool) {

@@ -199,6 +199,8 @@ pub(super) struct ManifestTask {
     pub(super) concurrent: Vec<ManifestManagedConcurrentEntry>,
     #[serde(default)]
     pub(super) profiles: IndexMap<String, ManifestManagedProfile>,
+    #[serde(default)]
+    pub(super) cache: Option<ManifestTaskCache>,
 }
 
 #[derive(Debug)]
@@ -418,6 +420,19 @@ impl<'de> serde::Deserialize<'de> for ManifestManagedRunStep {
 pub(super) struct ManifestManagedProfile {
     #[serde(default)]
     pub(super) concurrent: Vec<ManifestManagedConcurrentEntry>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ManifestTaskCache {
+    #[serde(default)]
+    pub(super) enabled: bool,
+    #[serde(default)]
+    pub(super) inputs: Vec<String>,
+    #[serde(default)]
+    pub(super) outputs: Vec<String>,
+    #[serde(default)]
+    pub(super) env: Vec<String>,
 }
 
 impl ManifestManagedProfile {

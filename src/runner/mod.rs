@@ -9,6 +9,7 @@ use crate::TaskInvocation;
 use crate::{Command, DoctorArgs, TasksArgs};
 
 mod builtin;
+mod cache;
 mod catalog;
 mod deferral;
 mod doctor;
@@ -29,7 +30,7 @@ use catalog::discover_catalogs;
 use execute::run_manifest_task;
 use manifest::{
     ManifestJsPackageManager, ManifestManagedConcurrentEntry, ManifestManagedRun,
-    ManifestManagedRunStep, ManifestTask, TaskManifest,
+    ManifestManagedRunStep, ManifestTask, ManifestTaskCache, TaskManifest,
 };
 use model::{
     CatalogSelectionMode, DeferredCommand, LoadedCatalog, ManagedProcessSpec, ManagedTaskPlan,
@@ -270,3 +271,7 @@ mod json_contract_tests;
 #[cfg(test)]
 #[path = "../tests/task_ref_parser_tests.rs"]
 mod task_ref_parser_tests;
+
+#[cfg(test)]
+#[path = "../tests/cache_tests.rs"]
+mod cache_tests;
