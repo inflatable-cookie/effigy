@@ -10,7 +10,10 @@ use super::help::render_completion_candidates_help;
 
 mod cache;
 
-use cache::{load_completion_candidates_with_cache, CompletionCandidatesCacheState};
+use cache::{
+    completion_candidates_cache_ttl_ms, load_completion_candidates_with_cache,
+    CompletionCandidatesCacheState,
+};
 
 struct CompletionCandidatesResult {
     candidates: Vec<String>,
@@ -18,6 +21,7 @@ struct CompletionCandidatesResult {
     cache_state: &'static str,
     manifest_count: usize,
     cache_age_ms: Option<u128>,
+    cache_ttl_ms: Option<u64>,
 }
 
 pub(super) fn run_completion_candidates(
@@ -102,6 +106,7 @@ pub(super) fn run_completion_candidates(
             "cache_state": completion_candidates.cache_state,
             "manifest_count": completion_candidates.manifest_count,
             "cache_age_ms": completion_candidates.cache_age_ms,
+            "cache_ttl_ms": completion_candidates.cache_ttl_ms,
         });
         return serde_json::to_string_pretty(&payload)
             .map(Some)
@@ -133,5 +138,7 @@ fn collect_completion_candidates(
         cache_state: cache_state.as_str(),
         manifest_count,
         cache_age_ms,
+        cache_ttl_ms: (cache_state == CompletionCandidatesCacheState::Hit)
+            .then_some(completion_candidates_cache_ttl_ms()),
     })
 }
