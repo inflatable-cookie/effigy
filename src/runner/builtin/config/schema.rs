@@ -66,6 +66,13 @@ pub(super) fn render_builtin_config_schema() -> String {
         "# Example DAG-style run sequence with explicit step ids and dependencies.",
         "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
         "",
+        "[tasks.build.cache]",
+        "# Phase-1 cache contract: explicit opt-in only, no implicit discovery.",
+        "enabled = true",
+        "inputs = [\"src/**/*.rs\", \"Cargo.toml\"]",
+        "outputs = [\"target/build-artifact\"]",
+        "env = [\"RUSTFLAGS\", \"NODE_ENV\"]",
+        "",
     ]
     .join("\n")
 }
@@ -178,6 +185,13 @@ pub(super) fn render_builtin_config_schema_target(target: &str, minimal: bool) -
                 "[tasks.validate]",
                 "# Example DAG-style run sequence with explicit step ids and dependencies.",
                 "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
+                "",
+                "[tasks.build.cache]",
+                "# Phase-1 cache contract: explicit opt-in only, no implicit discovery.",
+                "enabled = true",
+                "inputs = [\"src/**/*.rs\", \"Cargo.toml\"]",
+                "outputs = [\"target/build-artifact\"]",
+                "env = [\"RUSTFLAGS\", \"NODE_ENV\"]",
                 "",
             ]
             .join("\n"),
