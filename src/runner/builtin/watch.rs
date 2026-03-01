@@ -96,7 +96,7 @@ pub(super) fn run_builtin_watch(
     let matcher = build_matcher(&request.include, &request.exclude)?;
     let max_runs = request.max_runs;
     let mut runs = 0usize;
-    run_manifest_task_with_cwd(&target, target_root.to_path_buf())?;
+    run_watch_target(&target, target_root, request.output_json)?;
     runs += 1;
     if Some(runs) == max_runs {
         return render_watch_result_json(request.output_json, runs);
@@ -105,12 +105,25 @@ pub(super) fn run_builtin_watch(
     let mut snapshot = collect_snapshot(target_root, &matcher)?;
     loop {
         let _changes = wait_for_changes(target_root, &matcher, &mut snapshot, request.debounce_ms)?;
-        run_manifest_task_with_cwd(&target, target_root.to_path_buf())?;
+        run_watch_target(&target, target_root, request.output_json)?;
         runs += 1;
         if Some(runs) == max_runs {
             return render_watch_result_json(request.output_json, runs);
         }
     }
+}
+
+fn run_watch_target(
+    target: &TaskInvocation,
+    target_root: &Path,
+    output_json: bool,
+) -> Result<(), RunnerError> {
+    let mut invocation = target.clone();
+    if output_json {
+        invocation.args.push("--json".to_owned());
+    }
+    let _ = run_manifest_task_with_cwd(&invocation, target_root.to_path_buf())?;
+    Ok(())
 }
 
 fn parse_watch_request(

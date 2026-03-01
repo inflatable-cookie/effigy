@@ -45,6 +45,7 @@ If you are extending behavior:
 - [`guides/025-command-reference-matrix.md`](./guides/025-command-reference-matrix.md)
 - [`guides/026-json-payload-examples.md`](./guides/026-json-payload-examples.md)
 - [`guides/027-copy-paste-snippets.md`](./guides/027-copy-paste-snippets.md)
+- [`guides/028-migration-quick-paths.md`](./guides/028-migration-quick-paths.md)
 - [`guides/028-docs-flow-map.md`](./guides/028-docs-flow-map.md)
 
 ## JSON Contract Notes

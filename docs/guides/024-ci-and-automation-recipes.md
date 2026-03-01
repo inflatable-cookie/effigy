@@ -21,6 +21,7 @@ Before debugging CI, run locally:
 ./scripts/check-json-contracts-ci.sh
 ./scripts/check-json-contracts.sh --fast --print-selected=json
 ./scripts/check-json-contracts.sh --full --print-selected=text
+./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)
 ```
 
 PR-style changed-only simulation:
