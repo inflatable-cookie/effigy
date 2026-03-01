@@ -1,9 +1,7 @@
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-#[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -15,6 +13,14 @@ use std::time::{Duration, Instant};
 use nix::sys::signal::{kill, Signal};
 #[cfg(unix)]
 use nix::unistd::{setpgid, Pid};
+
+#[path = "process_manager/diagnostics.rs"]
+mod diagnostics;
+#[path = "process_manager/streams.rs"]
+mod streams;
+
+use diagnostics::{collect_exit_diagnostics, format_exit_diagnostic};
+use streams::spawn_stream_thread;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessSpec {
@@ -268,41 +274,7 @@ impl ProcessSupervisor {
 
     pub fn exit_diagnostics(&self) -> Vec<(String, String)> {
         let process_map = self.processes.lock().expect("process map lock");
-        let mut diagnostics = self
-            .specs
-            .keys()
-            .map(|name| {
-                let diagnostic = if let Some(child) = process_map.get(name) {
-                    match child.lock().expect("child lock").try_wait() {
-                        Ok(Some(status)) => format_exit_diagnostic(status),
-                        Ok(None) => "running".to_owned(),
-                        Err(err) => format!("wait-error={err}"),
-                    }
-                } else {
-                    "not-tracked".to_owned()
-                };
-                (name.clone(), diagnostic)
-            })
-            .collect::<Vec<(String, String)>>();
-        diagnostics.sort_by(|a, b| a.0.cmp(&b.0));
-        diagnostics
-    }
-}
-
-fn format_exit_diagnostic(status: std::process::ExitStatus) -> String {
-    #[cfg(unix)]
-    {
-        if let Some(code) = status.code() {
-            return format!("exit={code}");
-        }
-        if let Some(signal) = status.signal() {
-            return format!("signal={signal}");
-        }
-        "exit=unknown".to_owned()
-    }
-    #[cfg(not(unix))]
-    {
-        format!("exit={}", status.code().unwrap_or(-1))
+        collect_exit_diagnostics(&self.specs, &process_map)
     }
 }
 
@@ -395,77 +367,6 @@ fn attach_child_stream_threads(
             }
         });
     }
-}
-
-fn spawn_stream_thread(
-    process: String,
-    mut reader: impl Read + Send + 'static,
-    line_kind: ProcessEventKind,
-    chunk_kind: ProcessEventKind,
-    tx: Sender<ProcessEvent>,
-) {
-    thread::spawn(move || {
-        let mut buf = [0u8; 4096];
-        let mut line_buffer = Vec::<u8>::new();
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(read) => {
-                    let chunk = buf[..read].to_vec();
-                    let _ = tx.send(ProcessEvent {
-                        process: process.clone(),
-                        kind: chunk_kind.clone(),
-                        payload: String::from_utf8_lossy(&chunk).into_owned(),
-                        chunk: Some(chunk.clone()),
-                    });
-                    line_buffer.extend_from_slice(&chunk);
-                    emit_complete_lines(&tx, &process, &line_kind, &mut line_buffer);
-                }
-                Err(_) => break,
-            }
-        }
-        if !line_buffer.is_empty() {
-            let line = decode_line(&line_buffer);
-            let _ = tx.send(ProcessEvent {
-                process,
-                kind: line_kind,
-                payload: line,
-                chunk: None,
-            });
-        }
-    });
-}
-
-fn emit_complete_lines(
-    tx: &Sender<ProcessEvent>,
-    process: &str,
-    line_kind: &ProcessEventKind,
-    line_buffer: &mut Vec<u8>,
-) {
-    loop {
-        let Some(index) = line_buffer.iter().position(|byte| *byte == b'\n') else {
-            break;
-        };
-        let line = line_buffer.drain(..=index).collect::<Vec<u8>>();
-        let text = decode_line(&line);
-        let _ = tx.send(ProcessEvent {
-            process: process.to_owned(),
-            kind: line_kind.clone(),
-            payload: text,
-            chunk: None,
-        });
-    }
-}
-
-fn decode_line(line: &[u8]) -> String {
-    let mut slice = line;
-    if slice.ends_with(b"\n") {
-        slice = &slice[..slice.len() - 1];
-    }
-    if slice.ends_with(b"\r") {
-        slice = &slice[..slice.len() - 1];
-    }
-    String::from_utf8_lossy(slice).into_owned()
 }
 
 fn terminate_child_graceful(child: &Arc<Mutex<Child>>, timeout: Duration) {
