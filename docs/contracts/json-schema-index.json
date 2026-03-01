@@ -54,6 +54,13 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
+      "command": "effigy --json completion candidates --prefix farm",
+      "surface": "built-in task",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
       "command": "effigy --json build --repo <fixture_task_success>",
       "surface": "catalog task",
       "status": "active"

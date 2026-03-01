@@ -71,6 +71,7 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.migrate.v1`
 - `effigy.unlock.v1`
 - `effigy.completion.v1`
+- `effigy.completion.candidates.v1`
 - `effigy.task.run.v1`
 
 Examples:
@@ -90,6 +91,7 @@ effigy --json init --dry-run
 effigy --json migrate --apply
 effigy --json unlock --all
 effigy --json completion bash
+effigy --json completion candidates --prefix farm
 effigy --json build --repo /path/to/workspace
 ```
 

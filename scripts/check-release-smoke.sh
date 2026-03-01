@@ -44,5 +44,6 @@ run_cmd "prefixed builtin tasks" "$BIN_PATH" farmyard/tasks --repo "$TMP_DIR"
 run_cmd "test plan" "$BIN_PATH" test --plan --repo "$TMP_DIR"
 run_cmd "prefixed builtin test plan" "$BIN_PATH" farmyard/test --plan --repo "$TMP_DIR"
 run_cmd "completion bash" "$BIN_PATH" completion bash
+run_cmd "completion candidates" "$BIN_PATH" completion candidates --repo "$TMP_DIR"
 
 echo "[ok] release smoke checks passed"

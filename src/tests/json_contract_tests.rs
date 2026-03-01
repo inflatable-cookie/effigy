@@ -427,6 +427,135 @@ fn builtin_completion_json_contract_has_versioned_shape() {
 }
 
 #[test]
+fn builtin_completion_candidates_json_contract_has_versioned_shape() {
+    let root = temp_workspace("completion-candidates-json-contract");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf root\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec![
+                "candidates".to_owned(),
+                "--prefix".to_owned(),
+                "farm".to_owned(),
+                "--json".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect("run completion candidates --json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.completion.candidates.v1");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["prefix"], "farm");
+    let candidates = parsed["candidates"].as_array().expect("candidates array");
+    assert!(candidates
+        .iter()
+        .any(|value| value.as_str() == Some("farmyard/api")));
+}
+
+#[test]
+fn builtin_completion_candidates_text_includes_builtin_and_task_selectors() {
+    let root = temp_workspace("completion-candidates-text-contract");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf root\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["candidates".to_owned()],
+        },
+        root,
+    )
+    .expect("run completion candidates");
+
+    assert!(out.lines().any(|line| line == "help"));
+    assert!(out.lines().any(|line| line == "build"));
+    assert!(out.lines().any(|line| line == "farmyard/api"));
+}
+
+#[test]
+fn builtin_completion_bash_script_uses_dynamic_candidates_probe() {
+    let root = temp_workspace("completion-bash-dynamic-candidates");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["bash".to_owned()],
+        },
+        root,
+    )
+    .expect("run completion bash");
+
+    assert!(out.contains("effigy completion candidates --prefix \"$cur\""));
+}
+
+#[test]
+fn builtin_completion_candidates_prefix_requires_value() {
+    let root = temp_workspace("completion-candidates-prefix-missing");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["candidates".to_owned(), "--prefix".to_owned()],
+        },
+        root,
+    )
+    .expect_err("completion candidates --prefix should fail without value");
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert!(message.contains("completion candidates argument --prefix requires a value"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn builtin_completion_candidates_help_json_uses_help_schema() {
+    let root = temp_workspace("completion-candidates-help-json");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec![
+                "candidates".to_owned(),
+                "--help".to_owned(),
+                "--json".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect("run completion candidates --help --json");
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["schema"], "effigy.help.v1");
+    assert_eq!(parsed["topic"], "completion-candidates");
+}
+
+#[test]
 fn builtin_init_json_contract_has_versioned_shape() {
     let root = temp_workspace("init-json-contract");
     let out = run_manifest_task_with_cwd(
