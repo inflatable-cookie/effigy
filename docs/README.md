@@ -58,6 +58,8 @@ If you are extending behavior:
 - [`guides/033-style-and-terminology-guide.md`](./guides/033-style-and-terminology-guide.md) (docs writing standard)
 - [`guides/034-task-and-command-glossary.md`](./guides/034-task-and-command-glossary.md) (canonical terminology)
 - [`guides/035-guide-ownership-and-update-triggers.md`](./guides/035-guide-ownership-and-update-triggers.md) (docs update trigger matrix)
+- [`guides/036-release-notes-authoring-template-and-examples.md`](./guides/036-release-notes-authoring-template-and-examples.md) (release-notes writing standard)
+- [`guides/037-documentation-contribution-playbook.md`](./guides/037-documentation-contribution-playbook.md) (docs contribution workflow)
 - [`guides/028-docs-flow-map.md`](./guides/028-docs-flow-map.md) (legacy navigation map)
 
 ## JSON Contract Notes
