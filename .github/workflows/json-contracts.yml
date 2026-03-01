@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate markdown link targets
-        run: ./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)
+        run: ./scripts/check-quality-gates.sh --docs-only
 
   json-contracts:
     name: Validate JSON contracts
@@ -36,7 +36,7 @@ jobs:
       - name: Validate JSON contracts
         run: |
           set -o pipefail
-          ./scripts/check-json-contracts-ci.sh | tee json-contracts.log
+          ./scripts/check-quality-gates.sh --json-only --ci | tee json-contracts.log
           grep -m1 '^{"selected":' json-contracts.log > json-contracts-selected.json
 
       - name: Validate selection artifact contract

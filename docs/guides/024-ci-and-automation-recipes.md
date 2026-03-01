@@ -18,10 +18,11 @@ Primary machine mode entrypoint:
 Before debugging CI, run locally:
 
 ```sh
+cargo qa
 ./scripts/check-json-contracts-ci.sh
 ./scripts/check-json-contracts.sh --fast --print-selected=json
 ./scripts/check-json-contracts.sh --full --print-selected=text
-./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)
+cargo qa-docs
 ```
 
 PR-style changed-only simulation:
@@ -203,9 +204,20 @@ Naming pattern:
 - Always preserve raw logs as artifacts for post-failure analysis.
 - Use changed-only checks for PR speed; keep a full sweep on `main`/nightly.
 
+## 10) Pre-Push CI Stability Checklist
+
+Canonical checklist and troubleshooting live in [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md).
+
+Use this fast path before pushing changes that touch command behavior, JSON schemas, or docs contracts:
+
+```sh
+cargo qa
+```
+
 ## Related Guides
 
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
 - [`019-watch-init-migrate-phase-1.md`](./019-watch-init-migrate-phase-1.md)
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
