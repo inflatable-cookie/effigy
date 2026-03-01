@@ -8,8 +8,8 @@ use serde_json::json;
 
 use crate::TaskInvocation;
 
+use super::super::super::catalog::discover_catalogs;
 use super::super::super::RunnerError;
-use super::super::catalog::discover_catalogs;
 use super::super::TaskRuntimeArgs;
 use super::help::render_completion_candidates_help;
 use super::scripts::command_names;
