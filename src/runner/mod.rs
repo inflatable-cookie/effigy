@@ -34,8 +34,8 @@ use manifest::{
 };
 use model::{
     CatalogSelectionMode, DeferredCommand, LoadedCatalog, ManagedProcessSpec, ManagedTaskPlan,
-    TaskRuntimeArgs, TaskSelection, TaskSelector, BUILTIN_TASKS, DEFAULT_BUILTIN_TEST_MAX_PARALLEL,
-    DEFAULT_MANAGED_SHELL_RUN, DEFER_DEPTH_ENV, IMPLICIT_ROOT_DEFER_TEMPLATE, TASK_MANIFEST_FILE,
+    TaskRuntimeArgs, TaskSelection, TaskSelector, BUILTIN_TASKS, DEFAULT_MANAGED_SHELL_RUN,
+    DEFER_DEPTH_ENV, IMPLICIT_ROOT_DEFER_TEMPLATE, TASK_MANIFEST_FILE,
 };
 use tasks_listing::render_tasks_listing;
 use tasks_probe::build_resolve_probe;
@@ -44,6 +44,9 @@ use util::parse_task_reference_invocation;
 use util::parse_task_runtime_args;
 #[cfg(test)]
 use util::parse_task_selector;
+
+pub(super) const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize =
+    model::DEFAULT_BUILTIN_TEST_MAX_PARALLEL;
 
 #[derive(Debug)]
 pub enum RunnerError {

@@ -8,7 +8,7 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -733,7 +733,7 @@ fn run_manifest_task_builtin_watch_once_executes_target_task() {
 
 #[test]
 fn run_manifest_task_builtin_watch_rejects_concurrent_watch_owner_for_same_target() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("builtin-watch-lock-conflict");
     write_manifest(
         &root.join("effigy.toml"),
@@ -882,7 +882,7 @@ fn run_manifest_task_builtin_completion_json_uses_completion_schema() {
 
 #[test]
 fn run_manifest_task_verbose_root_includes_resolution_trace() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let _env = EnvGuard::set_many(&[("EFFIGY_COLOR", None), ("NO_COLOR", None)]);
     let root = temp_workspace("verbose-trace");
     let farmyard = root.join("farmyard");
@@ -1145,7 +1145,7 @@ run = [
 
 #[test]
 fn run_manifest_task_run_array_executes_ready_steps_in_parallel() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("run-array-parallel-ready-steps");
     let marker = root.join("parallel-ready.log");
     let _env = EnvGuard::set_many(&[("EFFIGY_DAG_MAX_PARALLEL", Some("2".to_owned()))]);
@@ -1155,8 +1155,8 @@ fn run_manifest_task_run_array_executes_ready_steps_in_parallel() {
             r#"[tasks.validate]
 run = [
   {{ id = "seed", run = "printf seed > \"{}\"" }},
-  {{ id = "a", run = "sh -lc 'sleep 0.7; printf a >> \"{}\"'", depends_on = ["seed"] }},
-  {{ id = "b", run = "sh -lc 'sleep 0.7; printf b >> \"{}\"'", depends_on = ["seed"] }}
+  {{ id = "a", run = "sh -lc 'sleep 0.8; printf a >> \"{}\"'", depends_on = ["seed"] }},
+  {{ id = "b", run = "sh -lc 'sleep 0.8; printf b >> \"{}\"'", depends_on = ["seed"] }}
 ]
 "#,
             marker.display(),
@@ -1180,14 +1180,14 @@ run = [
     assert!(body.contains('a'));
     assert!(body.contains('b'));
     assert!(
-        elapsed < Duration::from_millis(1200),
+        elapsed < Duration::from_millis(1400),
         "expected parallel schedule, elapsed={elapsed:?}"
     );
 }
 
 #[test]
 fn run_manifest_task_run_array_honors_parallel_cap() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("run-array-parallel-cap");
     let marker = root.join("parallel-cap.log");
     let _env = EnvGuard::set_many(&[("EFFIGY_DAG_MAX_PARALLEL", Some("1".to_owned()))]);
@@ -1197,8 +1197,8 @@ fn run_manifest_task_run_array_honors_parallel_cap() {
             r#"[tasks.validate]
 run = [
   {{ id = "seed", run = "printf seed > \"{}\"" }},
-  {{ id = "a", run = "sh -lc 'sleep 0.7; printf a >> \"{}\"'", depends_on = ["seed"] }},
-  {{ id = "b", run = "sh -lc 'sleep 0.7; printf b >> \"{}\"'", depends_on = ["seed"] }}
+  {{ id = "a", run = "sh -lc 'sleep 0.8; printf a >> \"{}\"'", depends_on = ["seed"] }},
+  {{ id = "b", run = "sh -lc 'sleep 0.8; printf b >> \"{}\"'", depends_on = ["seed"] }}
 ]
 "#,
             marker.display(),
@@ -1222,7 +1222,7 @@ run = [
     assert!(body.contains('a'));
     assert!(body.contains('b'));
     assert!(
-        elapsed >= Duration::from_millis(1200),
+        elapsed >= Duration::from_millis(1400),
         "expected capped schedule, elapsed={elapsed:?}"
     );
 }
@@ -1290,7 +1290,7 @@ run = [
 
 #[test]
 fn run_manifest_task_run_array_fail_fast_false_allows_other_ready_steps() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("run-array-fail-fast-false");
     let marker = root.join("fail-fast-false.out");
     write_manifest(
@@ -2285,7 +2285,7 @@ fn run_manifest_task_builtin_test_json_suppresses_child_process_output() {
 
 #[test]
 fn run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("builtin-test-multi-context");
     fs::write(
         root.join("package.json"),
@@ -2642,7 +2642,7 @@ fn run_manifest_task_explicit_test_task_overrides_builtin_auto_detection() {
 
 #[test]
 fn run_manifest_task_builtin_test_falls_through_to_deferral_when_no_detection_matches() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("builtin-test-defers");
     write_manifest(
         &root.join("effigy.toml"),
@@ -3775,7 +3775,7 @@ js = "pnpm"
 
 #[test]
 fn run_manifest_task_builtin_test_exec_uses_configured_package_manager() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("builtin-test-exec-package-manager");
     write_manifest(
         &root.join("effigy.toml"),
@@ -4724,7 +4724,7 @@ run = [{ task = "missing/task" }]
 
 #[test]
 fn run_manifest_task_defers_when_unprefixed_task_missing() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("defer-missing");
     write_manifest(
         &root.join("effigy.toml"),
@@ -4745,7 +4745,7 @@ fn run_manifest_task_defers_when_unprefixed_task_missing() {
 
 #[test]
 fn run_manifest_task_defers_and_supports_request_and_args_tokens() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("defer-tokens");
     write_manifest(
         &root.join("effigy.toml"),
@@ -4766,7 +4766,7 @@ fn run_manifest_task_defers_and_supports_request_and_args_tokens() {
 
 #[test]
 fn run_manifest_task_defers_for_path_like_request_when_prefix_not_found() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("defer-path-like-request");
     write_manifest(
         &root.join("effigy.toml"),
@@ -4787,7 +4787,7 @@ fn run_manifest_task_defers_for_path_like_request_when_prefix_not_found() {
 
 #[test]
 fn run_manifest_task_defers_to_prefixed_catalog_handler() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("defer-prefixed");
     let farmyard = root.join("farmyard");
     fs::create_dir_all(&farmyard).expect("mkdir");
@@ -4811,7 +4811,7 @@ fn run_manifest_task_defers_to_prefixed_catalog_handler() {
 
 #[test]
 fn run_manifest_task_deferral_loop_guard_fails() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("defer-loop");
     write_manifest(
         &root.join("effigy.toml"),
@@ -4837,7 +4837,7 @@ fn run_manifest_task_deferral_loop_guard_fails() {
 
 #[test]
 fn run_manifest_task_implicitly_defers_to_root_when_no_configured_deferral() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("implicit-root-defer");
     fs::write(root.join("effigy.json"), "{}\n").expect("write effigy marker");
     fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
@@ -4884,7 +4884,7 @@ fn run_manifest_task_implicitly_defers_to_root_when_no_configured_deferral() {
 
 #[test]
 fn run_manifest_task_does_not_implicitly_defer_without_effigy_json_marker() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("implicit-root-defer-missing-effigy-json");
     fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
 
@@ -4935,7 +4935,7 @@ fn run_manifest_task_does_not_implicitly_defer_without_effigy_json_marker() {
 
 #[test]
 fn run_manifest_task_does_not_implicitly_defer_without_composer_json_marker() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("implicit-root-defer-missing-composer-json");
     fs::write(root.join("effigy.json"), "{}\n").expect("write effigy marker");
 
@@ -4986,7 +4986,7 @@ fn run_manifest_task_does_not_implicitly_defer_without_composer_json_marker() {
 
 #[test]
 fn run_manifest_task_does_not_implicitly_defer_when_markers_exist_only_in_nested_directory() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("implicit-root-defer-nested-markers-only");
     let nested = root.join("nested");
     fs::create_dir_all(&nested).expect("mkdir nested");
@@ -5040,7 +5040,7 @@ fn run_manifest_task_does_not_implicitly_defer_when_markers_exist_only_in_nested
 
 #[test]
 fn run_manifest_task_explicit_deferral_wins_over_implicit_root_deferral() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("explicit-over-implicit");
     fs::write(root.join("effigy.json"), "{}\n").expect("write effigy marker");
     fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
@@ -5090,7 +5090,7 @@ fn run_manifest_task_explicit_deferral_wins_over_implicit_root_deferral() {
 
 #[test]
 fn run_manifest_task_managed_tui_uses_default_profile_when_not_specified() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-default-profile");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     write_manifest(
@@ -5130,7 +5130,7 @@ concurrent = [
 
 #[test]
 fn run_manifest_task_managed_tui_accepts_named_profile_argument() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-named-profile");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     write_manifest(
@@ -5168,7 +5168,7 @@ concurrent = [
 
 #[test]
 fn run_manifest_task_managed_tui_supports_concurrent_entries() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-concurrent-entries");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     write_manifest(
@@ -5245,7 +5245,7 @@ run = "printf api"
 
 #[test]
 fn run_manifest_task_managed_tui_supports_profile_specific_concurrent_entries() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-concurrent-profile-specific");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     write_manifest(
@@ -5292,7 +5292,7 @@ concurrent = [
 
 #[test]
 fn run_manifest_task_managed_tui_supports_independent_tab_order() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-tab-order");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     write_manifest(
@@ -5322,7 +5322,7 @@ concurrent = [
 
 #[test]
 fn run_manifest_task_managed_tui_supports_ranked_tab_order_map() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-tab-order-ranked");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     write_manifest(
@@ -5352,7 +5352,7 @@ concurrent = [
 
 #[test]
 fn run_manifest_task_managed_tui_supports_ranked_tab_order_map_with_task_refs() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-tab-order-ranked-refs");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     let farmyard = root.join("farmyard");
@@ -5414,7 +5414,7 @@ run = "printf dairy-dev"
 
 #[test]
 fn run_manifest_task_managed_tui_supports_single_definition_ordered_profile_entries() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-single-definition-ordered-profile");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     let farmyard = root.join("farmyard");
@@ -5547,7 +5547,7 @@ concurrent = [{ name = "api", run = "cargo run -p api" }]
 
 #[test]
 fn run_manifest_task_managed_tui_processes_can_reference_other_tasks() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-task-refs");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     let farmyard = root.join("farmyard");
@@ -5628,7 +5628,7 @@ concurrent = [{ name = "api", run = "printf api", task = "api" }]
 
 #[test]
 fn run_manifest_task_managed_tui_supports_compact_profile_task_refs() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-compact-profile-refs");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     let farmyard = root.join("farmyard");
@@ -5681,7 +5681,7 @@ run = "printf cream-dev"
 
 #[test]
 fn run_manifest_task_managed_tui_rejects_unterminated_quote_in_compact_profile_task_ref() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-compact-profile-ref-unterminated-quote");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     write_manifest(
@@ -5719,7 +5719,7 @@ concurrent = [{ name = "tests", task = 'test "unterminated' }]
 
 #[test]
 fn run_manifest_task_managed_tui_process_run_array_supports_task_refs() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-process-run-array");
     let farmyard = root.join("farmyard");
     fs::create_dir_all(&farmyard).expect("mkdir farmyard");
@@ -5761,7 +5761,7 @@ run = "printf farmyard-api"
 
 #[test]
 fn run_manifest_task_managed_tui_rejects_unterminated_quote_in_process_task_ref() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-process-task-ref-unterminated-quote");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     write_manifest(
@@ -5799,7 +5799,7 @@ concurrent = [{ name = "tests", task = 'test "unterminated' }]
 
 #[test]
 fn run_manifest_task_managed_tui_rejects_trailing_escape_in_process_task_ref() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-process-task-ref-trailing-escape");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     write_manifest(
@@ -5837,7 +5837,7 @@ concurrent = [{ name = "tests", task = "test vitest \\" }]
 
 #[test]
 fn run_manifest_task_managed_tui_supports_relative_task_refs() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-relative-task-ref");
     let dairy = root.join("dairy");
     let froyo = root.join("froyo");
@@ -5879,7 +5879,7 @@ run = "printf froyo-validate"
 
 #[test]
 fn run_manifest_task_managed_tui_appends_shell_process_when_enabled() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-shell-enabled");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     write_manifest(
@@ -5906,7 +5906,7 @@ concurrent = [{ name = "api", run = "printf api" }]
 
 #[test]
 fn run_manifest_task_managed_tui_uses_global_shell_run_override() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-shell-global-override");
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
     write_manifest(
@@ -5936,7 +5936,7 @@ concurrent = [{ name = "api", run = "printf api" }]
 
 #[test]
 fn run_manifest_task_managed_stream_executes_selected_profile_processes() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-stream-runtime");
     write_manifest(
         &root.join("effigy.toml"),
@@ -5969,7 +5969,7 @@ concurrent = [
 
 #[test]
 fn run_manifest_task_managed_stream_uses_named_profile_concurrent_entries() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-stream-runtime-profile-specific");
     write_manifest(
         &root.join("effigy.toml"),
@@ -6002,7 +6002,7 @@ concurrent = [{ name = "front-only", run = "printf front-ok" }]
 
 #[test]
 fn run_manifest_task_managed_stream_errors_for_unknown_profile_with_available_profiles() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-stream-unknown-profile");
     write_manifest(
         &root.join("effigy.toml"),
@@ -6041,7 +6041,7 @@ concurrent = [{ name = "front-only", run = "printf front-ok" }]
 
 #[test]
 fn run_manifest_task_managed_stream_process_task_ref_supports_builtin_test() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-stream-builtin-test-task-ref");
     let marker = root.join("builtin-test-called.log");
     write_manifest(
@@ -6075,7 +6075,7 @@ concurrent = [{{ name = "tests", task = "test" }}]
 
 #[test]
 fn run_manifest_task_managed_stream_process_task_ref_supports_builtin_test_with_inline_suite_arg() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-stream-builtin-test-task-ref-inline-suite");
     let marker = root.join("builtin-test-called.log");
     write_manifest(
@@ -6112,7 +6112,7 @@ concurrent = [{{ name = "tests", task = "test vitest" }}]
 
 #[test]
 fn run_manifest_task_managed_stream_profile_entry_supports_builtin_test() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-stream-builtin-test-profile-entry");
     let marker = root.join("builtin-test-called.log");
     write_manifest(
@@ -6149,7 +6149,7 @@ concurrent = [{{ name = "tests", task = "test" }}]
 
 #[test]
 fn run_manifest_task_managed_stream_fails_when_process_exits_non_zero_by_default() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-stream-fail-on-non-zero-default");
     write_manifest(
         &root.join("effigy.toml"),
@@ -6185,7 +6185,7 @@ concurrent = [{ name = "api", run = "sh -lc 'exit 7'" }]
 
 #[test]
 fn run_manifest_task_managed_stream_allows_non_zero_when_disabled() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("managed-stream-fail-on-non-zero-disabled");
     write_manifest(
         &root.join("effigy.toml"),
@@ -6213,7 +6213,7 @@ concurrent = [{ name = "api", run = "sh -lc 'exit 9'" }]
 
 #[test]
 fn run_manifest_task_rejects_live_lock_conflict() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("lock-conflict-live");
     write_manifest(
         &root.join("effigy.toml"),
@@ -6261,7 +6261,7 @@ run = "sleep 1"
 
 #[test]
 fn run_manifest_task_reclaims_stale_lock_from_dead_pid() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("lock-stale-reclaim");
     write_manifest(
         &root.join("effigy.toml"),
@@ -6292,7 +6292,7 @@ run = "printf ok"
 
 #[test]
 fn run_manifest_task_builtin_unlock_clears_explicit_scopes() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("unlock-explicit-scopes");
     fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
     fs::write(root.join(".effigy/locks/workspace.lock"), "{}").expect("write workspace lock");
@@ -6340,7 +6340,7 @@ fn with_cwd<F, T>(cwd: &PathBuf, f: F) -> T
 where
     F: FnOnce() -> T,
 {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let original = std::env::current_dir().expect("current dir");
     std::env::set_current_dir(cwd).expect("set cwd");
     let out = f();
@@ -6351,6 +6351,13 @@ where
 fn test_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn lock_test() -> MutexGuard<'static, ()> {
+    match test_lock().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
 }
 
 struct EnvGuard {

@@ -8,7 +8,8 @@ use crate::process_manager::ProcessSpec;
 use crate::tui::{run_multiprocess_tui, MultiProcessTuiOptions};
 
 use super::super::super::util::with_local_node_bin_path;
-use super::{BuiltinTestExecResult, BuiltinTestRunnable, RunnerError};
+use super::planning::BuiltinTestRunnable;
+use super::{BuiltinTestExecResult, RunnerError};
 
 pub(super) fn should_run_builtin_test_tui(force_tui: bool, suite_count: usize) -> bool {
     if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
