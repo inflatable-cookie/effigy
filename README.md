@@ -63,6 +63,33 @@ effigy tasks
 
 For PATH/release workflow details, see [`docs/guides/010-path-installation-and-release.md`](./docs/guides/010-path-installation-and-release.md).
 
+## Contributor Commands
+
+Use Cargo aliases for standard local validation:
+
+```bash
+# full local quality gate (docs links + json contracts)
+cargo qa
+
+# docs links only
+cargo qa-docs
+
+# json contracts only (local fast mode)
+cargo qa-json
+
+# json contracts only (CI behavior)
+cargo qa-json-ci
+```
+
+Fallback (if aliases are unavailable):
+
+```bash
+./scripts/check-quality-gates.sh
+./scripts/check-quality-gates.sh --docs-only
+./scripts/check-quality-gates.sh --json-only
+./scripts/check-quality-gates.sh --json-only --ci
+```
+
 ## Most Common Commands
 
 ```bash
