@@ -14,9 +14,9 @@ Effigy docs are organized by intent:
 If you are new to the project:
 1. [`../README.md`](../README.md) for quick start
 2. [`guides/README.md`](./guides/README.md) for persona-based guide navigation
-3. [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md) for command examples
-4. [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md) for copy-paste manifest patterns
-5. [`guides/030-contributor-onboarding-15-minutes.md`](./guides/030-contributor-onboarding-15-minutes.md) for first-day setup
+3. [`guides/030-contributor-onboarding-15-minutes.md`](./guides/030-contributor-onboarding-15-minutes.md) for first-day setup
+4. [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md) for command examples
+5. [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md) for copy-paste manifest patterns
 6. [`architecture/000-overview.md`](./architecture/000-overview.md) for system framing
 
 If you are extending behavior:
@@ -48,10 +48,14 @@ If you are extending behavior:
 - [`guides/026-json-payload-examples.md`](./guides/026-json-payload-examples.md)
 - [`guides/027-copy-paste-snippets.md`](./guides/027-copy-paste-snippets.md)
 - [`guides/028-migration-quick-paths.md`](./guides/028-migration-quick-paths.md)
-- [`guides/029-docs-qa-checklist-and-validation.md`](./guides/029-docs-qa-checklist-and-validation.md)
-- [`guides/030-contributor-onboarding-15-minutes.md`](./guides/030-contributor-onboarding-15-minutes.md)
-- [`guides/031-docs-navigation-cleanup.md`](./guides/031-docs-navigation-cleanup.md)
-- [`guides/028-docs-flow-map.md`](./guides/028-docs-flow-map.md) (supplemental)
+
+## Operations Guides
+
+- [`guides/029-docs-qa-checklist-and-validation.md`](./guides/029-docs-qa-checklist-and-validation.md) (canonical docs QA checklist)
+- [`guides/030-contributor-onboarding-15-minutes.md`](./guides/030-contributor-onboarding-15-minutes.md) (fast contributor onboarding path)
+- [`guides/031-docs-navigation-cleanup.md`](./guides/031-docs-navigation-cleanup.md) (navigation cleanup notes)
+- [`guides/032-docs-consistency-sweep-and-changelog.md`](./guides/032-docs-consistency-sweep-and-changelog.md) (consistency/changelog sweep)
+- [`guides/028-docs-flow-map.md`](./guides/028-docs-flow-map.md) (legacy navigation map)
 
 ## JSON Contract Notes
 
