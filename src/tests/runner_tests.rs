@@ -1154,18 +1154,19 @@ fn run_manifest_task_run_array_executes_ready_steps_in_parallel() {
         &format!(
             r#"[tasks.validate]
 run = [
-  {{ id = "seed", run = "printf seed > \"{}\"" }},
-  {{ id = "a", run = "sh -lc 'sleep 0.8; printf a >> \"{}\"'", depends_on = ["seed"] }},
-  {{ id = "b", run = "sh -lc 'sleep 0.8; printf b >> \"{}\"'", depends_on = ["seed"] }}
+  {{ id = "seed", run = "echo seed > \"{}\"" }},
+  {{ id = "a", run = "sh -lc 'echo a-start >> \"{}\"; sleep 0.8; echo a-end >> \"{}\"'", depends_on = ["seed"] }},
+  {{ id = "b", run = "sh -lc 'echo b-start >> \"{}\"; sleep 0.8; echo b-end >> \"{}\"'", depends_on = ["seed"] }}
 ]
 "#,
+            marker.display(),
+            marker.display(),
             marker.display(),
             marker.display(),
             marker.display()
         ),
     );
 
-    let start = Instant::now();
     run_manifest_task_with_cwd(
         &TaskInvocation {
             name: "validate".to_owned(),
@@ -1174,14 +1175,27 @@ run = [
         root.clone(),
     )
     .expect("run");
-    let elapsed = start.elapsed();
 
     let body = fs::read_to_string(marker).expect("read marker");
-    assert!(body.contains('a'));
-    assert!(body.contains('b'));
+    let lines: Vec<&str> = body.lines().collect();
     assert!(
-        elapsed < Duration::from_millis(1400),
-        "expected parallel schedule, elapsed={elapsed:?}"
+        lines.contains(&"a-start")
+            && lines.contains(&"b-start")
+            && lines.contains(&"a-end")
+            && lines.contains(&"b-end"),
+        "expected start/end markers in log: {lines:?}"
+    );
+    let first_end_idx = lines
+        .iter()
+        .position(|line| *line == "a-end" || *line == "b-end")
+        .expect("expected end marker");
+    let starts_before_end = lines[..first_end_idx]
+        .iter()
+        .filter(|line| **line == "a-start" || **line == "b-start")
+        .count();
+    assert_eq!(
+        starts_before_end, 2,
+        "expected both ready steps to start before first completion, lines={lines:?}"
     );
 }
 
