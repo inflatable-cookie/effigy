@@ -4,7 +4,7 @@ Effigy is a unified task runner for monorepos and nested workspaces.
 
 It gives you one command surface for:
 - project tasks from `effigy.toml`,
-- built-in workflow commands (`tasks`, `doctor`, `test`, `watch`, `init`, `migrate`, `config`, `unlock`),
+- built-in workflow commands (`tasks`, `doctor`, `test`, `watch`, `init`, `migrate`, `config`, `unlock`, `cache`),
 - deterministic task resolution across catalogs.
 
 ## Quick Start (2 Minutes)
@@ -56,6 +56,8 @@ effigy test --plan
 effigy watch --owner effigy --once test
 effigy --json tasks
 effigy unlock --all
+effigy cache inspect
+effigy cache invalidate build
 ```
 
 ## Contributor Commands
@@ -91,6 +93,12 @@ alias = "catalog-a"
 
 [tasks."db:reset"]
 run = "cargo run -p app-db --bin reset_dev_db {args}"
+
+[tasks.build.cache]
+enabled = true
+inputs = ["src/**/*.rs", "Cargo.toml"]
+outputs = ["target/app"]
+env = ["RUSTFLAGS", "NODE_ENV"]
 ```
 
 Interpolation tokens:
