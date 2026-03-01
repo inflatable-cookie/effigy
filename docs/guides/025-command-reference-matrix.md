@@ -67,7 +67,8 @@ effigy completion candidates [--repo <PATH>] [--prefix <value>] [--json]
 - `cache invalidate` accepts selectors or `--all` (not both).
 - `completion` command list is sourced from the built-in command index (`BUILTIN_TASKS`) to reduce drift with command discovery output.
 - `completion candidates` includes built-ins plus discovered `<task>` and `<catalog>/<task>` selectors.
-- `completion candidates` JSON payload reports `cache_hit` and `manifest_count` for memoized candidate scans.
+- `completion candidates` JSON payload reports `cache_hit`, `cache_state`, and `manifest_count` for memoized candidate scans.
+- `cache_state` values: `miss_initial`, `hit`, `miss_ttl`, `miss_manifest_change`.
 
 ## 5) Common Recipes
 

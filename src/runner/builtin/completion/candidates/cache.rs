@@ -27,17 +27,56 @@ static COMPLETION_CANDIDATES_CACHE: OnceLock<
     Mutex<HashMap<PathBuf, CompletionCandidatesSnapshot>>,
 > = OnceLock::new();
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CompletionCandidatesCacheState {
+    MissInitial,
+    Hit,
+    MissTtl,
+    MissManifestChange,
+}
+
+impl CompletionCandidatesCacheState {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::MissInitial => "miss_initial",
+            Self::Hit => "hit",
+            Self::MissTtl => "miss_ttl",
+            Self::MissManifestChange => "miss_manifest_change",
+        }
+    }
+}
+
+enum CacheLookup {
+    Hit {
+        candidates: Vec<String>,
+        manifest_count: usize,
+    },
+    MissInitial,
+    MissTtl,
+    MissManifestChange,
+}
+
 pub(super) fn load_completion_candidates_with_cache(
     repo_root: &Path,
-) -> Result<(Vec<String>, bool, usize), RunnerError> {
+) -> Result<(Vec<String>, CompletionCandidatesCacheState, usize), RunnerError> {
     let now = Instant::now();
     let cache = COMPLETION_CANDIDATES_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
-    if let Some((candidates, manifest_count)) =
-        read_cached_completion_candidates(repo_root, now, cache)?
-    {
-        return Ok((candidates, true, manifest_count));
-    }
+    let miss_reason = match read_cached_completion_candidates(repo_root, now, cache)? {
+        CacheLookup::Hit {
+            candidates,
+            manifest_count,
+        } => {
+            return Ok((
+                candidates,
+                CompletionCandidatesCacheState::Hit,
+                manifest_count,
+            ))
+        }
+        CacheLookup::MissInitial => CompletionCandidatesCacheState::MissInitial,
+        CacheLookup::MissTtl => CompletionCandidatesCacheState::MissTtl,
+        CacheLookup::MissManifestChange => CompletionCandidatesCacheState::MissManifestChange,
+    };
 
     let (candidates, manifest_stamps) = discover_completion_candidates(repo_root)?;
     let manifest_count = manifest_stamps.len();
@@ -51,30 +90,30 @@ pub(super) fn load_completion_candidates_with_cache(
         .lock()
         .map_err(|_| RunnerError::Ui("completion candidate cache lock poisoned".to_owned()))?;
     map.insert(repo_root.to_path_buf(), snapshot);
-    Ok((candidates, false, manifest_count))
+    Ok((candidates, miss_reason, manifest_count))
 }
 
 fn read_cached_completion_candidates(
     repo_root: &Path,
     now: Instant,
     cache: &Mutex<HashMap<PathBuf, CompletionCandidatesSnapshot>>,
-) -> Result<Option<(Vec<String>, usize)>, RunnerError> {
+) -> Result<CacheLookup, RunnerError> {
     let map = cache
         .lock()
         .map_err(|_| RunnerError::Ui("completion candidate cache lock poisoned".to_owned()))?;
     let Some(snapshot) = map.get(repo_root) else {
-        return Ok(None);
+        return Ok(CacheLookup::MissInitial);
     };
     if now.duration_since(snapshot.created_at) > CANDIDATE_CACHE_TTL {
-        return Ok(None);
+        return Ok(CacheLookup::MissTtl);
     }
     if !manifest_stamps_unchanged(&snapshot.manifest_stamps) {
-        return Ok(None);
+        return Ok(CacheLookup::MissManifestChange);
     }
-    Ok(Some((
-        snapshot.candidates.clone(),
-        snapshot.manifest_stamps.len(),
-    )))
+    Ok(CacheLookup::Hit {
+        candidates: snapshot.candidates.clone(),
+        manifest_count: snapshot.manifest_stamps.len(),
+    })
 }
 
 fn discover_completion_candidates(

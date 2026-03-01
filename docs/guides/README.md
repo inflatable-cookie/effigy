@@ -63,6 +63,7 @@ Read:
 - Drift monitoring: [`039-docs-drift-monitoring.md`](./039-docs-drift-monitoring.md)
 - Archive/deprecation policy: [`040-docs-archive-and-deprecation-policy.md`](./040-docs-archive-and-deprecation-policy.md)
 - Distribution CI pinning + wrapper migration: [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
+- Homebrew tap + release automation: [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
 
 ## Supplemental
 

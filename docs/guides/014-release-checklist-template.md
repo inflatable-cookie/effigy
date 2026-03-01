@@ -62,6 +62,7 @@ Owner: `name/team`
 - [ ] Checksums updated.
 - [ ] Tap commit merged/pushed.
 - [ ] Fresh install + upgrade path validated.
+- [ ] Tap automation workflow ran for release tag and attached evidence.
 
 ## 5) Rollback Preparedness
 
@@ -89,6 +90,7 @@ Owner: `name/team`
 - [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
 - [`../roadmap/backlog/release-contract-v0.md`](../roadmap/backlog/release-contract-v0.md)
 - [`../roadmap/backlog/distribution-channels.md`](../roadmap/backlog/distribution-channels.md)
+- [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
 
 ## Next Step
 

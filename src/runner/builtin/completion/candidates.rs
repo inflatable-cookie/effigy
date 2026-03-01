@@ -10,11 +10,12 @@ use super::help::render_completion_candidates_help;
 
 mod cache;
 
-use cache::load_completion_candidates_with_cache;
+use cache::{load_completion_candidates_with_cache, CompletionCandidatesCacheState};
 
 struct CompletionCandidatesResult {
     candidates: Vec<String>,
     cache_hit: bool,
+    cache_state: &'static str,
     manifest_count: usize,
 }
 
@@ -97,6 +98,7 @@ pub(super) fn run_completion_candidates(
             "prefix": prefix,
             "candidates": completion_candidates.candidates,
             "cache_hit": completion_candidates.cache_hit,
+            "cache_state": completion_candidates.cache_state,
             "manifest_count": completion_candidates.manifest_count,
         });
         return serde_json::to_string_pretty(&payload)
@@ -111,7 +113,7 @@ fn collect_completion_candidates(
     repo_root: &Path,
     prefix: Option<&str>,
 ) -> Result<CompletionCandidatesResult, RunnerError> {
-    let (base_candidates, cache_hit, manifest_count) =
+    let (base_candidates, cache_state, manifest_count) =
         load_completion_candidates_with_cache(repo_root)?;
 
     let candidates = base_candidates
@@ -125,7 +127,8 @@ fn collect_completion_candidates(
 
     Ok(CompletionCandidatesResult {
         candidates,
-        cache_hit,
+        cache_hit: cache_state == CompletionCandidatesCacheState::Hit,
+        cache_state: cache_state.as_str(),
         manifest_count,
     })
 }
