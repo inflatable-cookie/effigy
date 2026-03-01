@@ -111,3 +111,4 @@ Before finalizing a guide update:
 - `029-docs-qa-checklist-and-validation.md`
 - `031-docs-navigation-cleanup.md`
 - `032-docs-consistency-sweep-and-changelog.md`
+- `034-task-and-command-glossary.md`

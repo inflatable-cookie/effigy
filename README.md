@@ -175,6 +175,7 @@ Start with:
 - Docs QA checklist: [`docs/guides/029-docs-qa-checklist-and-validation.md`](./docs/guides/029-docs-qa-checklist-and-validation.md)
 - Navigation cleanup note: [`docs/guides/031-docs-navigation-cleanup.md`](./docs/guides/031-docs-navigation-cleanup.md)
 - Style and terminology guide: [`docs/guides/033-style-and-terminology-guide.md`](./docs/guides/033-style-and-terminology-guide.md)
+- Task and command glossary: [`docs/guides/034-task-and-command-glossary.md`](./docs/guides/034-task-and-command-glossary.md)
 
 ## Development
 
