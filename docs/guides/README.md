@@ -116,4 +116,6 @@ cargo test
 - Style and terminology guide: [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
 - Task and command glossary: [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)
 - Guide ownership + update triggers: [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
+- Release notes authoring template + examples: [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
+- Documentation contribution playbook: [`037-documentation-contribution-playbook.md`](./037-documentation-contribution-playbook.md)
 - Docs flow map (legacy navigation map): [`028-docs-flow-map.md`](./028-docs-flow-map.md)

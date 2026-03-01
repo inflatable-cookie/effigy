@@ -19,6 +19,7 @@ When a feature spans multiple same-day checkpoints, add a consolidation report t
 
 ## Recent Release Notes
 
+- [`../guides/036-release-notes-authoring-template-and-examples.md`](../guides/036-release-notes-authoring-template-and-examples.md) (authoring template + examples)
 - [`2026-02-28-dag-watch-onboarding-release-note.md`](./2026-02-28-dag-watch-onboarding-release-note.md)
 - [`2026-02-28-json-envelope-removal-release-note.md`](./2026-02-28-json-envelope-removal-release-note.md)
 - [`2026-02-28-doctor-explain-mode-release-note.md`](./2026-02-28-doctor-explain-mode-release-note.md)

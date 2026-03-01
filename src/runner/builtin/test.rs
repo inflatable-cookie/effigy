@@ -25,293 +25,34 @@ pub(super) fn try_run_builtin_test(
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
 ) -> Result<Option<String>, RunnerError> {
-    let (flags, mut passthrough) = extract_builtin_test_flags(&runtime_args.passthrough);
+    let (flags, passthrough) = extract_builtin_test_flags(&runtime_args.passthrough);
     let targets = resolve_builtin_test_targets(selector, resolved_root, catalogs);
-    let mut runnable = targets
-        .iter()
-        .flat_map(|target| {
-            let plans = target.plans.clone();
-            let multi = plans.len() > 1;
-            plans
-                .into_iter()
-                .map(|plan| {
-                    let name = if multi {
-                        format!("{}/{}", target.name, plan.suite)
-                    } else {
-                        target.name.clone()
-                    };
-                    (name, target.root.clone(), plan.command, plan.suite)
-                })
-                .collect::<Vec<(String, PathBuf, String, String)>>()
-        })
-        .collect::<Vec<(String, PathBuf, String, String)>>();
+    let runnable = collect_builtin_test_runnable_targets(&targets);
     if runnable.is_empty() {
         return Ok(None);
     }
-    let available_runners = runnable
-        .iter()
-        .map(|(_, _, _, suite)| suite.clone())
-        .collect::<BTreeSet<String>>();
-    let requested_suite_raw = passthrough.first().cloned();
-    let requested_suite = passthrough.first().and_then(|candidate| {
-        normalize_builtin_test_suite(candidate)
-            .map(str::to_owned)
-            .or_else(|| {
-                if available_runners.contains(candidate) {
-                    Some(candidate.clone())
-                } else {
-                    None
-                }
-            })
-    });
-
-    if let Some(selected) = requested_suite.as_ref() {
-        passthrough.remove(0);
-        runnable.retain(|(_, _, _, suite)| suite == selected);
-        if runnable.is_empty() {
-            let available = if available_runners.is_empty() {
-                "<none>".to_owned()
-            } else {
-                available_runners
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            };
-            let forwarded = passthrough.join(" ");
-            let suggested = available_runners
-                .iter()
-                .map(|suite| {
-                    if forwarded.is_empty() {
-                        format!("effigy test {suite}")
-                    } else {
-                        format!("effigy test {suite} {forwarded}")
-                    }
-                })
-                .collect::<Vec<String>>()
-                .join(" | ");
-            let message = format!(
-                "built-in `test` runner `{selected}` is not available in this target (available: {available}). Try one of: {suggested}. Use `effigy test --plan <args>` to preview suite routing before execution."
-            );
-            if flags.plan_mode {
-                return render_builtin_test_plan_recovery(
-                    task,
-                    resolved_root,
-                    &available_runners,
-                    &message,
-                    flags.output_json,
-                )
-                .map(Some);
-            }
-            return Err(RunnerError::TaskInvocation(message));
+    let suite_selection = match select_builtin_test_suite(runnable, passthrough) {
+        Ok(selection) => selection,
+        Err(selection_error) => {
+            return render_suite_selection_failure(task, resolved_root, flags, selection_error);
         }
-    } else if !passthrough.is_empty() && available_runners.len() > 1 {
-        let first = requested_suite_raw.unwrap_or_else(|| passthrough[0].clone());
-        if let Some(suggested_suite) = suggest_suite_name(&first, &available_runners) {
-            let remainder = passthrough.iter().skip(1).cloned().collect::<Vec<String>>();
-            let suggested = if remainder.is_empty() {
-                format!("effigy test {suggested_suite}")
-            } else {
-                format!("effigy test {suggested_suite} {}", remainder.join(" "))
-            };
-            let available = available_runners
-                .iter()
-                .cloned()
-                .collect::<Vec<String>>()
-                .join(", ");
-            let message = format!(
-                "built-in `test` runner `{first}` is not available in this target (available: {available}). Did you mean `{suggested_suite}`? Try: {suggested}. Use `effigy test --plan <args>` to preview suite routing before execution.",
-            );
-            if flags.plan_mode {
-                return render_builtin_test_plan_recovery(
-                    task,
-                    resolved_root,
-                    &available_runners,
-                    &message,
-                    flags.output_json,
-                )
-                .map(Some);
-            }
-            return Err(RunnerError::TaskInvocation(message));
-        }
-        let available = available_runners
-            .iter()
-            .cloned()
-            .collect::<Vec<String>>()
-            .join(", ");
-        let user_args = passthrough.join(" ");
-        let suggested = available_runners
-            .iter()
-            .map(|suite| format!("effigy test {suite} {user_args}"))
-            .collect::<Vec<String>>()
-            .join(" | ");
-        let message = format!(
-            "built-in `test` is ambiguous for arguments `{user_args}` because multiple suites are available ({available}); specify a suite first. Try one of: {suggested}. Use `effigy test --plan <args>` to preview suite routing before execution.",
-        );
-        if flags.plan_mode {
-            return render_builtin_test_plan_recovery(
-                task,
-                resolved_root,
-                &available_runners,
-                &message,
-                flags.output_json,
-            )
-            .map(Some);
-        }
-        return Err(RunnerError::TaskInvocation(message));
-    }
+    };
 
     if flags.plan_mode {
-        if flags.output_json {
-            let runtime_mode = if should_run_builtin_test_tui(flags.tui, runnable.len()) {
-                "tui"
-            } else {
-                "text"
-            };
-            let payload = build_builtin_test_plan_payload(
-                task,
-                resolved_root,
-                &targets,
-                requested_suite.as_deref(),
-                &passthrough,
-                runtime_mode,
-            );
-            return serde_json::to_string_pretty(&payload)
-                .map(Some)
-                .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
-        }
-        let color_enabled =
-            resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
-        let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
-        let runtime_mode = if should_run_builtin_test_tui(flags.tui, runnable.len()) {
-            "tui"
-        } else {
-            "text"
-        };
-        renderer.section("Test Plan")?;
-        renderer.key_values(&[
-            KeyValue::new("request", task.name.clone()),
-            KeyValue::new("root", resolved_root.display().to_string()),
-            KeyValue::new("targets", runnable.len().to_string()),
-            KeyValue::new("runtime", runtime_mode.to_owned()),
-        ])?;
-        renderer.text("")?;
-        renderer.section("Target Summary")?;
-        let summary_lines = targets
-            .iter()
-            .map(|target| {
-                let available_suites = target
-                    .plans
-                    .iter()
-                    .map(|plan| plan.suite.as_str())
-                    .collect::<BTreeSet<&str>>()
-                    .into_iter()
-                    .collect::<Vec<&str>>()
-                    .join(", ");
-                format!(
-                    "{}: source={} suites={}",
-                    target.name, target.suite_source, available_suites
-                )
-            })
-            .collect::<Vec<String>>();
-        renderer.bullet_list("targets", &summary_lines)?;
-        renderer.text("")?;
-        for target in &targets {
-            let available_suites = target
-                .plans
-                .iter()
-                .map(|plan| plan.suite.as_str())
-                .collect::<BTreeSet<&str>>()
-                .into_iter()
-                .collect::<Vec<&str>>()
-                .join(", ");
-            let mut selected_plans = target.plans.clone();
-            if let Some(requested) = requested_suite.as_ref() {
-                selected_plans.retain(|plan| &plan.suite == requested);
-            }
-            renderer.section(&format!("Target: {}", target.name))?;
-            if !selected_plans.is_empty() {
-                let args_rendered = passthrough
-                    .iter()
-                    .map(|arg| shell_quote(arg))
-                    .collect::<Vec<String>>()
-                    .join(" ");
-                let runners = selected_plans
-                    .iter()
-                    .map(|plan| plan.suite.as_str())
-                    .collect::<Vec<&str>>()
-                    .join(", ");
-                let commands = selected_plans
-                    .iter()
-                    .map(|plan| {
-                        if args_rendered.is_empty() {
-                            plan.command.clone()
-                        } else {
-                            format!("{} {}", plan.command, args_rendered)
-                        }
-                    })
-                    .collect::<Vec<String>>();
-                renderer.key_values(&[
-                    KeyValue::new("root", target.root.display().to_string()),
-                    KeyValue::new("runner", runners),
-                    KeyValue::new("available-suites", available_suites.clone()),
-                    KeyValue::new("suite-source", target.suite_source.clone()),
-                ])?;
-                renderer.text("")?;
-                renderer.bullet_list("command", &commands)?;
-                renderer.text("")?;
-                let mut evidence = Vec::<String>::new();
-                for plan in &selected_plans {
-                    for line in &plan.evidence {
-                        evidence.push(format!("{}: {line}", plan.suite));
-                    }
-                }
-                renderer.bullet_list("evidence", &evidence)?;
-            } else {
-                renderer.key_values(&[
-                    KeyValue::new("root", target.root.display().to_string()),
-                    KeyValue::new("runner", "<none>".to_owned()),
-                    KeyValue::new("available-suites", available_suites.clone()),
-                    KeyValue::new("suite-source", target.suite_source.clone()),
-                    KeyValue::new("command", "<none>".to_owned()),
-                ])?;
-                renderer.text("")?;
-                renderer.notice(
-                    NoticeLevel::Warning,
-                    "no supported test runner detected for this target",
-                )?;
-            }
-            renderer.text("")?;
-            renderer.bullet_list("fallback-chain", &target.fallback_chain)?;
-            renderer.text("")?;
-        }
-        let out = renderer.into_inner();
-        return String::from_utf8(out).map(Some).map_err(|error| {
-            RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}"))
-        });
+        return render_builtin_test_plan(
+            task,
+            resolved_root,
+            &targets,
+            suite_selection.requested_suite.as_deref(),
+            &suite_selection.passthrough,
+            suite_selection.runnable.len(),
+            flags,
+        )
+        .map(Some);
     }
 
-    let args_rendered = passthrough
-        .iter()
-        .map(|arg| shell_quote(arg))
-        .collect::<Vec<String>>()
-        .join(" ");
-    let runnable = runnable
-        .into_iter()
-        .map(|(name, root, command, suite)| {
-            let command = if args_rendered.is_empty() {
-                command
-            } else {
-                format!("{command} {args_rendered}")
-            };
-            BuiltinTestRunnable {
-                name,
-                runner: suite,
-                root,
-                command,
-            }
-        })
-        .collect::<Vec<BuiltinTestRunnable>>();
+    let runnable =
+        apply_passthrough_to_runnable(suite_selection.runnable, &suite_selection.passthrough);
     let max_parallel = builtin_test_max_parallel(catalogs, resolved_root);
     let should_tui = should_run_builtin_test_tui(flags.tui, runnable.len());
     let results = if should_tui {
@@ -335,8 +76,8 @@ pub(super) fn try_run_builtin_test(
         Some(render_builtin_test_results_json(
             &results,
             &targets,
-            requested_suite.as_deref(),
-            &passthrough,
+            suite_selection.requested_suite.as_deref(),
+            &suite_selection.passthrough,
         )?)
     } else {
         None
@@ -357,11 +98,304 @@ pub(super) fn try_run_builtin_test(
             let rendered = append_builtin_test_filter_hint(
                 rendered,
                 &results,
-                requested_suite.as_deref(),
-                &passthrough,
+                suite_selection.requested_suite.as_deref(),
+                &suite_selection.passthrough,
             );
             Err(RunnerError::BuiltinTestNonZero { failures, rendered })
         }
+    }
+}
+
+fn collect_builtin_test_runnable_targets(
+    targets: &[BuiltinTestTarget],
+) -> Vec<BuiltinTestRunnable> {
+    targets
+        .iter()
+        .flat_map(|target| {
+            let plans = target.plans.clone();
+            let multi = plans.len() > 1;
+            plans
+                .into_iter()
+                .map(|plan| BuiltinTestRunnable {
+                    name: if multi {
+                        format!("{}/{}", target.name, plan.suite)
+                    } else {
+                        target.name.clone()
+                    },
+                    runner: plan.suite,
+                    root: target.root.clone(),
+                    command: plan.command,
+                })
+                .collect::<Vec<BuiltinTestRunnable>>()
+        })
+        .collect::<Vec<BuiltinTestRunnable>>()
+}
+
+fn select_builtin_test_suite(
+    mut runnable: Vec<BuiltinTestRunnable>,
+    mut passthrough: Vec<String>,
+) -> Result<BuiltinSuiteSelection, BuiltinSuiteSelectionError> {
+    let available_runners = runnable
+        .iter()
+        .map(|plan| plan.runner.clone())
+        .collect::<BTreeSet<String>>();
+    let requested_suite_raw = passthrough.first().cloned();
+    let requested_suite = passthrough.first().and_then(|candidate| {
+        normalize_builtin_test_suite(candidate)
+            .map(str::to_owned)
+            .or_else(|| {
+                if available_runners.contains(candidate) {
+                    Some(candidate.clone())
+                } else {
+                    None
+                }
+            })
+    });
+
+    if let Some(selected) = requested_suite.as_ref() {
+        passthrough.remove(0);
+        runnable.retain(|entry| &entry.runner == selected);
+        if runnable.is_empty() {
+            let available = render_available_suites(&available_runners);
+            let forwarded = passthrough.join(" ");
+            let suggested = available_runners
+                .iter()
+                .map(|suite| {
+                    if forwarded.is_empty() {
+                        format!("effigy test {suite}")
+                    } else {
+                        format!("effigy test {suite} {forwarded}")
+                    }
+                })
+                .collect::<Vec<String>>()
+                .join(" | ");
+            return Err(BuiltinSuiteSelectionError {
+                message: format!(
+                    "built-in `test` runner `{selected}` is not available in this target (available: {available}). Try one of: {suggested}. Use `effigy test --plan <args>` to preview suite routing before execution."
+                ),
+                available_runners,
+            });
+        }
+    } else if !passthrough.is_empty() && available_runners.len() > 1 {
+        let first = requested_suite_raw.unwrap_or_else(|| passthrough[0].clone());
+        if let Some(suggested_suite) = suggest_suite_name(&first, &available_runners) {
+            let remainder = passthrough.iter().skip(1).cloned().collect::<Vec<String>>();
+            let suggested = if remainder.is_empty() {
+                format!("effigy test {suggested_suite}")
+            } else {
+                format!("effigy test {suggested_suite} {}", remainder.join(" "))
+            };
+            let available = render_available_suites(&available_runners);
+            return Err(BuiltinSuiteSelectionError {
+                message: format!(
+                    "built-in `test` runner `{first}` is not available in this target (available: {available}). Did you mean `{suggested_suite}`? Try: {suggested}. Use `effigy test --plan <args>` to preview suite routing before execution.",
+                ),
+                available_runners,
+            });
+        }
+        let available = render_available_suites(&available_runners);
+        let user_args = passthrough.join(" ");
+        let suggested = available_runners
+            .iter()
+            .map(|suite| format!("effigy test {suite} {user_args}"))
+            .collect::<Vec<String>>()
+            .join(" | ");
+        return Err(BuiltinSuiteSelectionError {
+            message: format!(
+                "built-in `test` is ambiguous for arguments `{user_args}` because multiple suites are available ({available}); specify a suite first. Try one of: {suggested}. Use `effigy test --plan <args>` to preview suite routing before execution.",
+            ),
+            available_runners,
+        });
+    }
+
+    Ok(BuiltinSuiteSelection {
+        runnable,
+        requested_suite,
+        passthrough,
+    })
+}
+
+fn render_suite_selection_failure(
+    task: &TaskInvocation,
+    resolved_root: &Path,
+    flags: BuiltinTestCliFlags,
+    selection_error: BuiltinSuiteSelectionError,
+) -> Result<Option<String>, RunnerError> {
+    if flags.plan_mode {
+        return render_builtin_test_plan_recovery(
+            task,
+            resolved_root,
+            &selection_error.available_runners,
+            &selection_error.message,
+            flags.output_json,
+        )
+        .map(Some);
+    }
+    Err(RunnerError::TaskInvocation(selection_error.message))
+}
+
+fn render_builtin_test_plan(
+    task: &TaskInvocation,
+    root: &Path,
+    targets: &[BuiltinTestTarget],
+    requested_suite: Option<&str>,
+    passthrough: &[String],
+    runnable_count: usize,
+    flags: BuiltinTestCliFlags,
+) -> Result<String, RunnerError> {
+    let runtime_mode = if should_run_builtin_test_tui(flags.tui, runnable_count) {
+        "tui"
+    } else {
+        "text"
+    };
+
+    if flags.output_json {
+        let payload = build_builtin_test_plan_payload(
+            task,
+            root,
+            targets,
+            requested_suite,
+            passthrough,
+            runtime_mode,
+        );
+        return serde_json::to_string_pretty(&payload)
+            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+    }
+
+    let color_enabled =
+        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
+    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+    renderer.section("Test Plan")?;
+    renderer.key_values(&[
+        KeyValue::new("request", task.name.clone()),
+        KeyValue::new("root", root.display().to_string()),
+        KeyValue::new("targets", runnable_count.to_string()),
+        KeyValue::new("runtime", runtime_mode.to_owned()),
+    ])?;
+    renderer.text("")?;
+    renderer.section("Target Summary")?;
+    let summary_lines = targets
+        .iter()
+        .map(|target| {
+            let available_suites = target
+                .plans
+                .iter()
+                .map(|plan| plan.suite.as_str())
+                .collect::<BTreeSet<&str>>()
+                .into_iter()
+                .collect::<Vec<&str>>()
+                .join(", ");
+            format!(
+                "{}: source={} suites={}",
+                target.name, target.suite_source, available_suites
+            )
+        })
+        .collect::<Vec<String>>();
+    renderer.bullet_list("targets", &summary_lines)?;
+    renderer.text("")?;
+    for target in targets {
+        let available_suites = target
+            .plans
+            .iter()
+            .map(|plan| plan.suite.as_str())
+            .collect::<BTreeSet<&str>>()
+            .into_iter()
+            .collect::<Vec<&str>>()
+            .join(", ");
+        let mut selected_plans = target.plans.clone();
+        if let Some(requested) = requested_suite {
+            selected_plans.retain(|plan| plan.suite == requested);
+        }
+        renderer.section(&format!("Target: {}", target.name))?;
+        if !selected_plans.is_empty() {
+            let args_rendered = passthrough
+                .iter()
+                .map(|arg| shell_quote(arg))
+                .collect::<Vec<String>>()
+                .join(" ");
+            let runners = selected_plans
+                .iter()
+                .map(|plan| plan.suite.as_str())
+                .collect::<Vec<&str>>()
+                .join(", ");
+            let commands = selected_plans
+                .iter()
+                .map(|plan| {
+                    if args_rendered.is_empty() {
+                        plan.command.clone()
+                    } else {
+                        format!("{} {}", plan.command, args_rendered)
+                    }
+                })
+                .collect::<Vec<String>>();
+            renderer.key_values(&[
+                KeyValue::new("root", target.root.display().to_string()),
+                KeyValue::new("runner", runners),
+                KeyValue::new("available-suites", available_suites.clone()),
+                KeyValue::new("suite-source", target.suite_source.clone()),
+            ])?;
+            renderer.text("")?;
+            renderer.bullet_list("command", &commands)?;
+            renderer.text("")?;
+            let mut evidence = Vec::<String>::new();
+            for plan in &selected_plans {
+                for line in &plan.evidence {
+                    evidence.push(format!("{}: {line}", plan.suite));
+                }
+            }
+            renderer.bullet_list("evidence", &evidence)?;
+        } else {
+            renderer.key_values(&[
+                KeyValue::new("root", target.root.display().to_string()),
+                KeyValue::new("runner", "<none>".to_owned()),
+                KeyValue::new("available-suites", available_suites.clone()),
+                KeyValue::new("suite-source", target.suite_source.clone()),
+                KeyValue::new("command", "<none>".to_owned()),
+            ])?;
+            renderer.text("")?;
+            renderer.notice(
+                NoticeLevel::Warning,
+                "no supported test runner detected for this target",
+            )?;
+        }
+        renderer.text("")?;
+        renderer.bullet_list("fallback-chain", &target.fallback_chain)?;
+        renderer.text("")?;
+    }
+    let out = renderer.into_inner();
+    String::from_utf8(out)
+        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
+}
+
+fn apply_passthrough_to_runnable(
+    runnable: Vec<BuiltinTestRunnable>,
+    passthrough: &[String],
+) -> Vec<BuiltinTestRunnable> {
+    let args_rendered = passthrough
+        .iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<String>>()
+        .join(" ");
+    runnable
+        .into_iter()
+        .map(|mut entry| {
+            if !args_rendered.is_empty() {
+                entry.command = format!("{} {}", entry.command, args_rendered);
+            }
+            entry
+        })
+        .collect::<Vec<BuiltinTestRunnable>>()
+}
+
+fn render_available_suites(available_runners: &BTreeSet<String>) -> String {
+    if available_runners.is_empty() {
+        "<none>".to_owned()
+    } else {
+        available_runners
+            .iter()
+            .cloned()
+            .collect::<Vec<String>>()
+            .join(", ")
     }
 }
 
@@ -755,6 +789,19 @@ struct BuiltinTestRunnable {
     runner: String,
     root: PathBuf,
     command: String,
+}
+
+#[derive(Debug, Clone)]
+struct BuiltinSuiteSelection {
+    runnable: Vec<BuiltinTestRunnable>,
+    requested_suite: Option<String>,
+    passthrough: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct BuiltinSuiteSelectionError {
+    message: String,
+    available_runners: BTreeSet<String>,
 }
 
 fn should_run_builtin_test_tui(force_tui: bool, suite_count: usize) -> bool {

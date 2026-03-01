@@ -81,5 +81,6 @@ Owner: `name/team`
 ---
 
 Related docs:
+- [Release Notes Authoring Guide](./036-release-notes-authoring-template-and-examples.md)
 - [Release Contract (v0.x)](../roadmap/backlog/release-contract-v0.md)
 - [Distribution Channels Backlog](../roadmap/backlog/distribution-channels.md)
