@@ -49,8 +49,8 @@ Across `MINOR` bumps:
 
 A version can be tagged for channel publication only if all are true:
 
-- [ ] `cargo test` passes on release branch.
-- [ ] Smoke checks pass on active workspace(s):
+- [x] `cargo test` passes on release branch.
+- [x] Smoke checks pass on active workspace(s):
   - `help`
   - `tasks`
   - prefixed built-ins (`farmyard/tasks`, `farmyard/test`)
@@ -58,6 +58,12 @@ A version can be tagged for channel publication only if all are true:
 - [ ] Release notes drafted with change summary and migration notes (if needed).
 - [ ] Rollback candidate tag identified (previous known-good).
 - [ ] Distribution metadata validated (crate metadata, install docs, checksum path).
+
+Automation entrypoint:
+- `cargo qa-release` (wraps `scripts/check-release-gates.sh`)
+
+CI automation:
+- `.github/workflows/release-gates.yml` on tag pushes (`v*`) and manual dispatch.
 
 Operational template:
 - [Release Checklist Template](../../guides/014-release-checklist-template.md)

@@ -44,14 +44,14 @@ Effigy is still evolving, so distribution planning should be staged and reversib
 ## 5) Execution Plan
 
 ### Phase A - Release Contract and Artifact Policy
-- [ ] Define minimum release contract for first public version (`v0.1.x` target scope).
-- [ ] Define semver policy and compatibility expectations.
-- [ ] Define rollback and hotfix process.
-- [ ] Define changelog format and release notes template.
+- [x] Define minimum release contract for first public version (`v0.1.x` target scope).
+- [x] Define semver policy and compatibility expectations.
+- [x] Define rollback and hotfix process.
+- [x] Define changelog format and release notes template.
 
 ### Phase B - Crates Path
-- [ ] Finalize crate metadata and publish readiness checks.
-- [ ] Add tag-driven release checklist for crates publication.
+- [x] Finalize crate metadata and publish readiness checks.
+- [x] Add tag-driven release checklist for crates publication.
 - [ ] Validate `cargo install` flows from tag and from crates.io.
 
 ### Phase C - Homebrew Path
@@ -86,7 +86,7 @@ Effigy is still evolving, so distribution planning should be staged and reversib
 
 ## 8) Deliverables
 
-- [ ] Release contract doc + checklist.
-- [ ] Crates publication workflow.
+- [x] Release contract doc + checklist.
+- [x] Crates publication workflow.
 - [ ] Homebrew tap + automation workflow.
 - [ ] CI install recipes and migration guidance.

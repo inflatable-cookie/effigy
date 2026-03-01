@@ -61,7 +61,7 @@ For now, version is controlled in `Cargo.toml`.
 
 ## 5) Release Checklist
 
-1. `cargo test` passes on default profile.
+1. Run release gates in one pass: `cargo qa-release`.
 2. CLI help and core commands run from installed PATH binary.
 3. Wrapper fallback still operational in at least one consumer repo.
 4. Update roadmap/report docs with validation evidence.
@@ -84,6 +84,7 @@ If cargo lock contention causes delayed startup for wrapper mode, direct PATH in
 ## Related Guides
 
 - [`014-release-checklist-template.md`](./014-release-checklist-template.md)
+- [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
 
 ## Next Step

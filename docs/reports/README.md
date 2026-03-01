@@ -28,6 +28,10 @@ When a feature spans multiple same-day checkpoints, add a consolidation report t
 
 - [`2026-03-01-documentation-ia-completion-report.md`](./2026-03-01-documentation-ia-completion-report.md)
 
+## Recent Validation Reports
+
+- [`2026-03-01-release-gates-automation-checkpoint.md`](./2026-03-01-release-gates-automation-checkpoint.md)
+
 ## Report template
 
 ```md
