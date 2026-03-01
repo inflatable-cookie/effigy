@@ -10,7 +10,11 @@ use serde_json::json;
 use crate::TaskInvocation;
 
 use super::super::catalog::discover_catalogs;
-use super::super::{RunnerError, TaskRuntimeArgs, BUILTIN_TASKS};
+use super::super::{RunnerError, TaskRuntimeArgs};
+
+mod scripts;
+
+use scripts::{command_names, render_completion_script, CompletionShell};
 
 const CANDIDATE_CACHE_TTL: Duration = Duration::from_secs(2);
 
@@ -33,34 +37,9 @@ struct CompletionCandidatesResult {
     manifest_count: usize,
 }
 
-static COMPLETION_CANDIDATES_CACHE: OnceLock<Mutex<HashMap<PathBuf, CompletionCandidatesSnapshot>>> =
-    OnceLock::new();
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CompletionShell {
-    Bash,
-    Zsh,
-    Fish,
-}
-
-impl CompletionShell {
-    fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "bash" => Some(Self::Bash),
-            "zsh" => Some(Self::Zsh),
-            "fish" => Some(Self::Fish),
-            _ => None,
-        }
-    }
-
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Bash => "bash",
-            Self::Zsh => "zsh",
-            Self::Fish => "fish",
-        }
-    }
-}
+static COMPLETION_CANDIDATES_CACHE: OnceLock<
+    Mutex<HashMap<PathBuf, CompletionCandidatesSnapshot>>,
+> = OnceLock::new();
 
 pub(super) fn run_builtin_completion(
     task: &TaskInvocation,
@@ -131,11 +110,7 @@ pub(super) fn run_builtin_completion(
         )
     })?;
 
-    let script = match shell {
-        CompletionShell::Bash => render_bash_completion(),
-        CompletionShell::Zsh => render_zsh_completion(),
-        CompletionShell::Fish => render_fish_completion(),
-    };
+    let script = render_completion_script(shell);
 
     if output_json {
         let payload = json!({
@@ -254,6 +229,7 @@ fn render_completion_help() -> String {
         "Notes",
         "- completion command list is sourced from Effigy built-in command index",
         "- candidate suggestions include built-ins and discovered task selectors",
+        "- candidate lookups use short TTL memoization with manifest mtime invalidation",
         "- regenerate and source after command surface changes",
         "",
         "Examples",
@@ -276,6 +252,7 @@ fn render_completion_candidates_help() -> String {
         "Notes",
         "- suggestions include built-ins, `<task>`, and `<catalog>/<task>` selectors",
         "- no manifest discovery beyond existing `tasks` catalog scan behavior",
+        "- responses include `cache_hit` and `manifest_count` in JSON mode",
         "",
         "Examples",
         "- effigy completion candidates",
@@ -314,7 +291,9 @@ fn load_completion_candidates_with_cache(
     let now = Instant::now();
     let cache = COMPLETION_CANDIDATES_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
-    if let Some((candidates, manifest_count)) = read_cached_completion_candidates(repo_root, now, cache)? {
+    if let Some((candidates, manifest_count)) =
+        read_cached_completion_candidates(repo_root, now, cache)?
+    {
         return Ok((candidates, true, manifest_count));
     }
 
@@ -376,11 +355,16 @@ fn discover_completion_candidates(
     }
     manifest_stamps.sort_by(|a, b| a.path.cmp(&b.path));
 
-    Ok((candidates.into_iter().collect::<Vec<String>>(), manifest_stamps))
+    Ok((
+        candidates.into_iter().collect::<Vec<String>>(),
+        manifest_stamps,
+    ))
 }
 
 fn manifest_stamps_unchanged(expected: &[ManifestStamp]) -> bool {
-    expected.iter().all(|stamp| read_manifest_stamp(&stamp.path) == *stamp)
+    expected
+        .iter()
+        .all(|stamp| read_manifest_stamp(&stamp.path) == *stamp)
 }
 
 fn read_manifest_stamp(path: &Path) -> ManifestStamp {
@@ -394,197 +378,4 @@ fn read_manifest_stamp(path: &Path) -> ManifestStamp {
         path: path.to_path_buf(),
         modified_epoch_ns,
     }
-}
-
-fn command_names() -> Vec<&'static str> {
-    let mut names = Vec::with_capacity(BUILTIN_TASKS.len() + 1);
-    names.push("help");
-    for (name, _) in BUILTIN_TASKS {
-        names.push(name);
-    }
-    names
-}
-
-fn command_options(command: &str) -> &'static [&'static str] {
-    match command {
-        "help" => &["--json", "--help", "-h"],
-        "tasks" | "catalogs" => &[
-            "--repo",
-            "--task",
-            "--resolve",
-            "--json",
-            "--pretty",
-            "--help",
-            "-h",
-        ],
-        "doctor" => &["--repo", "--fix", "--verbose", "--json", "--help", "-h"],
-        "test" => &[
-            "--plan",
-            "--verbose-results",
-            "--tui",
-            "--json",
-            "--help",
-            "-h",
-        ],
-        "watch" => &[
-            "--owner",
-            "--debounce-ms",
-            "--include",
-            "--exclude",
-            "--once",
-            "--max-runs",
-            "--json",
-            "--help",
-            "-h",
-        ],
-        "init" => &["--dry-run", "--force", "--json", "--help", "-h"],
-        "migrate" => &["--from", "--script", "--apply", "--json", "--help", "-h"],
-        "config" => &[
-            "--schema",
-            "--minimal",
-            "--target",
-            "--runner",
-            "--json",
-            "--help",
-            "-h",
-        ],
-        "unlock" => &["--all", "--json", "--help", "-h"],
-        "cache" => &["inspect", "invalidate", "--all", "--json", "--help", "-h"],
-        "completion" => &[
-            "bash",
-            "zsh",
-            "fish",
-            "candidates",
-            "--repo",
-            "--prefix",
-            "--json",
-            "--help",
-            "-h",
-        ],
-        _ => &[],
-    }
-}
-
-fn render_bash_completion() -> String {
-    let commands = command_names().join(" ");
-    let mut lines = vec![
-        "# bash completion for effigy".to_owned(),
-        "_effigy() {".to_owned(),
-        "  local cur prev cmd".to_owned(),
-        "  COMPREPLY=()".to_owned(),
-        "  cur=\"${COMP_WORDS[COMP_CWORD]}\"".to_owned(),
-        "  prev=\"${COMP_WORDS[COMP_CWORD-1]}\"".to_owned(),
-        "  cmd=\"${COMP_WORDS[1]}\"".to_owned(),
-        "".to_owned(),
-        "  if [[ ${COMP_CWORD} -eq 1 ]]; then".to_owned(),
-        "    local candidates".to_owned(),
-        "    candidates=\"$(effigy completion candidates --prefix \"$cur\" 2>/dev/null)\""
-            .to_owned(),
-        "    if [[ -z \"$candidates\" ]]; then".to_owned(),
-        format!(
-            "      COMPREPLY=( $(compgen -W \"{}\" -- \"$cur\") )",
-            commands
-        ),
-        "    else".to_owned(),
-        "      COMPREPLY=( $(compgen -W \"$candidates\" -- \"$cur\") )".to_owned(),
-        "    fi".to_owned(),
-        "    return 0".to_owned(),
-        "  fi".to_owned(),
-        "".to_owned(),
-        "  case \"$cmd\" in".to_owned(),
-    ];
-
-    for command in command_names() {
-        let options = command_options(command).join(" ");
-        lines.push(format!("    {command})"));
-        lines.push(format!(
-            "      COMPREPLY=( $(compgen -W \"{}\" -- \"$cur\") )",
-            options
-        ));
-        lines.push("      return 0".to_owned());
-        lines.push("      ;;".to_owned());
-    }
-
-    lines.extend_from_slice(&[
-        "  esac".to_owned(),
-        "}".to_owned(),
-        "complete -F _effigy effigy".to_owned(),
-    ]);
-    lines.join("\n")
-}
-
-fn render_zsh_completion() -> String {
-    let mut lines = vec![
-        "#compdef effigy".to_owned(),
-        "".to_owned(),
-        "local -a commands".to_owned(),
-        "commands=(".to_owned(),
-        "  'help:Show general help'".to_owned(),
-    ];
-
-    for (name, description) in BUILTIN_TASKS {
-        lines.push(format!("  '{name}:{description}'"));
-    }
-
-    lines.extend_from_slice(&[
-        ")".to_owned(),
-        "".to_owned(),
-        "if (( CURRENT == 2 )); then".to_owned(),
-        "  local -a dynamic_commands".to_owned(),
-        "  dynamic_commands=(${(f)\"$(effigy completion candidates --prefix $words[CURRENT] 2>/dev/null)\"})".to_owned(),
-        "  if (( ${#dynamic_commands[@]} > 0 )); then".to_owned(),
-        "    _describe 'command-or-task' dynamic_commands".to_owned(),
-        "    return".to_owned(),
-        "  fi".to_owned(),
-        "  _describe 'command' commands".to_owned(),
-        "  return".to_owned(),
-        "fi".to_owned(),
-        "".to_owned(),
-        "case $words[2] in".to_owned(),
-    ]);
-
-    for command in command_names() {
-        let options = command_options(command)
-            .iter()
-            .map(|opt| format!("'{opt}[option]'"))
-            .collect::<Vec<String>>()
-            .join(" ");
-        lines.push(format!("  {command})"));
-        lines.push(format!("    _arguments {options}"));
-        lines.push("    ;;".to_owned());
-    }
-
-    lines.extend_from_slice(&["esac".to_owned()]);
-    lines.join("\n")
-}
-
-fn render_fish_completion() -> String {
-    let mut lines = vec![
-        "# fish completion for effigy".to_owned(),
-        "complete -c effigy -f".to_owned(),
-        "complete -c effigy -n '__fish_use_subcommand' -a '(effigy completion candidates --prefix (commandline -ct) 2>/dev/null)'".to_owned(),
-    ];
-
-    for (name, description) in command_rows_for_fish() {
-        lines.push(format!(
-            "complete -c effigy -n '__fish_use_subcommand' -a '{name}' -d '{}'",
-            description.replace('"', "\\\"")
-        ));
-    }
-
-    for command in command_names() {
-        for option in command_options(command) {
-            lines.push(format!(
-                "complete -c effigy -n '__fish_seen_subcommand_from {command}' -a '{option}'"
-            ));
-        }
-    }
-
-    lines.join("\n")
-}
-
-fn command_rows_for_fish() -> Vec<(&'static str, &'static str)> {
-    let mut rows = vec![("help", "Show general help")];
-    rows.extend(BUILTIN_TASKS.iter().copied());
-    rows
 }

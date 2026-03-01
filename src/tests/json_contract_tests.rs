@@ -498,6 +498,41 @@ fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_re
     let second_parsed: serde_json::Value =
         serde_json::from_str(&second).expect("parse second json");
     assert_eq!(second_parsed["cache_hit"], true);
+    assert_eq!(second_parsed["manifest_count"], 1);
+}
+
+#[test]
+fn builtin_completion_candidates_json_contract_expires_cache_after_ttl() {
+    let root = temp_workspace("completion-candidates-cache-ttl-expiry");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf root\"\n",
+    );
+
+    let first = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["candidates".to_owned(), "--json".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("run completion candidates first");
+    let first_parsed: serde_json::Value = serde_json::from_str(&first).expect("parse first json");
+    assert_eq!(first_parsed["cache_hit"], false);
+
+    thread::sleep(Duration::from_millis(2200));
+
+    let second = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["candidates".to_owned(), "--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run completion candidates second");
+    let second_parsed: serde_json::Value =
+        serde_json::from_str(&second).expect("parse second json");
+    assert_eq!(second_parsed["cache_hit"], false);
 }
 
 #[test]

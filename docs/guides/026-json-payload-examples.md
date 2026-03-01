@@ -359,6 +359,8 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
   "ok": true,
   "repo": "/workspace",
   "prefix": "farm",
+  "cache_hit": true,
+  "manifest_count": 3,
   "candidates": [
     "farmyard/api",
     "farmyard/build"
