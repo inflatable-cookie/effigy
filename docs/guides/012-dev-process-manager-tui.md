@@ -115,3 +115,13 @@ In this example, `../shared/validate` resolves relative to `dairy` catalog root.
 3. In a Vite tab, send `r` then `Enter` and confirm restart behavior.
 4. Use another terminal tab/window for ad-hoc commands while the dev stack is running.
 5. Exit with `q` and verify child process teardown.
+
+## Related Guides
+
+- [`019-watch-init-migrate-phase-1.md`](./019-watch-init-migrate-phase-1.md)
+- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+
+## Next Step
+
+After validating local TUI behavior, codify the same profile shape in a reusable snippet from [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md).

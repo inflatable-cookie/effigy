@@ -66,3 +66,13 @@ Result rendering:
 
 TUI diagnostics:
 - set `EFFIGY_TUI_DIAGNOSTICS=1` when running `effigy test --tui` to emit post-run runtime diagnostics and recent trace lines for emulator/debug troubleshooting.
+
+## Related Guides
+
+- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+
+## Next Step
+
+After finalizing test routing, capture expected machine payloads in [`026-json-payload-examples.md`](./026-json-payload-examples.md) for CI consumers.

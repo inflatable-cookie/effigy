@@ -59,3 +59,12 @@ When adding/updating command output:
 - Unit tests should cover renderer behavior with colour disabled.
 - Command tests should validate representative success and failure flows.
 - CLI integration tests should assert output remains ANSI-free when `NO_COLOR` is set.
+
+## Related Guides
+
+- [`017-json-output-contracts.md`](./017-json-output-contracts.md)
+- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+
+## Next Step
+
+After changing renderer behavior, run docs and JSON contract checks from [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md) before merging.

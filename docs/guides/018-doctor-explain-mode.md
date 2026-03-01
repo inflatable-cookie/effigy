@@ -113,8 +113,12 @@ JSON output excerpt:
 - `deferral`: whether fallback deferral was considered and selected.
 - `reasoning`: explicit narrative for selection and deferral outcomes.
 
-## Next Reading
+## Related Guides
 
 - Resolution precedence details: [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
 - Tasks resolution probe mode: [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - Failure recipes for routing/deferral issues: [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+
+## Next Step
+
+After adding or changing explain fields, validate JSON shape against [`017-json-output-contracts.md`](./017-json-output-contracts.md) and add a troubleshooting note in [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md) if behavior changed.

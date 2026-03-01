@@ -54,3 +54,13 @@ Recommended deprecation trigger per repo:
 - no unresolved requests observed over an agreed validation window,
 - primary dev/test/release tasks run through native Effigy tasks,
 - fallback invocation is no longer needed in CI or local workflows.
+
+## Related Guides
+
+- [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
+- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+- [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
+
+## Next Step
+
+After deferral is stable, migrate one high-volume selector path into explicit `[tasks]` and validate it with `effigy tasks --resolve`.

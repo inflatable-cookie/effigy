@@ -108,10 +108,22 @@ Escalate docs scope when:
 - a workflow/script rename invalidates validation instructions
 - a new guide introduces navigation drift across entrypoints
 
-## 7) Related Source-of-Truth Guides
+## Expected Outcome
 
-- `029-docs-qa-checklist-and-validation.md`
-- `033-style-and-terminology-guide.md`
-- `034-task-and-command-glossary.md`
-- `035-guide-ownership-and-update-triggers.md`
-- `036-release-notes-authoring-template-and-examples.md`
+- contributors can map change type to required docs updates quickly
+- PRs include reproducible docs validation evidence
+- docs regressions are caught before merge
+
+## Related Guides
+
+- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+- [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
+- [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)
+- [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
+- [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
+- [`038-docs-ia-snapshot.md`](./038-docs-ia-snapshot.md)
+- [`039-docs-drift-monitoring.md`](./039-docs-drift-monitoring.md)
+
+## Next Step
+
+Before submitting a docs-impacting PR, execute the validation commands in Section 4 and include results with the checklist snippet from Section 5.

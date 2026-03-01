@@ -130,8 +130,12 @@ Rule of thumb:
 - New optional fields may be added in `v1` without removing existing keys.
 - Breaking envelope changes require a new top-level schema/version.
 
-## Next Reading
+## Related Guides
 
 - Watch/init/migrate command contracts: [`019-watch-init-migrate-phase-1.md`](./019-watch-init-migrate-phase-1.md)
 - DAG/policy/locking behavior: [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
 - CI automation patterns: [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+
+## Next Step
+
+After updating any envelope or payload shape, add or refresh examples in [`026-json-payload-examples.md`](./026-json-payload-examples.md) and run `./scripts/check-json-contracts.sh --fast`.

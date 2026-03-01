@@ -12,24 +12,44 @@ use crate::tui::core::{InputMode, LogEntry, LogEntryKind, ProcessExitState};
 use super::super::terminal_text::{ansi_line, runtime_meta_line};
 use super::header::panel_block;
 
+pub(super) struct OutputPaneRenderArgs<'a> {
+    pub(super) active_logs: &'a [LogEntry],
+    pub(super) scroll_offset: usize,
+    pub(super) max_offset: usize,
+    pub(super) render_scroll_offset: usize,
+    pub(super) scrollbar_total: usize,
+    pub(super) active_process: &'a str,
+    pub(super) process_name: &'a str,
+    pub(super) shell_capture_mode: bool,
+    pub(super) active_output_seen: bool,
+    pub(super) spinner_tick: usize,
+    pub(super) active_elapsed: Duration,
+    pub(super) active_restart_count: usize,
+    pub(super) exit_states: &'a HashMap<String, ProcessExitState>,
+    pub(super) shell_cursor: Option<(u16, u16)>,
+}
+
 pub(super) fn render_output_pane(
     frame: &mut Frame<'_>,
     area: Rect,
-    active_logs: &[LogEntry],
-    scroll_offset: usize,
-    max_offset: usize,
-    render_scroll_offset: usize,
-    scrollbar_total: usize,
-    active_process: &str,
-    process_name: &str,
-    shell_capture_mode: bool,
-    active_output_seen: bool,
-    spinner_tick: usize,
-    active_elapsed: Duration,
-    active_restart_count: usize,
-    exit_states: &HashMap<String, ProcessExitState>,
-    shell_cursor: Option<(u16, u16)>,
+    args: OutputPaneRenderArgs<'_>,
 ) {
+    let OutputPaneRenderArgs {
+        active_logs,
+        scroll_offset,
+        max_offset,
+        render_scroll_offset,
+        scrollbar_total,
+        active_process,
+        process_name,
+        shell_capture_mode,
+        active_output_seen,
+        spinner_tick,
+        active_elapsed,
+        active_restart_count,
+        exit_states,
+        shell_cursor,
+    } = args;
     let active_is_shell = active_process == "shell";
     let output_height = area.height.saturating_sub(2) as usize;
     let mut lines = Vec::with_capacity(active_logs.len() + 1);

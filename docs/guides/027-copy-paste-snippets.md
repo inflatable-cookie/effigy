@@ -1,6 +1,8 @@
 # 027 - Copy/Paste Snippets
 
-Use this guide when you need ready-to-run templates with minimal adaptation.
+Use this guide for quick manifest bootstraps you can paste and adapt.
+
+For CI workflow snippets, use [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md).
 
 ## 1) Single Rust Repo (`effigy.toml`)
 
@@ -161,77 +163,13 @@ run = "composer global exec effigy -- {request} {args}"
 
 Use only when unresolved selectors must forward to legacy tooling.
 
-## 7) GitHub Actions: PR JSON Contracts
-
-```yaml
-name: JSON Contracts
-
-on:
-  pull_request:
-  push:
-    branches: [main]
-
-jobs:
-  json-contracts:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Validate contracts
-        run: |
-          set -o pipefail
-          ./scripts/check-json-contracts-ci.sh | tee json-contracts.log
-          grep -m1 '^{"selected":' json-contracts.log > json-contracts-selected.json
-
-      - name: Validate selection artifact
-        run: ./scripts/validate-json-contract-selection-artifact.sh ./json-contracts-selected.json
-
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: json-contracts-${{ github.run_id }}
-          path: |
-            json-contracts.log
-            json-contracts-selected.json
-```
-
-## 8) GitHub Actions: Failure Triage Artifact Capture
-
-```yaml
-- name: Capture Effigy triage JSON
-  if: failure()
-  run: |
-    effigy --json tasks --resolve test > tasks-resolve.json || true
-    effigy --json doctor --verbose > doctor-verbose.json || true
-
-- name: Upload triage artifacts
-  if: always()
-  uses: actions/upload-artifact@v4
-  with:
-    name: effigy-triage-${{ github.run_id }}
-    path: |
-      tasks-resolve.json
-      doctor-verbose.json
-      json-contracts.log
-      json-contracts-selected.json
-```
-
-## 9) Quick Validation Commands
-
-```sh
-effigy tasks
-effigy tasks --resolve test
-effigy doctor --verbose
-effigy test --plan
-./scripts/check-json-contracts.sh --fast --print-selected=text
-```
-
 ## Related Guides
 
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-- [`026-json-payload-examples.md`](./026-json-payload-examples.md)
+- [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
+
+## Next Step
+
+After pasting a snippet, validate routing and health with the checklist in [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md).

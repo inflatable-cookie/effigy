@@ -38,8 +38,18 @@ When adding a new guide:
 3. Add to root `README.md` only if it is newcomer-critical.
 4. Avoid duplicate placement in both "Start Here" and long-form topic lists unless intentional.
 
+## Expected Outcome
+
+- newcomers have one clear reading path from root README to operational guides
+- legacy or historical navigation aids remain discoverable but non-primary
+- index pages stay consistent after new guide additions
+
 ## Related Guides
 
-- `028-migration-quick-paths.md`
-- `029-docs-qa-checklist-and-validation.md`
-- `030-contributor-onboarding-15-minutes.md`
+- [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
+- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+- [`030-contributor-onboarding-15-minutes.md`](./030-contributor-onboarding-15-minutes.md)
+
+## Next Step
+
+After any index change, record the update in [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md) and re-run docs link checks.

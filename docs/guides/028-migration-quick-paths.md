@@ -2,6 +2,9 @@
 
 Use this guide to choose the shortest safe migration path for common Effigy adoption scenarios.
 
+For detailed command syntax, see [`025-command-reference-matrix.md`](./025-command-reference-matrix.md).
+For CI implementation templates, see [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md).
+
 ## 1) Path A: New Repo Onboarding
 
 When to use:
@@ -14,7 +17,7 @@ Decision path:
 3. Verify routing and health.
 4. Add CI JSON checks only after local task flow is stable.
 
-Commands:
+Fast commands:
 
 ```sh
 effigy init
@@ -52,15 +55,14 @@ Decision path:
 3. Keep `[defer]` as fallback for low-volume legacy paths.
 4. Remove `[defer]` only after no critical selector depends on it.
 
-Commands:
+Fast commands:
 
 ```sh
 effigy tasks --resolve <selector>
 effigy doctor <selector> -- <args>
-effigy doctor --verbose
 ```
 
-Compatibility snippet (temporary):
+Temporary compatibility snippet:
 
 ```toml
 [defer]
@@ -84,28 +86,19 @@ Decision path:
 3. Validate selection artifact payload.
 4. Upload triage artifacts for failures.
 
-Commands/scripts:
+Core scripts:
 
 ```sh
 ./scripts/check-json-contracts-ci.sh
 ./scripts/validate-json-contract-selection-artifact.sh ./json-contracts-selected.json
-./scripts/check-selection-artifact-validator-smoke.sh
-```
-
-Minimal workflow step:
-
-```yaml
-- name: Validate contracts
-  run: |
-    set -o pipefail
-    ./scripts/check-json-contracts-ci.sh | tee json-contracts.log
-    grep -m1 '^{"selected":' json-contracts.log > json-contracts-selected.json
 ```
 
 Exit criteria:
 - CI no longer depends on human-rendered text parsing
 - contract validation job passes on PR and main
 - triage artifacts are uploaded on failure
+
+Implementation details live in [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md).
 
 ## 4) Path D: Monorepo Expansion (Single Catalog -> Multi-Catalog)
 
@@ -118,7 +111,7 @@ Decision path:
 3. Keep root manifest for orchestration-only tasks.
 4. Prefer prefixed invocation in shared scripts (`<catalog>/<task>`).
 
-Commands:
+Fast commands:
 
 ```sh
 effigy tasks
@@ -140,7 +133,6 @@ Exit criteria:
 
 ## 6) Quick Selector
 
-Use this quick selector:
 - If you have no manifest: choose Path A.
 - If you rely on legacy forwarding: choose Path B.
 - If CI needs machine contracts: choose Path C.
@@ -148,8 +140,12 @@ Use this quick selector:
 
 ## Related Guides
 
-- `021-quick-start-and-command-cookbook.md`
-- `022-manifest-cookbook.md`
-- `023-troubleshooting-and-failure-recipes.md`
-- `024-ci-and-automation-recipes.md`
-- `027-copy-paste-snippets.md`
+- [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
+- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+- [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+- [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
+
+## Next Step
+
+Choose one migration path and then run the validation bundle from [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md) before merging.

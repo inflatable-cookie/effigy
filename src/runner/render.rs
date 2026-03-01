@@ -5,7 +5,7 @@ use crate::resolver::ResolvedTarget;
 use crate::ui::theme::resolve_color_enabled;
 use crate::ui::{KeyValue, OutputMode, PlainRenderer, Renderer};
 
-use super::{TaskSelection, TaskSelector};
+use super::{RunnerError, TaskSelection, TaskSelector};
 
 pub(super) fn render_task_resolution_trace(
     resolved: &ResolvedTarget,
@@ -56,4 +56,36 @@ pub(super) fn trace_renderer() -> PlainRenderer<Vec<u8>> {
     let color_enabled =
         resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
     PlainRenderer::new(Vec::<u8>::new(), color_enabled)
+}
+
+pub(super) fn standard_renderer(output_json: bool) -> PlainRenderer<Vec<u8>> {
+    let color_enabled = if output_json {
+        false
+    } else {
+        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal())
+    };
+    PlainRenderer::new(Vec::<u8>::new(), color_enabled)
+}
+
+pub(super) fn render_utf8(out: Vec<u8>) -> Result<String, RunnerError> {
+    String::from_utf8(out)
+        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
+}
+
+pub(super) fn encode_json(
+    payload: &serde_json::Value,
+    pretty: bool,
+) -> Result<String, RunnerError> {
+    let encoded = if pretty {
+        serde_json::to_string_pretty(payload)
+    } else {
+        serde_json::to_string(payload)
+    };
+    encoded.map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
+}
+
+pub(super) fn encode_pretty_json_optional(
+    payload: &serde_json::Value,
+) -> Result<Option<String>, RunnerError> {
+    encode_json(payload, true).map(Some)
 }

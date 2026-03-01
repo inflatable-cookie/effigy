@@ -88,8 +88,12 @@ effigy migrate --from ./frontend/package.json --apply --json
 | `migrate` behavior | preview/apply/non-destructive import behavior | `src/tests/runner_tests.rs` |
 | `migrate` JSON payload | `effigy.migrate.v1` payload shape | `src/tests/json_contract_tests.rs` |
 
-## Next Reading
+## Related Guides
 
 - DAG run/policy/lock baseline: [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
 - Troubleshooting watch and lock failures: [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - CI recipes for JSON command automation: [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+
+## Next Step
+
+After adopting any watch/init/migrate flow, add a path-specific rollout checklist in [`028-migration-quick-paths.md`](./028-migration-quick-paths.md) and validate commands via [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md).

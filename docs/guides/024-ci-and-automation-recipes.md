@@ -10,7 +10,7 @@ Primary contract checks in this repo:
 - `./scripts/validate-json-contract-selection-artifact.sh`
 - `./scripts/check-selection-artifact-validator-smoke.sh`
 
-Primary machine mode entrypoint:
+Primary JSON mode entrypoint:
 - `effigy --json <command>`
 
 ## 2) Local Reproduction Commands
@@ -109,7 +109,7 @@ Optional artifact upload:
 
 ## 5) Recipe: Capture Effigy JSON for Triage
 
-Store machine output for failed command triage:
+Store JSON output for failed command triage:
 
 ```yaml
 - name: Capture doctor JSON

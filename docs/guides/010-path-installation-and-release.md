@@ -80,3 +80,12 @@ For now, version is controlled in `Cargo.toml`.
 ## 7) Notes
 
 If cargo lock contention causes delayed startup for wrapper mode, direct PATH invocation avoids the cargo-run lock path.
+
+## Related Guides
+
+- [`014-release-checklist-template.md`](./014-release-checklist-template.md)
+- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+
+## Next Step
+
+After confirming install mode and smoke matrix, run the release checklist in [`014-release-checklist-template.md`](./014-release-checklist-template.md) for your target version.

@@ -1,6 +1,6 @@
 # 012 - Codebase Consolidation and Health
 
-Status: In Progress
+Status: Complete
 Owner: Platform
 Created: 2026-03-01
 Depends on: 001-011
@@ -55,27 +55,27 @@ Structural issues identified:
 - [x] Validate with targeted runner tests for plan/recovery/filter paths.
 
 ### Batch 12.2 - Doctor Module Decomposition
-- [ ] Split doctor checks into focused modules (`manifest`, `environment`, `references`, `health`).
-- [ ] Keep a thin orchestration layer in `doctor.rs`.
-- [ ] Reuse shared finding/status aggregation helpers.
-- [ ] Preserve explain/fix/json behavior contracts.
+- [x] Split doctor checks into focused modules (`manifest`, `environment`, `references`, `health`).
+- [x] Keep a thin orchestration layer in `doctor.rs`.
+- [x] Reuse shared finding/status aggregation helpers.
+- [x] Preserve explain/fix/json behavior contracts.
 
 ### Batch 12.3 - Managed Runtime Separation
-- [ ] Separate DAG scheduling/policy rendering from process launch execution.
-- [ ] Extract task-reference resolution and invocation rendering into utilities.
-- [ ] Add tests around dependency-cycle diagnostics and policy wrapping parity.
+- [x] Separate DAG scheduling/policy rendering from process launch execution.
+- [x] Extract task-reference resolution and invocation rendering into utilities.
+- [x] Add tests around dependency-cycle diagnostics and policy wrapping parity.
 
 ### Batch 12.4 - Runner Error/Rendering Cleanup
-- [ ] Break `RunnerError` formatting and command rendering helpers into smaller components.
-- [ ] Reduce repeated JSON encode failure handling with small utilities.
-- [ ] Keep all public command outputs stable.
+- [x] Break `RunnerError` formatting and command rendering helpers into smaller components.
+- [x] Reduce repeated JSON encode failure handling with small utilities.
+- [x] Keep all public command outputs stable.
 
 ## 6) Acceptance Criteria
 
-- [ ] At least three hotspot modules reduced in branch complexity and responsibility width.
-- [ ] Existing contract tests for builtin test and doctor JSON outputs remain green.
-- [ ] No regressions in targeted behavioral tests for suite selection, ambiguity recovery, and filter hints.
-- [ ] Roadmap batches produce smaller, reviewable diffs with clear ownership boundaries.
+- [x] At least three hotspot modules reduced in branch complexity and responsibility width.
+- [x] Existing contract tests for builtin test and doctor JSON outputs remain green.
+- [x] No regressions in targeted behavioral tests for suite selection, ambiguity recovery, and filter hints.
+- [x] Roadmap batches produce smaller, reviewable diffs with clear ownership boundaries.
 
 ## 7) Risks and Mitigations
 
@@ -89,6 +89,6 @@ Structural issues identified:
 ## 8) Deliverables
 
 - [x] Consolidated builtin test flow internals (batch 12.1).
-- [ ] Doctor decomposition with preserved command contracts.
-- [ ] Managed runtime decomposition with stable behavior.
-- [ ] Runner core cleanup with reduced repetition and clearer ownership.
+- [x] Doctor decomposition with preserved command contracts.
+- [x] Managed runtime decomposition with stable behavior.
+- [x] Runner core cleanup with reduced repetition and clearer ownership.

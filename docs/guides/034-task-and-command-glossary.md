@@ -17,7 +17,7 @@ alias = "api"
 ## Selector
 
 Definition:
-- A task request string passed to Effigy.
+- A selector string passed to Effigy.
 - Forms: unprefixed (`test`) or prefixed (`api/test`).
 
 Examples:
@@ -30,7 +30,7 @@ effigy api/test
 ## Routing
 
 Definition:
-- The process Effigy uses to resolve a selector to a catalog+task.
+- The process Effigy uses to resolve a selector to a catalog and task.
 
 Inspection command:
 
@@ -158,8 +158,17 @@ concurrent = [{ run = "cargo run -p api", start = 1, tab = 1 }]
 - Use these exact terms in docs where possible.
 - Prefer linking this glossary rather than redefining terms repeatedly.
 
+## Expected Outcome
+
+- docs use one canonical meaning for `catalog`, `selector`, `routing`, `deferral`, `suite`, and `profile`
+- cross-guide wording drift is reduced during future updates
+
 ## Related Guides
 
-- `025-command-reference-matrix.md`
-- `033-style-and-terminology-guide.md`
-- `017-json-output-contracts.md`
+- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+- [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
+- [`017-json-output-contracts.md`](./017-json-output-contracts.md)
+
+## Next Step
+
+When introducing new command surfaces or schema terms, add definitions here first and then propagate usage across affected guides.

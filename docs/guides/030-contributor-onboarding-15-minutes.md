@@ -103,9 +103,19 @@ cargo run --bin effigy -- test --plan
 cargo qa-docs
 ```
 
+## Expected Outcome
+
+- a new contributor can validate core command behavior in one short pass
+- JSON mode checks confirm the `effigy.command.v1` envelope
+- docs quality checks pass before first PR
+
 ## Related Guides
 
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 - [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+
+## Next Step
+
+After onboarding is complete, use the update rules in [`037-documentation-contribution-playbook.md`](./037-documentation-contribution-playbook.md) to scope your first docs or behavior change.

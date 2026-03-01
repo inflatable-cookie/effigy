@@ -56,8 +56,18 @@ When adding future guides:
 3. Add to `README.md` only if newcomer-critical.
 4. Use supplemental sections for legacy maps and non-primary navigation aids.
 
+## Expected Outcome
+
+- docs entry points remain coherent after repeated updates
+- navigation drift is visible via changelog entries
+- readers can find both primary and supplemental guides without duplication
+
 ## Related Guides
 
-- `029-docs-qa-checklist-and-validation.md`
-- `030-contributor-onboarding-15-minutes.md`
-- `031-docs-navigation-cleanup.md`
+- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+- [`030-contributor-onboarding-15-minutes.md`](./030-contributor-onboarding-15-minutes.md)
+- [`031-docs-navigation-cleanup.md`](./031-docs-navigation-cleanup.md)
+
+## Next Step
+
+When another docs sweep is completed, append a dated section here and link the affected index updates for traceability.
