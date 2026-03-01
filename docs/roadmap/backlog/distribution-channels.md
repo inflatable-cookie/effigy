@@ -57,9 +57,9 @@ Effigy is still evolving, so distribution planning should be staged and reversib
   - [ ] crates.io install validation (pending first publish cycle)
 
 ### Phase C - Homebrew Path
-- [ ] Create and validate tap repository/formula workflow.
-- [ ] Automate formula bump on release tags.
-- [ ] Define bottle/checksum/update strategy.
+- [x] Create and validate tap repository/formula workflow.
+- [x] Automate formula bump on release tags.
+- [x] Define bottle/checksum/update strategy.
 
 ### Phase D - CI + Team Adoption
 - [x] Add pinned-version install snippets for CI.
@@ -90,5 +90,5 @@ Effigy is still evolving, so distribution planning should be staged and reversib
 
 - [x] Release contract doc + checklist.
 - [x] Crates publication workflow.
-- [ ] Homebrew tap + automation workflow.
+- [x] Homebrew tap + automation workflow.
 - [x] CI install recipes and migration guidance.

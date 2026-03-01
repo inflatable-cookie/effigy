@@ -461,6 +461,7 @@ fn builtin_completion_candidates_json_contract_has_versioned_shape() {
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["prefix"], "farm");
     assert_eq!(parsed["cache_hit"], false);
+    assert_eq!(parsed["cache_state"], "miss_initial");
     assert_eq!(parsed["manifest_count"], 2);
     let candidates = parsed["candidates"].as_array().expect("candidates array");
     assert!(candidates
@@ -486,6 +487,7 @@ fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_re
     .expect("run completion candidates first");
     let first_parsed: serde_json::Value = serde_json::from_str(&first).expect("parse first json");
     assert_eq!(first_parsed["cache_hit"], false);
+    assert_eq!(first_parsed["cache_state"], "miss_initial");
 
     let second = run_manifest_task_with_cwd(
         &TaskInvocation {
@@ -498,6 +500,7 @@ fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_re
     let second_parsed: serde_json::Value =
         serde_json::from_str(&second).expect("parse second json");
     assert_eq!(second_parsed["cache_hit"], true);
+    assert_eq!(second_parsed["cache_state"], "hit");
     assert_eq!(second_parsed["manifest_count"], 1);
 }
 
@@ -519,6 +522,7 @@ fn builtin_completion_candidates_json_contract_expires_cache_after_ttl() {
     .expect("run completion candidates first");
     let first_parsed: serde_json::Value = serde_json::from_str(&first).expect("parse first json");
     assert_eq!(first_parsed["cache_hit"], false);
+    assert_eq!(first_parsed["cache_state"], "miss_initial");
 
     thread::sleep(Duration::from_millis(2200));
 
@@ -533,6 +537,7 @@ fn builtin_completion_candidates_json_contract_expires_cache_after_ttl() {
     let second_parsed: serde_json::Value =
         serde_json::from_str(&second).expect("parse second json");
     assert_eq!(second_parsed["cache_hit"], false);
+    assert_eq!(second_parsed["cache_state"], "miss_ttl");
 }
 
 #[test]
@@ -553,6 +558,7 @@ fn builtin_completion_candidates_json_contract_invalidates_cache_on_manifest_mti
     .expect("run completion candidates first");
     let first_parsed: serde_json::Value = serde_json::from_str(&first).expect("parse first json");
     assert_eq!(first_parsed["cache_hit"], false);
+    assert_eq!(first_parsed["cache_state"], "miss_initial");
 
     thread::sleep(Duration::from_millis(1100));
     write_manifest(
@@ -571,6 +577,7 @@ fn builtin_completion_candidates_json_contract_invalidates_cache_on_manifest_mti
     let second_parsed: serde_json::Value =
         serde_json::from_str(&second).expect("parse second json");
     assert_eq!(second_parsed["cache_hit"], false);
+    assert_eq!(second_parsed["cache_state"], "miss_manifest_change");
     assert!(second_parsed["candidates"]
         .as_array()
         .expect("candidates array")
