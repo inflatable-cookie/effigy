@@ -207,7 +207,7 @@ pub(super) struct ManifestTask {
 enum ManifestTaskDefinition {
     Run(String),
     RunSequence(Vec<ManifestManagedRunStep>),
-    Full(ManifestTask),
+    Full(Box<ManifestTask>),
 }
 
 impl ManifestTaskDefinition {
@@ -221,7 +221,7 @@ impl ManifestTaskDefinition {
                 run: Some(ManifestManagedRun::Sequence(sequence)),
                 ..ManifestTask::default()
             },
-            ManifestTaskDefinition::Full(task) => task,
+            ManifestTaskDefinition::Full(task) => *task,
         }
     }
 }
@@ -271,7 +271,7 @@ impl<'de> serde::Deserialize<'de> for ManifestTaskDefinition {
                 let task = <ManifestTask as serde::Deserialize>::deserialize(
                     de::value::MapAccessDeserializer::new(map),
                 )?;
-                Ok(ManifestTaskDefinition::Full(task))
+                Ok(ManifestTaskDefinition::Full(Box::new(task)))
             }
         }
 
