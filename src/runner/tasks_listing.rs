@@ -12,7 +12,7 @@ use super::tasks_view::{
     managed_profile_display_rows, relative_display_path, render_resolution_probe_block, style_text,
 };
 use super::util::parse_task_selector;
-use super::{render, LoadedCatalog, RunnerError, BUILTIN_TASKS};
+use super::{render, LoadedCatalog, RunnerError, TaskSelector, BUILTIN_TASKS};
 
 pub(super) fn render_tasks_listing(
     args: &TasksArgs,
@@ -53,20 +53,7 @@ fn render_tasks_json(
 ) -> Result<String, RunnerError> {
     if let Some(filter) = args.task_name.as_ref() {
         let selector = parse_task_selector(filter)?;
-        let matched_tasks = catalogs
-            .iter()
-            .filter_map(|catalog| {
-                let task = catalog.manifest.tasks.get(&selector.task_name)?;
-                if selector
-                    .prefix
-                    .as_ref()
-                    .is_some_and(|prefix| prefix != &catalog.alias)
-                {
-                    return None;
-                }
-                Some((catalog, task))
-            })
-            .collect::<Vec<(&LoadedCatalog, &super::ManifestTask)>>();
+        let matched_tasks = matched_catalog_tasks(catalogs, &selector);
         let matches = matched_tasks
             .iter()
             .map(|(catalog, task)| {
@@ -80,31 +67,10 @@ fn render_tasks_json(
         let managed_profile_matches = matched_tasks
             .iter()
             .flat_map(|(catalog, task)| {
-                managed_profile_display_rows(catalog, &selector.task_name, task)
-                    .into_iter()
-                    .map(|row| {
-                        json!({
-                            "task": row.task,
-                            "run": row.run,
-                            "manifest": catalog.manifest_path.display().to_string(),
-                            "profile": row.profile,
-                            "invocation": row.invocation,
-                            "parent_task": row.parent_task,
-                        })
-                    })
-                    .collect::<Vec<serde_json::Value>>()
+                managed_profile_rows_json(catalog, &selector.task_name, task)
             })
             .collect::<Vec<serde_json::Value>>();
-        let builtin_matches = BUILTIN_TASKS
-            .iter()
-            .filter(|(name, _)| selector.prefix.is_none() && selector.task_name == *name)
-            .map(|(name, description)| {
-                json!({
-                    "task": *name,
-                    "description": *description,
-                })
-            })
-            .collect::<Vec<serde_json::Value>>();
+        let builtin_matches = builtin_matches_json(&selector);
         let payload = json!({
             "schema": "effigy.tasks.filtered.v1",
             "schema_version": 1,
@@ -142,20 +108,7 @@ fn render_tasks_json(
                 "run": task_run_preview(task_def),
                 "manifest": catalog.manifest_path.display().to_string(),
             }));
-            managed_profile_rows.extend(
-                managed_profile_display_rows(catalog, task_name, task_def)
-                    .into_iter()
-                    .map(|row| {
-                        json!({
-                            "task": row.task,
-                            "run": row.run,
-                            "manifest": catalog.manifest_path.display().to_string(),
-                            "profile": row.profile,
-                            "invocation": row.invocation,
-                            "parent_task": row.parent_task,
-                        })
-                    }),
-            );
+            managed_profile_rows.extend(managed_profile_rows_json(catalog, task_name, task_def));
         }
     }
     let builtin_rows = BUILTIN_TASKS
@@ -195,24 +148,8 @@ fn render_tasks_text(
         let selector = parse_task_selector(filter)?;
         renderer.section(&format!("Task Matches: {filter}"))?;
 
-        let matches = catalogs
-            .iter()
-            .filter_map(|catalog| {
-                let task = catalog.manifest.tasks.get(&selector.task_name)?;
-                if selector
-                    .prefix
-                    .as_ref()
-                    .is_some_and(|prefix| prefix != &catalog.alias)
-                {
-                    return None;
-                }
-                Some((catalog, task))
-            })
-            .collect::<Vec<(&LoadedCatalog, &super::ManifestTask)>>();
-        let builtin_matches = BUILTIN_TASKS
-            .iter()
-            .filter(|(name, _)| selector.prefix.is_none() && selector.task_name == *name)
-            .collect::<Vec<&(&str, &str)>>();
+        let matches = matched_catalog_tasks(catalogs, &selector);
+        let builtin_matches = builtin_matches_text(&selector);
 
         if matches.is_empty() && builtin_matches.is_empty() {
             renderer.notice(NoticeLevel::Warning, "no matches")?;
@@ -353,4 +290,64 @@ fn render_tasks_text(
         render_resolution_probe_block(&mut renderer, probe, color_enabled, true)?;
     }
     render::render_utf8(renderer.into_inner())
+}
+
+fn matched_catalog_tasks<'a>(
+    catalogs: &'a [LoadedCatalog],
+    selector: &TaskSelector,
+) -> Vec<(&'a LoadedCatalog, &'a super::ManifestTask)> {
+    catalogs
+        .iter()
+        .filter_map(|catalog| {
+            let task = catalog.manifest.tasks.get(&selector.task_name)?;
+            if selector
+                .prefix
+                .as_ref()
+                .is_some_and(|prefix| prefix != &catalog.alias)
+            {
+                return None;
+            }
+            Some((catalog, task))
+        })
+        .collect::<Vec<(&LoadedCatalog, &super::ManifestTask)>>()
+}
+
+fn managed_profile_rows_json(
+    catalog: &LoadedCatalog,
+    task_name: &str,
+    task: &super::ManifestTask,
+) -> Vec<serde_json::Value> {
+    managed_profile_display_rows(catalog, task_name, task)
+        .into_iter()
+        .map(|row| {
+            json!({
+                "task": row.task,
+                "run": row.run,
+                "manifest": catalog.manifest_path.display().to_string(),
+                "profile": row.profile,
+                "invocation": row.invocation,
+                "parent_task": row.parent_task,
+            })
+        })
+        .collect::<Vec<serde_json::Value>>()
+}
+
+fn builtin_matches_text(selector: &TaskSelector) -> Vec<(&'static str, &'static str)> {
+    BUILTIN_TASKS
+        .iter()
+        .filter(|(name, _)| selector.prefix.is_none() && selector.task_name == *name)
+        .copied()
+        .collect::<Vec<(&'static str, &'static str)>>()
+}
+
+fn builtin_matches_json(selector: &TaskSelector) -> Vec<serde_json::Value> {
+    builtin_matches_text(selector)
+        .into_iter()
+        .map(|(name, description)| {
+            json!({
+                "task": name,
+                "description": description,
+            })
+        })
+        .collect::<Vec<serde_json::Value>>()
 }
