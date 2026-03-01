@@ -757,6 +757,7 @@ Built-in Tasks
 - migrate : Migrate package scripts into [tasks] with preview/apply flow
 - unlock : Manually clear lock scopes (`workspace`, `task:*`, `profile:*/*`)
 - cache : Inspect and invalidate phase-1 task cache metadata (`inspect`, `invalidate`)
+- completion : Generate shell completion scripts (`bash`, `zsh`, `fish`)
 
 ";
     assert_eq!(tail, expected);
@@ -903,6 +904,7 @@ Built-in Tasks
 - migrate : Migrate package scripts into [tasks] with preview/apply flow
 - unlock : Manually clear lock scopes (`workspace`, `task:*`, `profile:*/*`)
 - cache : Inspect and invalidate phase-1 task cache metadata (`inspect`, `invalidate`)
+- completion : Generate shell completion scripts (`bash`, `zsh`, `fish`)
 
 ";
     assert_eq!(tail, expected);
