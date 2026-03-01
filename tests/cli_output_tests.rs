@@ -756,6 +756,7 @@ Built-in Tasks
 - init : Initialize baseline effigy.toml scaffold with dry-run/force controls
 - migrate : Migrate package scripts into [tasks] with preview/apply flow
 - unlock : Manually clear lock scopes (`workspace`, `task:*`, `profile:*/*`)
+- cache : Inspect and invalidate phase-1 task cache metadata (`inspect`, `invalidate`)
 
 ";
     assert_eq!(tail, expected);
@@ -901,6 +902,7 @@ Built-in Tasks
 - init : Initialize baseline effigy.toml scaffold with dry-run/force controls
 - migrate : Migrate package scripts into [tasks] with preview/apply flow
 - unlock : Manually clear lock scopes (`workspace`, `task:*`, `profile:*/*`)
+- cache : Inspect and invalidate phase-1 task cache metadata (`inspect`, `invalidate`)
 
 ";
     assert_eq!(tail, expected);
