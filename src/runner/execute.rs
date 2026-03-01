@@ -2,10 +2,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 
-use serde_json::json;
-
 use crate::resolver::resolve_target_root;
 use crate::TaskInvocation;
+
+#[path = "execute/json_payload.rs"]
+mod json_payload;
 
 use super::cache::{check_task_cache, update_task_cache_entry};
 use super::catalog::select_catalog_and_task;
@@ -173,7 +174,7 @@ pub(super) fn run_manifest_task_with_cwd(
     )?;
     if cache_check.enabled && cache_check.hit {
         if output_json {
-            return render_task_cache_hit_json(
+            return json_payload::render_task_cache_hit_json(
                 &selector.task_name,
                 &selector,
                 &repo_for_task,
@@ -213,7 +214,7 @@ pub(super) fn run_manifest_task_with_cwd(
             })?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let rendered = render_task_command_json(
+        let rendered = json_payload::render_task_command_json(
             &selector.task_name,
             &selector,
             &repo_for_task,
@@ -273,41 +274,6 @@ pub(super) fn run_manifest_task_with_cwd(
     })
 }
 
-fn render_task_cache_hit_json(
-    task_name: &str,
-    selector: &super::TaskSelector,
-    cwd: &std::path::Path,
-    command: &str,
-    reason: &str,
-    fingerprint: &str,
-) -> Result<String, RunnerError> {
-    let selector_rendered = selector
-        .prefix
-        .as_ref()
-        .map(|prefix| format!("{prefix}/{}", selector.task_name))
-        .unwrap_or_else(|| selector.task_name.clone());
-    let payload = json!({
-        "schema": "effigy.task.run.v1",
-        "schema_version": 1,
-        "ok": true,
-        "task": task_name,
-        "selector": selector_rendered,
-        "command": command,
-        "cwd": cwd.display().to_string(),
-        "exit_code": 0,
-        "stdout": "",
-        "stderr": "",
-        "cached": true,
-        "cache": {
-            "status": "hit",
-            "reason": reason,
-            "fingerprint": fingerprint,
-        },
-    });
-    serde_json::to_string_pretty(&payload)
-        .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
-}
-
 fn strip_task_json_flag(args: &[String]) -> (Vec<String>, bool) {
     let mut stripped = Vec::with_capacity(args.len());
     let mut json_mode = false;
@@ -325,34 +291,4 @@ fn strip_task_json_flag(args: &[String]) -> (Vec<String>, bool) {
         stripped.push(arg.clone());
     }
     (stripped, json_mode)
-}
-
-fn render_task_command_json(
-    task_name: &str,
-    selector: &super::TaskSelector,
-    cwd: &std::path::Path,
-    command: &str,
-    exit_code: Option<i32>,
-    stdout: &str,
-    stderr: &str,
-) -> Result<String, RunnerError> {
-    let selector_rendered = selector
-        .prefix
-        .as_ref()
-        .map(|prefix| format!("{prefix}/{}", selector.task_name))
-        .unwrap_or_else(|| selector.task_name.clone());
-    let payload = json!({
-        "schema": "effigy.task.run.v1",
-        "schema_version": 1,
-        "ok": exit_code == Some(0),
-        "task": task_name,
-        "selector": selector_rendered,
-        "command": command,
-        "cwd": cwd.display().to_string(),
-        "exit_code": exit_code,
-        "stdout": stdout,
-        "stderr": stderr,
-    });
-    serde_json::to_string_pretty(&payload)
-        .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
 }

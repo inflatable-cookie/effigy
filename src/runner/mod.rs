@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-use serde_json::json;
-
 use crate::process_manager::ProcessManagerError;
 use crate::resolver::{resolve_target_root, ResolveError};
 use crate::tasks::TaskError;
@@ -20,6 +18,7 @@ mod managed;
 mod manifest;
 mod model;
 mod render;
+mod tasks_diagnostics;
 mod tasks_listing;
 mod tasks_probe;
 mod tasks_view;
@@ -37,6 +36,7 @@ use model::{
     TaskRuntimeArgs, TaskSelection, TaskSelector, BUILTIN_TASKS, DEFAULT_MANAGED_SHELL_RUN,
     DEFER_DEPTH_ENV, IMPLICIT_ROOT_DEFER_TEMPLATE, TASK_MANIFEST_FILE,
 };
+use tasks_diagnostics::build_catalog_diagnostics;
 use tasks_listing::render_tasks_listing;
 use tasks_probe::build_resolve_probe;
 #[cfg(test)]
@@ -219,25 +219,7 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
 
     let resolve_probe = build_resolve_probe(args.resolve_selector.clone(), &catalogs)?;
 
-    let mut ordered_catalogs = catalogs.iter().collect::<Vec<&LoadedCatalog>>();
-    ordered_catalogs.sort_by(|a, b| {
-        a.depth
-            .cmp(&b.depth)
-            .then_with(|| a.alias.cmp(&b.alias))
-            .then_with(|| a.manifest_path.cmp(&b.manifest_path))
-    });
-    let catalog_diagnostics = ordered_catalogs
-        .iter()
-        .map(|catalog| {
-            json!({
-                "alias": catalog.alias,
-                "root": catalog.catalog_root.display().to_string(),
-                "depth": catalog.depth,
-                "manifest": catalog.manifest_path.display().to_string(),
-                "has_defer": catalog.defer_run.is_some(),
-            })
-        })
-        .collect::<Vec<serde_json::Value>>();
+    let (ordered_catalogs, catalog_diagnostics) = build_catalog_diagnostics(&catalogs);
 
     render_tasks_listing(
         &args,
