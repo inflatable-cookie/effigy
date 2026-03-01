@@ -22,6 +22,14 @@ pub(super) enum LoopControl {
     Quit,
 }
 
+pub(super) struct KeyEventContext<'a> {
+    pub(super) supervisor: &'a ProcessSupervisor,
+    pub(super) state: &'a mut SessionState,
+    pub(super) diagnostics: &'a mut RuntimeDiagnostics,
+    pub(super) options: MultiProcessTuiOptions,
+    pub(super) max_offset: usize,
+}
+
 pub(super) fn drain_process_events(
     supervisor: &ProcessSupervisor,
     state: &mut SessionState,
@@ -146,15 +154,17 @@ pub(super) fn drain_process_events(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_key_event(
     key: &KeyEvent,
-    supervisor: &ProcessSupervisor,
-    state: &mut SessionState,
-    diagnostics: &mut RuntimeDiagnostics,
-    options: MultiProcessTuiOptions,
-    max_offset: usize,
+    context: KeyEventContext<'_>,
 ) -> Result<LoopControl, MultiProcessTuiError> {
+    let KeyEventContext {
+        supervisor,
+        state,
+        diagnostics,
+        options,
+        max_offset,
+    } = context;
     diagnostics.record_keypress(key);
     let active_process = state.active_process().to_owned();
     let active_is_shell = active_process == "shell";
@@ -422,7 +432,7 @@ fn shell_key_input(key: &KeyEvent) -> Option<String> {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         if let KeyCode::Char(c) = key.code {
             let lower = c.to_ascii_lowercase() as u8;
-            if (b'a'..=b'z').contains(&lower) {
+            if lower.is_ascii_lowercase() {
                 let value = lower - b'a' + 1;
                 return Some((value as char).to_string());
             }

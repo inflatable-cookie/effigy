@@ -150,3 +150,13 @@ Then diff:
 diff -u reports/tasks-before.json reports/tasks-after.json
 diff -u reports/tasks-probe-before.json reports/tasks-probe-after.json
 ```
+
+## Related Guides
+
+- [`018-doctor-explain-mode.md`](./018-doctor-explain-mode.md)
+- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+
+## Next Step
+
+After changing routing behavior, update probe snapshots and run the docs QA flow in [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md).

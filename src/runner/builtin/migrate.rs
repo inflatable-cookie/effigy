@@ -1,14 +1,12 @@
 use std::collections::BTreeSet;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
 use toml::Value;
 
-use crate::ui::theme::resolve_color_enabled;
-use crate::ui::{OutputMode, PlainRenderer};
 use crate::{render_help, HelpTopic, TaskInvocation};
 
+use super::super::render::{encode_pretty_json_optional, render_utf8, standard_renderer};
 use super::super::{RunnerError, TASK_MANIFEST_FILE};
 
 #[derive(Debug, Clone)]
@@ -70,16 +68,9 @@ pub(super) fn run_builtin_migrate(
     }
 
     if help {
-        let color_enabled = if output_json {
-            false
-        } else {
-            resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal())
-        };
-        let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+        let mut renderer = standard_renderer(output_json);
         render_help(&mut renderer, HelpTopic::Migrate)?;
-        let rendered = String::from_utf8(renderer.into_inner()).map_err(|error| {
-            RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}"))
-        })?;
+        let rendered = render_utf8(renderer.into_inner())?;
         if output_json {
             let payload = json!({
                 "schema": "effigy.help.v1",
@@ -88,9 +79,7 @@ pub(super) fn run_builtin_migrate(
                 "topic": "migrate",
                 "text": rendered,
             });
-            return serde_json::to_string_pretty(&payload)
-                .map(Some)
-                .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+            return encode_pretty_json_optional(&payload);
         }
         return Ok(Some(rendered));
     }
@@ -163,9 +152,7 @@ pub(super) fn run_builtin_migrate(
             "added": added.iter().map(|s| json!({"name": s.name, "run": s.command})).collect::<Vec<_>>(),
             "conflicts": conflicts.iter().map(|s| json!({"name": s.name, "run": s.command, "reason": "task already exists"})).collect::<Vec<_>>(),
         });
-        return serde_json::to_string_pretty(&payload)
-            .map(Some)
-            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+        return encode_pretty_json_optional(&payload);
     }
 
     let mut lines = Vec::<String>::new();

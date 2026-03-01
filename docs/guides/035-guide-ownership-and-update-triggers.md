@@ -82,8 +82,18 @@ For docs completeness on non-trivial behavior changes, require:
 ./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)
 ```
 
+## Expected Outcome
+
+- behavior, contract, and CI changes consistently trigger matching docs updates
+- PRs include explicit docs impact checks instead of ad-hoc judgment
+- index and runbook drift is reduced across releases
+
 ## Related Guides
 
-- `029-docs-qa-checklist-and-validation.md`
-- `033-style-and-terminology-guide.md`
-- `032-docs-consistency-sweep-and-changelog.md`
+- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+- [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
+- [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md)
+
+## Next Step
+
+When a behavior PR is opened, copy the checklist in Section 4 into the PR description and complete it before review.

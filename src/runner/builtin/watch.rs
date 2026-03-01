@@ -1,5 +1,4 @@
 use std::collections::{BTreeSet, HashMap};
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -7,11 +6,10 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde_json::json;
 use walkdir::WalkDir;
 
-use crate::ui::theme::resolve_color_enabled;
-use crate::ui::{OutputMode, PlainRenderer};
 use crate::{render_help, HelpTopic, TaskInvocation};
 
 use super::super::locking::{acquire_scopes, LockScope};
+use super::super::render::{encode_pretty_json_optional, render_utf8, standard_renderer};
 use super::super::{run_manifest_task_with_cwd, RunnerError, TaskRuntimeArgs};
 
 const DEFAULT_DEBOUNCE_MS: u64 = 400;
@@ -265,15 +263,9 @@ fn parse_watch_request(
 }
 
 fn render_watch_help_payload(output_json: bool) -> Result<Option<String>, RunnerError> {
-    let color_enabled = if output_json {
-        false
-    } else {
-        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal())
-    };
-    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+    let mut renderer = standard_renderer(output_json);
     render_help(&mut renderer, HelpTopic::Watch)?;
-    let rendered = String::from_utf8(renderer.into_inner())
-        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))?;
+    let rendered = render_utf8(renderer.into_inner())?;
     if output_json {
         let payload = json!({
             "schema": "effigy.help.v1",
@@ -282,9 +274,7 @@ fn render_watch_help_payload(output_json: bool) -> Result<Option<String>, Runner
             "topic": "watch",
             "text": rendered,
         });
-        return serde_json::to_string_pretty(&payload)
-            .map(Some)
-            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+        return encode_pretty_json_optional(&payload);
     }
     Ok(Some(rendered))
 }
@@ -299,9 +289,7 @@ fn render_watch_result_json(output_json: bool, runs: usize) -> Result<Option<Str
         "ok": true,
         "runs": runs,
     });
-    serde_json::to_string_pretty(&payload)
-        .map(Some)
-        .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
+    encode_pretty_json_optional(&payload)
 }
 
 fn build_matcher(include: &[String], exclude: &[String]) -> Result<WatchMatcher, RunnerError> {

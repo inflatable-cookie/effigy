@@ -67,8 +67,12 @@ effigy unlock --all --json
 
 `--json` returns `effigy.unlock.v1`.
 
-## Next Reading
+## Related Guides
 
 - Operator command walkthrough: [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - Manifest patterns (including DAG and concurrent profiles): [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - Failure remediation recipes: [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+
+## Next Step
+
+After introducing DAG policies or lock-scope changes, run lock conflict scenarios and document expected recovery steps in [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md).

@@ -1,22 +1,21 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::io::IsTerminal;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
-
-use crate::process_manager::{ProcessEventKind, ProcessSpec, ProcessSupervisor};
-use crate::tui::{run_multiprocess_tui, MultiProcessTuiOptions};
 use crate::ui::theme::resolve_color_enabled;
 use crate::ui::{
     KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer, SummaryCounts, TableSpec,
 };
+use std::collections::HashSet;
+use std::io::IsTerminal;
+use std::path::Path;
 
-use super::catalog::select_catalog_and_task;
-use super::util::{parse_task_reference_invocation, render_task_selector, shell_quote};
+use super::util::shell_quote;
 use super::{
     LoadedCatalog, ManagedProcessSpec, ManagedTaskPlan, ManifestManagedConcurrentEntry,
     ManifestManagedRun, ManifestManagedRunStep, ManifestTask, RunnerError, TaskRuntimeArgs,
-    TaskSelector, BUILTIN_TASKS, DEFAULT_MANAGED_SHELL_RUN,
+    TaskSelector, DEFAULT_MANAGED_SHELL_RUN,
 };
+
+mod references;
+mod runtime;
+mod scheduler;
 
 pub(super) fn resolve_managed_task_plan(
     selector: &TaskSelector,
@@ -43,16 +42,16 @@ pub(super) fn resolve_managed_task_plan(
         .unwrap_or_else(|| "default".to_owned());
 
     if let Some(entries) = concurrent_entries_for_profile(task, &profile_name) {
-        return resolve_managed_concurrent_task_plan(
+        return resolve_managed_concurrent_task_plan(ManagedConcurrentPlanInput {
             selector,
             catalog,
             task,
-            &profile_name,
+            profile_name: &profile_name,
             entries,
-            &runtime_args.passthrough,
+            passthrough: &runtime_args.passthrough,
             catalogs,
             task_scope_cwd,
-        )
+        })
         .map(Some);
     }
 
@@ -78,16 +77,30 @@ struct ConcurrentResolvedProcess {
     index: usize,
 }
 
+struct ManagedConcurrentPlanInput<'a> {
+    selector: &'a TaskSelector,
+    catalog: &'a LoadedCatalog,
+    task: &'a ManifestTask,
+    profile_name: &'a str,
+    entries: &'a [ManifestManagedConcurrentEntry],
+    passthrough: &'a [String],
+    catalogs: &'a [LoadedCatalog],
+    task_scope_cwd: &'a Path,
+}
+
 fn resolve_managed_concurrent_task_plan(
-    selector: &TaskSelector,
-    catalog: &LoadedCatalog,
-    task: &ManifestTask,
-    profile_name: &str,
-    entries: &[ManifestManagedConcurrentEntry],
-    passthrough: &[String],
-    catalogs: &[LoadedCatalog],
-    task_scope_cwd: &Path,
+    input: ManagedConcurrentPlanInput<'_>,
 ) -> Result<ManagedTaskPlan, RunnerError> {
+    let ManagedConcurrentPlanInput {
+        selector,
+        catalog,
+        task,
+        profile_name,
+        entries,
+        passthrough,
+        catalogs,
+        task_scope_cwd,
+    } = input;
     if entries.is_empty() {
         return Err(RunnerError::TaskManagedProfileEmpty {
             task: selector.task_name.clone(),
@@ -116,7 +129,7 @@ fn resolve_managed_concurrent_task_plan(
             });
         }
         let (run, cwd) = match (&entry.task, &entry.run) {
-            (Some(task_ref), None) => resolve_task_reference_run(
+            (Some(task_ref), None) => references::resolve_task_reference_run(
                 &selector.task_name,
                 &process_name,
                 task_ref,
@@ -260,75 +273,6 @@ fn available_concurrent_profiles(task: &ManifestTask) -> Vec<String> {
     available
 }
 
-fn resolve_task_reference_run(
-    managed_task_name: &str,
-    process_name: &str,
-    task_ref: &str,
-    catalogs: &[LoadedCatalog],
-    task_scope_cwd: &Path,
-) -> Result<(String, PathBuf), RunnerError> {
-    let (selector, ref_args) = parse_task_reference_invocation(task_ref).map_err(|error| {
-        RunnerError::TaskManagedTaskReferenceInvalid {
-            task: managed_task_name.to_owned(),
-            process: process_name.to_owned(),
-            reference: task_ref.to_owned(),
-            detail: error.to_string(),
-        }
-    })?;
-    let ref_args_rendered = ref_args
-        .iter()
-        .map(|arg| shell_quote(arg))
-        .collect::<Vec<String>>()
-        .join(" ");
-    let selector_rendered = render_task_selector(&selector);
-    let selection = match select_catalog_and_task(&selector, catalogs, task_scope_cwd) {
-        Ok(selection) => selection,
-        Err(error) => {
-            if is_builtin_task_selector(&selector) {
-                let command = render_builtin_task_reference_invocation(
-                    &selector_rendered,
-                    &ref_args_rendered,
-                )?;
-                return Ok((command, task_scope_cwd.to_path_buf()));
-            }
-            return Err(RunnerError::TaskManagedTaskReferenceInvalid {
-                task: managed_task_name.to_owned(),
-                process: process_name.to_owned(),
-                reference: task_ref.to_owned(),
-                detail: error.to_string(),
-            });
-        }
-    };
-    let run_spec = selection.task.run.as_ref().ok_or_else(|| {
-        RunnerError::TaskManagedTaskReferenceInvalid {
-            task: managed_task_name.to_owned(),
-            process: process_name.to_owned(),
-            reference: task_ref.to_owned(),
-            detail: format!(
-                "referenced task `{}` in {} has no `run` command",
-                selector.task_name,
-                selection.catalog.manifest_path.display()
-            ),
-        }
-    })?;
-    let run_rendered = render_task_run_spec(
-        &selector.task_name,
-        run_spec,
-        &ref_args_rendered,
-        &selection.catalog.catalog_root,
-        catalogs,
-        &selection.catalog.catalog_root,
-        0,
-    )
-    .map_err(|error| RunnerError::TaskManagedTaskReferenceInvalid {
-        task: managed_task_name.to_owned(),
-        process: process_name.to_owned(),
-        reference: task_ref.to_owned(),
-        detail: error.to_string(),
-    })?;
-    Ok((run_rendered, selection.catalog.catalog_root.clone()))
-}
-
 pub(super) fn render_task_run_spec(
     task_name: &str,
     run: &ManifestManagedRun,
@@ -366,20 +310,20 @@ pub(super) fn render_task_run_spec(
                     task_scope_cwd,
                     depth + 1,
                 )?);
-                policies.push(step_policy_for(step));
+                policies.push(scheduler::step_policy_for(step));
             }
             let has_non_default_policy =
                 policies.iter().copied().any(|policy| !policy.is_default());
-            let schedule = build_run_sequence_schedule(task_name, steps)?;
+            let schedule = scheduler::build_run_sequence_schedule(task_name, steps)?;
             match schedule {
-                Some(levels) => Ok(render_parallel_run_levels_with_policy(
+                Some(levels) => Ok(scheduler::render_parallel_run_levels_with_policy(
                     &commands, &levels, &policies,
                 )),
                 None if has_non_default_policy => {
                     let sequential_levels = (0..commands.len())
                         .map(|index| vec![index])
                         .collect::<Vec<Vec<usize>>>();
-                    Ok(render_parallel_run_levels_with_policy(
+                    Ok(scheduler::render_parallel_run_levels_with_policy(
                         &commands,
                         &sequential_levels,
                         &policies,
@@ -389,333 +333,6 @@ pub(super) fn render_task_run_spec(
             }
         }
     }
-}
-
-const DEFAULT_DAG_MAX_PARALLEL: usize = 4;
-
-#[derive(Clone, Copy)]
-struct RunStepPolicy {
-    timeout_ms: Option<u64>,
-    retry: usize,
-    retry_delay_ms: u64,
-    fail_fast: bool,
-}
-
-impl Default for RunStepPolicy {
-    fn default() -> Self {
-        Self {
-            timeout_ms: None,
-            retry: 0,
-            retry_delay_ms: 0,
-            fail_fast: true,
-        }
-    }
-}
-
-impl RunStepPolicy {
-    fn is_default(self) -> bool {
-        self.timeout_ms.is_none() && self.retry == 0 && self.retry_delay_ms == 0 && self.fail_fast
-    }
-}
-
-fn build_run_sequence_schedule(
-    task_name: &str,
-    steps: &[ManifestManagedRunStep],
-) -> Result<Option<Vec<Vec<usize>>>, RunnerError> {
-    let mut has_explicit_dependencies = false;
-    let mut declared_ids = HashSet::<String>::new();
-    let mut id_to_index = BTreeMap::<String, usize>::new();
-    let mut display_names = Vec::<String>::with_capacity(steps.len());
-
-    for (index, step) in steps.iter().enumerate() {
-        match step {
-            ManifestManagedRunStep::Command(_) => {
-                display_names.push(format!("step-{}", index + 1));
-            }
-            ManifestManagedRunStep::Step(table) => {
-                if let Some(raw_id) = table.id.as_deref() {
-                    let id = raw_id.trim();
-                    if id.is_empty() {
-                        return Err(RunnerError::TaskInvocation(format!(
-                            "task `{task_name}` run step {} has an empty `id`",
-                            index + 1
-                        )));
-                    }
-                    if !declared_ids.insert(id.to_owned()) {
-                        return Err(RunnerError::TaskInvocation(format!(
-                            "task `{task_name}` run sequence has duplicate step id `{id}`"
-                        )));
-                    }
-                    id_to_index.insert(id.to_owned(), index);
-                    display_names.push(id.to_owned());
-                } else {
-                    display_names.push(format!("step-{}", index + 1));
-                }
-                if !table.depends_on.is_empty() {
-                    has_explicit_dependencies = true;
-                }
-            }
-        }
-    }
-
-    if !has_explicit_dependencies {
-        return Ok(None);
-    }
-
-    let mut dependencies = vec![Vec::<usize>::new(); steps.len()];
-    let mut dependents = vec![Vec::<usize>::new(); steps.len()];
-
-    for (index, step) in steps.iter().enumerate() {
-        let mut step_dependencies = Vec::<usize>::new();
-        match step {
-            ManifestManagedRunStep::Command(_) => {
-                if index > 0 {
-                    step_dependencies.push(index - 1);
-                }
-            }
-            ManifestManagedRunStep::Step(table) => {
-                if table.depends_on.is_empty() {
-                    if index > 0 {
-                        step_dependencies.push(index - 1);
-                    }
-                } else {
-                    let step_id = table.id.as_deref().map(str::trim).unwrap_or_default();
-                    if step_id.is_empty() {
-                        return Err(RunnerError::TaskInvocation(format!(
-                            "task `{task_name}` run step {} defines `depends_on` but is missing a non-empty `id`",
-                            index + 1
-                        )));
-                    }
-                    for raw_dep in &table.depends_on {
-                        let dep = raw_dep.trim();
-                        if dep.is_empty() {
-                            return Err(RunnerError::TaskInvocation(format!(
-                                "task `{task_name}` run step `{step_id}` has an empty dependency in `depends_on`"
-                            )));
-                        }
-                        let Some(dep_index) = id_to_index.get(dep).copied() else {
-                            return Err(RunnerError::TaskInvocation(format!(
-                                "task `{task_name}` run step `{step_id}` depends on missing step `{dep}`"
-                            )));
-                        };
-                        if dep_index == index {
-                            return Err(RunnerError::TaskInvocation(format!(
-                                "task `{task_name}` run step `{step_id}` cannot depend on itself"
-                            )));
-                        }
-                        step_dependencies.push(dep_index);
-                    }
-                }
-            }
-        }
-        step_dependencies.sort_unstable();
-        step_dependencies.dedup();
-        dependencies[index] = step_dependencies;
-    }
-
-    for (index, deps) in dependencies.iter().enumerate() {
-        for dep in deps {
-            dependents[*dep].push(index);
-        }
-    }
-    for outgoing in &mut dependents {
-        outgoing.sort_unstable();
-    }
-
-    if let Some(cycle) = detect_dependency_cycle(&dependencies, &display_names) {
-        return Err(RunnerError::TaskInvocation(format!(
-            "task `{task_name}` run sequence contains dependency cycle: {}",
-            cycle.join(" -> ")
-        )));
-    }
-
-    let mut indegree = dependencies.iter().map(Vec::len).collect::<Vec<usize>>();
-    let mut ready = BTreeSet::<usize>::new();
-    for (index, degree) in indegree.iter().enumerate() {
-        if *degree == 0 {
-            ready.insert(index);
-        }
-    }
-
-    let mut levels = Vec::<Vec<usize>>::new();
-    let mut processed = 0usize;
-    while !ready.is_empty() {
-        let current = ready.iter().copied().collect::<Vec<usize>>();
-        for node in &current {
-            ready.remove(node);
-        }
-        processed += current.len();
-        for node in &current {
-            for dependent in &dependents[*node] {
-                indegree[*dependent] = indegree[*dependent].saturating_sub(1);
-                if indegree[*dependent] == 0 {
-                    ready.insert(*dependent);
-                }
-            }
-        }
-        levels.push(current);
-    }
-
-    if processed != steps.len() {
-        return Err(RunnerError::TaskInvocation(format!(
-            "task `{task_name}` run sequence contains dependency cycle"
-        )));
-    }
-
-    Ok(Some(levels))
-}
-
-fn detect_dependency_cycle(
-    dependencies: &[Vec<usize>],
-    display_names: &[String],
-) -> Option<Vec<String>> {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum VisitState {
-        Visiting,
-        Visited,
-    }
-
-    fn visit(
-        node: usize,
-        dependencies: &[Vec<usize>],
-        display_names: &[String],
-        state: &mut Vec<Option<VisitState>>,
-        stack: &mut Vec<usize>,
-    ) -> Option<Vec<String>> {
-        match state[node] {
-            Some(VisitState::Visited) => return None,
-            Some(VisitState::Visiting) => {
-                if let Some(cycle_start) = stack.iter().position(|item| *item == node) {
-                    let mut cycle = stack[cycle_start..]
-                        .iter()
-                        .map(|index| display_names[*index].clone())
-                        .collect::<Vec<String>>();
-                    cycle.push(display_names[node].clone());
-                    return Some(cycle);
-                }
-                return Some(vec![
-                    display_names[node].clone(),
-                    display_names[node].clone(),
-                ]);
-            }
-            None => {}
-        }
-
-        state[node] = Some(VisitState::Visiting);
-        stack.push(node);
-
-        for dependency in &dependencies[node] {
-            if let Some(cycle) = visit(*dependency, dependencies, display_names, state, stack) {
-                return Some(cycle);
-            }
-        }
-
-        stack.pop();
-        state[node] = Some(VisitState::Visited);
-        None
-    }
-
-    let mut state = vec![None; dependencies.len()];
-    let mut stack = Vec::<usize>::new();
-    for node in 0..dependencies.len() {
-        if let Some(cycle) = visit(node, dependencies, display_names, &mut state, &mut stack) {
-            return Some(cycle);
-        }
-    }
-    None
-}
-
-fn render_parallel_run_levels_with_policy(
-    commands: &[String],
-    levels: &[Vec<usize>],
-    policies: &[RunStepPolicy],
-) -> String {
-    let max_parallel = dag_max_parallel();
-    let mut lines = Vec::<String>::new();
-    lines.push("__effigy_overall_status=0".to_owned());
-
-    for level in levels {
-        for batch in level.chunks(max_parallel) {
-            for (offset, index) in batch.iter().enumerate() {
-                lines.push(format!(
-                    "({}) & __effigy_pid_{}=$!",
-                    render_policy_wrapped_command(&commands[*index], policies[*index]),
-                    offset + 1
-                ));
-            }
-            for (offset, index) in batch.iter().enumerate() {
-                lines.push(format!("wait \"$__effigy_pid_{}\"", offset + 1));
-                lines.push("__effigy_status=$?".to_owned());
-                lines.push("if [ \"$__effigy_status\" -ne 0 ]; then".to_owned());
-                if policies[*index].fail_fast {
-                    lines.push("  exit \"$__effigy_status\"".to_owned());
-                } else {
-                    lines.push("  __effigy_overall_status=1".to_owned());
-                }
-                lines.push("fi".to_owned());
-            }
-        }
-    }
-
-    lines.push("exit \"$__effigy_overall_status\"".to_owned());
-    lines.join("\n")
-}
-
-fn dag_max_parallel() -> usize {
-    std::env::var("EFFIGY_DAG_MAX_PARALLEL")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_DAG_MAX_PARALLEL)
-}
-
-fn step_policy_for(step: &ManifestManagedRunStep) -> RunStepPolicy {
-    match step {
-        ManifestManagedRunStep::Command(_) => RunStepPolicy::default(),
-        ManifestManagedRunStep::Step(table) => RunStepPolicy {
-            timeout_ms: table.timeout_ms,
-            retry: table.retry.unwrap_or(0),
-            retry_delay_ms: table.retry_delay_ms.unwrap_or(0),
-            fail_fast: table.fail_fast.unwrap_or(true),
-        },
-    }
-}
-
-fn render_policy_wrapped_command(command: &str, policy: RunStepPolicy) -> String {
-    let timeout_secs = policy
-        .timeout_ms
-        .map_or(0.0_f64, |value| (value as f64) / 1000.0_f64);
-    let retry_delay_secs = (policy.retry_delay_ms as f64) / 1000.0_f64;
-    let mut lines = Vec::<String>::new();
-    lines.push("__effigy_attempt=0".to_owned());
-    lines.push("while :".to_owned());
-    lines.push("do".to_owned());
-    if policy.timeout_ms.is_some() {
-        lines.push(format!(
-            "  python3 -c 'import subprocess,sys\ntry:\n r=subprocess.run([\"sh\",\"-lc\",sys.argv[2]], timeout=float(sys.argv[1]))\n sys.exit(r.returncode)\nexcept subprocess.TimeoutExpired:\n sys.exit(124)' {} {}",
-            timeout_secs,
-            shell_quote(command)
-        ));
-    } else {
-        lines.push(format!("  sh -lc {}", shell_quote(command)));
-    }
-    lines.push("  __effigy_status=$?".to_owned());
-    lines.push("  if [ \"$__effigy_status\" -eq 0 ]; then".to_owned());
-    lines.push("    break".to_owned());
-    lines.push("  fi".to_owned());
-    lines.push(format!(
-        "  if [ \"$__effigy_attempt\" -ge {} ]; then",
-        policy.retry
-    ));
-    lines.push("    break".to_owned());
-    lines.push("  fi".to_owned());
-    lines.push("  __effigy_attempt=$((__effigy_attempt + 1))".to_owned());
-    if policy.retry_delay_ms > 0 {
-        lines.push(format!("  sleep {}", retry_delay_secs));
-    }
-    lines.push("done".to_owned());
-    lines.push("exit \"$__effigy_status\"".to_owned());
-    format!("sh -lc {}", shell_quote(&lines.join("\n")))
 }
 
 fn resolve_task_run_step(
@@ -734,7 +351,7 @@ fn resolve_task_run_step(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
-                resolve_task_reference_step(
+                references::resolve_task_reference_step(
                     task_name,
                     task_ref,
                     args_rendered,
@@ -756,7 +373,7 @@ fn resolve_task_run_step(
                     .replace("{repo}", &repo_rendered)
                     .replace("{args}", args_rendered))
             }
-            (None, Some(task_ref)) => resolve_task_reference_step(
+            (None, Some(task_ref)) => references::resolve_task_reference_step(
                 task_name,
                 task_ref,
                 args_rendered,
@@ -772,118 +389,6 @@ fn resolve_task_run_step(
             ))),
         },
     }
-}
-
-fn resolve_task_reference_step(
-    task_name: &str,
-    task_ref: &str,
-    args_rendered: &str,
-    catalogs: &[LoadedCatalog],
-    task_scope_cwd: &Path,
-    depth: usize,
-) -> Result<String, RunnerError> {
-    let (selector, ref_args) = parse_task_reference_invocation(task_ref).map_err(|error| {
-        RunnerError::TaskInvocation(format!(
-            "task `{task_name}` run step task ref `{task_ref}` is invalid: {error}"
-        ))
-    })?;
-    let selector_rendered = render_task_selector(&selector);
-    let ref_args_rendered = ref_args
-        .iter()
-        .map(|arg| shell_quote(arg))
-        .collect::<Vec<String>>()
-        .join(" ");
-    let merged_args_rendered = match (ref_args_rendered.is_empty(), args_rendered.is_empty()) {
-        (true, true) => String::new(),
-        (false, true) => ref_args_rendered,
-        (true, false) => args_rendered.to_owned(),
-        (false, false) => format!("{ref_args_rendered} {args_rendered}"),
-    };
-    let selection = match select_catalog_and_task(&selector, catalogs, task_scope_cwd) {
-        Ok(selection) => selection,
-        Err(error) => {
-            if is_builtin_task_selector(&selector) {
-                let command = render_builtin_task_reference_invocation(
-                    &selector_rendered,
-                    &merged_args_rendered,
-                )
-                .map_err(|detail| {
-                    RunnerError::TaskInvocation(format!(
-                        "task `{task_name}` run step task ref `{task_ref}` failed: {detail}"
-                    ))
-                })?;
-                return Ok(format!(
-                    "(cd {} && {})",
-                    shell_quote(&task_scope_cwd.display().to_string()),
-                    command
-                ));
-            }
-            return Err(RunnerError::TaskInvocation(format!(
-                "task `{task_name}` run step task ref `{task_ref}` failed: {error}"
-            )));
-        }
-    };
-    let run_spec = selection.task.run.as_ref().ok_or_else(|| {
-        RunnerError::TaskInvocation(format!(
-            "task `{task_name}` run step task ref `{task_ref}` has no `run` command in {}",
-            selection.catalog.manifest_path.display()
-        ))
-    })?;
-    let nested = render_task_run_spec(
-        &selector.task_name,
-        run_spec,
-        &merged_args_rendered,
-        &selection.catalog.catalog_root,
-        catalogs,
-        &selection.catalog.catalog_root,
-        depth,
-    )?;
-    Ok(format!(
-        "(cd {} && {})",
-        shell_quote(&selection.catalog.catalog_root.display().to_string()),
-        nested
-    ))
-}
-
-fn is_builtin_task_selector(selector: &TaskSelector) -> bool {
-    BUILTIN_TASKS
-        .iter()
-        .any(|(name, _)| *name == selector.task_name.as_str())
-}
-
-fn render_builtin_task_reference_invocation(
-    task_ref: &str,
-    args_rendered: &str,
-) -> Result<String, RunnerError> {
-    let executable = resolve_effigy_invocation_prefix()?;
-    let task = shell_quote(task_ref);
-    if args_rendered.is_empty() {
-        Ok(format!("{executable} {task}"))
-    } else {
-        Ok(format!("{executable} {task} {args_rendered}"))
-    }
-}
-
-fn resolve_effigy_invocation_prefix() -> Result<String, RunnerError> {
-    if let Ok(explicit) = std::env::var("EFFIGY_EXECUTABLE") {
-        let trimmed = explicit.trim();
-        if !trimmed.is_empty() {
-            return Ok(shell_quote(trimmed));
-        }
-    }
-
-    let executable = std::env::current_exe().map_err(RunnerError::Cwd)?;
-    let is_test_harness = executable
-        .parent()
-        .and_then(|parent| parent.file_name())
-        .is_some_and(|name| name == "deps");
-    if is_test_harness {
-        let manifest_path = shell_quote(&format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR")));
-        return Ok(format!(
-            "cargo run --quiet --manifest-path {manifest_path} --bin effigy --"
-        ));
-    }
-    Ok(shell_quote(&executable.display().to_string()))
 }
 
 fn render_managed_task_plan(
@@ -970,7 +475,7 @@ pub(super) fn run_or_render_managed_task(
         .ok()
         .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
     if should_stream {
-        return run_managed_task_runtime(task_name, repo_root, plan);
+        return runtime::run_managed_task_runtime(task_name, repo_root, plan);
     }
 
     let should_tui = match tui_override.as_deref() {
@@ -981,148 +486,8 @@ pub(super) fn run_or_render_managed_task(
         _ => std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
     };
     if should_tui {
-        return run_managed_task_tui(task_name, repo_root, plan);
+        return runtime::run_managed_task_tui(task_name, repo_root, plan);
     }
 
     render_managed_task_plan(task_name, repo_root, manifest_path, plan)
-}
-
-fn run_managed_task_tui(
-    task_name: &str,
-    repo_root: &Path,
-    plan: ManagedTaskPlan,
-) -> Result<String, RunnerError> {
-    let ManagedTaskPlan {
-        processes,
-        tab_order,
-        fail_on_non_zero,
-        profile,
-        ..
-    } = plan;
-    let specs = processes
-        .into_iter()
-        .map(|process| ProcessSpec {
-            name: process.name,
-            run: process.run,
-            cwd: process.cwd,
-            start_after_ms: process.start_after_ms,
-            pty: true,
-        })
-        .collect::<Vec<ProcessSpec>>();
-    let outcome = run_multiprocess_tui(
-        repo_root.to_path_buf(),
-        specs,
-        tab_order,
-        MultiProcessTuiOptions::default(),
-    )
-    .map_err(|error| {
-        RunnerError::Ui(format!(
-            "managed tui runtime failed for task `{task_name}`: {error}"
-        ))
-    })?;
-    if fail_on_non_zero && !outcome.non_zero_exits.is_empty() {
-        return Err(RunnerError::TaskManagedNonZeroExit {
-            task: task_name.to_owned(),
-            profile,
-            processes: outcome.non_zero_exits,
-        });
-    }
-    Ok(String::new())
-}
-
-fn run_managed_task_runtime(
-    task_name: &str,
-    repo_root: &Path,
-    plan: ManagedTaskPlan,
-) -> Result<String, RunnerError> {
-    let specs = plan
-        .processes
-        .iter()
-        .map(|process| ProcessSpec {
-            name: process.name.clone(),
-            run: process.run.clone(),
-            cwd: process.cwd.clone(),
-            start_after_ms: process.start_after_ms,
-            pty: true,
-        })
-        .collect::<Vec<ProcessSpec>>();
-    let expected = specs.len();
-    let supervisor = ProcessSupervisor::spawn(repo_root.to_path_buf(), specs)?;
-
-    let color_enabled =
-        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
-    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
-    renderer.section("Managed Task Runtime")?;
-    renderer.key_values(&[
-        KeyValue::new("task", task_name.to_owned()),
-        KeyValue::new("mode", plan.mode),
-        KeyValue::new("profile", plan.profile.clone()),
-        KeyValue::new("processes", expected.to_string()),
-        KeyValue::new(
-            "fail-on-non-zero",
-            if plan.fail_on_non_zero {
-                "enabled"
-            } else {
-                "disabled"
-            },
-        ),
-    ])?;
-    renderer.text("")?;
-    renderer.notice(
-        NoticeLevel::Info,
-        "Running managed profile in temporary stream mode.",
-    )?;
-    renderer.text("")?;
-
-    let mut exit_count = 0usize;
-    let mut drained_after_exit = 0usize;
-    let mut non_zero_exits = Vec::<(String, String)>::new();
-    while exit_count < expected || drained_after_exit < 3 {
-        if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(100)) {
-            if exit_count >= expected {
-                drained_after_exit = 0;
-            }
-            match event.kind {
-                ProcessEventKind::Stdout => {
-                    renderer.text(&format!("[{}] {}", event.process, event.payload))?;
-                }
-                ProcessEventKind::Stderr => {
-                    renderer.text(&format!("[{} stderr] {}", event.process, event.payload))?;
-                }
-                ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {}
-                ProcessEventKind::Exit => {
-                    exit_count += 1;
-                    if event.payload != "exit=0" {
-                        non_zero_exits.push((event.process.clone(), event.payload.clone()));
-                    }
-                    renderer.notice(
-                        NoticeLevel::Info,
-                        &format!("process `{}` {}", event.process, event.payload),
-                    )?;
-                }
-            }
-        } else if exit_count >= expected {
-            drained_after_exit += 1;
-        }
-    }
-
-    supervisor.terminate_all();
-    non_zero_exits.sort_by(|a, b| a.0.cmp(&b.0));
-    non_zero_exits.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
-    if plan.fail_on_non_zero && !non_zero_exits.is_empty() {
-        return Err(RunnerError::TaskManagedNonZeroExit {
-            task: task_name.to_owned(),
-            profile: plan.profile,
-            processes: non_zero_exits,
-        });
-    }
-    renderer.text("")?;
-    renderer.summary(SummaryCounts {
-        ok: expected,
-        warn: 1,
-        err: 0,
-    })?;
-    let out = renderer.into_inner();
-    String::from_utf8(out)
-        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
 }

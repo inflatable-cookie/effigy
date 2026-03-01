@@ -22,7 +22,7 @@ This matrix is a quick operator reference for Effigy commands, key flags, JSON p
 For sample payloads per schema, see [`026-json-payload-examples.md`](./026-json-payload-examples.md).
 
 
-Canonical machine mode:
+Canonical JSON mode:
 
 ```sh
 effigy --json <command>
@@ -74,7 +74,7 @@ effigy test --plan
 effigy test vitest
 ```
 
-CI/machine-mode:
+CI/JSON mode:
 
 ```sh
 effigy --json tasks

@@ -24,6 +24,10 @@ When a feature spans multiple same-day checkpoints, add a consolidation report t
 - [`2026-02-28-json-envelope-removal-release-note.md`](./2026-02-28-json-envelope-removal-release-note.md)
 - [`2026-02-28-doctor-explain-mode-release-note.md`](./2026-02-28-doctor-explain-mode-release-note.md)
 
+## Recent Docs IA Reports
+
+- [`2026-03-01-documentation-ia-completion-report.md`](./2026-03-01-documentation-ia-completion-report.md)
+
 ## Report template
 
 ```md

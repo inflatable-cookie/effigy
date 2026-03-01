@@ -80,7 +80,12 @@ Owner: `name/team`
 
 ---
 
-Related docs:
-- [Release Notes Authoring Guide](./036-release-notes-authoring-template-and-examples.md)
-- [Release Contract (v0.x)](../roadmap/backlog/release-contract-v0.md)
-- [Distribution Channels Backlog](../roadmap/backlog/distribution-channels.md)
+## Related Guides
+
+- [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
+- [`../roadmap/backlog/release-contract-v0.md`](../roadmap/backlog/release-contract-v0.md)
+- [`../roadmap/backlog/distribution-channels.md`](../roadmap/backlog/distribution-channels.md)
+
+## Next Step
+
+After running this checklist for a release, publish a dated report under `docs/reports/` and link it from your release PR.

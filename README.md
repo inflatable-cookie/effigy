@@ -46,64 +46,34 @@ cargo run --bin effigy -- dev
 cargo run --bin effigy -- app/db:reset
 ```
 
-## Installation Options
-
-Development invocation:
+## Most Common Commands
 
 ```bash
-cargo run --manifest-path /abs/path/to/effigy/Cargo.toml --bin effigy -- tasks
-```
-
-PATH install (daily use):
-
-```bash
-cargo install --path .
 effigy tasks
+effigy tasks --resolve test
+effigy doctor --verbose
+effigy test --plan
+effigy watch --owner effigy --once test
+effigy --json tasks
+effigy unlock --all
 ```
-
-For PATH/release workflow details, see [`docs/guides/010-path-installation-and-release.md`](./docs/guides/010-path-installation-and-release.md).
 
 ## Contributor Commands
 
-Use Cargo aliases for standard local validation:
-
 ```bash
-# full local quality gate (docs links + json contracts)
 cargo qa
-
-# docs links only
 cargo qa-docs
-
-# json contracts only (local fast mode)
 cargo qa-json
-
-# json contracts only (CI behavior)
 cargo qa-json-ci
 ```
 
-Fallback (if aliases are unavailable):
+Fallback:
 
 ```bash
 ./scripts/check-quality-gates.sh
 ./scripts/check-quality-gates.sh --docs-only
 ./scripts/check-quality-gates.sh --json-only
 ./scripts/check-quality-gates.sh --json-only --ci
-```
-
-## Most Common Commands
-
-```bash
-effigy tasks
-effigy tasks --resolve test
-effigy doctor
-effigy doctor --fix
-effigy test
-effigy test --plan
-effigy watch --owner effigy --once test
-effigy config
-effigy config --schema --target test
-effigy migrate --apply
-effigy unlock --all
 ```
 
 ## Task Catalog Basics
@@ -118,15 +88,6 @@ alias = "catalog-a"
 
 [tasks."db:reset"]
 run = "cargo run -p app-db --bin reset_dev_db {args}"
-```
-
-Compact task syntax is also supported:
-
-```toml
-[tasks]
-api = "cargo run -p app-api {args}"
-jobs = "cargo run -p app-jobs {args}"
-"db:reset" = [{ task = "db:drop" }, { task = "db:migrate" }]
 ```
 
 Interpolation tokens:
@@ -151,44 +112,37 @@ Detailed routing guide: [`docs/guides/016-task-routing-precedence.md`](./docs/gu
 
 ## JSON Output
 
-Canonical machine mode:
+Canonical JSON mode:
 
 ```bash
-effigy --json tasks
-effigy --json doctor
-effigy --json test --plan
+effigy --json <command>
 ```
 
-- Top-level envelope schema: `effigy.command.v1`
-- Payload schemas are command-specific (`effigy.tasks.v1`, `effigy.doctor.v1`, etc.)
+Top-level envelope schema: `effigy.command.v1`.
 
 See [`docs/guides/017-json-output-contracts.md`](./docs/guides/017-json-output-contracts.md).
 
-## Extended Guides
+## Terminology Canon
 
-Start with:
-- Docs index: [`docs/README.md`](./docs/README.md)
-- Guides landing page: [`docs/guides/README.md`](./docs/guides/README.md)
+Use the canonical terms across docs and PRs:
+- `selector`: a task request string such as `test` or `api/test`
+- `routing`: how a selector resolves to a catalog and task
+- `deferral`: fallback execution when no selector matches local tasks
+
+See [`docs/guides/034-task-and-command-glossary.md`](./docs/guides/034-task-and-command-glossary.md).
+
+## Documentation Entry Points
+
+- Docs system index: [`docs/README.md`](./docs/README.md)
+- Guides landing (persona/task navigation): [`docs/guides/README.md`](./docs/guides/README.md)
 - Contributor onboarding (15 min): [`docs/guides/030-contributor-onboarding-15-minutes.md`](./docs/guides/030-contributor-onboarding-15-minutes.md)
-- Troubleshooting recipes: [`docs/guides/023-troubleshooting-and-failure-recipes.md`](./docs/guides/023-troubleshooting-and-failure-recipes.md)
-- CI and automation recipes: [`docs/guides/024-ci-and-automation-recipes.md`](./docs/guides/024-ci-and-automation-recipes.md)
-- Docs QA checklist: [`docs/guides/029-docs-qa-checklist-and-validation.md`](./docs/guides/029-docs-qa-checklist-and-validation.md)
-- Navigation cleanup note: [`docs/guides/031-docs-navigation-cleanup.md`](./docs/guides/031-docs-navigation-cleanup.md)
-- Style and terminology guide: [`docs/guides/033-style-and-terminology-guide.md`](./docs/guides/033-style-and-terminology-guide.md)
-- Task and command glossary: [`docs/guides/034-task-and-command-glossary.md`](./docs/guides/034-task-and-command-glossary.md)
-- Guide ownership + update triggers: [`docs/guides/035-guide-ownership-and-update-triggers.md`](./docs/guides/035-guide-ownership-and-update-triggers.md)
-- Release notes authoring template + examples: [`docs/guides/036-release-notes-authoring-template-and-examples.md`](./docs/guides/036-release-notes-authoring-template-and-examples.md)
 - Documentation contribution playbook: [`docs/guides/037-documentation-contribution-playbook.md`](./docs/guides/037-documentation-contribution-playbook.md)
 
 ## Development
 
-Run tests:
-
 ```bash
 cargo test
 cargo qa
-# fallback:
-# ./scripts/check-quality-gates.sh
 ```
 
 ## Repository Layout

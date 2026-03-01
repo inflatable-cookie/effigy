@@ -151,9 +151,19 @@ For each new release note:
 2. add link to `docs/reports/README.md` under recent release notes
 3. reference from relevant guide(s) when behavior is user-impacting
 
+## Expected Outcome
+
+- release notes are consistent, scannable, and directly actionable
+- each note includes concrete validation and rollback steps
+- release documentation stays connected to roadmap and guide updates
+
 ## Related Guides
 
-- `014-release-checklist-template.md`
-- `024-ci-and-automation-recipes.md`
-- `029-docs-qa-checklist-and-validation.md`
-- `033-style-and-terminology-guide.md`
+- [`014-release-checklist-template.md`](./014-release-checklist-template.md)
+- [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+- [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
+
+## Next Step
+
+After drafting a release note, run the release checklist in [`014-release-checklist-template.md`](./014-release-checklist-template.md) and attach validation outputs from the executed commands.

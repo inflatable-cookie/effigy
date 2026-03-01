@@ -31,7 +31,7 @@ For procedural docs:
 
 - use fenced blocks with `sh` or `bash`
 - commands must be runnable from repo root unless explicitly stated
-- show canonical machine mode as `effigy --json <command>`
+- show canonical JSON mode as `effigy --json <command>`
 - for non-destructive guidance, prefer plan/dry-run flags first (`--plan`, `--dry-run`)
 
 Example:
@@ -105,11 +105,21 @@ Before finalizing a guide update:
 4. confirm guide is discoverable from at least one index
 5. avoid introducing redundant navigation blocks
 
+## Expected Outcome
+
+- docs stay consistent in tone, command examples, and schema naming
+- terminology is applied uniformly across onboarding, operations, and CI guides
+- new guide updates require less editorial cleanup during review
+
 ## Related Guides
 
-- `017-json-output-contracts.md`
-- `029-docs-qa-checklist-and-validation.md`
-- `031-docs-navigation-cleanup.md`
-- `032-docs-consistency-sweep-and-changelog.md`
-- `034-task-and-command-glossary.md`
-- `035-guide-ownership-and-update-triggers.md`
+- [`017-json-output-contracts.md`](./017-json-output-contracts.md)
+- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+- [`031-docs-navigation-cleanup.md`](./031-docs-navigation-cleanup.md)
+- [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md)
+- [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)
+- [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
+
+## Next Step
+
+After writing or updating a guide, run through the checklist in Section 8 and then validate links and docs quality gates before opening a PR.

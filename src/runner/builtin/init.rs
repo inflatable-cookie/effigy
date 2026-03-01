@@ -1,12 +1,10 @@
-use std::io::IsTerminal;
 use std::path::Path;
 
 use serde_json::json;
 
-use crate::ui::theme::resolve_color_enabled;
-use crate::ui::{OutputMode, PlainRenderer};
 use crate::{render_help, HelpTopic, TaskInvocation};
 
+use super::super::render::{encode_pretty_json_optional, render_utf8, standard_renderer};
 use super::super::{RunnerError, TASK_MANIFEST_FILE};
 
 pub(super) fn run_builtin_init(
@@ -37,16 +35,9 @@ pub(super) fn run_builtin_init(
     }
 
     if help {
-        let color_enabled = if output_json {
-            false
-        } else {
-            resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal())
-        };
-        let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+        let mut renderer = standard_renderer(output_json);
         render_help(&mut renderer, HelpTopic::Init)?;
-        let rendered = String::from_utf8(renderer.into_inner()).map_err(|error| {
-            RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}"))
-        })?;
+        let rendered = render_utf8(renderer.into_inner())?;
         if output_json {
             let payload = json!({
                 "schema": "effigy.help.v1",
@@ -55,9 +46,7 @@ pub(super) fn run_builtin_init(
                 "topic": "init",
                 "text": rendered,
             });
-            return serde_json::to_string_pretty(&payload)
-                .map(Some)
-                .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+            return encode_pretty_json_optional(&payload);
         }
         return Ok(Some(rendered));
     }
@@ -95,9 +84,7 @@ pub(super) fn run_builtin_init(
             "overwritten": exists && written,
             "content": scaffold,
         });
-        return serde_json::to_string_pretty(&payload)
-            .map(Some)
-            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+        return encode_pretty_json_optional(&payload);
     }
 
     if dry_run {

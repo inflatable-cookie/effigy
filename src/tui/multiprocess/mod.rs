@@ -19,9 +19,9 @@ use config::{
     INPUT_POLL_WAIT, MAX_EVENTS_PER_TICK, VT_PARSER_COLS, VT_PARSER_ROWS, VT_PARSER_SCROLLBACK,
 };
 use diagnostics::RuntimeDiagnostics;
-use events::{drain_process_events, handle_key_event, LoopControl};
+use events::{drain_process_events, handle_key_event, KeyEventContext, LoopControl};
 use lifecycle::{init_terminal, shutdown_and_render_summary};
-use render::render_ui;
+use render::{render_ui, RenderUiState};
 pub(super) use state::OptionsAction;
 use state::SessionState;
 use view_model::build_active_view_model;
@@ -127,27 +127,29 @@ pub fn run_multiprocess_tui(
         terminal.draw(|frame| {
             render_ui(
                 frame,
-                &state.process_names,
-                state.active_index,
-                &active_view.active_logs,
-                active_view.scroll_offset,
-                active_view.max_offset,
-                active_view.render_scroll_offset,
-                active_view.scrollbar_total,
-                active_view.is_follow,
-                &active_view.active_process,
-                &state.input_line,
-                state.input_mode,
-                state.shell_capture_mode,
-                &state.exit_states,
-                state.show_help,
-                state.show_options,
-                state.options_index,
-                active_view.active_output_seen,
-                state.spinner_tick,
-                active_view.active_elapsed,
-                active_view.active_restart_count,
-                active_view.shell_cursor,
+                RenderUiState {
+                    process_names: &state.process_names,
+                    active_index: state.active_index,
+                    active_logs: &active_view.active_logs,
+                    scroll_offset: active_view.scroll_offset,
+                    max_offset: active_view.max_offset,
+                    render_scroll_offset: active_view.render_scroll_offset,
+                    scrollbar_total: active_view.scrollbar_total,
+                    follow: active_view.is_follow,
+                    active_process: &active_view.active_process,
+                    input_line: &state.input_line,
+                    input_mode: state.input_mode,
+                    shell_capture_mode: state.shell_capture_mode,
+                    exit_states: &state.exit_states,
+                    show_help: state.show_help,
+                    show_options: state.show_options,
+                    options_index: state.options_index,
+                    active_output_seen: active_view.active_output_seen,
+                    spinner_tick: state.spinner_tick,
+                    active_elapsed: active_view.active_elapsed,
+                    active_restart_count: active_view.active_restart_count,
+                    shell_cursor: active_view.shell_cursor,
+                },
             )
         })?;
         diagnostics.record_frame();
@@ -159,11 +161,13 @@ pub fn run_multiprocess_tui(
                 }
                 match handle_key_event(
                     &key,
-                    &supervisor,
-                    &mut state,
-                    &mut diagnostics,
-                    options,
-                    active_view.max_offset,
+                    KeyEventContext {
+                        supervisor: &supervisor,
+                        state: &mut state,
+                        diagnostics: &mut diagnostics,
+                        options,
+                        max_offset: active_view.max_offset,
+                    },
                 )? {
                     LoopControl::Continue => {}
                     LoopControl::Quit => break Ok(()),

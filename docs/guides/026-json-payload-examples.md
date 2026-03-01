@@ -2,7 +2,7 @@
 
 This guide provides realistic pretty-printed JSON payload samples for Effigy command contracts.
 
-All examples assume canonical machine mode:
+All examples assume canonical JSON mode:
 
 ```sh
 effigy --json <command>

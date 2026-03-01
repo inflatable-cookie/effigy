@@ -15,37 +15,60 @@ mod panes;
 use footer::render_footer;
 use header::render_tabs;
 use help_overlay::{render_help_overlay, render_options_overlay};
-use panes::{render_input_pane, render_output_pane};
+use panes::{render_input_pane, render_output_pane, OutputPaneRenderArgs};
 
 pub(super) fn options_actions(follow_enabled: bool) -> Vec<OptionsAction> {
     help_overlay::options_actions(follow_enabled)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn render_ui(
-    frame: &mut Frame<'_>,
-    process_names: &[String],
-    active_index: usize,
-    active_logs: &[LogEntry],
-    scroll_offset: usize,
-    max_offset: usize,
-    render_scroll_offset: usize,
-    scrollbar_total: usize,
-    follow: bool,
-    active_process: &str,
-    input_line: &str,
-    input_mode: InputMode,
-    shell_capture_mode: bool,
-    exit_states: &HashMap<String, ProcessExitState>,
-    show_help: bool,
-    show_options: bool,
-    options_index: usize,
-    active_output_seen: bool,
-    spinner_tick: usize,
-    active_elapsed: Duration,
-    active_restart_count: usize,
-    shell_cursor: Option<(u16, u16)>,
-) {
+pub(super) struct RenderUiState<'a> {
+    pub(super) process_names: &'a [String],
+    pub(super) active_index: usize,
+    pub(super) active_logs: &'a [LogEntry],
+    pub(super) scroll_offset: usize,
+    pub(super) max_offset: usize,
+    pub(super) render_scroll_offset: usize,
+    pub(super) scrollbar_total: usize,
+    pub(super) follow: bool,
+    pub(super) active_process: &'a str,
+    pub(super) input_line: &'a str,
+    pub(super) input_mode: InputMode,
+    pub(super) shell_capture_mode: bool,
+    pub(super) exit_states: &'a HashMap<String, ProcessExitState>,
+    pub(super) show_help: bool,
+    pub(super) show_options: bool,
+    pub(super) options_index: usize,
+    pub(super) active_output_seen: bool,
+    pub(super) spinner_tick: usize,
+    pub(super) active_elapsed: Duration,
+    pub(super) active_restart_count: usize,
+    pub(super) shell_cursor: Option<(u16, u16)>,
+}
+
+pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
+    let RenderUiState {
+        process_names,
+        active_index,
+        active_logs,
+        scroll_offset,
+        max_offset,
+        render_scroll_offset,
+        scrollbar_total,
+        follow,
+        active_process,
+        input_line,
+        input_mode,
+        shell_capture_mode,
+        exit_states,
+        show_help,
+        show_options,
+        options_index,
+        active_output_seen,
+        spinner_tick,
+        active_elapsed,
+        active_restart_count,
+        shell_cursor,
+    } = state;
     let active_is_shell = active_process == "shell";
     let input_height = if active_is_shell {
         0
@@ -79,20 +102,22 @@ pub(super) fn render_ui(
         render_output_pane(
             frame,
             chunks[1],
-            active_logs,
-            scroll_offset,
-            max_offset,
-            render_scroll_offset,
-            scrollbar_total,
-            active_process,
-            &process_names[active_index],
-            shell_capture_mode,
-            active_output_seen,
-            spinner_tick,
-            active_elapsed,
-            active_restart_count,
-            exit_states,
-            shell_cursor,
+            OutputPaneRenderArgs {
+                active_logs,
+                scroll_offset,
+                max_offset,
+                render_scroll_offset,
+                scrollbar_total,
+                active_process,
+                process_name: &process_names[active_index],
+                shell_capture_mode,
+                active_output_seen,
+                spinner_tick,
+                active_elapsed,
+                active_restart_count,
+                exit_states,
+                shell_cursor,
+            },
         );
     }
 

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 #[cfg(unix)]
@@ -270,8 +270,8 @@ impl ProcessSupervisor {
         let process_map = self.processes.lock().expect("process map lock");
         let mut diagnostics = self
             .specs
-            .iter()
-            .map(|(name, _)| {
+            .keys()
+            .map(|name| {
                 let diagnostic = if let Some(child) = process_map.get(name) {
                     match child.lock().expect("child lock").try_wait() {
                         Ok(Some(status)) => format_exit_diagnostic(status),
@@ -518,7 +518,7 @@ fn spawn_plain_shell(spec: &ProcessSpec) -> ProcessCommand {
     unsafe {
         process.pre_exec(|| {
             setpgid(Pid::from_raw(0), Pid::from_raw(0))
-                .map_err(|error| std::io::Error::new(ErrorKind::Other, error.to_string()))
+                .map_err(|error| std::io::Error::other(error.to_string()))
         });
     }
     with_local_node_bin_path(&mut process, &spec.cwd);
@@ -543,7 +543,7 @@ fn spawn_with_pty_wrapper(spec: &ProcessSpec) -> ProcessCommand {
         unsafe {
             process.pre_exec(|| {
                 setpgid(Pid::from_raw(0), Pid::from_raw(0))
-                    .map_err(|error| std::io::Error::new(ErrorKind::Other, error.to_string()))
+                    .map_err(|error| std::io::Error::other(error.to_string()))
             });
         }
         with_local_node_bin_path(&mut process, &spec.cwd);
