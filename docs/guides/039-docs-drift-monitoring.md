@@ -2,7 +2,19 @@
 
 Use this guide for recurring documentation maintenance.
 
-## 1) Monthly Drift Checklist
+## 1) Docs Maintenance Cadence
+
+Run from repository root.
+
+| Cadence | Owner | Required Checks | Deliverable |
+| --- | --- | --- | --- |
+| Weekly (every Friday) | Docs maintainer on rotation | Link integrity, entrypoint index coherence, terminology spot check (`JSON mode`, `selector`, `routing`, `deferral`) | short checkpoint note in `docs/reports/` if issues are found |
+| Monthly (first business day) | Docs maintainer + CI owner | Full monthly drift checklist in this guide | dated drift report in `docs/reports/` |
+| Quarterly (first week of quarter) | Docs maintainer + maintainer lead | Quarterly deep drift sweep in this guide | consolidated IA health report with follow-up actions |
+
+If ownership rotates, update the current owner in your team runbook and reference that owner in the dated report.
+
+## 2) Monthly Drift Checklist
 
 Run from repository root.
 
@@ -63,7 +75,7 @@ Pass criteria:
 Pass criteria:
 - docs-only quality gate passes
 
-## 2) Quarterly Deep Drift Sweep
+## 3) Quarterly Deep Drift Sweep
 
 In addition to monthly checks:
 - compare guide matrix in `038` against current guide set
@@ -71,7 +83,7 @@ In addition to monthly checks:
 - ensure `029` commands still reflect actual scripts/workflows
 - review `036` release-note template against recent release-note quality
 
-## 3) Recurring Report Snippet
+## 4) Recurring Report Snippet
 
 Use this in a dated report under `docs/reports/`:
 
@@ -102,7 +114,7 @@ Owner: <team/person>
 - ...
 ```
 
-## 4) Escalation Conditions
+## 5) Escalation Conditions
 
 Escalate to docs cleanup work when any of these occur:
 - repeated link-check failures across checkpoints
@@ -110,9 +122,19 @@ Escalate to docs cleanup work when any of these occur:
 - schema docs diverge from current contracts
 - guide indexes drift into contradictory onboarding paths
 
-## 5) Related Guides
+## Expected Outcome
 
-- `029-docs-qa-checklist-and-validation.md`
-- `032-docs-consistency-sweep-and-changelog.md`
-- `035-guide-ownership-and-update-triggers.md`
-- `038-docs-ia-snapshot.md`
+- recurring checks catch link, navigation, and terminology drift before it accumulates
+- docs updates stay aligned with live command and schema behavior
+- maintenance ownership and cadence remain explicit across weeks, months, and quarters
+
+## Related Guides
+
+- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+- [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md)
+- [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
+- [`038-docs-ia-snapshot.md`](./038-docs-ia-snapshot.md)
+
+## Next Step
+
+After each monthly run, update the latest findings in [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md) and link the dated report.
