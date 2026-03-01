@@ -153,6 +153,7 @@ Start with:
 - CI and automation recipes: [`docs/guides/024-ci-and-automation-recipes.md`](./docs/guides/024-ci-and-automation-recipes.md)
 - Command reference matrix: [`docs/guides/025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
 - Copy/paste snippets: [`docs/guides/027-copy-paste-snippets.md`](./docs/guides/027-copy-paste-snippets.md)
+- Migration quick paths: [`docs/guides/028-migration-quick-paths.md`](./docs/guides/028-migration-quick-paths.md)
 - Recent release note (DAG/watch/onboarding): [`docs/reports/2026-02-28-dag-watch-onboarding-release-note.md`](./docs/reports/2026-02-28-dag-watch-onboarding-release-note.md)
 
 ## Development
@@ -161,6 +162,7 @@ Run tests:
 
 ```bash
 cargo test
+./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)
 ```
 
 ## Repository Layout

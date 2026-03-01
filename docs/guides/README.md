@@ -109,4 +109,5 @@ cargo test
 - Command reference matrix: [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - JSON payload examples: [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 - Copy/paste snippets: [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
+- Migration quick paths: [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
 - Docs flow map: [`028-docs-flow-map.md`](./028-docs-flow-map.md)
