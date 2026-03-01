@@ -62,9 +62,9 @@ Effigy is still evolving, so distribution planning should be staged and reversib
 - [ ] Define bottle/checksum/update strategy.
 
 ### Phase D - CI + Team Adoption
-- [ ] Add pinned-version install snippets for CI.
-- [ ] Add bootstrap docs for local dev + fallback channels.
-- [ ] Add upgrade guide for existing projects using `bun effigy` wrappers.
+- [x] Add pinned-version install snippets for CI.
+- [x] Add bootstrap docs for local dev + fallback channels.
+- [x] Add upgrade guide for existing projects using `bun effigy` wrappers.
 
 ### Phase E - Optional Wrapper Evaluation
 - [ ] Reassess need for npm wrapper after crates + brew are stable.
@@ -91,4 +91,4 @@ Effigy is still evolving, so distribution planning should be staged and reversib
 - [x] Release contract doc + checklist.
 - [x] Crates publication workflow.
 - [ ] Homebrew tap + automation workflow.
-- [ ] CI install recipes and migration guidance.
+- [x] CI install recipes and migration guidance.

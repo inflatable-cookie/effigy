@@ -49,6 +49,7 @@ Keep `bun effigy ...` wrapper scripts as compatibility fallback while teams migr
 Recommended policy:
 - primary: direct `effigy ...`
 - fallback: `bun effigy ...` wrapper (cargo-run)
+- migration runbook: [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
 
 ## 4) Versioning
 
@@ -87,6 +88,7 @@ If cargo lock contention causes delayed startup for wrapper mode, direct PATH in
 
 - [`014-release-checklist-template.md`](./014-release-checklist-template.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+- [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
 - [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
 
 ## Next Step

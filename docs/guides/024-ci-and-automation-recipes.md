@@ -30,6 +30,9 @@ cargo qa-release
 cargo qa-docs
 ```
 
+Install pinning and team migration policy:
+- [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
+
 PR-style changed-only simulation:
 
 ```sh
@@ -255,4 +258,5 @@ What `check-release-gates.sh` enforces:
 - [`019-watch-init-migrate-phase-1.md`](./019-watch-init-migrate-phase-1.md)
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+- [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
 - [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
