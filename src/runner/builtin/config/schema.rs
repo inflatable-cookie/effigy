@@ -208,7 +208,10 @@ pub(super) fn render_builtin_config_schema_target(target: &str, minimal: bool) -
     }
 }
 
-pub(super) fn render_builtin_config_schema_test_target(minimal: bool, runner: Option<&str>) -> String {
+pub(super) fn render_builtin_config_schema_test_target(
+    minimal: bool,
+    runner: Option<&str>,
+) -> String {
     let header = match (minimal, runner) {
         (true, Some(name)) => {
             format!("# Minimal strict-valid effigy.toml starter (test target, runner: {name})")
