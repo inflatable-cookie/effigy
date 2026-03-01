@@ -361,6 +361,7 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
   "prefix": "farm",
   "cache_hit": true,
   "cache_state": "hit",
+  "cache_age_ms": 14,
   "manifest_count": 3,
   "candidates": [
     "farmyard/api",

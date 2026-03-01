@@ -17,6 +17,7 @@ struct CompletionCandidatesResult {
     cache_hit: bool,
     cache_state: &'static str,
     manifest_count: usize,
+    cache_age_ms: Option<u128>,
 }
 
 pub(super) fn run_completion_candidates(
@@ -100,6 +101,7 @@ pub(super) fn run_completion_candidates(
             "cache_hit": completion_candidates.cache_hit,
             "cache_state": completion_candidates.cache_state,
             "manifest_count": completion_candidates.manifest_count,
+            "cache_age_ms": completion_candidates.cache_age_ms,
         });
         return serde_json::to_string_pretty(&payload)
             .map(Some)
@@ -113,7 +115,7 @@ fn collect_completion_candidates(
     repo_root: &Path,
     prefix: Option<&str>,
 ) -> Result<CompletionCandidatesResult, RunnerError> {
-    let (base_candidates, cache_state, manifest_count) =
+    let (base_candidates, cache_state, manifest_count, cache_age_ms) =
         load_completion_candidates_with_cache(repo_root)?;
 
     let candidates = base_candidates
@@ -130,5 +132,6 @@ fn collect_completion_candidates(
         cache_hit: cache_state == CompletionCandidatesCacheState::Hit,
         cache_state: cache_state.as_str(),
         manifest_count,
+        cache_age_ms,
     })
 }
