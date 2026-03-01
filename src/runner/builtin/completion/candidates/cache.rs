@@ -25,6 +25,8 @@ struct CompletionCandidatesSnapshot {
 struct ManifestStamp {
     path: PathBuf,
     modified_epoch_ns: Option<u128>,
+    len_bytes: Option<u64>,
+    content_hash_fnv1a64: Option<u64>,
 }
 
 static COMPLETION_CANDIDATES_CACHE: OnceLock<
@@ -165,14 +167,34 @@ fn manifest_stamps_unchanged(expected: &[ManifestStamp]) -> bool {
 }
 
 fn read_manifest_stamp(path: &Path) -> ManifestStamp {
-    let modified_epoch_ns = fs::metadata(path)
-        .ok()
+    let metadata = fs::metadata(path).ok();
+    let modified_epoch_ns = metadata
+        .as_ref()
         .and_then(|metadata| metadata.modified().ok())
         .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
         .map(|duration| duration.as_nanos());
+    let contents = fs::read(path).ok();
+    let len_bytes = contents
+        .as_ref()
+        .map(|bytes| bytes.len() as u64)
+        .or_else(|| metadata.as_ref().map(|value| value.len()));
+    let content_hash_fnv1a64 = contents.as_ref().map(|bytes| fnv1a64(bytes));
 
     ManifestStamp {
         path: path.to_path_buf(),
         modified_epoch_ns,
+        len_bytes,
+        content_hash_fnv1a64,
     }
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+    let mut hash = OFFSET_BASIS;
+    for byte in bytes {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
 }
