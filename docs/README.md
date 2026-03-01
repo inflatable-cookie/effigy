@@ -16,13 +16,15 @@ If you are new to the project:
 2. [`guides/README.md`](./guides/README.md) for persona-based guide navigation
 3. [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md) for command examples
 4. [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md) for copy-paste manifest patterns
-5. [`architecture/000-overview.md`](./architecture/000-overview.md) for system framing
+5. [`guides/030-contributor-onboarding-15-minutes.md`](./guides/030-contributor-onboarding-15-minutes.md) for first-day setup
+6. [`architecture/000-overview.md`](./architecture/000-overview.md) for system framing
 
 If you are extending behavior:
 1. [`guides/016-task-routing-precedence.md`](./guides/016-task-routing-precedence.md)
 2. [`guides/017-json-output-contracts.md`](./guides/017-json-output-contracts.md)
-3. [`architecture/010-package-map.md`](./architecture/010-package-map.md)
-4. [`architecture/011-multiprocess-tui-config-contract.md`](./architecture/011-multiprocess-tui-config-contract.md)
+3. [`guides/025-command-reference-matrix.md`](./guides/025-command-reference-matrix.md)
+4. [`architecture/010-package-map.md`](./architecture/010-package-map.md)
+5. [`architecture/011-multiprocess-tui-config-contract.md`](./architecture/011-multiprocess-tui-config-contract.md)
 
 ## Guide Index
 
@@ -46,7 +48,10 @@ If you are extending behavior:
 - [`guides/026-json-payload-examples.md`](./guides/026-json-payload-examples.md)
 - [`guides/027-copy-paste-snippets.md`](./guides/027-copy-paste-snippets.md)
 - [`guides/028-migration-quick-paths.md`](./guides/028-migration-quick-paths.md)
-- [`guides/028-docs-flow-map.md`](./guides/028-docs-flow-map.md)
+- [`guides/029-docs-qa-checklist-and-validation.md`](./guides/029-docs-qa-checklist-and-validation.md)
+- [`guides/030-contributor-onboarding-15-minutes.md`](./guides/030-contributor-onboarding-15-minutes.md)
+- [`guides/031-docs-navigation-cleanup.md`](./guides/031-docs-navigation-cleanup.md)
+- [`guides/028-docs-flow-map.md`](./guides/028-docs-flow-map.md) (supplemental)
 
 ## JSON Contract Notes
 

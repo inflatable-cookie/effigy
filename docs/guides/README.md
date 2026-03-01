@@ -5,14 +5,16 @@ This is the practical landing page for Effigy runbooks and examples.
 ## Start Here
 
 If you want one fast path:
-1. [`028-docs-flow-map.md`](./028-docs-flow-map.md)
-2. [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
-3. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-4. [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
-5. [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
-6. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-7. [`026-json-payload-examples.md`](./026-json-payload-examples.md)
-8. [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
+1. [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
+2. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+3. [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+4. [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+5. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+6. [`026-json-payload-examples.md`](./026-json-payload-examples.md)
+7. [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
+8. [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
+9. [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+10. [`030-contributor-onboarding-15-minutes.md`](./030-contributor-onboarding-15-minutes.md)
 
 ## By Persona
 
@@ -110,4 +112,10 @@ cargo test
 - JSON payload examples: [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 - Copy/paste snippets: [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
 - Migration quick paths: [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
-- Docs flow map: [`028-docs-flow-map.md`](./028-docs-flow-map.md)
+- Docs QA checklist: [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+- Contributor onboarding (15 min): [`030-contributor-onboarding-15-minutes.md`](./030-contributor-onboarding-15-minutes.md)
+- Docs navigation cleanup note: [`031-docs-navigation-cleanup.md`](./031-docs-navigation-cleanup.md)
+
+## Supplemental
+
+- Docs flow map (legacy navigation map): [`028-docs-flow-map.md`](./028-docs-flow-map.md)

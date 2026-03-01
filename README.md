@@ -142,19 +142,15 @@ See [`docs/guides/017-json-output-contracts.md`](./docs/guides/017-json-output-c
 Start with:
 - Docs index: [`docs/README.md`](./docs/README.md)
 - Guides landing page: [`docs/guides/README.md`](./docs/guides/README.md)
-- Docs flow map: [`docs/guides/028-docs-flow-map.md`](./docs/guides/028-docs-flow-map.md)
 - Command cookbook: [`docs/guides/021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md)
 - Manifest cookbook: [`docs/guides/022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
-- Testing orchestration: [`docs/guides/013-testing-orchestration.md`](./docs/guides/013-testing-orchestration.md)
-- Watch/init/migrate: [`docs/guides/019-watch-init-migrate-phase-1.md`](./docs/guides/019-watch-init-migrate-phase-1.md)
-- DAG + locks: [`docs/guides/020-dag-lock-policy-baseline.md`](./docs/guides/020-dag-lock-policy-baseline.md)
-- Deferral migration: [`docs/guides/015-deferral-fallback-migration.md`](./docs/guides/015-deferral-fallback-migration.md)
 - Troubleshooting recipes: [`docs/guides/023-troubleshooting-and-failure-recipes.md`](./docs/guides/023-troubleshooting-and-failure-recipes.md)
 - CI and automation recipes: [`docs/guides/024-ci-and-automation-recipes.md`](./docs/guides/024-ci-and-automation-recipes.md)
 - Command reference matrix: [`docs/guides/025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
 - Copy/paste snippets: [`docs/guides/027-copy-paste-snippets.md`](./docs/guides/027-copy-paste-snippets.md)
 - Migration quick paths: [`docs/guides/028-migration-quick-paths.md`](./docs/guides/028-migration-quick-paths.md)
-- Recent release note (DAG/watch/onboarding): [`docs/reports/2026-02-28-dag-watch-onboarding-release-note.md`](./docs/reports/2026-02-28-dag-watch-onboarding-release-note.md)
+- Docs QA checklist: [`docs/guides/029-docs-qa-checklist-and-validation.md`](./docs/guides/029-docs-qa-checklist-and-validation.md)
+- Contributor onboarding (15 min): [`docs/guides/030-contributor-onboarding-15-minutes.md`](./docs/guides/030-contributor-onboarding-15-minutes.md)
 
 ## Development
 
@@ -162,7 +158,9 @@ Run tests:
 
 ```bash
 cargo test
-./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)
+cargo qa
+# fallback:
+# ./scripts/check-quality-gates.sh
 ```
 
 ## Repository Layout

@@ -36,8 +36,14 @@ check_file() {
       failures=$((failures + 1))
     fi
   done < <(
-    perl -ne 'while (/\[[^\]]+\]\(([^)]+)\)/g) { print "$1\n"; }' "$file" \
-      | awk -v f="$file" '{ print f "|" $0 }'
+    perl -ne '
+      our $in_fence;
+      $in_fence = 0 unless defined $in_fence;
+      if (/^\s*```/) { $in_fence = !$in_fence; next; }
+      next if $in_fence;
+      s/`[^`]*`//g;
+      while (/\[[^\]]+\]\(([^)]+)\)/g) { print "$1\n"; }
+    ' "$file" | awk -v f="$file" '{ print f "|" $0 }'
   )
 }
 

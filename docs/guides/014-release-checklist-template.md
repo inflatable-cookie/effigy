@@ -22,8 +22,10 @@ Owner: `name/team`
 
 - [ ] `cargo fmt` clean.
 - [ ] `cargo test` passes.
+- [ ] Local quality gates pass:
+  - [ ] `cargo qa`
 - [ ] Docs link integrity check passes:
-  - [ ] `./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)`
+  - [ ] `cargo qa-docs`
 - [ ] CI gate is green before merge/tag:
   - [ ] `json-contracts / Validate docs links`
   - [ ] `json-contracts / Validate JSON contracts`
