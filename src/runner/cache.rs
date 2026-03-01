@@ -36,7 +36,7 @@ pub(super) struct TaskCacheEntry {
     pub(super) updated_at_epoch_ms: u128,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct TaskCacheStore {
     #[serde(default = "cache_store_schema")]
     schema: String,
