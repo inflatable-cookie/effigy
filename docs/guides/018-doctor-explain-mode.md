@@ -5,15 +5,15 @@ Use explain mode to diagnose task resolution decisions without running the task 
 ## Command Shape
 
 ```bash
-effigy doctor <task> <args>
-effigy --json doctor <task> <args>
+effigy doctor [--repo <PATH>] <task> -- <args>
+effigy --json doctor --repo <PATH> <task> -- <args>
 ```
 
 Examples:
 
 ```bash
-effigy doctor farmyard/build -- --watch
-effigy --json doctor farmyard/build -- --watch
+effigy doctor --repo /path/to/workspace catalog-a/build -- --watch
+effigy --json doctor --repo /path/to/workspace catalog-a/build -- --watch
 ```
 
 ## Scenario 1: Successful Selection
@@ -21,7 +21,7 @@ effigy --json doctor farmyard/build -- --watch
 Command:
 
 ```bash
-effigy doctor farmyard/build -- --watch
+effigy doctor --repo /path/to/workspace catalog-a/build -- --watch
 ```
 
 Text output excerpt:
@@ -29,9 +29,9 @@ Text output excerpt:
 ```text
 Doctor Explain
 ──────────────
-request: farmyard/build
+request: catalog-a/build
 selection-status: ok
-selected-catalog: farmyard
+selected-catalog: catalog-a
 selected-mode: explicit_prefix
 selection-reasoning: selected catalog by explicit task prefix
 deferral-considered: false
@@ -46,14 +46,14 @@ JSON output excerpt:
   "schema": "effigy.doctor.explain.v1",
   "schema_version": 1,
   "request": {
-    "task": "farmyard/build",
+    "task": "catalog-a/build",
     "args": ["--", "--watch"]
   },
   "selection": {
     "status": "ok",
-    "catalog": "farmyard",
+    "catalog": "catalog-a",
     "mode": "explicit_prefix",
-    "evidence": ["selected catalog via explicit prefix `farmyard`"],
+    "evidence": ["selected catalog via explicit prefix `catalog-a`"],
     "error": null
   },
   "reasoning": {
@@ -68,7 +68,7 @@ JSON output excerpt:
 Command:
 
 ```bash
-effigy doctor missing-task
+effigy doctor --repo /path/to/workspace missing-task
 ```
 
 Text output excerpt:
@@ -112,3 +112,9 @@ JSON output excerpt:
 - `ambiguity_candidates`: populated when resolution fails due to ambiguity.
 - `deferral`: whether fallback deferral was considered and selected.
 - `reasoning`: explicit narrative for selection and deferral outcomes.
+
+## Next Reading
+
+- Resolution precedence details: [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
+- Tasks resolution probe mode: [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
+- Failure recipes for routing/deferral issues: [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)

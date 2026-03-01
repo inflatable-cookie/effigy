@@ -14,8 +14,8 @@ Status overview of all Effigy roadmaps.
 | 008 | [Universal JSON Command Coverage](./008-universal-json-command-coverage.md) | Complete | Standardize envelope-based JSON output across command paths for CI/tooling consumption |
 | 009 | [Doctor Health Consolidation](./009-doctor-health-consolidation.md) | Complete | Consolidate health checks and remediation into canonical `doctor`, with `repo-pulse`/`health` surface removal |
 | 010 | [DAG Lock and Policy Baseline](./010-dag-lock-policy-baseline.md) | Complete | Add DAG execution, lock scopes, and node-level timeout/retry/fail-fast policy semantics |
-| 011 | [Watch Mode, Init, and Migrate (Phase 1)](./011-watch-init-migrate-phase-1.md) | Not Started | Add watch reruns with owner-policy safeguards plus onboarding helpers (`init`, `migrate`) |
+| 011 | [Watch Mode, Init, and Migrate (Phase 1)](./011-watch-init-migrate-phase-1.md) | Complete | Add watch reruns with owner-policy safeguards plus onboarding helpers (`init`, `migrate`) |
 
-**Complete:** 10 | **In progress:** 0 | **Not started:** 1
+**Complete:** 11 | **In progress:** 0 | **Not started:** 0
 
 Backlog (unnumbered): [roadmap/backlog](./backlog/README.md)

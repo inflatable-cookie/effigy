@@ -26,7 +26,7 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
-      "command": "effigy --json doctor farmyard/build -- --watch",
+      "command": "effigy --json doctor --repo <fixture_task_success> build -- --watch",
       "surface": "top-level command",
       "status": "active"
     },

@@ -1,130 +1,87 @@
 # effigy
 
-Effigy is a unified task runner for multi-repo and nested-workspace development.
+Effigy is a unified task runner for monorepos and nested workspaces.
 
-It provides:
-- built-in operational tasks (including `doctor`, `test`, `tasks`, `config`),
-- project-defined tasks in TOML catalogs,
-- deterministic task resolution across nested catalogs,
-- explicit catalog targeting (`catalog/task`) and unprefixed intelligent resolution (`task`).
+It gives you one command surface for:
+- project tasks from `effigy.toml`,
+- built-in workflow commands (`tasks`, `doctor`, `test`, `watch`, `init`, `migrate`, `config`, `unlock`),
+- deterministic task resolution across catalogs.
 
-## Why Effigy
+## Quick Start (2 Minutes)
 
-In large workspaces, scripts drift across `package.json`, shell wrappers, and ad hoc per-repo commands. Effigy provides one runner surface with consistent behavior:
+1. Build and run help:
 
-- one command surface for humans and automation,
-- catalog-based task ownership by repo/sub-repo,
-- location-aware resolution so unprefixed tasks behave predictably,
-- no forced coupling to Node package scripts.
+```bash
+cargo run --bin effigy -- --help
+```
 
-## Install and Run
+2. Preview your discovered tasks:
 
-Current development mode (recommended while iterating):
+```bash
+cargo run --bin effigy -- tasks
+```
+
+3. Scaffold a starter manifest if you do not have one:
+
+```bash
+cargo run --bin effigy -- init
+```
+
+4. Add a minimal task catalog in `effigy.toml`:
+
+```toml
+[catalog]
+alias = "app"
+
+[tasks]
+dev = "bun run dev"
+test = "bun x vitest run"
+"db:reset" = "./scripts/reset-db.sh"
+```
+
+5. Run tasks:
+
+```bash
+cargo run --bin effigy -- dev
+cargo run --bin effigy -- app/db:reset
+```
+
+## Installation Options
+
+Development invocation:
 
 ```bash
 cargo run --manifest-path /abs/path/to/effigy/Cargo.toml --bin effigy -- tasks
 ```
 
-Typical workspace helper script:
-
-```json
-{
-  "scripts": {
-    "effigy": "cargo run --manifest-path ../effigy/Cargo.toml --bin effigy --"
-  }
-}
-```
-
-Then use:
+PATH install (daily use):
 
 ```bash
-bun effigy tasks
-bun effigy doctor
-bun effigy catalog-a/db:reset
+cargo install --path .
+effigy tasks
 ```
 
-Planned steady-state:
-- install `effigy` on PATH and run `effigy ...` directly,
-- keep `bun effigy ...` wrapper as a fallback compatibility surface.
+For PATH/release workflow details, see [`docs/guides/010-path-installation-and-release.md`](./docs/guides/010-path-installation-and-release.md).
 
-## Command Contract
+## Most Common Commands
 
 ```bash
-effigy <task> [task args]
-effigy <catalog>/<task> [task args]
-effigy dev [profile]
-effigy test [suite] [runner args]
-effigy test --plan [suite] [runner args]
-effigy test --verbose-results [suite] [runner args]
-effigy doctor [--repo <PATH>] [--fix] [--json]
-effigy doctor <task> <args> [--json]
-effigy tasks [--repo <PATH>] [--task <TASK_NAME>]
+effigy tasks
+effigy tasks --resolve test
+effigy doctor
+effigy doctor --fix
+effigy test
+effigy test --plan
+effigy watch --owner effigy --once test
+effigy config
+effigy config --schema --target test
+effigy migrate --apply
+effigy unlock --all
 ```
 
-### Built-in tasks
-- `doctor`: remediation-first checks for environment tooling, manifest validity, task-reference resolution, and delegated `tasks.health` execution when present.
-- `doctor` explain mode: `effigy doctor <task> <args>` prints task-resolution candidates, selection evidence, ambiguity reasoning, and deferral consideration/selection.
-- `test`: built-in test runner auto-detection (`vitest`, `cargo nextest run`, `cargo test`) with `--plan` explainability.
-- `tasks`: enumerate discovered catalogs and task commands.
-- managed `mode = "tui"` tasks (for example `dev`) launch tabbed process manager on interactive terminals.
+## Task Catalog Basics
 
-### Health Command Migration (`repo-pulse` / built-in `health` -> `doctor`)
-
-- before: `effigy repo-pulse --repo <workspace>`
-- before: `effigy health`
-- after: `effigy doctor --repo <workspace>`
-- after (project-owned checks): define `tasks.health` in `effigy.toml`; `doctor` discovers and runs it automatically.
-
-### Built-in test fanout config
-
-Built-in `test` supports workspace fanout across discovered catalog roots. Configure concurrency in root `effigy.toml`:
-
-```toml
-[builtin.test]
-max_parallel = 2
-package_manager = "bun" # optional: bun|pnpm|npm|direct
-```
-
-Notes:
-- this controls parallel workers for built-in `effigy test` fanout only,
-- explicit `[tasks.test]` definitions still override built-in detection entirely.
-- when runner args are provided and multiple suites are detected, prefix suite explicitly (for example `effigy test vitest user-service`).
-
-### Built-in test migration
-
-If you previously relied on implicit multi-suite forwarding for named tests, use explicit suite selection in mixed repos.
-
-- before: `effigy test user-service` (ambiguous when multiple suites exist)
-- after: `effigy test vitest user-service`
-- after: `effigy test nextest user_service --nocapture`
-
-Single-suite repos still support:
-- `effigy test user-service`
-
-## Output Conventions
-
-Effigy uses a shared widget renderer for normal CLI mode so command output stays consistent:
-
-- section headings with subtle underlines
-- semantic blocks (`success`, `warning`, `error`)
-- key/value lines
-- bullet lists
-- tables for task/catalog listings
-- progress spinners with non-interactive fallback
-
-Colour/progress behavior is controlled by:
-
-- `EFFIGY_COLOR=auto|always|never` (default: `auto`)
-- `NO_COLOR` disables colour regardless of `EFFIGY_COLOR`
-- `CI` disables animated spinner behavior
-
-See [docs/guides/011-output-widgets-and-colour-modes.md](./docs/guides/011-output-widgets-and-colour-modes.md) for renderer usage and authoring rules.
-
-## Task Catalogs
-
-Canonical manifest name:
-- `effigy.toml`
-- discovery scans the workspace tree recursively, including symlinked directories
+Manifest name: `effigy.toml` (discovered recursively).
 
 Example:
 
@@ -136,7 +93,7 @@ alias = "catalog-a"
 run = "cargo run -p app-db --bin reset_dev_db {args}"
 ```
 
-Compact task syntax is also supported for simple `run` tasks:
+Compact task syntax is also supported:
 
 ```toml
 [tasks]
@@ -145,61 +102,58 @@ jobs = "cargo run -p app-jobs {args}"
 "db:reset" = [{ task = "db:drop" }, { task = "db:migrate" }]
 ```
 
-You can mix compact entries with full task tables in the same manifest.
-
-Discovery notes:
-- catalog aliases must be unique across all discovered manifests.
-- if two discovered manifests declare the same alias (including via symlinked paths), Effigy fails fast with an alias conflict error.
-
 Interpolation tokens:
-- `{repo}`: resolved catalog root path shell-quoted.
-- `{args}`: task passthrough args shell-quoted and joined.
-
-### Deferral fallback
-
-Catalogs can define a fallback process used when no named task matches:
-
-```toml
-[defer]
-run = "composer global exec effigy -- {request} {args}"
-```
-
-Deferral runs only for unresolved task requests and receives:
-- `{request}`: original task request (`task` or `catalog/task`)
-- `{args}`: passthrough args
-- `{repo}`: catalog root path
+- `{repo}`: resolved catalog root (shell-quoted)
+- `{args}`: passthrough args (shell-quoted)
+- `{request}`: original unresolved selector (deferral only)
 
 ## Resolution Model
 
-Root resolution:
-1. use explicit `--repo` when provided,
-2. otherwise detect nearest marker root from cwd (`package.json`, `composer.json`, `Cargo.toml`, `.git`),
-3. optionally promote to parent workspace when membership signals indicate it.
+Root selection:
+1. explicit `--repo <PATH>` when provided,
+2. otherwise nearest marker root from cwd,
+3. optional promotion to parent workspace when membership signals indicate it.
 
-If no configured deferral matches and the resolved workspace root contains both `effigy.json` and `composer.json`, Effigy automatically defers to:
-- `composer global exec effigy -- {request} {args}`
-
-Task resolution:
+Task selection:
 1. explicit prefix (`catalog/task`) selects one catalog,
-2. unprefixed selects nearest in-scope catalog if cwd is inside matching catalogs,
-3. otherwise chooses shallowest depth from workspace root,
-4. ties fail explicitly as ambiguous.
+2. unprefixed selector chooses nearest in-scope catalog,
+3. otherwise shallowest from workspace root,
+4. ties fail as explicit ambiguity.
 
-## Repository Layout
+Detailed routing guide: [`docs/guides/016-task-routing-precedence.md`](./docs/guides/016-task-routing-precedence.md).
 
-```text
-effigy/
-├── src/
-│   ├── bin/effigy.rs
-│   ├── runner.rs
-│   ├── resolver.rs
-│   └── tasks/
-├── docs/
-│   ├── architecture/
-│   ├── roadmap/
-│   └── reports/
-└── Cargo.toml
+## JSON Output
+
+Canonical machine mode:
+
+```bash
+effigy --json tasks
+effigy --json doctor
+effigy --json test --plan
 ```
+
+- Top-level envelope schema: `effigy.command.v1`
+- Payload schemas are command-specific (`effigy.tasks.v1`, `effigy.doctor.v1`, etc.)
+
+See [`docs/guides/017-json-output-contracts.md`](./docs/guides/017-json-output-contracts.md).
+
+## Extended Guides
+
+Start with:
+- Docs index: [`docs/README.md`](./docs/README.md)
+- Guides landing page: [`docs/guides/README.md`](./docs/guides/README.md)
+- Docs flow map: [`docs/guides/028-docs-flow-map.md`](./docs/guides/028-docs-flow-map.md)
+- Command cookbook: [`docs/guides/021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md)
+- Manifest cookbook: [`docs/guides/022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
+- Testing orchestration: [`docs/guides/013-testing-orchestration.md`](./docs/guides/013-testing-orchestration.md)
+- Watch/init/migrate: [`docs/guides/019-watch-init-migrate-phase-1.md`](./docs/guides/019-watch-init-migrate-phase-1.md)
+- DAG + locks: [`docs/guides/020-dag-lock-policy-baseline.md`](./docs/guides/020-dag-lock-policy-baseline.md)
+- Deferral migration: [`docs/guides/015-deferral-fallback-migration.md`](./docs/guides/015-deferral-fallback-migration.md)
+- Troubleshooting recipes: [`docs/guides/023-troubleshooting-and-failure-recipes.md`](./docs/guides/023-troubleshooting-and-failure-recipes.md)
+- CI and automation recipes: [`docs/guides/024-ci-and-automation-recipes.md`](./docs/guides/024-ci-and-automation-recipes.md)
+- Command reference matrix: [`docs/guides/025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
+- Copy/paste snippets: [`docs/guides/027-copy-paste-snippets.md`](./docs/guides/027-copy-paste-snippets.md)
+- Recent release note (DAG/watch/onboarding): [`docs/reports/2026-02-28-dag-watch-onboarding-release-note.md`](./docs/reports/2026-02-28-dag-watch-onboarding-release-note.md)
 
 ## Development
 
@@ -209,19 +163,16 @@ Run tests:
 cargo test
 ```
 
-## Documentation System
+## Repository Layout
 
-Effigy uses the same style as Underlay:
-- numbered roadmap phases with explicit task checklists,
-- architecture docs as stable source-of-truth,
-- dated reports capturing sweeps, validation, and checkpoints.
-
-Start here:
-- `docs/architecture/`
-- `docs/guides/010-path-installation-and-release.md`
-- `docs/guides/011-output-widgets-and-colour-modes.md`
-- `docs/guides/012-dev-process-manager-tui.md`
-- `docs/guides/013-testing-orchestration.md`
-- `docs/guides/018-doctor-explain-mode.md`
-- `docs/roadmap/README.md`
-- `docs/reports/README.md`
+```text
+effigy/
+├── src/
+├── docs/
+│   ├── architecture/
+│   ├── contracts/
+│   ├── guides/
+│   ├── roadmap/
+│   └── reports/
+└── Cargo.toml
+```

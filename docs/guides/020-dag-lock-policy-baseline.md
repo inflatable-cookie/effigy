@@ -66,3 +66,9 @@ effigy unlock --all --json
 ```
 
 `--json` returns `effigy.unlock.v1`.
+
+## Next Reading
+
+- Operator command walkthrough: [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
+- Manifest patterns (including DAG and concurrent profiles): [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- Failure remediation recipes: [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)

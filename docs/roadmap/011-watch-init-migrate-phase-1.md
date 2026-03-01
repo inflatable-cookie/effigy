@@ -116,8 +116,8 @@ Batch C phase-1 starts only when:
   - Mitigation: validate scaffold via tests against current parser/contracts.
 - [ ] Risk: migrate output is noisy or unsafe.
   - Mitigation: preview-first flow, explicit apply gate, no source mutation.
-- [ ] Risk: Batch C overlaps unresolved Batch A lock/schema work.
-  - Mitigation: enforce start gates and sequence watch/runtime work after lock freeze.
+- [x] Risk: Batch C overlaps unresolved Batch A lock/schema work.
+  - Mitigation: start gates enforced; lock contract freeze is complete and watch/runtime interop is covered by lock-scope tests.
 
 ## 9) Deliverables
 

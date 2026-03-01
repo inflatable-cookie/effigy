@@ -17,6 +17,12 @@ Examples:
 
 When a feature spans multiple same-day checkpoints, add a consolidation report that links those checkpoints and provides one final validation matrix.
 
+## Recent Release Notes
+
+- [`2026-02-28-dag-watch-onboarding-release-note.md`](./2026-02-28-dag-watch-onboarding-release-note.md)
+- [`2026-02-28-json-envelope-removal-release-note.md`](./2026-02-28-json-envelope-removal-release-note.md)
+- [`2026-02-28-doctor-explain-mode-release-note.md`](./2026-02-28-doctor-explain-mode-release-note.md)
+
 ## Report template
 
 ```md
