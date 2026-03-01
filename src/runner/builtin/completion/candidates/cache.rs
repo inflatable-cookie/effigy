@@ -10,6 +10,10 @@ use super::super::scripts::command_names;
 
 const CANDIDATE_CACHE_TTL: Duration = Duration::from_secs(2);
 
+pub(super) fn completion_candidates_cache_ttl_ms() -> u64 {
+    CANDIDATE_CACHE_TTL.as_millis() as u64
+}
+
 #[derive(Clone)]
 struct CompletionCandidatesSnapshot {
     created_at: Instant,
