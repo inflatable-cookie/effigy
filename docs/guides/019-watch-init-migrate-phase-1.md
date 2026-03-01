@@ -75,3 +75,21 @@ effigy migrate --from ./frontend/package.json --apply --json
 - `effigy.watch.v1` for bounded watch runs (`--json` + bounded mode)
 - `effigy.init.v1` for init reports
 - `effigy.migrate.v1` for migration previews/applies
+
+## Contracts Matrix
+
+| Surface | Purpose | Test file(s) |
+|---|---|---|
+| `watch` behavior | owner policy, rerun loop, lock contention behavior | `src/tests/runner_tests.rs` |
+| `watch` JSON payload | schema/version shape for bounded `--json` runs | `src/tests/json_contract_tests.rs` |
+| CLI JSON envelope | top-level `effigy.command.v1` wrapping + error/remediation propagation | `tests/cli_output_tests.rs` |
+| `init` behavior | scaffold write/force/dry-run semantics | `src/tests/runner_tests.rs` |
+| `init` JSON payload | `effigy.init.v1` payload shape | `src/tests/json_contract_tests.rs` |
+| `migrate` behavior | preview/apply/non-destructive import behavior | `src/tests/runner_tests.rs` |
+| `migrate` JSON payload | `effigy.migrate.v1` payload shape | `src/tests/json_contract_tests.rs` |
+
+## Next Reading
+
+- DAG run/policy/lock baseline: [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
+- Troubleshooting watch and lock failures: [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+- CI recipes for JSON command automation: [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
