@@ -94,6 +94,8 @@ effigy completion fish > ~/.config/fish/completions/effigy.fish
 effigy completion candidates --prefix farm
 ```
 
+Completion-candidate memoization TTL can be tuned with `EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS` (ms, bounded `100..60000`, default `2000`).
+
 ## 4) JSON Mode (Automation-Safe)
 
 Canonical JSON mode:
