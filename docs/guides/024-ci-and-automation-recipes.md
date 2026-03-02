@@ -262,6 +262,36 @@ What `check-release-gates.sh` enforces:
 - distribution metadata validation (`check-distribution-metadata.sh`)
 - install validation from the pushed tag (`check-release-install-from-tag.sh`)
 
+## 12) Recipe: Assert Completion Cache Policy Fields
+
+Use this when CI needs deterministic completion-cache policy behavior.
+
+```yaml
+- name: Assert completion cache policy telemetry
+  env:
+    EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS: "750"
+  run: |
+    set -euo pipefail
+    effigy --json completion candidates --prefix farm > completion-candidates.json
+    jq -e '.schema == "effigy.command.v1"' completion-candidates.json >/dev/null
+    jq -e '.result.schema == "effigy.completion.candidates.v1"' completion-candidates.json >/dev/null
+    jq -e '.result.effective_cache_ttl_ms == 750' completion-candidates.json >/dev/null
+    jq -e '.result.cache_ttl_source == "env"' completion-candidates.json >/dev/null
+```
+
+Invalid env fallback check:
+
+```yaml
+- name: Assert invalid completion ttl fallback
+  env:
+    EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS: "not-a-number"
+  run: |
+    set -euo pipefail
+    effigy --json completion candidates --prefix farm > completion-candidates-invalid.json
+    jq -e '.result.effective_cache_ttl_ms == 2000' completion-candidates-invalid.json >/dev/null
+    jq -e '.result.cache_ttl_source == "env_invalid"' completion-candidates-invalid.json >/dev/null
+```
+
 ## Related Guides
 
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
