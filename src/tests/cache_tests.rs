@@ -1,7 +1,7 @@
 use super::run_manifest_task_with_cwd;
 use crate::TaskInvocation;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -171,18 +171,18 @@ fn cache_builtin_inspect_and_invalidate_paths_are_available() {
     assert!(inspect_missing.contains("status: missing"));
 }
 
-fn run_task(root: &PathBuf, name: &str) {
+fn run_task(root: &Path, name: &str) {
     run_manifest_task_with_cwd(
         &TaskInvocation {
             name: name.to_owned(),
             args: Vec::new(),
         },
-        root.clone(),
+        root.to_path_buf(),
     )
     .expect("task run");
 }
 
-fn write_cached_manifest(root: &PathBuf, marker: &PathBuf, marker_write: &str) {
+fn write_cached_manifest(root: &Path, marker: &Path, marker_write: &str) {
     write_manifest(
         &root.join("effigy.toml"),
         &format!(
@@ -192,7 +192,7 @@ fn write_cached_manifest(root: &PathBuf, marker: &PathBuf, marker_write: &str) {
     );
 }
 
-fn write_manifest(path: &PathBuf, body: &str) {
+fn write_manifest(path: &Path, body: &str) {
     fs::write(path, body).expect("write manifest");
 }
 
