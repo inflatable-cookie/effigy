@@ -2,6 +2,8 @@ use std::path::Path;
 
 use crate::TasksArgs;
 
+#[path = "tasks_listing/filtering.rs"]
+mod filtering;
 #[path = "tasks_listing/json_output.rs"]
 mod json_output;
 #[path = "tasks_listing/matches.rs"]

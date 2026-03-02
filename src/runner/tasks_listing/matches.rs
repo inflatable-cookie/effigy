@@ -1,5 +1,3 @@
-use serde_json::json;
-
 use super::super::{LoadedCatalog, ManifestTask, TaskSelector, BUILTIN_TASKS};
 
 pub(super) fn matched_catalog_tasks<'a>(
@@ -28,24 +26,4 @@ pub(super) fn builtin_matches(selector: &TaskSelector) -> Vec<(&'static str, &'s
         .filter(|(name, _)| selector.prefix.is_none() && selector.task_name == *name)
         .copied()
         .collect::<Vec<(&'static str, &'static str)>>()
-}
-
-pub(super) fn builtin_matches_json(selector: &TaskSelector) -> Vec<serde_json::Value> {
-    builtin_matches(selector)
-        .into_iter()
-        .map(|(name, description)| {
-            json!({
-                "task": name,
-                "description": description,
-            })
-        })
-        .collect::<Vec<serde_json::Value>>()
-}
-
-pub(super) fn builtin_test_fallback_notes(task_name: &str) -> Vec<String> {
-    if task_name == "test" {
-        vec![super::BUILTIN_TEST_FALLBACK_NOTE.to_owned()]
-    } else {
-        Vec::new()
-    }
 }
