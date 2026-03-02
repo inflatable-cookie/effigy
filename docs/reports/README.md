@@ -75,6 +75,8 @@ When a feature spans multiple same-day checkpoints, add a consolidation report t
 - [`2026-03-01-release-gates-automation-checkpoint.md`](./2026-03-01-release-gates-automation-checkpoint.md)
 - [`2026-03-01-release-tag-install-validation-checkpoint.md`](./2026-03-01-release-tag-install-validation-checkpoint.md)
 
+- [`2026-03-02-docs-qa-report-index-helper-validation.md`](./2026-03-02-docs-qa-report-index-helper-validation.md)
+
 ## Archived Validation Reports
 
 - [`2026-02-26-deferral-fallback-phase-2-1-checkpoint.md`](./2026-02-26-deferral-fallback-phase-2-1-checkpoint.md)

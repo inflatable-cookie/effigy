@@ -91,6 +91,9 @@ Behavior:
 - fails when any report file is missing from the index
 - fails when index entries point to non-existent report files
 
+Helper:
+- `scripts/add-report-index-entry.sh <report-file>` inserts a missing report entry ahead of archived links.
+
 ## 6) Common Failure Modes
 
 ### Broken relative path after file move
@@ -143,6 +146,9 @@ Copy into PR description:
 ```sh
 # docs links only
 cargo qa-docs
+
+# index a newly added report artifact
+./scripts/add-report-index-entry.sh docs/reports/YYYY-MM-DD-topic.md
 
 # json contracts only
 cargo qa-json-ci
