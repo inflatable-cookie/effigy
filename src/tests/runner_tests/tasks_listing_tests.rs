@@ -14,20 +14,8 @@ fn run_tasks_lists_catalogs_and_tasks() {
         "[tasks.reset-db]\nrun = \"printf farmyard\"\n",
     );
 
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            repo_override: None,
-            task_name: None,
-            resolve_selector: None,
-            output_json: false,
-            pretty_json: true,
-        })
-    })
-    .expect("run tasks");
-
-    assert!(out.contains("root"));
-    assert!(out.contains("farmyard"));
-    assert!(out.contains("reset-db"));
+    let out = run_tasks_from_repo(&root, None, None, false);
+    assert_contains_all(&out, &["root", "farmyard", "reset-db"]);
 }
 
 #[test]
@@ -41,20 +29,8 @@ jobs = "printf jobs"
 "#,
     );
 
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            repo_override: None,
-            task_name: None,
-            resolve_selector: None,
-            output_json: false,
-            pretty_json: true,
-        })
-    })
-    .expect("run tasks");
-
-    assert!(out.contains("api"));
-    assert!(out.contains("jobs"));
-    assert!(out.contains("printf api"));
+    let out = run_tasks_from_repo(&root, None, None, false);
+    assert_contains_all(&out, &["api", "jobs", "printf api"]);
 }
 
 #[test]
@@ -70,28 +46,11 @@ run = "printf dev"
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "api".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect("run compact task");
+    let out = run_builtin_ok(root.clone(), "api", &[]);
     assert_eq!(out, "");
 
-    let tasks = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            repo_override: None,
-            task_name: None,
-            resolve_selector: None,
-            output_json: false,
-            pretty_json: true,
-        })
-    })
-    .expect("run tasks");
-    assert!(tasks.contains("api"));
-    assert!(tasks.contains("dev"));
+    let tasks = run_tasks_from_repo(&root, None, None, false);
+    assert_contains_all(&tasks, &["api", "dev"]);
 }
 
 #[test]
@@ -106,28 +65,11 @@ reset-db = [{ task = "drop-db" }, { task = "migrate-db" }]
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "reset-db".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect("run compact sequence task");
+    let out = run_builtin_ok(root.clone(), "reset-db", &[]);
     assert_eq!(out, "");
 
-    let tasks = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            repo_override: None,
-            task_name: Some("reset-db".to_owned()),
-            resolve_selector: None,
-            output_json: false,
-            pretty_json: true,
-        })
-    })
-    .expect("run tasks");
-    assert!(tasks.contains("reset-db"));
-    assert!(tasks.contains("<sequence:2>"));
+    let tasks = run_tasks_from_repo(&root, Some("reset-db"), None, false);
+    assert_contains_all(&tasks, &["reset-db", "<sequence:2>"]);
 }
 
 #[test]
@@ -144,20 +86,8 @@ fn run_tasks_with_task_filter_reports_only_matches() {
         "[tasks.reset-db]\nrun = \"printf farmyard\"\n",
     );
 
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            repo_override: None,
-            task_name: Some("reset-db".to_owned()),
-            resolve_selector: None,
-            output_json: false,
-            pretty_json: true,
-        })
-    })
-    .expect("run tasks");
-
-    assert!(out.contains("Task Matches: reset-db"));
-    assert!(out.contains("farmyard"));
-    assert!(out.contains("reset-db"));
+    let out = run_tasks_from_repo(&root, Some("reset-db"), None, false);
+    assert_contains_all(&out, &["Task Matches: reset-db", "farmyard", "reset-db"]);
     assert!(!out.contains("root      │ reset-db"));
 }
 
@@ -165,43 +95,33 @@ fn run_tasks_with_task_filter_reports_only_matches() {
 fn run_tasks_with_test_filter_shows_catalog_fallback_note() {
     let root = temp_workspace("task-filter-test-note");
 
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            repo_override: None,
-            task_name: Some("test".to_owned()),
-            resolve_selector: None,
-            output_json: false,
-            pretty_json: true,
-        })
-    })
-    .expect("run tasks");
-
-    assert!(out.contains("Task Matches: test"));
-    assert!(out.contains("Built-in Task Matches"));
-    assert!(out.contains("built-in fallback supports `<catalog>/test`"));
+    let out = run_tasks_from_repo(&root, Some("test"), None, false);
+    assert_contains_all(
+        &out,
+        &[
+            "Task Matches: test",
+            "Built-in Task Matches",
+            "built-in fallback supports `<catalog>/test`",
+        ],
+    );
 }
 
 #[test]
 fn run_tasks_without_catalogs_still_lists_builtin_tasks() {
     let root = temp_workspace("builtins-only");
 
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            repo_override: None,
-            task_name: None,
-            resolve_selector: None,
-            output_json: false,
-            pretty_json: true,
-        })
-    })
-    .expect("run tasks");
-
-    assert!(out.contains("Tasks"));
-    assert!(out.contains("help"));
-    assert!(out.contains("doctor"));
-    assert!(out.contains("test"));
-    assert!(out.contains("<catalog>/test fallback"));
-    assert!(out.contains("tasks"));
+    let out = run_tasks_from_repo(&root, None, None, false);
+    assert_contains_all(
+        &out,
+        &[
+            "Tasks",
+            "help",
+            "doctor",
+            "test",
+            "<catalog>/test fallback",
+            "tasks",
+        ],
+    );
 }
 
 #[test]
@@ -218,18 +138,9 @@ fn run_tasks_json_renders_machine_readable_payload() {
         "[tasks.reset-db]\nrun = \"printf farmyard\"\n",
     );
 
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            repo_override: None,
-            task_name: None,
-            resolve_selector: None,
-            output_json: true,
-            pretty_json: true,
-        })
-    })
-    .expect("run tasks json");
+    let out = run_tasks_from_repo(&root, None, None, true);
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    let parsed = parse_json_output(&out);
     assert_eq!(parsed["catalog_count"], 2);
     assert!(parsed["catalog_tasks"].is_array());
     assert!(parsed["managed_profiles"].is_array());
@@ -239,18 +150,9 @@ fn run_tasks_json_renders_machine_readable_payload() {
 #[test]
 fn run_tasks_json_filter_includes_builtin_matches_and_notes() {
     let root = temp_workspace("tasks-json-filter");
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            repo_override: None,
-            task_name: Some("test".to_owned()),
-            resolve_selector: None,
-            output_json: true,
-            pretty_json: true,
-        })
-    })
-    .expect("run tasks json filter");
+    let out = run_tasks_from_repo(&root, Some("test"), None, true);
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    let parsed = parse_json_output(&out);
     assert_eq!(parsed["filter"], "test");
     assert!(parsed["builtin_matches"].is_array());
     assert!(parsed["managed_profile_matches"].is_array());
@@ -273,20 +175,8 @@ concurrent = [{ run = "printf api" }]
 "#,
     );
 
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            repo_override: None,
-            task_name: None,
-            resolve_selector: None,
-            output_json: false,
-            pretty_json: true,
-        })
-    })
-    .expect("run tasks");
-
-    assert!(out.contains("Tasks"));
-    assert!(out.contains("dev admin"));
-    assert!(out.contains("<managed:tui profile:admin>"));
+    let out = run_tasks_from_repo(&root, None, None, false);
+    assert_contains_all(&out, &["Tasks", "dev admin", "<managed:tui profile:admin>"]);
     assert!(!out.contains("dev default"));
 }
 
@@ -304,19 +194,8 @@ concurrent = [{ run = "printf api" }]
 "#,
     );
 
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            repo_override: None,
-            task_name: Some("dev".to_owned()),
-            resolve_selector: None,
-            output_json: false,
-            pretty_json: true,
-        })
-    })
-    .expect("run tasks --task dev");
-
-    assert!(out.contains("Task Matches: dev"));
-    assert!(out.contains("dev front"));
+    let out = run_tasks_from_repo(&root, Some("dev"), None, false);
+    assert_contains_all(&out, &["Task Matches: dev", "dev front"]);
     assert!(!out.contains("dev default"));
 }
 
@@ -334,18 +213,9 @@ concurrent = [{ run = "printf api" }]
 "#,
     );
 
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            repo_override: None,
-            task_name: None,
-            resolve_selector: None,
-            output_json: true,
-            pretty_json: true,
-        })
-    })
-    .expect("run tasks --json");
+    let out = run_tasks_from_repo(&root, None, None, true);
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    let parsed = parse_json_output(&out);
     let tasks = parsed["managed_profiles"]
         .as_array()
         .expect("managed_profiles array")
@@ -370,18 +240,9 @@ concurrent = [{ run = "printf api" }]
 "#,
     );
 
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            repo_override: None,
-            task_name: Some("dev".to_owned()),
-            resolve_selector: None,
-            output_json: true,
-            pretty_json: true,
-        })
-    })
-    .expect("run tasks --json --task dev");
+    let out = run_tasks_from_repo(&root, Some("dev"), None, true);
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    let parsed = parse_json_output(&out);
     let tasks = parsed["managed_profile_matches"]
         .as_array()
         .expect("managed_profile_matches array")
@@ -423,18 +284,9 @@ run = "printf dairy-admin"
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "farmyard/tasks".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("prefixed builtin tasks");
+    let out = run_builtin_ok(root, "farmyard/tasks", &[]);
 
-    assert!(out.contains("Catalogs"));
-    assert!(out.contains("count: 1"));
-    assert!(out.contains("api"));
+    assert_contains_all(&out, &["Catalogs", "count: 1", "api"]);
     assert!(!out.contains("admin"));
     assert!(!out.contains("root-only"));
 }
@@ -462,17 +314,8 @@ run = "printf froyo-validate"
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "../froyo/tasks".to_owned(),
-            args: Vec::new(),
-        },
-        dairy,
-    )
-    .expect("relative prefixed builtin tasks");
+    let out = run_builtin_ok(dairy, "../froyo/tasks", &[]);
 
-    assert!(out.contains("Catalogs"));
-    assert!(out.contains("count: 1"));
-    assert!(out.contains("validate"));
+    assert_contains_all(&out, &["Catalogs", "count: 1", "validate"]);
     assert!(!out.contains("root-only"));
 }
