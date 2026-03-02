@@ -1,5 +1,42 @@
 use super::*;
 
+fn run_tasks_with_repo(root: PathBuf) -> Result<String, RunnerError> {
+    run_tasks(TasksArgs {
+        repo_override: Some(root),
+        task_name: None,
+        resolve_selector: None,
+        output_json: false,
+        pretty_json: true,
+    })
+}
+
+fn assert_tasks_manifest_parse_error_contains_any(root: PathBuf, expected: &[&str]) {
+    let err = run_tasks_with_repo(root).expect_err("expected manifest parse failure");
+    match err {
+        RunnerError::TaskManifestParse { error, .. } => {
+            assert_manifest_parse_error_contains_any(&error, expected);
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+fn run_doctor_task(root: PathBuf, args: &[&str]) -> Result<String, RunnerError> {
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "doctor".to_owned(),
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        },
+        root,
+    )
+}
+
+fn assert_doctor_non_zero_contains(err: RunnerError, expected: &[&str]) {
+    match err {
+        RunnerError::DoctorNonZero { rendered, .. } => assert_contains_all(&rendered, expected),
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
 #[test]
 fn run_tasks_rejects_legacy_builtin_config_group() {
     let root = temp_workspace("reject-legacy-builtin-group");
@@ -9,22 +46,7 @@ fn run_tasks_rejects_legacy_builtin_config_group() {
 max_parallel = 2
 "#,
     );
-
-    let err = run_tasks(TasksArgs {
-        repo_override: Some(root.clone()),
-        task_name: None,
-        resolve_selector: None,
-        output_json: false,
-        pretty_json: true,
-    })
-    .expect_err("expected manifest parse failure");
-
-    match err {
-        RunnerError::TaskManifestParse { error, .. } => {
-            assert!(error.to_string().contains("unknown field `builtin`"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_tasks_manifest_parse_error_contains_any(root, &["unknown field `builtin`"]);
 }
 
 #[test]
@@ -36,22 +58,7 @@ fn run_tasks_rejects_unknown_test_config_field() {
 max_parallels = 2
 "#,
     );
-
-    let err = run_tasks(TasksArgs {
-        repo_override: Some(root),
-        task_name: None,
-        resolve_selector: None,
-        output_json: false,
-        pretty_json: true,
-    })
-    .expect_err("expected manifest parse failure");
-
-    match err {
-        RunnerError::TaskManifestParse { error, .. } => {
-            assert!(error.to_string().contains("unknown field `max_parallels`"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_tasks_manifest_parse_error_contains_any(root, &["unknown field `max_parallels`"]);
 }
 
 #[test]
@@ -63,22 +70,7 @@ fn run_tasks_rejects_unknown_package_manager_field() {
 jss = "pnpm"
 "#,
     );
-
-    let err = run_tasks(TasksArgs {
-        repo_override: Some(root),
-        task_name: None,
-        resolve_selector: None,
-        output_json: false,
-        pretty_json: true,
-    })
-    .expect_err("expected manifest parse failure");
-
-    match err {
-        RunnerError::TaskManifestParse { error, .. } => {
-            assert!(error.to_string().contains("unknown field `jss`"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_tasks_manifest_parse_error_contains_any(root, &["unknown field `jss`"]);
 }
 
 #[test]
@@ -90,25 +82,10 @@ fn run_tasks_rejects_unknown_test_runner_override_field() {
 cmd = "vitest run"
 "#,
     );
-
-    let err = run_tasks(TasksArgs {
-        repo_override: Some(root),
-        task_name: None,
-        resolve_selector: None,
-        output_json: false,
-        pretty_json: true,
-    })
-    .expect_err("expected manifest parse failure");
-
-    match err {
-        RunnerError::TaskManifestParse { error, .. } => {
-            assert_manifest_parse_error_contains_any(
-                &error,
-                &["unknown field `cmd`", "data did not match any variant"],
-            );
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_tasks_manifest_parse_error_contains_any(
+        root,
+        &["unknown field `cmd`", "data did not match any variant"],
+    );
 }
 
 #[test]
@@ -121,28 +98,13 @@ run = "printf dev"
 fial_on_non_zero = true
 "#,
     );
-
-    let err = run_tasks(TasksArgs {
-        repo_override: Some(root),
-        task_name: None,
-        resolve_selector: None,
-        output_json: false,
-        pretty_json: true,
-    })
-    .expect_err("expected manifest parse failure");
-
-    match err {
-        RunnerError::TaskManifestParse { error, .. } => {
-            assert_manifest_parse_error_contains_any(
-                &error,
-                &[
-                    "unknown field `fial_on_non_zero`",
-                    "data did not match any variant",
-                ],
-            );
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_tasks_manifest_parse_error_contains_any(
+        root,
+        &[
+            "unknown field `fial_on_non_zero`",
+            "data did not match any variant",
+        ],
+    );
 }
 
 #[test]
@@ -155,25 +117,10 @@ mode = "tui"
 concurrent = [{ run = "printf api", tas = "api" }]
 "#,
     );
-
-    let err = run_tasks(TasksArgs {
-        repo_override: Some(root),
-        task_name: None,
-        resolve_selector: None,
-        output_json: false,
-        pretty_json: true,
-    })
-    .expect_err("expected manifest parse failure");
-
-    match err {
-        RunnerError::TaskManifestParse { error, .. } => {
-            assert_manifest_parse_error_contains_any(
-                &error,
-                &["unknown field `tas`", "data did not match any variant"],
-            );
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_tasks_manifest_parse_error_contains_any(
+        root,
+        &["unknown field `tas`", "data did not match any variant"],
+    );
 }
 
 #[test]
@@ -188,28 +135,13 @@ mode = "tui"
 run = "printf api"
 "#,
     );
-
-    let err = run_tasks(TasksArgs {
-        repo_override: Some(root),
-        task_name: None,
-        resolve_selector: None,
-        output_json: false,
-        pretty_json: true,
-    })
-    .expect_err("expected manifest parse failure");
-
-    match err {
-        RunnerError::TaskManifestParse { error, .. } => {
-            assert_manifest_parse_error_contains_any(
-                &error,
-                &[
-                    "unknown field `processes`",
-                    "data did not match any variant",
-                ],
-            );
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_tasks_manifest_parse_error_contains_any(
+        root,
+        &[
+            "unknown field `processes`",
+            "data did not match any variant",
+        ],
+    );
 }
 
 #[test]
@@ -224,25 +156,10 @@ mode = "tui"
 default = ["farmyard/api"]
 "#,
     );
-
-    let err = run_tasks(TasksArgs {
-        repo_override: Some(root),
-        task_name: None,
-        resolve_selector: None,
-        output_json: false,
-        pretty_json: true,
-    })
-    .expect_err("expected manifest parse failure");
-
-    match err {
-        RunnerError::TaskManifestParse { error, .. } => {
-            assert_manifest_parse_error_contains_any(
-                &error,
-                &["invalid type", "data did not match any variant"],
-            );
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_tasks_manifest_parse_error_contains_any(
+        root,
+        &["invalid type", "data did not match any variant"],
+    );
 }
 
 #[test]
@@ -256,25 +173,10 @@ run = [
 ]
 "#,
     );
-
-    let err = run_tasks(TasksArgs {
-        repo_override: Some(root),
-        task_name: None,
-        resolve_selector: None,
-        output_json: false,
-        pretty_json: true,
-    })
-    .expect_err("expected manifest parse failure");
-
-    match err {
-        RunnerError::TaskManifestParse { error, .. } => {
-            assert_manifest_parse_error_contains_any(
-                &error,
-                &["unknown field `rnu`", "data did not match any variant"],
-            );
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_tasks_manifest_parse_error_contains_any(
+        root,
+        &["unknown field `rnu`", "data did not match any variant"],
+    );
 }
 
 #[test]
@@ -287,22 +189,7 @@ alias = "farmyard"
 aliass = "dup"
 "#,
     );
-
-    let err = run_tasks(TasksArgs {
-        repo_override: Some(root),
-        task_name: None,
-        resolve_selector: None,
-        output_json: false,
-        pretty_json: true,
-    })
-    .expect_err("expected manifest parse failure");
-
-    match err {
-        RunnerError::TaskManifestParse { error, .. } => {
-            assert!(error.to_string().contains("unknown field `aliass`"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_tasks_manifest_parse_error_contains_any(root, &["unknown field `aliass`"]);
 }
 
 #[test]
@@ -316,14 +203,7 @@ fn run_doctor_executes_discovered_health_task() {
         "[catalog]\nalias = \"farmyard\"\n[tasks.health]\nrun = \"printf farmyard-health-ok\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "doctor".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("doctor run");
+    let out = run_doctor_task(root, &[]).expect("doctor run");
 
     assert!(out.contains("health.task.discovery"));
     assert!(out.contains("health.task.execute"));
@@ -338,22 +218,11 @@ fn run_doctor_reports_error_when_health_task_fails() {
         "[tasks.health]\nrun = \"sh -lc 'printf health-failed; exit 3'\"\n",
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "doctor".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("doctor should fail when health task fails");
-
-    match err {
-        RunnerError::DoctorNonZero { rendered, .. } => {
-            assert!(rendered.contains("health.task.execute"));
-            assert!(rendered.contains("health task execution failed"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_doctor_task(root, &[]).expect_err("doctor should fail when health task fails");
+    assert_doctor_non_zero_contains(
+        err,
+        &["health.task.execute", "health task execution failed"],
+    );
 }
 
 #[test]
@@ -364,14 +233,7 @@ fn run_doctor_fix_scaffolds_health_task_when_missing() {
         "[tasks.build]\nrun = \"printf ok\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "doctor".to_owned(),
-            args: vec!["--fix".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("doctor --fix");
+    let out = run_doctor_task(root.clone(), &["--fix"]).expect("doctor --fix");
 
     let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read manifest");
     assert!(manifest.contains("health = \"printf health-check-placeholder\""));
@@ -396,12 +258,8 @@ fn run_doctor_fix_reports_skipped_when_manifest_invalid() {
     })
     .expect_err("doctor should still fail");
 
-    match err {
-        RunnerError::DoctorNonZero { rendered, .. } => {
-            assert!(rendered.contains("Fix Actions"));
-            assert!(rendered.contains("manifest.health_task_scaffold"));
-            assert!(rendered.contains("skipped"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_doctor_non_zero_contains(
+        err,
+        &["Fix Actions", "manifest.health_task_scaffold", "skipped"],
+    );
 }
