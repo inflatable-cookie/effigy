@@ -99,6 +99,21 @@ effigy --json build --repo /path/to/workspace
 
 See `026-json-payload-examples.md` for realistic sample responses for each schema.
 
+### Completion Candidates Telemetry (`effigy.completion.candidates.v1`)
+
+`effigy --json completion candidates` includes cache diagnostics for selector memoization:
+
+- `cache_hit` (boolean): whether candidates were served from in-process cache.
+- `cache_state` (string): `miss_initial`, `hit`, `miss_ttl`, or `miss_manifest_change`.
+- `cache_age_ms` (number|null): cache entry age on hit; `null` on miss.
+- `cache_ttl_ms` (number|null): hit-scoped TTL value; `null` on miss.
+- `effective_cache_ttl_ms` (number): active TTL policy used for this response.
+- `cache_ttl_source` (string): TTL source policy:
+  - `default` when no env override is set
+  - `env` when `EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS` is valid
+  - `env_invalid` when that env var is set but malformed (falls back to default TTL)
+- `manifest_count` (number): number of manifest sources included in candidate discovery.
+
 ## Contract Validation
 
 JSON contract smoke checks:
