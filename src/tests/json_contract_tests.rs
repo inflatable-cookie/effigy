@@ -623,6 +623,80 @@ fn builtin_completion_candidates_json_contract_invalidates_cache_on_manifest_cha
 }
 
 #[test]
+fn builtin_completion_candidates_json_contract_reports_env_ttl_policy() {
+    let _guard = test_lock().lock().expect("lock");
+    let _env = EnvGuard::set_many(&[(
+        "EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS",
+        Some("750".to_owned()),
+    )]);
+    let root = temp_workspace("completion-candidates-ttl-env-policy");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf root\"\n",
+    );
+
+    let first = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["candidates".to_owned(), "--json".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("run completion candidates first");
+    let first_parsed: serde_json::Value = serde_json::from_str(&first).expect("parse first json");
+    assert_eq!(first_parsed["cache_hit"], false);
+    assert_eq!(first_parsed["cache_state"], "miss_initial");
+    assert_eq!(first_parsed["effective_cache_ttl_ms"], 750);
+    assert_eq!(first_parsed["cache_ttl_source"], "env");
+    assert!(first_parsed["cache_ttl_ms"].is_null());
+
+    let second = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["candidates".to_owned(), "--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run completion candidates second");
+    let second_parsed: serde_json::Value =
+        serde_json::from_str(&second).expect("parse second json");
+    assert_eq!(second_parsed["cache_hit"], true);
+    assert_eq!(second_parsed["cache_state"], "hit");
+    assert_eq!(second_parsed["effective_cache_ttl_ms"], 750);
+    assert_eq!(second_parsed["cache_ttl_source"], "env");
+    assert_eq!(second_parsed["cache_ttl_ms"], 750);
+}
+
+#[test]
+fn builtin_completion_candidates_json_contract_reports_invalid_env_ttl_policy() {
+    let _guard = test_lock().lock().expect("lock");
+    let _env = EnvGuard::set_many(&[(
+        "EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS",
+        Some("not-a-number".to_owned()),
+    )]);
+    let root = temp_workspace("completion-candidates-ttl-env-invalid-policy");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf root\"\n",
+    );
+
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: vec!["candidates".to_owned(), "--json".to_owned()],
+        },
+        root,
+    )
+    .expect("run completion candidates");
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    assert_eq!(parsed["cache_hit"], false);
+    assert_eq!(parsed["cache_state"], "miss_initial");
+    assert_eq!(parsed["effective_cache_ttl_ms"], 2000);
+    assert_eq!(parsed["cache_ttl_source"], "env_invalid");
+    assert!(parsed["cache_ttl_ms"].is_null());
+}
+
+#[test]
 fn builtin_completion_candidates_text_includes_builtin_and_task_selectors() {
     let root = temp_workspace("completion-candidates-text-contract");
     let farmyard = root.join("farmyard");
@@ -957,4 +1031,33 @@ where
 fn test_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+struct EnvGuard {
+    original: Vec<(String, Option<String>)>,
+}
+
+impl EnvGuard {
+    fn set_many(entries: &[(&str, Option<String>)]) -> Self {
+        let mut original = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            original.push(((*key).to_owned(), std::env::var(key).ok()));
+            match value {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+        Self { original }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        for (key, value) in self.original.drain(..) {
+            match value {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
 }
