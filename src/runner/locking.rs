@@ -87,11 +87,7 @@ pub(super) fn acquire_scopes(
     unique_scopes.sort();
     unique_scopes.dedup();
 
-    let locks_root = workspace_root.join(LOCKS_DIR);
-    fs::create_dir_all(&locks_root).map_err(|error| RunnerError::TaskLockIo {
-        path: locks_root.clone(),
-        error,
-    })?;
+    let locks_root = ensure_locks_root(workspace_root)?;
 
     let mut guards = Vec::with_capacity(unique_scopes.len());
     for scope in unique_scopes {
@@ -129,10 +125,7 @@ fn acquire_scope_lock(
                 let existing = read_lock_record(&path).ok();
                 if let Some(existing_record) = existing.as_ref() {
                     if !pid_is_alive(existing_record.pid) {
-                        fs::remove_file(&path).map_err(|remove_error| RunnerError::TaskLockIo {
-                            path: path.clone(),
-                            error: remove_error,
-                        })?;
+                        remove_lock_file(&path)?;
                         continue;
                     }
                 }
@@ -171,11 +164,7 @@ pub(super) fn unlock_scopes(
     workspace_root: &Path,
     scopes: &[LockScope],
 ) -> Result<UnlockResult, RunnerError> {
-    let locks_root = workspace_root.join(LOCKS_DIR);
-    fs::create_dir_all(&locks_root).map_err(|error| RunnerError::TaskLockIo {
-        path: locks_root.clone(),
-        error,
-    })?;
+    let locks_root = ensure_locks_root(workspace_root)?;
 
     let mut removed = Vec::new();
     let mut missing = Vec::new();
@@ -199,11 +188,7 @@ pub(super) fn unlock_scopes(
 }
 
 pub(super) fn unlock_all(workspace_root: &Path) -> Result<UnlockResult, RunnerError> {
-    let locks_root = workspace_root.join(LOCKS_DIR);
-    fs::create_dir_all(&locks_root).map_err(|error| RunnerError::TaskLockIo {
-        path: locks_root.clone(),
-        error,
-    })?;
+    let locks_root = ensure_locks_root(workspace_root)?;
 
     let mut removed = Vec::new();
     for entry in fs::read_dir(&locks_root).map_err(|error| RunnerError::TaskLockIo {
@@ -218,10 +203,7 @@ pub(super) fn unlock_all(workspace_root: &Path) -> Result<UnlockResult, RunnerEr
         if path.extension().and_then(|ext| ext.to_str()) != Some("lock") {
             continue;
         }
-        fs::remove_file(&path).map_err(|error| RunnerError::TaskLockIo {
-            path: path.clone(),
-            error,
-        })?;
+        remove_lock_file(&path)?;
         if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
             removed.push(name.to_owned());
         }
@@ -243,6 +225,22 @@ fn read_lock_record(path: &Path) -> Result<LockRecord, RunnerError> {
             "failed to parse lock record {}: {error}",
             path.display()
         ))
+    })
+}
+
+fn ensure_locks_root(workspace_root: &Path) -> Result<PathBuf, RunnerError> {
+    let locks_root = workspace_root.join(LOCKS_DIR);
+    fs::create_dir_all(&locks_root).map_err(|error| RunnerError::TaskLockIo {
+        path: locks_root.clone(),
+        error,
+    })?;
+    Ok(locks_root)
+}
+
+fn remove_lock_file(path: &Path) -> Result<(), RunnerError> {
+    fs::remove_file(path).map_err(|error| RunnerError::TaskLockIo {
+        path: path.to_path_buf(),
+        error,
     })
 }
 
