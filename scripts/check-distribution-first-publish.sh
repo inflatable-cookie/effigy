@@ -10,6 +10,8 @@ SKIP_HOMEBREW=0
 ARTIFACTS_DIR=""
 CLEANUP_DIR=""
 STEP_INDEX=0
+HOME_BREW_EXECUTED=0
+LOG_FILES=()
 
 slugify() {
   tr '[:upper:]' '[:lower:]' <<<"$1" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-+/-/g'
@@ -24,6 +26,7 @@ run_step() {
   slug="$(slugify "$label")"
   local log_path
   log_path="$ARTIFACTS_DIR/$(printf '%02d' "$STEP_INDEX")-${slug}.log"
+  LOG_FILES+=("$(basename "$log_path")")
 
   echo "[check] $label"
   if "$@" >"$log_path" 2>&1; then
@@ -141,11 +144,29 @@ if [[ "$SKIP_HOMEBREW" -eq 1 ]]; then
 elif ! command -v brew >/dev/null 2>&1; then
   echo "[info] skipping homebrew checks (brew not available)"
 else
+  HOME_BREW_EXECUTED=1
   run_step "homebrew install" brew install "$BREW_FORMULA"
   run_step "homebrew binary help" effigy --help
   run_step "homebrew binary json tasks" effigy --json tasks
   run_step "homebrew upgrade" brew upgrade effigy
 fi
 
+summary_path="$ARTIFACTS_DIR/distribution-summary.env"
+{
+  echo "TAG=$TAG"
+  echo "CRATE_VERSION=$CRATE_VERSION"
+  echo "REPO_URL=$REPO_URL"
+  echo "BREW_FORMULA=$BREW_FORMULA"
+  echo "HOMEBREW_EXECUTED=$HOME_BREW_EXECUTED"
+  echo "LOG_FILES=$(IFS=,; echo "${LOG_FILES[*]}")"
+} > "$summary_path"
+
+validate_args=(--artifacts-dir "$ARTIFACTS_DIR")
+if [[ "$HOME_BREW_EXECUTED" -eq 1 ]]; then
+  validate_args+=(--expect-homebrew)
+fi
+"$ROOT_DIR/scripts/validate-distribution-artifacts.sh" "${validate_args[@]}"
+
 echo "[ok] distribution first-publish matrix passed"
 echo "[ok] artifacts directory: $ARTIFACTS_DIR"
+echo "[ok] artifacts summary: $summary_path"
