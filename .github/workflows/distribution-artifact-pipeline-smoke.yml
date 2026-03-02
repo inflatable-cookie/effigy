@@ -1,0 +1,32 @@
+name: Distribution Artifact Pipeline Smoke
+
+on:
+  pull_request:
+    paths:
+      - "scripts/check-distribution-artifact-pipeline-smoke.sh"
+      - "scripts/validate-distribution-artifacts.sh"
+      - "scripts/generate-distribution-closeout-report.sh"
+      - "docs/guides/024-ci-and-automation-recipes.md"
+      - "docs/guides/044-distribution-first-publish-execution-runbook.md"
+      - "docs/reports/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/check-distribution-artifact-pipeline-smoke.sh"
+      - "scripts/validate-distribution-artifacts.sh"
+      - "scripts/generate-distribution-closeout-report.sh"
+      - "docs/guides/024-ci-and-automation-recipes.md"
+      - "docs/guides/044-distribution-first-publish-execution-runbook.md"
+      - "docs/reports/**"
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run distribution artifact pipeline smoke
+        run: ./scripts/check-distribution-artifact-pipeline-smoke.sh

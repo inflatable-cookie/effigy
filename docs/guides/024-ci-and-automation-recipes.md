@@ -19,6 +19,9 @@ Primary contract checks in this repo:
 - `./scripts/check-distribution-artifact-pipeline-smoke.sh`
 - `./scripts/update-homebrew-formula-from-metadata.sh`
 
+Related CI workflow:
+- `.github/workflows/distribution-artifact-pipeline-smoke.yml`
+
 Primary JSON mode entrypoint:
 - `effigy --json <command>`
 
