@@ -53,51 +53,33 @@ pub(super) fn style_text(enabled: bool, style: anstyle::Style, text: &str) -> St
     format!("{}{}{}", style.render(), text, style.render_reset())
 }
 
-fn render_probe_lock_scopes(probe: &serde_json::Value) -> String {
-    let Some(scopes) = probe["lock_scopes"].as_array() else {
-        return "<none>".to_owned();
-    };
-    let rendered = scopes
-        .iter()
-        .filter_map(|value| value.as_str())
-        .map(str::to_owned)
-        .collect::<Vec<String>>();
-    if rendered.is_empty() {
-        return "<none>".to_owned();
-    }
-    rendered.join(", ")
+fn probe_text_field<'a>(probe: &'a serde_json::Value, field: &str, fallback: &'a str) -> &'a str {
+    probe[field].as_str().unwrap_or(fallback)
 }
 
-pub(super) fn render_resolution_probe_block(
-    renderer: &mut PlainRenderer<Vec<u8>>,
-    probe: &serde_json::Value,
-    color_enabled: bool,
-    show_evidence: bool,
-) -> Result<(), RunnerError> {
-    renderer.section(&format!(
-        "Resolution: {}",
-        probe["selector"].as_str().unwrap_or("<selector>")
-    ))?;
-    renderer.key_values(&[
-        KeyValue::new("status", probe["status"].as_str().unwrap_or("<unknown>")),
-        KeyValue::new("catalog", probe["catalog"].as_str().unwrap_or("<none>")),
-        KeyValue::new("task", probe["task"].as_str().unwrap_or("<none>")),
-        KeyValue::new("lock_scopes", render_probe_lock_scopes(probe)),
-    ])?;
-    if let Some(error) = probe["error"].as_str() {
-        renderer.notice(NoticeLevel::Warning, error)?;
-        return Ok(());
-    }
-    if !show_evidence {
-        return Ok(());
-    }
-    let Some(evidence) = probe["evidence"].as_array() else {
-        return Ok(());
-    };
-    let lines = evidence
-        .iter()
+fn probe_lines_field(probe: &serde_json::Value, field: &str) -> Vec<String> {
+    probe[field]
+        .as_array()
+        .into_iter()
+        .flatten()
         .filter_map(|item| item.as_str().map(str::to_owned))
-        .collect::<Vec<String>>();
+        .collect::<Vec<String>>()
+}
+
+fn render_probe_lock_scopes(probe: &serde_json::Value) -> String {
+    let scopes = probe_lines_field(probe, "lock_scopes");
+    if scopes.is_empty() {
+        return "<none>".to_owned();
+    }
+    scopes.join(", ")
+}
+
+fn render_probe_evidence_block(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    color_enabled: bool,
+    probe: &serde_json::Value,
+) -> Result<(), RunnerError> {
+    let lines = probe_lines_field(probe, "evidence");
     if lines.is_empty() {
         return Ok(());
     }
@@ -110,4 +92,30 @@ pub(super) fn render_resolution_probe_block(
         renderer.text(&format!("- {line}"))?;
     }
     Ok(())
+}
+
+pub(super) fn render_resolution_probe_block(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    probe: &serde_json::Value,
+    color_enabled: bool,
+    show_evidence: bool,
+) -> Result<(), RunnerError> {
+    renderer.section(&format!(
+        "Resolution: {}",
+        probe_text_field(probe, "selector", "<selector>")
+    ))?;
+    renderer.key_values(&[
+        KeyValue::new("status", probe_text_field(probe, "status", "<unknown>")),
+        KeyValue::new("catalog", probe_text_field(probe, "catalog", "<none>")),
+        KeyValue::new("task", probe_text_field(probe, "task", "<none>")),
+        KeyValue::new("lock_scopes", render_probe_lock_scopes(probe)),
+    ])?;
+    if let Some(error) = probe["error"].as_str().filter(|value| !value.is_empty()) {
+        renderer.notice(NoticeLevel::Warning, error)?;
+        return Ok(());
+    }
+    if !show_evidence {
+        return Ok(());
+    }
+    render_probe_evidence_block(renderer, color_enabled, probe)
 }
