@@ -6,6 +6,7 @@ TAG=""
 ARTIFACTS_DIR=""
 OUTPUT_PATH=""
 OWNER="Effigy"
+EXPECT_HOMEBREW=0
 
 usage() {
   cat <<'USAGE'
@@ -17,6 +18,7 @@ Options:
   --artifacts-dir <dir>    Directory containing step logs from check-distribution-first-publish.sh (required)
   --output <path>          Output report path (default: docs/reports/<date>-distribution-acceptance-closeout-<tag>.md)
   --owner <name>           Report owner label (default: Effigy)
+  --expect-homebrew        Require Homebrew channel logs in artifact validation
   --help                   Show this help
 USAGE
 }
@@ -38,6 +40,10 @@ while [[ $# -gt 0 ]]; do
     --owner)
       OWNER="$2"
       shift 2
+      ;;
+    --expect-homebrew)
+      EXPECT_HOMEBREW=1
+      shift
       ;;
     --help|-h)
       usage
@@ -66,6 +72,12 @@ if [[ ! -d "$ARTIFACTS_DIR" ]]; then
   echo "[error] artifacts directory not found: $ARTIFACTS_DIR" >&2
   exit 1
 fi
+
+validate_args=(--artifacts-dir "$ARTIFACTS_DIR")
+if [[ "$EXPECT_HOMEBREW" -eq 1 ]]; then
+  validate_args+=(--expect-homebrew)
+fi
+"$ROOT_DIR/scripts/validate-distribution-artifacts.sh" "${validate_args[@]}"
 
 log_files=()
 while IFS= read -r log_file; do
