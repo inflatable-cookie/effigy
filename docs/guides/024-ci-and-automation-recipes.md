@@ -292,6 +292,17 @@ Invalid env fallback check:
     jq -e '.result.cache_ttl_source == "env_invalid"' completion-candidates-invalid.json >/dev/null
 ```
 
+Miss-path nullability check:
+
+```yaml
+- name: Assert miss telemetry keeps hit-only ttl field null
+  run: |
+    set -euo pipefail
+    effigy --json completion candidates --prefix farm > completion-candidates-miss.json
+    jq -e '.result.cache_state != "hit"' completion-candidates-miss.json >/dev/null
+    jq -e '.result.cache_ttl_ms == null' completion-candidates-miss.json >/dev/null
+```
+
 ## Related Guides
 
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
