@@ -13,6 +13,13 @@ use super::super::deferral::{select_deferral, should_attempt_deferral};
 use super::super::util::parse_task_selector;
 use super::{CatalogSelectionMode, RunnerError};
 
+const DEFERRAL_NOT_CONSIDERED_REASON: &str =
+    "deferral was not considered because the selection outcome does not trigger deferral";
+const DEFERRAL_SELECTED_REASON: &str =
+    "deferral was selected from configured or implicit fallback routing";
+const DEFERRAL_NOT_FOUND_REASON: &str =
+    "deferral was considered but no eligible fallback route was found";
+
 struct SelectionOutcome {
     status: String,
     catalog: Option<String>,
@@ -140,50 +147,66 @@ fn render_explain_text(
     let color_enabled =
         resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
-    let _ = renderer.section("Doctor Explain");
-    let _ = renderer.key_values(&[
-        KeyValue::new("request", request.name.clone()),
-        KeyValue::new("args", request.args.join(" ")),
-        KeyValue::new(
-            "resolved-root",
-            resolved.resolved_root.display().to_string(),
-        ),
-        KeyValue::new("selection-status", selection.status.clone()),
-        KeyValue::new(
-            "selected-catalog",
-            selection
-                .catalog
-                .clone()
-                .unwrap_or_else(|| "<none>".to_owned()),
-        ),
-        KeyValue::new(
-            "selected-mode",
-            selection
-                .mode
-                .clone()
-                .unwrap_or_else(|| "<none>".to_owned()),
-        ),
-        KeyValue::new("selection-reasoning", selection.reasoning.clone()),
-        KeyValue::new("deferral-considered", deferral.considered.to_string()),
-        KeyValue::new("deferral-selected", deferral.selected.to_string()),
-        KeyValue::new("deferral-reasoning", deferral.reasoning.clone()),
-    ]);
+    renderer
+        .section("Doctor Explain")
+        .map_err(map_render_error)?;
+    renderer
+        .key_values(&[
+            KeyValue::new("request", request.name.clone()),
+            KeyValue::new("args", request.args.join(" ")),
+            KeyValue::new(
+                "resolved-root",
+                resolved.resolved_root.display().to_string(),
+            ),
+            KeyValue::new("selection-status", selection.status.clone()),
+            KeyValue::new(
+                "selected-catalog",
+                selection
+                    .catalog
+                    .clone()
+                    .unwrap_or_else(|| "<none>".to_owned()),
+            ),
+            KeyValue::new(
+                "selected-mode",
+                selection
+                    .mode
+                    .clone()
+                    .unwrap_or_else(|| "<none>".to_owned()),
+            ),
+            KeyValue::new("selection-reasoning", selection.reasoning.clone()),
+            KeyValue::new("deferral-considered", deferral.considered.to_string()),
+            KeyValue::new("deferral-selected", deferral.selected.to_string()),
+            KeyValue::new("deferral-reasoning", deferral.reasoning.clone()),
+        ])
+        .map_err(map_render_error)?;
     if let Some(source) = deferral.source.as_ref() {
-        let _ = renderer.key_values(&[KeyValue::new("deferral-source", source.clone())]);
+        renderer
+            .key_values(&[KeyValue::new("deferral-source", source.clone())])
+            .map_err(map_render_error)?;
     }
     if let Some(working_dir) = deferral.working_dir.as_ref() {
-        let _ = renderer.key_values(&[KeyValue::new("deferral-working-dir", working_dir.clone())]);
+        renderer
+            .key_values(&[KeyValue::new("deferral-working-dir", working_dir.clone())])
+            .map_err(map_render_error)?;
     }
     if let Some(error) = selection.error.as_ref() {
-        let _ = renderer.notice(NoticeLevel::Warning, error);
+        renderer
+            .notice(NoticeLevel::Warning, error)
+            .map_err(map_render_error)?;
     }
-    let _ = renderer.text("");
-    let _ = renderer.bullet_list("candidate-catalogs", candidates);
+    renderer.text("").map_err(map_render_error)?;
+    renderer
+        .bullet_list("candidate-catalogs", candidates)
+        .map_err(map_render_error)?;
     if !selection.evidence.is_empty() {
-        let _ = renderer.bullet_list("selection-evidence", &selection.evidence);
+        renderer
+            .bullet_list("selection-evidence", &selection.evidence)
+            .map_err(map_render_error)?;
     }
     if !selection.ambiguity_candidates.is_empty() {
-        let _ = renderer.bullet_list("ambiguity-candidates", &selection.ambiguity_candidates);
+        renderer
+            .bullet_list("ambiguity-candidates", &selection.ambiguity_candidates)
+            .map_err(map_render_error)?;
     }
     if verbose {
         let mut all_catalogs = catalogs
@@ -199,12 +222,18 @@ fn render_explain_text(
             })
             .collect::<Vec<String>>();
         all_catalogs.sort();
-        let _ = renderer.bullet_list("discovered-catalogs", &all_catalogs);
+        renderer
+            .bullet_list("discovered-catalogs", &all_catalogs)
+            .map_err(map_render_error)?;
         if !resolved.evidence.is_empty() {
-            let _ = renderer.bullet_list("root-resolution-evidence", &resolved.evidence);
+            renderer
+                .bullet_list("root-resolution-evidence", &resolved.evidence)
+                .map_err(map_render_error)?;
         }
         if !resolved.warnings.is_empty() {
-            let _ = renderer.bullet_list("root-resolution-warnings", &resolved.warnings);
+            renderer
+                .bullet_list("root-resolution-warnings", &resolved.warnings)
+                .map_err(map_render_error)?;
         }
     }
     let out = renderer.into_inner();
@@ -247,15 +276,18 @@ fn compute_selection_outcome(
     selection: &Result<super::super::TaskSelection<'_>, RunnerError>,
 ) -> SelectionOutcome {
     match selection {
-        Ok(value) => SelectionOutcome {
-            status: "ok".to_owned(),
-            catalog: Some(value.catalog.alias.clone()),
-            mode: Some(format_selection_mode(value.mode.clone())),
-            evidence: value.evidence.clone(),
-            error: None,
-            ambiguity_candidates: Vec::new(),
-            reasoning: selection_reasoning(Some(format_selection_mode(value.mode.clone())), false),
-        },
+        Ok(value) => {
+            let mode = format_selection_mode(value.mode.clone());
+            SelectionOutcome {
+                status: "ok".to_owned(),
+                catalog: Some(value.catalog.alias.clone()),
+                mode: Some(mode.clone()),
+                evidence: value.evidence.clone(),
+                error: None,
+                ambiguity_candidates: Vec::new(),
+                reasoning: selection_reasoning(Some(mode), false),
+            }
+        }
         Err(error) => {
             let ambiguity_candidates = match &error {
                 RunnerError::TaskAmbiguous { candidates, .. } => candidates.clone(),
@@ -302,25 +334,11 @@ fn compute_deferral_outcome(
     resolved_root: &std::path::Path,
 ) -> DeferralOutcome {
     let Err(error) = selection else {
-        return DeferralOutcome {
-            considered: false,
-            selected: false,
-            source: None,
-            working_dir: None,
-            reasoning: "deferral was not considered because the selection outcome does not trigger deferral"
-                .to_owned(),
-        };
+        return deferral_not_considered();
     };
     let considered = should_attempt_deferral(error);
     if !considered {
-        return DeferralOutcome {
-            considered,
-            selected: false,
-            source: None,
-            working_dir: None,
-            reasoning: "deferral was not considered because the selection outcome does not trigger deferral"
-                .to_owned(),
-        };
+        return deferral_not_considered();
     }
     if let Some(deferral) = select_deferral(selector, catalogs, cwd, resolved_root) {
         return DeferralOutcome {
@@ -328,8 +346,7 @@ fn compute_deferral_outcome(
             selected: true,
             source: Some(deferral.source),
             working_dir: Some(deferral.working_dir.display().to_string()),
-            reasoning: "deferral was selected from configured or implicit fallback routing"
-                .to_owned(),
+            reasoning: DEFERRAL_SELECTED_REASON.to_owned(),
         };
     }
     DeferralOutcome {
@@ -337,7 +354,7 @@ fn compute_deferral_outcome(
         selected: false,
         source: None,
         working_dir: None,
-        reasoning: "deferral was considered but no eligible fallback route was found".to_owned(),
+        reasoning: DEFERRAL_NOT_FOUND_REASON.to_owned(),
     }
 }
 
@@ -347,4 +364,18 @@ fn format_selection_mode(mode: CatalogSelectionMode) -> String {
         CatalogSelectionMode::CwdNearest => "cwd_nearest".to_owned(),
         CatalogSelectionMode::RootShallowest => "root_shallowest".to_owned(),
     }
+}
+
+fn deferral_not_considered() -> DeferralOutcome {
+    DeferralOutcome {
+        considered: false,
+        selected: false,
+        source: None,
+        working_dir: None,
+        reasoning: DEFERRAL_NOT_CONSIDERED_REASON.to_owned(),
+    }
+}
+
+fn map_render_error(error: crate::ui::UiError) -> RunnerError {
+    RunnerError::Ui(format!("failed to render doctor explain output: {error}"))
 }
