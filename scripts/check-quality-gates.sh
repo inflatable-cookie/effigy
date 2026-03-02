@@ -43,6 +43,8 @@ if [[ "$RUN_DOCS" == true ]]; then
   "$ROOT_DIR/scripts/check-doc-links.sh" "$ROOT_DIR/README.md" "${docs_files[@]}"
   echo "[info] quality gate: docs json examples"
   "$ROOT_DIR/scripts/check-doc-json-examples.sh"
+  echo "[info] quality gate: docs reports index"
+  "$ROOT_DIR/scripts/check-doc-reports-index.sh"
 fi
 
 if [[ "$RUN_JSON" == true ]]; then
