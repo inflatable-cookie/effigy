@@ -18,5 +18,6 @@ run_step "cli json mode tests" cargo test --test cli_output_tests cli_json_mode
 run_step "library tests" cargo test --lib
 run_step "cli output tests" cargo test --test cli_output_tests
 run_step "docs links" ./scripts/check-doc-links.sh
+run_step "docs json examples" ./scripts/check-doc-json-examples.sh
 
 echo "[ok] pre-push ci checks passed"
