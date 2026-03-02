@@ -8,8 +8,7 @@ use super::super::super::tasks_view::{
     managed_profile_display_rows, relative_display_path, render_resolution_probe_block,
 };
 use super::super::super::{LoadedCatalog, ManifestTask, RunnerError};
-use super::super::matches::{builtin_matches, matched_catalog_tasks};
-use super::super::BUILTIN_TEST_FALLBACK_NOTE;
+use super::super::filtering::evaluate_task_filter;
 use super::rows::{render_builtin_task_rows, render_task_with_profiles};
 
 pub(super) fn render_filtered_tasks_text(
@@ -21,13 +20,10 @@ pub(super) fn render_filtered_tasks_text(
     resolve_probe: &Option<serde_json::Value>,
     resolved_root: &Path,
 ) -> Result<(), RunnerError> {
-    let selector = super::super::super::util::parse_task_selector(filter)?;
+    let evaluation = evaluate_task_filter(catalogs, filter)?;
     renderer.section(&format!("Task Matches: {filter}"))?;
 
-    let matches = matched_catalog_tasks(catalogs, &selector);
-    let builtin_matches = builtin_matches(&selector);
-
-    if matches.is_empty() && builtin_matches.is_empty() {
+    if evaluation.catalog_matches.is_empty() && evaluation.builtin_matches.is_empty() {
         renderer.notice(NoticeLevel::Warning, "no matches")?;
         return Ok(());
     }
@@ -37,17 +33,22 @@ pub(super) fn render_filtered_tasks_text(
         color_enabled,
         theme,
         resolved_root,
-        matches.as_slice(),
-        &selector.task_name,
+        evaluation.catalog_matches.as_slice(),
+        &evaluation.task_name,
     )?;
 
-    if !builtin_matches.is_empty() || resolve_probe.is_some() {
+    if !evaluation.builtin_matches.is_empty() || resolve_probe.is_some() {
         renderer.text("")?;
     }
-    if !builtin_matches.is_empty() {
+    if !evaluation.builtin_matches.is_empty() {
         renderer.section("Built-in Task Matches")?;
-        render_builtin_task_rows(renderer, color_enabled, theme, builtin_matches.as_slice())?;
-        render_builtin_test_fallback_notice(renderer, &selector.task_name)?;
+        render_builtin_task_rows(
+            renderer,
+            color_enabled,
+            theme,
+            evaluation.builtin_matches.as_slice(),
+        )?;
+        render_builtin_test_fallback_notice(renderer, evaluation.notes.as_slice())?;
         if resolve_probe.is_some() {
             renderer.text("")?;
         }
@@ -86,10 +87,10 @@ fn render_filtered_catalog_task_matches(
 
 fn render_builtin_test_fallback_notice(
     renderer: &mut PlainRenderer<Vec<u8>>,
-    task_name: &str,
+    notes: &[String],
 ) -> Result<(), RunnerError> {
-    if task_name == "test" {
-        renderer.notice(NoticeLevel::Info, BUILTIN_TEST_FALLBACK_NOTE)?;
+    for note in notes {
+        renderer.notice(NoticeLevel::Info, note)?;
     }
     Ok(())
 }

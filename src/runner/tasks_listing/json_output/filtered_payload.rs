@@ -1,9 +1,7 @@
 use serde_json::json;
 
 use super::super::super::{LoadedCatalog, RunnerError};
-use super::super::matches::{
-    builtin_matches_json, builtin_test_fallback_notes, matched_catalog_tasks,
-};
+use super::super::filtering::evaluate_task_filter;
 use super::rows::{catalog_task_row_json, managed_profile_rows_json};
 
 pub(super) fn build_filtered_tasks_payload(
@@ -13,15 +11,26 @@ pub(super) fn build_filtered_tasks_payload(
     resolve_probe: &Option<serde_json::Value>,
     filter: &str,
 ) -> Result<serde_json::Value, RunnerError> {
-    let selector = super::super::super::util::parse_task_selector(filter)?;
-    let matched_tasks = matched_catalog_tasks(catalogs, &selector);
-    let matches = matched_tasks
+    let evaluation = evaluate_task_filter(catalogs, filter)?;
+    let matches = evaluation
+        .catalog_matches
         .iter()
-        .map(|(catalog, task)| catalog_task_row_json(catalog, &selector.task_name, task))
+        .map(|(catalog, task)| catalog_task_row_json(catalog, &evaluation.task_name, task))
         .collect::<Vec<serde_json::Value>>();
-    let managed_profile_matches = matched_tasks
+    let managed_profile_matches = evaluation
+        .catalog_matches
         .iter()
-        .flat_map(|(catalog, task)| managed_profile_rows_json(catalog, &selector.task_name, task))
+        .flat_map(|(catalog, task)| managed_profile_rows_json(catalog, &evaluation.task_name, task))
+        .collect::<Vec<serde_json::Value>>();
+    let builtin_matches = evaluation
+        .builtin_matches
+        .iter()
+        .map(|(name, description)| {
+            json!({
+                "task": name,
+                "description": description,
+            })
+        })
         .collect::<Vec<serde_json::Value>>();
     Ok(json!({
         "schema": "effigy.tasks.filtered.v1",
@@ -30,10 +39,10 @@ pub(super) fn build_filtered_tasks_payload(
         "filter": filter,
         "matches": matches,
         "managed_profile_matches": managed_profile_matches,
-        "builtin_matches": builtin_matches_json(&selector),
+        "builtin_matches": builtin_matches,
         "catalogs": catalog_diagnostics,
         "precedence": precedence,
         "resolve": resolve_probe,
-        "notes": builtin_test_fallback_notes(&selector.task_name),
+        "notes": evaluation.notes,
     }))
 }
