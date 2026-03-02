@@ -22,6 +22,12 @@ Run this sequence in one release window:
 4. Update Homebrew formula and validate fresh install + upgrade path.
 5. Capture one consolidated channel matrix report.
 
+Optional one-command execution helper:
+
+```bash
+./scripts/check-distribution-first-publish.sh --tag vX.Y.Z
+```
+
 ## 3) Command Matrix
 
 ### Tag Install Validation
