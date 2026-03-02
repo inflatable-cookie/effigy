@@ -1,5 +1,5 @@
-use super::matches::{builtin_matches, matched_catalog_tasks};
 use super::super::{LoadedCatalog, ManifestTask, RunnerError};
+use super::matches::{builtin_matches, matched_catalog_tasks};
 use super::BUILTIN_TEST_FALLBACK_NOTE;
 
 pub(super) struct TaskFilterEvaluation<'a> {

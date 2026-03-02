@@ -8,10 +8,13 @@ mod filtering;
 mod json_output;
 #[path = "tasks_listing/matches.rs"]
 mod matches;
+#[path = "tasks_listing/render_context.rs"]
+mod render_context;
 #[path = "tasks_listing/text_output.rs"]
 mod text_output;
 
 use super::{LoadedCatalog, RunnerError};
+use render_context::ListingRenderContext;
 
 const BUILTIN_TEST_FALLBACK_NOTE: &str =
     "built-in fallback supports `<catalog>/test` when explicit `tasks.test` is not defined";
@@ -25,24 +28,18 @@ pub(super) fn render_tasks_listing(
     resolve_probe: &Option<serde_json::Value>,
     resolved_root: &Path,
 ) -> Result<String, RunnerError> {
+    let context = ListingRenderContext::new(args, resolve_probe);
     if args.output_json {
         return json_output::render_tasks_json(
-            args,
+            &context,
             catalogs,
             ordered_catalogs,
             catalog_diagnostics,
             precedence,
-            resolve_probe,
         );
     }
 
-    text_output::render_tasks_text(
-        args,
-        catalogs,
-        ordered_catalogs,
-        resolve_probe,
-        resolved_root,
-    )
+    text_output::render_tasks_text(&context, catalogs, ordered_catalogs, resolved_root)
 }
 
 fn manifest_path_string(catalog: &LoadedCatalog) -> String {
