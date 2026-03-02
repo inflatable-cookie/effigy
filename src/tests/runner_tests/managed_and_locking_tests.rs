@@ -46,6 +46,28 @@ fn run_task_with_repo(root: &PathBuf, name: &str, args: &[&str]) -> Result<Strin
     )
 }
 
+fn managed_tui_env() -> EnvGuard {
+    EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))])
+}
+
+fn managed_stream_env() -> EnvGuard {
+    EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))])
+}
+
+fn create_workspace_dir(root: &PathBuf, name: &str) -> PathBuf {
+    let dir = root.join(name);
+    fs::create_dir_all(&dir).expect("mkdir workspace dir");
+    dir
+}
+
+fn write_catalog_tasks(dir: &PathBuf, alias: &str, tasks: &[(&str, &str)]) {
+    let mut manifest = format!("[catalog]\nalias = \"{}\"\n", alias);
+    for (task, run) in tasks {
+        manifest.push_str(&format!("[tasks.{}]\nrun = \"{}\"\n", task, run));
+    }
+    write_manifest(&dir.join("effigy.toml"), &manifest);
+}
+
 fn assert_managed_process_invalid_definition(
     err: RunnerError,
     expected_task: &str,
@@ -159,7 +181,7 @@ fn assert_lock_conflict(err: RunnerError, expected_scope: &str, expected_remedia
 fn run_manifest_task_managed_tui_uses_default_profile_when_not_specified() {
     let _guard = lock_test();
     let root = temp_workspace("managed-default-profile");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let _env = managed_tui_env();
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
@@ -196,7 +218,7 @@ concurrent = [
 fn run_manifest_task_managed_tui_accepts_named_profile_argument() {
     let _guard = lock_test();
     let root = temp_workspace("managed-named-profile");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let _env = managed_tui_env();
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
@@ -224,7 +246,7 @@ concurrent = [
 fn run_manifest_task_managed_tui_supports_concurrent_entries() {
     let _guard = lock_test();
     let root = temp_workspace("managed-concurrent-entries");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let _env = managed_tui_env();
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
@@ -282,7 +304,7 @@ run = "printf api"
 fn run_manifest_task_managed_tui_supports_profile_specific_concurrent_entries() {
     let _guard = lock_test();
     let root = temp_workspace("managed-concurrent-profile-specific");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let _env = managed_tui_env();
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
@@ -315,7 +337,7 @@ concurrent = [
 fn run_manifest_task_managed_tui_supports_independent_tab_order() {
     let _guard = lock_test();
     let root = temp_workspace("managed-tab-order");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let _env = managed_tui_env();
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
@@ -337,7 +359,7 @@ concurrent = [
 fn run_manifest_task_managed_tui_supports_ranked_tab_order_map() {
     let _guard = lock_test();
     let root = temp_workspace("managed-tab-order-ranked");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let _env = managed_tui_env();
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
@@ -359,13 +381,10 @@ concurrent = [
 fn run_manifest_task_managed_tui_supports_ranked_tab_order_map_with_task_refs() {
     let _guard = lock_test();
     let root = temp_workspace("managed-tab-order-ranked-refs");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
-    let farmyard = root.join("farmyard");
-    let cream = root.join("cream");
-    let dairy = root.join("dairy");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-    fs::create_dir_all(&cream).expect("mkdir cream");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    let _env = managed_tui_env();
+    let farmyard = create_workspace_dir(&root, "farmyard");
+    let cream = create_workspace_dir(&root, "cream");
+    let dairy = create_workspace_dir(&root, "dairy");
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
@@ -378,32 +397,16 @@ concurrent = [
 ]
 "#,
     );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        r#"[catalog]
-alias = "farmyard"
-[tasks.api]
-run = "printf farmyard-api"
-[tasks.jobs]
-run = "printf farmyard-jobs"
-"#,
+    write_catalog_tasks(
+        &farmyard,
+        "farmyard",
+        &[
+            ("api", "printf farmyard-api"),
+            ("jobs", "printf farmyard-jobs"),
+        ],
     );
-    write_manifest(
-        &cream.join("effigy.toml"),
-        r#"[catalog]
-alias = "cream"
-[tasks.dev]
-run = "printf cream-dev"
-"#,
-    );
-    write_manifest(
-        &dairy.join("effigy.toml"),
-        r#"[catalog]
-alias = "dairy"
-[tasks.dev]
-run = "printf dairy-dev"
-"#,
-    );
+    write_catalog_tasks(&cream, "cream", &[("dev", "printf cream-dev")]);
+    write_catalog_tasks(&dairy, "dairy", &[("dev", "printf dairy-dev")]);
 
     let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
     assert_contains_all(
@@ -416,13 +419,10 @@ run = "printf dairy-dev"
 fn run_manifest_task_managed_tui_supports_single_definition_ordered_profile_entries() {
     let _guard = lock_test();
     let root = temp_workspace("managed-single-definition-ordered-profile");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
-    let farmyard = root.join("farmyard");
-    let cream = root.join("cream");
-    let dairy = root.join("dairy");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-    fs::create_dir_all(&cream).expect("mkdir cream");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    let _env = managed_tui_env();
+    let farmyard = create_workspace_dir(&root, "farmyard");
+    let cream = create_workspace_dir(&root, "cream");
+    let dairy = create_workspace_dir(&root, "dairy");
 
     write_manifest(
         &root.join("effigy.toml"),
@@ -436,32 +436,16 @@ concurrent = [
 ]
 "#,
     );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        r#"[catalog]
-alias = "farmyard"
-[tasks.api]
-run = "printf farmyard-api"
-[tasks.jobs]
-run = "printf farmyard-jobs"
-"#,
+    write_catalog_tasks(
+        &farmyard,
+        "farmyard",
+        &[
+            ("api", "printf farmyard-api"),
+            ("jobs", "printf farmyard-jobs"),
+        ],
     );
-    write_manifest(
-        &cream.join("effigy.toml"),
-        r#"[catalog]
-alias = "cream"
-[tasks.dev]
-run = "printf cream-dev"
-"#,
-    );
-    write_manifest(
-        &dairy.join("effigy.toml"),
-        r#"[catalog]
-alias = "dairy"
-[tasks.dev]
-run = "printf dairy-dev"
-"#,
-    );
+    write_catalog_tasks(&cream, "cream", &[("dev", "printf cream-dev")]);
+    write_catalog_tasks(&dairy, "dairy", &[("dev", "printf dairy-dev")]);
 
     let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
     assert_contains_all(
@@ -513,11 +497,9 @@ concurrent = [{ name = "api", run = "cargo run -p api" }]
 fn run_manifest_task_managed_tui_processes_can_reference_other_tasks() {
     let _guard = lock_test();
     let root = temp_workspace("managed-task-refs");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
-    let farmyard = root.join("farmyard");
-    let cream = root.join("cream");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-    fs::create_dir_all(&cream).expect("mkdir cream");
+    let _env = managed_tui_env();
+    let farmyard = create_workspace_dir(&root, "farmyard");
+    let cream = create_workspace_dir(&root, "cream");
 
     write_manifest(
         &root.join("effigy.toml"),
@@ -529,22 +511,8 @@ concurrent = [
 ]
 "#,
     );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        r#"[catalog]
-alias = "farmyard"
-[tasks.api]
-run = "printf farmyard-api"
-"#,
-    );
-    write_manifest(
-        &cream.join("effigy.toml"),
-        r#"[catalog]
-alias = "cream"
-[tasks.dev]
-run = "printf cream-dev"
-"#,
-    );
+    write_catalog_tasks(&farmyard, "farmyard", &[("api", "printf farmyard-api")]);
+    write_catalog_tasks(&cream, "cream", &[("dev", "printf cream-dev")]);
 
     let out = run_dev(&root, &[]).expect("managed plan should render");
 
@@ -578,11 +546,9 @@ concurrent = [{ name = "api", run = "printf api", task = "api" }]
 fn run_manifest_task_managed_tui_supports_compact_profile_task_refs() {
     let _guard = lock_test();
     let root = temp_workspace("managed-compact-profile-refs");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
-    let farmyard = root.join("farmyard");
-    let cream = root.join("cream");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-    fs::create_dir_all(&cream).expect("mkdir cream");
+    let _env = managed_tui_env();
+    let farmyard = create_workspace_dir(&root, "farmyard");
+    let cream = create_workspace_dir(&root, "cream");
 
     write_manifest(
         &root.join("effigy.toml"),
@@ -594,22 +560,8 @@ concurrent = [{ task = "farmyard/api" }, { task = "cream/dev" }]
 concurrent = [{ task = "farmyard/api" }]
 "#,
     );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        r#"[catalog]
-alias = "farmyard"
-[tasks.api]
-run = "printf farmyard-api"
-"#,
-    );
-    write_manifest(
-        &cream.join("effigy.toml"),
-        r#"[catalog]
-alias = "cream"
-[tasks.dev]
-run = "printf cream-dev"
-"#,
-    );
+    write_catalog_tasks(&farmyard, "farmyard", &[("api", "printf farmyard-api")]);
+    write_catalog_tasks(&cream, "cream", &[("dev", "printf cream-dev")]);
 
     let out = run_dev_with_repo(&root, &[]).expect("managed compact plan should render");
     assert_contains_all(
@@ -628,7 +580,7 @@ run = "printf cream-dev"
 fn run_manifest_task_managed_tui_rejects_unterminated_quote_in_compact_profile_task_ref() {
     let _guard = lock_test();
     let root = temp_workspace("managed-compact-profile-ref-unterminated-quote");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let _env = managed_tui_env();
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
@@ -652,9 +604,8 @@ concurrent = [{ name = "tests", task = 'test "unterminated' }]
 fn run_manifest_task_managed_tui_process_run_array_supports_task_refs() {
     let _guard = lock_test();
     let root = temp_workspace("managed-process-run-array");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let farmyard = create_workspace_dir(&root, "farmyard");
+    let _env = managed_tui_env();
 
     write_manifest(
         &root.join("effigy.toml"),
@@ -666,14 +617,7 @@ concurrent = [{ name = "combo", task = "combo" }]
 run = ["printf start", { task = "farmyard/api" }, "printf done"]
 "#,
     );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        r#"[catalog]
-alias = "farmyard"
-[tasks.api]
-run = "printf farmyard-api"
-"#,
-    );
+    write_catalog_tasks(&farmyard, "farmyard", &[("api", "printf farmyard-api")]);
 
     let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
     assert_contains_all(&out, &["printf start", "farmyard-api", "printf done", "cd"]);
@@ -683,7 +627,7 @@ run = "printf farmyard-api"
 fn run_manifest_task_managed_tui_rejects_unterminated_quote_in_process_task_ref() {
     let _guard = lock_test();
     let root = temp_workspace("managed-process-task-ref-unterminated-quote");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let _env = managed_tui_env();
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
@@ -706,7 +650,7 @@ concurrent = [{ name = "tests", task = 'test "unterminated' }]
 fn run_manifest_task_managed_tui_rejects_trailing_escape_in_process_task_ref() {
     let _guard = lock_test();
     let root = temp_workspace("managed-process-task-ref-trailing-escape");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let _env = managed_tui_env();
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
@@ -723,11 +667,9 @@ concurrent = [{ name = "tests", task = "test vitest \\" }]
 fn run_manifest_task_managed_tui_supports_relative_task_refs() {
     let _guard = lock_test();
     let root = temp_workspace("managed-relative-task-ref");
-    let dairy = root.join("dairy");
-    let froyo = root.join("froyo");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
-    fs::create_dir_all(&froyo).expect("mkdir froyo");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let dairy = create_workspace_dir(&root, "dairy");
+    let froyo = create_workspace_dir(&root, "froyo");
+    let _env = managed_tui_env();
 
     write_manifest(
         &dairy.join("effigy.toml"),
@@ -738,14 +680,7 @@ mode = "tui"
 concurrent = [{ name = "validate-stack", task = "../froyo/validate" }]
 "#,
     );
-    write_manifest(
-        &froyo.join("effigy.toml"),
-        r#"[catalog]
-alias = "froyo"
-[tasks.validate]
-run = "printf froyo-validate"
-"#,
-    );
+    write_catalog_tasks(&froyo, "froyo", &[("validate", "printf froyo-validate")]);
 
     let out = run_task_with_repo(&root, "dairy/dev", &[]).expect("managed plan should render");
     assert_contains_all(
@@ -762,7 +697,7 @@ run = "printf froyo-validate"
 fn run_manifest_task_managed_tui_appends_shell_process_when_enabled() {
     let _guard = lock_test();
     let root = temp_workspace("managed-shell-enabled");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let _env = managed_tui_env();
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.dev]
@@ -780,7 +715,7 @@ concurrent = [{ name = "api", run = "printf api" }]
 fn run_manifest_task_managed_tui_uses_global_shell_run_override() {
     let _guard = lock_test();
     let root = temp_workspace("managed-shell-global-override");
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))]);
+    let _env = managed_tui_env();
     write_manifest(
         &root.join("effigy.toml"),
         r#"[shell]
@@ -811,7 +746,7 @@ concurrent = [
 ]
 "#,
     );
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+    let _env = managed_stream_env();
 
     let out = run_dev(&root, &[]).expect("managed stream run");
     assert_contains_all(
@@ -841,7 +776,7 @@ concurrent = [{ name = "default-only", run = "printf default-ok" }]
 concurrent = [{ name = "front-only", run = "printf front-ok" }]
 "#,
     );
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+    let _env = managed_stream_env();
 
     let out = run_dev(&root, &["front"]).expect("managed stream run with named profile");
     assert_contains_all(
@@ -871,7 +806,7 @@ concurrent = [{ name = "default-only", run = "printf default-ok" }]
 concurrent = [{ name = "front-only", run = "printf front-ok" }]
 "#,
     );
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+    let _env = managed_stream_env();
 
     let err = run_dev(&root, &["admin"]).expect_err("unknown managed profile should fail");
     assert_managed_profile_not_found(err, "dev", "admin", &["default", "front"]);
@@ -895,7 +830,7 @@ concurrent = [{{ name = "tests", task = "test" }}]
             marker.display()
         ),
     );
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+    let _env = managed_stream_env();
 
     let out = run_dev(&root, &["default"]).expect("run managed stream with builtin test task ref");
     assert_contains_all(&out, &["Managed Task Runtime", "root: ok"]);
@@ -920,7 +855,7 @@ concurrent = [{{ name = "tests", task = "test vitest" }}]
             marker.display()
         ),
     );
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+    let _env = managed_stream_env();
 
     let out = run_dev(&root, &["default"])
         .expect("run managed stream with builtin test task ref and suite arg");
@@ -949,7 +884,7 @@ concurrent = [{{ name = "tests", task = "test" }}]
             marker.display()
         ),
     );
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+    let _env = managed_stream_env();
 
     let out = run_dev(&root, &["default"]).expect("run managed stream with builtin profile entry");
     assert_contains_all(&out, &["Managed Task Runtime", "root: ok"]);
@@ -970,7 +905,7 @@ mode = "tui"
 concurrent = [{ name = "api", run = "sh -lc 'exit 7'" }]
 "#,
     );
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+    let _env = managed_stream_env();
 
     let err =
         run_dev(&root, &[]).expect_err("managed stream should fail for non-zero exit by default");
@@ -989,7 +924,7 @@ fail_on_non_zero = false
 concurrent = [{ name = "api", run = "sh -lc 'exit 9'" }]
 "#,
     );
-    let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
+    let _env = managed_stream_env();
 
     let out = run_dev(&root, &[]).expect("managed stream should allow non-zero when disabled");
     assert_contains_all(
@@ -1014,15 +949,7 @@ run = "sleep 1"
     );
 
     let root_for_thread = root.clone();
-    let join = thread::spawn(move || {
-        run_manifest_task_with_cwd(
-            &TaskInvocation {
-                name: "dev".to_owned(),
-                args: Vec::new(),
-            },
-            root_for_thread,
-        )
-    });
+    let join = thread::spawn(move || run_dev(&root_for_thread, &[]));
 
     std::thread::sleep(Duration::from_millis(120));
 
