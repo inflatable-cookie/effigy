@@ -96,6 +96,18 @@ effigy completion candidates --prefix farm
 
 Completion-candidate memoization TTL can be tuned with `EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS` (ms, bounded `100..60000`, default `2000`).
 
+Completion cache troubleshooting (JSON):
+
+```sh
+effigy --json completion candidates --prefix farm
+```
+
+Check these fields:
+- `cache_state` (`miss_initial`, `hit`, `miss_ttl`, `miss_manifest_change`)
+- `cache_ttl_source` (`default`, `env`, `env_invalid`)
+- `effective_cache_ttl_ms` (active TTL policy)
+- `cache_age_ms` and `cache_ttl_ms` (`hit` responses)
+
 ## 4) JSON Mode (Automation-Safe)
 
 Canonical JSON mode:
