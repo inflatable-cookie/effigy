@@ -227,10 +227,16 @@ struct CompletionCandidatesCacheTtlPolicy {
 fn parse_completion_candidates_cache_ttl_policy(
     raw: Option<&str>,
 ) -> CompletionCandidatesCacheTtlPolicy {
-    match raw.and_then(|value| value.parse::<u64>().ok()) {
-        Some(value) => CompletionCandidatesCacheTtlPolicy {
-            ttl_ms: value.clamp(MIN_CANDIDATE_CACHE_TTL_MS, MAX_CANDIDATE_CACHE_TTL_MS),
-            source: "env",
+    match raw {
+        Some(value) => match value.parse::<u64>() {
+            Ok(parsed) => CompletionCandidatesCacheTtlPolicy {
+                ttl_ms: parsed.clamp(MIN_CANDIDATE_CACHE_TTL_MS, MAX_CANDIDATE_CACHE_TTL_MS),
+                source: "env",
+            },
+            Err(_) => CompletionCandidatesCacheTtlPolicy {
+                ttl_ms: DEFAULT_CANDIDATE_CACHE_TTL_MS,
+                source: "env_invalid",
+            },
         },
         None => CompletionCandidatesCacheTtlPolicy {
             ttl_ms: DEFAULT_CANDIDATE_CACHE_TTL_MS,
@@ -293,7 +299,7 @@ mod tests {
             parse_completion_candidates_cache_ttl_policy(Some("not-a-number")),
             CompletionCandidatesCacheTtlPolicy {
                 ttl_ms: 2_000,
-                source: "default",
+                source: "env_invalid",
             }
         );
     }

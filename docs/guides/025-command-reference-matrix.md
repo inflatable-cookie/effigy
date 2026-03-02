@@ -71,6 +71,7 @@ effigy completion candidates [--repo <PATH>] [--prefix <value>] [--json]
 - `cache_state` values: `miss_initial`, `hit`, `miss_ttl`, `miss_manifest_change`.
 - `miss_manifest_change` is triggered from manifest stamp drift (mtime/size/content digest), so cache invalidation is not dependent on timestamp granularity alone.
 - Completion candidates cache TTL can be tuned with `EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS` (bounded to `100..60000`, default `2000`).
+- `cache_ttl_source` values: `default`, `env`, `env_invalid` (invalid env values fall back to default TTL).
 
 ## 5) Common Recipes
 
