@@ -1,0 +1,57 @@
+name: Homebrew Tap Metadata
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (for example v0.2.3)"
+        required: true
+        type: string
+
+jobs:
+  build-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          if [[ -z "$TAG" ]]; then
+            echo "tag is required" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "resolved tag: $TAG"
+
+      - name: Build Homebrew metadata
+        id: metadata
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          URL="https://github.com/inflatable-cookie/effigy/archive/refs/tags/${TAG}.tar.gz"
+          SHA256="$(curl -fsSL "$URL" | sha256sum | awk '{print $1}')"
+          VERSION="${TAG#v}"
+          cat > homebrew-metadata.json <<JSON
+          {
+            "tag": "${TAG}",
+            "version": "${VERSION}",
+            "url": "${URL}",
+            "sha256": "${SHA256}",
+            "formula": "effigy"
+          }
+          JSON
+          cat homebrew-metadata.json
+
+      - name: Upload metadata artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-metadata-${{ steps.tag.outputs.tag }}
+          path: homebrew-metadata.json

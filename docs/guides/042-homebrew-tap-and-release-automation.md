@@ -66,6 +66,10 @@ Add a release-triggered workflow in core repo:
   - compute release tarball checksum
   - call tap update automation (or open PR)
 
+Implemented metadata hook:
+- workflow: `.github/workflows/homebrew-tap-metadata.yml`
+- output artifact: `homebrew-metadata-<tag>` containing `tag`, `version`, `url`, `sha256`, `formula`
+
 Tap repo workflow should run:
 - `brew audit --strict --formula`
 - `brew style`
