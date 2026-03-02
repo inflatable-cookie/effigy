@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
 use crate::process_manager::ProcessManagerError;
-use crate::resolver::{resolve_target_root, ResolveError};
+use crate::resolver::ResolveError;
 use crate::tasks::TaskError;
 use crate::TaskInvocation;
-use crate::{Command, DoctorArgs, TasksArgs};
+#[cfg(test)]
+pub(crate) use crate::{DoctorArgs, TasksArgs};
 
 mod builtin;
 mod cache;
@@ -12,6 +13,7 @@ mod catalog;
 mod command_context;
 mod deferral;
 mod doctor;
+mod entrypoints;
 mod error;
 mod execute;
 mod locking;
@@ -29,8 +31,6 @@ mod util;
 use builtin::try_run_builtin_task;
 #[cfg(test)]
 use catalog::discover_catalogs;
-use command_context::command_repo_override;
-use execute::run_manifest_task;
 use manifest::{
     ManifestJsPackageManager, ManifestManagedConcurrentEntry, ManifestManagedRun,
     ManifestManagedRunStep, ManifestTask, ManifestTaskCache, TaskManifest,
@@ -49,6 +49,8 @@ use util::parse_task_selector;
 
 pub(super) const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize =
     model::DEFAULT_BUILTIN_TEST_MAX_PARALLEL;
+
+pub use entrypoints::{resolve_command_root, run_command, run_doctor, run_tasks};
 
 #[derive(Debug)]
 pub enum RunnerError {
@@ -172,33 +174,6 @@ pub enum RunnerError {
     DeferLoopDetected {
         depth: u8,
     },
-}
-
-pub fn run_command(cmd: Command) -> Result<String, RunnerError> {
-    match cmd {
-        Command::Help(_) => Ok(String::new()),
-        Command::Doctor(args) => run_doctor(args),
-        Command::Tasks(args) => run_tasks(args),
-        Command::Task(task) => run_manifest_task(&task),
-    }
-}
-
-pub fn resolve_command_root(cmd: &Command) -> PathBuf {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let repo_override = command_repo_override(cmd);
-
-    match resolve_target_root(cwd.clone(), repo_override) {
-        Ok(resolved) => resolved.resolved_root,
-        Err(_) => cwd,
-    }
-}
-
-pub fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
-    doctor::run_doctor(args)
-}
-
-pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
-    tasks_command::run_tasks(args)
 }
 
 fn run_manifest_task_with_cwd(task: &TaskInvocation, cwd: PathBuf) -> Result<String, RunnerError> {
