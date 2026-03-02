@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use crate::process_manager::ProcessManagerError;
 use crate::resolver::ResolveError;
 use crate::tasks::TaskError;
-use crate::TaskInvocation;
 #[cfg(test)]
-pub(crate) use crate::{DoctorArgs, TasksArgs};
+pub(crate) use crate::{DoctorArgs, TaskInvocation, TasksArgs};
 
+mod bridges;
 mod builtin;
 mod cache;
 mod catalog;
@@ -50,6 +50,9 @@ use util::parse_task_selector;
 pub(super) const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize =
     model::DEFAULT_BUILTIN_TEST_MAX_PARALLEL;
 
+#[cfg(test)]
+use bridges::builtin_test_max_parallel;
+use bridges::run_manifest_task_with_cwd;
 pub use entrypoints::{resolve_command_root, run_command, run_doctor, run_tasks};
 
 #[derive(Debug)]
@@ -174,15 +177,6 @@ pub enum RunnerError {
     DeferLoopDetected {
         depth: u8,
     },
-}
-
-fn run_manifest_task_with_cwd(task: &TaskInvocation, cwd: PathBuf) -> Result<String, RunnerError> {
-    execute::run_manifest_task_with_cwd(task, cwd)
-}
-
-#[cfg(test)]
-fn builtin_test_max_parallel(catalogs: &[LoadedCatalog], resolved_root: &std::path::Path) -> usize {
-    builtin::builtin_test_max_parallel(catalogs, resolved_root)
 }
 
 #[cfg(test)]
