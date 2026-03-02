@@ -59,10 +59,11 @@ A version can be tagged for channel publication only if all are true:
   - `./scripts/check-release-install-from-tag.sh --tag <tag>`
 - [ ] Release notes drafted with change summary and migration notes (if needed).
 - [ ] Rollback candidate tag identified (previous known-good).
-- [ ] Distribution metadata validated (crate metadata, install docs, checksum path).
+- [x] Distribution metadata validated (crate metadata, install docs, checksum path):
+  - `./scripts/check-distribution-metadata.sh [--tag <tag>]`
 
 Automation entrypoint:
-- `cargo qa-release` (wraps `scripts/check-release-gates.sh`)
+- `cargo qa-release` (wraps `scripts/check-release-gates.sh`, including distribution metadata validation)
 
 CI automation:
 - `.github/workflows/release-gates.yml` on tag pushes (`v*`) and manual dispatch.
