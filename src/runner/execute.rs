@@ -190,26 +190,8 @@ fn resolve_selection_error<'a>(
     if let Some(removed_builtin_error) = removed_builtin_invocation_error(&preflight.selector) {
         return Err(removed_builtin_error);
     }
-    if let Some(output) = try_run_builtin_task(
-        &preflight.selector,
-        task,
-        &preflight.runtime_args_raw,
-        &preflight.resolved.resolved_root,
-        &preflight.catalogs,
-        &preflight.invocation_cwd,
-    )? {
+    if let Some(output) = resolve_builtin_or_deferred_output(task, preflight, &error)? {
         return Ok(SelectionResolution::Output(output));
-    }
-    if should_attempt_deferral(&error) {
-        if let Some(deferral) = select_deferral(
-            &preflight.selector,
-            &preflight.catalogs,
-            &preflight.invocation_cwd,
-            &preflight.resolved.resolved_root,
-        ) {
-            return run_deferred_request(task, &preflight.runtime_args_raw, &deferral, &error)
-                .map(SelectionResolution::Output);
-        }
     }
     Err(error)
 }
@@ -218,14 +200,53 @@ fn removed_builtin_invocation_error(selector: &super::TaskSelector) -> Option<Ru
     if !matches!(selector.task_name.as_str(), "repo-pulse" | "health") {
         return None;
     }
-    let request = selector
-        .prefix
-        .as_ref()
-        .map(|prefix| format!("{prefix}/{}", selector.task_name))
-        .unwrap_or_else(|| selector.task_name.clone());
+    let request = removed_builtin_request(selector);
     Some(RunnerError::TaskInvocation(format!(
         "`{request}` is no longer a built-in command. Use `effigy doctor` for consolidated health checks, or define `tasks.health` in your manifest for project-owned checks."
     )))
+}
+
+fn removed_builtin_request(selector: &super::TaskSelector) -> String {
+    selector
+        .prefix
+        .as_ref()
+        .map(|prefix| format!("{prefix}/{}", selector.task_name))
+        .unwrap_or_else(|| selector.task_name.clone())
+}
+
+fn resolve_builtin_or_deferred_output(
+    task: &TaskInvocation,
+    preflight: &ExecutionPreflight,
+    selection_error: &RunnerError,
+) -> Result<Option<String>, RunnerError> {
+    if let Some(output) = try_run_builtin_task(
+        &preflight.selector,
+        task,
+        &preflight.runtime_args_raw,
+        &preflight.resolved.resolved_root,
+        &preflight.catalogs,
+        &preflight.invocation_cwd,
+    )? {
+        return Ok(Some(output));
+    }
+    if !should_attempt_deferral(selection_error) {
+        return Ok(None);
+    }
+    let Some(deferral) = select_deferral(
+        &preflight.selector,
+        &preflight.catalogs,
+        &preflight.invocation_cwd,
+        &preflight.resolved.resolved_root,
+    ) else {
+        return Ok(None);
+    };
+    run_deferred_request(
+        task,
+        &preflight.runtime_args_raw,
+        &deferral,
+        selection_error,
+    )
+    .map(Some)
 }
 
 fn render_passthrough_args(args: &[String]) -> String {
@@ -250,11 +271,7 @@ fn build_execution_preflight(
     };
     let resolved = resolve_target_root(cwd, runtime_args_raw.repo_override.clone())?;
     let selector = parse_task_selector(&task.name)?;
-    let catalogs = match discover_catalogs(&resolved.resolved_root) {
-        Ok(catalogs) => catalogs,
-        Err(RunnerError::TaskCatalogsMissing { .. }) => Vec::new(),
-        Err(error) => return Err(error),
-    };
+    let catalogs = discover_catalogs_allow_missing(&resolved.resolved_root)?;
     Ok(ExecutionPreflight {
         invocation_cwd,
         runtime_args_raw,
@@ -264,6 +281,16 @@ fn build_execution_preflight(
         selector,
         catalogs,
     })
+}
+
+fn discover_catalogs_allow_missing(
+    resolved_root: &std::path::Path,
+) -> Result<Vec<LoadedCatalog>, RunnerError> {
+    match discover_catalogs(resolved_root) {
+        Ok(catalogs) => Ok(catalogs),
+        Err(RunnerError::TaskCatalogsMissing { .. }) => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
 }
 
 fn strip_task_json_flag(args: &[String]) -> (Vec<String>, bool) {
