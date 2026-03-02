@@ -303,6 +303,21 @@ Miss-path nullability check:
     jq -e '.result.cache_ttl_ms == null' completion-candidates-miss.json >/dev/null
 ```
 
+Warm-hit consistency check:
+
+```yaml
+- name: Assert completion hit ttl consistency
+  env:
+    EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS: "750"
+  run: |
+    set -euo pipefail
+    effigy --json completion candidates --prefix farm > completion-candidates-first.json
+    effigy --json completion candidates --prefix farm > completion-candidates-second.json
+    jq -e '.result.cache_state == "hit"' completion-candidates-second.json >/dev/null
+    jq -e '.result.cache_ttl_ms != null' completion-candidates-second.json >/dev/null
+    jq -e '.result.cache_ttl_ms == .result.effective_cache_ttl_ms' completion-candidates-second.json >/dev/null
+```
+
 ## Related Guides
 
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
