@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use crate::TaskInvocation;
 
-use super::RunnerError;
 #[cfg(test)]
 use super::LoadedCatalog;
+use super::RunnerError;
 
 pub(super) fn run_manifest_task_with_cwd(
     task: &TaskInvocation,
