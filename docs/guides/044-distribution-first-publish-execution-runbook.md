@@ -89,6 +89,7 @@ When using the helper script, attach per-step logs from `--artifacts-dir` direct
 The closeout report can be generated from those logs using `generate-distribution-closeout-report.sh`.
 Artifact completeness can be checked directly with `validate-distribution-artifacts.sh`.
 The first-publish helper also writes `distribution-summary.env` in the artifacts directory and validates artifacts before returning success.
+Local tooling sanity for this pipeline can be checked with `check-distribution-artifact-pipeline-smoke.sh`.
 
 ## 5) Acceptance Criteria Mapping
 
