@@ -1,5 +1,12 @@
 use super::*;
 
+fn doctor_nonzero_rendered(err: RunnerError) -> String {
+    match err {
+        RunnerError::DoctorNonZero { rendered, .. } => rendered,
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
 #[test]
 fn run_doctor_text_output_has_blank_line_between_sections() {
     let root = temp_workspace("doctor-section-spacing");
@@ -8,18 +15,10 @@ fn run_doctor_text_output_has_blank_line_between_sections() {
         "[tasks.health]\nrun = \"printf ok\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "doctor".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("run doctor");
+    let out = run_builtin_ok(root, "doctor", &[]);
 
     assert!(out.starts_with("Doctor's Report\n"));
-    assert!(out.contains("workspace.root-resolution"));
-    assert!(out.contains("\n\nsummary  ok:"));
+    assert_contains_all(&out, &["workspace.root-resolution", "\n\nsummary  ok:"]);
     assert!(!out.contains("\n\nRoot Resolution\n"));
 }
 
@@ -37,22 +36,20 @@ fn run_doctor_explain_text_reports_resolution_selection() {
         "[catalog]\nalias = \"farmyard\"\n[tasks.build]\nrun = \"printf farmyard\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "doctor".to_owned(),
-            args: vec!["farmyard/build".to_owned()],
-        },
-        root,
-    )
-    .expect("doctor explain run");
+    let out = run_builtin_ok(root, "doctor", &["farmyard/build"]);
 
-    assert!(out.contains("Doctor Explain"));
-    assert!(out.contains("selection-status: ok"));
-    assert!(out.contains("selected-catalog: farmyard"));
-    assert!(out.contains("selected-mode: explicit_prefix"));
-    assert!(out.contains("selection-reasoning:"));
-    assert!(out.contains("candidate-catalogs"));
-    assert!(out.contains("selection-evidence"));
+    assert_contains_all(
+        &out,
+        &[
+            "Doctor Explain",
+            "selection-status: ok",
+            "selected-catalog: farmyard",
+            "selected-mode: explicit_prefix",
+            "selection-reasoning:",
+            "candidate-catalogs",
+            "selection-evidence",
+        ],
+    );
 }
 
 #[test]
@@ -69,18 +66,7 @@ fn run_doctor_explain_text_snapshot_prefix_block_is_stable() {
         "[catalog]\nalias = \"farmyard\"\n[tasks.build]\nrun = \"printf farmyard\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "doctor".to_owned(),
-            args: vec![
-                "farmyard/build".to_owned(),
-                "--".to_owned(),
-                "--watch".to_owned(),
-            ],
-        },
-        root.clone(),
-    )
-    .expect("doctor explain run");
+    let out = run_builtin_ok(root, "doctor", &["farmyard/build", "--", "--watch"]);
 
     let (prefix_block, _) = out
         .split_once("\ncandidate-catalogs:\n")
@@ -124,21 +110,19 @@ fn run_doctor_explain_text_reports_deferral_reasoning_on_missing_task() {
         "[defer]\nrun = \"printf deferred\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "doctor".to_owned(),
-            args: vec!["missing-task".to_owned()],
-        },
-        root,
-    )
-    .expect("doctor explain missing");
+    let out = run_builtin_ok(root, "doctor", &["missing-task"]);
 
-    assert!(out.contains("Doctor Explain"));
-    assert!(out.contains("selection-status: error"));
-    assert!(out.contains("deferral-considered: true"));
-    assert!(out.contains("deferral-selected: true"));
-    assert!(out.contains("deferral-reasoning:"));
-    assert!(out.contains("deferral-source"));
+    assert_contains_all(
+        &out,
+        &[
+            "Doctor Explain",
+            "selection-status: error",
+            "deferral-considered: true",
+            "deferral-selected: true",
+            "deferral-reasoning:",
+            "deferral-source",
+        ],
+    );
 }
 
 #[test]
@@ -146,21 +130,8 @@ fn run_doctor_explain_rejects_fix_mode() {
     let root = temp_workspace("doctor-explain-fix-invalid");
     write_manifest(&root.join("effigy.toml"), "");
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "doctor".to_owned(),
-            args: vec!["--fix".to_owned(), "build".to_owned()],
-        },
-        root,
-    )
-    .expect_err("doctor explain --fix should fail");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("`--fix` is not supported with explain mode"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "doctor", &["--fix", "build"]);
+    assert_task_invocation_error_contains(err, &["`--fix` is not supported with explain mode"]);
 }
 
 #[test]
@@ -176,26 +147,20 @@ run = [{ task = "missing/task" }]
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "doctor".to_owned(),
-            args: vec!["--verbose".to_owned()],
-        },
-        root,
-    )
-    .expect_err("doctor should fail for unresolved task references");
+    let err = run_builtin_err(root, "doctor", &["--verbose"]);
+    let rendered = doctor_nonzero_rendered(err);
 
-    let rendered = match err {
-        RunnerError::DoctorNonZero { rendered, .. } => rendered,
-        other => panic!("unexpected error: {other}"),
-    };
-
-    assert!(rendered.contains("tasks.references.resolve"));
-    assert!(rendered.contains("findings: 2"));
-    assert!(rendered.contains("entry: 1"));
-    assert!(rendered.contains("entry: 2"));
-    assert!(rendered.contains("entry-evidence"));
-    assert!(rendered.contains("entry-remediation"));
+    assert_contains_all(
+        &rendered,
+        &[
+            "tasks.references.resolve",
+            "findings: 2",
+            "entry: 1",
+            "entry: 2",
+            "entry-evidence",
+            "entry-remediation",
+        ],
+    );
 }
 
 #[test]
@@ -217,10 +182,7 @@ fn run_doctor_groups_findings_in_severity_first_order() {
     })
     .expect_err("doctor should fail for unsupported manifest key");
 
-    let rendered = match err {
-        RunnerError::DoctorNonZero { rendered, .. } => rendered,
-        other => panic!("unexpected error: {other}"),
-    };
+    let rendered = doctor_nonzero_rendered(err);
 
     let error_idx = rendered
         .find("manifest.parse")
@@ -266,10 +228,7 @@ fn run_doctor_groups_same_severity_findings_in_alphabetical_order() {
     })
     .expect_err("doctor should fail for health execution and parse errors");
 
-    let rendered = match err {
-        RunnerError::DoctorNonZero { rendered, .. } => rendered,
-        other => panic!("unexpected error: {other}"),
-    };
+    let rendered = doctor_nonzero_rendered(err);
 
     let health_error_idx = rendered
         .find("health.task.execute")
@@ -310,17 +269,19 @@ run = [{ task = "missing/task" }]
     })
     .expect_err("doctor should fail with unresolved task reference");
 
-    let rendered = match err {
-        RunnerError::DoctorNonZero { rendered, .. } => rendered,
-        other => panic!("unexpected error: {other}"),
-    };
+    let rendered = doctor_nonzero_rendered(err);
 
     assert!(rendered.starts_with("Doctor's Report\n"));
-    assert!(rendered.contains("\n\nFix Actions\n"));
-    assert!(rendered.contains("status"));
-    assert!(rendered.contains("manifest.health_task_scaffold"));
-    assert!(rendered.contains("applied"));
-    assert!(rendered.contains("\n\nsummary  ok:"));
+    assert_contains_all(
+        &rendered,
+        &[
+            "\n\nFix Actions\n",
+            "status",
+            "manifest.health_task_scaffold",
+            "applied",
+            "\n\nsummary  ok:",
+        ],
+    );
 
     let error_idx = rendered
         .find("tasks.references.resolve")
