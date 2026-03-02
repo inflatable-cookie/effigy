@@ -8,6 +8,7 @@ use super::super::super::tasks_view::{
     managed_profile_display_rows, relative_display_path, style_text,
 };
 use super::super::super::{LoadedCatalog, RunnerError, BUILTIN_TASKS};
+use super::super::catalog_rows::{assemble_catalog_rows, CatalogRow};
 use super::rows::{render_builtin_task_rows, render_task_with_profiles};
 
 pub(super) fn render_default_tasks_text(
@@ -72,31 +73,32 @@ fn render_tasks_section(
     resolved_root: &Path,
 ) -> Result<(), RunnerError> {
     renderer.section("Tasks")?;
-    let mut has_tasks = false;
     if ordered_catalogs.is_empty() {
         renderer.notice(NoticeLevel::Info, "none")?;
     } else {
-        for catalog in ordered_catalogs {
-            if catalog.manifest.tasks.is_empty() {
-                continue;
-            }
-            let manifest = relative_display_path(resolved_root, &catalog.manifest_path);
-            for (task_name, task_def) in &catalog.manifest.tasks {
+        let rows = assemble_catalog_rows(ordered_catalogs);
+        for row in rows.rows() {
+            if let CatalogRow::Task {
+                catalog,
+                task_name,
+                task,
+            } = row
+            {
+                let manifest = relative_display_path(resolved_root, &catalog.manifest_path);
                 render_task_with_profiles(
                     renderer,
                     color_enabled,
                     theme,
                     &manifest,
                     &catalog_task_label(catalog, task_name),
-                    &task_run_preview(task_def),
-                    managed_profile_display_rows(catalog, task_name, task_def),
+                    &task_run_preview(task),
+                    managed_profile_display_rows(catalog, task_name, task),
                 )?;
-                has_tasks = true;
             }
         }
-    }
-    if !has_tasks {
-        renderer.notice(NoticeLevel::Info, "none")?;
+        if !rows.has_tasks() {
+            renderer.notice(NoticeLevel::Info, "none")?;
+        }
     }
     renderer.text("")?;
     Ok(())
