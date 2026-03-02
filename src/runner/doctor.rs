@@ -152,6 +152,21 @@ impl DoctorState {
             });
         }
     }
+
+    fn into_report(
+        self,
+        summary: DoctorSummary,
+        root_evidence: Vec<String>,
+        root_warnings: Vec<String>,
+    ) -> DoctorReport {
+        DoctorReport {
+            summary,
+            findings: self.findings,
+            fixes: self.fixes,
+            root_evidence,
+            root_warnings,
+        }
+    }
 }
 
 pub(super) fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
@@ -178,27 +193,27 @@ pub(super) fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
     add_manifest_availability_findings(&resolved.resolved_root, &manifest, &mut state);
 
     let summary = state.summarize();
-    let report = DoctorReport {
-        summary: summary.clone(),
-        findings: state.findings,
-        fixes: state.fixes,
-        root_evidence: resolved.evidence,
-        root_warnings: resolved.warnings,
-    };
+    let report = state.into_report(summary.clone(), resolved.evidence, resolved.warnings);
+    render_doctor_result(&report, args.output_json, args.verbose, summary.error)
+}
 
-    let rendered = if args.output_json {
-        render::render_json(&report)?
+fn render_doctor_result(
+    report: &DoctorReport,
+    output_json: bool,
+    verbose: bool,
+    error_count: usize,
+) -> Result<String, RunnerError> {
+    let rendered = if output_json {
+        render::render_json(report)?
     } else {
-        render::render_text(&report, args.verbose)
+        render::render_text(report, verbose)?
     };
-
-    if summary.error > 0 {
+    if error_count > 0 {
         return Err(RunnerError::DoctorNonZero {
-            error_count: summary.error,
+            error_count,
             rendered,
         });
     }
-
     Ok(rendered)
 }
 
