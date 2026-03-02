@@ -276,7 +276,7 @@ fn concurrent_entries_for_profile<'a>(
     {
         return Some(entries);
     }
-    if profile_name == "default" && !task.concurrent.is_empty() {
+    if profile_name == DEFAULT_MANAGED_PROFILE && !task.concurrent.is_empty() {
         return Some(task.concurrent.as_slice());
     }
     None
@@ -301,8 +301,9 @@ fn available_concurrent_profiles(task: &ManifestTask) -> Vec<String> {
                 .then_some(name.clone())
         })
         .collect::<Vec<String>>();
-    if !task.concurrent.is_empty() && !available.iter().any(|name| name == "default") {
-        available.push("default".to_owned());
+    if !task.concurrent.is_empty() && !available.iter().any(|name| name == DEFAULT_MANAGED_PROFILE)
+    {
+        available.push(DEFAULT_MANAGED_PROFILE.to_owned());
     }
     available.sort();
     available
