@@ -352,6 +352,8 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
 
 ## 13) Completion Candidates (`effigy.completion.candidates.v1`)
 
+Warm-hit example:
+
 ```json
 {
   "schema": "effigy.completion.candidates.v1",
@@ -365,6 +367,29 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
   "cache_ttl_ms": 2000,
   "effective_cache_ttl_ms": 2000,
   "cache_ttl_source": "default",
+  "manifest_count": 3,
+  "candidates": [
+    "farmyard/api",
+    "farmyard/build"
+  ]
+}
+```
+
+Miss example (invalid env policy fallback):
+
+```json
+{
+  "schema": "effigy.completion.candidates.v1",
+  "schema_version": 1,
+  "ok": true,
+  "repo": "/workspace",
+  "prefix": "farm",
+  "cache_hit": false,
+  "cache_state": "miss_initial",
+  "cache_age_ms": null,
+  "cache_ttl_ms": null,
+  "effective_cache_ttl_ms": 2000,
+  "cache_ttl_source": "env_invalid",
   "manifest_count": 3,
   "candidates": [
     "farmyard/api",
