@@ -19,16 +19,7 @@ pub(super) fn discover_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatal
     let mut alias_map: HashMap<String, PathBuf> = HashMap::new();
 
     for manifest_path in manifest_paths {
-        let manifest_src =
-            fs::read_to_string(&manifest_path).map_err(|error| RunnerError::TaskManifestRead {
-                path: manifest_path.clone(),
-                error,
-            })?;
-        let manifest: TaskManifest =
-            toml::from_str(&manifest_src).map_err(|error| RunnerError::TaskManifestParse {
-                path: manifest_path.clone(),
-                error,
-            })?;
+        let manifest = load_catalog_manifest(&manifest_path)?;
 
         let catalog_root = manifest_path
             .parent()
@@ -132,20 +123,11 @@ pub(super) fn select_catalog_and_task<'a>(
                 available: sorted_catalog_aliases(catalogs),
             });
         };
-
-        let evidence = vec![if catalog.alias == *prefix {
-            format!("selected catalog via explicit prefix `{prefix}`")
-        } else {
-            format!(
-                "selected catalog via relative prefix `{prefix}` -> `{}`",
-                catalog.alias
-            )
-        }];
         return build_task_selection(
             selector,
             catalog,
             CatalogSelectionMode::ExplicitPrefix,
-            evidence,
+            vec![selection_evidence_for_prefix(prefix, catalog)],
         );
     }
 
@@ -159,29 +141,58 @@ pub(super) fn select_catalog_and_task<'a>(
     }
 
     if let Some(selected) = select_in_scope_catalog(cwd, &matches, &selector.task_name)? {
-        let evidence = vec![format!(
-            "selected nearest in-scope catalog `{}` for cwd {}",
-            selected.alias,
-            cwd.display()
-        )];
         return build_task_selection(
             selector,
             selected,
             CatalogSelectionMode::CwdNearest,
-            evidence,
+            vec![selection_evidence_for_cwd(selected, cwd)],
         );
     }
 
     let selected = select_shallowest_catalog(&matches, &selector.task_name)?;
-    let evidence = vec![format!(
-        "selected shallowest catalog `{}` by depth {} from workspace root",
-        selected.alias, selected.depth
-    )];
     build_task_selection(
         selector,
         selected,
         CatalogSelectionMode::RootShallowest,
-        evidence,
+        vec![selection_evidence_for_shallowest(selected)],
+    )
+}
+
+fn load_catalog_manifest(manifest_path: &Path) -> Result<TaskManifest, RunnerError> {
+    let manifest_src =
+        fs::read_to_string(manifest_path).map_err(|error| RunnerError::TaskManifestRead {
+            path: manifest_path.to_path_buf(),
+            error,
+        })?;
+    toml::from_str(&manifest_src).map_err(|error| RunnerError::TaskManifestParse {
+        path: manifest_path.to_path_buf(),
+        error,
+    })
+}
+
+fn selection_evidence_for_prefix(prefix: &str, catalog: &LoadedCatalog) -> String {
+    if catalog.alias == prefix {
+        format!("selected catalog via explicit prefix `{prefix}`")
+    } else {
+        format!(
+            "selected catalog via relative prefix `{prefix}` -> `{}`",
+            catalog.alias
+        )
+    }
+}
+
+fn selection_evidence_for_cwd(catalog: &LoadedCatalog, cwd: &Path) -> String {
+    format!(
+        "selected nearest in-scope catalog `{}` for cwd {}",
+        catalog.alias,
+        cwd.display()
+    )
+}
+
+fn selection_evidence_for_shallowest(catalog: &LoadedCatalog) -> String {
+    format!(
+        "selected shallowest catalog `{}` by depth {} from workspace root",
+        catalog.alias, catalog.depth
     )
 }
 
