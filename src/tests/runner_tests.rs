@@ -100,6 +100,28 @@ fn assert_manifest_parse_error_contains_any(error: &toml::de::Error, expected: &
     );
 }
 
+fn parse_json_output(rendered: &str) -> serde_json::Value {
+    serde_json::from_str(rendered).expect("parse json")
+}
+
+fn run_tasks_from_repo(
+    root: &PathBuf,
+    task_name: Option<&str>,
+    resolve_selector: Option<&str>,
+    output_json: bool,
+) -> String {
+    with_cwd(root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: task_name.map(|value| value.to_owned()),
+            resolve_selector: resolve_selector.map(|value| value.to_owned()),
+            output_json,
+            pretty_json: true,
+        })
+    })
+    .expect("run tasks")
+}
+
 fn temp_dir(name: &str) -> PathBuf {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)

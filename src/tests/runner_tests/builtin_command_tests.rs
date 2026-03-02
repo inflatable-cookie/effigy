@@ -13,25 +13,22 @@ fn run_manifest_task_builtin_test_plan_renders_detection_summary() {
     )
     .expect("write package");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--plan".to_owned()],
-        },
-        root,
-    )
-    .expect("run test --plan");
-
-    assert!(out.contains("Test Plan"));
-    assert!(out.contains("targets:"));
-    assert!(out.contains("runtime:"));
-    assert!(out.contains("text"));
-    assert!(out.contains("Target: root"));
-    assert!(out.contains("runner:"));
-    assert!(out.contains("available-suites:"));
-    assert!(out.contains("suite-source: auto-detected"));
-    assert!(out.contains("vitest"));
-    assert!(out.contains("fallback-chain"));
+    let out = run_builtin_ok(root, "test", &["--plan"]);
+    assert_contains_all(
+        &out,
+        &[
+            "Test Plan",
+            "targets:",
+            "runtime:",
+            "text",
+            "Target: root",
+            "runner:",
+            "available-suites:",
+            "suite-source: auto-detected",
+            "vitest",
+            "fallback-chain",
+        ],
+    );
 }
 
 #[test]
@@ -47,16 +44,8 @@ fn run_manifest_task_builtin_test_plan_json_has_versioned_schema() {
     )
     .expect("write package");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--plan".to_owned(), "--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run test --plan --json");
-
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    let out = run_builtin_ok(root, "test", &["--plan", "--json"]);
+    let parsed = parse_json_output(&out);
     assert_eq!(parsed["schema"], "effigy.test.plan.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert!(parsed["targets"].is_array());
@@ -73,19 +62,16 @@ unit = "pnpm exec vitest run"
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--plan".to_owned()],
-        },
-        root,
-    )
-    .expect("run configured suite test --plan");
-
-    assert!(out.contains("Test Plan"));
-    assert!(out.contains("available-suites: unit"));
-    assert!(out.contains("suite-source: configured"));
-    assert!(out.contains("test.suites.unit"));
+    let out = run_builtin_ok(root, "test", &["--plan"]);
+    assert_contains_all(
+        &out,
+        &[
+            "Test Plan",
+            "available-suites: unit",
+            "suite-source: configured",
+            "test.suites.unit",
+        ],
+    );
 }
 
 #[test]
@@ -125,25 +111,22 @@ alias = "dairy"
     )
     .expect("write dairy package");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--plan".to_owned()],
-        },
-        root,
-    )
-    .expect("run mixed-source test --plan");
-
-    assert!(out.contains("Target Summary"));
-    assert!(out.contains("farmyard: source=configured suites=unit"));
-    assert!(out.contains("dairy: source=auto-detected suites=vitest"));
-    assert!(out.contains("Target: farmyard"));
-    assert!(out.contains("available-suites: unit"));
-    assert!(out.contains("suite-source: configured"));
-    assert!(out.contains("test.suites.unit"));
-    assert!(out.contains("Target: dairy"));
-    assert!(out.contains("suite-source: auto-detected"));
-    assert!(out.contains("vitest"));
+    let out = run_builtin_ok(root, "test", &["--plan"]);
+    assert_contains_all(
+        &out,
+        &[
+            "Target Summary",
+            "farmyard: source=configured suites=unit",
+            "dairy: source=auto-detected suites=vitest",
+            "Target: farmyard",
+            "available-suites: unit",
+            "suite-source: configured",
+            "test.suites.unit",
+            "Target: dairy",
+            "suite-source: auto-detected",
+            "vitest",
+        ],
+    );
 }
 
 #[test]
@@ -182,17 +165,8 @@ unit = "sh -lc 'printf configured > \"{}\"'"
     perms.set_mode(0o755);
     fs::set_permissions(&vitest, perms).expect("chmod");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--verbose-results".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("run configured suite test");
-
-    assert!(out.contains("Test Results"));
-    assert!(out.contains("runner:unit"));
+    let out = run_builtin_ok(root.clone(), "test", &["--verbose-results"]);
+    assert_contains_all(&out, &["Test Results", "runner:unit"]);
     assert!(configured_marker.exists(), "configured suite should run");
     assert!(
         !vitest_marker.exists(),
@@ -211,24 +185,16 @@ integration = "true"
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["user-service".to_owned()],
-        },
-        root,
-    )
-    .expect_err("configured multi-suite should be ambiguous");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("ambiguous"));
-            assert!(message.contains("unit"));
-            assert!(message.contains("integration"));
-            assert!(message.contains("effigy test unit user-service"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "test", &["user-service"]);
+    assert_task_invocation_error_contains(
+        err,
+        &[
+            "ambiguous",
+            "unit",
+            "integration",
+            "effigy test unit user-service",
+        ],
+    );
 }
 
 #[test]
@@ -246,16 +212,8 @@ integration = "sh -lc 'printf integration > \"{}\"'"
     );
     write_manifest(&root.join("effigy.toml"), &manifest);
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["unit".to_owned()],
-        },
-        root,
-    )
-    .expect("configured custom suite selector should run");
-
-    assert!(out.contains("Test Results"));
+    let out = run_builtin_ok(root, "test", &["unit"]);
+    assert_contains_all(&out, &["Test Results"]);
     assert!(unit_marker.exists(), "selected suite should run");
     assert!(
         !integration_marker.exists(),
@@ -287,18 +245,8 @@ fn run_manifest_task_builtin_test_executes_local_vitest() {
     perms.set_mode(0o755);
     fs::set_permissions(&vitest, perms).expect("chmod");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--run".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("run builtin test");
-
-    assert!(out.contains("Test Results"));
-    assert!(out.contains("targets:"));
-    assert!(out.contains("root"));
+    let out = run_builtin_ok(root.clone(), "test", &["--run"]);
+    assert_contains_all(&out, &["Test Results", "targets:", "root"]);
     assert!(!out.contains("runner:vitest"));
     assert!(!out.contains("command:"));
     assert!(marker.exists(), "vitest stub should be invoked");
@@ -324,14 +272,7 @@ fn run_manifest_task_builtin_test_json_suppresses_child_process_output() {
     perms.set_mode(0o755);
     fs::set_permissions(&vitest, perms).expect("chmod");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--json".to_owned(), "--run".to_owned()],
-        },
-        root,
-    )
-    .expect("run builtin test --json");
+    let out = run_builtin_ok(root, "test", &["--json", "--run"]);
 
     assert!(
         !out.contains("noisy-stdout"),
@@ -341,7 +282,7 @@ fn run_manifest_task_builtin_test_json_suppresses_child_process_output() {
         !out.contains("noisy-stderr"),
         "child stderr leaked into json output"
     );
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    let parsed = parse_json_output(&out);
     assert_eq!(parsed["schema"], "effigy.test.results.v1");
 }
 
@@ -386,18 +327,8 @@ fn run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo() {
     vitest_perms.set_mode(0o755);
     fs::set_permissions(&vitest, vitest_perms).expect("chmod");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect("run builtin multi-context test");
-
-    assert!(out.contains("Test Results"));
-    assert!(out.contains("root/vitest"));
-    assert!(out.contains("root/cargo-"));
+    let out = run_builtin_ok(root.clone(), "test", &[]);
+    assert_contains_all(&out, &["Test Results", "root/vitest", "root/cargo-"]);
     assert!(vitest_marker.exists(), "vitest suite should run");
 }
 
@@ -419,27 +350,19 @@ fn run_manifest_task_builtin_test_with_named_args_errors_when_multi_suite_is_amb
     )
     .expect("write cargo toml");
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["user-service".to_owned()],
-        },
-        root,
-    )
-    .expect_err("expected ambiguity error");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("ambiguous"));
-            assert!(message.contains("vitest"));
-            assert!(message.contains("cargo-"));
-            assert!(message.contains("Try one of:"));
-            assert!(message.contains("Use `effigy test --plan <args>`"));
-            assert!(message.contains("effigy test vitest user-service"));
-            assert!(message.contains("effigy test cargo-"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "test", &["user-service"]);
+    assert_task_invocation_error_contains(
+        err,
+        &[
+            "ambiguous",
+            "vitest",
+            "cargo-",
+            "Try one of:",
+            "Use `effigy test --plan <args>`",
+            "effigy test vitest user-service",
+            "effigy test cargo-",
+        ],
+    );
 }
 
 #[test]
@@ -460,20 +383,17 @@ fn run_manifest_task_builtin_test_plan_with_named_args_in_multi_suite_returns_re
     )
     .expect("write cargo toml");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--plan".to_owned(), "user-service".to_owned()],
-        },
-        root,
-    )
-    .expect("plan should return recovery output");
-
-    assert!(out.contains("Test Plan"));
-    assert!(out.contains("runtime: plan-recovery"));
-    assert!(out.contains("available-suites:"));
-    assert!(out.contains("ambiguous"));
-    assert!(out.contains("Try one of:"));
+    let out = run_builtin_ok(root, "test", &["--plan", "user-service"]);
+    assert_contains_all(
+        &out,
+        &[
+            "Test Plan",
+            "runtime: plan-recovery",
+            "available-suites:",
+            "ambiguous",
+            "Try one of:",
+        ],
+    );
 }
 
 #[test]
@@ -494,20 +414,8 @@ fn run_manifest_task_builtin_test_plan_json_recovery_has_versioned_schema() {
     )
     .expect("write cargo toml");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec![
-                "--plan".to_owned(),
-                "--json".to_owned(),
-                "user-service".to_owned(),
-            ],
-        },
-        root,
-    )
-    .expect("plan recovery should return json");
-
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    let out = run_builtin_ok(root, "test", &["--plan", "--json", "user-service"]);
+    let parsed = parse_json_output(&out);
     assert_eq!(parsed["schema"], "effigy.test.plan.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert_eq!(parsed["runtime"], "plan-recovery");
