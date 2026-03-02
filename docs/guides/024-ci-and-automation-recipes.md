@@ -27,6 +27,7 @@ Before debugging CI, run locally:
 cargo qa
 cargo qa-release
 ./scripts/check-release-install-from-tag.sh --tag v0.__.__
+./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 ./scripts/check-json-contracts-ci.sh
 ./scripts/check-json-contracts.sh --fast --print-selected=json
 ./scripts/check-json-contracts.sh --full --print-selected=text
