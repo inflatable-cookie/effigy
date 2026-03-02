@@ -59,29 +59,20 @@ impl std::fmt::Display for RunnerError {
                 code,
                 stdout,
                 stderr,
-            } => {
-                if stdout.is_empty() && stderr.is_empty() {
-                    write!(f, "task command failed `{command}` (code={:?})", code)
-                } else {
-                    write!(
-                        f,
-                        "task command failed `{command}` (code={:?})\nstdout:\n{}\nstderr:\n{}",
-                        code, stdout, stderr
-                    )
-                }
-            }
+            } => write_task_command_failure(f, command, code, stdout, stderr),
             RunnerError::TaskLockConflict {
                 scope,
                 lock_path,
                 holder_pid,
                 holder_started_at_epoch_ms,
                 remediation,
-            } => write!(
+            } => write_lock_conflict(
                 f,
-                "lock conflict for `{scope}` (holder_pid={}, started_at_epoch_ms={}, lock={}); {remediation}",
-                render_optional(holder_pid),
-                render_optional(holder_started_at_epoch_ms),
-                lock_path.display()
+                scope,
+                lock_path,
+                holder_pid,
+                holder_started_at_epoch_ms,
+                remediation,
             ),
             RunnerError::TaskLockIo { path, error } => {
                 write!(f, "lock I/O failed at {}: {error}", path.display())
@@ -144,32 +135,15 @@ impl std::fmt::Display for RunnerError {
                 task,
                 profile,
                 processes,
-            } => write!(
-                f,
-                "managed task `{task}` profile `{profile}` had non-zero exits: {}",
-                processes
-                    .iter()
-                    .map(|(name, diagnostic)| format!("{name} ({diagnostic})"))
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            ),
+            } => write_managed_non_zero_exit(f, task, profile, processes),
             RunnerError::TaskMissingRunCommand { task, path } => write!(
                 f,
                 "task `{task}` in {} is missing `run` command (required for non-managed tasks)",
                 path.display()
             ),
-            RunnerError::BuiltinTestNonZero { failures, .. } => write!(
-                f,
-                "one or more built-in test targets failed: {}",
-                failures
-                    .iter()
-                    .map(|(target, code)| match code {
-                        Some(value) => format!("{target}: exit={value}"),
-                        None => format!("{target}: terminated"),
-                    })
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            ),
+            RunnerError::BuiltinTestNonZero { failures, .. } => {
+                write_builtin_test_non_zero(f, failures)
+            }
             RunnerError::DoctorNonZero { error_count, .. } => {
                 write!(f, "doctor found {error_count} error finding(s)")
             }
@@ -187,15 +161,9 @@ impl std::error::Error for RunnerError {}
 impl RunnerError {
     pub fn rendered_output(&self) -> Option<&str> {
         match self {
-            RunnerError::BuiltinTestNonZero { rendered, .. } if !rendered.trim().is_empty() => {
-                Some(rendered.as_str())
-            }
-            RunnerError::DoctorNonZero { rendered, .. } if !rendered.trim().is_empty() => {
-                Some(rendered.as_str())
-            }
-            RunnerError::CommandJsonFailure { rendered } if !rendered.trim().is_empty() => {
-                Some(rendered.as_str())
-            }
+            RunnerError::BuiltinTestNonZero { rendered, .. } => non_empty_rendered(rendered),
+            RunnerError::DoctorNonZero { rendered, .. } => non_empty_rendered(rendered),
+            RunnerError::CommandJsonFailure { rendered } => non_empty_rendered(rendered),
             _ => None,
         }
     }
@@ -230,4 +198,74 @@ fn render_optional<T: std::fmt::Display>(value: &Option<T>) -> String {
         .as_ref()
         .map(ToString::to_string)
         .unwrap_or_else(|| "<unknown>".to_owned())
+}
+
+fn non_empty_rendered(rendered: &str) -> Option<&str> {
+    (!rendered.trim().is_empty()).then_some(rendered)
+}
+
+fn write_task_command_failure(
+    f: &mut std::fmt::Formatter<'_>,
+    command: &str,
+    code: &Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> std::fmt::Result {
+    if stdout.is_empty() && stderr.is_empty() {
+        return write!(f, "task command failed `{command}` (code={:?})", code);
+    }
+    write!(
+        f,
+        "task command failed `{command}` (code={:?})\nstdout:\n{}\nstderr:\n{}",
+        code, stdout, stderr
+    )
+}
+
+fn write_lock_conflict(
+    f: &mut std::fmt::Formatter<'_>,
+    scope: &str,
+    lock_path: &std::path::Path,
+    holder_pid: &Option<u32>,
+    holder_started_at_epoch_ms: &Option<u128>,
+    remediation: &str,
+) -> std::fmt::Result {
+    write!(
+        f,
+        "lock conflict for `{scope}` (holder_pid={}, started_at_epoch_ms={}, lock={}); {remediation}",
+        render_optional(holder_pid),
+        render_optional(holder_started_at_epoch_ms),
+        lock_path.display()
+    )
+}
+
+fn write_managed_non_zero_exit(
+    f: &mut std::fmt::Formatter<'_>,
+    task: &str,
+    profile: &str,
+    processes: &[(String, String)],
+) -> std::fmt::Result {
+    let rendered = processes
+        .iter()
+        .map(|(name, diagnostic)| format!("{name} ({diagnostic})"))
+        .collect::<Vec<String>>()
+        .join(", ");
+    write!(
+        f,
+        "managed task `{task}` profile `{profile}` had non-zero exits: {rendered}"
+    )
+}
+
+fn write_builtin_test_non_zero(
+    f: &mut std::fmt::Formatter<'_>,
+    failures: &[(String, Option<i32>)],
+) -> std::fmt::Result {
+    let rendered = failures
+        .iter()
+        .map(|(target, code)| match code {
+            Some(value) => format!("{target}: exit={value}"),
+            None => format!("{target}: terminated"),
+        })
+        .collect::<Vec<String>>()
+        .join(", ");
+    write!(f, "one or more built-in test targets failed: {rendered}")
 }
