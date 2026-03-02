@@ -1,5 +1,24 @@
 use super::*;
 
+fn run_validate_ok(root: &PathBuf, args: &[&str]) -> String {
+    run_builtin_ok(root.clone(), "validate", args)
+}
+
+fn run_validate_err(root: &PathBuf, args: &[&str]) -> RunnerError {
+    run_builtin_err(root.clone(), "validate", args)
+}
+
+fn assert_task_command_failure(err: RunnerError, expected_code: Option<Option<i32>>) {
+    match err {
+        RunnerError::TaskCommandFailure { code, .. } => {
+            if let Some(expected) = expected_code {
+                assert_eq!(code, expected);
+            }
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
 #[test]
 fn run_manifest_task_run_array_supports_task_reference_steps() {
     let root = temp_workspace("run-array-task-refs");
@@ -13,7 +32,7 @@ run = [{ task = "lint" }, "printf validate-ok"]
 "#,
     );
 
-    let out = run_builtin_ok(root, "validate", &["--verbose-root"]);
+    let out = run_validate_ok(&root, &["--verbose-root"]);
     assert_contains_all(&out, &["printf lint-ok", "printf validate-ok"]);
 }
 
@@ -31,7 +50,7 @@ run = [
 "#,
     );
 
-    let out = run_builtin_ok(root, "validate", &["--verbose-root"]);
+    let out = run_validate_ok(&root, &["--verbose-root"]);
     assert_contains_all(
         &out,
         &["printf lint-ok", "printf build-ok", "printf validate-ok"],
@@ -51,7 +70,7 @@ run = [
 "#,
     );
 
-    let err = run_builtin_err(root, "validate", &[]);
+    let err = run_validate_err(&root, &[]);
     assert_task_invocation_error_contains(
         err,
         &["defines `depends_on` but is missing a non-empty `id`"],
@@ -70,7 +89,7 @@ run = [
 "#,
     );
 
-    let err = run_builtin_err(root, "validate", &[]);
+    let err = run_validate_err(&root, &[]);
     assert_task_invocation_error_contains(err, &["depends on missing step `lint`"]);
 }
 
@@ -87,7 +106,7 @@ run = [
 "#,
     );
 
-    let err = run_builtin_err(root, "validate", &[]);
+    let err = run_validate_err(&root, &[]);
     assert_task_invocation_error_contains(err, &["duplicate step id `lint`"]);
 }
 
@@ -104,7 +123,7 @@ run = [
 "#,
     );
 
-    let err = run_builtin_err(root, "validate", &[]);
+    let err = run_validate_err(&root, &[]);
 
     match err {
         RunnerError::TaskInvocation(message) => {
@@ -130,7 +149,7 @@ run = [
 "#,
     );
 
-    let err = run_builtin_err(root, "validate", &[]);
+    let err = run_validate_err(&root, &[]);
     assert_task_invocation_error_contains(err, &["cannot depend on itself"]);
 }
 
@@ -158,7 +177,7 @@ run = [
         ),
     );
 
-    let _ = run_builtin_ok(root.clone(), "validate", &[]);
+    let _ = run_validate_ok(&root, &[]);
 
     let body = fs::read_to_string(marker).expect("read marker");
     let lines: Vec<&str> = body.lines().collect();
@@ -206,7 +225,7 @@ run = [
     );
 
     let start = Instant::now();
-    let _ = run_builtin_ok(root.clone(), "validate", &[]);
+    let _ = run_validate_ok(&root, &[]);
     let elapsed = start.elapsed();
 
     let body = fs::read_to_string(marker).expect("read marker");
@@ -237,7 +256,7 @@ run = [
         ),
     );
 
-    let out = run_builtin_ok(root, "validate", &[]);
+    let out = run_validate_ok(&root, &[]);
     assert_eq!(out, "");
     let body = fs::read_to_string(out_file).expect("read retry output");
     assert_eq!(body, "ok");
@@ -255,14 +274,8 @@ run = [
 "#,
     );
 
-    let err = run_builtin_err(root, "validate", &[]);
-
-    match err {
-        RunnerError::TaskCommandFailure { code, .. } => {
-            assert_eq!(code, Some(124));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_validate_err(&root, &[]);
+    assert_task_command_failure(err, Some(Some(124)));
 }
 
 #[test]
@@ -285,12 +298,8 @@ run = [
         ),
     );
 
-    let err = run_builtin_err(root.clone(), "validate", &[]);
-
-    match err {
-        RunnerError::TaskCommandFailure { .. } => {}
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_validate_err(&root, &[]);
+    assert_task_command_failure(err, None);
     let body = fs::read_to_string(marker).expect("read marker");
     assert!(body.contains("good"));
 }
@@ -312,7 +321,7 @@ run = [{{ task = "capture hello-world" }}]
         ),
     );
 
-    let out = run_builtin_ok(root, "validate", &[]);
+    let out = run_validate_ok(&root, &[]);
 
     assert_eq!(out, "");
     let body = fs::read_to_string(&marker).expect("read marker");
@@ -336,7 +345,7 @@ run = [{{ task = 'capture alpha "two words"' }}]
         ),
     );
 
-    let out = run_builtin_ok(root, "validate", &[]);
+    let out = run_validate_ok(&root, &[]);
 
     assert_eq!(out, "");
     let body = fs::read_to_string(&marker).expect("read marker");
@@ -353,7 +362,7 @@ run = [{ task = 'test "unterminated' }]
 "#,
     );
 
-    let err = run_builtin_err(root, "validate", &[]);
+    let err = run_validate_err(&root, &[]);
     assert_task_invocation_error_contains(err, &["run step task ref", "unterminated quote"]);
 }
 
@@ -367,7 +376,7 @@ run = [{ task = "test vitest \\" }]
 "#,
     );
 
-    let err = run_builtin_err(root, "validate", &[]);
+    let err = run_validate_err(&root, &[]);
     assert_task_invocation_error_contains(err, &["run step task ref", "trailing escape"]);
 }
 
@@ -388,7 +397,7 @@ run = [{{ task = "test" }}, "printf validate-ok"]
         ),
     );
 
-    let out = run_builtin_ok(root.clone(), "validate", &["--verbose-root"]);
+    let out = run_validate_ok(&root, &["--verbose-root"]);
     assert_contains_all(&out, &["validate-ok"]);
     assert!(marker.exists(), "built-in test task ref should execute");
 }
@@ -410,7 +419,7 @@ run = [{{ task = "test vitest" }}, "printf validate-ok"]
         ),
     );
 
-    let out = run_builtin_ok(root.clone(), "validate", &["--verbose-root"]);
+    let out = run_validate_ok(&root, &["--verbose-root"]);
     assert_contains_all(&out, &["validate-ok"]);
     assert!(
         marker.exists(),
@@ -442,7 +451,7 @@ unit = "sh -lc 'printf called > \"{}\"'"
         ),
     );
 
-    let out = run_builtin_ok(root.clone(), "validate", &["--verbose-root"]);
+    let out = run_validate_ok(&root, &["--verbose-root"]);
     assert_contains_all(&out, &["validate-ok"]);
     assert!(
         marker.exists(),
