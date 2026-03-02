@@ -1,18 +1,54 @@
 use super::*;
 
+fn create_workspace_dir(root: &PathBuf, name: &str) -> PathBuf {
+    let dir = root.join(name);
+    fs::create_dir_all(&dir).expect("mkdir workspace dir");
+    dir
+}
+
+fn write_catalog_tasks(dir: &PathBuf, alias: &str, tasks: &[(&str, &str)]) {
+    let mut manifest = format!("[catalog]\nalias = \"{}\"\n", alias);
+    for (task, run) in tasks {
+        manifest.push_str(&format!("[tasks.{}]\nrun = \"{}\"\n", task, run));
+    }
+    write_manifest(&dir.join("effigy.toml"), &manifest);
+}
+
+fn write_managed_dev_manifest(root: &PathBuf, profile: &str) {
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[tasks.dev]
+mode = "tui"
+concurrent = [{{ run = "printf api" }}]
+
+[tasks.dev.profiles.{}]
+concurrent = [{{ run = "printf api" }}]
+"#,
+            profile
+        ),
+    );
+}
+
+fn json_task_column(parsed: &serde_json::Value, field: &str) -> Vec<String> {
+    parsed[field]
+        .as_array()
+        .expect("json row array")
+        .iter()
+        .filter_map(|row| row["task"].as_str())
+        .map(|task| task.to_owned())
+        .collect::<Vec<_>>()
+}
+
 #[test]
 fn run_tasks_lists_catalogs_and_tasks() {
     let root = temp_workspace("list-tasks");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir");
+    let farmyard = create_workspace_dir(&root, "farmyard");
     write_manifest(
         &root.join("effigy.toml"),
         "[tasks.dev]\nrun = \"printf root\"\n",
     );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[tasks.reset-db]\nrun = \"printf farmyard\"\n",
-    );
+    write_catalog_tasks(&farmyard, "farmyard", &[("reset-db", "printf farmyard")]);
 
     let out = run_tasks_from_repo(&root, None, None, false);
     assert_contains_all(&out, &["root", "farmyard", "reset-db"]);
@@ -75,16 +111,12 @@ reset-db = [{ task = "drop-db" }, { task = "migrate-db" }]
 #[test]
 fn run_tasks_with_task_filter_reports_only_matches() {
     let root = temp_workspace("task-filter");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir");
+    let farmyard = create_workspace_dir(&root, "farmyard");
     write_manifest(
         &root.join("effigy.toml"),
         "[tasks.dev]\nrun = \"printf root\"\n",
     );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[tasks.reset-db]\nrun = \"printf farmyard\"\n",
-    );
+    write_catalog_tasks(&farmyard, "farmyard", &[("reset-db", "printf farmyard")]);
 
     let out = run_tasks_from_repo(&root, Some("reset-db"), None, false);
     assert_contains_all(&out, &["Task Matches: reset-db", "farmyard", "reset-db"]);
@@ -127,16 +159,12 @@ fn run_tasks_without_catalogs_still_lists_builtin_tasks() {
 #[test]
 fn run_tasks_json_renders_machine_readable_payload() {
     let root = temp_workspace("tasks-json");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir");
+    let farmyard = create_workspace_dir(&root, "farmyard");
     write_manifest(
         &root.join("effigy.toml"),
         "[tasks.dev]\nrun = \"printf root\"\n",
     );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[tasks.reset-db]\nrun = \"printf farmyard\"\n",
-    );
+    write_catalog_tasks(&farmyard, "farmyard", &[("reset-db", "printf farmyard")]);
 
     let out = run_tasks_from_repo(&root, None, None, true);
 
@@ -164,16 +192,7 @@ fn run_tasks_json_filter_includes_builtin_matches_and_notes() {
 #[test]
 fn run_tasks_lists_managed_profiles_for_tui_tasks() {
     let root = temp_workspace("tasks-managed-profiles-list");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
-mode = "tui"
-concurrent = [{ run = "printf api" }]
-
-[tasks.dev.profiles.admin]
-concurrent = [{ run = "printf api" }]
-"#,
-    );
+    write_managed_dev_manifest(&root, "admin");
 
     let out = run_tasks_from_repo(&root, None, None, false);
     assert_contains_all(&out, &["Tasks", "dev admin", "<managed:tui profile:admin>"]);
@@ -183,16 +202,7 @@ concurrent = [{ run = "printf api" }]
 #[test]
 fn run_tasks_filter_lists_managed_profiles_for_matching_task() {
     let root = temp_workspace("tasks-managed-profiles-filter");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
-mode = "tui"
-concurrent = [{ run = "printf api" }]
-
-[tasks.dev.profiles.front]
-concurrent = [{ run = "printf api" }]
-"#,
-    );
+    write_managed_dev_manifest(&root, "front");
 
     let out = run_tasks_from_repo(&root, Some("dev"), None, false);
     assert_contains_all(&out, &["Task Matches: dev", "dev front"]);
@@ -202,64 +212,34 @@ concurrent = [{ run = "printf api" }]
 #[test]
 fn run_tasks_json_lists_managed_profiles_with_invocation_labels() {
     let root = temp_workspace("tasks-managed-profiles-json-list");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
-mode = "tui"
-concurrent = [{ run = "printf api" }]
-
-[tasks.dev.profiles.admin]
-concurrent = [{ run = "printf api" }]
-"#,
-    );
+    write_managed_dev_manifest(&root, "admin");
 
     let out = run_tasks_from_repo(&root, None, None, true);
 
     let parsed = parse_json_output(&out);
-    let tasks = parsed["managed_profiles"]
-        .as_array()
-        .expect("managed_profiles array")
-        .iter()
-        .filter_map(|row| row["task"].as_str())
-        .collect::<Vec<&str>>();
-    assert!(tasks.contains(&"dev admin"));
-    assert!(!tasks.contains(&"dev default"));
+    let tasks = json_task_column(&parsed, "managed_profiles");
+    assert!(tasks.contains(&"dev admin".to_owned()));
+    assert!(!tasks.contains(&"dev default".to_owned()));
 }
 
 #[test]
 fn run_tasks_json_filter_lists_managed_profiles_with_invocation_labels() {
     let root = temp_workspace("tasks-managed-profiles-json-filter");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
-mode = "tui"
-concurrent = [{ run = "printf api" }]
-
-[tasks.dev.profiles.front]
-concurrent = [{ run = "printf api" }]
-"#,
-    );
+    write_managed_dev_manifest(&root, "front");
 
     let out = run_tasks_from_repo(&root, Some("dev"), None, true);
 
     let parsed = parse_json_output(&out);
-    let tasks = parsed["managed_profile_matches"]
-        .as_array()
-        .expect("managed_profile_matches array")
-        .iter()
-        .filter_map(|row| row["task"].as_str())
-        .collect::<Vec<&str>>();
-    assert!(tasks.contains(&"dev front"));
-    assert!(!tasks.contains(&"dev default"));
+    let tasks = json_task_column(&parsed, "managed_profile_matches");
+    assert!(tasks.contains(&"dev front".to_owned()));
+    assert!(!tasks.contains(&"dev default".to_owned()));
 }
 
 #[test]
 fn run_manifest_task_prefixed_builtin_tasks_targets_catalog_root_only() {
     let root = temp_workspace("builtin-tasks-prefixed-catalog");
-    let farmyard = root.join("farmyard");
-    let dairy = root.join("dairy");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    let farmyard = create_workspace_dir(&root, "farmyard");
+    let dairy = create_workspace_dir(&root, "dairy");
 
     write_manifest(
         &root.join("effigy.toml"),
@@ -267,22 +247,8 @@ fn run_manifest_task_prefixed_builtin_tasks_targets_catalog_root_only() {
 run = "printf root"
 "#,
     );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        r#"[catalog]
-alias = "farmyard"
-[tasks.api]
-run = "printf farmyard-api"
-"#,
-    );
-    write_manifest(
-        &dairy.join("effigy.toml"),
-        r#"[catalog]
-alias = "dairy"
-[tasks.admin]
-run = "printf dairy-admin"
-"#,
-    );
+    write_catalog_tasks(&farmyard, "farmyard", &[("api", "printf farmyard-api")]);
+    write_catalog_tasks(&dairy, "dairy", &[("admin", "printf dairy-admin")]);
 
     let out = run_builtin_ok(root, "farmyard/tasks", &[]);
 
@@ -294,10 +260,8 @@ run = "printf dairy-admin"
 #[test]
 fn run_manifest_task_relative_prefixed_builtin_tasks_target_catalog_root_only() {
     let root = temp_workspace("builtin-tasks-relative-prefixed-catalog");
-    let dairy = root.join("dairy");
-    let froyo = root.join("froyo");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
-    fs::create_dir_all(&froyo).expect("mkdir froyo");
+    let dairy = create_workspace_dir(&root, "dairy");
+    let froyo = create_workspace_dir(&root, "froyo");
 
     write_manifest(
         &root.join("effigy.toml"),
@@ -305,14 +269,7 @@ fn run_manifest_task_relative_prefixed_builtin_tasks_target_catalog_root_only() 
 run = "printf root"
 "#,
     );
-    write_manifest(
-        &froyo.join("effigy.toml"),
-        r#"[catalog]
-alias = "froyo"
-[tasks.validate]
-run = "printf froyo-validate"
-"#,
-    );
+    write_catalog_tasks(&froyo, "froyo", &[("validate", "printf froyo-validate")]);
 
     let out = run_builtin_ok(dairy, "../froyo/tasks", &[]);
 
