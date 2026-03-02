@@ -40,20 +40,7 @@ pub(super) fn run_builtin_migrate(
     let parsed = parse_migrate_args(task, args)?;
 
     if parsed.help {
-        let mut renderer = standard_renderer(parsed.output_json);
-        render_help(&mut renderer, HelpTopic::Migrate)?;
-        let rendered = render_utf8(renderer.into_inner())?;
-        if parsed.output_json {
-            let payload = json!({
-                "schema": "effigy.help.v1",
-                "schema_version": 1,
-                "ok": true,
-                "topic": "migrate",
-                "text": rendered,
-            });
-            return encode_pretty_json_optional(&payload);
-        }
-        return Ok(Some(rendered));
+        return render_migrate_help(parsed.output_json);
     }
 
     let package = resolve_package_path(target_root, parsed.package_path);
@@ -64,12 +51,7 @@ pub(super) fn run_builtin_migrate(
         )));
     }
 
-    let selected = load_package_scripts(&package)?
-        .into_iter()
-        .filter(|entry| {
-            parsed.script_filter.is_empty() || parsed.script_filter.contains(&entry.name)
-        })
-        .collect::<Vec<MigrateScript>>();
+    let selected = select_scripts(load_package_scripts(&package)?, &parsed.script_filter);
 
     let manifest_path = target_root.join(TASK_MANIFEST_FILE);
     let (mut manifest_doc, existing_tasks) = load_manifest_and_existing_tasks(&manifest_path)?;
@@ -88,6 +70,23 @@ pub(super) fn run_builtin_migrate(
         return render_migrate_json(&plan);
     }
     Ok(Some(render_migrate_text(&plan)))
+}
+
+fn render_migrate_help(output_json: bool) -> Result<Option<String>, RunnerError> {
+    let mut renderer = standard_renderer(output_json);
+    render_help(&mut renderer, HelpTopic::Migrate)?;
+    let rendered = render_utf8(renderer.into_inner())?;
+    if output_json {
+        let payload = json!({
+            "schema": "effigy.help.v1",
+            "schema_version": 1,
+            "ok": true,
+            "topic": "migrate",
+            "text": rendered,
+        });
+        return encode_pretty_json_optional(&payload);
+    }
+    Ok(Some(rendered))
 }
 
 fn parse_migrate_args(task: &TaskInvocation, args: &[String]) -> Result<MigrateArgs, RunnerError> {
@@ -155,6 +154,16 @@ fn resolve_package_path(target_root: &Path, package_path: Option<PathBuf>) -> Pa
     }
 }
 
+fn select_scripts(
+    scripts: Vec<MigrateScript>,
+    script_filter: &BTreeSet<String>,
+) -> Vec<MigrateScript> {
+    scripts
+        .into_iter()
+        .filter(|script| script_filter.is_empty() || script_filter.contains(&script.name))
+        .collect::<Vec<MigrateScript>>()
+}
+
 fn partition_scripts(
     selected: Vec<MigrateScript>,
     existing_tasks: &BTreeSet<String>,
@@ -210,66 +219,45 @@ fn render_migrate_json(plan: &MigratePlan) -> Result<Option<String>, RunnerError
         "manifest": plan.manifest_path.display().to_string(),
         "apply": plan.apply,
         "written": plan.written,
-        "added": plan.added.iter().map(|s| json!({"name": s.name, "run": s.command})).collect::<Vec<_>>(),
-        "conflicts": plan.conflicts.iter().map(|s| json!({"name": s.name, "run": s.command, "reason": "task already exists"})).collect::<Vec<_>>(),
+        "added": plan
+            .added
+            .iter()
+            .map(|script| script_entry_json(script, None))
+            .collect::<Vec<_>>(),
+        "conflicts": plan
+            .conflicts
+            .iter()
+            .map(|script| script_entry_json(script, Some("task already exists")))
+            .collect::<Vec<_>>(),
     });
     encode_pretty_json_optional(&payload)
 }
 
+fn script_entry_json(script: &MigrateScript, reason: Option<&str>) -> serde_json::Value {
+    match reason {
+        Some(reason) => json!({
+            "name": script.name,
+            "run": script.command,
+            "reason": reason,
+        }),
+        None => json!({
+            "name": script.name,
+            "run": script.command,
+        }),
+    }
+}
+
 fn render_migrate_text(plan: &MigratePlan) -> String {
     let mut lines = Vec::<String>::new();
-    lines.push("Migrate Preview".to_owned());
-    lines.push("──────────────".to_owned());
-    lines.push(format!("source: {}", plan.package_path.display()));
-    lines.push(format!("manifest: {}", plan.manifest_path.display()));
-    lines.push(format!(
-        "mode: {}",
-        if plan.apply { "apply" } else { "preview" }
-    ));
-    lines.push(format!(
-        "candidate scripts: {}",
-        plan.added.len() + plan.conflicts.len()
-    ));
-    lines.push(format!("ready to add: {}", plan.added.len()));
-    lines.push(format!("conflicts: {}", plan.conflicts.len()));
-    lines.push(String::new());
-
-    if !plan.added.is_empty() {
-        lines.push("Planned Task Imports".to_owned());
-        for script in &plan.added {
-            lines.push(format!("+ tasks.{} = {:?}", script.name, script.command));
-        }
-        lines.push(String::new());
-    }
-
-    if !plan.conflicts.is_empty() {
-        lines.push("Manual Remediation".to_owned());
-        for script in &plan.conflicts {
-            lines.push(format!(
-                "- skip `{}` (already defined in `[tasks]`): {}",
-                script.name, script.command
-            ));
-        }
-        lines.push(String::new());
-    }
-
-    if plan.apply {
-        if plan.written {
-            lines.push(format!("Applied: wrote {}.", plan.manifest_path.display()));
-        } else {
-            lines.push("No changes were written (all selected scripts already exist).".to_owned());
-        }
-    } else {
-        lines.push("No files were modified.".to_owned());
-        lines.push("Run `effigy migrate --apply` to write ready imports.".to_owned());
-    }
+    push_summary(&mut lines, plan);
+    push_added_section(&mut lines, &plan.added);
+    push_conflicts_section(&mut lines, &plan.conflicts);
+    push_outcome_section(&mut lines, plan);
     lines.join("\n")
 }
 
 fn load_package_scripts(path: &Path) -> Result<Vec<MigrateScript>, RunnerError> {
-    let raw = std::fs::read_to_string(path).map_err(|error| {
-        RunnerError::TaskInvocation(format!("failed to read {}: {error}", path.display()))
-    })?;
+    let raw = read_path(path)?;
     let parsed = serde_json::from_str::<serde_json::Value>(&raw).map_err(|error| {
         RunnerError::TaskInvocation(format!("failed to parse {}: {error}", path.display()))
     })?;
@@ -303,12 +291,7 @@ fn load_manifest_and_existing_tasks(
         return Ok((Value::Table(Default::default()), existing));
     }
 
-    let raw = std::fs::read_to_string(manifest_path).map_err(|error| {
-        RunnerError::TaskInvocation(format!(
-            "failed to read {}: {error}",
-            manifest_path.display()
-        ))
-    })?;
+    let raw = read_path(manifest_path)?;
     let parsed = toml::from_str::<Value>(&raw).map_err(|error| {
         RunnerError::TaskInvocation(format!(
             "failed to parse {}: {error}",
@@ -354,4 +337,66 @@ fn ensure_tasks_table<'a>(
             manifest_path.display()
         ))
     })
+}
+
+fn read_path(path: &Path) -> Result<String, RunnerError> {
+    std::fs::read_to_string(path).map_err(|error| {
+        RunnerError::TaskInvocation(format!("failed to read {}: {error}", path.display()))
+    })
+}
+
+fn push_summary(lines: &mut Vec<String>, plan: &MigratePlan) {
+    lines.push("Migrate Preview".to_owned());
+    lines.push("──────────────".to_owned());
+    lines.push(format!("source: {}", plan.package_path.display()));
+    lines.push(format!("manifest: {}", plan.manifest_path.display()));
+    lines.push(format!(
+        "mode: {}",
+        if plan.apply { "apply" } else { "preview" }
+    ));
+    lines.push(format!(
+        "candidate scripts: {}",
+        plan.added.len() + plan.conflicts.len()
+    ));
+    lines.push(format!("ready to add: {}", plan.added.len()));
+    lines.push(format!("conflicts: {}", plan.conflicts.len()));
+    lines.push(String::new());
+}
+
+fn push_added_section(lines: &mut Vec<String>, added: &[MigrateScript]) {
+    if added.is_empty() {
+        return;
+    }
+    lines.push("Planned Task Imports".to_owned());
+    for script in added {
+        lines.push(format!("+ tasks.{} = {:?}", script.name, script.command));
+    }
+    lines.push(String::new());
+}
+
+fn push_conflicts_section(lines: &mut Vec<String>, conflicts: &[MigrateScript]) {
+    if conflicts.is_empty() {
+        return;
+    }
+    lines.push("Manual Remediation".to_owned());
+    for script in conflicts {
+        lines.push(format!(
+            "- skip `{}` (already defined in `[tasks]`): {}",
+            script.name, script.command
+        ));
+    }
+    lines.push(String::new());
+}
+
+fn push_outcome_section(lines: &mut Vec<String>, plan: &MigratePlan) {
+    if plan.apply {
+        if plan.written {
+            lines.push(format!("Applied: wrote {}.", plan.manifest_path.display()));
+        } else {
+            lines.push("No changes were written (all selected scripts already exist).".to_owned());
+        }
+        return;
+    }
+    lines.push("No files were modified.".to_owned());
+    lines.push("Run `effigy migrate --apply` to write ready imports.".to_owned());
 }
