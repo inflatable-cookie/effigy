@@ -32,6 +32,8 @@ struct MigratePlan {
     written: bool,
 }
 
+const CONFLICT_REASON_TASK_EXISTS: &str = "task already exists";
+
 pub(super) fn run_builtin_migrate(
     task: &TaskInvocation,
     args: &[String],
@@ -43,7 +45,15 @@ pub(super) fn run_builtin_migrate(
         return render_migrate_help(parsed.output_json);
     }
 
-    let package = resolve_package_path(target_root, parsed.package_path);
+    let plan = build_migrate_plan(&parsed, target_root)?;
+    render_migrate_output(&plan, parsed.output_json)
+}
+
+fn build_migrate_plan(
+    parsed: &MigrateArgs,
+    target_root: &Path,
+) -> Result<MigratePlan, RunnerError> {
+    let package = resolve_package_path(target_root, parsed.package_path.clone());
     if !package.exists() {
         return Err(RunnerError::TaskInvocation(format!(
             "migration source not found: {}",
@@ -58,18 +68,24 @@ pub(super) fn run_builtin_migrate(
     let (added, conflicts) = partition_scripts(selected, &existing_tasks);
     let written =
         apply_migration_if_requested(parsed.apply, &added, &mut manifest_doc, &manifest_path)?;
-    let plan = MigratePlan {
+    Ok(MigratePlan {
         package_path: package,
         manifest_path,
         apply: parsed.apply,
         added,
         conflicts,
         written,
-    };
-    if parsed.output_json {
-        return render_migrate_json(&plan);
+    })
+}
+
+fn render_migrate_output(
+    plan: &MigratePlan,
+    output_json: bool,
+) -> Result<Option<String>, RunnerError> {
+    if output_json {
+        return render_migrate_json(plan);
     }
-    Ok(Some(render_migrate_text(&plan)))
+    Ok(Some(render_migrate_text(plan)))
 }
 
 fn render_migrate_help(output_json: bool) -> Result<Option<String>, RunnerError> {
@@ -227,7 +243,7 @@ fn render_migrate_json(plan: &MigratePlan) -> Result<Option<String>, RunnerError
         "conflicts": plan
             .conflicts
             .iter()
-            .map(|script| script_entry_json(script, Some("task already exists")))
+            .map(|script| script_entry_json(script, Some(CONFLICT_REASON_TASK_EXISTS)))
             .collect::<Vec<_>>(),
     });
     encode_pretty_json_optional(&payload)
@@ -257,10 +273,7 @@ fn render_migrate_text(plan: &MigratePlan) -> String {
 }
 
 fn load_package_scripts(path: &Path) -> Result<Vec<MigrateScript>, RunnerError> {
-    let raw = read_path(path)?;
-    let parsed = serde_json::from_str::<serde_json::Value>(&raw).map_err(|error| {
-        RunnerError::TaskInvocation(format!("failed to parse {}: {error}", path.display()))
-    })?;
+    let parsed = read_json_path(path)?;
     let Some(scripts) = parsed.get("scripts") else {
         return Ok(Vec::new());
     };
@@ -291,13 +304,7 @@ fn load_manifest_and_existing_tasks(
         return Ok((Value::Table(Default::default()), existing));
     }
 
-    let raw = read_path(manifest_path)?;
-    let parsed = toml::from_str::<Value>(&raw).map_err(|error| {
-        RunnerError::TaskInvocation(format!(
-            "failed to parse {}: {error}",
-            manifest_path.display()
-        ))
-    })?;
+    let parsed = read_toml_path(manifest_path)?;
     if let Some(tasks) = parsed.get("tasks") {
         let Some(task_table) = tasks.as_table() else {
             return Err(RunnerError::TaskInvocation(format!(
@@ -342,6 +349,20 @@ fn ensure_tasks_table<'a>(
 fn read_path(path: &Path) -> Result<String, RunnerError> {
     std::fs::read_to_string(path).map_err(|error| {
         RunnerError::TaskInvocation(format!("failed to read {}: {error}", path.display()))
+    })
+}
+
+fn read_json_path(path: &Path) -> Result<serde_json::Value, RunnerError> {
+    let raw = read_path(path)?;
+    serde_json::from_str::<serde_json::Value>(&raw).map_err(|error| {
+        RunnerError::TaskInvocation(format!("failed to parse {}: {error}", path.display()))
+    })
+}
+
+fn read_toml_path(path: &Path) -> Result<Value, RunnerError> {
+    let raw = read_path(path)?;
+    toml::from_str::<Value>(&raw).map_err(|error| {
+        RunnerError::TaskInvocation(format!("failed to parse {}: {error}", path.display()))
     })
 }
 
