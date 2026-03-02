@@ -58,6 +58,9 @@ Owner: `name/team`
 - [ ] Install validated from git tag:
   - [ ] `./scripts/check-release-install-from-tag.sh --tag v0.__.__`
 - [ ] Install validated from published crate.
+- [ ] First-publish artifact bundle captured:
+  - [ ] `./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__`
+  - [ ] `./scripts/validate-distribution-artifacts.sh --artifacts-dir ./artifacts/distribution-v0.__.__`
 
 ### Homebrew
 - [ ] Formula updated to new version.
@@ -78,6 +81,7 @@ Owner: `name/team`
 - [ ] Validate prefixed built-ins still route correctly.
 - [ ] Validate `test` summary output in compact mode.
 - [ ] Open dated checkpoint report in `docs/reports/`.
+  - [ ] `./scripts/generate-distribution-closeout-report.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
 
 ## 7) Sign-off
 
