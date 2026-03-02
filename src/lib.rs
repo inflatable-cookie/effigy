@@ -7,6 +7,10 @@ pub mod testing;
 pub mod tui;
 pub mod ui;
 
+pub use cli::output::{
+    command_kind_and_name, emit_json_envelope_error, emit_json_envelope_success,
+    emit_json_envelope_success_value, help_topic_label, parse_json_or_string,
+};
 pub use cli::parse::{
     apply_global_json_flag, command_requests_json, parse_command, strip_global_json_flag,
     strip_global_json_flags, CliParseError,
