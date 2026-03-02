@@ -72,24 +72,16 @@ pub(super) fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathB
         if !visited_dirs.insert(canonical_dir) {
             continue;
         }
-        let entries = fs::read_dir(&dir).map_err(|error| RunnerError::TaskCatalogReadDir {
-            path: dir.clone(),
-            error,
-        })?;
+        let entries =
+            fs::read_dir(&dir).map_err(|error| task_catalog_read_dir_error(&dir, error))?;
 
         for entry in entries {
-            let entry = entry.map_err(|error| RunnerError::TaskCatalogReadDir {
-                path: dir.clone(),
-                error,
-            })?;
+            let entry = entry.map_err(|error| task_catalog_read_dir_error(&dir, error))?;
 
             let path = entry.path();
             let file_type = entry
                 .file_type()
-                .map_err(|error| RunnerError::TaskCatalogReadDir {
-                    path: path.clone(),
-                    error,
-                })?;
+                .map_err(|error| task_catalog_read_dir_error(&path, error))?;
 
             if file_type_matches(&file_type, &path, EntryKind::Directory) {
                 if should_skip_dir(&path) {
@@ -99,12 +91,9 @@ pub(super) fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathB
                 continue;
             }
 
-            if file_type_matches(&file_type, &path, EntryKind::File)
-                && path.file_name().and_then(|n| n.to_str()) == Some(TASK_MANIFEST_FILE)
-            {
+            if is_task_manifest_file(&file_type, &path) {
                 let catalog_root = path.parent().map(Path::to_path_buf).unwrap_or_default();
                 manifests_by_catalog.insert(catalog_root, path);
-                continue;
             }
         }
     }
@@ -150,22 +139,8 @@ pub(super) fn select_catalog_and_task<'a>(
         });
     }
 
-    if let Some(selected) = select_in_scope_catalog(cwd, &matches, &selector.task_name)? {
-        return build_task_selection(
-            selector,
-            selected,
-            CatalogSelectionMode::CwdNearest,
-            vec![selection_evidence_for_cwd(selected, cwd)],
-        );
-    }
-
-    let selected = select_shallowest_catalog(&matches, &selector.task_name)?;
-    build_task_selection(
-        selector,
-        selected,
-        CatalogSelectionMode::RootShallowest,
-        vec![selection_evidence_for_shallowest(selected)],
-    )
+    let (selected, mode, evidence) = select_unprefixed_catalog(cwd, &matches, &selector.task_name)?;
+    build_task_selection(selector, selected, mode, vec![evidence])
 }
 
 fn load_catalog_manifest(manifest_path: &Path) -> Result<TaskManifest, RunnerError> {
@@ -204,6 +179,26 @@ fn selection_evidence_for_shallowest(catalog: &LoadedCatalog) -> String {
         "selected shallowest catalog `{}` by depth {} from workspace root",
         catalog.alias, catalog.depth
     )
+}
+
+fn select_unprefixed_catalog<'a>(
+    cwd: &Path,
+    matches: &[&'a LoadedCatalog],
+    task_name: &str,
+) -> Result<(&'a LoadedCatalog, CatalogSelectionMode, String), RunnerError> {
+    if let Some(selected) = select_in_scope_catalog(cwd, matches, task_name)? {
+        return Ok((
+            selected,
+            CatalogSelectionMode::CwdNearest,
+            selection_evidence_for_cwd(selected, cwd),
+        ));
+    }
+    let selected = select_shallowest_catalog(matches, task_name)?;
+    Ok((
+        selected,
+        CatalogSelectionMode::RootShallowest,
+        selection_evidence_for_shallowest(selected),
+    ))
 }
 
 fn sorted_catalog_aliases(catalogs: &[LoadedCatalog]) -> Vec<String> {
@@ -356,6 +351,13 @@ fn normalize_path(path: PathBuf) -> PathBuf {
     out
 }
 
+fn task_catalog_read_dir_error(path: &Path, error: std::io::Error) -> RunnerError {
+    RunnerError::TaskCatalogReadDir {
+        path: path.to_path_buf(),
+        error,
+    }
+}
+
 fn build_task_selection<'a>(
     selector: &TaskSelector,
     catalog: &'a LoadedCatalog,
@@ -398,4 +400,9 @@ fn file_type_matches(file_type: &FileType, path: &Path, want: EntryKind) -> bool
             EntryKind::File => meta.is_file(),
         })
         .unwrap_or(false)
+}
+
+fn is_task_manifest_file(file_type: &FileType, path: &Path) -> bool {
+    file_type_matches(file_type, path, EntryKind::File)
+        && path.file_name().and_then(|n| n.to_str()) == Some(TASK_MANIFEST_FILE)
 }
