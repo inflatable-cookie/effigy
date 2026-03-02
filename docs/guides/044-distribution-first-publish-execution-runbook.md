@@ -28,6 +28,7 @@ Optional one-command execution helper:
 
 ```bash
 ./scripts/check-distribution-first-publish.sh --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
+./scripts/generate-distribution-closeout-report.sh --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
 ```
 
 ## 3) Command Matrix
@@ -83,6 +84,7 @@ effigy --json help
 - one dated checkpoint report in `docs/reports/`
 
 When using the helper script, attach per-step logs from `--artifacts-dir` directly in the checkpoint report.
+The closeout report can be generated from those logs using `generate-distribution-closeout-report.sh`.
 
 ## 5) Acceptance Criteria Mapping
 
