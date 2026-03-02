@@ -68,6 +68,49 @@ fn write_catalog_tasks(dir: &PathBuf, alias: &str, tasks: &[(&str, &str)]) {
     write_manifest(&dir.join("effigy.toml"), &manifest);
 }
 
+fn write_managed_admin_profile_manifest(root: &PathBuf) {
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [
+  { name = "api", run = "cargo run -p api", start = 1, tab = 1 },
+  { name = "front", run = "vite dev", start = 2, tab = 2 },
+  { name = "admin", run = "vite dev --config admin", start = 3, tab = 3 }
+]
+
+[tasks.dev.profiles.admin]
+concurrent = [
+  { name = "api", run = "cargo run -p api", start = 1, tab = 1 },
+  { name = "admin", run = "vite dev --config admin", start = 2, tab = 2 }
+]
+"#,
+    );
+}
+
+fn write_managed_stream_builtin_test_manifest(
+    root: &PathBuf,
+    suite: &str,
+    test_task_ref: &str,
+    marker: &PathBuf,
+) {
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[test.suites]
+{} = "sh -lc 'printf called > \"{}\"'"
+
+[tasks.dev]
+mode = "tui"
+concurrent = [{{ name = "tests", task = "{}" }}]
+"#,
+            suite,
+            marker.display(),
+            test_task_ref
+        ),
+    );
+}
+
 fn assert_managed_process_invalid_definition(
     err: RunnerError,
     expected_task: &str,
@@ -182,23 +225,7 @@ fn run_manifest_task_managed_tui_uses_default_profile_when_not_specified() {
     let _guard = lock_test();
     let root = temp_workspace("managed-default-profile");
     let _env = managed_tui_env();
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
-mode = "tui"
-concurrent = [
-  { name = "api", run = "cargo run -p api", start = 1, tab = 1 },
-  { name = "front", run = "vite dev", start = 2, tab = 2 },
-  { name = "admin", run = "vite dev --config admin", start = 3, tab = 3 }
-]
-
-[tasks.dev.profiles.admin]
-concurrent = [
-  { name = "api", run = "cargo run -p api", start = 1, tab = 1 },
-  { name = "admin", run = "vite dev --config admin", start = 2, tab = 2 }
-]
-"#,
-    );
+    write_managed_admin_profile_manifest(&root);
 
     let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
     assert_contains_all(
@@ -219,23 +246,7 @@ fn run_manifest_task_managed_tui_accepts_named_profile_argument() {
     let _guard = lock_test();
     let root = temp_workspace("managed-named-profile");
     let _env = managed_tui_env();
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
-mode = "tui"
-concurrent = [
-  { name = "api", run = "cargo run -p api", start = 1, tab = 1 },
-  { name = "front", run = "vite dev", start = 2, tab = 2 },
-  { name = "admin", run = "vite dev --config admin", start = 3, tab = 3 }
-]
-
-[tasks.dev.profiles.admin]
-concurrent = [
-  { name = "api", run = "cargo run -p api", start = 1, tab = 1 },
-  { name = "admin", run = "vite dev --config admin", start = 2, tab = 2 }
-]
-"#,
-    );
+    write_managed_admin_profile_manifest(&root);
 
     let out = run_dev(&root, &["admin"]).expect("managed plan should render");
     assert_contains_all(&out, &["profile: admin", "api", "admin"]);
@@ -817,19 +828,7 @@ fn run_manifest_task_managed_stream_process_task_ref_supports_builtin_test() {
     let _guard = lock_test();
     let root = temp_workspace("managed-stream-builtin-test-task-ref");
     let marker = root.join("builtin-test-called.log");
-    write_manifest(
-        &root.join("effigy.toml"),
-        &format!(
-            r#"[test.suites]
-unit = "sh -lc 'printf called > \"{}\"'"
-
-[tasks.dev]
-mode = "tui"
-concurrent = [{{ name = "tests", task = "test" }}]
-"#,
-            marker.display()
-        ),
-    );
+    write_managed_stream_builtin_test_manifest(&root, "unit", "test", &marker);
     let _env = managed_stream_env();
 
     let out = run_dev(&root, &["default"]).expect("run managed stream with builtin test task ref");
@@ -842,19 +841,7 @@ fn run_manifest_task_managed_stream_process_task_ref_supports_builtin_test_with_
     let _guard = lock_test();
     let root = temp_workspace("managed-stream-builtin-test-task-ref-inline-suite");
     let marker = root.join("builtin-test-called.log");
-    write_manifest(
-        &root.join("effigy.toml"),
-        &format!(
-            r#"[test.suites]
-vitest = "sh -lc 'printf called > \"{}\"'"
-
-[tasks.dev]
-mode = "tui"
-concurrent = [{{ name = "tests", task = "test vitest" }}]
-"#,
-            marker.display()
-        ),
-    );
+    write_managed_stream_builtin_test_manifest(&root, "vitest", "test vitest", &marker);
     let _env = managed_stream_env();
 
     let out = run_dev(&root, &["default"])
@@ -871,19 +858,7 @@ fn run_manifest_task_managed_stream_profile_entry_supports_builtin_test() {
     let _guard = lock_test();
     let root = temp_workspace("managed-stream-builtin-test-profile-entry");
     let marker = root.join("builtin-test-called.log");
-    write_manifest(
-        &root.join("effigy.toml"),
-        &format!(
-            r#"[test.suites]
-unit = "sh -lc 'printf called > \"{}\"'"
-
-[tasks.dev]
-mode = "tui"
-concurrent = [{{ name = "tests", task = "test" }}]
-"#,
-            marker.display()
-        ),
-    );
+    write_managed_stream_builtin_test_manifest(&root, "unit", "test", &marker);
     let _env = managed_stream_env();
 
     let out = run_dev(&root, &["default"]).expect("run managed stream with builtin profile entry");
