@@ -456,17 +456,8 @@ fn run_manifest_task_builtin_test_supports_positional_suite_selector() {
     vitest_perms.set_mode(0o755);
     fs::set_permissions(&vitest, vitest_perms).expect("chmod");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["vitest".to_owned(), "user-service".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("run builtin suite-selected test");
-
-    assert!(out.contains("Test Results"));
-    assert!(out.contains("root/vitest"));
+    let out = run_builtin_ok(root.clone(), "test", &["vitest", "user-service"]);
+    assert_contains_all(&out, &["Test Results", "root/vitest"]);
     assert!(!out.contains("root/cargo-"));
     assert!(vitest_marker.exists(), "vitest suite should run");
 }
@@ -489,23 +480,16 @@ fn run_manifest_task_builtin_test_plan_mistyped_suite_returns_recovery_output() 
     )
     .expect("write cargo toml");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec![
-                "--plan".to_owned(),
-                "viteest".to_owned(),
-                "user-service".to_owned(),
-            ],
-        },
-        root,
-    )
-    .expect("plan should return typo recovery output");
-
-    assert!(out.contains("Test Plan"));
-    assert!(out.contains("runtime: plan-recovery"));
-    assert!(out.contains("Did you mean `vitest`?"));
-    assert!(out.contains("Try: effigy test vitest user-service"));
+    let out = run_builtin_ok(root, "test", &["--plan", "viteest", "user-service"]);
+    assert_contains_all(
+        &out,
+        &[
+            "Test Plan",
+            "runtime: plan-recovery",
+            "Did you mean `vitest`?",
+            "Try: effigy test vitest user-service",
+        ],
+    );
 }
 
 #[test]
@@ -521,26 +505,18 @@ fn run_manifest_task_builtin_test_errors_for_unavailable_positional_suite_select
     )
     .expect("write package");
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["nextest".to_owned()],
-        },
-        root,
-    )
-    .expect_err("suite should be unavailable");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("not available"));
-            assert!(message.contains("nextest"));
-            assert!(message.contains("vitest"));
-            assert!(message.contains("Try one of:"));
-            assert!(message.contains("Use `effigy test --plan <args>`"));
-            assert!(message.contains("effigy test vitest"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "test", &["nextest"]);
+    assert_task_invocation_error_contains(
+        err,
+        &[
+            "not available",
+            "nextest",
+            "vitest",
+            "Try one of:",
+            "Use `effigy test --plan <args>`",
+            "effigy test vitest",
+        ],
+    );
 }
 
 #[test]
@@ -561,24 +537,16 @@ fn run_manifest_task_builtin_test_mistyped_suite_suggests_nearest_runner() {
     )
     .expect("write cargo toml");
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["viteest".to_owned(), "user-service".to_owned()],
-        },
-        root,
-    )
-    .expect_err("expected mistyped suite error");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("runner `viteest` is not available"));
-            assert!(message.contains("Did you mean `vitest`?"));
-            assert!(message.contains("Try: effigy test vitest user-service"));
-            assert!(message.contains("Use `effigy test --plan <args>`"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "test", &["viteest", "user-service"]);
+    assert_task_invocation_error_contains(
+        err,
+        &[
+            "runner `viteest` is not available",
+            "Did you mean `vitest`?",
+            "Try: effigy test vitest user-service",
+            "Use `effigy test --plan <args>`",
+        ],
+    );
 }
 
 #[test]
@@ -594,14 +562,7 @@ fn run_manifest_task_explicit_test_task_overrides_builtin_auto_detection() {
     )
     .expect("write package");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect("run explicit test task");
+    let out = run_builtin_ok(root.clone(), "test", &[]);
 
     assert_eq!(out, "");
     assert!(
@@ -619,14 +580,7 @@ fn run_manifest_task_builtin_test_falls_through_to_deferral_when_no_detection_ma
         "[defer]\nrun = \"test {request} = 'test' && test {args} = '--watch'\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--watch".to_owned()],
-        },
-        root,
-    )
-    .expect("builtin test should defer when detection is unavailable");
+    let out = run_builtin_ok(root, "test", &["--watch"]);
 
     assert_eq!(out, "");
 }
@@ -695,19 +649,8 @@ fn run_manifest_task_builtin_test_fans_out_across_catalog_roots() {
     dairy_perms.set_mode(0o755);
     fs::set_permissions(&dairy_vitest, dairy_perms).expect("chmod");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("builtin test fanout");
-
-    assert!(out.contains("Test Results"));
-    assert!(out.contains("targets:"));
-    assert!(out.contains("dairy"));
-    assert!(out.contains("farmyard"));
+    let out = run_builtin_ok(root, "test", &[]);
+    assert_contains_all(&out, &["Test Results", "targets:", "dairy", "farmyard"]);
     assert!(!out.contains("runner:vitest"));
     assert!(!out.contains("command:"));
     assert!(farmyard_marker.exists(), "farmyard vitest should run");
@@ -778,17 +721,8 @@ fn run_manifest_task_prefixed_builtin_test_targets_catalog_root_only() {
     dairy_perms.set_mode(0o755);
     fs::set_permissions(&dairy_vitest, dairy_perms).expect("chmod");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "farmyard/test".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("prefixed builtin test");
-
-    assert!(out.contains("Test Results"));
-    assert!(out.contains("farmyard"));
+    let out = run_builtin_ok(root, "farmyard/test", &[]);
+    assert_contains_all(&out, &["Test Results", "farmyard"]);
     assert!(!out.contains("dairy"));
     assert!(farmyard_marker.exists(), "farmyard vitest should run");
     assert!(!dairy_marker.exists(), "dairy vitest should not run");
@@ -842,23 +776,15 @@ fn run_manifest_task_builtin_test_failure_keeps_rendered_results_summary() {
     dairy_perms.set_mode(0o755);
     fs::set_permissions(&dairy_vitest, dairy_perms).expect("chmod");
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("builtin test fanout should fail");
+    let err = run_builtin_err(root, "test", &[]);
 
     match err {
         RunnerError::BuiltinTestNonZero { failures, rendered } => {
             assert_eq!(failures, vec![("farmyard".to_owned(), Some(1))]);
-            assert!(rendered.contains("Test Results"));
-            assert!(rendered.contains("dairy"));
-            assert!(rendered.contains("ok"));
-            assert!(rendered.contains("farmyard"));
-            assert!(rendered.contains("exit=1"));
+            assert_contains_all(
+                &rendered,
+                &["Test Results", "dairy", "ok", "farmyard", "exit=1"],
+            );
             assert!(!rendered.contains("runner:vitest"));
             assert!(!rendered.contains("command:"));
         }
@@ -882,21 +808,19 @@ fn run_manifest_task_builtin_test_failure_with_suite_filter_shows_no_match_hint(
     perms.set_mode(0o755);
     fs::set_permissions(&vitest, perms).expect("chmod");
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["vitest".to_owned(), "user-service".to_owned()],
-        },
-        root,
-    )
-    .expect_err("filtered suite run should fail");
+    let err = run_builtin_err(root, "test", &["vitest", "user-service"]);
 
     match err {
         RunnerError::BuiltinTestNonZero { rendered, .. } => {
-            assert!(rendered.contains("Hint"));
-            assert!(rendered.contains("often means no tests matched"));
-            assert!(rendered.contains("vitest run 'user-service'"));
-            assert!(rendered.contains("Try again without the filter"));
+            assert_contains_all(
+                &rendered,
+                &[
+                    "Hint",
+                    "often means no tests matched",
+                    "vitest run 'user-service'",
+                    "Try again without the filter",
+                ],
+            );
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -918,19 +842,16 @@ fn run_manifest_task_builtin_test_verbose_results_include_runner_root_and_comman
     perms.set_mode(0o755);
     fs::set_permissions(&vitest, perms).expect("chmod");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--verbose-results".to_owned(), "--run".to_owned()],
-        },
-        root,
-    )
-    .expect("run builtin test");
-
-    assert!(out.contains("Test Results"));
-    assert!(out.contains("runner:vitest"));
-    assert!(out.contains("root:"));
-    assert!(out.contains("command:vitest run '--run'"));
+    let out = run_builtin_ok(root, "test", &["--verbose-results", "--run"]);
+    assert_contains_all(
+        &out,
+        &[
+            "Test Results",
+            "runner:vitest",
+            "root:",
+            "command:vitest run '--run'",
+        ],
+    );
 }
 
 #[test]
@@ -949,17 +870,8 @@ fn run_manifest_task_builtin_test_tui_flag_falls_back_to_text_when_non_interacti
     perms.set_mode(0o755);
     fs::set_permissions(&vitest, perms).expect("chmod");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--tui".to_owned()],
-        },
-        root,
-    )
-    .expect("run builtin test with tui flag");
-
-    assert!(out.contains("Test Results"));
-    assert!(out.contains("root"));
+    let out = run_builtin_ok(root, "test", &["--tui"]);
+    assert_contains_all(&out, &["Test Results", "root"]);
 }
 
 #[test]
@@ -981,17 +893,8 @@ js = "pnpm"
     )
     .expect("write package");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--plan".to_owned()],
-        },
-        root,
-    )
-    .expect("run test --plan");
-
-    assert!(out.contains("pnpm exec vitest run"));
-    assert!(out.contains("package_manager.js=pnpm"));
+    let out = run_builtin_ok(root, "test", &["--plan"]);
+    assert_contains_all(&out, &["pnpm exec vitest run", "package_manager.js=pnpm"]);
 }
 
 #[test]
@@ -1038,16 +941,8 @@ js = "bun"
         ),
     ]);
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["vitest".to_owned()],
-        },
-        root,
-    )
-    .expect("run builtin test");
-
-    assert!(out.contains("Test Results"));
+    let out = run_builtin_ok(root, "test", &["vitest"]);
+    assert_contains_all(&out, &["Test Results"]);
     let args = fs::read_to_string(args_log).expect("read bun args");
     assert_eq!(args, "x\nvitest\nrun\n");
 }
@@ -1071,17 +966,14 @@ vitest = "pnpm exec vitest run --config vitest.config.ts"
     )
     .expect("write package");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--plan".to_owned(), "vitest".to_owned()],
-        },
-        root,
-    )
-    .expect("run test --plan");
-
-    assert!(out.contains("pnpm exec vitest run --config vitest.config.ts"));
-    assert!(out.contains("test.runners.vitest command override applied"));
+    let out = run_builtin_ok(root, "test", &["--plan", "vitest"]);
+    assert_contains_all(
+        &out,
+        &[
+            "pnpm exec vitest run --config vitest.config.ts",
+            "test.runners.vitest command override applied",
+        ],
+    );
 }
 
 #[test]
@@ -1106,18 +998,15 @@ vitest = "npx vitest run --reporter=dot"
     )
     .expect("write package");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--plan".to_owned(), "vitest".to_owned()],
-        },
-        root,
-    )
-    .expect("run test --plan");
-
-    assert!(out.contains("npx vitest run --reporter=dot"));
-    assert!(out.contains("package_manager.js=bun"));
-    assert!(out.contains("test.runners.vitest command override applied"));
+    let out = run_builtin_ok(root, "test", &["--plan", "vitest"]);
+    assert_contains_all(
+        &out,
+        &[
+            "npx vitest run --reporter=dot",
+            "package_manager.js=bun",
+            "test.runners.vitest command override applied",
+        ],
+    );
 }
 
 #[test]
@@ -1125,22 +1014,17 @@ fn run_manifest_task_builtin_config_prints_reference() {
     let root = temp_workspace("builtin-config");
     write_manifest(&root.join("effigy.toml"), "");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "config".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("run config");
-
-    assert!(out.contains("effigy.toml Reference"));
-    assert!(out.contains("[test.runners]"));
-    assert!(out.contains("[tasks]"));
-    assert!(out.contains("task = \"test vitest \\\"user service\\\"\""));
-    assert!(out.contains(
-        "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]"
-    ));
+    let out = run_builtin_ok(root, "config", &[]);
+    assert_contains_all(
+        &out,
+        &[
+            "effigy.toml Reference",
+            "[test.runners]",
+            "[tasks]",
+            "task = \"test vitest \\\"user service\\\"\"",
+            "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
+        ],
+    );
 }
 
 #[test]
@@ -1156,15 +1040,6 @@ fn run_manifest_task_builtin_test_plan_has_blank_line_between_sections() {
     )
     .expect("write package");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "test".to_owned(),
-            args: vec!["--plan".to_owned()],
-        },
-        root,
-    )
-    .expect("run test --plan");
-
-    assert!(out.contains("\n\nTarget Summary\n"));
-    assert!(out.contains("\n\nTarget: root\n"));
+    let out = run_builtin_ok(root, "test", &["--plan"]);
+    assert_contains_all(&out, &["\n\nTarget Summary\n", "\n\nTarget: root\n"]);
 }
