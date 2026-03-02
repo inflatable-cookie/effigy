@@ -13,29 +13,57 @@ pub(super) fn check_health_task(
     findings: &mut Vec<DoctorFinding>,
     statuses: &mut HashMap<String, DoctorSeverity>,
 ) {
-    let health_catalogs = catalogs
-        .iter()
-        .filter(|catalog| catalog.manifest.tasks.contains_key("health"))
-        .map(|catalog| catalog.alias.clone())
-        .collect::<Vec<String>>();
+    let health_catalogs = catalogs_with_health_task(catalogs);
 
     if health_catalogs.is_empty() {
-        super::add_finding(
-            findings,
-            statuses,
-            DoctorFinding {
-                check_id: "health.task.discovery".to_owned(),
-                severity: DoctorSeverity::Warning,
-                evidence: "no `health` task found in discovered catalogs".to_owned(),
-                remediation:
-                    "Define `tasks.health` in a root or relevant catalog manifest for project-owned checks."
-                        .to_owned(),
-                fixable: true,
-            },
-        );
+        add_discovery_missing_finding(findings, statuses);
         return;
     }
 
+    add_discovery_found_finding(&health_catalogs, findings, statuses);
+
+    match run_health_task_json(resolved_root) {
+        Ok(output) => {
+            add_execute_success_finding(&output, findings, statuses);
+        }
+        Err(error) => {
+            add_execute_failure_finding(&error, findings, statuses);
+        }
+    }
+}
+
+fn catalogs_with_health_task(catalogs: &[LoadedCatalog]) -> Vec<String> {
+    catalogs
+        .iter()
+        .filter(|catalog| catalog.manifest.tasks.contains_key("health"))
+        .map(|catalog| catalog.alias.clone())
+        .collect::<Vec<String>>()
+}
+
+fn add_discovery_missing_finding(
+    findings: &mut Vec<DoctorFinding>,
+    statuses: &mut HashMap<String, DoctorSeverity>,
+) {
+    super::add_finding(
+        findings,
+        statuses,
+        DoctorFinding {
+            check_id: "health.task.discovery".to_owned(),
+            severity: DoctorSeverity::Warning,
+            evidence: "no `health` task found in discovered catalogs".to_owned(),
+            remediation:
+                "Define `tasks.health` in a root or relevant catalog manifest for project-owned checks."
+                    .to_owned(),
+            fixable: true,
+        },
+    );
+}
+
+fn add_discovery_found_finding(
+    health_catalogs: &[String],
+    findings: &mut Vec<DoctorFinding>,
+    statuses: &mut HashMap<String, DoctorSeverity>,
+) {
     super::add_finding(
         findings,
         statuses,
@@ -50,47 +78,57 @@ pub(super) fn check_health_task(
             fixable: false,
         },
     );
+}
 
+fn run_health_task_json(resolved_root: &Path) -> Result<String, RunnerError> {
     let invocation = TaskInvocation {
         name: "health".to_owned(),
         args: vec!["--json".to_owned()],
     };
-    match run_manifest_task_with_cwd(&invocation, resolved_root.to_path_buf()) {
-        Ok(output) => {
-            let output_note = summarize_health_task_json_success(&output);
-            super::add_finding(
-                findings,
-                statuses,
-                DoctorFinding {
-                    check_id: "health.task.execute".to_owned(),
-                    severity: DoctorSeverity::Info,
-                    evidence: output_note,
-                    remediation: "No action required.".to_owned(),
-                    fixable: false,
-                },
-            );
+    run_manifest_task_with_cwd(&invocation, resolved_root.to_path_buf())
+}
+
+fn add_execute_success_finding(
+    output: &str,
+    findings: &mut Vec<DoctorFinding>,
+    statuses: &mut HashMap<String, DoctorSeverity>,
+) {
+    super::add_finding(
+        findings,
+        statuses,
+        DoctorFinding {
+            check_id: "health.task.execute".to_owned(),
+            severity: DoctorSeverity::Info,
+            evidence: summarize_health_task_json_success(output),
+            remediation: "No action required.".to_owned(),
+            fixable: false,
+        },
+    );
+}
+
+fn add_execute_failure_finding(
+    error: &RunnerError,
+    findings: &mut Vec<DoctorFinding>,
+    statuses: &mut HashMap<String, DoctorSeverity>,
+) {
+    let failure_evidence = match error {
+        RunnerError::CommandJsonFailure { rendered } => {
+            summarize_health_task_json_failure(rendered)
         }
-        Err(error) => {
-            let failure_evidence = match &error {
-                RunnerError::CommandJsonFailure { rendered } => {
-                    summarize_health_task_json_failure(rendered)
-                }
-                _ => format!("health task execution failed: {error}"),
-            };
-            super::add_finding(
-                findings,
-                statuses,
-                DoctorFinding {
-                    check_id: "health.task.execute".to_owned(),
-                    severity: DoctorSeverity::Error,
-                    evidence: failure_evidence,
-                    remediation: "Fix `tasks.health` command failures and re-run `effigy doctor`."
-                        .to_owned(),
-                    fixable: false,
-                },
-            );
-        }
-    }
+        _ => format!("health task execution failed: {error}"),
+    };
+    super::add_finding(
+        findings,
+        statuses,
+        DoctorFinding {
+            check_id: "health.task.execute".to_owned(),
+            severity: DoctorSeverity::Error,
+            evidence: failure_evidence,
+            remediation: "Fix `tasks.health` command failures and re-run `effigy doctor`."
+                .to_owned(),
+            fixable: false,
+        },
+    );
 }
 
 fn summarize_output(output: &str) -> String {
