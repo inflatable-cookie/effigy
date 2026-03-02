@@ -672,6 +672,7 @@ fn builtin_completion_candidates_json_contract_reports_env_ttl_policy() {
     assert_eq!(first_parsed["cache_state"], "miss_initial");
     assert_eq!(first_parsed["effective_cache_ttl_ms"], 750);
     assert_eq!(first_parsed["cache_ttl_source"], "env");
+    assert!(first_parsed["cache_age_ms"].is_null());
     assert!(first_parsed["cache_ttl_ms"].is_null());
 
     let second = run_manifest_task_with_cwd(
@@ -717,6 +718,7 @@ fn builtin_completion_candidates_json_contract_reports_invalid_env_ttl_policy() 
     assert_eq!(parsed["cache_state"], "miss_initial");
     assert_eq!(parsed["effective_cache_ttl_ms"], 2000);
     assert_eq!(parsed["cache_ttl_source"], "env_invalid");
+    assert!(parsed["cache_age_ms"].is_null());
     assert!(parsed["cache_ttl_ms"].is_null());
 }
 

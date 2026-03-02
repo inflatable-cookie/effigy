@@ -305,6 +305,7 @@ Miss-path nullability check:
     set -euo pipefail
     effigy --json completion candidates --prefix farm > completion-candidates-miss.json
     jq -e '.result.cache_state != "hit"' completion-candidates-miss.json >/dev/null
+    jq -e '.result.cache_age_ms == null' completion-candidates-miss.json >/dev/null
     jq -e '.result.cache_ttl_ms == null' completion-candidates-miss.json >/dev/null
 ```
 
