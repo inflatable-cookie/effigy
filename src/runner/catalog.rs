@@ -126,18 +126,10 @@ pub(super) fn select_catalog_and_task<'a>(
     cwd: &Path,
 ) -> Result<TaskSelection<'a>, RunnerError> {
     if let Some(prefix) = &selector.prefix {
-        let mut available = catalogs
-            .iter()
-            .map(|c| c.alias.clone())
-            .collect::<Vec<String>>();
-        available.sort();
-
-        let selected_catalog = resolve_catalog_by_prefix(prefix, catalogs, cwd);
-
-        let Some(catalog) = selected_catalog else {
+        let Some(catalog) = resolve_catalog_by_prefix(prefix, catalogs, cwd) else {
             return Err(RunnerError::TaskCatalogPrefixNotFound {
                 prefix: prefix.clone(),
-                available,
+                available: sorted_catalog_aliases(catalogs),
             });
         };
 
@@ -157,10 +149,7 @@ pub(super) fn select_catalog_and_task<'a>(
         );
     }
 
-    let matches = catalogs
-        .iter()
-        .filter(|c| c.manifest.tasks.contains_key(&selector.task_name))
-        .collect::<Vec<&LoadedCatalog>>();
+    let matches = catalogs_matching_task(catalogs, &selector.task_name);
 
     if matches.is_empty() {
         return Err(RunnerError::TaskNotFoundAny {
@@ -169,25 +158,7 @@ pub(super) fn select_catalog_and_task<'a>(
         });
     }
 
-    let in_scope = matches
-        .iter()
-        .copied()
-        .filter(|c| cwd.starts_with(&c.catalog_root))
-        .collect::<Vec<&LoadedCatalog>>();
-
-    if !in_scope.is_empty() {
-        let max_depth = in_scope.iter().map(|c| c.depth).max().unwrap_or_default();
-        let deepest = in_scope
-            .into_iter()
-            .filter(|c| c.depth == max_depth)
-            .collect::<Vec<&LoadedCatalog>>();
-        if deepest.len() > 1 {
-            return Err(RunnerError::TaskAmbiguous {
-                name: selector.task_name.clone(),
-                candidates: deepest.into_iter().map(format_catalog).collect(),
-            });
-        }
-        let selected = deepest[0];
+    if let Some(selected) = select_in_scope_catalog(cwd, &matches, &selector.task_name)? {
         let evidence = vec![format!(
             "selected nearest in-scope catalog `{}` for cwd {}",
             selected.alias,
@@ -201,18 +172,7 @@ pub(super) fn select_catalog_and_task<'a>(
         );
     }
 
-    let min_depth = matches.iter().map(|c| c.depth).min().unwrap_or_default();
-    let shallowest = matches
-        .into_iter()
-        .filter(|c| c.depth == min_depth)
-        .collect::<Vec<&LoadedCatalog>>();
-    if shallowest.len() > 1 {
-        return Err(RunnerError::TaskAmbiguous {
-            name: selector.task_name.clone(),
-            candidates: shallowest.into_iter().map(format_catalog).collect(),
-        });
-    }
-    let selected = shallowest[0];
+    let selected = select_shallowest_catalog(&matches, &selector.task_name)?;
     let evidence = vec![format!(
         "selected shallowest catalog `{}` by depth {} from workspace root",
         selected.alias, selected.depth
@@ -223,6 +183,81 @@ pub(super) fn select_catalog_and_task<'a>(
         CatalogSelectionMode::RootShallowest,
         evidence,
     )
+}
+
+fn sorted_catalog_aliases(catalogs: &[LoadedCatalog]) -> Vec<String> {
+    let mut available = catalogs
+        .iter()
+        .map(|catalog| catalog.alias.clone())
+        .collect::<Vec<String>>();
+    available.sort();
+    available
+}
+
+fn catalogs_matching_task<'a>(
+    catalogs: &'a [LoadedCatalog],
+    task_name: &str,
+) -> Vec<&'a LoadedCatalog> {
+    catalogs
+        .iter()
+        .filter(|catalog| catalog.manifest.tasks.contains_key(task_name))
+        .collect()
+}
+
+fn select_in_scope_catalog<'a>(
+    cwd: &Path,
+    catalogs: &[&'a LoadedCatalog],
+    task_name: &str,
+) -> Result<Option<&'a LoadedCatalog>, RunnerError> {
+    let in_scope = catalogs
+        .iter()
+        .copied()
+        .filter(|catalog| cwd.starts_with(&catalog.catalog_root))
+        .collect::<Vec<&LoadedCatalog>>();
+    if in_scope.is_empty() {
+        return Ok(None);
+    }
+    let max_depth = in_scope
+        .iter()
+        .map(|catalog| catalog.depth)
+        .max()
+        .unwrap_or_default();
+    select_unique_catalog_by_depth(&in_scope, max_depth, task_name).map(Some)
+}
+
+fn select_shallowest_catalog<'a>(
+    catalogs: &[&'a LoadedCatalog],
+    task_name: &str,
+) -> Result<&'a LoadedCatalog, RunnerError> {
+    let min_depth = catalogs
+        .iter()
+        .map(|catalog| catalog.depth)
+        .min()
+        .unwrap_or_default();
+    select_unique_catalog_by_depth(catalogs, min_depth, task_name)
+}
+
+fn select_unique_catalog_by_depth<'a>(
+    catalogs: &[&'a LoadedCatalog],
+    depth: usize,
+    task_name: &str,
+) -> Result<&'a LoadedCatalog, RunnerError> {
+    let matches = catalogs
+        .iter()
+        .copied()
+        .filter(|catalog| catalog.depth == depth)
+        .collect::<Vec<&LoadedCatalog>>();
+    match matches.as_slice() {
+        [] => Err(RunnerError::TaskNotFoundAny {
+            name: task_name.to_owned(),
+            catalogs: catalogs.iter().copied().map(format_catalog).collect(),
+        }),
+        [catalog] => Ok(*catalog),
+        _ => Err(RunnerError::TaskAmbiguous {
+            name: task_name.to_owned(),
+            candidates: matches.into_iter().map(format_catalog).collect(),
+        }),
+    }
 }
 
 pub(super) fn format_catalog(catalog: &LoadedCatalog) -> String {
