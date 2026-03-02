@@ -11,11 +11,16 @@ use super::{
 };
 
 mod presentation;
+mod profiles;
 mod references;
 mod runtime;
 mod scheduler;
 
-const DEFAULT_MANAGED_PROFILE: &str = "default";
+use profiles::{
+    available_concurrent_profiles, concurrent_entries_for_profile, has_concurrent_schema,
+};
+
+pub(super) const DEFAULT_MANAGED_PROFILE: &str = profiles::DEFAULT_MANAGED_PROFILE;
 
 pub(super) fn resolve_managed_task_plan(
     selector: &TaskSelector,
@@ -265,48 +270,12 @@ fn sort_resolved_processes(resolved: &mut [ConcurrentResolvedProcess]) {
     });
 }
 
-fn concurrent_entries_for_profile<'a>(
-    task: &'a ManifestTask,
-    profile_name: &str,
-) -> Option<&'a [ManifestManagedConcurrentEntry]> {
-    if let Some(entries) = task
-        .profiles
-        .get(profile_name)
-        .and_then(|profile| profile.concurrent_entries())
-    {
-        return Some(entries);
-    }
-    if profile_name == DEFAULT_MANAGED_PROFILE && !task.concurrent.is_empty() {
-        return Some(task.concurrent.as_slice());
-    }
-    None
+pub(super) fn task_has_concurrent_profile(task: &ManifestTask, profile_name: &str) -> bool {
+    concurrent_entries_for_profile(task, profile_name).is_some()
 }
 
-fn has_concurrent_schema(task: &ManifestTask) -> bool {
-    !task.concurrent.is_empty()
-        || task
-            .profiles
-            .values()
-            .any(|profile| profile.concurrent_entries().is_some())
-}
-
-fn available_concurrent_profiles(task: &ManifestTask) -> Vec<String> {
-    let mut available = task
-        .profiles
-        .iter()
-        .filter_map(|(name, profile)| {
-            profile
-                .concurrent_entries()
-                .is_some()
-                .then_some(name.clone())
-        })
-        .collect::<Vec<String>>();
-    if !task.concurrent.is_empty() && !available.iter().any(|name| name == DEFAULT_MANAGED_PROFILE)
-    {
-        available.push(DEFAULT_MANAGED_PROFILE.to_owned());
-    }
-    available.sort();
-    available
+pub(super) fn managed_available_profiles(task: &ManifestTask) -> Vec<String> {
+    available_concurrent_profiles(task)
 }
 
 pub(super) fn render_task_run_spec(

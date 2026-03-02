@@ -1,6 +1,9 @@
 use serde_json::json;
 
 use super::catalog::select_catalog_and_task;
+use super::managed::{
+    managed_available_profiles, task_has_concurrent_profile, DEFAULT_MANAGED_PROFILE,
+};
 use super::util::parse_task_reference_invocation;
 use super::{LoadedCatalog, ManifestTask, RunnerError, BUILTIN_TASKS};
 
@@ -64,9 +67,9 @@ fn build_selected_probe(
     let profile_name = selector_args
         .first()
         .cloned()
-        .unwrap_or_else(|| "default".to_owned());
+        .unwrap_or_else(|| DEFAULT_MANAGED_PROFILE.to_owned());
     let lock_scopes = lock_scopes_for_task(selector_task_name, selection.task, Some(&profile_name));
-    if !concurrent_entries_for_profile(selection.task, &profile_name) {
+    if !task_has_concurrent_profile(selection.task, &profile_name) {
         let available_display = render_available_profiles(selection.task);
         return ResolveProbe::error(
             raw_selector,
@@ -96,7 +99,7 @@ fn build_selected_probe(
 }
 
 fn render_available_profiles(task: &ManifestTask) -> String {
-    let available = available_concurrent_profiles(task);
+    let available = managed_available_profiles(task);
     if available.is_empty() {
         "<none>".to_owned()
     } else {
@@ -106,18 +109,6 @@ fn render_available_profiles(task: &ManifestTask) -> String {
 
 fn is_builtin_or_catalogs_task(task_name: &str) -> bool {
     BUILTIN_TASKS.iter().any(|(name, _)| *name == task_name) || task_name == "catalogs"
-}
-
-fn concurrent_entries_for_profile(task: &ManifestTask, profile_name: &str) -> bool {
-    if task
-        .profiles
-        .get(profile_name)
-        .and_then(|profile| profile.concurrent_entries())
-        .is_some()
-    {
-        return true;
-    }
-    profile_name == "default" && !task.concurrent.is_empty()
 }
 
 struct ResolveProbe {
@@ -179,24 +170,6 @@ impl ResolveProbe {
     }
 }
 
-fn available_concurrent_profiles(task: &ManifestTask) -> Vec<String> {
-    let mut available = task
-        .profiles
-        .iter()
-        .filter_map(|(name, profile)| {
-            profile
-                .concurrent_entries()
-                .is_some()
-                .then_some(name.clone())
-        })
-        .collect::<Vec<String>>();
-    if !task.concurrent.is_empty() && !available.iter().any(|name| name == "default") {
-        available.push("default".to_owned());
-    }
-    available.sort();
-    available
-}
-
 fn lock_scopes_for_task(
     task_name: &str,
     task: &ManifestTask,
@@ -204,7 +177,7 @@ fn lock_scopes_for_task(
 ) -> Vec<String> {
     let mut scopes = vec!["workspace".to_owned(), format!("task:{task_name}")];
     if task.mode.as_deref() == Some("tui") {
-        let profile_name = profile.unwrap_or("default");
+        let profile_name = profile.unwrap_or(DEFAULT_MANAGED_PROFILE);
         scopes.push(format!("profile:{task_name}/{profile_name}"));
     }
     scopes

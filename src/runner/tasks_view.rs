@@ -4,6 +4,7 @@ use crate::ui::theme::Theme;
 use crate::ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
 
 use super::execute::catalog_task_label;
+use super::managed::DEFAULT_MANAGED_PROFILE;
 use super::{LoadedCatalog, ManifestTask, RunnerError};
 
 #[derive(Debug)]
@@ -35,7 +36,7 @@ pub(super) fn managed_profile_display_rows(
     let parent_task = catalog_task_label(catalog, task_name);
     task.profiles
         .keys()
-        .filter(|profile| profile.as_str() != "default")
+        .filter(|profile| profile.as_str() != DEFAULT_MANAGED_PROFILE)
         .map(|profile| ManagedProfileDisplayRow {
             task: format!("{parent_task} {profile}"),
             run: format!("<managed:{mode} profile:{profile}>"),
