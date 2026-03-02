@@ -13,6 +13,7 @@ Primary contract checks in this repo:
 - `./scripts/check-release-smoke.sh`
 - `./scripts/check-release-install-from-tag.sh`
 - `./scripts/check-distribution-first-publish.sh`
+- `./scripts/update-homebrew-formula-from-metadata.sh`
 
 Primary JSON mode entrypoint:
 - `effigy --json <command>`

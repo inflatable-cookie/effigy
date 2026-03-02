@@ -70,6 +70,20 @@ Implemented metadata hook:
 - workflow: `.github/workflows/homebrew-tap-metadata.yml`
 - output artifact: `homebrew-metadata-<tag>` containing `tag`, `version`, `url`, `sha256`, `formula`
 
+Implemented tap PR automation:
+- workflow: `.github/workflows/homebrew-tap-formula-pr.yml`
+- trigger:
+  - automatic on successful `Homebrew Tap Metadata` workflow runs
+  - manual with `metadata_run_id` for replay/recovery
+- behavior:
+  - downloads `homebrew-metadata-<tag>` artifact from the metadata run
+  - updates `Formula/effigy.rb` in tap repo using `scripts/update-homebrew-formula-from-metadata.sh`
+  - opens/updates a PR in tap repo via `peter-evans/create-pull-request`
+
+Required repository wiring:
+- secret: `EFFIGY_TAP_GH_TOKEN` (PAT with contents + pull request write access to tap repo)
+- default tap repo: `inflatable-cookie/homebrew-effigy` (override via workflow-dispatch input)
+
 Tap repo workflow should run:
 - `brew audit --strict --formula`
 - `brew style`
@@ -104,4 +118,4 @@ Per release:
 
 ## Next Step
 
-After the first tap automation run is stable, close the distribution backlog phase C items and proceed to phase E wrapper reassessment.
+After the first production run, attach the generated tap PR URL in a dated checkpoint report and proceed to first-publish channel matrix execution.
