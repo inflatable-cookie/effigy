@@ -44,6 +44,7 @@ When a feature spans multiple same-day checkpoints, add a consolidation report t
 - [`2026-03-02-completion-candidates-cache-policy-json-contract-validation.md`](./2026-03-02-completion-candidates-cache-policy-json-contract-validation.md)
 - [`2026-03-02-completion-candidates-json-contract-docs-validation.md`](./2026-03-02-completion-candidates-json-contract-docs-validation.md)
 - [`2026-03-02-completion-candidates-json-examples-policy-delta-validation.md`](./2026-03-02-completion-candidates-json-examples-policy-delta-validation.md)
+- [`2026-03-02-docs-qa-completion-candidates-json-example-check-validation.md`](./2026-03-02-docs-qa-completion-candidates-json-example-check-validation.md)
 - [`2026-03-02-completion-candidates-quickstart-troubleshooting-validation.md`](./2026-03-02-completion-candidates-quickstart-troubleshooting-validation.md)
 - [`2026-03-02-completion-candidates-ci-telemetry-recipe-validation.md`](./2026-03-02-completion-candidates-ci-telemetry-recipe-validation.md)
 - [`2026-03-02-completion-candidates-ci-miss-null-ttl-validation.md`](./2026-03-02-completion-candidates-ci-miss-null-ttl-validation.md)

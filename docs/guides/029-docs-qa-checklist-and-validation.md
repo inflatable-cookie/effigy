@@ -17,6 +17,7 @@ Manual checks:
 - numbering/title conventions are consistent with nearby guides
 - command examples match current CLI flags and behavior
 - JSON examples use current schema names and versions
+- completion-candidates examples include both hit and miss telemetry variants
 
 Optional broader check:
 
@@ -29,22 +30,22 @@ cargo qa
 Current workflow file:
 - `.github/workflows/json-contracts.yml`
 
-Docs link gate job:
+Docs QA gate job:
 
 ```yaml
 jobs:
-  docs-links:
-    name: Validate docs links
+  docs-qa:
+    name: Validate docs docs-only gates
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate markdown link targets
+      - name: Validate docs links and JSON examples
         run: ./scripts/check-quality-gates.sh --docs-only
 ```
 
-This ensures markdown links resolve on every pull request/push.
+This ensures markdown links resolve and key JSON examples stay contract-aligned on every pull request/push.
 
 ## 3) What the Link Checker Validates
 
@@ -62,7 +63,23 @@ Default scope when called with no args:
 - `docs/README.md`
 - `docs/guides/*.md`
 
-## 4) Common Failure Modes
+## 4) What the JSON Example Checker Validates
+
+Script:
+- `scripts/check-doc-json-examples.sh`
+
+Behavior:
+- inspects section `13) Completion Candidates` in `026-json-payload-examples.md`
+- requires at least two JSON example blocks (warm-hit and miss path)
+- verifies both blocks include cache telemetry keys:
+  - `cache_state`
+  - `cache_age_ms`
+  - `cache_ttl_ms`
+  - `effective_cache_ttl_ms`
+  - `cache_ttl_source`
+- asserts first block stays `cache_state=hit` and second block stays a miss (`cache_hit=false`)
+
+## 5) Common Failure Modes
 
 ### Broken relative path after file move
 
@@ -96,7 +113,7 @@ effigy --help
 effigy <command> --help
 ```
 
-## 5) Suggested PR Checklist Section
+## 6) Suggested PR Checklist Section
 
 Copy into PR description:
 
@@ -105,9 +122,10 @@ Copy into PR description:
 - [ ] `cargo qa-docs`
 - [ ] New guide linked from docs entry points
 - [ ] Command and JSON examples verified against current behavior
+- [ ] Completion-candidates JSON examples include hit + miss telemetry variants
 ```
 
-## 6) Fast Operator Commands
+## 7) Fast Operator Commands
 
 ```sh
 # docs links only

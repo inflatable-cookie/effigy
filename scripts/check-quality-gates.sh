@@ -41,6 +41,8 @@ if [[ "$RUN_DOCS" == true ]]; then
     docs_files+=("$doc_file")
   done < <(find "$ROOT_DIR/docs" -name '*.md' | sort)
   "$ROOT_DIR/scripts/check-doc-links.sh" "$ROOT_DIR/README.md" "${docs_files[@]}"
+  echo "[info] quality gate: docs json examples"
+  "$ROOT_DIR/scripts/check-doc-json-examples.sh"
 fi
 
 if [[ "$RUN_JSON" == true ]]; then
