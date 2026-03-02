@@ -28,11 +28,24 @@ fn write_multi_suite_cargo_manifest(root: &PathBuf) {
     .expect("write cargo toml");
 }
 
+fn setup_multi_suite_repo(root: &PathBuf) {
+    write_package_json_with_test_script(root);
+    write_multi_suite_cargo_manifest(root);
+}
+
 fn write_executable(path: &PathBuf, script: &str) {
     fs::write(path, script).expect("write executable");
     let mut perms = fs::metadata(path).expect("stat").permissions();
     perms.set_mode(0o755);
     fs::set_permissions(path, perms).expect("chmod");
+}
+
+fn write_test_suites_manifest(root: &PathBuf, suites: &[(&str, &str)]) {
+    let mut manifest = "[test.suites]\n".to_owned();
+    for (suite, cmd) in suites {
+        manifest.push_str(&format!("{} = \"{}\"\n", suite, cmd));
+    }
+    write_manifest(&root.join("effigy.toml"), &manifest);
 }
 
 fn install_local_vitest(root: &PathBuf, script: &str) {
@@ -110,12 +123,7 @@ fn run_manifest_task_builtin_test_plan_json_has_versioned_schema() {
 #[test]
 fn run_manifest_task_builtin_test_plan_marks_configured_suite_source() {
     let root = temp_workspace("builtin-test-plan-configured-suite-source");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[test.suites]
-unit = "pnpm exec vitest run"
-"#,
-    );
+    write_test_suites_manifest(&root, &[("unit", "pnpm exec vitest run")]);
 
     let out = run_builtin_ok(root, "test", &["--plan"]);
     assert_contains_all(
@@ -203,13 +211,7 @@ unit = "sh -lc 'printf configured > \"{}\"'"
 #[test]
 fn run_manifest_task_builtin_test_with_configured_multi_suite_requires_explicit_suite() {
     let root = temp_workspace("builtin-test-configured-multi-suite-ambiguous");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[test.suites]
-unit = "true"
-integration = "true"
-"#,
-    );
+    write_test_suites_manifest(&root, &[("unit", "true"), ("integration", "true")]);
 
     let err = run_builtin_err(root, "test", &["user-service"]);
     assert_task_invocation_error_contains(
@@ -308,8 +310,7 @@ fn run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo() {
 #[test]
 fn run_manifest_task_builtin_test_with_named_args_errors_when_multi_suite_is_ambiguous() {
     let root = temp_workspace("builtin-test-multi-suite-ambiguous");
-    write_package_json_with_test_script(&root);
-    write_multi_suite_cargo_manifest(&root);
+    setup_multi_suite_repo(&root);
 
     let err = run_builtin_err(root, "test", &["user-service"]);
     assert_task_invocation_error_contains(
@@ -329,8 +330,7 @@ fn run_manifest_task_builtin_test_with_named_args_errors_when_multi_suite_is_amb
 #[test]
 fn run_manifest_task_builtin_test_plan_with_named_args_in_multi_suite_returns_recovery_output() {
     let root = temp_workspace("builtin-test-multi-suite-plan-recovery");
-    write_package_json_with_test_script(&root);
-    write_multi_suite_cargo_manifest(&root);
+    setup_multi_suite_repo(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan", "user-service"]);
     assert_contains_all(
@@ -348,8 +348,7 @@ fn run_manifest_task_builtin_test_plan_with_named_args_in_multi_suite_returns_re
 #[test]
 fn run_manifest_task_builtin_test_plan_json_recovery_has_versioned_schema() {
     let root = temp_workspace("builtin-test-plan-json-recovery-schema");
-    write_package_json_with_test_script(&root);
-    write_multi_suite_cargo_manifest(&root);
+    setup_multi_suite_repo(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan", "--json", "user-service"]);
     let parsed = parse_json_output(&out);
@@ -362,8 +361,7 @@ fn run_manifest_task_builtin_test_plan_json_recovery_has_versioned_schema() {
 #[test]
 fn run_manifest_task_builtin_test_supports_positional_suite_selector() {
     let root = temp_workspace("builtin-test-suite-selector");
-    write_package_json_with_test_script(&root);
-    write_multi_suite_cargo_manifest(&root);
+    setup_multi_suite_repo(&root);
     let vitest_marker = root.join("vitest-called.log");
     install_local_vitest_marker(&root, &vitest_marker);
 
@@ -376,8 +374,7 @@ fn run_manifest_task_builtin_test_supports_positional_suite_selector() {
 #[test]
 fn run_manifest_task_builtin_test_plan_mistyped_suite_returns_recovery_output() {
     let root = temp_workspace("builtin-test-plan-mistyped-suite-recovery");
-    write_package_json_with_test_script(&root);
-    write_multi_suite_cargo_manifest(&root);
+    setup_multi_suite_repo(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan", "viteest", "user-service"]);
     assert_contains_all(
@@ -413,8 +410,7 @@ fn run_manifest_task_builtin_test_errors_for_unavailable_positional_suite_select
 #[test]
 fn run_manifest_task_builtin_test_mistyped_suite_suggests_nearest_runner() {
     let root = temp_workspace("builtin-test-mistyped-suite-suggestion");
-    write_package_json_with_test_script(&root);
-    write_multi_suite_cargo_manifest(&root);
+    setup_multi_suite_repo(&root);
 
     let err = run_builtin_err(root, "test", &["viteest", "user-service"]);
     assert_task_invocation_error_contains(
