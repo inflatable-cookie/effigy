@@ -10,6 +10,7 @@ use crate::TasksArgs;
 use super::execute::{catalog_task_label, task_run_preview};
 use super::tasks_view::{
     managed_profile_display_rows, relative_display_path, render_resolution_probe_block, style_text,
+    ManagedProfileDisplayRow,
 };
 use super::util::parse_task_selector;
 use super::{render, LoadedCatalog, RunnerError, TaskSelector, BUILTIN_TASKS};
@@ -60,7 +61,7 @@ fn render_tasks_json(
                 json!({
                     "task": catalog_task_label(catalog, &selector.task_name),
                     "run": task_run_preview(task),
-                    "manifest": catalog.manifest_path.display().to_string(),
+                    "manifest": manifest_path_string(catalog),
                 })
             })
             .collect::<Vec<serde_json::Value>>();
@@ -98,7 +99,7 @@ fn render_tasks_json(
             catalog_rows.push(json!({
                 "task": null,
                 "run": null,
-                "manifest": catalog.manifest_path.display().to_string(),
+                "manifest": manifest_path_string(catalog),
             }));
             continue;
         }
@@ -106,7 +107,7 @@ fn render_tasks_json(
             catalog_rows.push(json!({
                 "task": catalog_task_label(catalog, task_name),
                 "run": task_run_preview(task_def),
-                "manifest": catalog.manifest_path.display().to_string(),
+                "manifest": manifest_path_string(catalog),
             }));
             managed_profile_rows.extend(managed_profile_rows_json(catalog, task_name, task_def));
         }
@@ -161,26 +162,15 @@ fn render_tasks_text(
             let task_label = catalog_task_label(catalog, &selector.task_name);
             let manifest = relative_display_path(resolved_root, &catalog.manifest_path);
             let signature = task_run_preview(task);
-            renderer.text(&format!(
-                "- {} : {}",
-                style_text(color_enabled, theme.task_name, &task_label),
-                style_text(color_enabled, theme.muted, &manifest),
-            ))?;
-            renderer.text(&format!(
-                "      {}",
-                style_text(color_enabled, theme.task_signature, &signature),
-            ))?;
-            for row in managed_profile_display_rows(catalog, &selector.task_name, task) {
-                renderer.text(&format!(
-                    "- {} : {}",
-                    style_text(color_enabled, theme.task_name, &row.task),
-                    style_text(color_enabled, theme.muted, &manifest),
-                ))?;
-                renderer.text(&format!(
-                    "      {}",
-                    style_text(color_enabled, theme.task_signature, &row.run),
-                ))?;
-            }
+            render_task_with_profiles(
+                &mut renderer,
+                color_enabled,
+                &theme,
+                &manifest,
+                &task_label,
+                &signature,
+                managed_profile_display_rows(catalog, &selector.task_name, task),
+            )?;
         }
         if !builtin_matches.is_empty() || resolve_probe.is_some() {
             renderer.text("")?;
@@ -245,27 +235,16 @@ fn render_tasks_text(
             for (task_name, task_def) in &catalog.manifest.tasks {
                 let task_label = catalog_task_label(catalog, task_name);
                 let signature = task_run_preview(task_def);
-                renderer.text(&format!(
-                    "- {} : {}",
-                    style_text(color_enabled, theme.task_name, &task_label),
-                    style_text(color_enabled, theme.muted, &manifest),
-                ))?;
-                renderer.text(&format!(
-                    "      {}",
-                    style_text(color_enabled, theme.task_signature, &signature),
-                ))?;
+                render_task_with_profiles(
+                    &mut renderer,
+                    color_enabled,
+                    &theme,
+                    &manifest,
+                    &task_label,
+                    &signature,
+                    managed_profile_display_rows(catalog, task_name, task_def),
+                )?;
                 has_tasks = true;
-                for row in managed_profile_display_rows(catalog, task_name, task_def) {
-                    renderer.text(&format!(
-                        "- {} : {}",
-                        style_text(color_enabled, theme.task_name, &row.task),
-                        style_text(color_enabled, theme.muted, &manifest),
-                    ))?;
-                    renderer.text(&format!(
-                        "      {}",
-                        style_text(color_enabled, theme.task_signature, &row.run),
-                    ))?;
-                }
             }
         }
     }
@@ -317,13 +296,14 @@ fn managed_profile_rows_json(
     task_name: &str,
     task: &super::ManifestTask,
 ) -> Vec<serde_json::Value> {
+    let manifest = manifest_path_string(catalog);
     managed_profile_display_rows(catalog, task_name, task)
         .into_iter()
         .map(|row| {
             json!({
                 "task": row.task,
                 "run": row.run,
-                "manifest": catalog.manifest_path.display().to_string(),
+                "manifest": manifest.clone(),
                 "profile": row.profile,
                 "invocation": row.invocation,
                 "parent_task": row.parent_task,
@@ -350,4 +330,58 @@ fn builtin_matches_json(selector: &TaskSelector) -> Vec<serde_json::Value> {
             })
         })
         .collect::<Vec<serde_json::Value>>()
+}
+
+fn manifest_path_string(catalog: &LoadedCatalog) -> String {
+    catalog.manifest_path.display().to_string()
+}
+
+fn render_task_with_profiles(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    color_enabled: bool,
+    theme: &Theme,
+    manifest: &str,
+    task_label: &str,
+    signature: &str,
+    managed_profiles: Vec<ManagedProfileDisplayRow>,
+) -> Result<(), RunnerError> {
+    render_task_text_row(
+        renderer,
+        color_enabled,
+        theme,
+        manifest,
+        task_label,
+        signature,
+    )?;
+    for row in managed_profiles {
+        render_task_text_row(
+            renderer,
+            color_enabled,
+            theme,
+            manifest,
+            &row.task,
+            &row.run,
+        )?;
+    }
+    Ok(())
+}
+
+fn render_task_text_row(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    color_enabled: bool,
+    theme: &Theme,
+    manifest: &str,
+    task_label: &str,
+    signature: &str,
+) -> Result<(), RunnerError> {
+    renderer.text(&format!(
+        "- {} : {}",
+        style_text(color_enabled, theme.task_name, task_label),
+        style_text(color_enabled, theme.muted, manifest),
+    ))?;
+    renderer.text(&format!(
+        "      {}",
+        style_text(color_enabled, theme.task_signature, signature),
+    ))?;
+    Ok(())
 }
