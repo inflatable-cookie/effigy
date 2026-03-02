@@ -1,24 +1,15 @@
-use std::path::Path;
-
-use crate::ui::{OutputMode, PlainRenderer, Renderer};
+use crate::ui::{PlainRenderer, Renderer};
 use crate::{
-    emit_json_envelope_success_value, help_topic_label, render_cli_header, render_help, HelpTopic,
+    emit_json_envelope_success_value, help_topic_label, render_cli_header, render_help,
+    CliExecutionContext, HelpTopic,
 };
 use serde_json::json;
 
-pub fn run_help_command(
-    output_mode: OutputMode,
-    command_root: &Path,
-    suppress_header: bool,
-    emit_json_envelope: bool,
-    command_kind: &str,
-    command_name: &str,
-    topic: HelpTopic,
-) {
-    if suppress_header {
+pub fn run_help_command(context: &CliExecutionContext<'_>, topic: HelpTopic) {
+    if context.suppress_header {
         let payload = build_help_payload(topic);
-        if emit_json_envelope {
-            emit_json_envelope_success_value(command_kind, command_name, payload);
+        if context.emit_json_envelope {
+            emit_json_envelope_success_value(context.command_kind, context.command_name, payload);
             return;
         }
         println!(
@@ -30,9 +21,9 @@ pub fn run_help_command(
         return;
     }
 
-    let mut renderer = PlainRenderer::stdout(output_mode);
-    if !suppress_header {
-        let _ = render_cli_header(&mut renderer, command_root);
+    let mut renderer = PlainRenderer::stdout(context.output_mode);
+    if !context.suppress_header {
+        let _ = render_cli_header(&mut renderer, context.command_root);
     }
     let _ = render_help(&mut renderer, topic);
     let _ = renderer.text("");

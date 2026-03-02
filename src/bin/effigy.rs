@@ -2,7 +2,7 @@ use effigy::ui::{OutputMode, PlainRenderer};
 use effigy::{
     apply_global_json_flag, command_kind_and_name, command_requests_json, emit_json_envelope_error,
     parse_command, parse_error_json_details, render_parse_error, run_and_render_command,
-    run_help_command, strip_global_json_flags, Command,
+    run_help_command, strip_global_json_flags, CliExecutionContext, Command,
 };
 
 fn main() {
@@ -35,29 +35,21 @@ fn main() {
     let emit_json_envelope = suppress_header;
     let (command_kind, command_name) = command_kind_and_name(&cmd);
     let command_root = effigy::runner::resolve_command_root(&cmd);
+    let context = CliExecutionContext {
+        output_mode,
+        command_root: &command_root,
+        suppress_header,
+        emit_json_envelope,
+        command_kind,
+        command_name: &command_name,
+    };
 
     match cmd {
         Command::Help(topic) => {
-            run_help_command(
-                output_mode,
-                &command_root,
-                suppress_header,
-                emit_json_envelope,
-                command_kind,
-                &command_name,
-                topic,
-            );
+            run_help_command(&context, topic);
         }
         command @ (Command::Doctor(_) | Command::Tasks(_) | Command::Task(_)) => {
-            run_and_render_command(
-                output_mode,
-                &command_root,
-                suppress_header,
-                emit_json_envelope,
-                command_kind,
-                &command_name,
-                command,
-            );
+            run_and_render_command(&context, command);
         }
     }
 }
