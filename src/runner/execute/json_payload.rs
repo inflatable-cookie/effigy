@@ -10,27 +10,19 @@ pub(super) fn render_task_cache_hit_json(
     reason: &str,
     fingerprint: &str,
 ) -> Result<String, RunnerError> {
-    let selector_rendered = render_selector(selector);
-    let payload = json!({
-        "schema": "effigy.task.run.v1",
-        "schema_version": 1,
-        "ok": true,
-        "task": task_name,
-        "selector": selector_rendered,
-        "command": command,
-        "cwd": cwd.display().to_string(),
-        "exit_code": 0,
-        "stdout": "",
-        "stderr": "",
-        "cached": true,
-        "cache": {
-            "status": "hit",
-            "reason": reason,
-            "fingerprint": fingerprint,
-        },
-    });
-    serde_json::to_string_pretty(&payload)
-        .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
+    let mut payload = task_run_payload(task_name, selector, cwd, command, Some(0), "", "");
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("cached".to_owned(), json!(true));
+        obj.insert(
+            "cache".to_owned(),
+            json!({
+                "status": "hit",
+                "reason": reason,
+                "fingerprint": fingerprint,
+            }),
+        );
+    }
+    encode_task_run_json(&payload)
 }
 
 pub(super) fn render_task_command_json(
@@ -42,8 +34,21 @@ pub(super) fn render_task_command_json(
     stdout: &str,
     stderr: &str,
 ) -> Result<String, RunnerError> {
+    let payload = task_run_payload(task_name, selector, cwd, command, exit_code, stdout, stderr);
+    encode_task_run_json(&payload)
+}
+
+fn task_run_payload(
+    task_name: &str,
+    selector: &super::super::TaskSelector,
+    cwd: &std::path::Path,
+    command: &str,
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> serde_json::Value {
     let selector_rendered = render_selector(selector);
-    let payload = json!({
+    json!({
         "schema": "effigy.task.run.v1",
         "schema_version": 1,
         "ok": exit_code == Some(0),
@@ -54,8 +59,11 @@ pub(super) fn render_task_command_json(
         "exit_code": exit_code,
         "stdout": stdout,
         "stderr": stderr,
-    });
-    serde_json::to_string_pretty(&payload)
+    })
+}
+
+fn encode_task_run_json(payload: &serde_json::Value) -> Result<String, RunnerError> {
+    serde_json::to_string_pretty(payload)
         .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
 }
 

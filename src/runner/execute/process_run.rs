@@ -22,6 +22,13 @@ pub(super) fn run_task_process(
     verbose_root: bool,
     context: &ProcessRunContext<'_>,
 ) -> Result<String, RunnerError> {
+    if output_json {
+        return run_task_process_json(context);
+    }
+    run_task_process_text(verbose_root, context)
+}
+
+fn run_task_process_json(context: &ProcessRunContext<'_>) -> Result<String, RunnerError> {
     let mut process = ProcessCommand::new("sh");
     process
         .arg("-lc")
@@ -29,49 +36,46 @@ pub(super) fn run_task_process(
         .current_dir(context.repo_for_task);
     with_local_node_bin_path(&mut process, context.repo_for_task);
 
-    if output_json {
-        let output = process
-            .output()
-            .map_err(|error| RunnerError::TaskCommandLaunch {
-                command: context.command.to_owned(),
-                error,
-            })?;
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let rendered = super::json_payload::render_task_command_json(
-            &context.selector.task_name,
-            context.selector,
-            context.repo_for_task,
-            context.command,
-            output.status.code(),
-            &stdout,
-            &stderr,
-        )?;
-        if output.status.success() {
-            update_cache(context)?;
-            return Ok(rendered);
-        }
-        return Err(RunnerError::CommandJsonFailure { rendered });
+    let output = process
+        .output()
+        .map_err(|error| command_launch_error(context.command, error))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let rendered = super::json_payload::render_task_command_json(
+        &context.selector.task_name,
+        context.selector,
+        context.repo_for_task,
+        context.command,
+        output.status.code(),
+        &stdout,
+        &stderr,
+    )?;
+    if output.status.success() {
+        update_cache(context)?;
+        return Ok(rendered);
     }
+    Err(RunnerError::CommandJsonFailure { rendered })
+}
+
+fn run_task_process_text(
+    verbose_root: bool,
+    context: &ProcessRunContext<'_>,
+) -> Result<String, RunnerError> {
+    let mut process = ProcessCommand::new("sh");
+    process
+        .arg("-lc")
+        .arg(context.command)
+        .current_dir(context.repo_for_task);
+    with_local_node_bin_path(&mut process, context.repo_for_task);
 
     let status = process
         .status()
-        .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: context.command.to_owned(),
-            error,
-        })?;
+        .map_err(|error| command_launch_error(context.command, error))?;
 
     if status.success() {
         update_cache(context)?;
         if verbose_root {
-            let trace = render_task_resolution_trace(
-                context.resolved,
-                context.selector,
-                context.selection,
-                context.repo_for_task,
-                context.command,
-            );
-            return Ok(trace);
+            return Ok(render_resolution_trace(context));
         }
         return Ok(String::new());
     }
@@ -82,6 +86,23 @@ pub(super) fn run_task_process(
         stdout: String::new(),
         stderr: String::new(),
     })
+}
+
+fn render_resolution_trace(context: &ProcessRunContext<'_>) -> String {
+    render_task_resolution_trace(
+        context.resolved,
+        context.selector,
+        context.selection,
+        context.repo_for_task,
+        context.command,
+    )
+}
+
+fn command_launch_error(command: &str, error: std::io::Error) -> RunnerError {
+    RunnerError::TaskCommandLaunch {
+        command: command.to_owned(),
+        error,
+    }
 }
 
 fn update_cache(context: &ProcessRunContext<'_>) -> Result<(), RunnerError> {

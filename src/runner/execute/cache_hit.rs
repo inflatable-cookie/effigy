@@ -32,22 +32,31 @@ pub(super) fn render_cache_hit_output(
     }
 
     if verbose_root {
-        let trace = render_task_resolution_trace(
+        return Ok(cache_hit_verbose_output(context));
+    }
+
+    Ok(cache_hit_short_output(context))
+}
+
+fn cache_hit_verbose_output(context: &CacheHitContext<'_>) -> String {
+    format!(
+        "{}\ncache: hit ({})\nfingerprint: {}",
+        render_task_resolution_trace(
             context.resolved,
             context.selector,
             context.selection,
             context.repo_for_task,
-            context.command,
-        );
-        return Ok(format!(
-            "{trace}\ncache: hit ({})\nfingerprint: {}",
-            context.reason, context.fingerprint
-        ));
-    }
+            context.command
+        ),
+        context.reason,
+        context.fingerprint
+    )
+}
 
-    Ok(format!(
+fn cache_hit_short_output(context: &CacheHitContext<'_>) -> String {
+    format!(
         "cache hit: skipped `{}` ({reason})",
         context.selector.task_name,
         reason = context.reason
-    ))
+    )
 }
