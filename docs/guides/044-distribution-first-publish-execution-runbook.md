@@ -29,6 +29,8 @@ Optional one-command execution helper:
 ```bash
 ./scripts/check-distribution-first-publish.sh --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
 ./scripts/generate-distribution-closeout-report.sh --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
+# use --expect-homebrew when Homebrew checks are expected in this release window
+# ./scripts/generate-distribution-closeout-report.sh --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z --expect-homebrew
 ```
 
 ## 3) Command Matrix
@@ -85,6 +87,7 @@ effigy --json help
 
 When using the helper script, attach per-step logs from `--artifacts-dir` directly in the checkpoint report.
 The closeout report can be generated from those logs using `generate-distribution-closeout-report.sh`.
+Artifact completeness can be checked directly with `validate-distribution-artifacts.sh`.
 
 ## 5) Acceptance Criteria Mapping
 

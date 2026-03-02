@@ -14,6 +14,7 @@ Primary contract checks in this repo:
 - `./scripts/check-release-install-from-tag.sh`
 - `./scripts/check-distribution-metadata.sh`
 - `./scripts/check-distribution-first-publish.sh`
+- `./scripts/validate-distribution-artifacts.sh`
 - `./scripts/generate-distribution-closeout-report.sh`
 - `./scripts/update-homebrew-formula-from-metadata.sh`
 
@@ -29,6 +30,7 @@ cargo qa
 cargo qa-release
 ./scripts/check-release-install-from-tag.sh --tag v0.__.__
 ./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
+./scripts/validate-distribution-artifacts.sh --artifacts-dir ./artifacts/distribution-v0.__.__
 ./scripts/generate-distribution-closeout-report.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 ./scripts/check-json-contracts-ci.sh
 ./scripts/check-json-contracts.sh --fast --print-selected=json
