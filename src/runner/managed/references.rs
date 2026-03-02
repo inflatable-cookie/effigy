@@ -5,6 +5,54 @@ use super::super::util::{parse_task_reference_invocation, render_task_selector, 
 use super::super::{LoadedCatalog, RunnerError, TaskSelector, BUILTIN_TASKS};
 use super::render_task_run_spec;
 
+struct ManagedRefContext<'a> {
+    managed_task_name: &'a str,
+    process_name: &'a str,
+    task_ref: &'a str,
+}
+
+impl ManagedRefContext<'_> {
+    fn invalid(&self, detail: impl ToString) -> RunnerError {
+        RunnerError::TaskManagedTaskReferenceInvalid {
+            task: self.managed_task_name.to_owned(),
+            process: self.process_name.to_owned(),
+            reference: self.task_ref.to_owned(),
+            detail: detail.to_string(),
+        }
+    }
+}
+
+struct StepRefContext<'a> {
+    task_name: &'a str,
+    task_ref: &'a str,
+}
+
+impl StepRefContext<'_> {
+    fn failure(&self, detail: impl ToString) -> RunnerError {
+        RunnerError::TaskInvocation(format!(
+            "task `{}` run step task ref `{}` failed: {}",
+            self.task_name,
+            self.task_ref,
+            detail.to_string()
+        ))
+    }
+
+    fn invalid(&self, detail: impl ToString) -> RunnerError {
+        RunnerError::TaskInvocation(format!(
+            "task `{}` run step task ref `{}` is invalid: {}",
+            self.task_name,
+            self.task_ref,
+            detail.to_string()
+        ))
+    }
+}
+
+struct ParsedTaskRef {
+    selector: TaskSelector,
+    selector_rendered: String,
+    args_rendered: String,
+}
+
 pub(super) fn resolve_task_reference_run(
     managed_task_name: &str,
     process_name: &str,
@@ -12,65 +60,43 @@ pub(super) fn resolve_task_reference_run(
     catalogs: &[LoadedCatalog],
     task_scope_cwd: &Path,
 ) -> Result<(String, PathBuf), RunnerError> {
-    let (selector, ref_args) = parse_task_reference_invocation(task_ref).map_err(|error| {
-        RunnerError::TaskManagedTaskReferenceInvalid {
-            task: managed_task_name.to_owned(),
-            process: process_name.to_owned(),
-            reference: task_ref.to_owned(),
-            detail: error.to_string(),
-        }
-    })?;
-    let ref_args_rendered = ref_args
-        .iter()
-        .map(|arg| shell_quote(arg))
-        .collect::<Vec<String>>()
-        .join(" ");
-    let selector_rendered = render_task_selector(&selector);
-    let selection = match select_catalog_and_task(&selector, catalogs, task_scope_cwd) {
+    let context = ManagedRefContext {
+        managed_task_name,
+        process_name,
+        task_ref,
+    };
+    let parsed = parse_task_ref(task_ref).map_err(|error| context.invalid(error))?;
+
+    let selection = match select_catalog_and_task(&parsed.selector, catalogs, task_scope_cwd) {
         Ok(selection) => selection,
         Err(error) => {
-            if is_builtin_task_selector(&selector) {
+            if is_builtin_task_selector(&parsed.selector) {
                 let command = render_builtin_task_reference_invocation(
-                    &selector_rendered,
-                    &ref_args_rendered,
+                    &parsed.selector_rendered,
+                    &parsed.args_rendered,
                 )?;
                 return Ok((command, task_scope_cwd.to_path_buf()));
             }
-            return Err(RunnerError::TaskManagedTaskReferenceInvalid {
-                task: managed_task_name.to_owned(),
-                process: process_name.to_owned(),
-                reference: task_ref.to_owned(),
-                detail: error.to_string(),
-            });
+            return Err(context.invalid(error));
         }
     };
     let run_spec = selection.task.run.as_ref().ok_or_else(|| {
-        RunnerError::TaskManagedTaskReferenceInvalid {
-            task: managed_task_name.to_owned(),
-            process: process_name.to_owned(),
-            reference: task_ref.to_owned(),
-            detail: format!(
-                "referenced task `{}` in {} has no `run` command",
-                selector.task_name,
-                selection.catalog.manifest_path.display()
-            ),
-        }
+        context.invalid(format!(
+            "referenced task `{}` in {} has no `run` command",
+            parsed.selector.task_name,
+            selection.catalog.manifest_path.display()
+        ))
     })?;
     let run_rendered = render_task_run_spec(
-        &selector.task_name,
+        &parsed.selector.task_name,
         run_spec,
-        &ref_args_rendered,
+        &parsed.args_rendered,
         &selection.catalog.catalog_root,
         catalogs,
         &selection.catalog.catalog_root,
         0,
     )
-    .map_err(|error| RunnerError::TaskManagedTaskReferenceInvalid {
-        task: managed_task_name.to_owned(),
-        process: process_name.to_owned(),
-        reference: task_ref.to_owned(),
-        detail: error.to_string(),
-    })?;
+    .map_err(|error| context.invalid(error))?;
     Ok((run_rendered, selection.catalog.catalog_root.clone()))
 }
 
@@ -82,50 +108,39 @@ pub(super) fn resolve_task_reference_step(
     task_scope_cwd: &Path,
     depth: usize,
 ) -> Result<String, RunnerError> {
-    let (selector, ref_args) = parse_task_reference_invocation(task_ref).map_err(|error| {
-        RunnerError::TaskInvocation(format!(
-            "task `{task_name}` run step task ref `{task_ref}` is invalid: {error}"
-        ))
-    })?;
-    let selector_rendered = render_task_selector(&selector);
-    let ref_args_rendered = ref_args
-        .iter()
-        .map(|arg| shell_quote(arg))
-        .collect::<Vec<String>>()
-        .join(" ");
-    let merged_args_rendered = merge_args_rendered(&ref_args_rendered, args_rendered);
-    let selection = match select_catalog_and_task(&selector, catalogs, task_scope_cwd) {
+    let context = StepRefContext {
+        task_name,
+        task_ref,
+    };
+    let parsed = parse_task_ref(task_ref).map_err(|error| context.invalid(error))?;
+    let merged_args_rendered = merge_args_rendered(&parsed.args_rendered, args_rendered);
+
+    let selection = match select_catalog_and_task(&parsed.selector, catalogs, task_scope_cwd) {
         Ok(selection) => selection,
         Err(error) => {
-            if is_builtin_task_selector(&selector) {
+            if is_builtin_task_selector(&parsed.selector) {
                 let command = render_builtin_task_reference_invocation(
-                    &selector_rendered,
+                    &parsed.selector_rendered,
                     &merged_args_rendered,
                 )
-                .map_err(|detail| {
-                    RunnerError::TaskInvocation(format!(
-                        "task `{task_name}` run step task ref `{task_ref}` failed: {detail}"
-                    ))
-                })?;
+                .map_err(|detail| context.failure(detail))?;
                 return Ok(format!(
                     "(cd {} && {})",
                     shell_quote(&task_scope_cwd.display().to_string()),
                     command
                 ));
             }
-            return Err(RunnerError::TaskInvocation(format!(
-                "task `{task_name}` run step task ref `{task_ref}` failed: {error}"
-            )));
+            return Err(context.failure(error));
         }
     };
     let run_spec = selection.task.run.as_ref().ok_or_else(|| {
-        RunnerError::TaskInvocation(format!(
+        context.failure(format!(
             "task `{task_name}` run step task ref `{task_ref}` has no `run` command in {}",
             selection.catalog.manifest_path.display()
         ))
     })?;
     let nested = render_task_run_spec(
-        &selector.task_name,
+        &parsed.selector.task_name,
         run_spec,
         &merged_args_rendered,
         &selection.catalog.catalog_root,
@@ -138,6 +153,21 @@ pub(super) fn resolve_task_reference_step(
         shell_quote(&selection.catalog.catalog_root.display().to_string()),
         nested
     ))
+}
+
+fn parse_task_ref(task_ref: &str) -> Result<ParsedTaskRef, RunnerError> {
+    let (selector, args) = parse_task_reference_invocation(task_ref)?;
+    let selector_rendered = render_task_selector(&selector);
+    let args_rendered = args
+        .iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<String>>()
+        .join(" ");
+    Ok(ParsedTaskRef {
+        selector,
+        selector_rendered,
+        args_rendered,
+    })
 }
 
 fn merge_args_rendered(ref_args_rendered: &str, args_rendered: &str) -> String {
