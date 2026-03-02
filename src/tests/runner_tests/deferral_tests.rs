@@ -1,5 +1,53 @@
 use super::*;
 
+fn run_task(root: &PathBuf, name: &str, args: &[&str]) -> Result<String, RunnerError> {
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: name.to_owned(),
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        },
+        root.clone(),
+    )
+}
+
+fn assert_task_not_found_any(err: RunnerError) {
+    match err {
+        RunnerError::TaskNotFoundAny { .. } => {}
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+fn assert_defer_loop_detected(err: RunnerError, expected_depth: u8) {
+    match err {
+        RunnerError::DeferLoopDetected { depth } => assert_eq!(depth, expected_depth),
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+fn write_executable(path: &PathBuf, script: &str) {
+    fs::write(path, script).expect("write executable");
+    let mut perms = fs::metadata(path).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).expect("chmod");
+}
+
+fn setup_composer_stub(root: &PathBuf, script: &str, marker_file: &PathBuf) -> EnvGuard {
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    write_executable(&bin_dir.join("composer"), script);
+
+    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
+    let path = format!("{}:{}", bin_dir.display(), prior_path);
+    EnvGuard::set_many(&[
+        ("PATH", Some(path)),
+        ("SHELL", Some("/bin/sh".to_owned())),
+        (
+            "EFFIGY_TEST_COMPOSER_ARGS_FILE",
+            Some(marker_file.display().to_string()),
+        ),
+    ])
+}
+
 #[test]
 fn run_manifest_task_defers_when_unprefixed_task_missing() {
     let _guard = lock_test();
@@ -9,14 +57,7 @@ fn run_manifest_task_defers_when_unprefixed_task_missing() {
         "[defer]\nrun = \"printf deferred\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "unknown-task".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("deferred run should succeed");
+    let out = run_task(&root, "unknown-task", &[]).expect("deferred run should succeed");
 
     assert_eq!(out, "");
 }
@@ -30,14 +71,8 @@ fn run_manifest_task_defers_and_supports_request_and_args_tokens() {
         "[defer]\nrun = \"test {request} = 'unknown-task' && test {args} = '--dry-run'\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "unknown-task".to_owned(),
-            args: vec!["--dry-run".to_owned()],
-        },
-        root,
-    )
-    .expect("deferred token substitution should succeed");
+    let out = run_task(&root, "unknown-task", &["--dry-run"])
+        .expect("deferred token substitution should succeed");
 
     assert_eq!(out, "");
 }
@@ -51,14 +86,8 @@ fn run_manifest_task_defers_for_path_like_request_when_prefix_not_found() {
         "[defer]\nrun = \"test {request} = 'services/api/dev' && test {args} = '--watch'\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "services/api/dev".to_owned(),
-            args: vec!["--watch".to_owned()],
-        },
-        root,
-    )
-    .expect("path-like deferred request should succeed");
+    let out = run_task(&root, "services/api/dev", &["--watch"])
+        .expect("path-like deferred request should succeed");
 
     assert_eq!(out, "");
 }
@@ -75,14 +104,7 @@ fn run_manifest_task_defers_to_prefixed_catalog_handler() {
         "[catalog]\nalias = \"farmyard\"\n[defer]\nrun = \"printf farmyard-deferred\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "farmyard/missing".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("prefixed deferral should succeed");
+    let out = run_task(&root, "farmyard/missing", &[]).expect("prefixed deferral should succeed");
 
     assert_eq!(out, "");
 }
@@ -97,20 +119,9 @@ fn run_manifest_task_deferral_loop_guard_fails() {
     );
 
     std::env::set_var("EFFIGY_DEFER_DEPTH", "1");
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "unknown-task".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("loop guard should fail");
+    let err = run_task(&root, "unknown-task", &[]).expect_err("loop guard should fail");
     std::env::remove_var("EFFIGY_DEFER_DEPTH");
-
-    match err {
-        RunnerError::DeferLoopDetected { depth } => assert_eq!(depth, 1),
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_defer_loop_detected(err, 1);
 }
 
 #[test]
@@ -120,40 +131,14 @@ fn run_manifest_task_implicitly_defers_to_root_when_no_configured_deferral() {
     fs::write(root.join("effigy.json"), "{}\n").expect("write effigy marker");
     fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
 
-    let bin_dir = root.join("bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir bin");
-    let composer_stub = bin_dir.join("composer");
     let args_log = root.join("composer-args.log");
-    fs::write(
-        &composer_stub,
+    let _env = setup_composer_stub(
+        &root,
         "#!/bin/sh\nprintf \"%s\\n\" \"$@\" > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\n",
-    )
-    .expect("write composer stub");
-    let mut perms = fs::metadata(&composer_stub)
-        .expect("metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&composer_stub, perms).expect("chmod");
-
-    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
-    let path = format!("{}:{}", bin_dir.display(), prior_path);
-    let _env = EnvGuard::set_many(&[
-        ("PATH", Some(path)),
-        ("SHELL", Some("/bin/sh".to_owned())),
-        (
-            "EFFIGY_TEST_COMPOSER_ARGS_FILE",
-            Some(args_log.display().to_string()),
-        ),
-    ]);
-
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "version".to_owned(),
-            args: vec!["--dry-run".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("implicit root deferral should succeed");
+        &args_log,
+    );
+    let out =
+        run_task(&root, "version", &["--dry-run"]).expect("implicit root deferral should succeed");
 
     assert_eq!(out, "");
     let args = fs::read_to_string(args_log).expect("read composer args");
@@ -166,45 +151,15 @@ fn run_manifest_task_does_not_implicitly_defer_without_effigy_json_marker() {
     let root = temp_workspace("implicit-root-defer-missing-effigy-json");
     fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
 
-    let bin_dir = root.join("bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir bin");
-    let composer_stub = bin_dir.join("composer");
     let marker = root.join("composer-called.log");
-    fs::write(
-        &composer_stub,
+    let _env = setup_composer_stub(
+        &root,
         "#!/bin/sh\nprintf called > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit 0\n",
-    )
-    .expect("write composer stub");
-    let mut perms = fs::metadata(&composer_stub)
-        .expect("metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&composer_stub, perms).expect("chmod");
-
-    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
-    let path = format!("{}:{}", bin_dir.display(), prior_path);
-    let _env = EnvGuard::set_many(&[
-        ("PATH", Some(path)),
-        ("SHELL", Some("/bin/sh".to_owned())),
-        (
-            "EFFIGY_TEST_COMPOSER_ARGS_FILE",
-            Some(marker.display().to_string()),
-        ),
-    ]);
-
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "version".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("implicit deferral should not run without effigy.json marker");
-
-    match err {
-        RunnerError::TaskNotFoundAny { .. } => {}
-        other => panic!("unexpected error: {other}"),
-    }
+        &marker,
+    );
+    let err = run_task(&root, "version", &[])
+        .expect_err("implicit deferral should not run without effigy.json marker");
+    assert_task_not_found_any(err);
     assert!(
         !marker.exists(),
         "composer fallback should not be invoked when effigy.json is missing"
@@ -217,45 +172,15 @@ fn run_manifest_task_does_not_implicitly_defer_without_composer_json_marker() {
     let root = temp_workspace("implicit-root-defer-missing-composer-json");
     fs::write(root.join("effigy.json"), "{}\n").expect("write effigy marker");
 
-    let bin_dir = root.join("bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir bin");
-    let composer_stub = bin_dir.join("composer");
     let marker = root.join("composer-called.log");
-    fs::write(
-        &composer_stub,
+    let _env = setup_composer_stub(
+        &root,
         "#!/bin/sh\nprintf called > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit 0\n",
-    )
-    .expect("write composer stub");
-    let mut perms = fs::metadata(&composer_stub)
-        .expect("metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&composer_stub, perms).expect("chmod");
-
-    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
-    let path = format!("{}:{}", bin_dir.display(), prior_path);
-    let _env = EnvGuard::set_many(&[
-        ("PATH", Some(path)),
-        ("SHELL", Some("/bin/sh".to_owned())),
-        (
-            "EFFIGY_TEST_COMPOSER_ARGS_FILE",
-            Some(marker.display().to_string()),
-        ),
-    ]);
-
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "version".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("implicit deferral should not run without composer.json marker");
-
-    match err {
-        RunnerError::TaskNotFoundAny { .. } => {}
-        other => panic!("unexpected error: {other}"),
-    }
+        &marker,
+    );
+    let err = run_task(&root, "version", &[])
+        .expect_err("implicit deferral should not run without composer.json marker");
+    assert_task_not_found_any(err);
     assert!(
         !marker.exists(),
         "composer fallback should not be invoked when composer.json is missing"
@@ -271,45 +196,15 @@ fn run_manifest_task_does_not_implicitly_defer_when_markers_exist_only_in_nested
     fs::write(nested.join("effigy.json"), "{}\n").expect("write nested effigy marker");
     fs::write(nested.join("composer.json"), "{}\n").expect("write nested composer marker");
 
-    let bin_dir = root.join("bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir bin");
-    let composer_stub = bin_dir.join("composer");
     let marker = root.join("composer-called.log");
-    fs::write(
-        &composer_stub,
+    let _env = setup_composer_stub(
+        &root,
         "#!/bin/sh\nprintf called > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit 0\n",
-    )
-    .expect("write composer stub");
-    let mut perms = fs::metadata(&composer_stub)
-        .expect("metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&composer_stub, perms).expect("chmod");
-
-    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
-    let path = format!("{}:{}", bin_dir.display(), prior_path);
-    let _env = EnvGuard::set_many(&[
-        ("PATH", Some(path)),
-        ("SHELL", Some("/bin/sh".to_owned())),
-        (
-            "EFFIGY_TEST_COMPOSER_ARGS_FILE",
-            Some(marker.display().to_string()),
-        ),
-    ]);
-
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "version".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("implicit deferral should not run from nested marker files");
-
-    match err {
-        RunnerError::TaskNotFoundAny { .. } => {}
-        other => panic!("unexpected error: {other}"),
-    }
+        &marker,
+    );
+    let err = run_task(&root, "version", &[])
+        .expect_err("implicit deferral should not run from nested marker files");
+    assert_task_not_found_any(err);
     assert!(
         !marker.exists(),
         "composer fallback should not be invoked when markers are only nested"
@@ -327,40 +222,13 @@ fn run_manifest_task_explicit_deferral_wins_over_implicit_root_deferral() {
         "[defer]\nrun = \"printf explicit\"\n",
     );
 
-    let bin_dir = root.join("bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir bin");
-    let composer_stub = bin_dir.join("composer");
     let marker = root.join("composer-called.log");
-    fs::write(
-        &composer_stub,
+    let _env = setup_composer_stub(
+        &root,
         "#!/bin/sh\nprintf called > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit 99\n",
-    )
-    .expect("write composer stub");
-    let mut perms = fs::metadata(&composer_stub)
-        .expect("metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&composer_stub, perms).expect("chmod");
-
-    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
-    let path = format!("{}:{}", bin_dir.display(), prior_path);
-    let _env = EnvGuard::set_many(&[
-        ("PATH", Some(path)),
-        ("SHELL", Some("/bin/sh".to_owned())),
-        (
-            "EFFIGY_TEST_COMPOSER_ARGS_FILE",
-            Some(marker.display().to_string()),
-        ),
-    ]);
-
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "missing".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("explicit deferral should succeed");
+        &marker,
+    );
+    let out = run_task(&root, "missing", &[]).expect("explicit deferral should succeed");
 
     assert_eq!(out, "");
     assert!(!marker.exists(), "composer fallback should not be invoked");
