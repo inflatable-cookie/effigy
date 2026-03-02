@@ -113,6 +113,47 @@ struct ManifestSnapshot {
     parse_ok_any: bool,
 }
 
+struct DoctorState {
+    findings: Vec<DoctorFinding>,
+    statuses: HashMap<String, DoctorSeverity>,
+    fixes: Vec<DoctorFixAction>,
+}
+
+impl DoctorState {
+    fn new() -> Self {
+        Self {
+            findings: Vec::new(),
+            statuses: initialize_statuses(),
+            fixes: Vec::new(),
+        }
+    }
+
+    fn add_finding(&mut self, finding: DoctorFinding) {
+        let status = self
+            .statuses
+            .entry(finding.check_id.clone())
+            .or_insert(DoctorSeverity::Info);
+        if finding.severity > *status {
+            *status = finding.severity;
+        }
+        self.findings.push(finding);
+    }
+
+    fn summarize(&self) -> DoctorSummary {
+        summarize_statuses(&self.statuses)
+    }
+
+    fn finalize_fix_actions(&mut self, should_fix: bool) {
+        if should_fix && self.fixes.is_empty() {
+            self.fixes.push(DoctorFixAction {
+                fix_id: "manifest.health_task_scaffold".to_owned(),
+                status: DoctorFixStatus::Skipped,
+                detail: "No safe automatic fixes were applicable.".to_owned(),
+            });
+        }
+    }
+}
+
 pub(super) fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
     if let Some(request) = args.explain.clone() {
         return explain::run_doctor_explain(
@@ -127,40 +168,20 @@ pub(super) fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
     let cwd = std::env::current_dir().map_err(RunnerError::Cwd)?;
     let resolved = resolve_target_root(cwd, args.repo_override.clone())?;
 
-    let mut findings = Vec::<DoctorFinding>::new();
-    let mut statuses = initialize_statuses();
-    add_root_resolution_finding(&resolved, &mut findings, &mut statuses);
+    let mut state = DoctorState::new();
+    add_root_resolution_finding(&resolved, &mut state);
 
-    let mut fixes = Vec::<DoctorFixAction>::new();
-    let mut manifest =
-        collect_manifest_snapshot(&resolved.resolved_root, &mut findings, &mut statuses)?;
-    maybe_apply_manifest_fixes(
-        args.fix,
-        &resolved.resolved_root,
-        &mut manifest,
-        &mut findings,
-        &mut statuses,
-        &mut fixes,
-    )?;
-    run_doctor_checks(
-        &resolved.resolved_root,
-        &manifest,
-        &mut findings,
-        &mut statuses,
-    );
-    finalize_fix_actions(args.fix, &mut fixes);
-    add_manifest_availability_findings(
-        &resolved.resolved_root,
-        &manifest,
-        &mut findings,
-        &mut statuses,
-    );
+    let mut manifest = collect_manifest_snapshot(&resolved.resolved_root, &mut state)?;
+    maybe_apply_manifest_fixes(args.fix, &resolved.resolved_root, &mut manifest, &mut state)?;
+    run_doctor_checks(&resolved.resolved_root, &manifest, &mut state);
+    state.finalize_fix_actions(args.fix);
+    add_manifest_availability_findings(&resolved.resolved_root, &manifest, &mut state);
 
-    let summary = summarize_statuses(&statuses);
+    let summary = state.summarize();
     let report = DoctorReport {
         summary: summary.clone(),
-        findings,
-        fixes,
+        findings: state.findings,
+        fixes: state.fixes,
         root_evidence: resolved.evidence,
         root_warnings: resolved.warnings,
     };
@@ -190,38 +211,35 @@ fn initialize_statuses() -> HashMap<String, DoctorSeverity> {
 
 fn add_root_resolution_finding(
     resolved: &crate::resolver::ResolvedTarget,
-    findings: &mut Vec<DoctorFinding>,
-    statuses: &mut HashMap<String, DoctorSeverity>,
+    state: &mut DoctorState,
 ) {
     let root_mode = match resolved.resolution_mode {
         crate::tasks::ResolutionMode::Explicit => "explicit (--repo)",
         crate::tasks::ResolutionMode::AutoNearest => "auto (nearest root)",
         crate::tasks::ResolutionMode::AutoPromoted => "auto (promoted workspace root)",
     };
-    add_finding(
-        findings,
-        statuses,
-        DoctorFinding {
-            check_id: "workspace.root-resolution".to_owned(),
-            severity: DoctorSeverity::Info,
-            evidence: format!(
-                "resolved root `{}` using mode {root_mode}",
-                resolved.resolved_root.display()
-            ),
-            remediation: "Use `--repo <PATH>` when you need deterministic root targeting."
-                .to_owned(),
-            fixable: false,
-        },
-    );
+    state.add_finding(DoctorFinding {
+        check_id: "workspace.root-resolution".to_owned(),
+        severity: DoctorSeverity::Info,
+        evidence: format!(
+            "resolved root `{}` using mode {root_mode}",
+            resolved.resolved_root.display()
+        ),
+        remediation: "Use `--repo <PATH>` when you need deterministic root targeting.".to_owned(),
+        fixable: false,
+    });
 }
 
 fn collect_manifest_snapshot(
     resolved_root: &std::path::Path,
-    findings: &mut Vec<DoctorFinding>,
-    statuses: &mut HashMap<String, DoctorSeverity>,
+    state: &mut DoctorState,
 ) -> Result<ManifestSnapshot, RunnerError> {
     let (manifest_paths, parsed_catalogs, preferred_js_pm, parse_ok_any) =
-        manifest::collect_manifest_findings(resolved_root, findings, statuses)?;
+        manifest::collect_manifest_findings(
+            resolved_root,
+            &mut state.findings,
+            &mut state.statuses,
+        )?;
     Ok(ManifestSnapshot {
         manifest_paths,
         parsed_catalogs,
@@ -234,85 +252,76 @@ fn maybe_apply_manifest_fixes(
     should_fix: bool,
     resolved_root: &std::path::Path,
     manifest: &mut ManifestSnapshot,
-    findings: &mut Vec<DoctorFinding>,
-    statuses: &mut HashMap<String, DoctorSeverity>,
-    fixes: &mut Vec<DoctorFixAction>,
+    state: &mut DoctorState,
 ) -> Result<(), RunnerError> {
     if !should_fix {
         return Ok(());
     }
 
-    fixes.extend(manifest::apply_fixers(
+    state.fixes.extend(manifest::apply_fixers(
         resolved_root,
         &manifest.parsed_catalogs,
     ));
-    *manifest = collect_manifest_snapshot(resolved_root, findings, statuses)?;
+    *manifest = collect_manifest_snapshot(resolved_root, state)?;
     Ok(())
 }
 
 fn run_doctor_checks(
     resolved_root: &std::path::Path,
     manifest: &ManifestSnapshot,
-    findings: &mut Vec<DoctorFinding>,
-    statuses: &mut HashMap<String, DoctorSeverity>,
+    state: &mut DoctorState,
 ) {
-    conflicts::check_manifest_alias_conflicts(&manifest.parsed_catalogs, findings, statuses);
+    conflicts::check_manifest_alias_conflicts(
+        &manifest.parsed_catalogs,
+        &mut state.findings,
+        &mut state.statuses,
+    );
     environment::check_environment_tools(
         resolved_root,
         &manifest.parsed_catalogs,
         manifest.preferred_js_pm,
-        findings,
-        statuses,
+        &mut state.findings,
+        &mut state.statuses,
     );
-    references::check_task_references(&manifest.parsed_catalogs, findings, statuses);
-    health::check_health_task(resolved_root, &manifest.parsed_catalogs, findings, statuses);
-}
-
-fn finalize_fix_actions(should_fix: bool, fixes: &mut Vec<DoctorFixAction>) {
-    if should_fix && fixes.is_empty() {
-        fixes.push(DoctorFixAction {
-            fix_id: "manifest.health_task_scaffold".to_owned(),
-            status: DoctorFixStatus::Skipped,
-            detail: "No safe automatic fixes were applicable.".to_owned(),
-        });
-    }
+    references::check_task_references(
+        &manifest.parsed_catalogs,
+        &mut state.findings,
+        &mut state.statuses,
+    );
+    health::check_health_task(
+        resolved_root,
+        &manifest.parsed_catalogs,
+        &mut state.findings,
+        &mut state.statuses,
+    );
 }
 
 fn add_manifest_availability_findings(
     resolved_root: &std::path::Path,
     manifest: &ManifestSnapshot,
-    findings: &mut Vec<DoctorFinding>,
-    statuses: &mut HashMap<String, DoctorSeverity>,
+    state: &mut DoctorState,
 ) {
     if manifest.manifest_paths.is_empty() {
-        add_finding(
-            findings,
-            statuses,
-            DoctorFinding {
-                check_id: "manifest.parse".to_owned(),
-                severity: DoctorSeverity::Warning,
-                evidence: format!(
-                    "no `{}` files were discovered under {}",
-                    super::TASK_MANIFEST_FILE,
-                    resolved_root.display()
-                ),
-                remediation: "Add an `effigy.toml` at repo root or child catalog roots.".to_owned(),
-                fixable: false,
-            },
-        );
+        state.add_finding(DoctorFinding {
+            check_id: "manifest.parse".to_owned(),
+            severity: DoctorSeverity::Warning,
+            evidence: format!(
+                "no `{}` files were discovered under {}",
+                super::TASK_MANIFEST_FILE,
+                resolved_root.display()
+            ),
+            remediation: "Add an `effigy.toml` at repo root or child catalog roots.".to_owned(),
+            fixable: false,
+        });
     } else if !manifest.parse_ok_any {
-        add_finding(
-            findings,
-            statuses,
-            DoctorFinding {
-                check_id: "manifest.parse".to_owned(),
-                severity: DoctorSeverity::Error,
-                evidence: "no valid manifests were available for downstream checks".to_owned(),
-                remediation: "Fix manifest parse/schema errors first, then re-run `effigy doctor`."
-                    .to_owned(),
-                fixable: false,
-            },
-        );
+        state.add_finding(DoctorFinding {
+            check_id: "manifest.parse".to_owned(),
+            severity: DoctorSeverity::Error,
+            evidence: "no valid manifests were available for downstream checks".to_owned(),
+            remediation: "Fix manifest parse/schema errors first, then re-run `effigy doctor`."
+                .to_owned(),
+            fixable: false,
+        });
     }
 }
 
