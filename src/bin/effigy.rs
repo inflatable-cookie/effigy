@@ -1,8 +1,9 @@
-use effigy::ui::{MessageBlock, OutputMode, PlainRenderer, Renderer};
+use effigy::ui::{OutputMode, PlainRenderer, Renderer};
 use effigy::{
     apply_global_json_flag, command_kind_and_name, command_requests_json, emit_json_envelope_error,
-    emit_json_envelope_success_value, help_topic_label, parse_command, render_cli_header,
-    render_help, run_and_render_command, strip_global_json_flags, Command, HelpTopic,
+    emit_json_envelope_success_value, help_topic_label, parse_command, parse_error_json_details,
+    render_cli_header, render_help, render_parse_error, run_and_render_command,
+    strip_global_json_flags, Command,
 };
 use serde_json::json;
 
@@ -20,23 +21,14 @@ fn main() {
                     "parse",
                     "CliParseError",
                     &err.to_string(),
-                    Some(json!({
-                        "hint": "Run `effigy --help` to see supported command forms"
-                    })),
+                    Some(parse_error_json_details()),
                 );
             }
             let mut renderer = PlainRenderer::stderr(output_mode);
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             let resolved_root = effigy::resolver::resolve_target_root(cwd.clone(), None)
                 .map_or(cwd, |r| r.resolved_root);
-            if !global_json_mode {
-                let _ = render_cli_header(&mut renderer, &resolved_root);
-            }
-            let _ = renderer.error_block(
-                &MessageBlock::new("Invalid command arguments", err.to_string())
-                    .with_hint("Run `effigy --help` to see supported command forms"),
-            );
-            let _ = render_help(&mut renderer, HelpTopic::General);
+            let _ = render_parse_error(&mut renderer, &resolved_root, &err.to_string());
             std::process::exit(2);
         }
     };
