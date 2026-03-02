@@ -12,6 +12,8 @@ mod json_output;
 mod matches;
 #[path = "tasks_listing/render_context.rs"]
 mod render_context;
+#[path = "tasks_listing/row_projection.rs"]
+mod row_projection;
 #[path = "tasks_listing/text_output.rs"]
 mod text_output;
 

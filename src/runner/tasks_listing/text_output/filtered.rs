@@ -3,10 +3,7 @@ use std::path::Path;
 use crate::ui::theme::Theme;
 use crate::ui::{NoticeLevel, PlainRenderer, Renderer};
 
-use super::super::super::execute::{catalog_task_label, task_run_preview};
-use super::super::super::tasks_view::{
-    managed_profile_display_rows, relative_display_path, render_resolution_probe_block,
-};
+use super::super::super::tasks_view::{relative_display_path, render_resolution_probe_block};
 use super::super::super::{LoadedCatalog, ManifestTask, RunnerError};
 use super::super::filtering::evaluate_task_filter;
 use super::rows::{render_builtin_task_rows, render_task_with_profiles};
@@ -69,17 +66,15 @@ fn render_filtered_catalog_task_matches(
     task_name: &str,
 ) -> Result<(), RunnerError> {
     for (catalog, task) in matches {
-        let task_label = catalog_task_label(catalog, task_name);
         let manifest = relative_display_path(resolved_root, &catalog.manifest_path);
-        let signature = task_run_preview(task);
         render_task_with_profiles(
             renderer,
             color_enabled,
             theme,
             &manifest,
-            &task_label,
-            &signature,
-            managed_profile_display_rows(catalog, task_name, task),
+            catalog,
+            task_name,
+            task,
         )?;
     }
     Ok(())

@@ -3,10 +3,7 @@ use std::path::Path;
 use crate::ui::theme::Theme;
 use crate::ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
 
-use super::super::super::execute::{catalog_task_label, task_run_preview};
-use super::super::super::tasks_view::{
-    managed_profile_display_rows, relative_display_path, style_text,
-};
+use super::super::super::tasks_view::{relative_display_path, style_text};
 use super::super::super::{LoadedCatalog, RunnerError, BUILTIN_TASKS};
 use super::super::catalog_rows::{assemble_catalog_rows, CatalogRow};
 use super::rows::{render_builtin_task_rows, render_task_with_profiles};
@@ -90,9 +87,9 @@ fn render_tasks_section(
                     color_enabled,
                     theme,
                     &manifest,
-                    &catalog_task_label(catalog, task_name),
-                    &task_run_preview(task),
-                    managed_profile_display_rows(catalog, task_name, task),
+                    catalog,
+                    task_name,
+                    task,
                 )?;
             }
         }
