@@ -1,3 +1,4 @@
+pub mod entrypoint;
 pub mod execution_context;
 pub mod help_dispatch;
 pub mod output;
