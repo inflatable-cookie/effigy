@@ -1,57 +1,19 @@
 use std::path::{Path, PathBuf};
 
+#[path = "references/context.rs"]
+mod context;
+#[path = "references/invocation.rs"]
+mod invocation;
+#[path = "references/parser.rs"]
+mod parser;
+
 use super::super::catalog::select_catalog_and_task;
-use super::super::util::{parse_task_reference_invocation, render_task_selector, shell_quote};
-use super::super::{LoadedCatalog, RunnerError, TaskSelector, BUILTIN_TASKS};
+use super::super::util::shell_quote;
+use super::super::{LoadedCatalog, RunnerError};
 use super::run_spec::render_task_run_spec;
-
-struct ManagedRefContext<'a> {
-    managed_task_name: &'a str,
-    process_name: &'a str,
-    task_ref: &'a str,
-}
-
-impl ManagedRefContext<'_> {
-    fn invalid(&self, detail: impl ToString) -> RunnerError {
-        RunnerError::TaskManagedTaskReferenceInvalid {
-            task: self.managed_task_name.to_owned(),
-            process: self.process_name.to_owned(),
-            reference: self.task_ref.to_owned(),
-            detail: detail.to_string(),
-        }
-    }
-}
-
-struct StepRefContext<'a> {
-    task_name: &'a str,
-    task_ref: &'a str,
-}
-
-impl StepRefContext<'_> {
-    fn failure(&self, detail: impl ToString) -> RunnerError {
-        RunnerError::TaskInvocation(format!(
-            "task `{}` run step task ref `{}` failed: {}",
-            self.task_name,
-            self.task_ref,
-            detail.to_string()
-        ))
-    }
-
-    fn invalid(&self, detail: impl ToString) -> RunnerError {
-        RunnerError::TaskInvocation(format!(
-            "task `{}` run step task ref `{}` is invalid: {}",
-            self.task_name,
-            self.task_ref,
-            detail.to_string()
-        ))
-    }
-}
-
-struct ParsedTaskRef {
-    selector: TaskSelector,
-    selector_rendered: String,
-    args_rendered: String,
-}
+use context::{ManagedRefContext, StepRefContext};
+use invocation::render_builtin_task_reference_invocation;
+use parser::{is_builtin_task_selector, merge_args_rendered, parse_task_ref};
 
 pub(super) fn resolve_task_reference_run(
     managed_task_name: &str,
@@ -61,9 +23,9 @@ pub(super) fn resolve_task_reference_run(
     task_scope_cwd: &Path,
 ) -> Result<(String, PathBuf), RunnerError> {
     let context = ManagedRefContext {
-        managed_task_name,
-        process_name,
-        task_ref,
+        managed_task_name: managed_task_name.to_owned(),
+        process_name: process_name.to_owned(),
+        task_ref: task_ref.to_owned(),
     };
     let parsed = parse_task_ref(task_ref).map_err(|error| context.invalid(error))?;
 
@@ -109,8 +71,8 @@ pub(super) fn resolve_task_reference_step(
     depth: usize,
 ) -> Result<String, RunnerError> {
     let context = StepRefContext {
-        task_name,
-        task_ref,
+        task_name: task_name.to_owned(),
+        task_ref: task_ref.to_owned(),
     };
     let parsed = parse_task_ref(task_ref).map_err(|error| context.invalid(error))?;
     let merged_args_rendered = merge_args_rendered(&parsed.args_rendered, args_rendered);
@@ -153,69 +115,4 @@ pub(super) fn resolve_task_reference_step(
         shell_quote(&selection.catalog.catalog_root.display().to_string()),
         nested
     ))
-}
-
-fn parse_task_ref(task_ref: &str) -> Result<ParsedTaskRef, RunnerError> {
-    let (selector, args) = parse_task_reference_invocation(task_ref)?;
-    let selector_rendered = render_task_selector(&selector);
-    let args_rendered = args
-        .iter()
-        .map(|arg| shell_quote(arg))
-        .collect::<Vec<String>>()
-        .join(" ");
-    Ok(ParsedTaskRef {
-        selector,
-        selector_rendered,
-        args_rendered,
-    })
-}
-
-fn merge_args_rendered(ref_args_rendered: &str, args_rendered: &str) -> String {
-    match (ref_args_rendered.is_empty(), args_rendered.is_empty()) {
-        (true, true) => String::new(),
-        (false, true) => ref_args_rendered.to_owned(),
-        (true, false) => args_rendered.to_owned(),
-        (false, false) => format!("{ref_args_rendered} {args_rendered}"),
-    }
-}
-
-fn is_builtin_task_selector(selector: &TaskSelector) -> bool {
-    BUILTIN_TASKS
-        .iter()
-        .any(|(name, _)| *name == selector.task_name.as_str())
-}
-
-fn render_builtin_task_reference_invocation(
-    task_ref: &str,
-    args_rendered: &str,
-) -> Result<String, RunnerError> {
-    let executable = resolve_effigy_invocation_prefix()?;
-    let task = shell_quote(task_ref);
-    if args_rendered.is_empty() {
-        Ok(format!("{executable} {task}"))
-    } else {
-        Ok(format!("{executable} {task} {args_rendered}"))
-    }
-}
-
-fn resolve_effigy_invocation_prefix() -> Result<String, RunnerError> {
-    if let Ok(explicit) = std::env::var("EFFIGY_EXECUTABLE") {
-        let trimmed = explicit.trim();
-        if !trimmed.is_empty() {
-            return Ok(shell_quote(trimmed));
-        }
-    }
-
-    let executable = std::env::current_exe().map_err(RunnerError::Cwd)?;
-    let is_test_harness = executable
-        .parent()
-        .and_then(|parent| parent.file_name())
-        .is_some_and(|name| name == "deps");
-    if is_test_harness {
-        let manifest_path = shell_quote(&format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR")));
-        return Ok(format!(
-            "cargo run --quiet --manifest-path {manifest_path} --bin effigy --"
-        ));
-    }
-    Ok(shell_quote(&executable.display().to_string()))
 }
