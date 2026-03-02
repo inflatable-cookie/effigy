@@ -1,6 +1,7 @@
 use serde_json::json;
 
 use super::super::super::LoadedCatalog;
+use super::super::catalog_rows::{assemble_catalog_rows, CatalogRow};
 use super::rows::{
     builtin_task_rows_json, catalog_task_row_json, empty_task_row_json, managed_profile_rows_json,
 };
@@ -32,16 +33,21 @@ fn build_catalog_and_profile_rows(
 ) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
     let mut catalog_rows = Vec::<serde_json::Value>::new();
     let mut managed_profile_rows = Vec::<serde_json::Value>::new();
-    for catalog in ordered_catalogs {
-        if catalog.manifest.tasks.is_empty() {
-            catalog_rows.push(empty_task_row_json(&super::super::manifest_path_string(
+    for row in assemble_catalog_rows(ordered_catalogs).rows() {
+        match row {
+            CatalogRow::EmptyCatalog { catalog } => {
+                catalog_rows.push(empty_task_row_json(&super::super::manifest_path_string(
+                    catalog,
+                )));
+            }
+            CatalogRow::Task {
                 catalog,
-            )));
-            continue;
-        }
-        for (task_name, task_def) in &catalog.manifest.tasks {
-            catalog_rows.push(catalog_task_row_json(catalog, task_name, task_def));
-            managed_profile_rows.extend(managed_profile_rows_json(catalog, task_name, task_def));
+                task_name,
+                task,
+            } => {
+                catalog_rows.push(catalog_task_row_json(catalog, task_name, task));
+                managed_profile_rows.extend(managed_profile_rows_json(catalog, task_name, task));
+            }
         }
     }
     (catalog_rows, managed_profile_rows)
