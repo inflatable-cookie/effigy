@@ -111,4 +111,6 @@ Effigy is still evolving, so distribution planning should be staged and reversib
 
 Before marking this backlog item complete, execute:
 - [`../../guides/044-distribution-first-publish-execution-runbook.md`](../../guides/044-distribution-first-publish-execution-runbook.md)
+- `./scripts/check-distribution-first-publish.sh --tag <tag> --artifacts-dir <dir>`
+- `./scripts/generate-distribution-closeout-report.sh --tag <tag> --artifacts-dir <dir> [--expect-homebrew]`
 - one dated acceptance-closeout report with channel matrix evidence
