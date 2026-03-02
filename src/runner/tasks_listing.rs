@@ -15,6 +15,9 @@ use super::tasks_view::{
 use super::util::parse_task_selector;
 use super::{render, LoadedCatalog, RunnerError, TaskSelector, BUILTIN_TASKS};
 
+const BUILTIN_TEST_FALLBACK_NOTE: &str =
+    "built-in fallback supports `<catalog>/test` when explicit `tasks.test` is not defined";
+
 pub(super) fn render_tasks_listing(
     args: &TasksArgs,
     catalogs: &[LoadedCatalog],
@@ -119,10 +122,7 @@ fn build_filtered_tasks_payload(
 
 fn builtin_test_fallback_notes(task_name: &str) -> Vec<String> {
     if task_name == "test" {
-        vec![
-            "built-in fallback supports `<catalog>/test` when explicit `tasks.test` is not defined"
-                .to_owned(),
-        ]
+        vec![BUILTIN_TEST_FALLBACK_NOTE.to_owned()]
     } else {
         Vec::new()
     }
@@ -188,57 +188,17 @@ fn render_tasks_text(
     let color_enabled =
         resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+    let theme = Theme::default();
     if let Some(filter) = args.task_name.as_ref() {
-        let selector = parse_task_selector(filter)?;
-        renderer.section(&format!("Task Matches: {filter}"))?;
-
-        let matches = matched_catalog_tasks(catalogs, &selector);
-        let builtin_matches = builtin_matches_text(&selector);
-
-        if matches.is_empty() && builtin_matches.is_empty() {
-            renderer.notice(NoticeLevel::Warning, "no matches")?;
-            return render::render_utf8(renderer.into_inner());
-        }
-
-        let theme = Theme::default();
-        for (catalog, task) in matches {
-            let task_label = catalog_task_label(catalog, &selector.task_name);
-            let manifest = relative_display_path(resolved_root, &catalog.manifest_path);
-            let signature = task_run_preview(task);
-            render_task_with_profiles(
-                &mut renderer,
-                color_enabled,
-                &theme,
-                &manifest,
-                &task_label,
-                &signature,
-                managed_profile_display_rows(catalog, &selector.task_name, task),
-            )?;
-        }
-        if !builtin_matches.is_empty() || resolve_probe.is_some() {
-            renderer.text("")?;
-        }
-        if !builtin_matches.is_empty() {
-            renderer.section("Built-in Task Matches")?;
-            render_builtin_task_rows(
-                &mut renderer,
-                color_enabled,
-                &theme,
-                builtin_matches.as_slice(),
-            )?;
-            if selector.task_name == "test" {
-                renderer.notice(
-                    NoticeLevel::Info,
-                    "built-in fallback supports `<catalog>/test` when explicit `tasks.test` is not defined",
-                )?;
-            }
-            if resolve_probe.is_some() {
-                renderer.text("")?;
-            }
-        }
-        if let Some(probe) = resolve_probe {
-            render_resolution_probe_block(&mut renderer, probe, color_enabled, false)?;
-        }
+        render_filtered_tasks_text(
+            &mut renderer,
+            color_enabled,
+            &theme,
+            catalogs,
+            filter,
+            resolve_probe,
+            resolved_root,
+        )?;
         return render::render_utf8(renderer.into_inner());
     }
 
@@ -247,8 +207,7 @@ fn render_tasks_text(
         return render::render_utf8(renderer.into_inner());
     }
 
-    let theme = Theme::default();
-    render_catalogs_section(
+    render_default_tasks_text(
         &mut renderer,
         color_enabled,
         &theme,
@@ -256,17 +215,116 @@ fn render_tasks_text(
         ordered_catalogs,
         resolved_root,
     )?;
-    render_tasks_section(
-        &mut renderer,
+    render::render_utf8(renderer.into_inner())
+}
+
+fn render_filtered_tasks_text(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    color_enabled: bool,
+    theme: &Theme,
+    catalogs: &[LoadedCatalog],
+    filter: &str,
+    resolve_probe: &Option<serde_json::Value>,
+    resolved_root: &Path,
+) -> Result<(), RunnerError> {
+    let selector = parse_task_selector(filter)?;
+    renderer.section(&format!("Task Matches: {filter}"))?;
+
+    let matches = matched_catalog_tasks(catalogs, &selector);
+    let builtin_matches = builtin_matches(&selector);
+
+    if matches.is_empty() && builtin_matches.is_empty() {
+        renderer.notice(NoticeLevel::Warning, "no matches")?;
+        return Ok(());
+    }
+
+    render_filtered_catalog_task_matches(
+        renderer,
         color_enabled,
-        &theme,
+        theme,
+        resolved_root,
+        matches.as_slice(),
+        &selector.task_name,
+    )?;
+
+    if !builtin_matches.is_empty() || resolve_probe.is_some() {
+        renderer.text("")?;
+    }
+    if !builtin_matches.is_empty() {
+        renderer.section("Built-in Task Matches")?;
+        render_builtin_task_rows(renderer, color_enabled, theme, builtin_matches.as_slice())?;
+        render_builtin_test_fallback_notice(renderer, &selector.task_name)?;
+        if resolve_probe.is_some() {
+            renderer.text("")?;
+        }
+    }
+    if let Some(probe) = resolve_probe {
+        render_resolution_probe_block(renderer, probe, color_enabled, false)?;
+    }
+    Ok(())
+}
+
+fn render_filtered_catalog_task_matches(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    color_enabled: bool,
+    theme: &Theme,
+    resolved_root: &Path,
+    matches: &[(&LoadedCatalog, &super::ManifestTask)],
+    task_name: &str,
+) -> Result<(), RunnerError> {
+    for (catalog, task) in matches {
+        let task_label = catalog_task_label(catalog, task_name);
+        let manifest = relative_display_path(resolved_root, &catalog.manifest_path);
+        let signature = task_run_preview(task);
+        render_task_with_profiles(
+            renderer,
+            color_enabled,
+            theme,
+            &manifest,
+            &task_label,
+            &signature,
+            managed_profile_display_rows(catalog, task_name, task),
+        )?;
+    }
+    Ok(())
+}
+
+fn render_builtin_test_fallback_notice(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    task_name: &str,
+) -> Result<(), RunnerError> {
+    if task_name == "test" {
+        renderer.notice(NoticeLevel::Info, BUILTIN_TEST_FALLBACK_NOTE)?;
+    }
+    Ok(())
+}
+
+fn render_default_tasks_text(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    color_enabled: bool,
+    theme: &Theme,
+    catalogs: &[LoadedCatalog],
+    ordered_catalogs: &[&LoadedCatalog],
+    resolved_root: &Path,
+) -> Result<(), RunnerError> {
+    render_catalogs_section(
+        renderer,
+        color_enabled,
+        theme,
+        catalogs,
         ordered_catalogs,
         resolved_root,
     )?;
-
+    render_tasks_section(
+        renderer,
+        color_enabled,
+        theme,
+        ordered_catalogs,
+        resolved_root,
+    )?;
     renderer.section("Built-in Tasks")?;
-    render_builtin_task_rows(&mut renderer, color_enabled, &theme, &BUILTIN_TASKS)?;
-    render::render_utf8(renderer.into_inner())
+    render_builtin_task_rows(renderer, color_enabled, theme, &BUILTIN_TASKS)?;
+    Ok(())
 }
 
 fn render_catalogs_section(
@@ -374,7 +432,7 @@ fn managed_profile_rows_json(
         .collect::<Vec<serde_json::Value>>()
 }
 
-fn builtin_matches_text(selector: &TaskSelector) -> Vec<(&'static str, &'static str)> {
+fn builtin_matches(selector: &TaskSelector) -> Vec<(&'static str, &'static str)> {
     BUILTIN_TASKS
         .iter()
         .filter(|(name, _)| selector.prefix.is_none() && selector.task_name == *name)
@@ -383,7 +441,7 @@ fn builtin_matches_text(selector: &TaskSelector) -> Vec<(&'static str, &'static 
 }
 
 fn builtin_matches_json(selector: &TaskSelector) -> Vec<serde_json::Value> {
-    builtin_matches_text(selector)
+    builtin_matches(selector)
         .into_iter()
         .map(|(name, description)| {
             json!({
