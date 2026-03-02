@@ -15,6 +15,7 @@ pub use cli::parse::{
     apply_global_json_flag, command_requests_json, parse_command, strip_global_json_flag,
     strip_global_json_flags, CliParseError,
 };
+pub use cli::runner_dispatch::run_and_render_command;
 use std::path::{Path, PathBuf};
 use ui::{Renderer, UiResult};
 
