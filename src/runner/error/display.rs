@@ -1,5 +1,24 @@
 use super::super::{RunnerError, TASK_MANIFEST_FILE};
 
+#[path = "display/builtin.rs"]
+mod builtin;
+#[path = "display/managed.rs"]
+mod managed;
+#[path = "display/task_failures.rs"]
+mod task_failures;
+
+use builtin::{write_builtin_test_non_zero, write_doctor_non_zero};
+use managed::{
+    write_managed_non_zero_exit, write_task_managed_process_invalid_definition,
+    write_task_managed_process_not_found, write_task_managed_profile_empty,
+    write_task_managed_profile_not_found, write_task_managed_profile_tab_order_invalid,
+    write_task_managed_task_reference_invalid, write_task_managed_unsupported_mode,
+};
+use task_failures::{
+    write_defer_loop_detected, write_lock_conflict, write_task_command_failure,
+    write_task_command_launch, write_task_lock_io,
+};
+
 pub(super) fn fmt_runner_error(
     error: &RunnerError,
     f: &mut std::fmt::Formatter<'_>,
@@ -10,12 +29,7 @@ pub(super) fn fmt_runner_error(
         RunnerError::Task(err) => write!(f, "{err}"),
         RunnerError::Ui(msg) => write!(f, "ui render failed: {msg}"),
         RunnerError::TaskInvocation(msg) => write!(f, "{msg}"),
-        RunnerError::TaskCatalogsMissing { root } => write!(
-            f,
-            "no task catalogs found under {} (expected one or more {} files)",
-            root.display(),
-            TASK_MANIFEST_FILE
-        ),
+        RunnerError::TaskCatalogsMissing { root } => write_catalogs_missing(f, root),
         RunnerError::TaskCatalogReadDir { path, error } => {
             write!(f, "failed to read directory {}: {error}", path.display())
         }
@@ -54,7 +68,7 @@ pub(super) fn fmt_runner_error(
             candidates.join(", ")
         ),
         RunnerError::TaskCommandLaunch { command, error } => {
-            write!(f, "failed to launch task command `{command}`: {error}")
+            write_task_command_launch(f, command, error)
         }
         RunnerError::TaskCommandFailure {
             command,
@@ -76,63 +90,43 @@ pub(super) fn fmt_runner_error(
             holder_started_at_epoch_ms,
             remediation,
         ),
-        RunnerError::TaskLockIo { path, error } => {
-            write!(f, "lock I/O failed at {}: {error}", path.display())
-        }
+        RunnerError::TaskLockIo { path, error } => write_task_lock_io(f, path, error),
         RunnerError::CommandJsonFailure { .. } => {
             write!(f, "command failed (json output available)")
         }
         RunnerError::ManagedProcess(error) => write!(f, "{error}"),
-        RunnerError::TaskManagedUnsupportedMode { task, mode } => write!(
-            f,
-            "task `{task}` declares unsupported managed mode `{mode}` (expected `tui`)"
-        ),
+        RunnerError::TaskManagedUnsupportedMode { task, mode } => {
+            write_task_managed_unsupported_mode(f, task, mode)
+        }
         RunnerError::TaskManagedProfileNotFound {
             task,
             profile,
             available,
-        } => write!(
-            f,
-            "managed task `{task}` profile `{profile}` not found (available: {})",
-            available.join(", ")
-        ),
-        RunnerError::TaskManagedProfileEmpty { task, profile } => write!(
-            f,
-            "managed task `{task}` profile `{profile}` has no processes configured"
-        ),
+        } => write_task_managed_profile_not_found(f, task, profile, available),
+        RunnerError::TaskManagedProfileEmpty { task, profile } => {
+            write_task_managed_profile_empty(f, task, profile)
+        }
         RunnerError::TaskManagedProcessNotFound {
             task,
             profile,
             process,
-        } => write!(
-            f,
-            "managed task `{task}` profile `{profile}` references undefined process `{process}`"
-        ),
+        } => write_task_managed_process_not_found(f, task, profile, process),
         RunnerError::TaskManagedProcessInvalidDefinition {
             task,
             process,
             detail,
-        } => write!(
-            f,
-            "managed task `{task}` process `{process}` is invalid: {detail}"
-        ),
+        } => write_task_managed_process_invalid_definition(f, task, process, detail),
         RunnerError::TaskManagedProfileTabOrderInvalid {
             task,
             profile,
             detail,
-        } => write!(
-            f,
-            "managed task `{task}` profile `{profile}` tab order is invalid: {detail}"
-        ),
+        } => write_task_managed_profile_tab_order_invalid(f, task, profile, detail),
         RunnerError::TaskManagedTaskReferenceInvalid {
             task,
             process,
             reference,
             detail,
-        } => write!(
-            f,
-            "managed task `{task}` process `{process}` task ref `{reference}` is invalid: {detail}"
-        ),
+        } => write_task_managed_task_reference_invalid(f, task, process, reference, detail),
         RunnerError::TaskManagedNonZeroExit {
             task,
             profile,
@@ -146,86 +140,19 @@ pub(super) fn fmt_runner_error(
         RunnerError::BuiltinTestNonZero { failures, .. } => {
             write_builtin_test_non_zero(f, failures)
         }
-        RunnerError::DoctorNonZero { error_count, .. } => {
-            write!(f, "doctor found {error_count} error finding(s)")
-        }
-        RunnerError::DeferLoopDetected { depth } => write!(
-            f,
-            "deferral loop detected ({} deferral hop(s)); refusing to defer again",
-            depth
-        ),
+        RunnerError::DoctorNonZero { error_count, .. } => write_doctor_non_zero(f, *error_count),
+        RunnerError::DeferLoopDetected { depth } => write_defer_loop_detected(f, *depth),
     }
 }
 
-fn render_optional<T: std::fmt::Display>(value: &Option<T>) -> String {
-    value
-        .as_ref()
-        .map(ToString::to_string)
-        .unwrap_or_else(|| "<unknown>".to_owned())
-}
-
-fn write_task_command_failure(
+fn write_catalogs_missing(
     f: &mut std::fmt::Formatter<'_>,
-    command: &str,
-    code: &Option<i32>,
-    stdout: &str,
-    stderr: &str,
-) -> std::fmt::Result {
-    if stdout.is_empty() && stderr.is_empty() {
-        return write!(f, "task command failed `{command}` (code={:?})", code);
-    }
-    write!(
-        f,
-        "task command failed `{command}` (code={:?})\nstdout:\n{}\nstderr:\n{}",
-        code, stdout, stderr
-    )
-}
-
-fn write_lock_conflict(
-    f: &mut std::fmt::Formatter<'_>,
-    scope: &str,
-    lock_path: &std::path::Path,
-    holder_pid: &Option<u32>,
-    holder_started_at_epoch_ms: &Option<u128>,
-    remediation: &str,
+    root: &std::path::Path,
 ) -> std::fmt::Result {
     write!(
         f,
-        "lock conflict for `{scope}` (holder_pid={}, started_at_epoch_ms={}, lock={}); {remediation}",
-        render_optional(holder_pid),
-        render_optional(holder_started_at_epoch_ms),
-        lock_path.display()
+        "no task catalogs found under {} (expected one or more {} files)",
+        root.display(),
+        TASK_MANIFEST_FILE
     )
-}
-
-fn write_managed_non_zero_exit(
-    f: &mut std::fmt::Formatter<'_>,
-    task: &str,
-    profile: &str,
-    processes: &[(String, String)],
-) -> std::fmt::Result {
-    let rendered = processes
-        .iter()
-        .map(|(name, diagnostic)| format!("{name} ({diagnostic})"))
-        .collect::<Vec<String>>()
-        .join(", ");
-    write!(
-        f,
-        "managed task `{task}` profile `{profile}` had non-zero exits: {rendered}"
-    )
-}
-
-fn write_builtin_test_non_zero(
-    f: &mut std::fmt::Formatter<'_>,
-    failures: &[(String, Option<i32>)],
-) -> std::fmt::Result {
-    let rendered = failures
-        .iter()
-        .map(|(target, code)| match code {
-            Some(value) => format!("{target}: exit={value}"),
-            None => format!("{target}: terminated"),
-        })
-        .collect::<Vec<String>>()
-        .join(", ");
-    write!(f, "one or more built-in test targets failed: {rendered}")
 }
