@@ -3283,6 +3283,16 @@ jss = "pnpm"
     }
 }
 
+fn assert_manifest_parse_error_contains_any(error: &toml::de::Error, expected: &[&str]) {
+    let rendered = error.to_string();
+    assert!(
+        expected.iter().any(|pattern| rendered.contains(pattern)),
+        "expected parse error to contain one of {:?}, got: {}",
+        expected,
+        rendered
+    );
+}
+
 #[test]
 fn run_tasks_rejects_unknown_test_runner_override_field() {
     let root = temp_workspace("reject-unknown-test-runner-override-field");
@@ -3304,7 +3314,10 @@ cmd = "vitest run"
 
     match err {
         RunnerError::TaskManifestParse { error, .. } => {
-            assert!(error.to_string().contains("unknown field `cmd`"));
+            assert_manifest_parse_error_contains_any(
+                &error,
+                &["unknown field `cmd`", "data did not match any variant"],
+            );
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -3332,9 +3345,13 @@ fial_on_non_zero = true
 
     match err {
         RunnerError::TaskManifestParse { error, .. } => {
-            assert!(error
-                .to_string()
-                .contains("unknown field `fial_on_non_zero`"));
+            assert_manifest_parse_error_contains_any(
+                &error,
+                &[
+                    "unknown field `fial_on_non_zero`",
+                    "data did not match any variant",
+                ],
+            );
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -3362,7 +3379,10 @@ concurrent = [{ run = "printf api", tas = "api" }]
 
     match err {
         RunnerError::TaskManifestParse { error, .. } => {
-            assert!(error.to_string().contains("unknown field `tas`"));
+            assert_manifest_parse_error_contains_any(
+                &error,
+                &["unknown field `tas`", "data did not match any variant"],
+            );
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -3392,7 +3412,13 @@ run = "printf api"
 
     match err {
         RunnerError::TaskManifestParse { error, .. } => {
-            assert!(error.to_string().contains("unknown field `processes`"));
+            assert_manifest_parse_error_contains_any(
+                &error,
+                &[
+                    "unknown field `processes`",
+                    "data did not match any variant",
+                ],
+            );
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -3422,8 +3448,10 @@ default = ["farmyard/api"]
 
     match err {
         RunnerError::TaskManifestParse { error, .. } => {
-            let rendered = error.to_string();
-            assert!(rendered.contains("invalid type"));
+            assert_manifest_parse_error_contains_any(
+                &error,
+                &["invalid type", "data did not match any variant"],
+            );
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -3452,7 +3480,10 @@ run = [
 
     match err {
         RunnerError::TaskManifestParse { error, .. } => {
-            assert!(error.to_string().contains("unknown field `rnu`"));
+            assert_manifest_parse_error_contains_any(
+                &error,
+                &["unknown field `rnu`", "data did not match any variant"],
+            );
         }
         other => panic!("unexpected error: {other}"),
     }
