@@ -429,6 +429,7 @@ fn builtin_completion_json_contract_has_versioned_shape() {
 
 #[test]
 fn builtin_completion_candidates_json_contract_has_versioned_shape() {
+    let _env = EnvGuard::set_many(&[("EFFIGY_COMPLETION_CACHE_TTL_MS", None)]);
     let root = temp_workspace("completion-candidates-json-contract");
     let farmyard = root.join("farmyard");
     fs::create_dir_all(&farmyard).expect("mkdir farmyard");
@@ -475,6 +476,7 @@ fn builtin_completion_candidates_json_contract_has_versioned_shape() {
 
 #[test]
 fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_rerun() {
+    let _env = EnvGuard::set_many(&[("EFFIGY_COMPLETION_CACHE_TTL_MS", None)]);
     let root = temp_workspace("completion-candidates-cache-hit");
     write_manifest(
         &root.join("effigy.toml"),
@@ -518,6 +520,7 @@ fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_re
 
 #[test]
 fn builtin_completion_candidates_json_contract_expires_cache_after_ttl() {
+    let _env = EnvGuard::set_many(&[("EFFIGY_COMPLETION_CACHE_TTL_MS", None)]);
     let root = temp_workspace("completion-candidates-cache-ttl-expiry");
     write_manifest(
         &root.join("effigy.toml"),
