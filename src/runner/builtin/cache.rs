@@ -18,6 +18,13 @@ enum CacheCommand {
     Invalidate,
 }
 
+struct CacheArgs {
+    command: CacheCommand,
+    output_json: bool,
+    invalidate_all: bool,
+    selectors: Vec<String>,
+}
+
 pub(super) fn run_builtin_cache(
     task: &TaskInvocation,
     runtime_args: &TaskRuntimeArgs,
@@ -39,8 +46,31 @@ pub(super) fn run_builtin_cache(
         return Ok(Some(render_cache_help()));
     }
 
-    let mut args = runtime_args.passthrough.iter();
-    let Some(command_raw) = args.next() else {
+    let parsed = parse_cache_args(task, &runtime_args.passthrough)?;
+
+    match parsed.command {
+        CacheCommand::Inspect => run_inspect(
+            task,
+            target_root,
+            catalogs,
+            invocation_cwd,
+            parsed.output_json,
+            parsed.selectors,
+        ),
+        CacheCommand::Invalidate => run_invalidate(
+            target_root,
+            catalogs,
+            invocation_cwd,
+            parsed.output_json,
+            parsed.invalidate_all,
+            parsed.selectors,
+        ),
+    }
+}
+
+fn parse_cache_args(task: &TaskInvocation, args: &[String]) -> Result<CacheArgs, RunnerError> {
+    let mut iter = args.iter();
+    let Some(command_raw) = iter.next() else {
         return Err(RunnerError::TaskInvocation(
             "`cache` requires a subcommand: `inspect` or `invalidate`".to_owned(),
         ));
@@ -58,32 +88,20 @@ pub(super) fn run_builtin_cache(
     let mut output_json = false;
     let mut invalidate_all = false;
     let mut selectors = Vec::<String>::new();
-    for arg in args {
+    for arg in iter {
         match arg.as_str() {
             "--json" => output_json = true,
             "--all" => invalidate_all = true,
             value => selectors.push(value.to_owned()),
         }
     }
-
-    match command {
-        CacheCommand::Inspect => run_inspect(
-            task,
-            target_root,
-            catalogs,
-            invocation_cwd,
-            output_json,
-            selectors,
-        ),
-        CacheCommand::Invalidate => run_invalidate(
-            target_root,
-            catalogs,
-            invocation_cwd,
-            output_json,
-            invalidate_all,
-            selectors,
-        ),
-    }
+    let _ = task;
+    Ok(CacheArgs {
+        command,
+        output_json,
+        invalidate_all,
+        selectors,
+    })
 }
 
 fn run_inspect(
@@ -115,27 +133,9 @@ fn run_inspect(
                 "selector": selector_raw,
                 "entry": entry,
             });
-            return serde_json::to_string_pretty(&payload)
-                .map(Some)
-                .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+            return encode_cache_json(payload);
         }
-
-        let mut lines = vec![format!("cache root: {}", target_root.display())];
-        lines.push(format!("selector: {selector_raw}"));
-        match entry {
-            Some(entry) => {
-                lines.push("status: present".to_owned());
-                lines.push(format!("fingerprint: {}", entry.fingerprint));
-                lines.push(format!(
-                    "updated_at_epoch_ms: {}",
-                    entry.updated_at_epoch_ms
-                ));
-                lines.push(format!("command: {}", entry.command));
-                lines.push(format!("outputs_exist: {}", entry.outputs_exist));
-            }
-            None => lines.push("status: missing".to_owned()),
-        }
-        return Ok(Some(lines.join("\n")));
+        return Ok(Some(render_inspect_text(target_root, selector_raw, entry)));
     }
 
     let entries = cache_entries(target_root)?;
@@ -148,20 +148,10 @@ fn run_inspect(
             "root": target_root.display().to_string(),
             "entries": entries,
         });
-        return serde_json::to_string_pretty(&payload)
-            .map(Some)
-            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+        return encode_cache_json(payload);
     }
 
-    let mut lines = vec![format!("cache root: {}", target_root.display())];
-    lines.push(format!("entries: {}", entries.len()));
-    for entry in entries {
-        lines.push(format!(
-            "- {} [{}] fingerprint={} outputs_exist={}",
-            entry.task_name, entry.manifest_path, entry.fingerprint, entry.outputs_exist
-        ));
-    }
-    Ok(Some(lines.join("\n")))
+    Ok(Some(render_inspect_all_text(target_root, entries)))
 }
 
 fn run_invalidate(
@@ -207,22 +197,14 @@ fn run_invalidate(
             "requested": selectors,
             "removed": removed,
         });
-        return serde_json::to_string_pretty(&payload)
-            .map(Some)
-            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
+        return encode_cache_json(payload);
     }
 
-    let mut lines = vec![format!("cache root: {}", target_root.display())];
-    if invalidate_all {
-        lines.push("mode: all".to_owned());
-    } else {
-        lines.push("mode: selectors".to_owned());
-    }
-    lines.push(format!("removed: {}", removed.len()));
-    for key in removed {
-        lines.push(format!("- {key}"));
-    }
-    Ok(Some(lines.join("\n")))
+    Ok(Some(render_invalidate_text(
+        target_root,
+        invalidate_all,
+        removed,
+    )))
 }
 
 fn resolve_cache_selector(
@@ -258,4 +240,66 @@ fn render_cache_help() -> String {
         "- effigy cache inspect --json",
     ]
     .join("\n")
+}
+
+fn encode_cache_json(payload: serde_json::Value) -> Result<Option<String>, RunnerError> {
+    serde_json::to_string_pretty(&payload)
+        .map(Some)
+        .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
+}
+
+fn render_inspect_text(
+    target_root: &Path,
+    selector_raw: &str,
+    entry: Option<super::super::cache::TaskCacheEntry>,
+) -> String {
+    let mut lines = vec![format!("cache root: {}", target_root.display())];
+    lines.push(format!("selector: {selector_raw}"));
+    match entry {
+        Some(entry) => {
+            lines.push("status: present".to_owned());
+            lines.push(format!("fingerprint: {}", entry.fingerprint));
+            lines.push(format!(
+                "updated_at_epoch_ms: {}",
+                entry.updated_at_epoch_ms
+            ));
+            lines.push(format!("command: {}", entry.command));
+            lines.push(format!("outputs_exist: {}", entry.outputs_exist));
+        }
+        None => lines.push("status: missing".to_owned()),
+    }
+    lines.join("\n")
+}
+
+fn render_inspect_all_text(
+    target_root: &Path,
+    entries: Vec<super::super::cache::TaskCacheEntry>,
+) -> String {
+    let mut lines = vec![format!("cache root: {}", target_root.display())];
+    lines.push(format!("entries: {}", entries.len()));
+    for entry in entries {
+        lines.push(format!(
+            "- {} [{}] fingerprint={} outputs_exist={}",
+            entry.task_name, entry.manifest_path, entry.fingerprint, entry.outputs_exist
+        ));
+    }
+    lines.join("\n")
+}
+
+fn render_invalidate_text(
+    target_root: &Path,
+    invalidate_all: bool,
+    removed: Vec<String>,
+) -> String {
+    let mut lines = vec![format!("cache root: {}", target_root.display())];
+    if invalidate_all {
+        lines.push("mode: all".to_owned());
+    } else {
+        lines.push("mode: selectors".to_owned());
+    }
+    lines.push(format!("removed: {}", removed.len()));
+    for key in removed {
+        lines.push(format!("- {key}"));
+    }
+    lines.join("\n")
 }
