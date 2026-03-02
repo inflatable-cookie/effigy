@@ -46,6 +46,115 @@ fn run_task_with_repo(root: &PathBuf, name: &str, args: &[&str]) -> Result<Strin
     )
 }
 
+fn assert_managed_process_invalid_definition(
+    err: RunnerError,
+    expected_task: &str,
+    expected_process: &str,
+    expected_detail_substring: Option<&str>,
+) {
+    match err {
+        RunnerError::TaskManagedProcessInvalidDefinition {
+            task,
+            process,
+            detail,
+        } => {
+            assert_eq!(task, expected_task);
+            assert_eq!(process, expected_process);
+            if let Some(detail_substring) = expected_detail_substring {
+                assert!(detail.contains(detail_substring));
+            }
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+fn assert_managed_profile_not_found(
+    err: RunnerError,
+    expected_task: &str,
+    expected_profile: &str,
+    expected_available: &[&str],
+) {
+    match err {
+        RunnerError::TaskManagedProfileNotFound {
+            task,
+            profile,
+            available,
+        } => {
+            assert_eq!(task, expected_task);
+            assert_eq!(profile, expected_profile);
+            assert_eq!(
+                available,
+                expected_available
+                    .iter()
+                    .map(|value| (*value).to_owned())
+                    .collect::<Vec<_>>()
+            );
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+fn assert_managed_task_reference_invalid(
+    err: RunnerError,
+    expected_task: &str,
+    expected_process: &str,
+    expected_reference: &str,
+    expected_detail_substring: &str,
+) {
+    match err {
+        RunnerError::TaskManagedTaskReferenceInvalid {
+            task,
+            process,
+            reference,
+            detail,
+        } => {
+            assert_eq!(task, expected_task);
+            assert_eq!(process, expected_process);
+            assert_eq!(reference, expected_reference);
+            assert!(detail.contains(expected_detail_substring));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+fn assert_managed_non_zero_exit(
+    err: RunnerError,
+    expected_task: &str,
+    expected_profile: &str,
+    expected_processes: &[(&str, &str)],
+) {
+    match err {
+        RunnerError::TaskManagedNonZeroExit {
+            task,
+            profile,
+            processes,
+        } => {
+            assert_eq!(task, expected_task);
+            assert_eq!(profile, expected_profile);
+            assert_eq!(
+                processes,
+                expected_processes
+                    .iter()
+                    .map(|(process, exit)| ((*process).to_owned(), (*exit).to_owned()))
+                    .collect::<Vec<_>>()
+            );
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+fn assert_lock_conflict(err: RunnerError, expected_scope: &str, expected_remediation: &str) {
+    match err {
+        RunnerError::TaskLockConflict {
+            scope, remediation, ..
+        } => {
+            assert_eq!(scope, expected_scope);
+            assert!(remediation.contains(expected_remediation));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
 #[test]
 fn run_manifest_task_managed_tui_uses_default_profile_when_not_specified() {
     let _guard = lock_test();
@@ -166,16 +275,7 @@ run = "printf api"
     );
 
     let err = run_dev_with_repo(&root, &[]).expect_err("invalid concurrent entry should fail");
-
-    match err {
-        RunnerError::TaskManagedProcessInvalidDefinition {
-            process, detail, ..
-        } => {
-            assert_eq!(process, "api");
-            assert!(detail.contains("either `task` or `run`"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_managed_process_invalid_definition(err, "dev", "api", Some("either `task` or `run`"));
 }
 
 #[test]
@@ -386,19 +486,12 @@ concurrent = [{ name = "jobs" }]
     );
 
     let err = run_dev_with_repo(&root, &[]).expect_err("invalid concurrent entry should fail");
-
-    match err {
-        RunnerError::TaskManagedProcessInvalidDefinition {
-            task,
-            process,
-            detail,
-        } => {
-            assert_eq!(task, "dev");
-            assert_eq!(process, "jobs");
-            assert!(detail.contains("missing both `task` and `run`"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_managed_process_invalid_definition(
+        err,
+        "dev",
+        "jobs",
+        Some("missing both `task` and `run`"),
+    );
 }
 
 #[test]
@@ -413,19 +506,7 @@ concurrent = [{ name = "api", run = "cargo run -p api" }]
     );
 
     let err = run_dev(&root, &["admin"]).expect_err("unknown profile should fail");
-
-    match err {
-        RunnerError::TaskManagedProfileNotFound {
-            task,
-            profile,
-            available,
-        } => {
-            assert_eq!(task, "dev");
-            assert_eq!(profile, "admin");
-            assert_eq!(available, vec!["default".to_owned()]);
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_managed_profile_not_found(err, "dev", "admin", &["default"]);
 }
 
 #[test]
@@ -490,14 +571,7 @@ concurrent = [{ name = "api", run = "printf api", task = "api" }]
     );
 
     let err = run_dev_with_repo(&root, &[]).expect_err("invalid process definition should fail");
-
-    match err {
-        RunnerError::TaskManagedProcessInvalidDefinition { task, process, .. } => {
-            assert_eq!(task, "dev");
-            assert_eq!(process, "api");
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_managed_process_invalid_definition(err, "dev", "api", None);
 }
 
 #[test]
@@ -565,21 +639,13 @@ concurrent = [{ name = "tests", task = 'test "unterminated' }]
 
     let err =
         run_dev_with_repo(&root, &[]).expect_err("invalid compact profile task ref should fail");
-
-    match err {
-        RunnerError::TaskManagedTaskReferenceInvalid {
-            task,
-            process,
-            reference,
-            detail,
-        } => {
-            assert_eq!(task, "dev");
-            assert_eq!(process, "tests");
-            assert_eq!(reference, "test \"unterminated");
-            assert!(detail.contains("unterminated quote"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_managed_task_reference_invalid(
+        err,
+        "dev",
+        "tests",
+        "test \"unterminated",
+        "unterminated quote",
+    );
 }
 
 #[test]
@@ -627,21 +693,13 @@ concurrent = [{ name = "tests", task = 'test "unterminated' }]
     );
 
     let err = run_dev_with_repo(&root, &[]).expect_err("invalid process task ref should fail");
-
-    match err {
-        RunnerError::TaskManagedTaskReferenceInvalid {
-            task,
-            process,
-            reference,
-            detail,
-        } => {
-            assert_eq!(task, "dev");
-            assert_eq!(process, "tests");
-            assert_eq!(reference, "test \"unterminated");
-            assert!(detail.contains("unterminated quote"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_managed_task_reference_invalid(
+        err,
+        "dev",
+        "tests",
+        "test \"unterminated",
+        "unterminated quote",
+    );
 }
 
 #[test]
@@ -658,21 +716,7 @@ concurrent = [{ name = "tests", task = "test vitest \\" }]
     );
 
     let err = run_dev_with_repo(&root, &[]).expect_err("invalid process task ref should fail");
-
-    match err {
-        RunnerError::TaskManagedTaskReferenceInvalid {
-            task,
-            process,
-            reference,
-            detail,
-        } => {
-            assert_eq!(task, "dev");
-            assert_eq!(process, "tests");
-            assert_eq!(reference, "test vitest \\");
-            assert!(detail.contains("trailing escape"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_managed_task_reference_invalid(err, "dev", "tests", "test vitest \\", "trailing escape");
 }
 
 #[test]
@@ -830,19 +874,7 @@ concurrent = [{ name = "front-only", run = "printf front-ok" }]
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
 
     let err = run_dev(&root, &["admin"]).expect_err("unknown managed profile should fail");
-
-    match err {
-        RunnerError::TaskManagedProfileNotFound {
-            task,
-            profile,
-            available,
-        } => {
-            assert_eq!(task, "dev");
-            assert_eq!(profile, "admin");
-            assert_eq!(available, vec!["default".to_owned(), "front".to_owned()]);
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_managed_profile_not_found(err, "dev", "admin", &["default", "front"]);
 }
 
 #[test]
@@ -942,19 +974,7 @@ concurrent = [{ name = "api", run = "sh -lc 'exit 7'" }]
 
     let err =
         run_dev(&root, &[]).expect_err("managed stream should fail for non-zero exit by default");
-
-    match err {
-        RunnerError::TaskManagedNonZeroExit {
-            task,
-            profile,
-            processes,
-        } => {
-            assert_eq!(task, "dev");
-            assert_eq!(profile, "default");
-            assert_eq!(processes, vec![("api".to_owned(), "exit=7".to_owned())]);
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_managed_non_zero_exit(err, "dev", "default", &[("api", "exit=7")]);
 }
 
 #[test]
@@ -1007,16 +1027,7 @@ run = "sleep 1"
     std::thread::sleep(Duration::from_millis(120));
 
     let err = run_dev(&root, &[]).expect_err("second run should conflict on lock");
-
-    match err {
-        RunnerError::TaskLockConflict {
-            scope, remediation, ..
-        } => {
-            assert_eq!(scope, "workspace");
-            assert!(remediation.contains("effigy unlock workspace"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_lock_conflict(err, "workspace", "effigy unlock workspace");
 
     join.join()
         .expect("thread join")
