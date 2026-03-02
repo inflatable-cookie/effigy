@@ -52,6 +52,16 @@ pub(super) fn discover_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatal
     Ok(catalogs)
 }
 
+pub(super) fn discover_catalogs_allow_missing(
+    workspace_root: &Path,
+) -> Result<Vec<LoadedCatalog>, RunnerError> {
+    match discover_catalogs(workspace_root) {
+        Ok(catalogs) => Ok(catalogs),
+        Err(RunnerError::TaskCatalogsMissing { .. }) => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
+}
+
 pub(super) fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, RunnerError> {
     let mut pending: Vec<PathBuf> = vec![workspace_root.to_path_buf()];
     let mut visited_dirs: HashSet<PathBuf> = HashSet::new();

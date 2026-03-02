@@ -25,7 +25,9 @@ mod tasks_view;
 mod util;
 
 use builtin::try_run_builtin_task;
+#[cfg(test)]
 use catalog::discover_catalogs;
+use catalog::discover_catalogs_allow_missing;
 use execute::run_manifest_task;
 use manifest::{
     ManifestJsPackageManager, ManifestManagedConcurrentEntry, ManifestManagedRun,
@@ -224,16 +226,6 @@ fn command_repo_override(cmd: &Command) -> Option<PathBuf> {
             .ok()
             .and_then(|parsed| parsed.repo_override),
         Command::Help(_) => None,
-    }
-}
-
-fn discover_catalogs_allow_missing(
-    resolved_root: &std::path::Path,
-) -> Result<Vec<LoadedCatalog>, RunnerError> {
-    match discover_catalogs(resolved_root) {
-        Ok(catalogs) => Ok(catalogs),
-        Err(RunnerError::TaskCatalogsMissing { .. }) => Ok(Vec::new()),
-        Err(error) => Err(error),
     }
 }
 
