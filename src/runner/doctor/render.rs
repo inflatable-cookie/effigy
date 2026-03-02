@@ -9,49 +9,39 @@ use crate::ui::{
 
 use super::{DoctorFinding, DoctorReport, DoctorSeverity, RunnerError};
 
-pub(super) fn render_text(report: &DoctorReport, verbose: bool) -> String {
+pub(super) fn render_text(report: &DoctorReport, verbose: bool) -> Result<String, RunnerError> {
     let color_enabled =
         resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
 
-    let _ = renderer.section("Doctor's Report");
+    renderer
+        .section("Doctor's Report")
+        .map_err(map_render_error)?;
     if report.findings.is_empty() {
-        let _ = renderer.notice(NoticeLevel::Success, "No findings.");
+        renderer
+            .notice(NoticeLevel::Success, "No findings.")
+            .map_err(map_render_error)?;
     } else {
         let grouped = grouped_findings(&report.findings);
         for (check_id, items) in grouped {
-            render_finding_group(&mut renderer, &check_id, &items, report, verbose);
+            render_finding_group(&mut renderer, &check_id, &items, report, verbose)?;
         }
     }
 
     if !report.fixes.is_empty() {
-        let _ = renderer.section("Fix Actions");
-        let rows = report
-            .fixes
-            .iter()
-            .map(|fix| {
-                vec![
-                    fix.status.as_str().to_owned(),
-                    fix.fix_id.clone(),
-                    fix.detail.clone(),
-                ]
-            })
-            .collect::<Vec<Vec<String>>>();
-        let _ = renderer.table(&TableSpec::new(
-            vec!["status".to_owned(), "fix".to_owned(), "detail".to_owned()],
-            rows,
-        ));
-        let _ = renderer.text("");
+        render_fix_actions(&mut renderer, report)?;
     }
 
-    let _ = renderer.summary(SummaryCounts {
-        ok: report.summary.pass,
-        warn: report.summary.warning,
-        err: report.summary.error,
-    });
+    renderer
+        .summary(SummaryCounts {
+            ok: report.summary.pass,
+            warn: report.summary.warning,
+            err: report.summary.error,
+        })
+        .map_err(map_render_error)?;
 
     let out = renderer.into_inner();
-    String::from_utf8_lossy(&out).to_string()
+    Ok(String::from_utf8_lossy(&out).to_string())
 }
 
 fn grouped_findings(findings: &[DoctorFinding]) -> Vec<(String, Vec<&DoctorFinding>)> {
@@ -91,42 +81,48 @@ fn render_finding_group(
     items: &[&DoctorFinding],
     report: &DoctorReport,
     verbose: bool,
-) {
-    let _ = renderer.notice(group_max_severity(items).to_notice_level(), check_id);
+) -> Result<(), RunnerError> {
+    renderer
+        .notice(group_max_severity(items).to_notice_level(), check_id)
+        .map_err(map_render_error)?;
 
     let (evidence_items, remediation_items, any_fixable) = summarize_group(items);
-    let _ = renderer.bullet_list("evidence", &evidence_items);
-    let _ = renderer.bullet_list("remediation", &remediation_items);
-    let _ = renderer.key_values(&[KeyValue::new(
-        "auto-fix",
-        if any_fixable { "available" } else { "no" },
-    )]);
+    renderer
+        .bullet_list("evidence", &evidence_items)
+        .map_err(map_render_error)?;
+    renderer
+        .bullet_list("remediation", &remediation_items)
+        .map_err(map_render_error)?;
+    renderer
+        .key_values(&[KeyValue::new(
+            "auto-fix",
+            if any_fixable { "available" } else { "no" },
+        )])
+        .map_err(map_render_error)?;
 
     if verbose {
-        let _ = renderer.key_values(&[KeyValue::new("findings", items.len().to_string())]);
+        renderer
+            .key_values(&[KeyValue::new("findings", items.len().to_string())])
+            .map_err(map_render_error)?;
         for (index, item) in items.iter().enumerate() {
-            let _ = renderer.key_values(&[
-                KeyValue::new("entry", (index + 1).to_string()),
-                KeyValue::new("severity", item.severity.as_str()),
-                KeyValue::new("entry-evidence", item.evidence.clone()),
-                KeyValue::new("entry-remediation", item.remediation.clone()),
-                KeyValue::new(
-                    "entry-auto-fix",
-                    if item.fixable { "available" } else { "no" },
-                ),
-            ]);
+            renderer
+                .key_values(&[
+                    KeyValue::new("entry", (index + 1).to_string()),
+                    KeyValue::new("severity", item.severity.as_str()),
+                    KeyValue::new("entry-evidence", item.evidence.clone()),
+                    KeyValue::new("entry-remediation", item.remediation.clone()),
+                    KeyValue::new(
+                        "entry-auto-fix",
+                        if item.fixable { "available" } else { "no" },
+                    ),
+                ])
+                .map_err(map_render_error)?;
         }
     }
 
-    if check_id == "workspace.root-resolution" {
-        if !report.root_evidence.is_empty() {
-            let _ = renderer.bullet_list("root-resolution-trace", &report.root_evidence);
-        }
-        if !report.root_warnings.is_empty() {
-            let _ = renderer.bullet_list("root-resolution-warnings", &report.root_warnings);
-        }
-    }
-    let _ = renderer.text("");
+    render_root_resolution_details(renderer, check_id, report)?;
+    renderer.text("").map_err(map_render_error)?;
+    Ok(())
 }
 
 fn summarize_group(items: &[&DoctorFinding]) -> (Vec<String>, Vec<String>, bool) {
@@ -134,15 +130,64 @@ fn summarize_group(items: &[&DoctorFinding]) -> (Vec<String>, Vec<String>, bool)
     let mut remediation_items = Vec::<String>::new();
     let mut any_fixable = false;
     for item in items {
-        if !evidence_items.contains(&item.evidence) {
-            evidence_items.push(item.evidence.clone());
-        }
-        if !remediation_items.contains(&item.remediation) {
-            remediation_items.push(item.remediation.clone());
-        }
+        push_unique(&mut evidence_items, &item.evidence);
+        push_unique(&mut remediation_items, &item.remediation);
         any_fixable = any_fixable || item.fixable;
     }
     (evidence_items, remediation_items, any_fixable)
+}
+
+fn push_unique(values: &mut Vec<String>, value: &str) {
+    if !values.iter().any(|item| item == value) {
+        values.push(value.to_owned());
+    }
+}
+
+fn render_fix_actions(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    report: &DoctorReport,
+) -> Result<(), RunnerError> {
+    renderer.section("Fix Actions").map_err(map_render_error)?;
+    let rows = report
+        .fixes
+        .iter()
+        .map(|fix| {
+            vec![
+                fix.status.as_str().to_owned(),
+                fix.fix_id.clone(),
+                fix.detail.clone(),
+            ]
+        })
+        .collect::<Vec<Vec<String>>>();
+    renderer
+        .table(&TableSpec::new(
+            vec!["status".to_owned(), "fix".to_owned(), "detail".to_owned()],
+            rows,
+        ))
+        .map_err(map_render_error)?;
+    renderer.text("").map_err(map_render_error)?;
+    Ok(())
+}
+
+fn render_root_resolution_details(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    check_id: &str,
+    report: &DoctorReport,
+) -> Result<(), RunnerError> {
+    if check_id != "workspace.root-resolution" {
+        return Ok(());
+    }
+    if !report.root_evidence.is_empty() {
+        renderer
+            .bullet_list("root-resolution-trace", &report.root_evidence)
+            .map_err(map_render_error)?;
+    }
+    if !report.root_warnings.is_empty() {
+        renderer
+            .bullet_list("root-resolution-warnings", &report.root_warnings)
+            .map_err(map_render_error)?;
+    }
+    Ok(())
 }
 
 pub(super) fn render_json(report: &DoctorReport) -> Result<String, RunnerError> {
@@ -184,4 +229,8 @@ pub(super) fn render_json(report: &DoctorReport) -> Result<String, RunnerError> 
     });
     serde_json::to_string_pretty(&payload)
         .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
+}
+
+fn map_render_error(error: crate::ui::UiError) -> RunnerError {
+    RunnerError::Ui(format!("failed to render doctor output: {error}"))
 }
