@@ -2,7 +2,7 @@ use serde_json::json;
 
 use super::super::super::{LoadedCatalog, RunnerError};
 use super::super::filtering::evaluate_task_filter;
-use super::rows::{catalog_task_row_json, managed_profile_rows_json};
+use super::row_collector::collect_filtered_rows;
 
 pub(super) fn build_filtered_tasks_payload(
     catalogs: &[LoadedCatalog],
@@ -12,16 +12,8 @@ pub(super) fn build_filtered_tasks_payload(
     filter: &str,
 ) -> Result<serde_json::Value, RunnerError> {
     let evaluation = evaluate_task_filter(catalogs, filter)?;
-    let matches = evaluation
-        .catalog_matches
-        .iter()
-        .map(|(catalog, task)| catalog_task_row_json(catalog, &evaluation.task_name, task))
-        .collect::<Vec<serde_json::Value>>();
-    let managed_profile_matches = evaluation
-        .catalog_matches
-        .iter()
-        .flat_map(|(catalog, task)| managed_profile_rows_json(catalog, &evaluation.task_name, task))
-        .collect::<Vec<serde_json::Value>>();
+    let (matches, managed_profile_matches) =
+        collect_filtered_rows(evaluation.catalog_matches.as_slice(), &evaluation.task_name);
     let builtin_matches = evaluation
         .builtin_matches
         .iter()

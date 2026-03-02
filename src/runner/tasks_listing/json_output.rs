@@ -2,6 +2,8 @@
 mod catalog_payload;
 #[path = "json_output/filtered_payload.rs"]
 mod filtered_payload;
+#[path = "json_output/row_collector.rs"]
+mod row_collector;
 #[path = "json_output/rows.rs"]
 mod rows;
 
