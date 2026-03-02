@@ -5,7 +5,7 @@ use crate::resolver::{resolve_target_root, ResolvedTarget};
 use crate::TaskInvocation;
 
 use super::super::catalog::discover_catalogs_allow_missing;
-use super::super::util::{parse_task_runtime_args, parse_task_selector, shell_quote};
+use super::super::util::{parse_task_runtime_args, parse_task_selector};
 use super::super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector};
 
 pub(super) struct ExecutionPreflight {
@@ -43,13 +43,6 @@ pub(super) fn build_execution_preflight(
         selector,
         catalogs,
     })
-}
-
-pub(super) fn render_passthrough_args(args: &[String]) -> String {
-    args.iter()
-        .map(|arg| shell_quote(arg))
-        .collect::<Vec<String>>()
-        .join(" ")
 }
 
 fn strip_task_json_flag(args: &[String]) -> (Vec<String>, bool) {
