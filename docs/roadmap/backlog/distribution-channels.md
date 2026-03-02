@@ -60,7 +60,9 @@ Effigy is still evolving, so distribution planning should be staged and reversib
 - [x] Create and validate tap repository/formula workflow.
 - [x] Automate formula bump on release tags.
 - [x] Define bottle/checksum/update strategy.
-  - implementation hook: `.github/workflows/homebrew-tap-metadata.yml`
+  - implementation hooks:
+    - `.github/workflows/homebrew-tap-metadata.yml` (metadata artifact generation)
+    - `.github/workflows/homebrew-tap-formula-pr.yml` (tap PR automation from artifact)
 
 ### Phase D - CI + Team Adoption
 - [x] Add pinned-version install snippets for CI.
