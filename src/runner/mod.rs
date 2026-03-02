@@ -183,14 +183,7 @@ pub fn run_command(cmd: Command) -> Result<String, RunnerError> {
 
 pub fn resolve_command_root(cmd: &Command) -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let repo_override = match cmd {
-        Command::Doctor(args) => args.repo_override.clone(),
-        Command::Tasks(args) => args.repo_override.clone(),
-        Command::Task(task) => parse_task_runtime_args(&task.args)
-            .ok()
-            .and_then(|parsed| parsed.repo_override),
-        Command::Help(_) => None,
-    };
+    let repo_override = command_repo_override(cmd);
 
     match resolve_target_root(cwd.clone(), repo_override) {
         Ok(resolved) => resolved.resolved_root,
@@ -205,17 +198,8 @@ pub fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
 pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
     let cwd = std::env::current_dir().map_err(RunnerError::Cwd)?;
     let resolved = resolve_target_root(cwd, args.repo_override.clone())?;
-    let catalogs = match discover_catalogs(&resolved.resolved_root) {
-        Ok(catalogs) => catalogs,
-        Err(RunnerError::TaskCatalogsMissing { .. }) => Vec::new(),
-        Err(error) => return Err(error),
-    };
-    let precedence = vec![
-        "explicit catalog alias prefix".to_owned(),
-        "relative/absolute catalog path prefix".to_owned(),
-        "unprefixed nearest in-scope catalog by cwd".to_owned(),
-        "unprefixed shallowest catalog from workspace root".to_owned(),
-    ];
+    let catalogs = discover_catalogs_allow_missing(&resolved.resolved_root)?;
+    let precedence = task_selection_precedence_notes();
 
     let resolve_probe = build_resolve_probe(args.resolve_selector.clone(), &catalogs)?;
 
@@ -230,6 +214,39 @@ pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
         &resolve_probe,
         &resolved.resolved_root,
     )
+}
+
+fn command_repo_override(cmd: &Command) -> Option<PathBuf> {
+    match cmd {
+        Command::Doctor(args) => args.repo_override.clone(),
+        Command::Tasks(args) => args.repo_override.clone(),
+        Command::Task(task) => parse_task_runtime_args(&task.args)
+            .ok()
+            .and_then(|parsed| parsed.repo_override),
+        Command::Help(_) => None,
+    }
+}
+
+fn discover_catalogs_allow_missing(
+    resolved_root: &std::path::Path,
+) -> Result<Vec<LoadedCatalog>, RunnerError> {
+    match discover_catalogs(resolved_root) {
+        Ok(catalogs) => Ok(catalogs),
+        Err(RunnerError::TaskCatalogsMissing { .. }) => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
+}
+
+fn task_selection_precedence_notes() -> Vec<String> {
+    [
+        "explicit catalog alias prefix",
+        "relative/absolute catalog path prefix",
+        "unprefixed nearest in-scope catalog by cwd",
+        "unprefixed shallowest catalog from workspace root",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
 }
 
 fn run_manifest_task_with_cwd(task: &TaskInvocation, cwd: PathBuf) -> Result<String, RunnerError> {
