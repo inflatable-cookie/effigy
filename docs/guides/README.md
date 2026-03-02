@@ -65,6 +65,7 @@ Read:
 - Distribution CI pinning + wrapper migration: [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
 - Homebrew tap + release automation: [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
 - Wrapper channel evaluation + policy: [`043-wrapper-channel-evaluation-and-policy.md`](./043-wrapper-channel-evaluation-and-policy.md)
+- Distribution first-publish execution runbook: [`044-distribution-first-publish-execution-runbook.md`](./044-distribution-first-publish-execution-runbook.md)
 
 ## Supplemental
 

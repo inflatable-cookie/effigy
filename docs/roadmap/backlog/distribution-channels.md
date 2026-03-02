@@ -103,3 +103,9 @@ Effigy is still evolving, so distribution planning should be staged and reversib
 - [x] Crates publication workflow.
 - [x] Homebrew tap + automation workflow.
 - [x] CI install recipes and migration guidance.
+
+## 9) First-Publish Execution Gate
+
+Before marking this backlog item complete, execute:
+- [`../../guides/044-distribution-first-publish-execution-runbook.md`](../../guides/044-distribution-first-publish-execution-runbook.md)
+- one dated acceptance-closeout report with channel matrix evidence
