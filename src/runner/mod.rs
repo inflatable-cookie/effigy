@@ -9,6 +9,7 @@ use crate::{Command, DoctorArgs, TasksArgs};
 mod builtin;
 mod cache;
 mod catalog;
+mod command_context;
 mod deferral;
 mod doctor;
 mod error;
@@ -18,6 +19,7 @@ mod managed;
 mod manifest;
 mod model;
 mod render;
+mod tasks_command;
 mod tasks_diagnostics;
 mod tasks_listing;
 mod tasks_probe;
@@ -27,7 +29,7 @@ mod util;
 use builtin::try_run_builtin_task;
 #[cfg(test)]
 use catalog::discover_catalogs;
-use catalog::discover_catalogs_allow_missing;
+use command_context::command_repo_override;
 use execute::run_manifest_task;
 use manifest::{
     ManifestJsPackageManager, ManifestManagedConcurrentEntry, ManifestManagedRun,
@@ -38,11 +40,9 @@ use model::{
     TaskRuntimeArgs, TaskSelection, TaskSelector, BUILTIN_TASKS, DEFAULT_MANAGED_SHELL_RUN,
     DEFER_DEPTH_ENV, IMPLICIT_ROOT_DEFER_TEMPLATE, TASK_MANIFEST_FILE,
 };
-use tasks_diagnostics::build_catalog_diagnostics;
-use tasks_listing::render_tasks_listing;
-use tasks_probe::build_resolve_probe;
 #[cfg(test)]
 use util::parse_task_reference_invocation;
+#[cfg(test)]
 use util::parse_task_runtime_args;
 #[cfg(test)]
 use util::parse_task_selector;
@@ -198,47 +198,7 @@ pub fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
 }
 
 pub fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
-    let cwd = std::env::current_dir().map_err(RunnerError::Cwd)?;
-    let resolved = resolve_target_root(cwd, args.repo_override.clone())?;
-    let catalogs = discover_catalogs_allow_missing(&resolved.resolved_root)?;
-    let precedence = task_selection_precedence_notes();
-
-    let resolve_probe = build_resolve_probe(args.resolve_selector.clone(), &catalogs)?;
-
-    let (ordered_catalogs, catalog_diagnostics) = build_catalog_diagnostics(&catalogs);
-
-    render_tasks_listing(
-        &args,
-        &catalogs,
-        &ordered_catalogs,
-        &catalog_diagnostics,
-        &precedence,
-        &resolve_probe,
-        &resolved.resolved_root,
-    )
-}
-
-fn command_repo_override(cmd: &Command) -> Option<PathBuf> {
-    match cmd {
-        Command::Doctor(args) => args.repo_override.clone(),
-        Command::Tasks(args) => args.repo_override.clone(),
-        Command::Task(task) => parse_task_runtime_args(&task.args)
-            .ok()
-            .and_then(|parsed| parsed.repo_override),
-        Command::Help(_) => None,
-    }
-}
-
-fn task_selection_precedence_notes() -> Vec<String> {
-    [
-        "explicit catalog alias prefix",
-        "relative/absolute catalog path prefix",
-        "unprefixed nearest in-scope catalog by cwd",
-        "unprefixed shallowest catalog from workspace root",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect()
+    tasks_command::run_tasks(args)
 }
 
 fn run_manifest_task_with_cwd(task: &TaskInvocation, cwd: PathBuf) -> Result<String, RunnerError> {
