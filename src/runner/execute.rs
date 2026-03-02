@@ -19,7 +19,7 @@ use super::managed::{render_task_run_spec, resolve_managed_task_plan, run_or_ren
 use super::util::{parse_task_runtime_args, parse_task_selector, shell_quote};
 use super::{
     discover_catalogs, try_run_builtin_task, LoadedCatalog, ManifestManagedRun, ManifestTask,
-    RunnerError,
+    RunnerError, TaskSelection,
 };
 
 struct ExecutionPreflight {
@@ -30,6 +30,11 @@ struct ExecutionPreflight {
     resolved: ResolvedTarget,
     selector: super::TaskSelector,
     catalogs: Vec<LoadedCatalog>,
+}
+
+enum SelectionResolution<'a> {
+    Selected(TaskSelection<'a>),
+    Output(String),
 }
 
 pub(super) fn task_run_preview(task: &ManifestTask) -> String {
@@ -63,54 +68,9 @@ pub(super) fn run_manifest_task_with_cwd(
     cwd: PathBuf,
 ) -> Result<String, RunnerError> {
     let preflight = build_execution_preflight(task, cwd)?;
-    let selection = match select_catalog_and_task(
-        &preflight.selector,
-        &preflight.catalogs,
-        &preflight.invocation_cwd,
-    ) {
-        Ok(selection) => selection,
-        Err(error) => {
-            if matches!(
-                preflight.selector.task_name.as_str(),
-                "repo-pulse" | "health"
-            ) {
-                let request = preflight
-                    .selector
-                    .prefix
-                    .as_ref()
-                    .map(|prefix| format!("{prefix}/{}", preflight.selector.task_name))
-                    .unwrap_or_else(|| preflight.selector.task_name.clone());
-                return Err(RunnerError::TaskInvocation(format!(
-                        "`{request}` is no longer a built-in command. Use `effigy doctor` for consolidated health checks, or define `tasks.health` in your manifest for project-owned checks."
-                    )));
-            }
-            if let Some(output) = try_run_builtin_task(
-                &preflight.selector,
-                task,
-                &preflight.runtime_args_raw,
-                &preflight.resolved.resolved_root,
-                &preflight.catalogs,
-                &preflight.invocation_cwd,
-            )? {
-                return Ok(output);
-            }
-            if should_attempt_deferral(&error) {
-                if let Some(deferral) = select_deferral(
-                    &preflight.selector,
-                    &preflight.catalogs,
-                    &preflight.invocation_cwd,
-                    &preflight.resolved.resolved_root,
-                ) {
-                    return run_deferred_request(
-                        task,
-                        &preflight.runtime_args_raw,
-                        &deferral,
-                        &error,
-                    );
-                }
-            }
-            return Err(error);
-        }
+    let selection = match resolve_task_selection(task, &preflight)? {
+        SelectionResolution::Selected(selection) => selection,
+        SelectionResolution::Output(output) => return Ok(output),
     };
 
     let repo_for_task = selection.catalog.catalog_root.clone();
@@ -141,13 +101,7 @@ pub(super) fn run_manifest_task_with_cwd(
         );
     }
 
-    let args_rendered = preflight
-        .runtime_args_exec
-        .passthrough
-        .iter()
-        .map(|arg| shell_quote(arg))
-        .collect::<Vec<String>>()
-        .join(" ");
+    let args_rendered = render_passthrough_args(&preflight.runtime_args_exec.passthrough);
     let run_spec =
         selection
             .task
@@ -212,6 +166,73 @@ pub(super) fn run_manifest_task_with_cwd(
         preflight.runtime_args_raw.verbose_root,
         &process_run_context,
     )
+}
+
+fn resolve_task_selection<'a>(
+    task: &TaskInvocation,
+    preflight: &'a ExecutionPreflight,
+) -> Result<SelectionResolution<'a>, RunnerError> {
+    match select_catalog_and_task(
+        &preflight.selector,
+        &preflight.catalogs,
+        &preflight.invocation_cwd,
+    ) {
+        Ok(selection) => Ok(SelectionResolution::Selected(selection)),
+        Err(error) => resolve_selection_error(task, preflight, error),
+    }
+}
+
+fn resolve_selection_error<'a>(
+    task: &TaskInvocation,
+    preflight: &'a ExecutionPreflight,
+    error: RunnerError,
+) -> Result<SelectionResolution<'a>, RunnerError> {
+    if let Some(removed_builtin_error) = removed_builtin_invocation_error(&preflight.selector) {
+        return Err(removed_builtin_error);
+    }
+    if let Some(output) = try_run_builtin_task(
+        &preflight.selector,
+        task,
+        &preflight.runtime_args_raw,
+        &preflight.resolved.resolved_root,
+        &preflight.catalogs,
+        &preflight.invocation_cwd,
+    )? {
+        return Ok(SelectionResolution::Output(output));
+    }
+    if should_attempt_deferral(&error) {
+        if let Some(deferral) = select_deferral(
+            &preflight.selector,
+            &preflight.catalogs,
+            &preflight.invocation_cwd,
+            &preflight.resolved.resolved_root,
+        ) {
+            return run_deferred_request(task, &preflight.runtime_args_raw, &deferral, &error)
+                .map(SelectionResolution::Output);
+        }
+    }
+    Err(error)
+}
+
+fn removed_builtin_invocation_error(selector: &super::TaskSelector) -> Option<RunnerError> {
+    if !matches!(selector.task_name.as_str(), "repo-pulse" | "health") {
+        return None;
+    }
+    let request = selector
+        .prefix
+        .as_ref()
+        .map(|prefix| format!("{prefix}/{}", selector.task_name))
+        .unwrap_or_else(|| selector.task_name.clone());
+    Some(RunnerError::TaskInvocation(format!(
+        "`{request}` is no longer a built-in command. Use `effigy doctor` for consolidated health checks, or define `tasks.health` in your manifest for project-owned checks."
+    )))
+}
+
+fn render_passthrough_args(args: &[String]) -> String {
+    args.iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<String>>()
+        .join(" ")
 }
 
 fn build_execution_preflight(
