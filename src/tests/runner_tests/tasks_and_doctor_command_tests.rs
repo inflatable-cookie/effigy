@@ -81,16 +81,6 @@ jss = "pnpm"
     }
 }
 
-fn assert_manifest_parse_error_contains_any(error: &toml::de::Error, expected: &[&str]) {
-    let rendered = error.to_string();
-    assert!(
-        expected.iter().any(|pattern| rendered.contains(pattern)),
-        "expected parse error to contain one of {:?}, got: {}",
-        expected,
-        rendered
-    );
-}
-
 #[test]
 fn run_tasks_rejects_unknown_test_runner_override_field() {
     let root = temp_workspace("reject-unknown-test-runner-override-field");

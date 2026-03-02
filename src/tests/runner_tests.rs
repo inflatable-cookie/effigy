@@ -50,6 +50,56 @@ fn write_manifest(path: &PathBuf, body: &str) {
     fs::write(path, body).expect("write manifest");
 }
 
+fn run_builtin_ok(root: PathBuf, name: &str, args: &[&str]) -> String {
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: name.to_owned(),
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        },
+        root,
+    )
+    .expect("built-in invocation should succeed")
+}
+
+fn run_builtin_err(root: PathBuf, name: &str, args: &[&str]) -> RunnerError {
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: name.to_owned(),
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        },
+        root,
+    )
+    .expect_err("built-in invocation should fail")
+}
+
+fn assert_contains_all(rendered: &str, expected: &[&str]) {
+    for snippet in expected {
+        assert!(
+            rendered.contains(snippet),
+            "expected output to contain {:?}\noutput:\n{}",
+            snippet,
+            rendered
+        );
+    }
+}
+
+fn assert_task_invocation_error_contains(err: RunnerError, expected: &[&str]) {
+    match err {
+        RunnerError::TaskInvocation(message) => assert_contains_all(&message, expected),
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+fn assert_manifest_parse_error_contains_any(error: &toml::de::Error, expected: &[&str]) {
+    let rendered = error.to_string();
+    assert!(
+        expected.iter().any(|pattern| rendered.contains(pattern)),
+        "expected parse error to contain one of {:?}, got: {}",
+        expected,
+        rendered
+    );
+}
+
 fn temp_dir(name: &str) -> PathBuf {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
