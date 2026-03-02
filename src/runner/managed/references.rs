@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use super::super::catalog::select_catalog_and_task;
 use super::super::util::{parse_task_reference_invocation, render_task_selector, shell_quote};
 use super::super::{LoadedCatalog, RunnerError, TaskSelector, BUILTIN_TASKS};
-use super::render_task_run_spec;
+use super::run_spec::render_task_run_spec;
 
 struct ManagedRefContext<'a> {
     managed_task_name: &'a str,
