@@ -53,34 +53,12 @@ pub(super) fn style_text(enabled: bool, style: anstyle::Style, text: &str) -> St
     format!("{}{}{}", style.render(), text, style.render_reset())
 }
 
-fn probe_text_field<'a>(probe: &'a serde_json::Value, field: &str, fallback: &'a str) -> &'a str {
-    probe[field].as_str().unwrap_or(fallback)
-}
-
-fn probe_lines_field(probe: &serde_json::Value, field: &str) -> Vec<String> {
-    probe[field]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|item| item.as_str().map(str::to_owned))
-        .collect::<Vec<String>>()
-}
-
-fn render_probe_lock_scopes(probe: &serde_json::Value) -> String {
-    let scopes = probe_lines_field(probe, "lock_scopes");
-    if scopes.is_empty() {
-        return "<none>".to_owned();
-    }
-    scopes.join(", ")
-}
-
 fn render_probe_evidence_block(
     renderer: &mut PlainRenderer<Vec<u8>>,
     color_enabled: bool,
-    probe: &serde_json::Value,
+    evidence_lines: &[String],
 ) -> Result<(), RunnerError> {
-    let lines = probe_lines_field(probe, "evidence");
-    if lines.is_empty() {
+    if evidence_lines.is_empty() {
         return Ok(());
     }
     let theme = Theme::default();
@@ -88,7 +66,7 @@ fn render_probe_evidence_block(
         "{}:",
         style_text(color_enabled, theme.label, "evidence")
     ))?;
-    for line in lines {
+    for line in evidence_lines {
         renderer.text(&format!("- {line}"))?;
     }
     Ok(())
@@ -100,22 +78,68 @@ pub(super) fn render_resolution_probe_block(
     color_enabled: bool,
     show_evidence: bool,
 ) -> Result<(), RunnerError> {
-    renderer.section(&format!(
-        "Resolution: {}",
-        probe_text_field(probe, "selector", "<selector>")
-    ))?;
+    let view = ResolutionProbeView::from_value(probe);
+    let lock_scopes = view.lock_scopes_display();
+    renderer.section(&format!("Resolution: {}", view.selector))?;
     renderer.key_values(&[
-        KeyValue::new("status", probe_text_field(probe, "status", "<unknown>")),
-        KeyValue::new("catalog", probe_text_field(probe, "catalog", "<none>")),
-        KeyValue::new("task", probe_text_field(probe, "task", "<none>")),
-        KeyValue::new("lock_scopes", render_probe_lock_scopes(probe)),
+        KeyValue::new("status", view.status.as_str()),
+        KeyValue::new("catalog", view.catalog.as_str()),
+        KeyValue::new("task", view.task.as_str()),
+        KeyValue::new("lock_scopes", lock_scopes),
     ])?;
-    if let Some(error) = probe["error"].as_str().filter(|value| !value.is_empty()) {
-        renderer.notice(NoticeLevel::Warning, error)?;
+    if let Some(error) = view.error {
+        renderer.notice(NoticeLevel::Warning, &error)?;
         return Ok(());
     }
     if !show_evidence {
         return Ok(());
     }
-    render_probe_evidence_block(renderer, color_enabled, probe)
+    render_probe_evidence_block(renderer, color_enabled, view.evidence.as_slice())
+}
+
+struct ResolutionProbeView {
+    selector: String,
+    status: String,
+    catalog: String,
+    task: String,
+    lock_scopes: Vec<String>,
+    evidence: Vec<String>,
+    error: Option<String>,
+}
+
+impl ResolutionProbeView {
+    fn from_value(probe: &serde_json::Value) -> Self {
+        Self {
+            selector: probe_str(probe, "selector", "<selector>"),
+            status: probe_str(probe, "status", "<unknown>"),
+            catalog: probe_str(probe, "catalog", "<none>"),
+            task: probe_str(probe, "task", "<none>"),
+            lock_scopes: probe_lines(probe, "lock_scopes"),
+            evidence: probe_lines(probe, "evidence"),
+            error: probe["error"]
+                .as_str()
+                .map(str::to_owned)
+                .filter(|v| !v.is_empty()),
+        }
+    }
+
+    fn lock_scopes_display(&self) -> String {
+        if self.lock_scopes.is_empty() {
+            return "<none>".to_owned();
+        }
+        self.lock_scopes.join(", ")
+    }
+}
+
+fn probe_str(probe: &serde_json::Value, field: &str, fallback: &str) -> String {
+    probe[field].as_str().unwrap_or(fallback).to_owned()
+}
+
+fn probe_lines(probe: &serde_json::Value, field: &str) -> Vec<String> {
+    probe[field]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.as_str().map(str::to_owned))
+        .collect::<Vec<String>>()
 }
