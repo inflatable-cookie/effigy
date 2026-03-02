@@ -68,22 +68,8 @@ fn run_manifest_task_repo_pulse_shows_doctor_migration_message() {
         "[tasks.build]\nrun = \"printf ok\"\n",
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "repo-pulse".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("expected migration guidance");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("no longer a built-in command"));
-            assert!(message.contains("effigy doctor"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "repo-pulse", &[]);
+    assert_task_invocation_error_contains(err, &["no longer a built-in command", "effigy doctor"]);
 }
 
 #[test]
@@ -94,22 +80,11 @@ fn run_manifest_task_health_without_definition_shows_doctor_migration_message() 
         "[tasks.build]\nrun = \"printf ok\"\n",
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "health".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("expected migration guidance");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("no longer a built-in command"));
-            assert!(message.contains("define `tasks.health`"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "health", &[]);
+    assert_task_invocation_error_contains(
+        err,
+        &["no longer a built-in command", "define `tasks.health`"],
+    );
 }
 
 #[test]
@@ -117,36 +92,16 @@ fn run_manifest_task_builtin_watch_without_help_requires_owner_policy() {
     let root = temp_workspace("builtin-watch-owner-required-legacy");
     write_manifest(&root.join("effigy.toml"), "");
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "watch".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("expected owner policy requirement");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("--owner <effigy|external>` is required"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "watch", &[]);
+    assert_task_invocation_error_contains(err, &["--owner <effigy|external>` is required"]);
 }
 
 #[test]
 fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {
     let root = temp_workspace("builtin-init-create");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "init".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect("init should create scaffold");
-    assert!(out.contains("Created effigy.toml"));
+    let out = run_builtin_ok(root.clone(), "init", &[]);
+    assert_contains_all(&out, &["Created effigy.toml"]);
 
     let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read created manifest");
     assert!(manifest.contains("[tasks]"));
@@ -170,22 +125,8 @@ fn run_manifest_task_builtin_init_refuses_overwrite_without_force() {
     let root = temp_workspace("builtin-init-refuse-overwrite");
     write_manifest(&root.join("effigy.toml"), "[tasks]\nold = \"printf old\"\n");
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "init".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect_err("init should refuse overwrite");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("already exists"));
-            assert!(message.contains("`effigy init --force`"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root.clone(), "init", &[]);
+    assert_task_invocation_error_contains(err, &["already exists", "`effigy init --force`"]);
 
     let existing = fs::read_to_string(root.join("effigy.toml")).expect("read existing");
     assert!(existing.contains("old = \"printf old\""));
@@ -196,15 +137,8 @@ fn run_manifest_task_builtin_init_force_overwrites_existing_manifest() {
     let root = temp_workspace("builtin-init-force-overwrite");
     write_manifest(&root.join("effigy.toml"), "[tasks]\nold = \"printf old\"\n");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "init".to_owned(),
-            args: vec!["--force".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("init --force should overwrite");
-    assert!(out.contains("Overwrote effigy.toml"));
+    let out = run_builtin_ok(root.clone(), "init", &["--force"]);
+    assert_contains_all(&out, &["Overwrote effigy.toml"]);
 
     let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read overwritten");
     assert!(manifest.contains("ping = \"printf ok\""));
@@ -215,17 +149,8 @@ fn run_manifest_task_builtin_init_force_overwrites_existing_manifest() {
 fn run_manifest_task_builtin_init_dry_run_prints_scaffold_without_writing() {
     let root = temp_workspace("builtin-init-dry-run");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "init".to_owned(),
-            args: vec!["--dry-run".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("init --dry-run should render scaffold");
-
-    assert!(out.contains("[tasks]"));
-    assert!(out.contains("# [tasks.dev]"));
+    let out = run_builtin_ok(root.clone(), "init", &["--dry-run"]);
+    assert_contains_all(&out, &["[tasks]", "# [tasks.dev]"]);
     assert!(
         !root.join("effigy.toml").exists(),
         "dry-run should not write manifest"
@@ -236,19 +161,16 @@ fn run_manifest_task_builtin_init_dry_run_prints_scaffold_without_writing() {
 fn run_manifest_task_builtin_init_json_reports_write_status() {
     let root = temp_workspace("builtin-init-json");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "init".to_owned(),
-            args: vec!["--json".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("init --json should succeed");
-
-    assert!(out.contains("\"schema\": \"effigy.init.v1\""));
-    assert!(out.contains("\"written\": true"));
-    assert!(out.contains("\"dry_run\": false"));
-    assert!(out.contains("\"content\":"));
+    let out = run_builtin_ok(root.clone(), "init", &["--json"]);
+    assert_contains_all(
+        &out,
+        &[
+            "\"schema\": \"effigy.init.v1\"",
+            "\"written\": true",
+            "\"dry_run\": false",
+            "\"content\":",
+        ],
+    );
     assert!(root.join("effigy.toml").exists());
 }
 
@@ -267,20 +189,17 @@ fn run_manifest_task_builtin_migrate_preview_reports_candidates_without_writing(
     )
     .expect("write package scripts");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "migrate".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect("migrate preview should succeed");
-
-    assert!(out.contains("Migrate Preview"));
-    assert!(out.contains("candidate scripts: 2"));
-    assert!(out.contains("+ tasks.build = \"npm run compile\""));
-    assert!(out.contains("+ tasks.test = \"vitest run\""));
-    assert!(out.contains("No files were modified."));
+    let out = run_builtin_ok(root.clone(), "migrate", &[]);
+    assert_contains_all(
+        &out,
+        &[
+            "Migrate Preview",
+            "candidate scripts: 2",
+            "+ tasks.build = \"npm run compile\"",
+            "+ tasks.test = \"vitest run\"",
+            "No files were modified.",
+        ],
+    );
     assert!(
         !root.join("effigy.toml").exists(),
         "preview mode should not write manifest"
@@ -302,17 +221,8 @@ fn run_manifest_task_builtin_migrate_apply_writes_ready_imports() {
     )
     .expect("write package scripts");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "migrate".to_owned(),
-            args: vec!["--apply".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("migrate apply should succeed");
-
-    assert!(out.contains("mode: apply"));
-    assert!(out.contains("Applied: wrote"));
+    let out = run_builtin_ok(root.clone(), "migrate", &["--apply"]);
+    assert_contains_all(&out, &["mode: apply", "Applied: wrote"]);
     let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read migrated manifest");
     assert!(manifest.contains("[tasks]"));
     assert!(manifest.contains("build = \"npm run compile\""));
@@ -330,14 +240,7 @@ fn run_manifest_task_builtin_migrate_preserves_package_source_file() {
 "#;
     fs::write(root.join("package.json"), source).expect("write package scripts");
 
-    let _ = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "migrate".to_owned(),
-            args: vec!["--apply".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("migrate apply should succeed");
+    let _ = run_builtin_ok(root.clone(), "migrate", &["--apply"]);
 
     let package_after = fs::read_to_string(root.join("package.json")).expect("read package");
     assert_eq!(package_after, source, "migration must be non-destructive");
@@ -362,18 +265,15 @@ fn run_manifest_task_builtin_migrate_conflicts_require_manual_remediation() {
     )
     .expect("write package scripts");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "migrate".to_owned(),
-            args: vec!["--apply".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("migrate apply with conflicts should succeed");
-
-    assert!(out.contains("Manual Remediation"));
-    assert!(out.contains("skip `build` (already defined in `[tasks]`)"));
-    assert!(out.contains("+ tasks.lint = \"eslint .\""));
+    let out = run_builtin_ok(root.clone(), "migrate", &["--apply"]);
+    assert_contains_all(
+        &out,
+        &[
+            "Manual Remediation",
+            "skip `build` (already defined in `[tasks]`)",
+            "+ tasks.lint = \"eslint .\"",
+        ],
+    );
     let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read migrated manifest");
     assert!(manifest.contains("build = \"printf old\""));
     assert!(manifest.contains("lint = \"eslint .\""));
@@ -398,18 +298,16 @@ fn run_manifest_task_builtin_migrate_json_reports_schema_and_conflicts() {
     )
     .expect("write package scripts");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "migrate".to_owned(),
-            args: vec!["--json".to_owned()],
-        },
-        root,
-    )
-    .expect("migrate --json should succeed");
-    assert!(out.contains("\"schema\": \"effigy.migrate.v1\""));
-    assert!(out.contains("\"apply\": false"));
-    assert!(out.contains("\"name\": \"test\""));
-    assert!(out.contains("\"name\": \"build\""));
+    let out = run_builtin_ok(root, "migrate", &["--json"]);
+    assert_contains_all(
+        &out,
+        &[
+            "\"schema\": \"effigy.migrate.v1\"",
+            "\"apply\": false",
+            "\"name\": \"test\"",
+            "\"name\": \"build\"",
+        ],
+    );
 }
 
 #[test]
@@ -417,17 +315,15 @@ fn run_manifest_task_builtin_watch_help_renders_topic() {
     let root = temp_workspace("builtin-watch-help");
     write_manifest(&root.join("effigy.toml"), "");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "watch".to_owned(),
-            args: vec!["--help".to_owned()],
-        },
-        root,
-    )
-    .expect("run watch --help");
-    assert!(out.contains("watch Help"));
-    assert!(out.contains("--owner <effigy|external>"));
-    assert!(out.contains("--debounce-ms <MS>"));
+    let out = run_builtin_ok(root, "watch", &["--help"]);
+    assert_contains_all(
+        &out,
+        &[
+            "watch Help",
+            "--owner <effigy|external>",
+            "--debounce-ms <MS>",
+        ],
+    );
 }
 
 #[test]
@@ -435,21 +331,11 @@ fn run_manifest_task_builtin_watch_rejects_unknown_args() {
     let root = temp_workspace("builtin-watch-unknown-arg");
     write_manifest(&root.join("effigy.toml"), "");
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "watch".to_owned(),
-            args: vec!["--wat".to_owned()],
-        },
-        root,
-    )
-    .expect_err("expected watch unknown-arg failure");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("unknown argument(s) for built-in `watch`: --wat"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "watch", &["--wat"]);
+    assert_task_invocation_error_contains(
+        err,
+        &["unknown argument(s) for built-in `watch`: --wat"],
+    );
 }
 
 #[test]
@@ -460,21 +346,8 @@ fn run_manifest_task_builtin_watch_requires_explicit_owner_policy() {
         "[tasks.build]\nrun = \"printf ok\"\n",
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "watch".to_owned(),
-            args: vec!["build".to_owned(), "--once".to_owned()],
-        },
-        root,
-    )
-    .expect_err("expected owner-policy failure");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("--owner <effigy|external>` is required"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "watch", &["build", "--once"]);
+    assert_task_invocation_error_contains(err, &["--owner <effigy|external>` is required"]);
 }
 
 #[test]
@@ -485,27 +358,11 @@ fn run_manifest_task_builtin_watch_external_owner_rejects_nested_loop() {
         "[tasks.build]\nrun = \"printf ok\"\n",
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "watch".to_owned(),
-            args: vec![
-                "--owner".to_owned(),
-                "external".to_owned(),
-                "build".to_owned(),
-                "--once".to_owned(),
-            ],
-        },
-        root,
-    )
-    .expect_err("expected external-owner failure");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("watch owner `external`"));
-            assert!(message.contains("Run the task directly"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "watch", &["--owner", "external", "build", "--once"]);
+    assert_task_invocation_error_contains(
+        err,
+        &["watch owner `external`", "Run the task directly"],
+    );
 }
 
 #[test]
@@ -520,21 +377,8 @@ fn run_manifest_task_builtin_watch_once_executes_target_task() {
         ),
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "watch".to_owned(),
-            args: vec![
-                "--owner".to_owned(),
-                "effigy".to_owned(),
-                "--once".to_owned(),
-                "build".to_owned(),
-            ],
-        },
-        root,
-    )
-    .expect("watch once should run task");
-
-    assert!(out.contains("watch complete after 1 run(s)."));
+    let out = run_builtin_ok(root, "watch", &["--owner", "effigy", "--once", "build"]);
+    assert_contains_all(&out, &["watch complete after 1 run(s)."]);
     assert!(marker.exists(), "watch --once should execute the target");
 }
 
@@ -606,16 +450,11 @@ fn run_manifest_task_builtin_init_help_renders_topic() {
     let root = temp_workspace("builtin-init-help");
     write_manifest(&root.join("effigy.toml"), "");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "init".to_owned(),
-            args: vec!["--help".to_owned()],
-        },
-        root,
-    )
-    .expect("run init --help");
-    assert!(out.contains("init Help"));
-    assert!(out.contains("effigy init [--dry-run] [--force] [--json]"));
+    let out = run_builtin_ok(root, "init", &["--help"]);
+    assert_contains_all(
+        &out,
+        &["init Help", "effigy init [--dry-run] [--force] [--json]"],
+    );
 }
 
 #[test]
@@ -623,16 +462,11 @@ fn run_manifest_task_builtin_migrate_help_json_uses_help_schema() {
     let root = temp_workspace("builtin-migrate-help-json");
     write_manifest(&root.join("effigy.toml"), "");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "migrate".to_owned(),
-            args: vec!["--help".to_owned(), "--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run migrate --help --json");
-    assert!(out.contains("\"schema\": \"effigy.help.v1\""));
-    assert!(out.contains("\"topic\": \"migrate\""));
+    let out = run_builtin_ok(root, "migrate", &["--help", "--json"]);
+    assert_contains_all(
+        &out,
+        &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"migrate\""],
+    );
 }
 
 #[test]
@@ -640,16 +474,14 @@ fn run_manifest_task_builtin_completion_help_renders_topic() {
     let root = temp_workspace("builtin-completion-help");
     write_manifest(&root.join("effigy.toml"), "");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "completion".to_owned(),
-            args: vec!["--help".to_owned()],
-        },
-        root,
-    )
-    .expect("run completion --help");
-    assert!(out.contains("completion Help"));
-    assert!(out.contains("effigy completion <bash|zsh|fish> [--json]"));
+    let out = run_builtin_ok(root, "completion", &["--help"]);
+    assert_contains_all(
+        &out,
+        &[
+            "completion Help",
+            "effigy completion <bash|zsh|fish> [--json]",
+        ],
+    );
 }
 
 #[test]
@@ -657,16 +489,8 @@ fn run_manifest_task_builtin_completion_bash_outputs_script() {
     let root = temp_workspace("builtin-completion-bash");
     write_manifest(&root.join("effigy.toml"), "");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "completion".to_owned(),
-            args: vec!["bash".to_owned()],
-        },
-        root,
-    )
-    .expect("run completion bash");
-    assert!(out.contains("complete -F _effigy effigy"));
-    assert!(out.contains("cache completion"));
+    let out = run_builtin_ok(root, "completion", &["bash"]);
+    assert_contains_all(&out, &["complete -F _effigy effigy", "cache completion"]);
 }
 
 #[test]
@@ -674,17 +498,15 @@ fn run_manifest_task_builtin_completion_json_uses_completion_schema() {
     let root = temp_workspace("builtin-completion-json");
     write_manifest(&root.join("effigy.toml"), "");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "completion".to_owned(),
-            args: vec!["zsh".to_owned(), "--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run completion zsh --json");
-    assert!(out.contains("\"schema\": \"effigy.completion.v1\""));
-    assert!(out.contains("\"shell\": \"zsh\""));
-    assert!(out.contains("\"commands\""));
+    let out = run_builtin_ok(root, "completion", &["zsh", "--json"]);
+    assert_contains_all(
+        &out,
+        &[
+            "\"schema\": \"effigy.completion.v1\"",
+            "\"shell\": \"zsh\"",
+            "\"commands\"",
+        ],
+    );
 }
 
 #[test]
@@ -756,17 +578,8 @@ alias = "farmyard"
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "farmyard/help".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("prefixed builtin help");
-
-    assert!(out.contains("Commands"));
-    assert!(out.contains("effigy help"));
+    let out = run_builtin_ok(root, "farmyard/help", &[]);
+    assert_contains_all(&out, &["Commands", "effigy help"]);
 }
 
 #[test]

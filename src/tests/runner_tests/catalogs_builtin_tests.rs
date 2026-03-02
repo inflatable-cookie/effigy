@@ -15,17 +15,8 @@ fn run_manifest_task_builtin_catalogs_renders_diagnostics_and_resolution_probe()
         "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "catalogs".to_owned(),
-            args: vec!["--resolve".to_owned(), "farmyard/api".to_owned()],
-        },
-        root,
-    )
-    .expect("builtin catalogs");
-
-    assert!(out.contains("Resolution: farmyard/api"));
-    assert!(out.contains("catalog: farmyard"));
+    let out = run_builtin_ok(root, "catalogs", &["--resolve", "farmyard/api"]);
+    assert_contains_all(&out, &["Resolution: farmyard/api", "catalog: farmyard"]);
 }
 
 #[test]
@@ -42,20 +33,17 @@ concurrent = [{ run = "printf front-ok" }]
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "catalogs".to_owned(),
-            args: vec!["--resolve".to_owned(), "dev front".to_owned()],
-        },
-        root,
-    )
-    .expect("builtin catalogs managed profile resolve");
-
-    assert!(out.contains("Resolution: dev front"));
-    assert!(out.contains("status: ok"));
-    assert!(out.contains("catalog: root"));
-    assert!(out.contains("task: dev"));
-    assert!(out.contains("managed profile `front` resolved via invocation `dev front`"));
+    let out = run_builtin_ok(root, "catalogs", &["--resolve", "dev front"]);
+    assert_contains_all(
+        &out,
+        &[
+            "Resolution: dev front",
+            "status: ok",
+            "catalog: root",
+            "task: dev",
+            "managed profile `front` resolved via invocation `dev front`",
+        ],
+    );
 }
 
 #[test]
@@ -73,18 +61,7 @@ fn run_manifest_task_builtin_catalogs_json_renders_probe_payload() {
         "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "catalogs".to_owned(),
-            args: vec![
-                "--json".to_owned(),
-                "--resolve".to_owned(),
-                "farmyard/api".to_owned(),
-            ],
-        },
-        root,
-    )
-    .expect("builtin catalogs json");
+    let out = run_builtin_ok(root, "catalogs", &["--json", "--resolve", "farmyard/api"]);
 
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
     assert_eq!(parsed["schema"], "effigy.tasks.v1");
@@ -110,18 +87,7 @@ concurrent = [{ run = "printf front-ok" }]
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "catalogs".to_owned(),
-            args: vec![
-                "--json".to_owned(),
-                "--resolve".to_owned(),
-                "dev front".to_owned(),
-            ],
-        },
-        root,
-    )
-    .expect("builtin catalogs json managed profile resolve");
+    let out = run_builtin_ok(root, "catalogs", &["--json", "--resolve", "dev front"]);
 
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
     assert_eq!(parsed["resolve"]["selector"], "dev front");
@@ -147,18 +113,7 @@ fn run_manifest_task_builtin_catalogs_json_reports_resolution_errors() {
         "[tasks.root]\nrun = \"printf root\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "catalogs".to_owned(),
-            args: vec![
-                "--json".to_owned(),
-                "--resolve".to_owned(),
-                "farmyard/api".to_owned(),
-            ],
-        },
-        root,
-    )
-    .expect("builtin catalogs json error");
+    let out = run_builtin_ok(root, "catalogs", &["--json", "--resolve", "farmyard/api"]);
 
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
     assert_eq!(parsed["schema"], "effigy.tasks.v1");
@@ -180,20 +135,11 @@ fn run_manifest_task_builtin_catalogs_json_compact_output_has_no_newlines() {
         "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "catalogs".to_owned(),
-            args: vec![
-                "--json".to_owned(),
-                "--pretty".to_owned(),
-                "false".to_owned(),
-                "--resolve".to_owned(),
-                "farmyard/api".to_owned(),
-            ],
-        },
+    let out = run_builtin_ok(
         root,
-    )
-    .expect("builtin catalogs compact json");
+        "catalogs",
+        &["--json", "--pretty", "false", "--resolve", "farmyard/api"],
+    );
 
     assert!(!out.contains('\n'));
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
@@ -208,21 +154,11 @@ fn run_manifest_task_builtin_catalogs_pretty_requires_json() {
         "[tasks.root]\nrun = \"printf root\"\n",
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "catalogs".to_owned(),
-            args: vec!["--pretty".to_owned(), "false".to_owned()],
-        },
-        root,
-    )
-    .expect_err("expected --pretty requires --json");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("`--pretty` is only supported together with `--json`"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "catalogs", &["--pretty", "false"]);
+    assert_task_invocation_error_contains(
+        err,
+        &["`--pretty` is only supported together with `--json`"],
+    );
 }
 
 #[test]
@@ -233,23 +169,6 @@ fn run_manifest_task_builtin_catalogs_rejects_invalid_pretty_value() {
         "[tasks.root]\nrun = \"printf root\"\n",
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "catalogs".to_owned(),
-            args: vec![
-                "--json".to_owned(),
-                "--pretty".to_owned(),
-                "nope".to_owned(),
-            ],
-        },
-        root,
-    )
-    .expect_err("expected invalid --pretty value");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("value `nope` is invalid"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "catalogs", &["--json", "--pretty", "nope"]);
+    assert_task_invocation_error_contains(err, &["value `nope` is invalid"]);
 }
