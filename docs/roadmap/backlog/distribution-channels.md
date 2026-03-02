@@ -75,7 +75,18 @@ Effigy is still evolving, so distribution planning should be staged and reversib
 - [ ] One-command install exists for both Rust-native and macOS-default users.
 - [ ] Version pinning and rollback are documented and tested.
 - [ ] Release and upgrade flow is repeatable from CI.
-- [ ] Channel docs clearly distinguish dev channel vs stable channels.
+- [x] Channel docs clearly distinguish dev channel vs stable channels.
+
+### Current Closeout Status (2026-03-02)
+
+- Completed now:
+  - channel documentation coverage for dev vs stable paths
+  - CI pinning guidance and wrapper migration policy
+  - Homebrew workflow and release automation policy
+- Still blocked until publish-cycle execution:
+  - crates.io install validation
+  - release tag install validation on an actual published release tag
+  - full end-to-end channel matrix execution evidence from one release cycle
 
 ## 7) Risks and Mitigations
 

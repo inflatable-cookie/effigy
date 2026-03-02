@@ -67,7 +67,7 @@ effigy completion candidates [--repo <PATH>] [--prefix <value>] [--json]
 - `cache invalidate` accepts selectors or `--all` (not both).
 - `completion` command list is sourced from the built-in command index (`BUILTIN_TASKS`) to reduce drift with command discovery output.
 - `completion candidates` includes built-ins plus discovered `<task>` and `<catalog>/<task>` selectors.
-- `completion candidates` JSON payload reports `cache_hit`, `cache_state`, `cache_age_ms` (on hit), `cache_ttl_ms` (on hit), and `manifest_count` for memoized candidate scans.
+- `completion candidates` JSON payload reports `cache_hit`, `cache_state`, `cache_age_ms` (on hit), `cache_ttl_ms` (on hit), `effective_cache_ttl_ms`, `cache_ttl_source`, and `manifest_count` for memoized candidate scans.
 - `cache_state` values: `miss_initial`, `hit`, `miss_ttl`, `miss_manifest_change`.
 - `miss_manifest_change` is triggered from manifest stamp drift (mtime/size/content digest), so cache invalidation is not dependent on timestamp granularity alone.
 - Completion candidates cache TTL can be tuned with `EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS` (bounded to `100..60000`, default `2000`).

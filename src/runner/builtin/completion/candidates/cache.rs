@@ -14,11 +14,21 @@ const MIN_CANDIDATE_CACHE_TTL_MS: u64 = 100;
 const MAX_CANDIDATE_CACHE_TTL_MS: u64 = 60_000;
 
 pub(super) fn completion_candidates_cache_ttl_ms() -> u64 {
-    parse_completion_candidates_cache_ttl_ms(
+    parse_completion_candidates_cache_ttl_policy(
         std::env::var(COMPLETION_CANDIDATES_CACHE_TTL_ENV)
             .ok()
             .as_deref(),
     )
+    .ttl_ms
+}
+
+pub(super) fn completion_candidates_cache_ttl_source() -> &'static str {
+    parse_completion_candidates_cache_ttl_policy(
+        std::env::var(COMPLETION_CANDIDATES_CACHE_TTL_ENV)
+            .ok()
+            .as_deref(),
+    )
+    .source
 }
 
 #[derive(Clone)]
@@ -208,44 +218,83 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
-fn parse_completion_candidates_cache_ttl_ms(raw: Option<&str>) -> u64 {
-    raw.and_then(|value| value.parse::<u64>().ok())
-        .map(|value| value.clamp(MIN_CANDIDATE_CACHE_TTL_MS, MAX_CANDIDATE_CACHE_TTL_MS))
-        .unwrap_or(DEFAULT_CANDIDATE_CACHE_TTL_MS)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CompletionCandidatesCacheTtlPolicy {
+    ttl_ms: u64,
+    source: &'static str,
+}
+
+fn parse_completion_candidates_cache_ttl_policy(
+    raw: Option<&str>,
+) -> CompletionCandidatesCacheTtlPolicy {
+    match raw.and_then(|value| value.parse::<u64>().ok()) {
+        Some(value) => CompletionCandidatesCacheTtlPolicy {
+            ttl_ms: value.clamp(MIN_CANDIDATE_CACHE_TTL_MS, MAX_CANDIDATE_CACHE_TTL_MS),
+            source: "env",
+        },
+        None => CompletionCandidatesCacheTtlPolicy {
+            ttl_ms: DEFAULT_CANDIDATE_CACHE_TTL_MS,
+            source: "default",
+        },
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_completion_candidates_cache_ttl_ms;
+    use super::{parse_completion_candidates_cache_ttl_policy, CompletionCandidatesCacheTtlPolicy};
 
     #[test]
     fn completion_candidates_cache_ttl_defaults_when_unset() {
-        assert_eq!(parse_completion_candidates_cache_ttl_ms(None), 2_000);
+        assert_eq!(
+            parse_completion_candidates_cache_ttl_policy(None),
+            CompletionCandidatesCacheTtlPolicy {
+                ttl_ms: 2_000,
+                source: "default",
+            }
+        );
     }
 
     #[test]
     fn completion_candidates_cache_ttl_uses_valid_override() {
-        assert_eq!(parse_completion_candidates_cache_ttl_ms(Some("750")), 750);
+        assert_eq!(
+            parse_completion_candidates_cache_ttl_policy(Some("750")),
+            CompletionCandidatesCacheTtlPolicy {
+                ttl_ms: 750,
+                source: "env",
+            }
+        );
     }
 
     #[test]
     fn completion_candidates_cache_ttl_clamps_below_min() {
-        assert_eq!(parse_completion_candidates_cache_ttl_ms(Some("5")), 100);
+        assert_eq!(
+            parse_completion_candidates_cache_ttl_policy(Some("5")),
+            CompletionCandidatesCacheTtlPolicy {
+                ttl_ms: 100,
+                source: "env",
+            }
+        );
     }
 
     #[test]
     fn completion_candidates_cache_ttl_clamps_above_max() {
         assert_eq!(
-            parse_completion_candidates_cache_ttl_ms(Some("999999")),
-            60_000
+            parse_completion_candidates_cache_ttl_policy(Some("999999")),
+            CompletionCandidatesCacheTtlPolicy {
+                ttl_ms: 60_000,
+                source: "env",
+            }
         );
     }
 
     #[test]
     fn completion_candidates_cache_ttl_ignores_invalid_override() {
         assert_eq!(
-            parse_completion_candidates_cache_ttl_ms(Some("not-a-number")),
-            2_000
+            parse_completion_candidates_cache_ttl_policy(Some("not-a-number")),
+            CompletionCandidatesCacheTtlPolicy {
+                ttl_ms: 2_000,
+                source: "default",
+            }
         );
     }
 }
