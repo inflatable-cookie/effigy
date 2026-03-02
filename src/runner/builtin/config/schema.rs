@@ -7,219 +7,175 @@ pub(super) fn normalize_test_runner_name(value: &str) -> Option<&'static str> {
     }
 }
 
+const HEADER_CANONICAL: &str = "# Canonical strict-valid effigy.toml schema template";
+const HEADER_MINIMAL: &str = "# Minimal strict-valid effigy.toml starter";
+const RUNNER_COMMENT: &str = "# Per-runner command overrides for built-in detection.";
+
+const SECTION_PACKAGE_MANAGER: &[&str] = &[
+    "[package_manager]",
+    "# Preferred JS/TS package manager for built-in test runners.",
+    "js = \"bun\"",
+    "",
+];
+
+const SECTION_DEFER: &[&str] = &[
+    "[defer]",
+    "# Fallback command for unresolved task requests.",
+    "run = \"my-process {request} {args}\"",
+    "",
+];
+
+const SECTION_SHELL: &[&str] = &[
+    "[shell]",
+    "# Interactive shell command used by managed shell tabs.",
+    "run = \"exec ${SHELL:-/bin/zsh} -i\"",
+    "",
+];
+
+const SECTION_TASKS_MINIMAL: &[&str] = &[
+    "[tasks]",
+    "# Compact task command mappings.",
+    "test = \"bun x vitest run\"",
+    "",
+];
+
+const SECTION_TASKS_CANONICAL: &[&str] = &[
+    "[tasks]",
+    "# Compact task command mappings.",
+    "api = \"cargo run -p api\"",
+    "\"db:reset\" = [\"sqlx database reset -y\", \"sqlx migrate run\"]",
+    "",
+    "[tasks.dev]",
+    "# Managed dev task configuration.",
+    "mode = \"tui\"",
+    "fail_on_non_zero = true",
+    "# Concurrent launch plan with explicit start and tab ordering.",
+    "concurrent = [",
+    "  { task = \"catalog-a/api\", start = 1, tab = 3 },",
+    "  { task = \"catalog-a/jobs\", start = 2, tab = 4, start_after_ms = 1200 },",
+    "  { task = \"catalog-b/dev\", start = 3, tab = 2 },",
+    "  { run = \"my-other-arbitrary-process\", start = 4, tab = 1 }",
+    "]",
+    "",
+    "[tasks.dev.profiles.admin]",
+    "# Optional profile-specific concurrent override.",
+    "concurrent = [",
+    "  { task = \"catalog-a/api\", start = 1, tab = 2 },",
+    "  { run = \"my-admin-process\", start = 2, tab = 1 }",
+    "]",
+    "",
+    "[tasks.validate]",
+    "# Example DAG-style run sequence with explicit step ids and dependencies.",
+    "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
+    "",
+    "[tasks.build.cache]",
+    "# Phase-1 cache contract: explicit opt-in only, no implicit discovery.",
+    "enabled = true",
+    "inputs = [\"src/**/*.rs\", \"Cargo.toml\"]",
+    "outputs = [\"target/build-artifact\"]",
+    "env = [\"RUSTFLAGS\", \"NODE_ENV\"]",
+    "",
+];
+
+fn runner_lines(runner: Option<&str>) -> Vec<&'static str> {
+    match runner {
+        Some("vitest") => vec!["vitest = \"bun x vitest run\""],
+        Some("cargo-nextest") => vec!["\"cargo-nextest\" = \"cargo nextest run\""],
+        Some("cargo-test") => vec!["\"cargo-test\" = \"cargo test\""],
+        Some(_) => Vec::new(),
+        None => vec![
+            "vitest = \"bun x vitest run\"",
+            "\"cargo-nextest\" = \"cargo nextest run\"",
+            "\"cargo-test\" = \"cargo test\"",
+        ],
+    }
+}
+
+fn section_test_lines(minimal: bool, runner: Option<&str>) -> Vec<String> {
+    let mut lines = Vec::<String>::new();
+    if !minimal {
+        lines.extend(
+            [
+                "[test]",
+                "# Built-in test fanout and execution behavior.",
+                "max_parallel = 3",
+                "",
+                "[test.suites]",
+                "# Optional named suite commands used as source of truth.",
+                "unit = \"bun x vitest run\"",
+                "integration = \"cargo nextest run\"",
+                "",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        );
+    }
+
+    lines.push("[test.runners]".to_owned());
+    lines.push(RUNNER_COMMENT.to_owned());
+    lines.extend(runner_lines(runner).into_iter().map(str::to_owned));
+    lines.push(String::new());
+    lines
+}
+
+fn join_lines(lines: &[String]) -> String {
+    lines.join("\n")
+}
+
+fn prefixed_section(header: &str, section_lines: &[&str]) -> String {
+    let mut lines = vec![header.to_owned(), String::new()];
+    lines.extend(section_lines.iter().copied().map(str::to_owned));
+    join_lines(&lines)
+}
+
 pub(super) fn render_builtin_config_schema() -> String {
-    [
-        "# Canonical strict-valid effigy.toml schema template",
-        "",
-        "[package_manager]",
-        "# Preferred JS/TS package manager for built-in test runners.",
-        "js = \"bun\"",
-        "",
-        "[test]",
-        "# Built-in test fanout and execution behavior.",
-        "max_parallel = 3",
-        "",
-        "[test.suites]",
-        "# Optional named suite commands used as source of truth.",
-        "unit = \"bun x vitest run\"",
-        "integration = \"cargo nextest run\"",
-        "",
-        "[test.runners]",
-        "# Per-runner command overrides for built-in detection.",
-        "vitest = \"bun x vitest run\"",
-        "\"cargo-nextest\" = \"cargo nextest run\"",
-        "\"cargo-test\" = \"cargo test\"",
-        "",
-        "[defer]",
-        "# Fallback command for unresolved task requests.",
-        "run = \"my-process {request} {args}\"",
-        "",
-        "[shell]",
-        "# Interactive shell command used by managed shell tabs.",
-        "run = \"exec ${SHELL:-/bin/zsh} -i\"",
-        "",
-        "[tasks]",
-        "# Compact task command mappings.",
-        "api = \"cargo run -p api\"",
-        "\"db:reset\" = [\"sqlx database reset -y\", \"sqlx migrate run\"]",
-        "",
-        "[tasks.dev]",
-        "# Managed dev task configuration.",
-        "mode = \"tui\"",
-        "fail_on_non_zero = true",
-        "# Concurrent launch plan with explicit start and tab ordering.",
-        "concurrent = [",
-        "  { task = \"catalog-a/api\", start = 1, tab = 3 },",
-        "  { task = \"catalog-a/jobs\", start = 2, tab = 4, start_after_ms = 1200 },",
-        "  { task = \"catalog-b/dev\", start = 3, tab = 2 },",
-        "  { run = \"my-other-arbitrary-process\", start = 4, tab = 1 }",
-        "]",
-        "",
-        "[tasks.dev.profiles.admin]",
-        "# Optional profile-specific concurrent override.",
-        "concurrent = [",
-        "  { task = \"catalog-a/api\", start = 1, tab = 2 },",
-        "  { run = \"my-admin-process\", start = 2, tab = 1 }",
-        "]",
-        "",
-        "[tasks.validate]",
-        "# Example DAG-style run sequence with explicit step ids and dependencies.",
-        "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
-        "",
-        "[tasks.build.cache]",
-        "# Phase-1 cache contract: explicit opt-in only, no implicit discovery.",
-        "enabled = true",
-        "inputs = [\"src/**/*.rs\", \"Cargo.toml\"]",
-        "outputs = [\"target/build-artifact\"]",
-        "env = [\"RUSTFLAGS\", \"NODE_ENV\"]",
-        "",
-    ]
-    .join("\n")
+    let mut lines = vec![HEADER_CANONICAL.to_owned(), String::new()];
+    lines.extend(SECTION_PACKAGE_MANAGER.iter().copied().map(str::to_owned));
+    lines.extend(section_test_lines(false, None));
+    lines.extend(SECTION_DEFER.iter().copied().map(str::to_owned));
+    lines.extend(SECTION_SHELL.iter().copied().map(str::to_owned));
+    lines.extend(SECTION_TASKS_CANONICAL.iter().copied().map(str::to_owned));
+    join_lines(&lines)
 }
 
 pub(super) fn render_builtin_config_schema_minimal() -> String {
-    [
-        "# Minimal strict-valid effigy.toml starter",
-        "",
-        "[package_manager]",
-        "# Preferred JS/TS package manager for built-in test runners.",
-        "js = \"bun\"",
-        "",
-        "[test.runners]",
-        "# Per-runner command overrides for built-in detection.",
-        "vitest = \"bun x vitest run\"",
-        "",
-        "[tasks]",
-        "# Compact task command mappings.",
-        "test = \"bun x vitest run\"",
-        "",
-    ]
-    .join("\n")
+    let mut lines = vec![HEADER_MINIMAL.to_owned(), String::new()];
+    lines.extend(SECTION_PACKAGE_MANAGER.iter().copied().map(str::to_owned));
+    lines.extend(section_test_lines(true, Some("vitest")));
+    lines.extend(SECTION_TASKS_MINIMAL.iter().copied().map(str::to_owned));
+    join_lines(&lines)
 }
 
 pub(super) fn render_builtin_config_schema_target(target: &str, minimal: bool) -> Option<String> {
-    match (target, minimal) {
-        ("package_manager", true) => Some(
-            [
-                "# Minimal strict-valid effigy.toml starter (package_manager target)",
-                "",
-                "[package_manager]",
-                "# Preferred JS/TS package manager for built-in test runners.",
-                "js = \"bun\"",
-                "",
-            ]
-            .join("\n"),
+    let header_prefix = if minimal {
+        "# Minimal strict-valid effigy.toml starter"
+    } else {
+        "# Canonical strict-valid effigy.toml schema template"
+    };
+
+    let rendered = match (target, minimal) {
+        ("package_manager", true) | ("package_manager", false) => prefixed_section(
+            &format!("{header_prefix} (package_manager target)"),
+            SECTION_PACKAGE_MANAGER,
         ),
-        ("tasks", true) => Some(
-            [
-                "# Minimal strict-valid effigy.toml starter (tasks target)",
-                "",
-                "[tasks]",
-                "# Compact task command mappings.",
-                "test = \"bun x vitest run\"",
-                "",
-            ]
-            .join("\n"),
+        ("tasks", true) => prefixed_section(
+            &format!("{header_prefix} (tasks target)"),
+            SECTION_TASKS_MINIMAL,
         ),
-        ("defer", true) => Some(
-            [
-                "# Minimal strict-valid effigy.toml starter (defer target)",
-                "",
-                "[defer]",
-                "# Fallback command for unresolved task requests.",
-                "run = \"my-process {request} {args}\"",
-                "",
-            ]
-            .join("\n"),
+        ("tasks", false) => prefixed_section(
+            &format!("{header_prefix} (tasks target)"),
+            SECTION_TASKS_CANONICAL,
         ),
-        ("shell", true) => Some(
-            [
-                "# Minimal strict-valid effigy.toml starter (shell target)",
-                "",
-                "[shell]",
-                "# Interactive shell command used by managed shell tabs.",
-                "run = \"exec ${SHELL:-/bin/zsh} -i\"",
-                "",
-            ]
-            .join("\n"),
-        ),
-        ("package_manager", false) => Some(
-            [
-                "# Canonical strict-valid effigy.toml schema template (package_manager target)",
-                "",
-                "[package_manager]",
-                "# Preferred JS/TS package manager for built-in test runners.",
-                "js = \"bun\"",
-                "",
-            ]
-            .join("\n"),
-        ),
-        ("tasks", false) => Some(
-            [
-                "# Canonical strict-valid effigy.toml schema template (tasks target)",
-                "",
-                "[tasks]",
-                "# Compact task command mappings.",
-                "api = \"cargo run -p api\"",
-                "\"db:reset\" = [\"sqlx database reset -y\", \"sqlx migrate run\"]",
-                "",
-                "[tasks.dev]",
-                "# Managed dev task configuration.",
-                "mode = \"tui\"",
-                "fail_on_non_zero = true",
-                "# Concurrent launch plan with explicit start and tab ordering.",
-                "concurrent = [",
-                "  { task = \"catalog-a/api\", start = 1, tab = 3 },",
-                "  { task = \"catalog-a/jobs\", start = 2, tab = 4, start_after_ms = 1200 },",
-                "  { task = \"catalog-b/dev\", start = 3, tab = 2 },",
-                "  { run = \"my-other-arbitrary-process\", start = 4, tab = 1 }",
-                "]",
-                "",
-                "[tasks.dev.profiles.admin]",
-                "# Optional profile-specific concurrent override.",
-                "concurrent = [",
-                "  { task = \"catalog-a/api\", start = 1, tab = 2 },",
-                "  { run = \"my-admin-process\", start = 2, tab = 1 }",
-                "]",
-                "",
-                "[tasks.validate]",
-                "# Example DAG-style run sequence with explicit step ids and dependencies.",
-                "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
-                "",
-                "[tasks.build.cache]",
-                "# Phase-1 cache contract: explicit opt-in only, no implicit discovery.",
-                "enabled = true",
-                "inputs = [\"src/**/*.rs\", \"Cargo.toml\"]",
-                "outputs = [\"target/build-artifact\"]",
-                "env = [\"RUSTFLAGS\", \"NODE_ENV\"]",
-                "",
-            ]
-            .join("\n"),
-        ),
-        ("defer", false) => Some(
-            [
-                "# Canonical strict-valid effigy.toml schema template (defer target)",
-                "",
-                "[defer]",
-                "# Fallback command for unresolved task requests.",
-                "run = \"my-process {request} {args}\"",
-                "",
-            ]
-            .join("\n"),
-        ),
-        ("shell", false) => Some(
-            [
-                "# Canonical strict-valid effigy.toml schema template (shell target)",
-                "",
-                "[shell]",
-                "# Interactive shell command used by managed shell tabs.",
-                "run = \"exec ${SHELL:-/bin/zsh} -i\"",
-                "",
-            ]
-            .join("\n"),
-        ),
-        _ => None,
-    }
+        ("defer", true) | ("defer", false) => {
+            prefixed_section(&format!("{header_prefix} (defer target)"), SECTION_DEFER)
+        }
+        ("shell", true) | ("shell", false) => {
+            prefixed_section(&format!("{header_prefix} (shell target)"), SECTION_SHELL)
+        }
+        _ => return None,
+    };
+
+    Some(rendered)
 }
 
 pub(super) fn render_builtin_config_schema_test_target(
@@ -240,30 +196,6 @@ pub(super) fn render_builtin_config_schema_test_target(
     };
 
     let mut lines = vec![header, String::new()];
-    if !minimal {
-        lines.push("[test]".to_owned());
-        lines.push("# Built-in test fanout and execution behavior.".to_owned());
-        lines.push("max_parallel = 3".to_owned());
-        lines.push(String::new());
-        lines.push("[test.suites]".to_owned());
-        lines.push("# Optional named suite commands used as source of truth.".to_owned());
-        lines.push("unit = \"bun x vitest run\"".to_owned());
-        lines.push("integration = \"cargo nextest run\"".to_owned());
-        lines.push(String::new());
-    }
-    lines.push("[test.runners]".to_owned());
-    lines.push("# Per-runner command overrides for built-in detection.".to_owned());
-    match runner {
-        Some("vitest") => lines.push("vitest = \"bun x vitest run\"".to_owned()),
-        Some("cargo-nextest") => lines.push("\"cargo-nextest\" = \"cargo nextest run\"".to_owned()),
-        Some("cargo-test") => lines.push("\"cargo-test\" = \"cargo test\"".to_owned()),
-        Some(_) => {}
-        None => {
-            lines.push("vitest = \"bun x vitest run\"".to_owned());
-            lines.push("\"cargo-nextest\" = \"cargo nextest run\"".to_owned());
-            lines.push("\"cargo-test\" = \"cargo test\"".to_owned());
-        }
-    }
-    lines.push(String::new());
-    lines.join("\n")
+    lines.extend(section_test_lines(minimal, runner));
+    join_lines(&lines)
 }
