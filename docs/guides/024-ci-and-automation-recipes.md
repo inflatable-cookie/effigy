@@ -22,6 +22,7 @@ Primary contract checks in this repo:
 
 Related CI workflow:
 - `.github/workflows/distribution-artifact-pipeline-smoke.yml`
+- `.github/workflows/distribution-preflight.yml`
 
 Primary JSON mode entrypoint:
 - `effigy --json <command>`
