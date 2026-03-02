@@ -91,11 +91,11 @@ fn build_filtered_tasks_payload(
     let matches = matched_tasks
         .iter()
         .map(|(catalog, task)| {
-            json!({
-                "task": catalog_task_label(catalog, &selector.task_name),
-                "run": task_run_preview(task),
-                "manifest": manifest_path_string(catalog),
-            })
+            task_row_json(
+                &catalog_task_label(catalog, &selector.task_name),
+                &task_run_preview(task),
+                &manifest_path_string(catalog),
+            )
         })
         .collect::<Vec<serde_json::Value>>();
     let managed_profile_matches = matched_tasks
@@ -135,19 +135,15 @@ fn build_catalog_and_profile_rows(
     let mut managed_profile_rows = Vec::<serde_json::Value>::new();
     for catalog in ordered_catalogs {
         if catalog.manifest.tasks.is_empty() {
-            catalog_rows.push(json!({
-                "task": null,
-                "run": null,
-                "manifest": manifest_path_string(catalog),
-            }));
+            catalog_rows.push(empty_task_row_json(&manifest_path_string(catalog)));
             continue;
         }
         for (task_name, task_def) in &catalog.manifest.tasks {
-            catalog_rows.push(json!({
-                "task": catalog_task_label(catalog, task_name),
-                "run": task_run_preview(task_def),
-                "manifest": manifest_path_string(catalog),
-            }));
+            catalog_rows.push(task_row_json(
+                &catalog_task_label(catalog, task_name),
+                &task_run_preview(task_def),
+                &manifest_path_string(catalog),
+            ));
             managed_profile_rows.extend(managed_profile_rows_json(catalog, task_name, task_def));
         }
     }
@@ -164,6 +160,22 @@ fn builtin_task_rows_json() -> Vec<serde_json::Value> {
             })
         })
         .collect::<Vec<serde_json::Value>>()
+}
+
+fn task_row_json(task: &str, run: &str, manifest: &str) -> serde_json::Value {
+    json!({
+        "task": task,
+        "run": run,
+        "manifest": manifest,
+    })
+}
+
+fn empty_task_row_json(manifest: &str) -> serde_json::Value {
+    json!({
+        "task": null,
+        "run": null,
+        "manifest": manifest,
+    })
 }
 
 fn render_tasks_text(
@@ -208,13 +220,12 @@ fn render_tasks_text(
         }
         if !builtin_matches.is_empty() {
             renderer.section("Built-in Task Matches")?;
-            for (name, description) in builtin_matches {
-                renderer.text(&format!(
-                    "- {} : {}",
-                    style_text(color_enabled, theme.task_name, name),
-                    style_text(color_enabled, theme.muted, description),
-                ))?;
-            }
+            render_builtin_task_rows(
+                &mut renderer,
+                color_enabled,
+                &theme,
+                builtin_matches.as_slice(),
+            )?;
             if selector.task_name == "test" {
                 renderer.notice(
                     NoticeLevel::Info,
@@ -254,20 +265,7 @@ fn render_tasks_text(
     )?;
 
     renderer.section("Built-in Tasks")?;
-    for (name, description) in BUILTIN_TASKS {
-        renderer.text(&format!(
-            "- {} : {}",
-            style_text(color_enabled, theme.task_name, name),
-            style_text(color_enabled, theme.muted, description),
-        ))?;
-    }
-    if resolve_probe.is_some() {
-        renderer.text("")?;
-    }
-
-    if let Some(probe) = resolve_probe {
-        render_resolution_probe_block(&mut renderer, probe, color_enabled, true)?;
-    }
+    render_builtin_task_rows(&mut renderer, color_enabled, &theme, &BUILTIN_TASKS)?;
     render::render_utf8(renderer.into_inner())
 }
 
@@ -426,6 +424,22 @@ fn render_task_with_profiles(
             &row.task,
             &row.run,
         )?;
+    }
+    Ok(())
+}
+
+fn render_builtin_task_rows(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    color_enabled: bool,
+    theme: &Theme,
+    rows: &[(&str, &str)],
+) -> Result<(), RunnerError> {
+    for (name, description) in rows {
+        renderer.text(&format!(
+            "- {} : {}",
+            style_text(color_enabled, theme.task_name, name),
+            style_text(color_enabled, theme.muted, description),
+        ))?;
     }
     Ok(())
 }

@@ -115,10 +115,7 @@ fn acquire_scope_lock(
         match OpenOptions::new().create_new(true).write(true).open(&path) {
             Ok(mut file) => {
                 file.write_all(&body)
-                    .map_err(|error| RunnerError::TaskLockIo {
-                        path: path.clone(),
-                        error,
-                    })?;
+                    .map_err(|error| task_lock_io(path.clone(), error))?;
                 return Ok(LockGuard { path: path.clone() });
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -146,10 +143,7 @@ fn acquire_scope_lock(
                 });
             }
             Err(error) => {
-                return Err(RunnerError::TaskLockIo {
-                    path: path.clone(),
-                    error,
-                });
+                return Err(task_lock_io(path.clone(), error));
             }
         }
     }
@@ -169,18 +163,12 @@ pub(super) fn unlock_scopes(
     let mut removed = Vec::new();
     let mut missing = Vec::new();
     for scope in scopes {
+        let label = scope.label();
         let path = locks_root.join(scope.file_name());
         match fs::remove_file(&path) {
-            Ok(()) => removed.push(scope.label()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                missing.push(scope.label())
-            }
-            Err(error) => {
-                return Err(RunnerError::TaskLockIo {
-                    path: path.clone(),
-                    error,
-                });
-            }
+            Ok(()) => removed.push(label),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => missing.push(label),
+            Err(error) => return Err(task_lock_io(path.clone(), error)),
         }
     }
 
@@ -238,10 +226,11 @@ fn ensure_locks_root(workspace_root: &Path) -> Result<PathBuf, RunnerError> {
 }
 
 fn remove_lock_file(path: &Path) -> Result<(), RunnerError> {
-    fs::remove_file(path).map_err(|error| RunnerError::TaskLockIo {
-        path: path.to_path_buf(),
-        error,
-    })
+    fs::remove_file(path).map_err(|error| task_lock_io(path.to_path_buf(), error))
+}
+
+fn task_lock_io(path: PathBuf, error: std::io::Error) -> RunnerError {
+    RunnerError::TaskLockIo { path, error }
 }
 
 fn pid_is_alive(pid: u32) -> bool {
