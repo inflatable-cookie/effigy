@@ -1,11 +1,9 @@
-use effigy::ui::{OutputMode, PlainRenderer, Renderer};
+use effigy::ui::{OutputMode, PlainRenderer};
 use effigy::{
     apply_global_json_flag, command_kind_and_name, command_requests_json, emit_json_envelope_error,
-    emit_json_envelope_success_value, help_topic_label, parse_command, parse_error_json_details,
-    render_cli_header, render_help, render_parse_error, run_and_render_command,
-    strip_global_json_flags, Command,
+    parse_command, parse_error_json_details, render_parse_error, run_and_render_command,
+    run_help_command, strip_global_json_flags, Command,
 };
-use serde_json::json;
 
 fn main() {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
@@ -40,36 +38,15 @@ fn main() {
 
     match cmd {
         Command::Help(topic) => {
-            if suppress_header {
-                let topic_label = help_topic_label(topic);
-                let mut help_renderer = PlainRenderer::new(Vec::<u8>::new(), false);
-                let _ = render_help(&mut help_renderer, topic);
-                let rendered = String::from_utf8(help_renderer.into_inner()).unwrap_or_default();
-                let payload = json!({
-                    "schema": "effigy.help.v1",
-                    "schema_version": 1,
-                    "ok": true,
-                    "topic": topic_label,
-                    "text": rendered,
-                });
-                if emit_json_envelope {
-                    emit_json_envelope_success_value(command_kind, &command_name, payload);
-                    return;
-                }
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| {
-                        "{\"ok\":false,\"error\":{\"kind\":\"JsonEncodeError\"}}".to_owned()
-                    })
-                );
-                return;
-            }
-            let mut renderer = PlainRenderer::stdout(output_mode);
-            if !suppress_header {
-                let _ = render_cli_header(&mut renderer, &command_root);
-            }
-            let _ = render_help(&mut renderer, topic);
-            let _ = renderer.text("");
+            run_help_command(
+                output_mode,
+                &command_root,
+                suppress_header,
+                emit_json_envelope,
+                command_kind,
+                &command_name,
+                topic,
+            );
         }
         command @ (Command::Doctor(_) | Command::Tasks(_) | Command::Task(_)) => {
             run_and_render_command(

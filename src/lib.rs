@@ -7,6 +7,7 @@ pub mod testing;
 pub mod tui;
 pub mod ui;
 
+pub use cli::help_dispatch::{build_help_payload, run_help_command};
 pub use cli::output::{
     command_kind_and_name, emit_json_envelope_error, emit_json_envelope_success,
     emit_json_envelope_success_value, help_topic_label, parse_json_or_string,
