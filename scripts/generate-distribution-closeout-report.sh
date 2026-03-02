@@ -7,6 +7,7 @@ ARTIFACTS_DIR=""
 OUTPUT_PATH=""
 OWNER="Effigy"
 EXPECT_HOMEBREW=0
+EXPECT_HOMEBREW_EXPLICIT=0
 
 usage() {
   cat <<'USAGE'
@@ -43,6 +44,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --expect-homebrew)
       EXPECT_HOMEBREW=1
+      EXPECT_HOMEBREW_EXPLICIT=1
       shift
       ;;
     --help|-h)
@@ -71,6 +73,14 @@ fi
 if [[ ! -d "$ARTIFACTS_DIR" ]]; then
   echo "[error] artifacts directory not found: $ARTIFACTS_DIR" >&2
   exit 1
+fi
+
+summary_path="$ARTIFACTS_DIR/distribution-summary.env"
+if [[ "$EXPECT_HOMEBREW_EXPLICIT" -eq 0 && -f "$summary_path" ]]; then
+  summary_homebrew="$(awk -F= '$1=="HOMEBREW_EXECUTED"{print $2}' "$summary_path" | tail -n1)"
+  if [[ "$summary_homebrew" == "1" ]]; then
+    EXPECT_HOMEBREW=1
+  fi
 fi
 
 validate_args=(--artifacts-dir "$ARTIFACTS_DIR")
@@ -125,6 +135,7 @@ Related roadmap: docs/roadmap/backlog/distribution-channels.md
 
 - release tag: ${TAG}
 - artifacts directory: ${ARTIFACTS_DIR}
+- artifacts summary: ${summary_path}
 
 ## Evidence Logs
 

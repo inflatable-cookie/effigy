@@ -88,6 +88,7 @@ effigy --json help
 When using the helper script, attach per-step logs from `--artifacts-dir` directly in the checkpoint report.
 The closeout report can be generated from those logs using `generate-distribution-closeout-report.sh`.
 Artifact completeness can be checked directly with `validate-distribution-artifacts.sh`.
+The first-publish helper also writes `distribution-summary.env` in the artifacts directory and validates artifacts before returning success.
 
 ## 5) Acceptance Criteria Mapping
 
