@@ -2,6 +2,14 @@ use std::collections::BTreeMap;
 
 use indexmap::IndexMap;
 
+#[path = "manifest/task_defs.rs"]
+mod task_defs;
+#[path = "manifest/test_config.rs"]
+mod test_config;
+
+use task_defs::deserialize_tasks;
+use test_config::ManifestTestConfig;
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct TaskManifest {
@@ -28,17 +36,6 @@ pub(super) struct ManifestShellConfig {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct ManifestTestConfig {
-    #[serde(default)]
-    pub(super) max_parallel: Option<usize>,
-    #[serde(default)]
-    pub(super) runners: BTreeMap<String, ManifestTestRunnerOverride>,
-    #[serde(default)]
-    pub(super) suites: BTreeMap<String, ManifestTestSuite>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(super) struct ManifestPackageManagerConfig {
     #[serde(default, alias = "js_ts", alias = "typescript")]
     pub(super) js: Option<ManifestJsPackageManager>,
@@ -51,51 +48,6 @@ pub(super) enum ManifestJsPackageManager {
     Pnpm,
     Npm,
     Direct,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-pub(super) enum ManifestTestRunnerOverride {
-    Command(String),
-    Config(ManifestTestRunnerOverrideTable),
-}
-
-#[derive(Debug, serde::Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ManifestTestRunnerOverrideTable {
-    #[serde(default)]
-    pub(super) command: Option<String>,
-}
-
-impl ManifestTestRunnerOverride {
-    pub(super) fn command(&self) -> Option<&str> {
-        match self {
-            ManifestTestRunnerOverride::Command(command) => Some(command.as_str()),
-            ManifestTestRunnerOverride::Config(table) => table.command.as_deref(),
-        }
-    }
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-pub(super) enum ManifestTestSuite {
-    Command(String),
-    Config(ManifestTestSuiteTable),
-}
-
-#[derive(Debug, serde::Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ManifestTestSuiteTable {
-    pub(super) run: String,
-}
-
-impl ManifestTestSuite {
-    pub(super) fn run(&self) -> Option<&str> {
-        match self {
-            ManifestTestSuite::Command(command) => Some(command.as_str()),
-            ManifestTestSuite::Config(table) => Some(table.run.as_str()),
-        }
-    }
 }
 
 #[derive(Debug, serde::Deserialize, Default)]
@@ -115,30 +67,6 @@ pub(super) struct ManifestTask {
     pub(super) profiles: IndexMap<String, ManifestManagedProfile>,
     #[serde(default)]
     pub(super) cache: Option<ManifestTaskCache>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-enum ManifestTaskDefinition {
-    Run(String),
-    RunSequence(Vec<ManifestManagedRunStep>),
-    Full(Box<ManifestTask>),
-}
-
-impl ManifestTaskDefinition {
-    fn into_manifest_task(self) -> ManifestTask {
-        match self {
-            ManifestTaskDefinition::Run(command) => ManifestTask {
-                run: Some(ManifestManagedRun::Command(command)),
-                ..ManifestTask::default()
-            },
-            ManifestTaskDefinition::RunSequence(sequence) => ManifestTask {
-                run: Some(ManifestManagedRun::Sequence(sequence)),
-                ..ManifestTask::default()
-            },
-            ManifestTaskDefinition::Full(task) => *task,
-        }
-    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -221,20 +149,6 @@ impl ManifestManagedProfile {
             Some(self.concurrent.as_slice())
         }
     }
-}
-
-fn deserialize_tasks<'de, D>(deserializer: D) -> Result<BTreeMap<String, ManifestTask>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let definitions =
-        <BTreeMap<String, ManifestTaskDefinition> as serde::Deserialize>::deserialize(
-            deserializer,
-        )?;
-    Ok(definitions
-        .into_iter()
-        .map(|(name, definition)| (name, definition.into_manifest_task()))
-        .collect())
 }
 
 #[derive(Debug, serde::Deserialize)]
