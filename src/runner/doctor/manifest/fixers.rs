@@ -6,129 +6,152 @@ use toml::Value;
 use super::super::super::{LoadedCatalog, TASK_MANIFEST_FILE};
 use super::super::{DoctorFixAction, DoctorFixStatus};
 
+const HEALTH_FIX_ID: &str = "manifest.health_task_scaffold";
+const HEALTH_SCAFFOLD_COMMAND: &str = "printf health-check-placeholder";
+
 pub(super) fn apply_fixers(
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
 ) -> Vec<DoctorFixAction> {
-    let mut actions = Vec::<DoctorFixAction>::new();
     if catalogs
         .iter()
         .any(|catalog| catalog.manifest.tasks.contains_key("health"))
     {
-        return actions;
+        return Vec::new();
     }
 
-    let root_manifest = resolved_root.join(TASK_MANIFEST_FILE);
-    let scaffold_command = "printf health-check-placeholder";
+    let mut fixer = HealthScaffoldFixer::new(resolved_root.join(TASK_MANIFEST_FILE));
+    fixer.apply();
+    fixer.actions
+}
 
-    if !root_manifest.exists() {
-        let content = format!("[tasks.health]\nrun = \"{scaffold_command}\"\n");
-        match fs::write(&root_manifest, content) {
-            Ok(_) => actions.push(DoctorFixAction {
-                fix_id: "manifest.health_task_scaffold".to_owned(),
-                status: DoctorFixStatus::Applied,
-                detail: format!(
-                    "Created {} with `tasks.health` placeholder command.",
-                    root_manifest.display()
-                ),
-            }),
-            Err(error) => actions.push(DoctorFixAction {
-                fix_id: "manifest.health_task_scaffold".to_owned(),
-                status: DoctorFixStatus::Skipped,
-                detail: format!("Could not create {}: {error}", root_manifest.display()),
-            }),
+struct HealthScaffoldFixer {
+    root_manifest: std::path::PathBuf,
+    actions: Vec<DoctorFixAction>,
+}
+
+impl HealthScaffoldFixer {
+    fn new(root_manifest: std::path::PathBuf) -> Self {
+        Self {
+            root_manifest,
+            actions: Vec::new(),
         }
-        return actions;
     }
 
-    let existing = match fs::read_to_string(&root_manifest) {
-        Ok(value) => value,
-        Err(error) => {
-            actions.push(DoctorFixAction {
-                fix_id: "manifest.health_task_scaffold".to_owned(),
-                status: DoctorFixStatus::Skipped,
-                detail: format!("Could not read {}: {error}", root_manifest.display()),
-            });
-            return actions;
+    fn apply(&mut self) {
+        if !self.root_manifest.exists() {
+            self.create_manifest_with_health_placeholder();
+            return;
         }
-    };
 
-    let mut raw = match existing.parse::<Value>() {
-        Ok(value) => value,
-        Err(error) => {
-            actions.push(DoctorFixAction {
-                fix_id: "manifest.health_task_scaffold".to_owned(),
-                status: DoctorFixStatus::Skipped,
-                detail: format!(
-                    "Skipped because {} has TOML syntax errors: {error}",
-                    root_manifest.display()
-                ),
-            });
-            return actions;
-        }
-    };
-
-    let Some(root_table) = raw.as_table_mut() else {
-        actions.push(DoctorFixAction {
-            fix_id: "manifest.health_task_scaffold".to_owned(),
-            status: DoctorFixStatus::Skipped,
-            detail: format!(
+        let Some(existing) = self.read_manifest_source() else {
+            return;
+        };
+        let Some(mut raw) = self.parse_manifest_source(&existing) else {
+            return;
+        };
+        let Some(root_table) = raw.as_table_mut() else {
+            self.skipped(format!(
                 "Skipped because {} root document is not a table.",
-                root_manifest.display()
-            ),
-        });
-        return actions;
-    };
-    if root_table.contains_key("tasks") && !root_table["tasks"].is_table() {
-        actions.push(DoctorFixAction {
-            fix_id: "manifest.health_task_scaffold".to_owned(),
-            status: DoctorFixStatus::Skipped,
-            detail: format!(
+                self.root_manifest.display()
+            ));
+            return;
+        };
+        if root_table.contains_key("tasks") && !root_table["tasks"].is_table() {
+            self.skipped(format!(
                 "Skipped because {} has non-table `tasks`.",
-                root_manifest.display()
-            ),
-        });
-        return actions;
-    }
-
-    let tasks = root_table
-        .entry("tasks")
-        .or_insert_with(|| Value::Table(toml::map::Map::new()));
-    let tasks_table = tasks.as_table_mut().expect("tasks ensured as table above");
-    if tasks_table.contains_key("health") {
-        return actions;
-    }
-    tasks_table.insert(
-        "health".to_owned(),
-        Value::String(scaffold_command.to_owned()),
-    );
-
-    let rendered = match toml::to_string_pretty(&raw) {
-        Ok(value) => value,
-        Err(error) => {
-            actions.push(DoctorFixAction {
-                fix_id: "manifest.health_task_scaffold".to_owned(),
-                status: DoctorFixStatus::Skipped,
-                detail: format!("Could not serialize {}: {error}", root_manifest.display()),
-            });
-            return actions;
+                self.root_manifest.display()
+            ));
+            return;
         }
-    };
-    match fs::write(&root_manifest, rendered) {
-        Ok(_) => actions.push(DoctorFixAction {
-            fix_id: "manifest.health_task_scaffold".to_owned(),
-            status: DoctorFixStatus::Applied,
-            detail: format!(
+
+        let tasks = root_table
+            .entry("tasks")
+            .or_insert_with(|| Value::Table(toml::map::Map::new()));
+        let tasks_table = tasks.as_table_mut().expect("tasks ensured as table above");
+        if tasks_table.contains_key("health") {
+            return;
+        }
+        tasks_table.insert(
+            "health".to_owned(),
+            Value::String(HEALTH_SCAFFOLD_COMMAND.to_owned()),
+        );
+
+        let rendered = match toml::to_string_pretty(&raw) {
+            Ok(value) => value,
+            Err(error) => {
+                self.skipped(format!(
+                    "Could not serialize {}: {error}",
+                    self.root_manifest.display()
+                ));
+                return;
+            }
+        };
+        match fs::write(&self.root_manifest, rendered) {
+            Ok(_) => self.applied(format!(
                 "Added `tasks.health` placeholder command in {}.",
-                root_manifest.display()
-            ),
-        }),
-        Err(error) => actions.push(DoctorFixAction {
-            fix_id: "manifest.health_task_scaffold".to_owned(),
-            status: DoctorFixStatus::Skipped,
-            detail: format!("Could not update {}: {error}", root_manifest.display()),
-        }),
+                self.root_manifest.display()
+            )),
+            Err(error) => self.skipped(format!(
+                "Could not update {}: {error}",
+                self.root_manifest.display()
+            )),
+        }
     }
 
-    actions
+    fn create_manifest_with_health_placeholder(&mut self) {
+        let content = format!("[tasks.health]\nrun = \"{HEALTH_SCAFFOLD_COMMAND}\"\n");
+        match fs::write(&self.root_manifest, content) {
+            Ok(_) => self.applied(format!(
+                "Created {} with `tasks.health` placeholder command.",
+                self.root_manifest.display()
+            )),
+            Err(error) => self.skipped(format!(
+                "Could not create {}: {error}",
+                self.root_manifest.display()
+            )),
+        }
+    }
+
+    fn read_manifest_source(&mut self) -> Option<String> {
+        match fs::read_to_string(&self.root_manifest) {
+            Ok(source) => Some(source),
+            Err(error) => {
+                self.skipped(format!(
+                    "Could not read {}: {error}",
+                    self.root_manifest.display()
+                ));
+                None
+            }
+        }
+    }
+
+    fn parse_manifest_source(&mut self, source: &str) -> Option<Value> {
+        match source.parse::<Value>() {
+            Ok(value) => Some(value),
+            Err(error) => {
+                self.skipped(format!(
+                    "Skipped because {} has TOML syntax errors: {error}",
+                    self.root_manifest.display()
+                ));
+                None
+            }
+        }
+    }
+
+    fn applied(&mut self, detail: String) {
+        self.actions.push(DoctorFixAction {
+            fix_id: HEALTH_FIX_ID.to_owned(),
+            status: DoctorFixStatus::Applied,
+            detail,
+        });
+    }
+
+    fn skipped(&mut self, detail: String) {
+        self.actions.push(DoctorFixAction {
+            fix_id: HEALTH_FIX_ID.to_owned(),
+            status: DoctorFixStatus::Skipped,
+            detail,
+        });
+    }
 }
