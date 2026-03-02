@@ -7,6 +7,25 @@ fn doctor_nonzero_rendered(err: RunnerError) -> String {
     }
 }
 
+fn create_workspace_dir(root: &PathBuf, name: &str) -> PathBuf {
+    let dir = root.join(name);
+    fs::create_dir_all(&dir).expect("mkdir workspace dir");
+    dir
+}
+
+fn run_doctor_err_from_cwd(root: &PathBuf, fix: bool) -> RunnerError {
+    with_cwd(root, || {
+        run_doctor(DoctorArgs {
+            repo_override: None,
+            output_json: false,
+            fix,
+            verbose: false,
+            explain: None,
+        })
+    })
+    .expect_err("doctor should fail")
+}
+
 #[test]
 fn run_doctor_text_output_has_blank_line_between_sections() {
     let root = temp_workspace("doctor-section-spacing");
@@ -25,8 +44,7 @@ fn run_doctor_text_output_has_blank_line_between_sections() {
 #[test]
 fn run_doctor_explain_text_reports_resolution_selection() {
     let root = temp_workspace("doctor-explain-selection");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    let farmyard = create_workspace_dir(&root, "farmyard");
     write_manifest(
         &root.join("effigy.toml"),
         "[tasks.root]\nrun = \"printf root\"\n",
@@ -55,8 +73,7 @@ fn run_doctor_explain_text_reports_resolution_selection() {
 #[test]
 fn run_doctor_explain_text_snapshot_prefix_block_is_stable() {
     let root = temp_workspace("doctor-explain-snapshot-prefix");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    let farmyard = create_workspace_dir(&root, "farmyard");
     write_manifest(
         &root.join("effigy.toml"),
         "[tasks.root]\nrun = \"printf root\"\n",
@@ -171,16 +188,7 @@ fn run_doctor_groups_findings_in_severity_first_order() {
         "[catalog]\nalias = \"root\"\nunknown_key = true\n",
     );
 
-    let err = with_cwd(&root, || {
-        run_doctor(DoctorArgs {
-            repo_override: None,
-            output_json: false,
-            fix: false,
-            verbose: false,
-            explain: None,
-        })
-    })
-    .expect_err("doctor should fail for unsupported manifest key");
+    let err = run_doctor_err_from_cwd(&root, false);
 
     let rendered = doctor_nonzero_rendered(err);
 
@@ -208,8 +216,7 @@ fn run_doctor_groups_findings_in_severity_first_order() {
 #[test]
 fn run_doctor_groups_same_severity_findings_in_alphabetical_order() {
     let root = temp_workspace("doctor-same-severity-order");
-    let broken = root.join("broken");
-    fs::create_dir_all(&broken).expect("mkdir broken");
+    let broken = create_workspace_dir(&root, "broken");
 
     write_manifest(
         &root.join("effigy.toml"),
@@ -217,16 +224,7 @@ fn run_doctor_groups_same_severity_findings_in_alphabetical_order() {
     );
     fs::write(broken.join("effigy.toml"), "[tasks\nbad = true\n").expect("write bad manifest");
 
-    let err = with_cwd(&root, || {
-        run_doctor(DoctorArgs {
-            repo_override: None,
-            output_json: false,
-            fix: false,
-            verbose: false,
-            explain: None,
-        })
-    })
-    .expect_err("doctor should fail for health execution and parse errors");
+    let err = run_doctor_err_from_cwd(&root, false);
 
     let rendered = doctor_nonzero_rendered(err);
 
@@ -246,8 +244,7 @@ fn run_doctor_groups_same_severity_findings_in_alphabetical_order() {
 #[test]
 fn run_doctor_text_output_snapshot_mixed_findings_and_fix_actions() {
     let root = temp_workspace("doctor-text-snapshot-mixed");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    let farmyard = create_workspace_dir(&root, "farmyard");
     write_manifest(
         &farmyard.join("effigy.toml"),
         r#"[catalog]
@@ -258,16 +255,7 @@ run = [{ task = "missing/task" }]
 "#,
     );
 
-    let err = with_cwd(&root, || {
-        run_doctor(DoctorArgs {
-            repo_override: None,
-            output_json: false,
-            fix: true,
-            verbose: false,
-            explain: None,
-        })
-    })
-    .expect_err("doctor should fail with unresolved task reference");
+    let err = run_doctor_err_from_cwd(&root, true);
 
     let rendered = doctor_nonzero_rendered(err);
 
