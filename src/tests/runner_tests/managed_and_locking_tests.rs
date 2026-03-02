@@ -1,5 +1,51 @@
 use super::*;
 
+fn run_dev(root: &PathBuf, args: &[&str]) -> Result<String, RunnerError> {
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        },
+        root.clone(),
+    )
+}
+
+fn run_dev_with_repo(root: &PathBuf, args: &[&str]) -> Result<String, RunnerError> {
+    let mut full_args = vec!["--repo".to_owned(), root.display().to_string()];
+    full_args.extend(args.iter().map(|arg| (*arg).to_owned()));
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "dev".to_owned(),
+            args: full_args,
+        },
+        root.clone(),
+    )
+}
+
+fn run_unlock_with_repo(root: &PathBuf, scopes: &[&str]) -> Result<String, RunnerError> {
+    let mut args = vec!["--repo".to_owned(), root.display().to_string()];
+    args.extend(scopes.iter().map(|scope| (*scope).to_owned()));
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "unlock".to_owned(),
+            args,
+        },
+        root.clone(),
+    )
+}
+
+fn run_task_with_repo(root: &PathBuf, name: &str, args: &[&str]) -> Result<String, RunnerError> {
+    let mut full_args = vec!["--repo".to_owned(), root.display().to_string()];
+    full_args.extend(args.iter().map(|arg| (*arg).to_owned()));
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: name.to_owned(),
+            args: full_args,
+        },
+        root.clone(),
+    )
+}
+
 #[test]
 fn run_manifest_task_managed_tui_uses_default_profile_when_not_specified() {
     let _guard = lock_test();
@@ -23,21 +69,18 @@ concurrent = [
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root.clone(),
-    )
-    .expect("managed plan should render");
-
-    assert!(out.contains("Managed Task Plan"));
-    assert!(out.contains("profile: default"));
-    assert!(out.contains("api"));
-    assert!(out.contains("front"));
-    assert!(out.contains("admin"));
-    assert!(out.contains("fail-on-non-zero: enabled"));
+    let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
+    assert_contains_all(
+        &out,
+        &[
+            "Managed Task Plan",
+            "profile: default",
+            "api",
+            "front",
+            "admin",
+            "fail-on-non-zero: enabled",
+        ],
+    );
 }
 
 #[test]
@@ -63,18 +106,8 @@ concurrent = [
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["admin".to_owned()],
-        },
-        root,
-    )
-    .expect("managed plan should render");
-
-    assert!(out.contains("profile: admin"));
-    assert!(out.contains("api"));
-    assert!(out.contains("admin"));
+    let out = run_dev(&root, &["admin"]).expect("managed plan should render");
+    assert_contains_all(&out, &["profile: admin", "api", "admin"]);
     assert!(!out.contains("front"));
 }
 
@@ -101,22 +134,19 @@ run = "printf front"
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect("managed plan should render");
-
-    assert!(out.contains("Managed Task Plan"));
-    assert!(out.contains("profile: default"));
-    assert!(out.contains("tab-order: front, process-2, api"));
-    assert!(out.contains("printf api"));
-    assert!(out.contains("printf background"));
-    assert!(out.contains("printf front"));
-    assert!(out.contains("250"));
+    let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
+    assert_contains_all(
+        &out,
+        &[
+            "Managed Task Plan",
+            "profile: default",
+            "tab-order: front, process-2, api",
+            "printf api",
+            "printf background",
+            "printf front",
+            "250",
+        ],
+    );
 }
 
 #[test]
@@ -135,14 +165,7 @@ run = "printf api"
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect_err("invalid concurrent entry should fail");
+    let err = run_dev_with_repo(&root, &[]).expect_err("invalid concurrent entry should fail");
 
     match err {
         RunnerError::TaskManagedProcessInvalidDefinition {
@@ -176,29 +199,15 @@ concurrent = [
 "#,
     );
 
-    let out_default = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root.clone(),
-    )
-    .expect("default managed plan should render");
-    assert!(out_default.contains("profile: default"));
-    assert!(out_default.contains("default-api"));
-    assert!(out_default.contains("default-front"));
+    let out_default = run_dev_with_repo(&root, &[]).expect("default managed plan should render");
+    assert_contains_all(
+        &out_default,
+        &["profile: default", "default-api", "default-front"],
+    );
     assert!(!out_default.contains("admin-api"));
 
-    let out_admin = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["admin".to_owned()],
-        },
-        root,
-    )
-    .expect("admin managed plan should render");
-    assert!(out_admin.contains("profile: admin"));
-    assert!(out_admin.contains("admin-api"));
+    let out_admin = run_dev(&root, &["admin"]).expect("admin managed plan should render");
+    assert_contains_all(&out_admin, &["profile: admin", "admin-api"]);
     assert!(!out_admin.contains("default-front"));
 }
 
@@ -220,16 +229,8 @@ concurrent = [
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect("managed plan should render");
-
-    assert!(out.contains("tab-order: dairy, cream, api, jobs"));
+    let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
+    assert_contains_all(&out, &["tab-order: dairy, cream, api, jobs"]);
 }
 
 #[test]
@@ -250,16 +251,8 @@ concurrent = [
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect("managed plan should render");
-
-    assert!(out.contains("tab-order: dairy, cream, api, jobs"));
+    let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
+    assert_contains_all(&out, &["tab-order: dairy, cream, api, jobs"]);
 }
 
 #[test]
@@ -312,16 +305,11 @@ run = "printf dairy-dev"
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect("managed plan should render");
-
-    assert!(out.contains("tab-order: dairy/dev, cream/dev, farmyard/api, farmyard/jobs"));
+    let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
+    assert_contains_all(
+        &out,
+        &["tab-order: dairy/dev, cream/dev, farmyard/api, farmyard/jobs"],
+    );
 }
 
 #[test]
@@ -375,18 +363,15 @@ run = "printf dairy-dev"
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect("managed plan should render");
-
-    assert!(out.contains("tab-order: dairy/dev, cream/dev, farmyard/api, farmyard/jobs"));
-    assert!(out.contains("start-after-ms"));
-    assert!(out.contains("1200"));
+    let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
+    assert_contains_all(
+        &out,
+        &[
+            "tab-order: dairy/dev, cream/dev, farmyard/api, farmyard/jobs",
+            "start-after-ms",
+            "1200",
+        ],
+    );
 }
 
 #[test]
@@ -400,14 +385,7 @@ concurrent = [{ name = "jobs" }]
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect_err("invalid concurrent entry should fail");
+    let err = run_dev_with_repo(&root, &[]).expect_err("invalid concurrent entry should fail");
 
     match err {
         RunnerError::TaskManagedProcessInvalidDefinition {
@@ -434,14 +412,7 @@ concurrent = [{ name = "api", run = "cargo run -p api" }]
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["admin".to_owned()],
-        },
-        root,
-    )
-    .expect_err("unknown profile should fail");
+    let err = run_dev(&root, &["admin"]).expect_err("unknown profile should fail");
 
     match err {
         RunnerError::TaskManagedProfileNotFound {
@@ -494,19 +465,17 @@ run = "printf cream-dev"
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("managed plan should render");
+    let out = run_dev(&root, &[]).expect("managed plan should render");
 
-    assert!(out.contains("farmyard-api"));
-    assert!(out.contains("cream-dev"));
-    assert!(out.contains(&farmyard.display().to_string()));
-    assert!(out.contains(&cream.display().to_string()));
+    assert_contains_all(
+        &out,
+        &[
+            "farmyard-api",
+            "cream-dev",
+            &farmyard.display().to_string(),
+            &cream.display().to_string(),
+        ],
+    );
 }
 
 #[test]
@@ -520,14 +489,7 @@ concurrent = [{ name = "api", run = "printf api", task = "api" }]
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect_err("invalid process definition should fail");
+    let err = run_dev_with_repo(&root, &[]).expect_err("invalid process definition should fail");
 
     match err {
         RunnerError::TaskManagedProcessInvalidDefinition { task, process, .. } => {
@@ -575,20 +537,17 @@ run = "printf cream-dev"
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect("managed compact plan should render");
-
-    assert!(out.contains("profile: default"));
-    assert!(out.contains("farmyard-api"));
-    assert!(out.contains("cream-dev"));
-    assert!(out.contains("farmyard/api"));
-    assert!(out.contains("cream/dev"));
+    let out = run_dev_with_repo(&root, &[]).expect("managed compact plan should render");
+    assert_contains_all(
+        &out,
+        &[
+            "profile: default",
+            "farmyard-api",
+            "cream-dev",
+            "farmyard/api",
+            "cream/dev",
+        ],
+    );
 }
 
 #[test]
@@ -604,14 +563,8 @@ concurrent = [{ name = "tests", task = 'test "unterminated' }]
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect_err("invalid compact profile task ref should fail");
+    let err =
+        run_dev_with_repo(&root, &[]).expect_err("invalid compact profile task ref should fail");
 
     match err {
         RunnerError::TaskManagedTaskReferenceInvalid {
@@ -656,19 +609,8 @@ run = "printf farmyard-api"
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect("managed plan should render");
-
-    assert!(out.contains("printf start"));
-    assert!(out.contains("farmyard-api"));
-    assert!(out.contains("printf done"));
-    assert!(out.contains("cd"));
+    let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
+    assert_contains_all(&out, &["printf start", "farmyard-api", "printf done", "cd"]);
 }
 
 #[test]
@@ -684,14 +626,7 @@ concurrent = [{ name = "tests", task = 'test "unterminated' }]
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect_err("invalid process task ref should fail");
+    let err = run_dev_with_repo(&root, &[]).expect_err("invalid process task ref should fail");
 
     match err {
         RunnerError::TaskManagedTaskReferenceInvalid {
@@ -722,14 +657,7 @@ concurrent = [{ name = "tests", task = "test vitest \\" }]
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect_err("invalid process task ref should fail");
+    let err = run_dev_with_repo(&root, &[]).expect_err("invalid process task ref should fail");
 
     match err {
         RunnerError::TaskManagedTaskReferenceInvalid {
@@ -775,18 +703,15 @@ run = "printf froyo-validate"
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dairy/dev".to_owned(),
-            args: vec!["--repo".to_owned(), root.display().to_string()],
-        },
-        root,
-    )
-    .expect("managed plan should render");
-
-    assert!(out.contains("validate-stack"));
-    assert!(out.contains("froyo-validate"));
-    assert!(out.contains(&froyo.display().to_string()));
+    let out = run_task_with_repo(&root, "dairy/dev", &[]).expect("managed plan should render");
+    assert_contains_all(
+        &out,
+        &[
+            "validate-stack",
+            "froyo-validate",
+            &froyo.display().to_string(),
+        ],
+    );
 }
 
 #[test]
@@ -803,17 +728,8 @@ concurrent = [{ name = "api", run = "printf api" }]
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("managed plan should include shell process");
-
-    assert!(out.contains("shell"));
-    assert!(out.contains("exec ${SHELL:-/bin/zsh} -i"));
+    let out = run_dev(&root, &[]).expect("managed plan should include shell process");
+    assert_contains_all(&out, &["shell", "exec ${SHELL:-/bin/zsh} -i"]);
 }
 
 #[test]
@@ -833,17 +749,8 @@ concurrent = [{ name = "api", run = "printf api" }]
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("managed plan should include configured shell process");
-
-    assert!(out.contains("shell"));
-    assert!(out.contains("exec ${SHELL:-/bin/bash} -i"));
+    let out = run_dev(&root, &[]).expect("managed plan should include configured shell process");
+    assert_contains_all(&out, &["shell", "exec ${SHELL:-/bin/bash} -i"]);
 }
 
 #[test]
@@ -862,21 +769,18 @@ concurrent = [
     );
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("managed stream run");
-
-    assert!(out.contains("Managed Task Runtime"));
-    assert!(out.contains("[api] api-ok"));
-    assert!(out.contains("[front] front-ok"));
-    assert!(out.contains("fail-on-non-zero: enabled"));
-    assert!(out.contains("process `api` exit=0"));
-    assert!(out.contains("process `front` exit=0"));
+    let out = run_dev(&root, &[]).expect("managed stream run");
+    assert_contains_all(
+        &out,
+        &[
+            "Managed Task Runtime",
+            "[api] api-ok",
+            "[front] front-ok",
+            "fail-on-non-zero: enabled",
+            "process `api` exit=0",
+            "process `front` exit=0",
+        ],
+    );
 }
 
 #[test]
@@ -895,19 +799,16 @@ concurrent = [{ name = "front-only", run = "printf front-ok" }]
     );
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["front".to_owned()],
-        },
-        root,
-    )
-    .expect("managed stream run with named profile");
-
-    assert!(out.contains("Managed Task Runtime"));
-    assert!(out.contains("profile: front"));
-    assert!(out.contains("[front-only] front-ok"));
-    assert!(out.contains("process `front-only` exit=0"));
+    let out = run_dev(&root, &["front"]).expect("managed stream run with named profile");
+    assert_contains_all(
+        &out,
+        &[
+            "Managed Task Runtime",
+            "profile: front",
+            "[front-only] front-ok",
+            "process `front-only` exit=0",
+        ],
+    );
     assert!(!out.contains("default-only"));
     assert!(!out.contains("default-ok"));
 }
@@ -928,14 +829,7 @@ concurrent = [{ name = "front-only", run = "printf front-ok" }]
     );
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["admin".to_owned()],
-        },
-        root,
-    )
-    .expect_err("unknown managed profile should fail");
+    let err = run_dev(&root, &["admin"]).expect_err("unknown managed profile should fail");
 
     match err {
         RunnerError::TaskManagedProfileNotFound {
@@ -971,17 +865,8 @@ concurrent = [{{ name = "tests", task = "test" }}]
     );
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["default".to_owned()],
-        },
-        root,
-    )
-    .expect("run managed stream with builtin test task ref");
-
-    assert!(out.contains("Managed Task Runtime"));
-    assert!(out.contains("root: ok"));
+    let out = run_dev(&root, &["default"]).expect("run managed stream with builtin test task ref");
+    assert_contains_all(&out, &["Managed Task Runtime", "root: ok"]);
     assert!(marker.exists(), "built-in test task ref should execute");
 }
 
@@ -1005,17 +890,9 @@ concurrent = [{{ name = "tests", task = "test vitest" }}]
     );
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["default".to_owned()],
-        },
-        root,
-    )
-    .expect("run managed stream with builtin test task ref and suite arg");
-
-    assert!(out.contains("Managed Task Runtime"));
-    assert!(out.contains("root: ok"));
+    let out = run_dev(&root, &["default"])
+        .expect("run managed stream with builtin test task ref and suite arg");
+    assert_contains_all(&out, &["Managed Task Runtime", "root: ok"]);
     assert!(
         marker.exists(),
         "built-in test task ref with suite arg should execute"
@@ -1042,17 +919,8 @@ concurrent = [{{ name = "tests", task = "test" }}]
     );
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: vec!["default".to_owned()],
-        },
-        root,
-    )
-    .expect("run managed stream with builtin profile entry");
-
-    assert!(out.contains("Managed Task Runtime"));
-    assert!(out.contains("root: ok"));
+    let out = run_dev(&root, &["default"]).expect("run managed stream with builtin profile entry");
+    assert_contains_all(&out, &["Managed Task Runtime", "root: ok"]);
     assert!(
         marker.exists(),
         "built-in test profile entry should execute"
@@ -1072,14 +940,8 @@ concurrent = [{ name = "api", run = "sh -lc 'exit 7'" }]
     );
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("managed stream should fail for non-zero exit by default");
+    let err =
+        run_dev(&root, &[]).expect_err("managed stream should fail for non-zero exit by default");
 
     match err {
         RunnerError::TaskManagedNonZeroExit {
@@ -1109,18 +971,15 @@ concurrent = [{ name = "api", run = "sh -lc 'exit 9'" }]
     );
     let _env = EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))]);
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("managed stream should allow non-zero when disabled");
-
-    assert!(out.contains("Managed Task Runtime"));
-    assert!(out.contains("fail-on-non-zero: disabled"));
-    assert!(out.contains("process `api` exit=9"));
+    let out = run_dev(&root, &[]).expect("managed stream should allow non-zero when disabled");
+    assert_contains_all(
+        &out,
+        &[
+            "Managed Task Runtime",
+            "fail-on-non-zero: disabled",
+            "process `api` exit=9",
+        ],
+    );
 }
 
 #[test]
@@ -1147,14 +1006,7 @@ run = "sleep 1"
 
     std::thread::sleep(Duration::from_millis(120));
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect_err("second run should conflict on lock");
+    let err = run_dev(&root, &[]).expect_err("second run should conflict on lock");
 
     match err {
         RunnerError::TaskLockConflict {
@@ -1190,14 +1042,7 @@ run = "printf ok"
     )
     .expect("write stale lock");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "dev".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("stale lock should be reclaimed");
+    let out = run_dev(&root, &[]).expect("stale lock should be reclaimed");
 
     assert_eq!(out, "");
 }
@@ -1210,21 +1055,8 @@ fn run_manifest_task_builtin_unlock_clears_explicit_scopes() {
     fs::write(root.join(".effigy/locks/workspace.lock"), "{}").expect("write workspace lock");
     fs::write(root.join(".effigy/locks/task-dev.lock"), "{}").expect("write task lock");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "unlock".to_owned(),
-            args: vec![
-                "--repo".to_owned(),
-                root.display().to_string(),
-                "workspace".to_owned(),
-                "task:dev".to_owned(),
-            ],
-        },
-        root.clone(),
-    )
-    .expect("unlock should run");
-
-    assert!(out.contains("removed: 2"));
+    let out = run_unlock_with_repo(&root, &["workspace", "task:dev"]).expect("unlock should run");
+    assert_contains_all(&out, &["removed: 2"]);
     assert!(!root.join(".effigy/locks/workspace.lock").exists());
     assert!(!root.join(".effigy/locks/task-dev.lock").exists());
 }
