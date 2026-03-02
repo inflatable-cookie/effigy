@@ -1,8 +1,14 @@
 use super::*;
 
-#[test]
-fn run_manifest_task_builtin_test_plan_renders_detection_summary() {
-    let root = temp_workspace("builtin-test-plan");
+fn write_package_json_with_test_script(root: &PathBuf) {
+    fs::write(
+        root.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write package");
+}
+
+fn write_package_json_with_vitest_dev_dependency(root: &PathBuf) {
     fs::write(
         root.join("package.json"),
         r#"{
@@ -12,6 +18,63 @@ fn run_manifest_task_builtin_test_plan_renders_detection_summary() {
 }"#,
     )
     .expect("write package");
+}
+
+fn write_multi_suite_cargo_manifest(root: &PathBuf) {
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write cargo toml");
+}
+
+fn write_executable(path: &PathBuf, script: &str) {
+    fs::write(path, script).expect("write executable");
+    let mut perms = fs::metadata(path).expect("stat").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).expect("chmod");
+}
+
+fn install_local_vitest(root: &PathBuf, script: &str) {
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    write_executable(&local_bin.join("vitest"), script);
+}
+
+fn install_local_vitest_marker(root: &PathBuf, marker: &PathBuf) {
+    install_local_vitest(
+        root,
+        &format!(
+            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
+            marker.display()
+        ),
+    );
+}
+
+fn assert_builtin_test_non_zero(
+    err: RunnerError,
+    expected_failures: Option<Vec<(String, Option<i32>)>>,
+    expected_rendered_snippets: &[&str],
+    unexpected_rendered_snippets: &[&str],
+) {
+    match err {
+        RunnerError::BuiltinTestNonZero { failures, rendered } => {
+            if let Some(expected) = expected_failures {
+                assert_eq!(failures, expected);
+            }
+            assert_contains_all(&rendered, expected_rendered_snippets);
+            for snippet in unexpected_rendered_snippets {
+                assert!(!rendered.contains(snippet));
+            }
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_builtin_test_plan_renders_detection_summary() {
+    let root = temp_workspace("builtin-test-plan");
+    write_package_json_with_vitest_dev_dependency(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan"]);
     assert_contains_all(
@@ -34,15 +97,7 @@ fn run_manifest_task_builtin_test_plan_renders_detection_summary() {
 #[test]
 fn run_manifest_task_builtin_test_plan_json_has_versioned_schema() {
     let root = temp_workspace("builtin-test-plan-json-schema");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "devDependencies": {
-    "vitest": "^2.0.0"
-  }
-}"#,
-    )
-    .expect("write package");
+    write_package_json_with_vitest_dev_dependency(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan", "--json"]);
     let parsed = parse_json_output(&out);
@@ -101,15 +156,7 @@ unit = "pnpm exec vitest run"
 alias = "dairy"
 "#,
     );
-    fs::write(
-        dairy.join("package.json"),
-        r#"{
-  "devDependencies": {
-    "vitest": "^2.0.0"
-  }
-}"#,
-    )
-    .expect("write dairy package");
+    write_package_json_with_vitest_dev_dependency(&dairy);
 
     let out = run_builtin_ok(root, "test", &["--plan"]);
     assert_contains_all(
@@ -141,29 +188,8 @@ unit = "sh -lc 'printf configured > \"{}\"'"
         configured_marker.display()
     );
     write_manifest(&root.join("effigy.toml"), &manifest);
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "test": "vitest run"
-  }
-}"#,
-    )
-    .expect("write package");
-    let local_bin = root.join("node_modules/.bin");
-    fs::create_dir_all(&local_bin).expect("mkdir local bin");
-    let vitest = local_bin.join("vitest");
-    fs::write(
-        &vitest,
-        format!(
-            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
-            vitest_marker.display()
-        ),
-    )
-    .expect("write vitest");
-    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&vitest, perms).expect("chmod");
+    write_package_json_with_test_script(&root);
+    install_local_vitest_marker(&root, &vitest_marker);
 
     let out = run_builtin_ok(root.clone(), "test", &["--verbose-results"]);
     assert_contains_all(&out, &["Test Results", "runner:unit"]);
@@ -224,26 +250,9 @@ integration = "sh -lc 'printf integration > \"{}\"'"
 #[test]
 fn run_manifest_task_builtin_test_executes_local_vitest() {
     let root = temp_workspace("builtin-test-exec-vitest");
-    fs::write(
-        root.join("package.json"),
-        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
-    )
-    .expect("write package");
-    let local_bin = root.join("node_modules/.bin");
-    fs::create_dir_all(&local_bin).expect("mkdir local bin");
-    let vitest = local_bin.join("vitest");
     let marker = root.join("vitest-called.log");
-    fs::write(
-        &vitest,
-        format!(
-            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
-            marker.display()
-        ),
-    )
-    .expect("write vitest");
-    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&vitest, perms).expect("chmod");
+    write_package_json_with_test_script(&root);
+    install_local_vitest_marker(&root, &marker);
 
     let out = run_builtin_ok(root.clone(), "test", &["--run"]);
     assert_contains_all(&out, &["Test Results", "targets:", "root"]);
@@ -255,22 +264,11 @@ fn run_manifest_task_builtin_test_executes_local_vitest() {
 #[test]
 fn run_manifest_task_builtin_test_json_suppresses_child_process_output() {
     let root = temp_workspace("builtin-test-json-suppresses-child-output");
-    fs::write(
-        root.join("package.json"),
-        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
-    )
-    .expect("write package");
-    let local_bin = root.join("node_modules/.bin");
-    fs::create_dir_all(&local_bin).expect("mkdir local bin");
-    let vitest = local_bin.join("vitest");
-    fs::write(
-        &vitest,
+    write_package_json_with_test_script(&root);
+    install_local_vitest(
+        &root,
         "#!/bin/sh\nprintf noisy-stdout\nprintf noisy-stderr >&2\nexit 0\n",
-    )
-    .expect("write vitest");
-    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&vitest, perms).expect("chmod");
+    );
 
     let out = run_builtin_ok(root, "test", &["--json", "--run"]);
 
@@ -290,20 +288,8 @@ fn run_manifest_task_builtin_test_json_suppresses_child_process_output() {
 fn run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo() {
     let _guard = lock_test();
     let root = temp_workspace("builtin-test-multi-context");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "test": "vitest run"
-  }
-}"#,
-    )
-    .expect("write package");
-    fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write cargo toml");
+    write_package_json_with_test_script(&root);
+    write_multi_suite_cargo_manifest(&root);
     fs::create_dir_all(root.join("src")).expect("mkdir src");
     fs::write(
         root.join("src/lib.rs"),
@@ -311,21 +297,8 @@ fn run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo() {
     )
     .expect("write lib");
 
-    let local_bin = root.join("node_modules/.bin");
-    fs::create_dir_all(&local_bin).expect("mkdir local bin");
-    let vitest = local_bin.join("vitest");
     let vitest_marker = root.join("vitest-called.log");
-    fs::write(
-        &vitest,
-        format!(
-            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
-            vitest_marker.display()
-        ),
-    )
-    .expect("write vitest");
-    let mut vitest_perms = fs::metadata(&vitest).expect("stat").permissions();
-    vitest_perms.set_mode(0o755);
-    fs::set_permissions(&vitest, vitest_perms).expect("chmod");
+    install_local_vitest_marker(&root, &vitest_marker);
 
     let out = run_builtin_ok(root.clone(), "test", &[]);
     assert_contains_all(&out, &["Test Results", "root/vitest", "root/cargo-"]);
@@ -335,20 +308,8 @@ fn run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo() {
 #[test]
 fn run_manifest_task_builtin_test_with_named_args_errors_when_multi_suite_is_ambiguous() {
     let root = temp_workspace("builtin-test-multi-suite-ambiguous");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "test": "vitest run"
-  }
-}"#,
-    )
-    .expect("write package");
-    fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write cargo toml");
+    write_package_json_with_test_script(&root);
+    write_multi_suite_cargo_manifest(&root);
 
     let err = run_builtin_err(root, "test", &["user-service"]);
     assert_task_invocation_error_contains(
@@ -368,20 +329,8 @@ fn run_manifest_task_builtin_test_with_named_args_errors_when_multi_suite_is_amb
 #[test]
 fn run_manifest_task_builtin_test_plan_with_named_args_in_multi_suite_returns_recovery_output() {
     let root = temp_workspace("builtin-test-multi-suite-plan-recovery");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "test": "vitest run"
-  }
-}"#,
-    )
-    .expect("write package");
-    fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write cargo toml");
+    write_package_json_with_test_script(&root);
+    write_multi_suite_cargo_manifest(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan", "user-service"]);
     assert_contains_all(
@@ -399,20 +348,8 @@ fn run_manifest_task_builtin_test_plan_with_named_args_in_multi_suite_returns_re
 #[test]
 fn run_manifest_task_builtin_test_plan_json_recovery_has_versioned_schema() {
     let root = temp_workspace("builtin-test-plan-json-recovery-schema");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "test": "vitest run"
-  }
-}"#,
-    )
-    .expect("write package");
-    fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write cargo toml");
+    write_package_json_with_test_script(&root);
+    write_multi_suite_cargo_manifest(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan", "--json", "user-service"]);
     let parsed = parse_json_output(&out);
@@ -425,36 +362,10 @@ fn run_manifest_task_builtin_test_plan_json_recovery_has_versioned_schema() {
 #[test]
 fn run_manifest_task_builtin_test_supports_positional_suite_selector() {
     let root = temp_workspace("builtin-test-suite-selector");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "test": "vitest run"
-  }
-}"#,
-    )
-    .expect("write package");
-    fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write cargo toml");
-
-    let local_bin = root.join("node_modules/.bin");
-    fs::create_dir_all(&local_bin).expect("mkdir local bin");
-    let vitest = local_bin.join("vitest");
+    write_package_json_with_test_script(&root);
+    write_multi_suite_cargo_manifest(&root);
     let vitest_marker = root.join("vitest-called.log");
-    fs::write(
-        &vitest,
-        format!(
-            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
-            vitest_marker.display()
-        ),
-    )
-    .expect("write vitest");
-    let mut vitest_perms = fs::metadata(&vitest).expect("stat").permissions();
-    vitest_perms.set_mode(0o755);
-    fs::set_permissions(&vitest, vitest_perms).expect("chmod");
+    install_local_vitest_marker(&root, &vitest_marker);
 
     let out = run_builtin_ok(root.clone(), "test", &["vitest", "user-service"]);
     assert_contains_all(&out, &["Test Results", "root/vitest"]);
@@ -465,20 +376,8 @@ fn run_manifest_task_builtin_test_supports_positional_suite_selector() {
 #[test]
 fn run_manifest_task_builtin_test_plan_mistyped_suite_returns_recovery_output() {
     let root = temp_workspace("builtin-test-plan-mistyped-suite-recovery");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "test": "vitest run"
-  }
-}"#,
-    )
-    .expect("write package");
-    fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write cargo toml");
+    write_package_json_with_test_script(&root);
+    write_multi_suite_cargo_manifest(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan", "viteest", "user-service"]);
     assert_contains_all(
@@ -495,15 +394,7 @@ fn run_manifest_task_builtin_test_plan_mistyped_suite_returns_recovery_output() 
 #[test]
 fn run_manifest_task_builtin_test_errors_for_unavailable_positional_suite_selector() {
     let root = temp_workspace("builtin-test-suite-selector-unavailable");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "test": "vitest run"
-  }
-}"#,
-    )
-    .expect("write package");
+    write_package_json_with_test_script(&root);
 
     let err = run_builtin_err(root, "test", &["nextest"]);
     assert_task_invocation_error_contains(
@@ -522,20 +413,8 @@ fn run_manifest_task_builtin_test_errors_for_unavailable_positional_suite_select
 #[test]
 fn run_manifest_task_builtin_test_mistyped_suite_suggests_nearest_runner() {
     let root = temp_workspace("builtin-test-mistyped-suite-suggestion");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "test": "vitest run"
-  }
-}"#,
-    )
-    .expect("write package");
-    fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write cargo toml");
+    write_package_json_with_test_script(&root);
+    write_multi_suite_cargo_manifest(&root);
 
     let err = run_builtin_err(root, "test", &["viteest", "user-service"]);
     assert_task_invocation_error_contains(
@@ -556,11 +435,7 @@ fn run_manifest_task_explicit_test_task_overrides_builtin_auto_detection() {
         &root.join("effigy.toml"),
         "[tasks.test]\nrun = \"printf explicit > explicit-test.log\"\n",
     );
-    fs::write(
-        root.join("package.json"),
-        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
-    )
-    .expect("write package");
+    write_package_json_with_test_script(&root);
 
     let out = run_builtin_ok(root.clone(), "test", &[]);
 
@@ -605,49 +480,12 @@ fn run_manifest_task_builtin_test_fans_out_across_catalog_roots() {
         "[catalog]\nalias = \"dairy\"\n[tasks.ping]\nrun = \"printf ok\"\n",
     );
 
-    fs::write(
-        farmyard.join("package.json"),
-        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
-    )
-    .expect("write farmyard package");
-    fs::write(
-        dairy.join("package.json"),
-        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
-    )
-    .expect("write dairy package");
-
-    let farmyard_bin = farmyard.join("node_modules/.bin");
-    fs::create_dir_all(&farmyard_bin).expect("mkdir farmyard bin");
-    let dairy_bin = dairy.join("node_modules/.bin");
-    fs::create_dir_all(&dairy_bin).expect("mkdir dairy bin");
+    write_package_json_with_test_script(&farmyard);
+    write_package_json_with_test_script(&dairy);
     let farmyard_marker = farmyard.join("vitest-called.log");
     let dairy_marker = dairy.join("vitest-called.log");
-
-    let farmyard_vitest = farmyard_bin.join("vitest");
-    fs::write(
-        &farmyard_vitest,
-        format!(
-            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
-            farmyard_marker.display()
-        ),
-    )
-    .expect("write farmyard vitest");
-    let mut farmyard_perms = fs::metadata(&farmyard_vitest).expect("stat").permissions();
-    farmyard_perms.set_mode(0o755);
-    fs::set_permissions(&farmyard_vitest, farmyard_perms).expect("chmod");
-
-    let dairy_vitest = dairy_bin.join("vitest");
-    fs::write(
-        &dairy_vitest,
-        format!(
-            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
-            dairy_marker.display()
-        ),
-    )
-    .expect("write dairy vitest");
-    let mut dairy_perms = fs::metadata(&dairy_vitest).expect("stat").permissions();
-    dairy_perms.set_mode(0o755);
-    fs::set_permissions(&dairy_vitest, dairy_perms).expect("chmod");
+    install_local_vitest_marker(&farmyard, &farmyard_marker);
+    install_local_vitest_marker(&dairy, &dairy_marker);
 
     let out = run_builtin_ok(root, "test", &[]);
     assert_contains_all(&out, &["Test Results", "targets:", "dairy", "farmyard"]);
@@ -677,49 +515,12 @@ fn run_manifest_task_prefixed_builtin_test_targets_catalog_root_only() {
         "[catalog]\nalias = \"dairy\"\n[tasks.ping]\nrun = \"printf ok\"\n",
     );
 
-    fs::write(
-        farmyard.join("package.json"),
-        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
-    )
-    .expect("write farmyard package");
-    fs::write(
-        dairy.join("package.json"),
-        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
-    )
-    .expect("write dairy package");
-
-    let farmyard_bin = farmyard.join("node_modules/.bin");
-    fs::create_dir_all(&farmyard_bin).expect("mkdir farmyard bin");
-    let dairy_bin = dairy.join("node_modules/.bin");
-    fs::create_dir_all(&dairy_bin).expect("mkdir dairy bin");
+    write_package_json_with_test_script(&farmyard);
+    write_package_json_with_test_script(&dairy);
     let farmyard_marker = farmyard.join("vitest-called.log");
     let dairy_marker = dairy.join("vitest-called.log");
-
-    let farmyard_vitest = farmyard_bin.join("vitest");
-    fs::write(
-        &farmyard_vitest,
-        format!(
-            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
-            farmyard_marker.display()
-        ),
-    )
-    .expect("write farmyard vitest");
-    let mut farmyard_perms = fs::metadata(&farmyard_vitest).expect("stat").permissions();
-    farmyard_perms.set_mode(0o755);
-    fs::set_permissions(&farmyard_vitest, farmyard_perms).expect("chmod");
-
-    let dairy_vitest = dairy_bin.join("vitest");
-    fs::write(
-        &dairy_vitest,
-        format!(
-            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
-            dairy_marker.display()
-        ),
-    )
-    .expect("write dairy vitest");
-    let mut dairy_perms = fs::metadata(&dairy_vitest).expect("stat").permissions();
-    dairy_perms.set_mode(0o755);
-    fs::set_permissions(&dairy_vitest, dairy_perms).expect("chmod");
+    install_local_vitest_marker(&farmyard, &farmyard_marker);
+    install_local_vitest_marker(&dairy, &dairy_marker);
 
     let out = run_builtin_ok(root, "farmyard/test", &[]);
     assert_contains_all(&out, &["Test Results", "farmyard"]);
@@ -748,99 +549,47 @@ fn run_manifest_task_builtin_test_failure_keeps_rendered_results_summary() {
         "[catalog]\nalias = \"dairy\"\n[tasks.ping]\nrun = \"printf ok\"\n",
     );
 
-    fs::write(
-        farmyard.join("package.json"),
-        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
-    )
-    .expect("write farmyard package");
-    fs::write(
-        dairy.join("package.json"),
-        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
-    )
-    .expect("write dairy package");
-
-    let farmyard_bin = farmyard.join("node_modules/.bin");
-    fs::create_dir_all(&farmyard_bin).expect("mkdir farmyard bin");
-    let dairy_bin = dairy.join("node_modules/.bin");
-    fs::create_dir_all(&dairy_bin).expect("mkdir dairy bin");
-
-    let farmyard_vitest = farmyard_bin.join("vitest");
-    fs::write(&farmyard_vitest, "#!/bin/sh\nexit 1\n").expect("write farmyard vitest");
-    let mut farmyard_perms = fs::metadata(&farmyard_vitest).expect("stat").permissions();
-    farmyard_perms.set_mode(0o755);
-    fs::set_permissions(&farmyard_vitest, farmyard_perms).expect("chmod");
-
-    let dairy_vitest = dairy_bin.join("vitest");
-    fs::write(&dairy_vitest, "#!/bin/sh\nexit 0\n").expect("write dairy vitest");
-    let mut dairy_perms = fs::metadata(&dairy_vitest).expect("stat").permissions();
-    dairy_perms.set_mode(0o755);
-    fs::set_permissions(&dairy_vitest, dairy_perms).expect("chmod");
+    write_package_json_with_test_script(&farmyard);
+    write_package_json_with_test_script(&dairy);
+    install_local_vitest(&farmyard, "#!/bin/sh\nexit 1\n");
+    install_local_vitest(&dairy, "#!/bin/sh\nexit 0\n");
 
     let err = run_builtin_err(root, "test", &[]);
 
-    match err {
-        RunnerError::BuiltinTestNonZero { failures, rendered } => {
-            assert_eq!(failures, vec![("farmyard".to_owned(), Some(1))]);
-            assert_contains_all(
-                &rendered,
-                &["Test Results", "dairy", "ok", "farmyard", "exit=1"],
-            );
-            assert!(!rendered.contains("runner:vitest"));
-            assert!(!rendered.contains("command:"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_builtin_test_non_zero(
+        err,
+        Some(vec![("farmyard".to_owned(), Some(1))]),
+        &["Test Results", "dairy", "ok", "farmyard", "exit=1"],
+        &["runner:vitest", "command:"],
+    );
 }
 
 #[test]
 fn run_manifest_task_builtin_test_failure_with_suite_filter_shows_no_match_hint() {
     let root = temp_workspace("builtin-test-filtered-failure-hint");
-    fs::write(
-        root.join("package.json"),
-        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
-    )
-    .expect("write package");
-    let local_bin = root.join("node_modules/.bin");
-    fs::create_dir_all(&local_bin).expect("mkdir local bin");
-    let vitest = local_bin.join("vitest");
-    fs::write(&vitest, "#!/bin/sh\nexit 1\n").expect("write vitest");
-    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&vitest, perms).expect("chmod");
+    write_package_json_with_test_script(&root);
+    install_local_vitest(&root, "#!/bin/sh\nexit 1\n");
 
     let err = run_builtin_err(root, "test", &["vitest", "user-service"]);
 
-    match err {
-        RunnerError::BuiltinTestNonZero { rendered, .. } => {
-            assert_contains_all(
-                &rendered,
-                &[
-                    "Hint",
-                    "often means no tests matched",
-                    "vitest run 'user-service'",
-                    "Try again without the filter",
-                ],
-            );
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_builtin_test_non_zero(
+        err,
+        None,
+        &[
+            "Hint",
+            "often means no tests matched",
+            "vitest run 'user-service'",
+            "Try again without the filter",
+        ],
+        &[],
+    );
 }
 
 #[test]
 fn run_manifest_task_builtin_test_verbose_results_include_runner_root_and_command() {
     let root = temp_workspace("builtin-test-verbose-results");
-    fs::write(
-        root.join("package.json"),
-        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
-    )
-    .expect("write package");
-    let local_bin = root.join("node_modules/.bin");
-    fs::create_dir_all(&local_bin).expect("mkdir local bin");
-    let vitest = local_bin.join("vitest");
-    fs::write(&vitest, "#!/bin/sh\nexit 0\n").expect("write vitest");
-    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&vitest, perms).expect("chmod");
+    write_package_json_with_test_script(&root);
+    install_local_vitest(&root, "#!/bin/sh\nexit 0\n");
 
     let out = run_builtin_ok(root, "test", &["--verbose-results", "--run"]);
     assert_contains_all(
@@ -857,18 +606,8 @@ fn run_manifest_task_builtin_test_verbose_results_include_runner_root_and_comman
 #[test]
 fn run_manifest_task_builtin_test_tui_flag_falls_back_to_text_when_non_interactive() {
     let root = temp_workspace("builtin-test-tui-fallback");
-    fs::write(
-        root.join("package.json"),
-        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
-    )
-    .expect("write package");
-    let local_bin = root.join("node_modules/.bin");
-    fs::create_dir_all(&local_bin).expect("mkdir local bin");
-    let vitest = local_bin.join("vitest");
-    fs::write(&vitest, "#!/bin/sh\nexit 0\n").expect("write vitest");
-    let mut perms = fs::metadata(&vitest).expect("stat").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&vitest, perms).expect("chmod");
+    write_package_json_with_test_script(&root);
+    install_local_vitest(&root, "#!/bin/sh\nexit 0\n");
 
     let out = run_builtin_ok(root, "test", &["--tui"]);
     assert_contains_all(&out, &["Test Results", "root"]);
@@ -883,15 +622,7 @@ fn run_manifest_task_builtin_test_plan_respects_configured_package_manager() {
 js = "pnpm"
 "#,
     );
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "devDependencies": {
-    "vitest": "^2.0.0"
-  }
-}"#,
-    )
-    .expect("write package");
+    write_package_json_with_vitest_dev_dependency(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan"]);
     assert_contains_all(&out, &["pnpm exec vitest run", "package_manager.js=pnpm"]);
@@ -907,28 +638,16 @@ fn run_manifest_task_builtin_test_exec_uses_configured_package_manager() {
 js = "bun"
 "#,
     );
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "devDependencies": {
-    "vitest": "^2.0.0"
-  }
-}"#,
-    )
-    .expect("write package");
+    write_package_json_with_vitest_dev_dependency(&root);
 
     let bin_dir = root.join("bin");
     fs::create_dir_all(&bin_dir).expect("mkdir bin");
     let bun_stub = bin_dir.join("bun");
     let args_log = root.join("bun-args.log");
-    fs::write(
+    write_executable(
         &bun_stub,
         "#!/bin/sh\nprintf \"%s\\n\" \"$@\" > \"$EFFIGY_TEST_BUN_ARGS_FILE\"\n",
-    )
-    .expect("write bun stub");
-    let mut perms = fs::metadata(&bun_stub).expect("metadata").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&bun_stub, perms).expect("chmod");
+    );
 
     let prior_path = std::env::var("PATH").ok().unwrap_or_default();
     let path = format!("{}:{}", bin_dir.display(), prior_path);
@@ -956,15 +675,7 @@ fn run_manifest_task_builtin_test_plan_respects_runner_command_override() {
 vitest = "pnpm exec vitest run --config vitest.config.ts"
 "#,
     );
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "devDependencies": {
-    "vitest": "^2.0.0"
-  }
-}"#,
-    )
-    .expect("write package");
+    write_package_json_with_vitest_dev_dependency(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan", "vitest"]);
     assert_contains_all(
@@ -988,15 +699,7 @@ js = "bun"
 vitest = "npx vitest run --reporter=dot"
 "#,
     );
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "devDependencies": {
-    "vitest": "^2.0.0"
-  }
-}"#,
-    )
-    .expect("write package");
+    write_package_json_with_vitest_dev_dependency(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan", "vitest"]);
     assert_contains_all(
@@ -1030,15 +733,7 @@ fn run_manifest_task_builtin_config_prints_reference() {
 #[test]
 fn run_manifest_task_builtin_test_plan_has_blank_line_between_sections() {
     let root = temp_workspace("builtin-test-plan-section-spacing");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "devDependencies": {
-    "vitest": "^2.0.0"
-  }
-}"#,
-    )
-    .expect("write package");
+    write_package_json_with_vitest_dev_dependency(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan"]);
     assert_contains_all(&out, &["\n\nTarget Summary\n", "\n\nTarget: root\n"]);
