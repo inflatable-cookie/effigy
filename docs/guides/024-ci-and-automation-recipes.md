@@ -16,6 +16,7 @@ Primary contract checks in this repo:
 - `./scripts/check-distribution-first-publish.sh`
 - `./scripts/validate-distribution-artifacts.sh`
 - `./scripts/generate-distribution-closeout-report.sh`
+- `./scripts/check-distribution-artifact-pipeline-smoke.sh`
 - `./scripts/update-homebrew-formula-from-metadata.sh`
 
 Primary JSON mode entrypoint:
@@ -33,6 +34,7 @@ cargo qa-release
 # writes ./artifacts/distribution-v0.__.__/distribution-summary.env
 ./scripts/validate-distribution-artifacts.sh --artifacts-dir ./artifacts/distribution-v0.__.__
 ./scripts/generate-distribution-closeout-report.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
+./scripts/check-distribution-artifact-pipeline-smoke.sh
 ./scripts/check-json-contracts-ci.sh
 ./scripts/check-json-contracts.sh --fast --print-selected=json
 ./scripts/check-json-contracts.sh --full --print-selected=text
