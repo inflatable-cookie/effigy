@@ -13,6 +13,7 @@ Primary contract checks in this repo:
 - `./scripts/check-release-smoke.sh`
 - `./scripts/check-release-install-from-tag.sh`
 - `./scripts/check-distribution-metadata.sh`
+- `./scripts/check-distribution-preflight.sh`
 - `./scripts/check-distribution-first-publish.sh`
 - `./scripts/validate-distribution-artifacts.sh`
 - `./scripts/generate-distribution-closeout-report.sh`
@@ -32,6 +33,7 @@ Before debugging CI, run locally:
 ```sh
 cargo qa
 cargo qa-release
+./scripts/check-distribution-preflight.sh --tag v0.__.__
 ./scripts/check-release-install-from-tag.sh --tag v0.__.__
 ./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 # writes ./artifacts/distribution-v0.__.__/distribution-summary.env

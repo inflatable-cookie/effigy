@@ -15,6 +15,12 @@ Required inputs:
 - release tag: `vX.Y.Z`
 - previous known-good version/tag for rollback
 
+Recommended preflight before opening publish window:
+
+```bash
+./scripts/check-distribution-preflight.sh --tag vX.Y.Z
+```
+
 ## 2) Execution Order
 
 Run this sequence in one release window:

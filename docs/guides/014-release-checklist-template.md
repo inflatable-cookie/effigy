@@ -20,6 +20,8 @@ Owner: `name/team`
 
 ## 2) Quality Gates
 
+- [ ] Distribution preflight passes:
+  - [ ] `./scripts/check-distribution-preflight.sh --tag v0.__.__`
 - [ ] Consolidated release gate pass:
   - [ ] `cargo qa-release`
 - [ ] `cargo fmt` clean.
