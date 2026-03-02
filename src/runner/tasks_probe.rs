@@ -23,32 +23,10 @@ pub(super) fn build_resolve_probe(
             selection,
         ),
         Err(error) => {
-            if BUILTIN_TASKS
-                .iter()
-                .any(|(name, _)| *name == selector_task_name.as_str())
-                || selector_task_name == "catalogs"
-            {
-                probe_value(
-                    &raw_selector,
-                    "ok",
-                    None,
-                    None,
-                    &selector_task_name,
-                    Vec::new(),
-                    vec![format!("resolved built-in task `{}`", selector_task_name)],
-                    None,
-                )
+            if is_builtin_or_catalogs_task(&selector_task_name) {
+                build_builtin_probe(&raw_selector, &selector_task_name)
             } else {
-                probe_value(
-                    &raw_selector,
-                    "error",
-                    None,
-                    None,
-                    &selector_task_name,
-                    Vec::new(),
-                    Vec::new(),
-                    Some(error.to_string()),
-                )
+                build_error_probe(&raw_selector, &selector_task_name, error.to_string())
             }
         }
     };
@@ -63,15 +41,13 @@ fn build_selected_probe(
     selection: super::TaskSelection<'_>,
 ) -> serde_json::Value {
     if selection.task.mode.as_deref() != Some("tui") {
-        return probe_value(
+        return build_ok_probe(
             raw_selector,
-            "ok",
+            selector_task_name,
             Some(selection.catalog.alias.clone()),
             Some(selection.catalog.catalog_root.display().to_string()),
-            selector_task_name,
             lock_scopes_for_task(selector_task_name, selection.task, None),
             selection.evidence,
-            None,
         );
     }
 
@@ -82,18 +58,14 @@ fn build_selected_probe(
     let lock_scopes = lock_scopes_for_task(selector_task_name, selection.task, Some(&profile_name));
     if !concurrent_entries_for_profile(selection.task, &profile_name) {
         let available_display = render_available_profiles(selection.task);
-        return probe_value(
+        return build_error_probe_with_scopes(
             raw_selector,
-            "error",
-            None,
-            None,
             selector_task_name,
             lock_scopes,
-            Vec::new(),
-            Some(format!(
+            format!(
                 "managed profile `{profile_name}` not found for task `{}`; available: {}",
                 selector_task_name, available_display
-            )),
+            ),
         );
     }
 
@@ -101,15 +73,13 @@ fn build_selected_probe(
     evidence.push(format!(
         "managed profile `{profile_name}` resolved via invocation `{raw_selector}`"
     ));
-    probe_value(
+    build_ok_probe(
         raw_selector,
-        "ok",
+        selector_task_name,
         Some(selection.catalog.alias.clone()),
         Some(selection.catalog.catalog_root.display().to_string()),
-        selector_task_name,
         lock_scopes,
         evidence,
-        None,
     )
 }
 
@@ -142,6 +112,63 @@ fn probe_value(
         "evidence": evidence,
         "error": error,
     })
+}
+
+fn is_builtin_or_catalogs_task(task_name: &str) -> bool {
+    BUILTIN_TASKS.iter().any(|(name, _)| *name == task_name) || task_name == "catalogs"
+}
+
+fn build_builtin_probe(raw_selector: &str, task_name: &str) -> serde_json::Value {
+    build_ok_probe(
+        raw_selector,
+        task_name,
+        None,
+        None,
+        Vec::new(),
+        vec![format!("resolved built-in task `{task_name}`")],
+    )
+}
+
+fn build_ok_probe(
+    raw_selector: &str,
+    task_name: &str,
+    catalog: Option<String>,
+    catalog_root: Option<String>,
+    lock_scopes: Vec<String>,
+    evidence: Vec<String>,
+) -> serde_json::Value {
+    probe_value(
+        raw_selector,
+        "ok",
+        catalog,
+        catalog_root,
+        task_name,
+        lock_scopes,
+        evidence,
+        None,
+    )
+}
+
+fn build_error_probe(raw_selector: &str, task_name: &str, error: String) -> serde_json::Value {
+    build_error_probe_with_scopes(raw_selector, task_name, Vec::new(), error)
+}
+
+fn build_error_probe_with_scopes(
+    raw_selector: &str,
+    task_name: &str,
+    lock_scopes: Vec<String>,
+    error: String,
+) -> serde_json::Value {
+    probe_value(
+        raw_selector,
+        "error",
+        None,
+        None,
+        task_name,
+        lock_scopes,
+        Vec::new(),
+        Some(error),
+    )
 }
 
 fn concurrent_entries_for_profile(task: &ManifestTask, profile_name: &str) -> bool {
