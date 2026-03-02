@@ -7,19 +7,16 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[cfg(unix)]
-use nix::sys::signal::{kill, Signal};
-#[cfg(unix)]
-use nix::unistd::Pid;
-
 #[path = "process_manager/diagnostics.rs"]
 mod diagnostics;
 #[path = "process_manager/lifecycle.rs"]
 mod lifecycle;
+#[path = "process_manager/signal.rs"]
+mod signal;
 #[path = "process_manager/streams.rs"]
 mod streams;
 
-use diagnostics::{collect_exit_diagnostics, format_exit_diagnostic};
+use diagnostics::collect_exit_diagnostics;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessSpec {
@@ -163,7 +160,7 @@ impl ProcessSupervisor {
             processes.values().cloned().collect::<Vec<_>>()
         };
         for child in children {
-            let _ = child.lock().expect("child lock").kill();
+            signal::send_kill(&mut child.lock().expect("child lock"));
         }
     }
 
@@ -214,14 +211,7 @@ impl ProcessSupervisor {
         };
         for child in &children {
             let mut child = child.lock().expect("child lock");
-            #[cfg(unix)]
-            {
-                let _ = signal_process_group(&mut child, Signal::SIGTERM);
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = child.kill();
-            }
+            signal::send_terminate(&mut child);
         }
 
         on_progress(ShutdownProgress::Waiting);
@@ -254,16 +244,8 @@ impl ProcessSupervisor {
             if !still_running {
                 continue;
             }
-            #[cfg(unix)]
-            {
-                let _ = signal_process_group(&mut child, Signal::SIGKILL);
-                forced += 1;
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = child.kill();
-                forced += 1;
-            }
+            signal::send_kill(&mut child);
+            forced += 1;
         }
         on_progress(ShutdownProgress::Complete {
             total: children.len(),
@@ -274,15 +256,5 @@ impl ProcessSupervisor {
     pub fn exit_diagnostics(&self) -> Vec<(String, String)> {
         let process_map = self.processes.lock().expect("process map lock");
         collect_exit_diagnostics(&self.specs, &process_map)
-    }
-}
-
-#[cfg(unix)]
-fn signal_process_group(child: &mut Child, signal: Signal) -> Result<(), nix::Error> {
-    let pid = child.id() as i32;
-    if pid > 0 {
-        kill(Pid::from_raw(-pid), signal)
-    } else {
-        Ok(())
     }
 }
