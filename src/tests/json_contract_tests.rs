@@ -521,7 +521,10 @@ fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_re
     assert_eq!(second_parsed["cache_hit"], true);
     assert_eq!(second_parsed["cache_state"], "hit");
     assert_eq!(second_parsed["manifest_count"], 1);
-    assert!(second_parsed["cache_age_ms"].as_u64().is_some());
+    let cache_age_ms = second_parsed["cache_age_ms"]
+        .as_u64()
+        .expect("cache_age_ms must be numeric on hit");
+    assert!(cache_age_ms <= effective_ttl_ms);
     assert_eq!(
         second_parsed["cache_ttl_ms"].as_u64(),
         Some(effective_ttl_ms)
