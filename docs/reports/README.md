@@ -47,6 +47,7 @@ When a feature spans multiple same-day checkpoints, add a consolidation report t
 - [`2026-03-02-completion-candidates-ci-telemetry-recipe-validation.md`](./2026-03-02-completion-candidates-ci-telemetry-recipe-validation.md)
 - [`2026-03-02-completion-candidates-ci-miss-null-ttl-validation.md`](./2026-03-02-completion-candidates-ci-miss-null-ttl-validation.md)
 - [`2026-03-02-completion-candidates-ci-warm-hit-ttl-consistency-validation.md`](./2026-03-02-completion-candidates-ci-warm-hit-ttl-consistency-validation.md)
+- [`2026-03-02-completion-candidates-ci-warm-hit-cache-age-validation.md`](./2026-03-02-completion-candidates-ci-warm-hit-cache-age-validation.md)
 - [`2026-03-01-distribution-phase-d-ci-adoption-checkpoint.md`](./2026-03-01-distribution-phase-d-ci-adoption-checkpoint.md)
 - [`2026-03-01-distribution-phase-c-homebrew-checkpoint.md`](./2026-03-01-distribution-phase-c-homebrew-checkpoint.md)
 - [`2026-03-01-distribution-phase-e-wrapper-evaluation-checkpoint.md`](./2026-03-01-distribution-phase-e-wrapper-evaluation-checkpoint.md)

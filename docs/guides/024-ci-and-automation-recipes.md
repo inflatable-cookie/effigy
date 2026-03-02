@@ -321,6 +321,7 @@ Warm-hit consistency check:
     jq -e '.result.cache_state == "hit"' completion-candidates-second.json >/dev/null
     jq -e '.result.cache_ttl_ms != null' completion-candidates-second.json >/dev/null
     jq -e '.result.cache_ttl_ms == .result.effective_cache_ttl_ms' completion-candidates-second.json >/dev/null
+    jq -e '(.result.cache_age_ms | type) == "number"' completion-candidates-second.json >/dev/null
 ```
 
 ## Related Guides
