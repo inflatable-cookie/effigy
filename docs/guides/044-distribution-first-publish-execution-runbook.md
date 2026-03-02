@@ -18,7 +18,7 @@ Required inputs:
 Recommended preflight before opening publish window:
 
 ```bash
-./scripts/check-distribution-preflight.sh --tag vX.Y.Z
+./scripts/check-distribution-preflight.sh --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env
 ```
 
 ## 2) Execution Order
