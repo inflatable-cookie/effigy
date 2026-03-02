@@ -1,19 +1,58 @@
 use super::*;
 
+fn create_workspace_dir(root: &PathBuf, name: &str) -> PathBuf {
+    let dir = root.join(name);
+    fs::create_dir_all(&dir).expect("mkdir workspace dir");
+    dir
+}
+
+fn write_catalog_tasks(dir: &PathBuf, alias: Option<&str>, tasks: &[(&str, &str)]) {
+    let mut manifest = String::new();
+    if let Some(alias) = alias {
+        manifest.push_str(&format!("[catalog]\nalias = \"{}\"\n", alias));
+    }
+    for (task, run) in tasks {
+        manifest.push_str(&format!("[tasks.{}]\nrun = \"{}\"\n", task, run));
+    }
+    write_manifest(&dir.join("effigy.toml"), &manifest);
+}
+
+fn assert_task_ambiguous_reset_db(err: RunnerError) {
+    match err {
+        RunnerError::TaskAmbiguous { name, candidates } => {
+            assert_eq!(name, "reset-db");
+            assert_eq!(candidates.len(), 2);
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+fn assert_catalog_alias_conflict(err: RunnerError, expected_alias: &str) {
+    match err {
+        RunnerError::TaskCatalogAliasConflict {
+            alias,
+            first_path,
+            second_path,
+        } => {
+            assert_eq!(alias, expected_alias);
+            assert!(first_path.ends_with("effigy.toml"));
+            assert!(second_path.ends_with("effigy.toml"));
+            assert_ne!(first_path, second_path);
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
 #[test]
 fn run_manifest_task_prefixed_uses_named_catalog() {
     let root = temp_workspace("prefixed");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir");
+    let farmyard = create_workspace_dir(&root, "farmyard");
 
     write_manifest(
         &root.join("effigy.toml"),
         "[tasks.ping]\nrun = \"printf root\"\n",
     );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[tasks.ping]\nrun = \"printf farmyard\"\n",
-    );
+    write_catalog_tasks(&farmyard, Some("farmyard"), &[("ping", "printf farmyard")]);
 
     let out = run_builtin_ok(root.clone(), "farmyard/ping", &[]);
     assert_eq!(out, "");
@@ -30,10 +69,7 @@ fn run_manifest_task_unprefixed_prefers_nearest_catalog_in_scope() {
         &root.join("effigy.toml"),
         "[tasks.ping]\nrun = \"printf root\"\n",
     );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[tasks.ping]\nrun = \"printf farmyard\"\n",
-    );
+    write_catalog_tasks(&farmyard, Some("farmyard"), &[("ping", "printf farmyard")]);
 
     let out = run_builtin_ok(nested, "ping", &[]);
     assert_eq!(out, "");
@@ -42,46 +78,32 @@ fn run_manifest_task_unprefixed_prefers_nearest_catalog_in_scope() {
 #[test]
 fn run_manifest_task_unprefixed_reports_ambiguity_on_equal_shallow_depth() {
     let root = temp_workspace("ambiguous");
-    let farmyard = root.join("farmyard");
-    let dairy = root.join("dairy");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    let farmyard = create_workspace_dir(&root, "farmyard");
+    let dairy = create_workspace_dir(&root, "dairy");
 
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[tasks.reset-db]\nrun = \"printf farmyard\"\n",
+    write_catalog_tasks(
+        &farmyard,
+        Some("farmyard"),
+        &[("reset-db", "printf farmyard")],
     );
-    write_manifest(
-        &dairy.join("effigy.toml"),
-        "[tasks.reset-db]\nrun = \"printf dairy\"\n",
-    );
+    write_catalog_tasks(&dairy, Some("dairy"), &[("reset-db", "printf dairy")]);
 
     let err = run_builtin_err(root.clone(), "reset-db", &[]);
 
-    match err {
-        RunnerError::TaskAmbiguous { name, candidates } => {
-            assert_eq!(name, "reset-db");
-            assert_eq!(candidates.len(), 2);
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_task_ambiguous_reset_db(err);
 }
 
 #[test]
 fn run_manifest_task_relative_prefix_resolves_catalog_by_path() {
     let root = temp_workspace("relative-prefix-path");
-    let dairy = root.join("dairy");
-    let froyo = root.join("froyo");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
-    fs::create_dir_all(&froyo).expect("mkdir froyo");
+    let dairy = create_workspace_dir(&root, "dairy");
+    let froyo = create_workspace_dir(&root, "froyo");
 
-    write_manifest(
-        &dairy.join("effigy.toml"),
-        "[catalog]\nalias = \"dairy\"\n[tasks.dev]\nrun = \"printf dairy\"\n",
-    );
-    write_manifest(
-        &froyo.join("effigy.toml"),
-        "[catalog]\nalias = \"froyo\"\n[tasks.validate]\nrun = \"printf froyo-validate\"\n",
+    write_catalog_tasks(&dairy, Some("dairy"), &[("dev", "printf dairy")]);
+    write_catalog_tasks(
+        &froyo,
+        Some("froyo"),
+        &[("validate", "printf froyo-validate")],
     );
 
     let out = run_builtin_ok(dairy, "../froyo/validate", &[]);
@@ -91,25 +113,17 @@ fn run_manifest_task_relative_prefix_resolves_catalog_by_path() {
 #[test]
 fn run_manifest_task_relative_prefix_prefers_alias_collision_over_path_resolution() {
     let root = temp_workspace("relative-prefix-alias-collision");
-    let dairy = root.join("dairy");
-    let alias_override = root.join("alias-override");
-    let froyo = root.join("froyo");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
-    fs::create_dir_all(&alias_override).expect("mkdir alias-override");
-    fs::create_dir_all(&froyo).expect("mkdir froyo");
+    let dairy = create_workspace_dir(&root, "dairy");
+    let alias_override = create_workspace_dir(&root, "alias-override");
+    let froyo = create_workspace_dir(&root, "froyo");
 
-    write_manifest(
-        &dairy.join("effigy.toml"),
-        "[catalog]\nalias = \"dairy\"\n[tasks.dev]\nrun = \"printf dairy\"\n",
+    write_catalog_tasks(&dairy, Some("dairy"), &[("dev", "printf dairy")]);
+    write_catalog_tasks(
+        &alias_override,
+        Some("../froyo"),
+        &[("validate", "printf alias")],
     );
-    write_manifest(
-        &alias_override.join("effigy.toml"),
-        "[catalog]\nalias = \"../froyo\"\n[tasks.validate]\nrun = \"printf alias\"\n",
-    );
-    write_manifest(
-        &froyo.join("effigy.toml"),
-        "[catalog]\nalias = \"froyo\"\n[tasks.validate]\nrun = \"printf froyo\"\n",
-    );
+    write_catalog_tasks(&froyo, Some("froyo"), &[("validate", "printf froyo")]);
 
     let out = run_builtin_ok(dairy, "../froyo/validate", &["--verbose-root"]);
 
@@ -130,10 +144,7 @@ fn run_manifest_task_relative_prefix_supports_multi_parent_traversal() {
     fs::create_dir_all(&app).expect("mkdir app");
     fs::create_dir_all(&shared).expect("mkdir shared");
 
-    write_manifest(
-        &shared.join("effigy.toml"),
-        "[catalog]\nalias = \"shared\"\n[tasks.lint]\nrun = \"printf shared-lint\"\n",
-    );
+    write_catalog_tasks(&shared, Some("shared"), &[("lint", "printf shared-lint")]);
 
     let out = run_builtin_ok(app, "../../../shared/lint", &["--verbose-root"]);
 
@@ -149,23 +160,18 @@ fn run_manifest_task_relative_prefix_supports_multi_parent_traversal() {
 #[test]
 fn discover_catalogs_includes_symlinked_catalog_directories() {
     let root = temp_workspace("catalog-symlink-discovery");
-    let external = root.join("external");
-    let underlay_src = external.join("underlay");
-    fs::create_dir_all(&underlay_src).expect("mkdir underlay src");
+    let external = create_workspace_dir(&root, "external");
+    let underlay_src = create_workspace_dir(&external, "underlay");
     write_manifest(
         &root.join("effigy.toml"),
         r#"[catalog]
 alias = "acowtancy"
 "#,
     );
-    write_manifest(
-        &underlay_src.join("effigy.toml"),
-        r#"[catalog]
-alias = "underlay"
-
-[tasks.ping]
-run = "printf underlay"
-"#,
+    write_catalog_tasks(
+        &underlay_src,
+        Some("underlay"),
+        &[("ping", "printf underlay")],
     );
     symlink(&underlay_src, root.join("underlay")).expect("symlink underlay");
 
@@ -183,11 +189,9 @@ run = "printf underlay"
 #[test]
 fn discover_catalogs_reports_alias_conflict_for_symlinked_catalog() {
     let root = temp_workspace("catalog-symlink-alias-conflict");
-    let dairy = root.join("dairy");
-    let external = root.join("external");
-    let underlay_src = external.join("underlay");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
-    fs::create_dir_all(&underlay_src).expect("mkdir underlay src");
+    let dairy = create_workspace_dir(&root, "dairy");
+    let external = create_workspace_dir(&root, "external");
+    let underlay_src = create_workspace_dir(&external, "underlay");
 
     write_manifest(
         &dairy.join("effigy.toml"),
@@ -204,17 +208,5 @@ alias = "dairy"
     symlink(&underlay_src, root.join("underlay")).expect("symlink underlay");
 
     let err = discover_catalogs(&root).expect_err("expected alias conflict");
-    match err {
-        RunnerError::TaskCatalogAliasConflict {
-            alias,
-            first_path,
-            second_path,
-        } => {
-            assert_eq!(alias, "dairy");
-            assert!(first_path.ends_with("effigy.toml"));
-            assert!(second_path.ends_with("effigy.toml"));
-            assert_ne!(first_path, second_path);
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_catalog_alias_conflict(err, "dairy");
 }
