@@ -12,14 +12,14 @@ mod json_payload;
 mod process_run;
 
 use super::cache::check_task_cache;
-use super::catalog::select_catalog_and_task;
+use super::catalog::{discover_catalogs_allow_missing, select_catalog_and_task};
 use super::deferral::{run_deferred_request, select_deferral, should_attempt_deferral};
 use super::locking::{acquire_scopes, LockScope};
 use super::managed::{render_task_run_spec, resolve_managed_task_plan, run_or_render_managed_task};
 use super::util::{parse_task_runtime_args, parse_task_selector, shell_quote};
 use super::{
-    discover_catalogs, try_run_builtin_task, LoadedCatalog, ManifestManagedRun, ManifestTask,
-    RunnerError, TaskSelection,
+    try_run_builtin_task, LoadedCatalog, ManifestManagedRun, ManifestTask, RunnerError,
+    TaskSelection,
 };
 
 struct ExecutionPreflight {
@@ -281,16 +281,6 @@ fn build_execution_preflight(
         selector,
         catalogs,
     })
-}
-
-fn discover_catalogs_allow_missing(
-    resolved_root: &std::path::Path,
-) -> Result<Vec<LoadedCatalog>, RunnerError> {
-    match discover_catalogs(resolved_root) {
-        Ok(catalogs) => Ok(catalogs),
-        Err(RunnerError::TaskCatalogsMissing { .. }) => Ok(Vec::new()),
-        Err(error) => Err(error),
-    }
 }
 
 fn strip_task_json_flag(args: &[String]) -> (Vec<String>, bool) {
