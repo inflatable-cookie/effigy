@@ -1,5 +1,54 @@
 use super::*;
 
+fn run_task(root: &PathBuf, name: &str, args: &[&str]) -> Result<String, RunnerError> {
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: name.to_owned(),
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        },
+        root.clone(),
+    )
+}
+
+fn assert_catalog_prefix_not_found(
+    err: RunnerError,
+    expected_prefix: &str,
+    expected_available: &[&str],
+) {
+    match err {
+        RunnerError::TaskCatalogPrefixNotFound { prefix, available } => {
+            assert_eq!(prefix, expected_prefix);
+            assert_eq!(
+                available,
+                expected_available
+                    .iter()
+                    .map(|value| (*value).to_owned())
+                    .collect::<Vec<_>>()
+            );
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+fn assert_lock_conflict(err: RunnerError, expected_scope: &str, expected_remediation: &str) {
+    match err {
+        RunnerError::TaskLockConflict {
+            scope, remediation, ..
+        } => {
+            assert_eq!(scope, expected_scope);
+            assert!(remediation.contains(expected_remediation));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+fn write_executable(path: &PathBuf, script: &str) {
+    fs::write(path, script).expect("write executable");
+    let mut perms = fs::metadata(path).expect("stat").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).expect("chmod");
+}
+
 #[test]
 fn parse_task_runtime_args_extracts_repo_verbose_and_passthrough() {
     let args = vec![
@@ -42,22 +91,8 @@ fn run_manifest_task_unknown_prefix_returns_catalog_error() {
         "[tasks.reset-db]\nrun = \"printf root\"\n",
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "farmyard/reset-db".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("unknown prefix");
-
-    match err {
-        RunnerError::TaskCatalogPrefixNotFound { prefix, available } => {
-            assert_eq!(prefix, "farmyard");
-            assert_eq!(available, vec!["root".to_owned()]);
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_task(&root, "farmyard/reset-db", &[]).expect_err("unknown prefix");
+    assert_catalog_prefix_not_found(err, "farmyard", &["root"]);
 }
 
 #[test]
@@ -393,17 +428,10 @@ fn run_manifest_task_builtin_watch_rejects_concurrent_watch_owner_for_same_targe
 
     let root_for_thread = root.clone();
     let join = thread::spawn(move || {
-        run_manifest_task_with_cwd(
-            &TaskInvocation {
-                name: "watch".to_owned(),
-                args: vec![
-                    "--owner".to_owned(),
-                    "effigy".to_owned(),
-                    "--once".to_owned(),
-                    "build".to_owned(),
-                ],
-            },
-            root_for_thread,
+        run_task(
+            &root_for_thread,
+            "watch",
+            &["--owner", "effigy", "--once", "build"],
         )
     });
 
@@ -417,29 +445,9 @@ fn run_manifest_task_builtin_watch_rejects_concurrent_watch_owner_for_same_targe
         thread::sleep(Duration::from_millis(20));
     }
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "watch".to_owned(),
-            args: vec![
-                "--owner".to_owned(),
-                "effigy".to_owned(),
-                "--once".to_owned(),
-                "build".to_owned(),
-            ],
-        },
-        root.clone(),
-    )
-    .expect_err("second watch owner should conflict on watch scope lock");
-
-    match err {
-        RunnerError::TaskLockConflict {
-            scope, remediation, ..
-        } => {
-            assert_eq!(scope, "task:watch:build");
-            assert!(remediation.contains("effigy unlock task:watch:build"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_task(&root, "watch", &["--owner", "effigy", "--once", "build"])
+        .expect_err("second watch owner should conflict on watch scope lock");
+    assert_lock_conflict(err, "task:watch:build", "effigy unlock task:watch:build");
 
     let first = join.join().expect("thread join");
     first.expect("first watch should complete");
@@ -525,14 +533,7 @@ fn run_manifest_task_verbose_root_includes_resolution_trace() {
         "[tasks.ping]\nrun = \"printf farmyard\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "farmyard/ping".to_owned(),
-            args: vec!["--verbose-root".to_owned()],
-        },
-        root,
-    )
-    .expect("run");
+    let out = run_task(&root, "farmyard/ping", &["--verbose-root"]).expect("run");
 
     assert!(out.contains("Task Resolution"));
     assert!(out.contains("catalog-alias: farmyard"));
@@ -548,20 +549,9 @@ fn run_manifest_task_includes_local_node_modules_bin_in_path() {
     );
     let local_bin = root.join("node_modules/.bin");
     fs::create_dir_all(&local_bin).expect("mkdir local bin");
-    let tool = local_bin.join("local-tool");
-    fs::write(&tool, "#!/bin/sh\nexit 0\n").expect("write local tool");
-    let mut perms = fs::metadata(&tool).expect("stat").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&tool, perms).expect("chmod");
+    write_executable(&local_bin.join("local-tool"), "#!/bin/sh\nexit 0\n");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "local".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("run local tool");
+    let out = run_task(&root, "local", &[]).expect("run local tool");
 
     assert_eq!(out, "");
 }
