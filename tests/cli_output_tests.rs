@@ -972,8 +972,7 @@ fn cli_tasks_resolve_text_output_matches_canonical_fixture_tail() {
     let anchor = "\nResolution: cattle-grid/build\n";
     let start = stdout.find(anchor).expect("resolution section anchor");
     let tail = &stdout[start + 1..];
-    let expected = format!(
-        "\
+    let expected = "\
 Resolution: cattle-grid/build
 ─────────────────────────────
 status: ok
@@ -984,7 +983,7 @@ evidence:
 - selected catalog via explicit prefix `cattle-grid`
 
 "
-    );
+    .to_string();
     assert_eq!(tail, expected);
 }
 

@@ -92,7 +92,7 @@ fn run_standard_task(
         let cache_hit_context = cache_hit::CacheHitContext {
             resolved: &preflight.resolved,
             selector: &preflight.selector,
-            selection: &selection,
+            selection,
             repo_for_task: &repo_for_task,
             command: &command,
             reason: &cache_check.reason,
@@ -108,7 +108,7 @@ fn run_standard_task(
     let process_run_context = process_run::ProcessRunContext {
         resolved: &preflight.resolved,
         selector: &preflight.selector,
-        selection: &selection,
+        selection,
         resolved_root: &preflight.resolved.resolved_root,
         repo_for_task: &repo_for_task,
         command: &command,
