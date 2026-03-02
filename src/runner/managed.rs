@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use crate::runner::manifest::ManifestManagedRunStepTable;
+
 use super::util::shell_quote;
 use super::{
     LoadedCatalog, ManagedProcessSpec, ManagedTaskPlan, ManifestManagedConcurrentEntry,
@@ -326,11 +328,10 @@ pub(super) fn render_task_run_spec(
             "task `{task_name}` run expansion exceeded maximum nested task references (12)"
         )));
     }
-    let repo_rendered = shell_quote(&repo_root.display().to_string());
     match run {
-        ManifestManagedRun::Command(command) => Ok(command
-            .replace("{repo}", &repo_rendered)
-            .replace("{args}", args_rendered)),
+        ManifestManagedRun::Command(command) => {
+            Ok(render_command_template(command, repo_root, args_rendered))
+        }
         ManifestManagedRun::Sequence(steps) => {
             if steps.is_empty() {
                 return Err(RunnerError::TaskInvocation(format!(
@@ -399,35 +400,54 @@ fn resolve_task_run_step(
                     depth,
                 )
             } else {
-                let repo_rendered = shell_quote(&repo_root.display().to_string());
-                Ok(command
-                    .replace("{repo}", &repo_rendered)
-                    .replace("{args}", args_rendered))
+                Ok(render_command_template(command, repo_root, args_rendered))
             }
         }
-        ManifestManagedRunStep::Step(step) => match (&step.run, &step.task) {
-            (Some(run), None) => {
-                let repo_rendered = shell_quote(&repo_root.display().to_string());
-                Ok(run
-                    .replace("{repo}", &repo_rendered)
-                    .replace("{args}", args_rendered))
-            }
-            (None, Some(task_ref)) => references::resolve_task_reference_step(
-                task_name,
-                task_ref,
-                args_rendered,
-                catalogs,
-                task_scope_cwd,
-                depth,
-            ),
-            (Some(_), Some(_)) => Err(RunnerError::TaskInvocation(format!(
-                "task `{task_name}` run step is invalid: define either `run` or `task`, not both"
-            ))),
-            (None, None) => Err(RunnerError::TaskInvocation(format!(
-                "task `{task_name}` run step is invalid: missing both `run` and `task`"
-            ))),
-        },
+        ManifestManagedRunStep::Step(step) => resolve_table_task_run_step(
+            task_name,
+            step,
+            args_rendered,
+            repo_root,
+            catalogs,
+            task_scope_cwd,
+            depth,
+        ),
     }
+}
+
+fn resolve_table_task_run_step(
+    task_name: &str,
+    step: &ManifestManagedRunStepTable,
+    args_rendered: &str,
+    repo_root: &Path,
+    catalogs: &[LoadedCatalog],
+    task_scope_cwd: &Path,
+    depth: usize,
+) -> Result<String, RunnerError> {
+    match (&step.run, &step.task) {
+        (Some(run), None) => Ok(render_command_template(run, repo_root, args_rendered)),
+        (None, Some(task_ref)) => references::resolve_task_reference_step(
+            task_name,
+            task_ref,
+            args_rendered,
+            catalogs,
+            task_scope_cwd,
+            depth,
+        ),
+        (Some(_), Some(_)) => Err(RunnerError::TaskInvocation(format!(
+            "task `{task_name}` run step is invalid: define either `run` or `task`, not both"
+        ))),
+        (None, None) => Err(RunnerError::TaskInvocation(format!(
+            "task `{task_name}` run step is invalid: missing both `run` and `task`"
+        ))),
+    }
+}
+
+fn render_command_template(command: &str, repo_root: &Path, args_rendered: &str) -> String {
+    let repo_rendered = shell_quote(&repo_root.display().to_string());
+    command
+        .replace("{repo}", &repo_rendered)
+        .replace("{args}", args_rendered)
 }
 
 pub(super) fn run_or_render_managed_task(
