@@ -14,18 +14,18 @@ pub(super) fn check_environment_tools(
     findings: &mut Vec<DoctorFinding>,
     statuses: &mut HashMap<String, DoctorSeverity>,
 ) {
-    let mut required = HashSet::<&str>::new();
+    let mut required = HashSet::<String>::new();
 
     if workspace_root.join("Cargo.toml").exists() {
-        required.insert("cargo");
-        required.insert("rustc");
+        add_required(&mut required, "cargo");
+        add_required(&mut required, "rustc");
     }
 
     let mut has_package_json = workspace_root.join("package.json").exists();
     for catalog in catalogs {
         if catalog.catalog_root.join("Cargo.toml").exists() {
-            required.insert("cargo");
-            required.insert("rustc");
+            add_required(&mut required, "cargo");
+            add_required(&mut required, "rustc");
         }
         if catalog.catalog_root.join("package.json").exists() {
             has_package_json = true;
@@ -34,17 +34,17 @@ pub(super) fn check_environment_tools(
     }
 
     if has_package_json {
-        required.insert("node");
+        add_required(&mut required, "node");
         if let Some(pm) = preferred_js_pm {
             match pm {
                 ManifestJsPackageManager::Bun => {
-                    required.insert("bun");
+                    add_required(&mut required, "bun");
                 }
                 ManifestJsPackageManager::Pnpm => {
-                    required.insert("pnpm");
+                    add_required(&mut required, "pnpm");
                 }
                 ManifestJsPackageManager::Npm => {
-                    required.insert("npm");
+                    add_required(&mut required, "npm");
                 }
                 ManifestJsPackageManager::Direct => {}
             }
@@ -54,23 +54,11 @@ pub(super) fn check_environment_tools(
     let mut missing = required
         .iter()
         .filter(|tool| !tool_available(tool))
-        .copied()
+        .map(|tool| tool.as_str())
         .collect::<Vec<&str>>();
     missing.sort();
 
-    for tool in missing {
-        super::add_finding(
-            findings,
-            statuses,
-            DoctorFinding {
-                check_id: "environment.tools.required".to_owned(),
-                severity: DoctorSeverity::Error,
-                evidence: format!("required tool `{tool}` is not available in PATH"),
-                remediation: format!("Install `{tool}` and re-run `effigy doctor`."),
-                fixable: false,
-            },
-        );
-    }
+    report_missing_tools(missing, findings, statuses);
 
     if has_package_json
         && preferred_js_pm.is_none()
@@ -93,10 +81,31 @@ pub(super) fn check_environment_tools(
     }
 }
 
-fn collect_required_tools_from_manifest<'a>(
-    manifest: &'a TaskManifest,
-    required: &mut HashSet<&'a str>,
+fn add_required(required: &mut HashSet<String>, tool: &str) {
+    required.insert(tool.to_owned());
+}
+
+fn report_missing_tools(
+    missing: Vec<&str>,
+    findings: &mut Vec<DoctorFinding>,
+    statuses: &mut HashMap<String, DoctorSeverity>,
 ) {
+    for tool in missing {
+        super::add_finding(
+            findings,
+            statuses,
+            DoctorFinding {
+                check_id: "environment.tools.required".to_owned(),
+                severity: DoctorSeverity::Error,
+                evidence: format!("required tool `{tool}` is not available in PATH"),
+                remediation: format!("Install `{tool}` and re-run `effigy doctor`."),
+                fixable: false,
+            },
+        );
+    }
+}
+
+fn collect_required_tools_from_manifest(manifest: &TaskManifest, required: &mut HashSet<String>) {
     for task in manifest.tasks.values() {
         if let Some(run) = task.run.as_ref() {
             match run {
@@ -124,9 +133,9 @@ fn collect_required_tools_from_manifest<'a>(
     }
 }
 
-fn collect_tools_from_entries<'a>(
-    entries: &'a [ManifestManagedConcurrentEntry],
-    required: &mut HashSet<&'a str>,
+fn collect_tools_from_entries(
+    entries: &[ManifestManagedConcurrentEntry],
+    required: &mut HashSet<String>,
 ) {
     for entry in entries {
         if let Some(run) = entry.run.as_ref() {
@@ -135,27 +144,27 @@ fn collect_tools_from_entries<'a>(
     }
 }
 
-fn detect_tools_in_command<'a>(command: &'a str, required: &mut HashSet<&'a str>) {
+fn detect_tools_in_command(command: &str, required: &mut HashSet<String>) {
     let head = command.split_whitespace().next().unwrap_or_default();
     match head {
         "cargo" => {
-            required.insert("cargo");
-            required.insert("rustc");
+            add_required(required, "cargo");
+            add_required(required, "rustc");
         }
         "bun" => {
-            required.insert("bun");
-            required.insert("node");
+            add_required(required, "bun");
+            add_required(required, "node");
         }
         "pnpm" => {
-            required.insert("pnpm");
-            required.insert("node");
+            add_required(required, "pnpm");
+            add_required(required, "node");
         }
         "npm" | "npx" => {
-            required.insert("npm");
-            required.insert("node");
+            add_required(required, "npm");
+            add_required(required, "node");
         }
         "node" => {
-            required.insert("node");
+            add_required(required, "node");
         }
         _ => {}
     }
