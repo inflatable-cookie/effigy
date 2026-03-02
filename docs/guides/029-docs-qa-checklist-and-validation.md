@@ -18,6 +18,7 @@ Manual checks:
 - command examples match current CLI flags and behavior
 - JSON examples use current schema names and versions
 - completion-candidates examples include both hit and miss telemetry variants
+- new report artifacts are indexed in `docs/reports/README.md`
 
 Optional broader check:
 
@@ -41,11 +42,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate docs links and JSON examples
+      - name: Validate docs links, JSON examples, and report index
         run: ./scripts/check-quality-gates.sh --docs-only
 ```
 
-This ensures markdown links resolve and key JSON examples stay contract-aligned on every pull request/push.
+This ensures markdown links resolve, key JSON examples stay contract-aligned, and reports remain indexed on every pull request/push.
 
 ## 3) What the Link Checker Validates
 
@@ -79,7 +80,18 @@ Behavior:
   - `cache_ttl_source`
 - asserts first block stays `cache_state=hit` and second block stays a miss (`cache_hit=false`)
 
-## 5) Common Failure Modes
+## 5) What the Report Index Checker Validates
+
+Script:
+- `scripts/check-doc-reports-index.sh`
+
+Behavior:
+- scans `docs/reports/*.md` and excludes `docs/reports/README.md`
+- parses report links from `docs/reports/README.md`
+- fails when any report file is missing from the index
+- fails when index entries point to non-existent report files
+
+## 6) Common Failure Modes
 
 ### Broken relative path after file move
 
@@ -113,7 +125,7 @@ effigy --help
 effigy <command> --help
 ```
 
-## 6) Suggested PR Checklist Section
+## 7) Suggested PR Checklist Section
 
 Copy into PR description:
 
@@ -123,9 +135,10 @@ Copy into PR description:
 - [ ] New guide linked from docs entry points
 - [ ] Command and JSON examples verified against current behavior
 - [ ] Completion-candidates JSON examples include hit + miss telemetry variants
+- [ ] New report files indexed in `docs/reports/README.md`
 ```
 
-## 7) Fast Operator Commands
+## 8) Fast Operator Commands
 
 ```sh
 # docs links only
