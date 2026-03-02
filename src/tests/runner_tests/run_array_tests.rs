@@ -13,17 +13,8 @@ run = [{ task = "lint" }, "printf validate-ok"]
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: vec!["--verbose-root".to_owned()],
-        },
-        root,
-    )
-    .expect("run");
-
-    assert!(out.contains("printf lint-ok"));
-    assert!(out.contains("printf validate-ok"));
+    let out = run_builtin_ok(root, "validate", &["--verbose-root"]);
+    assert_contains_all(&out, &["printf lint-ok", "printf validate-ok"]);
 }
 
 #[test]
@@ -40,18 +31,11 @@ run = [
 "#,
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: vec!["--verbose-root".to_owned()],
-        },
-        root,
-    )
-    .expect("run");
-
-    assert!(out.contains("printf lint-ok"));
-    assert!(out.contains("printf build-ok"));
-    assert!(out.contains("printf validate-ok"));
+    let out = run_builtin_ok(root, "validate", &["--verbose-root"]);
+    assert_contains_all(
+        &out,
+        &["printf lint-ok", "printf build-ok", "printf validate-ok"],
+    );
 }
 
 #[test]
@@ -67,21 +51,11 @@ run = [
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("expected depends_on without id error");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("defines `depends_on` but is missing a non-empty `id`"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "validate", &[]);
+    assert_task_invocation_error_contains(
+        err,
+        &["defines `depends_on` but is missing a non-empty `id`"],
+    );
 }
 
 #[test]
@@ -96,21 +70,8 @@ run = [
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("expected missing dependency error");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("depends on missing step `lint`"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "validate", &[]);
+    assert_task_invocation_error_contains(err, &["depends on missing step `lint`"]);
 }
 
 #[test]
@@ -126,21 +87,8 @@ run = [
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("expected duplicate id error");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("duplicate step id `lint`"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "validate", &[]);
+    assert_task_invocation_error_contains(err, &["duplicate step id `lint`"]);
 }
 
 #[test]
@@ -156,14 +104,7 @@ run = [
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("expected cycle error");
+    let err = run_builtin_err(root, "validate", &[]);
 
     match err {
         RunnerError::TaskInvocation(message) => {
@@ -189,21 +130,8 @@ run = [
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("expected self cycle error");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("cannot depend on itself"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "validate", &[]);
+    assert_task_invocation_error_contains(err, &["cannot depend on itself"]);
 }
 
 #[test]
@@ -230,14 +158,7 @@ run = [
         ),
     );
 
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect("run");
+    let _ = run_builtin_ok(root.clone(), "validate", &[]);
 
     let body = fs::read_to_string(marker).expect("read marker");
     let lines: Vec<&str> = body.lines().collect();
@@ -285,14 +206,7 @@ run = [
     );
 
     let start = Instant::now();
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect("run");
+    let _ = run_builtin_ok(root.clone(), "validate", &[]);
     let elapsed = start.elapsed();
 
     let body = fs::read_to_string(marker).expect("read marker");
@@ -323,14 +237,7 @@ run = [
         ),
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("retry should recover");
+    let out = run_builtin_ok(root, "validate", &[]);
     assert_eq!(out, "");
     let body = fs::read_to_string(out_file).expect("read retry output");
     assert_eq!(body, "ok");
@@ -348,14 +255,7 @@ run = [
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("timeout should fail");
+    let err = run_builtin_err(root, "validate", &[]);
 
     match err {
         RunnerError::TaskCommandFailure { code, .. } => {
@@ -385,14 +285,7 @@ run = [
         ),
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect_err("overall command should fail");
+    let err = run_builtin_err(root.clone(), "validate", &[]);
 
     match err {
         RunnerError::TaskCommandFailure { .. } => {}
@@ -419,14 +312,7 @@ run = [{{ task = "capture hello-world" }}]
         ),
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("run");
+    let out = run_builtin_ok(root, "validate", &[]);
 
     assert_eq!(out, "");
     let body = fs::read_to_string(&marker).expect("read marker");
@@ -450,14 +336,7 @@ run = [{{ task = 'capture alpha "two words"' }}]
         ),
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("run");
+    let out = run_builtin_ok(root, "validate", &[]);
 
     assert_eq!(out, "");
     let body = fs::read_to_string(&marker).expect("read marker");
@@ -474,22 +353,8 @@ run = [{ task = 'test "unterminated' }]
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("expected unterminated quote error");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("run step task ref"));
-            assert!(message.contains("unterminated quote"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "validate", &[]);
+    assert_task_invocation_error_contains(err, &["run step task ref", "unterminated quote"]);
 }
 
 #[test]
@@ -502,22 +367,8 @@ run = [{ task = "test vitest \\" }]
 "#,
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect_err("expected trailing escape error");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("run step task ref"));
-            assert!(message.contains("trailing escape"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    let err = run_builtin_err(root, "validate", &[]);
+    assert_task_invocation_error_contains(err, &["run step task ref", "trailing escape"]);
 }
 
 #[test]
@@ -537,16 +388,8 @@ run = [{{ task = "test" }}, "printf validate-ok"]
         ),
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: vec!["--verbose-root".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("run");
-
-    assert!(out.contains("validate-ok"));
+    let out = run_builtin_ok(root.clone(), "validate", &["--verbose-root"]);
+    assert_contains_all(&out, &["validate-ok"]);
     assert!(marker.exists(), "built-in test task ref should execute");
 }
 
@@ -567,16 +410,8 @@ run = [{{ task = "test vitest" }}, "printf validate-ok"]
         ),
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: vec!["--verbose-root".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("run");
-
-    assert!(out.contains("validate-ok"));
+    let out = run_builtin_ok(root.clone(), "validate", &["--verbose-root"]);
+    assert_contains_all(&out, &["validate-ok"]);
     assert!(
         marker.exists(),
         "built-in test task ref with suite arg should execute"
@@ -607,16 +442,8 @@ unit = "sh -lc 'printf called > \"{}\"'"
         ),
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "validate".to_owned(),
-            args: vec!["--verbose-root".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("run");
-
-    assert!(out.contains("validate-ok"));
+    let out = run_builtin_ok(root.clone(), "validate", &["--verbose-root"]);
+    assert_contains_all(&out, &["validate-ok"]);
     assert!(
         marker.exists(),
         "prefixed built-in test task ref should execute"

@@ -15,15 +15,7 @@ fn run_manifest_task_prefixed_uses_named_catalog() {
         "[tasks.ping]\nrun = \"printf farmyard\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "farmyard/ping".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect("run");
-
+    let out = run_builtin_ok(root.clone(), "farmyard/ping", &[]);
     assert_eq!(out, "");
 }
 
@@ -43,15 +35,7 @@ fn run_manifest_task_unprefixed_prefers_nearest_catalog_in_scope() {
         "[tasks.ping]\nrun = \"printf farmyard\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "ping".to_owned(),
-            args: Vec::new(),
-        },
-        nested,
-    )
-    .expect("run");
-
+    let out = run_builtin_ok(nested, "ping", &[]);
     assert_eq!(out, "");
 }
 
@@ -72,14 +56,7 @@ fn run_manifest_task_unprefixed_reports_ambiguity_on_equal_shallow_depth() {
         "[tasks.reset-db]\nrun = \"printf dairy\"\n",
     );
 
-    let err = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "reset-db".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect_err("expected ambiguity");
+    let err = run_builtin_err(root.clone(), "reset-db", &[]);
 
     match err {
         RunnerError::TaskAmbiguous { name, candidates } => {
@@ -107,15 +84,7 @@ fn run_manifest_task_relative_prefix_resolves_catalog_by_path() {
         "[catalog]\nalias = \"froyo\"\n[tasks.validate]\nrun = \"printf froyo-validate\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "../froyo/validate".to_owned(),
-            args: Vec::new(),
-        },
-        dairy,
-    )
-    .expect("relative path task should resolve");
-
+    let out = run_builtin_ok(dairy, "../froyo/validate", &[]);
     assert_eq!(out, "");
 }
 
@@ -142,17 +111,15 @@ fn run_manifest_task_relative_prefix_prefers_alias_collision_over_path_resolutio
         "[catalog]\nalias = \"froyo\"\n[tasks.validate]\nrun = \"printf froyo\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "../froyo/validate".to_owned(),
-            args: vec!["--verbose-root".to_owned()],
-        },
-        dairy,
-    )
-    .expect("relative prefix should resolve via alias first");
+    let out = run_builtin_ok(dairy, "../froyo/validate", &["--verbose-root"]);
 
-    assert!(out.contains("catalog-alias: ../froyo"));
-    assert!(out.contains("selected catalog via explicit prefix `../froyo`"));
+    assert_contains_all(
+        &out,
+        &[
+            "catalog-alias: ../froyo",
+            "selected catalog via explicit prefix `../froyo`",
+        ],
+    );
 }
 
 #[test]
@@ -168,17 +135,15 @@ fn run_manifest_task_relative_prefix_supports_multi_parent_traversal() {
         "[catalog]\nalias = \"shared\"\n[tasks.lint]\nrun = \"printf shared-lint\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "../../../shared/lint".to_owned(),
-            args: vec!["--verbose-root".to_owned()],
-        },
-        app,
-    )
-    .expect("multi-parent relative task should resolve");
+    let out = run_builtin_ok(app, "../../../shared/lint", &["--verbose-root"]);
 
-    assert!(out.contains("catalog-alias: shared"));
-    assert!(out.contains("relative prefix `../../../shared` -> `shared`"));
+    assert_contains_all(
+        &out,
+        &[
+            "catalog-alias: shared",
+            "relative prefix `../../../shared` -> `shared`",
+        ],
+    );
 }
 
 #[test]
@@ -210,14 +175,7 @@ run = "printf underlay"
         "symlinked underlay catalog should be discovered"
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "underlay/ping".to_owned(),
-            args: Vec::new(),
-        },
-        root,
-    )
-    .expect("run symlinked prefixed task");
+    let out = run_builtin_ok(root, "underlay/ping", &[]);
     assert_eq!(out, "");
 }
 
