@@ -15,6 +15,7 @@ pub(super) fn check_environment_tools(
     statuses: &mut HashMap<String, DoctorSeverity>,
 ) {
     let mut required = HashSet::<String>::new();
+    let mut availability = ToolAvailability::new();
 
     if workspace_root.join("Cargo.toml").exists() {
         add_required(&mut required, "cargo");
@@ -53,7 +54,7 @@ pub(super) fn check_environment_tools(
 
     let mut missing = required
         .iter()
-        .filter(|tool| !tool_available(tool))
+        .filter(|tool| !availability.is_available(tool))
         .map(|tool| tool.as_str())
         .collect::<Vec<&str>>();
     missing.sort();
@@ -62,9 +63,9 @@ pub(super) fn check_environment_tools(
 
     if has_package_json
         && preferred_js_pm.is_none()
-        && !tool_available("bun")
-        && !tool_available("pnpm")
-        && !tool_available("npm")
+        && !availability.is_available("bun")
+        && !availability.is_available("pnpm")
+        && !availability.is_available("npm")
     {
         super::add_finding(
             findings,
@@ -78,6 +79,27 @@ pub(super) fn check_environment_tools(
                 fixable: false,
             },
         );
+    }
+}
+
+struct ToolAvailability {
+    cache: HashMap<String, bool>,
+}
+
+impl ToolAvailability {
+    fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+        }
+    }
+
+    fn is_available(&mut self, tool: &str) -> bool {
+        if let Some(available) = self.cache.get(tool) {
+            return *available;
+        }
+        let available = tool_available(tool);
+        self.cache.insert(tool.to_owned(), available);
+        available
     }
 }
 
