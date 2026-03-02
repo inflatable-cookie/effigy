@@ -33,11 +33,7 @@ pub(super) fn resolve_managed_task_plan(
         });
     }
 
-    let profile_name = runtime_args
-        .passthrough
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "default".to_owned());
+    let profile_name = requested_profile_name(runtime_args);
 
     if let Some(entries) = concurrent_entries_for_profile(task, &profile_name) {
         return resolve_managed_concurrent_task_plan(ManagedConcurrentPlanInput {
@@ -60,11 +56,11 @@ pub(super) fn resolve_managed_task_plan(
             available: available_concurrent_profiles(task),
         });
     }
-    Err(RunnerError::TaskManagedProcessInvalidDefinition {
-        task: selector.task_name.clone(),
-        process: "concurrent".to_owned(),
-        detail: "managed `mode = \"tui\"` requires `concurrent = [...]` in `[tasks.<name>]` (default profile) and/or `[tasks.<name>.profiles.<profile>]`".to_owned(),
-    })
+    Err(invalid_managed_process_definition(
+        selector,
+        "concurrent",
+        "managed `mode = \"tui\"` requires `concurrent = [...]` in `[tasks.<name>]` (default profile) and/or `[tasks.<name>.profiles.<profile>]`",
+    ))
 }
 
 #[derive(Debug)]
@@ -108,13 +104,7 @@ fn resolve_managed_concurrent_task_plan(
 
     let mut resolved =
         resolve_concurrent_process_entries(selector, entries, catalogs, task_scope_cwd)?;
-
-    resolved.sort_by(|a, b| {
-        a.start_rank
-            .cmp(&b.start_rank)
-            .then_with(|| a.index.cmp(&b.index))
-            .then_with(|| a.spec.name.cmp(&b.spec.name))
-    });
+    sort_resolved_processes(&mut resolved);
     let mut processes = resolved
         .iter()
         .map(|entry| entry.spec.clone())
@@ -146,12 +136,11 @@ fn resolve_concurrent_process_entries(
         let ordinal = index + 1;
         let process_name = process_name_for_entry(entry, ordinal);
         if !used_names.insert(process_name.clone()) {
-            return Err(RunnerError::TaskManagedProcessInvalidDefinition {
-                task: selector.task_name.clone(),
-                process: process_name,
-                detail: "duplicate process name; set unique `name` values in `concurrent` entries"
-                    .to_owned(),
-            });
+            return Err(invalid_managed_process_definition(
+                selector,
+                &process_name,
+                "duplicate process name; set unique `name` values in `concurrent` entries",
+            ));
         }
 
         let (run, cwd) =
@@ -200,16 +189,16 @@ fn resolve_process_run_and_cwd(
             task_scope_cwd,
         ),
         (None, Some(run)) => Ok((run.clone(), task_scope_cwd.to_path_buf())),
-        (Some(_), Some(_)) => Err(RunnerError::TaskManagedProcessInvalidDefinition {
-            task: selector.task_name.clone(),
-            process: process_name.to_owned(),
-            detail: "define either `task` or `run`, not both".to_owned(),
-        }),
-        (None, None) => Err(RunnerError::TaskManagedProcessInvalidDefinition {
-            task: selector.task_name.clone(),
-            process: process_name.to_owned(),
-            detail: "missing both `task` and `run`".to_owned(),
-        }),
+        (Some(_), Some(_)) => Err(invalid_managed_process_definition(
+            selector,
+            process_name,
+            "define either `task` or `run`, not both",
+        )),
+        (None, None) => Err(invalid_managed_process_definition(
+            selector,
+            process_name,
+            "missing both `task` and `run`",
+        )),
     }
 }
 
@@ -225,11 +214,11 @@ fn maybe_append_shell_process(
     }
     let shell_name = "shell";
     if processes.iter().any(|process| process.name == shell_name) {
-        return Err(RunnerError::TaskManagedProcessInvalidDefinition {
-            task: selector.task_name.clone(),
-            process: shell_name.to_owned(),
-            detail: "reserved process name `shell` is already defined".to_owned(),
-        });
+        return Err(invalid_managed_process_definition(
+            selector,
+            shell_name,
+            "reserved process name `shell` is already defined",
+        ));
     }
     let shell_run = catalog
         .manifest
@@ -263,12 +252,22 @@ fn build_tab_order(
         .into_iter()
         .map(|(name, _, _)| name)
         .collect::<Vec<String>>();
+    let mut seen = tab_order.iter().cloned().collect::<HashSet<String>>();
     for process in processes {
-        if !tab_order.iter().any(|name| name == &process.name) {
+        if seen.insert(process.name.clone()) {
             tab_order.push(process.name.clone());
         }
     }
     tab_order
+}
+
+fn sort_resolved_processes(resolved: &mut [ConcurrentResolvedProcess]) {
+    resolved.sort_by(|a, b| {
+        a.start_rank
+            .cmp(&b.start_rank)
+            .then_with(|| a.index.cmp(&b.index))
+            .then_with(|| a.spec.name.cmp(&b.spec.name))
+    });
 }
 
 fn concurrent_entries_for_profile<'a>(
@@ -448,6 +447,26 @@ fn render_command_template(command: &str, repo_root: &Path, args_rendered: &str)
     command
         .replace("{repo}", &repo_rendered)
         .replace("{args}", args_rendered)
+}
+
+fn requested_profile_name(runtime_args: &TaskRuntimeArgs) -> String {
+    runtime_args
+        .passthrough
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "default".to_owned())
+}
+
+fn invalid_managed_process_definition(
+    selector: &TaskSelector,
+    process: &str,
+    detail: &str,
+) -> RunnerError {
+    RunnerError::TaskManagedProcessInvalidDefinition {
+        task: selector.task_name.clone(),
+        process: process.to_owned(),
+        detail: detail.to_owned(),
+    }
 }
 
 pub(super) fn run_or_render_managed_task(
