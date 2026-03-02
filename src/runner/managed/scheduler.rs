@@ -34,107 +34,15 @@ pub(super) fn build_run_sequence_schedule(
     task_name: &str,
     steps: &[ManifestManagedRunStep],
 ) -> Result<Option<Vec<Vec<usize>>>, RunnerError> {
-    let mut has_explicit_dependencies = false;
-    let mut declared_ids = HashSet::<String>::new();
-    let mut id_to_index = BTreeMap::<String, usize>::new();
-    let mut display_names = Vec::<String>::with_capacity(steps.len());
-
-    for (index, step) in steps.iter().enumerate() {
-        match step {
-            ManifestManagedRunStep::Command(_) => {
-                display_names.push(format!("step-{}", index + 1));
-            }
-            ManifestManagedRunStep::Step(table) => {
-                if let Some(raw_id) = table.id.as_deref() {
-                    let id = raw_id.trim();
-                    if id.is_empty() {
-                        return Err(RunnerError::TaskInvocation(format!(
-                            "task `{task_name}` run step {} has an empty `id`",
-                            index + 1
-                        )));
-                    }
-                    if !declared_ids.insert(id.to_owned()) {
-                        return Err(RunnerError::TaskInvocation(format!(
-                            "task `{task_name}` run sequence has duplicate step id `{id}`"
-                        )));
-                    }
-                    id_to_index.insert(id.to_owned(), index);
-                    display_names.push(id.to_owned());
-                } else {
-                    display_names.push(format!("step-{}", index + 1));
-                }
-                if !table.depends_on.is_empty() {
-                    has_explicit_dependencies = true;
-                }
-            }
-        }
-    }
-
-    if !has_explicit_dependencies {
+    let step_index = build_step_index(task_name, steps)?;
+    if !step_index.has_explicit_dependencies {
         return Ok(None);
     }
 
-    let mut dependencies = vec![Vec::<usize>::new(); steps.len()];
-    let mut dependents = vec![Vec::<usize>::new(); steps.len()];
+    let dependencies = build_step_dependencies(task_name, steps, &step_index.id_to_index)?;
+    let dependents = build_step_dependents(&dependencies);
 
-    for (index, step) in steps.iter().enumerate() {
-        let mut step_dependencies = Vec::<usize>::new();
-        match step {
-            ManifestManagedRunStep::Command(_) => {
-                if index > 0 {
-                    step_dependencies.push(index - 1);
-                }
-            }
-            ManifestManagedRunStep::Step(table) => {
-                if table.depends_on.is_empty() {
-                    if index > 0 {
-                        step_dependencies.push(index - 1);
-                    }
-                } else {
-                    let step_id = table.id.as_deref().map(str::trim).unwrap_or_default();
-                    if step_id.is_empty() {
-                        return Err(RunnerError::TaskInvocation(format!(
-                            "task `{task_name}` run step {} defines `depends_on` but is missing a non-empty `id`",
-                            index + 1
-                        )));
-                    }
-                    for raw_dep in &table.depends_on {
-                        let dep = raw_dep.trim();
-                        if dep.is_empty() {
-                            return Err(RunnerError::TaskInvocation(format!(
-                                "task `{task_name}` run step `{step_id}` has an empty dependency in `depends_on`"
-                            )));
-                        }
-                        let Some(dep_index) = id_to_index.get(dep).copied() else {
-                            return Err(RunnerError::TaskInvocation(format!(
-                                "task `{task_name}` run step `{step_id}` depends on missing step `{dep}`"
-                            )));
-                        };
-                        if dep_index == index {
-                            return Err(RunnerError::TaskInvocation(format!(
-                                "task `{task_name}` run step `{step_id}` cannot depend on itself"
-                            )));
-                        }
-                        step_dependencies.push(dep_index);
-                    }
-                }
-            }
-        }
-        step_dependencies.sort_unstable();
-        step_dependencies.dedup();
-        dependencies[index] = step_dependencies;
-    }
-
-    for (index, deps) in dependencies.iter().enumerate() {
-        for dep in deps {
-            dependents[*dep].push(index);
-        }
-    }
-    for outgoing in &mut dependents {
-        outgoing.sort_unstable();
-    }
-
-    if let Some(cycle) = detect_dependency_cycle(&dependencies, &display_names) {
+    if let Some(cycle) = detect_dependency_cycle(&dependencies, &step_index.display_names) {
         return Err(RunnerError::TaskInvocation(format!(
             "task `{task_name}` run sequence contains dependency cycle: {}",
             cycle.join(" -> ")
@@ -175,6 +83,141 @@ pub(super) fn build_run_sequence_schedule(
     }
 
     Ok(Some(levels))
+}
+
+struct StepIndex {
+    has_explicit_dependencies: bool,
+    id_to_index: BTreeMap<String, usize>,
+    display_names: Vec<String>,
+}
+
+fn build_step_index(
+    task_name: &str,
+    steps: &[ManifestManagedRunStep],
+) -> Result<StepIndex, RunnerError> {
+    let mut has_explicit_dependencies = false;
+    let mut declared_ids = HashSet::<String>::new();
+    let mut id_to_index = BTreeMap::<String, usize>::new();
+    let mut display_names = Vec::<String>::with_capacity(steps.len());
+
+    for (index, step) in steps.iter().enumerate() {
+        match step {
+            ManifestManagedRunStep::Command(_) => {
+                display_names.push(default_step_name(index));
+            }
+            ManifestManagedRunStep::Step(table) => {
+                if let Some(raw_id) = table.id.as_deref() {
+                    let id = raw_id.trim();
+                    if id.is_empty() {
+                        return Err(RunnerError::TaskInvocation(format!(
+                            "task `{task_name}` run step {} has an empty `id`",
+                            index + 1
+                        )));
+                    }
+                    if !declared_ids.insert(id.to_owned()) {
+                        return Err(RunnerError::TaskInvocation(format!(
+                            "task `{task_name}` run sequence has duplicate step id `{id}`"
+                        )));
+                    }
+                    id_to_index.insert(id.to_owned(), index);
+                    display_names.push(id.to_owned());
+                } else {
+                    display_names.push(default_step_name(index));
+                }
+                if !table.depends_on.is_empty() {
+                    has_explicit_dependencies = true;
+                }
+            }
+        }
+    }
+
+    Ok(StepIndex {
+        has_explicit_dependencies,
+        id_to_index,
+        display_names,
+    })
+}
+
+fn build_step_dependencies(
+    task_name: &str,
+    steps: &[ManifestManagedRunStep],
+    id_to_index: &BTreeMap<String, usize>,
+) -> Result<Vec<Vec<usize>>, RunnerError> {
+    let mut dependencies = vec![Vec::<usize>::new(); steps.len()];
+    for (index, step) in steps.iter().enumerate() {
+        dependencies[index] = step_dependencies(task_name, step, index, id_to_index)?;
+    }
+    Ok(dependencies)
+}
+
+fn step_dependencies(
+    task_name: &str,
+    step: &ManifestManagedRunStep,
+    index: usize,
+    id_to_index: &BTreeMap<String, usize>,
+) -> Result<Vec<usize>, RunnerError> {
+    let mut dependencies = Vec::<usize>::new();
+    match step {
+        ManifestManagedRunStep::Command(_) => {
+            if index > 0 {
+                dependencies.push(index - 1);
+            }
+        }
+        ManifestManagedRunStep::Step(table) => {
+            if table.depends_on.is_empty() {
+                if index > 0 {
+                    dependencies.push(index - 1);
+                }
+            } else {
+                let step_id = table.id.as_deref().map(str::trim).unwrap_or_default();
+                if step_id.is_empty() {
+                    return Err(RunnerError::TaskInvocation(format!(
+                        "task `{task_name}` run step {} defines `depends_on` but is missing a non-empty `id`",
+                        index + 1
+                    )));
+                }
+                for raw_dep in &table.depends_on {
+                    let dep = raw_dep.trim();
+                    if dep.is_empty() {
+                        return Err(RunnerError::TaskInvocation(format!(
+                            "task `{task_name}` run step `{step_id}` has an empty dependency in `depends_on`"
+                        )));
+                    }
+                    let Some(dep_index) = id_to_index.get(dep).copied() else {
+                        return Err(RunnerError::TaskInvocation(format!(
+                            "task `{task_name}` run step `{step_id}` depends on missing step `{dep}`"
+                        )));
+                    };
+                    if dep_index == index {
+                        return Err(RunnerError::TaskInvocation(format!(
+                            "task `{task_name}` run step `{step_id}` cannot depend on itself"
+                        )));
+                    }
+                    dependencies.push(dep_index);
+                }
+            }
+        }
+    }
+    dependencies.sort_unstable();
+    dependencies.dedup();
+    Ok(dependencies)
+}
+
+fn build_step_dependents(dependencies: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let mut dependents = vec![Vec::<usize>::new(); dependencies.len()];
+    for (index, deps) in dependencies.iter().enumerate() {
+        for dep in deps {
+            dependents[*dep].push(index);
+        }
+    }
+    for outgoing in &mut dependents {
+        outgoing.sort_unstable();
+    }
+    dependents
+}
+
+fn default_step_name(index: usize) -> String {
+    format!("step-{}", index + 1)
 }
 
 fn detect_dependency_cycle(

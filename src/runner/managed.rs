@@ -15,6 +15,8 @@ mod references;
 mod runtime;
 mod scheduler;
 
+const DEFAULT_MANAGED_PROFILE: &str = "default";
+
 pub(super) fn resolve_managed_task_plan(
     selector: &TaskSelector,
     catalog: &LoadedCatalog,
@@ -35,32 +37,18 @@ pub(super) fn resolve_managed_task_plan(
 
     let profile_name = requested_profile_name(runtime_args);
 
-    if let Some(entries) = concurrent_entries_for_profile(task, &profile_name) {
-        return resolve_managed_concurrent_task_plan(ManagedConcurrentPlanInput {
-            selector,
-            catalog,
-            task,
-            profile_name: &profile_name,
-            entries,
-            passthrough: &runtime_args.passthrough,
-            catalogs,
-            task_scope_cwd,
-        })
-        .map(Some);
-    }
-
-    if has_concurrent_schema(task) {
-        return Err(RunnerError::TaskManagedProfileNotFound {
-            task: selector.task_name.clone(),
-            profile: profile_name,
-            available: available_concurrent_profiles(task),
-        });
-    }
-    Err(invalid_managed_process_definition(
+    let entries = select_concurrent_entries(selector, task, &profile_name)?;
+    resolve_managed_concurrent_task_plan(ManagedConcurrentPlanInput {
         selector,
-        "concurrent",
-        "managed `mode = \"tui\"` requires `concurrent = [...]` in `[tasks.<name>]` (default profile) and/or `[tasks.<name>.profiles.<profile>]`",
-    ))
+        catalog,
+        task,
+        profile_name: &profile_name,
+        entries,
+        passthrough: &runtime_args.passthrough,
+        catalogs,
+        task_scope_cwd,
+    })
+    .map(Some)
 }
 
 #[derive(Debug)]
@@ -180,25 +168,32 @@ fn resolve_process_run_and_cwd(
     catalogs: &[LoadedCatalog],
     task_scope_cwd: &Path,
 ) -> Result<(String, PathBuf), RunnerError> {
-    match (&entry.task, &entry.run) {
-        (Some(task_ref), None) => references::resolve_task_reference_run(
+    match select_run_or_task(
+        entry.run.as_deref(),
+        entry.task.as_deref(),
+        || {
+            invalid_managed_process_definition(
+                selector,
+                process_name,
+                "define either `task` or `run`, not both",
+            )
+        },
+        || {
+            invalid_managed_process_definition(
+                selector,
+                process_name,
+                "missing both `task` and `run`",
+            )
+        },
+    )? {
+        RunOrTaskRef::Task(task_ref) => references::resolve_task_reference_run(
             &selector.task_name,
             process_name,
             task_ref,
             catalogs,
             task_scope_cwd,
         ),
-        (None, Some(run)) => Ok((run.clone(), task_scope_cwd.to_path_buf())),
-        (Some(_), Some(_)) => Err(invalid_managed_process_definition(
-            selector,
-            process_name,
-            "define either `task` or `run`, not both",
-        )),
-        (None, None) => Err(invalid_managed_process_definition(
-            selector,
-            process_name,
-            "missing both `task` and `run`",
-        )),
+        RunOrTaskRef::Run(run) => Ok((run.to_owned(), task_scope_cwd.to_path_buf())),
     }
 }
 
@@ -423,9 +418,22 @@ fn resolve_table_task_run_step(
     task_scope_cwd: &Path,
     depth: usize,
 ) -> Result<String, RunnerError> {
-    match (&step.run, &step.task) {
-        (Some(run), None) => Ok(render_command_template(run, repo_root, args_rendered)),
-        (None, Some(task_ref)) => references::resolve_task_reference_step(
+    match select_run_or_task(
+        step.run.as_deref(),
+        step.task.as_deref(),
+        || {
+            RunnerError::TaskInvocation(format!(
+                "task `{task_name}` run step is invalid: define either `run` or `task`, not both"
+            ))
+        },
+        || {
+            RunnerError::TaskInvocation(format!(
+                "task `{task_name}` run step is invalid: missing both `run` and `task`"
+            ))
+        },
+    )? {
+        RunOrTaskRef::Run(run) => Ok(render_command_template(run, repo_root, args_rendered)),
+        RunOrTaskRef::Task(task_ref) => references::resolve_task_reference_step(
             task_name,
             task_ref,
             args_rendered,
@@ -433,12 +441,6 @@ fn resolve_table_task_run_step(
             task_scope_cwd,
             depth,
         ),
-        (Some(_), Some(_)) => Err(RunnerError::TaskInvocation(format!(
-            "task `{task_name}` run step is invalid: define either `run` or `task`, not both"
-        ))),
-        (None, None) => Err(RunnerError::TaskInvocation(format!(
-            "task `{task_name}` run step is invalid: missing both `run` and `task`"
-        ))),
     }
 }
 
@@ -454,7 +456,52 @@ fn requested_profile_name(runtime_args: &TaskRuntimeArgs) -> String {
         .passthrough
         .first()
         .cloned()
-        .unwrap_or_else(|| "default".to_owned())
+        .unwrap_or_else(|| DEFAULT_MANAGED_PROFILE.to_owned())
+}
+
+fn select_concurrent_entries<'a>(
+    selector: &TaskSelector,
+    task: &'a ManifestTask,
+    profile_name: &str,
+) -> Result<&'a [ManifestManagedConcurrentEntry], RunnerError> {
+    if let Some(entries) = concurrent_entries_for_profile(task, profile_name) {
+        return Ok(entries);
+    }
+    if has_concurrent_schema(task) {
+        return Err(RunnerError::TaskManagedProfileNotFound {
+            task: selector.task_name.clone(),
+            profile: profile_name.to_owned(),
+            available: available_concurrent_profiles(task),
+        });
+    }
+    Err(invalid_managed_process_definition(
+        selector,
+        "concurrent",
+        "managed `mode = \"tui\"` requires `concurrent = [...]` in `[tasks.<name>]` (default profile) and/or `[tasks.<name>.profiles.<profile>]`",
+    ))
+}
+
+enum RunOrTaskRef<'a> {
+    Run(&'a str),
+    Task(&'a str),
+}
+
+fn select_run_or_task<'a, FBoth, FNone>(
+    run: Option<&'a str>,
+    task: Option<&'a str>,
+    both_error: FBoth,
+    none_error: FNone,
+) -> Result<RunOrTaskRef<'a>, RunnerError>
+where
+    FBoth: FnOnce() -> RunnerError,
+    FNone: FnOnce() -> RunnerError,
+{
+    match (run, task) {
+        (Some(run), None) => Ok(RunOrTaskRef::Run(run)),
+        (None, Some(task)) => Ok(RunOrTaskRef::Task(task)),
+        (Some(_), Some(_)) => Err(both_error()),
+        (None, None) => Err(none_error()),
+    }
 }
 
 fn invalid_managed_process_definition(
