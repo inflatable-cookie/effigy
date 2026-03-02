@@ -12,6 +12,7 @@ Primary contract checks in this repo:
 - `./scripts/check-release-gates.sh`
 - `./scripts/check-release-smoke.sh`
 - `./scripts/check-release-install-from-tag.sh`
+- `./scripts/check-distribution-metadata.sh`
 - `./scripts/check-distribution-first-publish.sh`
 - `./scripts/update-homebrew-formula-from-metadata.sh`
 
@@ -252,6 +253,7 @@ What `check-release-gates.sh` enforces:
 - docs + JSON quality gates (`check-quality-gates.sh --all --ci`)
 - release binary build
 - release smoke checks (`help`, `tasks`, `farmyard/tasks`, `test --plan`, `farmyard/test --plan`)
+- distribution metadata validation (`check-distribution-metadata.sh`)
 - install validation from the pushed tag (`check-release-install-from-tag.sh`)
 
 ## Related Guides

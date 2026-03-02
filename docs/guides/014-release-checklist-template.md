@@ -51,6 +51,8 @@ Owner: `name/team`
 
 ### Crates
 - [ ] `Cargo.toml` metadata verified.
+- [ ] Distribution metadata validation passes:
+  - [ ] `./scripts/check-distribution-metadata.sh --tag v0.__.__`
 - [ ] Tag points to intended commit.
 - [ ] Publish command executed/queued.
 - [ ] Install validated from git tag:

@@ -38,6 +38,12 @@ run_step "quality gates (ci mode)" ./scripts/check-quality-gates.sh --all --ci
 run_step "release binary build" cargo build --release --bin effigy
 run_step "release binary smoke" ./scripts/check-release-smoke.sh ./target/release/effigy
 if [[ -n "$TAG" ]]; then
+  metadata_args=(--tag "$TAG")
+  run_step "distribution metadata validation" ./scripts/check-distribution-metadata.sh "${metadata_args[@]}"
+else
+  run_step "distribution metadata validation" ./scripts/check-distribution-metadata.sh
+fi
+if [[ -n "$TAG" ]]; then
   install_args=(--tag "$TAG")
   if [[ -n "$REPO_URL" ]]; then
     install_args+=(--repo-url "$REPO_URL")
