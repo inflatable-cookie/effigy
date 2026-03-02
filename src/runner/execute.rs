@@ -16,8 +16,9 @@ mod selection;
 use super::cache::check_task_cache;
 use super::locking::{acquire_scopes, LockScope};
 use super::managed::{render_task_run_spec, resolve_managed_task_plan, run_or_render_managed_task};
+use super::util::render_passthrough_args;
 use super::{LoadedCatalog, ManifestManagedRun, ManifestTask, RunnerError};
-use preflight::{build_execution_preflight, render_passthrough_args};
+use preflight::build_execution_preflight;
 use selection::{resolve_task_selection, SelectionResolution};
 
 pub(super) fn task_run_preview(task: &ManifestTask) -> String {
