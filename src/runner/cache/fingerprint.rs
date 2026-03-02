@@ -1,12 +1,19 @@
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::path::Path;
 
-use globset::Glob;
 use serde::Serialize;
-use walkdir::WalkDir;
 
 use crate::runner::{ManifestTaskCache, RunnerError};
+
+#[path = "fingerprint/digest.rs"]
+mod digest;
+#[path = "fingerprint/resolve.rs"]
+mod resolve;
+#[path = "fingerprint/stamp.rs"]
+mod stamp;
+
+use digest::fnv1a_hex;
+use resolve::{has_glob_magic, render_relative_or_absolute, resolve_declared_matches};
+use stamp::stamp_path;
 
 #[derive(Debug)]
 pub(super) struct CacheFingerprintSnapshot {
@@ -131,173 +138,4 @@ fn collect_env_stamps(keys: &[String]) -> Vec<DeclaredEnvStamp> {
         .collect::<Vec<DeclaredEnvStamp>>();
     env.sort_by(|a, b| a.key.cmp(&b.key));
     env
-}
-
-fn resolve_declared_matches(
-    catalog_root: &Path,
-    declaration: &str,
-) -> Result<Vec<PathBuf>, RunnerError> {
-    if has_glob_magic(declaration) {
-        return resolve_glob_matches(catalog_root, declaration);
-    }
-    Ok(vec![catalog_root.join(declaration)])
-}
-
-fn resolve_glob_matches(catalog_root: &Path, pattern: &str) -> Result<Vec<PathBuf>, RunnerError> {
-    let glob = Glob::new(pattern).map_err(|error| {
-        RunnerError::TaskInvocation(format!(
-            "invalid cache declaration glob `{pattern}`: {error}"
-        ))
-    })?;
-    let matcher = glob.compile_matcher();
-    let mut matches = WalkDir::new(catalog_root)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            if path == catalog_root {
-                return None;
-            }
-            let relative = path.strip_prefix(catalog_root).ok()?;
-            let relative_rendered = relative.to_string_lossy().replace('\\', "/");
-            matcher
-                .is_match(&relative_rendered)
-                .then_some(path.to_path_buf())
-        })
-        .collect::<Vec<PathBuf>>();
-    matches.sort();
-    Ok(matches)
-}
-
-fn stamp_path(catalog_root: &Path, path: &Path) -> Result<PathStamp, RunnerError> {
-    let rendered = render_relative_or_absolute(catalog_root, path);
-    let Ok(metadata) = fs::metadata(path) else {
-        return Ok(PathStamp {
-            path: rendered,
-            kind: "missing",
-            exists: false,
-            size: None,
-            modified_epoch_ms: None,
-            digest: None,
-        });
-    };
-
-    if metadata.is_file() {
-        let body = fs::read(path).map_err(|error| {
-            RunnerError::TaskInvocation(format!(
-                "failed reading cache input {}: {error}",
-                path.display()
-            ))
-        })?;
-        return Ok(PathStamp {
-            path: rendered,
-            kind: "file",
-            exists: true,
-            size: Some(metadata.len()),
-            modified_epoch_ms: metadata_modified_epoch_ms(&metadata),
-            digest: Some(fnv1a_hex(&body)),
-        });
-    }
-
-    if metadata.is_dir() {
-        let digest = digest_directory(path)?;
-        return Ok(PathStamp {
-            path: rendered,
-            kind: "dir",
-            exists: true,
-            size: None,
-            modified_epoch_ms: metadata_modified_epoch_ms(&metadata),
-            digest: Some(digest),
-        });
-    }
-
-    Ok(PathStamp {
-        path: rendered,
-        kind: "other",
-        exists: true,
-        size: None,
-        modified_epoch_ms: metadata_modified_epoch_ms(&metadata),
-        digest: None,
-    })
-}
-
-fn digest_directory(root: &Path) -> Result<String, RunnerError> {
-    let mut hasher = Fnv1a64::new();
-    for entry in WalkDir::new(root)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        let path = entry.path();
-        let Ok(relative) = path.strip_prefix(root) else {
-            continue;
-        };
-        let rel_rendered = relative.to_string_lossy().replace('\\', "/");
-        hasher.update(rel_rendered.as_bytes());
-
-        let Ok(metadata) = fs::metadata(path) else {
-            continue;
-        };
-        if metadata.is_file() {
-            hasher.update(b"f");
-            let body = fs::read(path).map_err(|error| {
-                RunnerError::TaskInvocation(format!(
-                    "failed reading cache directory input {}: {error}",
-                    path.display()
-                ))
-            })?;
-            hasher.update(&body);
-        } else if metadata.is_dir() {
-            hasher.update(b"d");
-        }
-    }
-    Ok(hasher.finish_hex())
-}
-
-fn metadata_modified_epoch_ms(metadata: &fs::Metadata) -> Option<u128> {
-    metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_millis())
-}
-
-fn render_relative_or_absolute(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_else(|_| path.display().to_string())
-}
-
-fn has_glob_magic(value: &str) -> bool {
-    value.contains('*') || value.contains('?') || value.contains('[') || value.contains('{')
-}
-
-fn fnv1a_hex(bytes: &[u8]) -> String {
-    let mut hasher = Fnv1a64::new();
-    hasher.update(bytes);
-    hasher.finish_hex()
-}
-
-struct Fnv1a64 {
-    state: u64,
-}
-
-impl Fnv1a64 {
-    fn new() -> Self {
-        Self {
-            state: 0xcbf29ce484222325,
-        }
-    }
-
-    fn update(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            self.state ^= u64::from(*byte);
-            self.state = self.state.wrapping_mul(0x100000001b3);
-        }
-    }
-
-    fn finish_hex(&self) -> String {
-        format!("{:016x}", self.state)
-    }
 }
