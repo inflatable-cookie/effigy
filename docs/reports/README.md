@@ -48,6 +48,7 @@ When a feature spans multiple same-day checkpoints, add a consolidation report t
 - [`2026-03-01-distribution-phase-e-wrapper-evaluation-checkpoint.md`](./2026-03-01-distribution-phase-e-wrapper-evaluation-checkpoint.md)
 - [`2026-03-02-distribution-acceptance-closeout-prepublish.md`](./2026-03-02-distribution-acceptance-closeout-prepublish.md)
 - [`2026-03-02-distribution-first-publish-runbook-prep.md`](./2026-03-02-distribution-first-publish-runbook-prep.md)
+- [`2026-03-02-distribution-first-publish-artifacts-hardening.md`](./2026-03-02-distribution-first-publish-artifacts-hardening.md)
 - [`2026-03-02-distribution-first-publish-script-automation.md`](./2026-03-02-distribution-first-publish-script-automation.md)
 - [`2026-03-02-distribution-metadata-validation-automation.md`](./2026-03-02-distribution-metadata-validation-automation.md)
 - [`2026-03-02-homebrew-metadata-workflow-checkpoint.md`](./2026-03-02-homebrew-metadata-workflow-checkpoint.md)

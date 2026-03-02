@@ -27,7 +27,7 @@ Run this sequence in one release window:
 Optional one-command execution helper:
 
 ```bash
-./scripts/check-distribution-first-publish.sh --tag vX.Y.Z
+./scripts/check-distribution-first-publish.sh --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
 ```
 
 ## 3) Command Matrix
@@ -81,6 +81,8 @@ effigy --json help
 - Homebrew fresh install + upgrade logs
 - CI pinned install log
 - one dated checkpoint report in `docs/reports/`
+
+When using the helper script, attach per-step logs from `--artifacts-dir` directly in the checkpoint report.
 
 ## 5) Acceptance Criteria Mapping
 
