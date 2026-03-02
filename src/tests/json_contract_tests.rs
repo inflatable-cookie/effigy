@@ -465,6 +465,8 @@ fn builtin_completion_candidates_json_contract_has_versioned_shape() {
     assert_eq!(parsed["manifest_count"], 2);
     assert!(parsed["cache_age_ms"].is_null());
     assert!(parsed["cache_ttl_ms"].is_null());
+    assert_eq!(parsed["effective_cache_ttl_ms"], 2000);
+    assert_eq!(parsed["cache_ttl_source"], "default");
     let candidates = parsed["candidates"].as_array().expect("candidates array");
     assert!(candidates
         .iter()
@@ -492,6 +494,8 @@ fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_re
     assert_eq!(first_parsed["cache_state"], "miss_initial");
     assert!(first_parsed["cache_age_ms"].is_null());
     assert!(first_parsed["cache_ttl_ms"].is_null());
+    assert_eq!(first_parsed["effective_cache_ttl_ms"], 2000);
+    assert_eq!(first_parsed["cache_ttl_source"], "default");
 
     let second = run_manifest_task_with_cwd(
         &TaskInvocation {
@@ -508,6 +512,8 @@ fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_re
     assert_eq!(second_parsed["manifest_count"], 1);
     assert!(second_parsed["cache_age_ms"].as_u64().is_some());
     assert_eq!(second_parsed["cache_ttl_ms"], 2000);
+    assert_eq!(second_parsed["effective_cache_ttl_ms"], 2000);
+    assert_eq!(second_parsed["cache_ttl_source"], "default");
 }
 
 #[test]
@@ -531,6 +537,8 @@ fn builtin_completion_candidates_json_contract_expires_cache_after_ttl() {
     assert_eq!(first_parsed["cache_state"], "miss_initial");
     assert!(first_parsed["cache_age_ms"].is_null());
     assert!(first_parsed["cache_ttl_ms"].is_null());
+    assert_eq!(first_parsed["effective_cache_ttl_ms"], 2000);
+    assert_eq!(first_parsed["cache_ttl_source"], "default");
 
     thread::sleep(Duration::from_millis(2200));
 
@@ -548,6 +556,8 @@ fn builtin_completion_candidates_json_contract_expires_cache_after_ttl() {
     assert_eq!(second_parsed["cache_state"], "miss_ttl");
     assert!(second_parsed["cache_age_ms"].is_null());
     assert!(second_parsed["cache_ttl_ms"].is_null());
+    assert_eq!(second_parsed["effective_cache_ttl_ms"], 2000);
+    assert_eq!(second_parsed["cache_ttl_source"], "default");
 }
 
 #[test]
@@ -570,6 +580,8 @@ fn builtin_completion_candidates_json_contract_invalidates_cache_on_manifest_cha
     assert_eq!(first_parsed["cache_state"], "miss_initial");
     assert!(first_parsed["cache_age_ms"].is_null());
     assert!(first_parsed["cache_ttl_ms"].is_null());
+    assert_eq!(first_parsed["effective_cache_ttl_ms"], 2000);
+    assert_eq!(first_parsed["cache_ttl_source"], "default");
 
     let original_modified = fs::metadata(&manifest_path)
         .expect("manifest metadata")
@@ -601,6 +613,8 @@ fn builtin_completion_candidates_json_contract_invalidates_cache_on_manifest_cha
     assert_eq!(second_parsed["cache_state"], "miss_manifest_change");
     assert!(second_parsed["cache_age_ms"].is_null());
     assert!(second_parsed["cache_ttl_ms"].is_null());
+    assert_eq!(second_parsed["effective_cache_ttl_ms"], 2000);
+    assert_eq!(second_parsed["cache_ttl_source"], "default");
     assert!(second_parsed["candidates"]
         .as_array()
         .expect("candidates array")

@@ -11,8 +11,8 @@ use super::help::render_completion_candidates_help;
 mod cache;
 
 use cache::{
-    completion_candidates_cache_ttl_ms, load_completion_candidates_with_cache,
-    CompletionCandidatesCacheState,
+    completion_candidates_cache_ttl_ms, completion_candidates_cache_ttl_source,
+    load_completion_candidates_with_cache, CompletionCandidatesCacheState,
 };
 
 struct CompletionCandidatesResult {
@@ -22,6 +22,8 @@ struct CompletionCandidatesResult {
     manifest_count: usize,
     cache_age_ms: Option<u128>,
     cache_ttl_ms: Option<u64>,
+    effective_cache_ttl_ms: u64,
+    cache_ttl_source: &'static str,
 }
 
 pub(super) fn run_completion_candidates(
@@ -107,6 +109,8 @@ pub(super) fn run_completion_candidates(
             "manifest_count": completion_candidates.manifest_count,
             "cache_age_ms": completion_candidates.cache_age_ms,
             "cache_ttl_ms": completion_candidates.cache_ttl_ms,
+            "effective_cache_ttl_ms": completion_candidates.effective_cache_ttl_ms,
+            "cache_ttl_source": completion_candidates.cache_ttl_source,
         });
         return serde_json::to_string_pretty(&payload)
             .map(Some)
@@ -122,6 +126,8 @@ fn collect_completion_candidates(
 ) -> Result<CompletionCandidatesResult, RunnerError> {
     let (base_candidates, cache_state, manifest_count, cache_age_ms) =
         load_completion_candidates_with_cache(repo_root)?;
+    let effective_cache_ttl_ms = completion_candidates_cache_ttl_ms();
+    let cache_ttl_source = completion_candidates_cache_ttl_source();
 
     let candidates = base_candidates
         .into_iter()
@@ -139,6 +145,8 @@ fn collect_completion_candidates(
         manifest_count,
         cache_age_ms,
         cache_ttl_ms: (cache_state == CompletionCandidatesCacheState::Hit)
-            .then_some(completion_candidates_cache_ttl_ms()),
+            .then_some(effective_cache_ttl_ms),
+        effective_cache_ttl_ms,
+        cache_ttl_source,
     })
 }
