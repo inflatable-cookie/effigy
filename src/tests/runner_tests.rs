@@ -7,7 +7,7 @@ mod runner_core_tests;
 #[path = "runner_tests/run_array_tests/mod.rs"]
 mod run_array_tests;
 
-#[path = "runner_tests/tasks_listing_tests.rs"]
+#[path = "runner_tests/tasks_listing_tests/mod.rs"]
 mod tasks_listing_tests;
 
 #[path = "runner_tests/builtin_command_tests/mod.rs"]
