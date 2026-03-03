@@ -4,7 +4,7 @@ mod catalog_discovery_tests;
 #[path = "runner_tests/runner_core_tests/mod.rs"]
 mod runner_core_tests;
 
-#[path = "runner_tests/run_array_tests.rs"]
+#[path = "runner_tests/run_array_tests/mod.rs"]
 mod run_array_tests;
 
 #[path = "runner_tests/tasks_listing_tests.rs"]
