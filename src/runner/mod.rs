@@ -192,7 +192,7 @@ mod contract_test_support;
 mod catalogs_contract_tests;
 
 #[cfg(test)]
-#[path = "../tests/json_contract_tests.rs"]
+#[path = "../tests/json_contract_tests/mod.rs"]
 mod json_contract_tests;
 
 #[cfg(test)]
