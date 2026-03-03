@@ -1,4 +1,4 @@
-use super::*;
+use super::prelude::*;
 
 fn run_task(root: &PathBuf, name: &str, args: &[&str]) -> Result<String, RunnerError> {
     run_manifest_task_with_cwd(

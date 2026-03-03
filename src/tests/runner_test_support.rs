@@ -1,4 +1,4 @@
-use super::{run_manifest_task_with_cwd, run_tasks, RunnerError};
+use super::super::{run_manifest_task_with_cwd, run_tasks, RunnerError};
 use crate::{TaskInvocation, TasksArgs};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;

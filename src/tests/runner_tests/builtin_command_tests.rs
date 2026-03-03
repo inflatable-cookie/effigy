@@ -1,4 +1,4 @@
-use super::*;
+use super::prelude::*;
 
 struct BuiltinTestErrorCase {
     workspace: &'static str,
