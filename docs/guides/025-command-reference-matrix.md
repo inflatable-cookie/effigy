@@ -76,6 +76,7 @@ effigy completion candidates [--repo <PATH>] [--prefix <value>] [--json]
 - `tasks.<name>.env` values support `{project}` and `{repo}` catalog-root token substitution.
 - built-in `test` automatically applies manifest `[env]` `CARGO_*` values to cargo suites (`cargo-nextest` and `cargo-test`), including grouped profile entries.
 - built-in cargo-env matching mode is configured via `[test].cargo_env_match` (`executable-only`, `prefix-aware`, `shell-aware`).
+- `effigy test --plan` target output (text and JSON) includes effective `cargo_env_match` per target.
 - built-in cargo-env auto-apply matching accepts optional `env`/`exec`/`command` wrappers, leading `KEY=value` assignments, and path-qualified cargo binaries.
 - shell-wrapped commands such as `sh -lc "cargo test --workspace"` are matched only when `[test].cargo_env_match = "shell-aware"`.
 - `completion` command list is sourced from the built-in command index (`BUILTIN_TASKS`) to reduce drift with command discovery output.

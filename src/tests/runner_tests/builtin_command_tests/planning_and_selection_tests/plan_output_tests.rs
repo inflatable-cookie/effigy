@@ -22,6 +22,7 @@ fn run_manifest_task_builtin_test_plan_renders_detection_summary() {
             "runner:",
             "available-suites:",
             "suite-source: auto-detected",
+            "cargo-env-match: prefix-aware",
             "vitest",
             "fallback-chain",
         ],
@@ -37,6 +38,7 @@ fn run_manifest_task_builtin_test_plan_json_has_versioned_schema() {
     let parsed = parse_json_output(&out);
     assert_plan_schema_v1(&parsed);
     assert!(parsed["targets"].is_array());
+    assert_eq!(parsed["targets"][0]["cargo_env_match"], "prefix-aware");
     assert_eq!(parsed["recovery"], serde_json::Value::Null);
 }
 
@@ -52,13 +54,15 @@ fn run_manifest_task_builtin_test_plan_marks_configured_suite_source() {
             "Test Plan",
             "available-suites: unit",
             "suite-source: configured",
+            "cargo-env-match: prefix-aware",
             "test.suites.unit",
         ],
     );
 }
 
 #[test]
-fn run_manifest_task_builtin_test_plan_mixed_workspace_reports_configured_and_auto_detected_sources() {
+fn run_manifest_task_builtin_test_plan_mixed_workspace_reports_configured_and_auto_detected_sources(
+) {
     let root = temp_workspace("builtin-test-plan-mixed-suite-sources");
     let farmyard = root.join("farmyard");
     let dairy = root.join("dairy");
@@ -89,12 +93,15 @@ alias = "dairy"
             "Target Summary",
             "farmyard: source=configured suites=unit",
             "dairy: source=auto-detected suites=vitest",
+            "cargo-env-match=prefix-aware",
             "Target: farmyard",
             "available-suites: unit",
             "suite-source: configured",
+            "cargo-env-match: prefix-aware",
             "test.suites.unit",
             "Target: dairy",
             "suite-source: auto-detected",
+            "cargo-env-match: prefix-aware",
             "vitest",
         ],
     );
@@ -161,6 +168,7 @@ fn run_manifest_task_builtin_test_plan_text_and_json_projection_consistency() {
     let json = run_builtin_ok(root, "test", &["--plan", "--json", "unit", "user-service"]);
     let parsed = parse_json_output(&json);
     let target = &parsed["targets"][0];
+    assert_eq!(target["cargo_env_match"], "prefix-aware");
 
     let available_suites = target["available_suites"]
         .as_array()
@@ -204,4 +212,32 @@ fn run_manifest_task_builtin_test_plan_text_and_json_projection_consistency() {
             "missing evidence in text output: {evidence}"
         );
     }
+}
+
+#[test]
+fn run_manifest_task_builtin_test_plan_reports_shell_aware_cargo_env_match_in_text_and_json() {
+    let root = temp_workspace("builtin-test-plan-cargo-env-match-shell-aware");
+    write_root_manifest(
+        &root,
+        r#"[test]
+cargo_env_match = "shell-aware"
+
+[test.suites]
+integration = "sh -lc 'cargo nextest run --workspace'"
+"#,
+    );
+
+    let text = run_builtin_ok(root.clone(), "test", &["--plan"]);
+    assert_contains_all(
+        &text,
+        &[
+            "Target Summary",
+            "cargo-env-match=shell-aware",
+            "cargo-env-match: shell-aware",
+        ],
+    );
+
+    let json = run_builtin_ok(root, "test", &["--plan", "--json"]);
+    let parsed = parse_json_output(&json);
+    assert_eq!(parsed["targets"][0]["cargo_env_match"], "shell-aware");
 }

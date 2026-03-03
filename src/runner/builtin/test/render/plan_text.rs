@@ -38,8 +38,8 @@ pub(super) fn render_builtin_test_plan_text(
             let projection = project_target_plan(target, requested_suite, passthrough);
             let available_suites = projection.available_suites.join(", ");
             format!(
-                "{}: source={} suites={}",
-                target.name, target.suite_source, available_suites
+                "{}: source={} suites={} cargo-env-match={}",
+                target.name, target.suite_source, available_suites, projection.cargo_env_match
             )
         })
         .collect::<Vec<String>>();
@@ -56,6 +56,7 @@ pub(super) fn render_builtin_test_plan_text(
                 KeyValue::new("runner", runners),
                 KeyValue::new("available-suites", available_suites.clone()),
                 KeyValue::new("suite-source", target.suite_source.clone()),
+                KeyValue::new("cargo-env-match", projection.cargo_env_match.clone()),
             ])?;
             renderer.text("")?;
             renderer.bullet_list("command", &projection.commands)?;
@@ -67,6 +68,7 @@ pub(super) fn render_builtin_test_plan_text(
                 KeyValue::new("runner", "<none>".to_owned()),
                 KeyValue::new("available-suites", available_suites.clone()),
                 KeyValue::new("suite-source", target.suite_source.clone()),
+                KeyValue::new("cargo-env-match", projection.cargo_env_match.clone()),
                 KeyValue::new("command", "<none>".to_owned()),
             ])?;
             renderer.text("")?;

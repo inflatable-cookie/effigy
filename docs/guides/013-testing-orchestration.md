@@ -17,7 +17,7 @@ Per target root:
 2. `cargo nextest run` when `Cargo.toml` exists and `cargo-nextest` is available.
 3. `cargo test` when `Cargo.toml` exists and `cargo-nextest` is unavailable.
 
-`effigy test --plan` prints selected runner, command, evidence, and fallback chain.
+`effigy test --plan` prints selected runner, command, evidence, fallback chain, and per-target `cargo-env-match` mode.
 
 ## Explicit Override
 
