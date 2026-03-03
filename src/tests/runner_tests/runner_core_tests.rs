@@ -49,15 +49,16 @@ fn write_executable(path: &PathBuf, script: &str) {
     fs::set_permissions(path, perms).expect("chmod");
 }
 
+fn write_root_manifest(root: &PathBuf, body: &str) {
+    write_manifest(&root.join("effigy.toml"), body);
+}
+
 fn write_empty_manifest(root: &PathBuf) {
-    write_manifest(&root.join("effigy.toml"), "");
+    write_root_manifest(root, "");
 }
 
 fn write_build_task_manifest(root: &PathBuf, run: &str) {
-    write_manifest(
-        &root.join("effigy.toml"),
-        &format!("[tasks.build]\nrun = \"{run}\"\n"),
-    );
+    write_root_manifest(root, &format!("[tasks.build]\nrun = \"{run}\"\n"));
 }
 
 fn write_package_json_scripts(root: &PathBuf, scripts: &[(&str, &str)]) {
@@ -90,6 +91,16 @@ fn assert_builtin_help_case(case: &BuiltinHelpCase) {
     write_empty_manifest(&root);
     let out = run_builtin_ok(root, case.command, case.args);
     assert_contains_all(&out, case.expected);
+}
+
+fn assert_builtin_ok_contains(root: PathBuf, command: &str, args: &[&str], expected: &[&str]) {
+    let out = run_builtin_ok(root, command, args);
+    assert_contains_all(&out, expected);
+}
+
+fn assert_run_task_ok_empty(root: &PathBuf, name: &str, args: &[&str]) {
+    let out = run_task(root, name, args).expect("task should succeed");
+    assert_eq!(out, "");
 }
 
 #[test]
@@ -129,10 +140,7 @@ fn parse_task_selector_supports_relative_prefixed_task() {
 #[test]
 fn run_manifest_task_unknown_prefix_returns_catalog_error() {
     let root = temp_workspace("unknown-prefix");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.reset-db]\nrun = \"printf root\"\n",
-    );
+    write_root_manifest(&root, "[tasks.reset-db]\nrun = \"printf root\"\n");
 
     let err = run_task(&root, "farmyard/reset-db", &[]).expect_err("unknown prefix");
     assert_catalog_prefix_not_found(err, "farmyard", &["root"]);
@@ -159,7 +167,7 @@ fn run_manifest_task_removed_builtins_show_migration_message() {
 
     for case in cases {
         let root = temp_workspace(case.workspace);
-        write_manifest(&root.join("effigy.toml"), case.manifest);
+        write_root_manifest(&root, case.manifest);
         let err = run_builtin_err(root, case.command, case.args);
         assert_task_invocation_error_contains(err, case.expected);
     }
@@ -192,7 +200,7 @@ fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {
 #[test]
 fn run_manifest_task_builtin_init_refuses_overwrite_without_force() {
     let root = temp_workspace("builtin-init-refuse-overwrite");
-    write_manifest(&root.join("effigy.toml"), "[tasks]\nold = \"printf old\"\n");
+    write_root_manifest(&root, "[tasks]\nold = \"printf old\"\n");
 
     let err = run_builtin_err(root.clone(), "init", &[]);
     assert_task_invocation_error_contains(err, &["already exists", "`effigy init --force`"]);
@@ -204,7 +212,7 @@ fn run_manifest_task_builtin_init_refuses_overwrite_without_force() {
 #[test]
 fn run_manifest_task_builtin_init_force_overwrites_existing_manifest() {
     let root = temp_workspace("builtin-init-force-overwrite");
-    write_manifest(&root.join("effigy.toml"), "[tasks]\nold = \"printf old\"\n");
+    write_root_manifest(&root, "[tasks]\nold = \"printf old\"\n");
 
     let out = run_builtin_ok(root.clone(), "init", &["--force"]);
     assert_contains_all(&out, &["Overwrote effigy.toml"]);
@@ -299,10 +307,7 @@ fn run_manifest_task_builtin_migrate_preserves_package_source_file() {
 #[test]
 fn run_manifest_task_builtin_migrate_conflicts_require_manual_remediation() {
     let root = temp_workspace("builtin-migrate-conflicts");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks]\nbuild = \"printf old\"\n",
-    );
+    write_root_manifest(&root, "[tasks]\nbuild = \"printf old\"\n");
     write_package_json_scripts(&root, &[("build", "npm run compile"), ("lint", "eslint .")]);
 
     let out = run_builtin_ok(root.clone(), "migrate", &["--apply"]);
@@ -322,10 +327,7 @@ fn run_manifest_task_builtin_migrate_conflicts_require_manual_remediation() {
 #[test]
 fn run_manifest_task_builtin_migrate_json_reports_schema_and_conflicts() {
     let root = temp_workspace("builtin-migrate-json");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks]\nbuild = \"printf old\"\n",
-    );
+    write_root_manifest(&root, "[tasks]\nbuild = \"printf old\"\n");
     write_package_json_scripts(
         &root,
         &[("build", "npm run compile"), ("test", "vitest run")],
@@ -394,7 +396,7 @@ fn run_manifest_task_builtin_watch_validates_owner_and_arguments() {
 
     for case in cases {
         let root = temp_workspace(case.workspace);
-        write_manifest(&root.join("effigy.toml"), case.manifest);
+        write_root_manifest(&root, case.manifest);
         let err = run_builtin_err(root, case.command, case.args);
         assert_task_invocation_error_contains(err, case.expected);
     }
@@ -404,8 +406,8 @@ fn run_manifest_task_builtin_watch_validates_owner_and_arguments() {
 fn run_manifest_task_builtin_watch_once_executes_target_task() {
     let root = temp_workspace("builtin-watch-once-exec");
     let marker = root.join("watch-once.log");
-    write_manifest(
-        &root.join("effigy.toml"),
+    write_root_manifest(
+        &root,
         &format!(
             "[tasks.build]\nrun = \"printf watched > '{}'\"\n",
             marker.display()
@@ -486,8 +488,12 @@ fn run_manifest_task_builtin_completion_bash_outputs_script() {
     let root = temp_workspace("builtin-completion-bash");
     write_empty_manifest(&root);
 
-    let out = run_builtin_ok(root, "completion", &["bash"]);
-    assert_contains_all(&out, &["complete -F _effigy effigy", "cache completion"]);
+    assert_builtin_ok_contains(
+        root,
+        "completion",
+        &["bash"],
+        &["complete -F _effigy effigy", "cache completion"],
+    );
 }
 
 #[test]
@@ -495,9 +501,10 @@ fn run_manifest_task_builtin_completion_json_uses_completion_schema() {
     let root = temp_workspace("builtin-completion-json");
     write_empty_manifest(&root);
 
-    let out = run_builtin_ok(root, "completion", &["zsh", "--json"]);
-    assert_contains_all(
-        &out,
+    assert_builtin_ok_contains(
+        root,
+        "completion",
+        &["zsh", "--json"],
         &[
             "\"schema\": \"effigy.completion.v1\"",
             "\"shell\": \"zsh\"",
@@ -513,10 +520,7 @@ fn run_manifest_task_verbose_root_includes_resolution_trace() {
     let root = temp_workspace("verbose-trace");
     let farmyard = root.join("farmyard");
     fs::create_dir_all(&farmyard).expect("mkdir");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.ping]\nrun = \"printf root\"\n",
-    );
+    write_root_manifest(&root, "[tasks.ping]\nrun = \"printf root\"\n");
     write_manifest(
         &farmyard.join("effigy.toml"),
         "[tasks.ping]\nrun = \"printf farmyard\"\n",
@@ -532,17 +536,12 @@ fn run_manifest_task_verbose_root_includes_resolution_trace() {
 #[test]
 fn run_manifest_task_includes_local_node_modules_bin_in_path() {
     let root = temp_workspace("local-node-bin-path");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.local]\nrun = \"local-tool\"\n",
-    );
+    write_root_manifest(&root, "[tasks.local]\nrun = \"local-tool\"\n");
     let local_bin = root.join("node_modules/.bin");
     fs::create_dir_all(&local_bin).expect("mkdir local bin");
     write_executable(&local_bin.join("local-tool"), "#!/bin/sh\nexit 0\n");
 
-    let out = run_task(&root, "local", &[]).expect("run local tool");
-
-    assert_eq!(out, "");
+    assert_run_task_ok_empty(&root, "local", &[]);
 }
 
 #[test]
@@ -564,8 +563,8 @@ alias = "farmyard"
 #[test]
 fn builtin_test_max_parallel_reads_root_manifest_config() {
     let root = temp_workspace("builtin-test-max-parallel-config");
-    write_manifest(
-        &root.join("effigy.toml"),
+    write_root_manifest(
+        &root,
         r#"[test]
 max_parallel = 1
 "#,
@@ -577,8 +576,8 @@ max_parallel = 1
 #[test]
 fn builtin_test_max_parallel_falls_back_when_invalid_or_missing() {
     let root = temp_workspace("builtin-test-max-parallel-default");
-    write_manifest(
-        &root.join("effigy.toml"),
+    write_root_manifest(
+        &root,
         r#"[test]
 max_parallel = 0
 "#,
