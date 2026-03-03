@@ -1,6 +1,18 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+#[path = "graph/cycle.rs"]
+mod cycle;
+#[path = "graph/dependencies.rs"]
+mod dependencies;
+#[path = "graph/index.rs"]
+mod index;
+#[path = "graph/topological.rs"]
+mod topological;
 
 use super::super::super::{ManifestManagedRunStep, RunnerError};
+
+use cycle::detect_dependency_cycle;
+use dependencies::{build_step_dependencies, build_step_dependents};
+use index::build_step_index;
+use topological::build_schedule_levels;
 
 pub(super) fn build_run_sequence_schedule(
     task_name: &str,
@@ -21,233 +33,87 @@ pub(super) fn build_run_sequence_schedule(
         )));
     }
 
-    let mut indegree = dependencies.iter().map(Vec::len).collect::<Vec<usize>>();
-    let mut ready = BTreeSet::<usize>::new();
-    for (index, degree) in indegree.iter().enumerate() {
-        if *degree == 0 {
-            ready.insert(index);
-        }
-    }
-
-    let mut levels = Vec::<Vec<usize>>::new();
-    let mut processed = 0usize;
-    while !ready.is_empty() {
-        let current = ready.iter().copied().collect::<Vec<usize>>();
-        for node in &current {
-            ready.remove(node);
-        }
-        processed += current.len();
-        for node in &current {
-            for dependent in &dependents[*node] {
-                indegree[*dependent] = indegree[*dependent].saturating_sub(1);
-                if indegree[*dependent] == 0 {
-                    ready.insert(*dependent);
-                }
-            }
-        }
-        levels.push(current);
-    }
-
-    if processed != steps.len() {
+    let Some(levels) = build_schedule_levels(steps.len(), &dependencies, &dependents) else {
         return Err(RunnerError::TaskInvocation(format!(
             "task `{task_name}` run sequence contains dependency cycle"
         )));
-    }
+    };
 
     Ok(Some(levels))
 }
 
-struct StepIndex {
-    has_explicit_dependencies: bool,
-    id_to_index: BTreeMap<String, usize>,
-    display_names: Vec<String>,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::super::super::manifest::ManifestManagedRunStepTable;
 
-fn build_step_index(
-    task_name: &str,
-    steps: &[ManifestManagedRunStep],
-) -> Result<StepIndex, RunnerError> {
-    let mut has_explicit_dependencies = false;
-    let mut declared_ids = HashSet::<String>::new();
-    let mut id_to_index = BTreeMap::<String, usize>::new();
-    let mut display_names = Vec::<String>::with_capacity(steps.len());
+    fn command_step(run: &str) -> ManifestManagedRunStep {
+        ManifestManagedRunStep::Command(run.to_owned())
+    }
 
-    for (index, step) in steps.iter().enumerate() {
-        match step {
-            ManifestManagedRunStep::Command(_) => {
-                display_names.push(default_step_name(index));
+    fn table_step(id: Option<&str>, depends_on: &[&str]) -> ManifestManagedRunStep {
+        ManifestManagedRunStep::Step(ManifestManagedRunStepTable {
+            run: Some("printf ok".to_owned()),
+            task: None,
+            env: None,
+            env_file: None,
+            id: id.map(str::to_owned),
+            depends_on: depends_on.iter().map(|value| value.to_string()).collect(),
+            timeout_ms: None,
+            retry: None,
+            retry_delay_ms: None,
+            fail_fast: None,
+        })
+    }
+
+    #[test]
+    fn schedule_returns_none_without_explicit_dependencies() {
+        let steps = vec![command_step("printf first"), command_step("printf second")];
+        let schedule = build_run_sequence_schedule("dev", &steps).expect("schedule");
+        assert!(schedule.is_none());
+    }
+
+    #[test]
+    fn schedule_builds_parallel_levels_for_explicit_dag() {
+        let steps = vec![
+            table_step(Some("a"), &[]),
+            table_step(Some("b"), &["a"]),
+            table_step(Some("c"), &["a"]),
+            table_step(Some("d"), &["b", "c"]),
+        ];
+
+        let schedule = build_run_sequence_schedule("dev", &steps)
+            .expect("schedule")
+            .expect("explicit dependencies should produce levels");
+        assert_eq!(schedule, vec![vec![0], vec![1, 2], vec![3]]);
+    }
+
+    #[test]
+    fn schedule_errors_on_duplicate_step_id() {
+        let steps = vec![table_step(Some("dup"), &[]), table_step(Some("dup"), &[])];
+        let err = build_run_sequence_schedule("dev", &steps).expect_err("duplicate id error");
+        match err {
+            RunnerError::TaskInvocation(message) => {
+                assert!(message.contains("duplicate step id `dup`"));
             }
-            ManifestManagedRunStep::Step(table) => {
-                if let Some(raw_id) = table.id.as_deref() {
-                    let id = raw_id.trim();
-                    if id.is_empty() {
-                        return Err(RunnerError::TaskInvocation(format!(
-                            "task `{task_name}` run step {} has an empty `id`",
-                            index + 1
-                        )));
-                    }
-                    if !declared_ids.insert(id.to_owned()) {
-                        return Err(RunnerError::TaskInvocation(format!(
-                            "task `{task_name}` run sequence has duplicate step id `{id}`"
-                        )));
-                    }
-                    id_to_index.insert(id.to_owned(), index);
-                    display_names.push(id.to_owned());
-                } else {
-                    display_names.push(default_step_name(index));
-                }
-                if !table.depends_on.is_empty() {
-                    has_explicit_dependencies = true;
-                }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn schedule_errors_on_dependency_cycle_with_named_path() {
+        let steps = vec![
+            table_step(Some("a"), &["b"]),
+            table_step(Some("b"), &["a"]),
+        ];
+
+        let err = build_run_sequence_schedule("dev", &steps).expect_err("cycle error");
+        match err {
+            RunnerError::TaskInvocation(message) => {
+                assert!(message.contains("dependency cycle"));
+                assert!(message.contains("a -> b -> a"));
             }
+            other => panic!("unexpected error: {other}"),
         }
     }
-
-    Ok(StepIndex {
-        has_explicit_dependencies,
-        id_to_index,
-        display_names,
-    })
-}
-
-fn build_step_dependencies(
-    task_name: &str,
-    steps: &[ManifestManagedRunStep],
-    id_to_index: &BTreeMap<String, usize>,
-) -> Result<Vec<Vec<usize>>, RunnerError> {
-    let mut dependencies = vec![Vec::<usize>::new(); steps.len()];
-    for (index, step) in steps.iter().enumerate() {
-        dependencies[index] = step_dependencies(task_name, step, index, id_to_index)?;
-    }
-    Ok(dependencies)
-}
-
-fn step_dependencies(
-    task_name: &str,
-    step: &ManifestManagedRunStep,
-    index: usize,
-    id_to_index: &BTreeMap<String, usize>,
-) -> Result<Vec<usize>, RunnerError> {
-    let mut dependencies = Vec::<usize>::new();
-    match step {
-        ManifestManagedRunStep::Command(_) => {
-            if index > 0 {
-                dependencies.push(index - 1);
-            }
-        }
-        ManifestManagedRunStep::Step(table) => {
-            if table.depends_on.is_empty() {
-                if index > 0 {
-                    dependencies.push(index - 1);
-                }
-            } else {
-                let step_id = table.id.as_deref().map(str::trim).unwrap_or_default();
-                if step_id.is_empty() {
-                    return Err(RunnerError::TaskInvocation(format!(
-                        "task `{task_name}` run step {} defines `depends_on` but is missing a non-empty `id`",
-                        index + 1
-                    )));
-                }
-                for raw_dep in &table.depends_on {
-                    let dep = raw_dep.trim();
-                    if dep.is_empty() {
-                        return Err(RunnerError::TaskInvocation(format!(
-                            "task `{task_name}` run step `{step_id}` has an empty dependency in `depends_on`"
-                        )));
-                    }
-                    let Some(dep_index) = id_to_index.get(dep).copied() else {
-                        return Err(RunnerError::TaskInvocation(format!(
-                            "task `{task_name}` run step `{step_id}` depends on missing step `{dep}`"
-                        )));
-                    };
-                    if dep_index == index {
-                        return Err(RunnerError::TaskInvocation(format!(
-                            "task `{task_name}` run step `{step_id}` cannot depend on itself"
-                        )));
-                    }
-                    dependencies.push(dep_index);
-                }
-            }
-        }
-    }
-    dependencies.sort_unstable();
-    dependencies.dedup();
-    Ok(dependencies)
-}
-
-fn build_step_dependents(dependencies: &[Vec<usize>]) -> Vec<Vec<usize>> {
-    let mut dependents = vec![Vec::<usize>::new(); dependencies.len()];
-    for (index, deps) in dependencies.iter().enumerate() {
-        for dep in deps {
-            dependents[*dep].push(index);
-        }
-    }
-    for outgoing in &mut dependents {
-        outgoing.sort_unstable();
-    }
-    dependents
-}
-
-fn default_step_name(index: usize) -> String {
-    format!("step-{}", index + 1)
-}
-
-fn detect_dependency_cycle(
-    dependencies: &[Vec<usize>],
-    display_names: &[String],
-) -> Option<Vec<String>> {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum VisitState {
-        Visiting,
-        Visited,
-    }
-
-    fn visit(
-        node: usize,
-        dependencies: &[Vec<usize>],
-        display_names: &[String],
-        state: &mut Vec<Option<VisitState>>,
-        stack: &mut Vec<usize>,
-    ) -> Option<Vec<String>> {
-        match state[node] {
-            Some(VisitState::Visited) => return None,
-            Some(VisitState::Visiting) => {
-                if let Some(cycle_start) = stack.iter().position(|item| *item == node) {
-                    let mut cycle = stack[cycle_start..]
-                        .iter()
-                        .map(|index| display_names[*index].clone())
-                        .collect::<Vec<String>>();
-                    cycle.push(display_names[node].clone());
-                    return Some(cycle);
-                }
-                return Some(vec![
-                    display_names[node].clone(),
-                    display_names[node].clone(),
-                ]);
-            }
-            None => {}
-        }
-
-        state[node] = Some(VisitState::Visiting);
-        stack.push(node);
-
-        for dependency in &dependencies[node] {
-            if let Some(cycle) = visit(*dependency, dependencies, display_names, state, stack) {
-                return Some(cycle);
-            }
-        }
-
-        stack.pop();
-        state[node] = Some(VisitState::Visited);
-        None
-    }
-
-    let mut state = vec![None; dependencies.len()];
-    let mut stack = Vec::<usize>::new();
-    for node in 0..dependencies.len() {
-        if let Some(cycle) = visit(node, dependencies, display_names, &mut state, &mut stack) {
-            return Some(cycle);
-        }
-    }
-    None
 }
