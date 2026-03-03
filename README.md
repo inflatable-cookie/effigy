@@ -130,6 +130,7 @@ Interpolation tokens:
 - run-array `env`/`env_file` directives may be standalone entries (no `run`/`task`) to mutate env state for later steps
 - set `tasks.<name>.env_file = ".env.test"` (or `[".env.local", ".env.test"]`) to change dotenv fallback for that task; run arrays can also switch with `{ env_file = ".env.local" }` or `{ env_file = [".env.local", ".env.test"] }`
 - dotenv parsing accepts `KEY=value` and `export KEY=value` lines; matching single/double quotes around values are stripped
+- built-in `test` auto-applies manifest `[env]` `CARGO_*` entries to cargo-based suites (`cargo-nextest` / `cargo-test`), so you do not need a custom `tasks.test` wrapper for Cargo home/target isolation
 
 ## Resolution Model
 

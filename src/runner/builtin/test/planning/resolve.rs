@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::runner::builtin::test::planning::{BuiltinResolvedPlan, BuiltinTestTarget};
+use crate::runner::manifest::ManifestEnvEntry;
 use crate::runner::util::normalize_builtin_test_suite;
 use crate::runner::{LoadedCatalog, ManifestJsPackageManager};
 
@@ -10,6 +11,7 @@ struct BuiltinTestTargetConfig {
     configured_suites: BTreeMap<String, String>,
     package_manager: Option<ManifestJsPackageManager>,
     runner_overrides: BTreeMap<String, String>,
+    cargo_env: BTreeMap<String, String>,
 }
 
 pub(super) fn resolve_builtin_test_targets(
@@ -19,7 +21,8 @@ pub(super) fn resolve_builtin_test_targets(
 ) -> Vec<BuiltinTestTarget> {
     if let Some(prefix) = prefix {
         if let Some(catalog) = catalogs.iter().find(|catalog| catalog.alias == prefix) {
-            let (plans, suite_source) = resolve_target_test_plans(catalogs, &catalog.catalog_root);
+            let (plans, suite_source, cargo_env) =
+                resolve_target_test_plans(catalogs, &catalog.catalog_root);
             if plans.is_empty() {
                 return Vec::new();
             }
@@ -29,6 +32,7 @@ pub(super) fn resolve_builtin_test_targets(
                 fallback_chain: render_fallback_chain(&plans),
                 plans,
                 suite_source,
+                cargo_env,
             }];
         }
         return Vec::new();
@@ -45,7 +49,7 @@ pub(super) fn resolve_builtin_test_targets(
         roots.insert(resolved_root.to_path_buf(), "root".to_owned());
     }
     for (root, name) in roots {
-        let (plans, suite_source) = resolve_target_test_plans(catalogs, &root);
+        let (plans, suite_source, cargo_env) = resolve_target_test_plans(catalogs, &root);
         if plans.is_empty() {
             continue;
         }
@@ -55,6 +59,7 @@ pub(super) fn resolve_builtin_test_targets(
             root,
             plans,
             suite_source,
+            cargo_env,
         });
     }
     targets
@@ -77,8 +82,9 @@ fn render_fallback_chain(plans: &[BuiltinResolvedPlan]) -> Vec<String> {
 fn resolve_target_test_plans(
     catalogs: &[LoadedCatalog],
     target_root: &Path,
-) -> (Vec<BuiltinResolvedPlan>, String) {
+) -> (Vec<BuiltinResolvedPlan>, String, BTreeMap<String, String>) {
     let config = resolve_target_test_config(catalogs, target_root);
+    let cargo_env = config.cargo_env.clone();
     if !config.configured_suites.is_empty() {
         return (
             config
@@ -91,6 +97,7 @@ fn resolve_target_test_plans(
                 })
                 .collect::<Vec<BuiltinResolvedPlan>>(),
             "configured".to_owned(),
+            cargo_env,
         );
     }
 
@@ -111,6 +118,7 @@ fn resolve_target_test_plans(
             })
             .collect::<Vec<BuiltinResolvedPlan>>(),
         "auto-detected".to_owned(),
+        cargo_env,
     )
 }
 
@@ -147,11 +155,37 @@ fn resolve_target_test_config(
                 .collect::<BTreeMap<String, String>>()
         })
         .unwrap_or_default();
+    let cargo_env = catalog.map(resolve_manifest_cargo_env).unwrap_or_default();
     BuiltinTestTargetConfig {
         configured_suites,
         package_manager,
         runner_overrides,
+        cargo_env,
     }
+}
+
+fn resolve_manifest_cargo_env(catalog: &LoadedCatalog) -> BTreeMap<String, String> {
+    let mut from_profiles = BTreeMap::<String, String>::new();
+    let mut from_values = BTreeMap::<String, String>::new();
+    for (entry_name, entry) in &catalog.manifest.env {
+        match entry {
+            ManifestEnvEntry::Value(value) if entry_name.starts_with("CARGO_") => {
+                from_values.insert(entry_name.clone(), value.clone());
+            }
+            ManifestEnvEntry::Profile(entries) => {
+                for table in entries {
+                    for (key, value) in table {
+                        if key.starts_with("CARGO_") {
+                            from_profiles.insert(key.clone(), value.clone());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    from_profiles.extend(from_values);
+    from_profiles
 }
 
 fn catalog_for_root<'a>(

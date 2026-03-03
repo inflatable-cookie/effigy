@@ -115,3 +115,105 @@ fn run_manifest_task_builtin_test_plan_has_blank_line_between_sections() {
     let out = run_builtin_ok(root, "test", &["--plan"]);
     assert_contains_all(&out, &["\n\nTarget Summary\n", "\n\nTarget: root\n"]);
 }
+
+#[test]
+fn run_manifest_task_builtin_test_applies_grouped_manifest_cargo_env() {
+    let _guard = lock_test();
+    let root = temp_workspace("builtin-test-cargo-env-grouped");
+    write_root_manifest(
+        &root,
+        r#"[env]
+cargo = [
+  { CARGO_HOME = "{project}/.cache/cargo/home" },
+  { CARGO_TARGET_DIR = "{repo}/.cache/cargo/target" }
+]
+"#,
+    );
+    write_multi_suite_cargo_manifest(&root);
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    let cargo_stub = bin_dir.join("cargo");
+    let cargo_nextest_stub = bin_dir.join("cargo-nextest");
+    let marker = root.join("cargo-env.log");
+    write_executable(
+        &cargo_stub,
+        "#!/bin/sh\nprintf \"%s|%s\" \"$CARGO_HOME\" \"$CARGO_TARGET_DIR\" > \"$EFFIGY_TEST_CARGO_ENV_FILE\"\n",
+    );
+    write_executable(&cargo_nextest_stub, "#!/bin/sh\nexit 0\n");
+
+    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
+    let path = format!("{}:{}", bin_dir.display(), prior_path);
+    let _env = EnvGuard::set_many(&[
+        ("PATH", Some(path)),
+        (
+            "EFFIGY_TEST_CARGO_ENV_FILE",
+            Some(marker.display().to_string()),
+        ),
+    ]);
+
+    let out = run_builtin_ok(root.clone(), "test", &[]);
+    assert_contains_all(&out, &["Test Results", "root"]);
+
+    let rendered = fs::read_to_string(&marker).expect("read cargo env marker");
+    let parts = rendered.split('|').collect::<Vec<&str>>();
+    assert_eq!(
+        parts.len(),
+        2,
+        "expected cargo env marker format `home|target`"
+    );
+    assert!(parts[0].ends_with("/.cache/cargo/home"));
+    assert!(parts[1].ends_with("/.cache/cargo/target"));
+}
+
+#[test]
+fn run_manifest_task_builtin_test_prefers_direct_manifest_cargo_env_over_grouped_entries() {
+    let _guard = lock_test();
+    let root = temp_workspace("builtin-test-cargo-env-direct-precedence");
+    write_root_manifest(
+        &root,
+        r#"[env]
+CARGO_HOME = "{project}/.cache/cargo/direct-home"
+CARGO_TARGET_DIR = "{project}/.cache/cargo/direct-target"
+cargo = [
+  { CARGO_HOME = "{project}/.cache/cargo/profile-home" },
+  { CARGO_TARGET_DIR = "{project}/.cache/cargo/profile-target" }
+]
+"#,
+    );
+    write_multi_suite_cargo_manifest(&root);
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    let cargo_stub = bin_dir.join("cargo");
+    let cargo_nextest_stub = bin_dir.join("cargo-nextest");
+    let marker = root.join("cargo-env-direct.log");
+    write_executable(
+        &cargo_stub,
+        "#!/bin/sh\nprintf \"%s|%s\" \"$CARGO_HOME\" \"$CARGO_TARGET_DIR\" > \"$EFFIGY_TEST_CARGO_ENV_FILE\"\n",
+    );
+    write_executable(&cargo_nextest_stub, "#!/bin/sh\nexit 0\n");
+
+    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
+    let path = format!("{}:{}", bin_dir.display(), prior_path);
+    let _env = EnvGuard::set_many(&[
+        ("PATH", Some(path)),
+        (
+            "EFFIGY_TEST_CARGO_ENV_FILE",
+            Some(marker.display().to_string()),
+        ),
+    ]);
+
+    let out = run_builtin_ok(root.clone(), "test", &[]);
+    assert_contains_all(&out, &["Test Results", "root"]);
+
+    let rendered = fs::read_to_string(&marker).expect("read cargo env marker");
+    let parts = rendered.split('|').collect::<Vec<&str>>();
+    assert_eq!(
+        parts.len(),
+        2,
+        "expected cargo env marker format `home|target`"
+    );
+    assert!(parts[0].ends_with("/.cache/cargo/direct-home"));
+    assert!(parts[1].ends_with("/.cache/cargo/direct-target"));
+}
