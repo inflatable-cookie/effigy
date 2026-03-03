@@ -30,6 +30,13 @@ When built-in `test` runs cargo suites (detected or configured), Effigy automati
 Included sources:
 - direct `[env]` entries (for example `CARGO_HOME = "..."`)
 - grouped profile arrays under `[env]` (for example `cargo = [{ CARGO_HOME = "..." }, ...]`)
+- fallback for missing `CARGO_HOME` / `CARGO_TARGET_DIR`:
+  1. process environment
+  2. `<target-root>/.env`
+
+Precedence:
+- manifest `[env]` wins over process env and dotenv fallback
+- process env wins over dotenv fallback
 
 Matching behavior:
 - applies to command shapes that resolve to cargo executables (`cargo`, `cargo-nextest`, `/abs/path/cargo`, `/abs/path/cargo-nextest`)
