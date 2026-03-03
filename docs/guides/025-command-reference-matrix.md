@@ -75,6 +75,7 @@ effigy completion candidates [--repo <PATH>] [--prefix <value>] [--json]
 - for cross-catalog `env = "<catalog-path>/<name>"`, dotenv fallback uses that target catalog root (including `env_file` overrides) and does not check process env.
 - `tasks.<name>.env` values support `{project}` and `{repo}` catalog-root token substitution.
 - built-in `test` automatically applies manifest `[env]` `CARGO_*` values to cargo suites (`cargo-nextest` and `cargo-test`), including grouped profile entries.
+- when manifest `[env]` does not define `CARGO_HOME` or `CARGO_TARGET_DIR`, built-in `test` falls back per target root: process env first, then `<target-root>/.env`.
 - built-in cargo-env matching mode is configured via `[test].cargo_env_match` (`executable-only`, `prefix-aware`, `shell-aware`).
 - `effigy test --plan` target output (text and JSON) includes effective `cargo_env_match` per target.
 - `effigy test --verbose-results` text output and `effigy.test.results.v1` targets include effective `cargo_env_match` per target.

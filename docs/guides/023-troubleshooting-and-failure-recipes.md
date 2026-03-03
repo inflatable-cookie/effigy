@@ -180,11 +180,11 @@ effigy test --plan
 Inspect:
 - whether routing selected explicit `tasks.test` (instead of built-in `test`)
 - whether the planned command is cargo-shaped vs shell-wrapped
-- whether the selected catalog defines `[env]` `CARGO_*` entries
+- whether the selected catalog defines `[env]` `CARGO_*` entries, or has fallback values in process env / `.env`
 
 Fix:
 - if you want built-in auto-apply behavior, avoid overriding with explicit `tasks.test`
-- define `CARGO_*` values in the selected catalog `[env]`
+- define `CARGO_*` values in the selected catalog `[env]` (highest precedence), or set `CARGO_HOME` / `CARGO_TARGET_DIR` in process env or `<target-root>/.env`
 - by default (`cargo_env_match = "prefix-aware"`), use cargo command forms directly (for example `cargo test ...`, `env FOO=bar cargo test ...`) instead of `sh -lc "cargo ..."` wrappers
 - if shell wrapping is required, set `[test].cargo_env_match = "shell-aware"`
 

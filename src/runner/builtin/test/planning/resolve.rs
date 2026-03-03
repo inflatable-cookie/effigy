@@ -1,5 +1,6 @@
 use crate::testing::{detect_test_runner_plans, TestRunner};
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::runner::builtin::test::planning::{BuiltinResolvedPlan, BuiltinTestTarget};
@@ -207,7 +208,76 @@ fn resolve_manifest_cargo_env(catalog: &LoadedCatalog) -> BTreeMap<String, Strin
         }
     }
     from_profiles.extend(from_values);
+    apply_builtin_cargo_env_fallback(&catalog.catalog_root, &mut from_profiles);
     from_profiles
+}
+
+const BUILTIN_CARGO_ENV_FALLBACK_KEYS: [&str; 2] = ["CARGO_HOME", "CARGO_TARGET_DIR"];
+
+fn apply_builtin_cargo_env_fallback(catalog_root: &Path, cargo_env: &mut BTreeMap<String, String>) {
+    for key in BUILTIN_CARGO_ENV_FALLBACK_KEYS {
+        if cargo_env.contains_key(key) {
+            continue;
+        }
+        if let Ok(value) = std::env::var(key) {
+            cargo_env.insert(key.to_owned(), value);
+        }
+    }
+
+    if BUILTIN_CARGO_ENV_FALLBACK_KEYS
+        .iter()
+        .all(|key| cargo_env.contains_key(*key))
+    {
+        return;
+    }
+
+    let dotenv = parse_dotenv_file_best_effort(&catalog_root.join(".env"));
+    for key in BUILTIN_CARGO_ENV_FALLBACK_KEYS {
+        if cargo_env.contains_key(key) {
+            continue;
+        }
+        if let Some(value) = dotenv.get(key) {
+            cargo_env.insert(key.to_owned(), value.to_owned());
+        }
+    }
+}
+
+fn parse_dotenv_file_best_effort(path: &Path) -> BTreeMap<String, String> {
+    let Ok(src) = fs::read_to_string(path) else {
+        return BTreeMap::new();
+    };
+
+    let mut entries = BTreeMap::new();
+    for raw_line in src.lines() {
+        let mut line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(exported) = line.strip_prefix("export ") {
+            line = exported.trim_start();
+        }
+        let Some((key_raw, value_raw)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key_raw.trim();
+        if key.is_empty() {
+            continue;
+        }
+        let value = strip_matching_quotes(value_raw.trim());
+        entries.insert(key.to_owned(), value.to_owned());
+    }
+    entries
+}
+
+fn strip_matching_quotes(value: &str) -> &str {
+    if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    }
 }
 
 fn catalog_for_root<'a>(
