@@ -29,6 +29,15 @@ fn setup_root_and_farmyard_catalog(name: &str) -> PathBuf {
     root
 }
 
+fn setup_root_with_catalogs(name: &str, catalogs: &[(&str, &[(&str, &str)])]) -> PathBuf {
+    let root = temp_workspace(name);
+    for (dir_name, tasks) in catalogs {
+        let dir = create_workspace_dir(&root, dir_name);
+        write_catalog_tasks(&dir, dir_name, tasks);
+    }
+    root
+}
+
 fn write_managed_dev_manifest(root: &PathBuf, profile: &str) {
     write_manifest(
         &root.join("effigy.toml"),
@@ -53,6 +62,14 @@ fn json_task_column(parsed: &serde_json::Value, field: &str) -> Vec<String> {
         .filter_map(|row| row["task"].as_str())
         .map(|task| task.to_owned())
         .collect::<Vec<_>>()
+}
+
+struct ManagedProfileListingCase {
+    workspace: &'static str,
+    profile: &'static str,
+    filter: Option<&'static str>,
+    output_json: bool,
+    expected_field: &'static str,
 }
 
 #[test]
@@ -187,65 +204,82 @@ fn run_tasks_json_filter_includes_builtin_matches_and_notes() {
 }
 
 #[test]
-fn run_tasks_lists_managed_profiles_for_tui_tasks() {
-    let root = temp_workspace("tasks-managed-profiles-list");
-    write_managed_dev_manifest(&root, "admin");
+fn run_tasks_lists_managed_profiles_with_invocation_labels() {
+    let cases = [
+        ManagedProfileListingCase {
+            workspace: "tasks-managed-profiles-list",
+            profile: "admin",
+            filter: None,
+            output_json: false,
+            expected_field: "managed_profiles",
+        },
+        ManagedProfileListingCase {
+            workspace: "tasks-managed-profiles-filter",
+            profile: "front",
+            filter: Some("dev"),
+            output_json: false,
+            expected_field: "managed_profile_matches",
+        },
+        ManagedProfileListingCase {
+            workspace: "tasks-managed-profiles-json-list",
+            profile: "admin",
+            filter: None,
+            output_json: true,
+            expected_field: "managed_profiles",
+        },
+        ManagedProfileListingCase {
+            workspace: "tasks-managed-profiles-json-filter",
+            profile: "front",
+            filter: Some("dev"),
+            output_json: true,
+            expected_field: "managed_profile_matches",
+        },
+    ];
 
-    let out = run_tasks_from_repo(&root, None, None, false);
-    assert_contains_all(&out, &["Tasks", "dev admin", "<managed:tui profile:admin>"]);
-    assert!(!out.contains("dev default"));
-}
+    for case in cases {
+        let root = temp_workspace(case.workspace);
+        write_managed_dev_manifest(&root, case.profile);
+        let out = run_tasks_from_repo(&root, case.filter, None, case.output_json);
 
-#[test]
-fn run_tasks_filter_lists_managed_profiles_for_matching_task() {
-    let root = temp_workspace("tasks-managed-profiles-filter");
-    write_managed_dev_manifest(&root, "front");
-
-    let out = run_tasks_from_repo(&root, Some("dev"), None, false);
-    assert_contains_all(&out, &["Task Matches: dev", "dev front"]);
-    assert!(!out.contains("dev default"));
-}
-
-#[test]
-fn run_tasks_json_lists_managed_profiles_with_invocation_labels() {
-    let root = temp_workspace("tasks-managed-profiles-json-list");
-    write_managed_dev_manifest(&root, "admin");
-
-    let out = run_tasks_from_repo(&root, None, None, true);
-
-    let parsed = parse_json_output(&out);
-    let tasks = json_task_column(&parsed, "managed_profiles");
-    assert!(tasks.contains(&"dev admin".to_owned()));
-    assert!(!tasks.contains(&"dev default".to_owned()));
-}
-
-#[test]
-fn run_tasks_json_filter_lists_managed_profiles_with_invocation_labels() {
-    let root = temp_workspace("tasks-managed-profiles-json-filter");
-    write_managed_dev_manifest(&root, "front");
-
-    let out = run_tasks_from_repo(&root, Some("dev"), None, true);
-
-    let parsed = parse_json_output(&out);
-    let tasks = json_task_column(&parsed, "managed_profile_matches");
-    assert!(tasks.contains(&"dev front".to_owned()));
-    assert!(!tasks.contains(&"dev default".to_owned()));
+        if case.output_json {
+            let parsed = parse_json_output(&out);
+            let tasks = json_task_column(&parsed, case.expected_field);
+            assert!(tasks.contains(&format!("dev {}", case.profile)));
+            assert!(!tasks.contains(&"dev default".to_owned()));
+        } else {
+            if case.filter.is_some() {
+                assert_contains_all(
+                    &out,
+                    &["Task Matches: dev", &format!("dev {}", case.profile)],
+                );
+            } else {
+                assert_contains_all(
+                    &out,
+                    &[
+                        "Tasks",
+                        &format!("dev {}", case.profile),
+                        &format!("<managed:tui profile:{}>", case.profile),
+                    ],
+                );
+            }
+            assert!(!out.contains("dev default"));
+        }
+    }
 }
 
 #[test]
 fn run_manifest_task_prefixed_builtin_tasks_targets_catalog_root_only() {
-    let root = temp_workspace("builtin-tasks-prefixed-catalog");
-    let farmyard = create_workspace_dir(&root, "farmyard");
-    let dairy = create_workspace_dir(&root, "dairy");
-
+    let root = setup_root_with_catalogs(
+        "builtin-tasks-prefixed-catalog",
+        &[
+            ("farmyard", &[("api", "printf farmyard-api")]),
+            ("dairy", &[("admin", "printf dairy-admin")]),
+        ],
+    );
     write_manifest(
         &root.join("effigy.toml"),
-        r#"[tasks.root-only]
-run = "printf root"
-"#,
+        "[tasks.root-only]\nrun = \"printf root\"\n",
     );
-    write_catalog_tasks(&farmyard, "farmyard", &[("api", "printf farmyard-api")]);
-    write_catalog_tasks(&dairy, "dairy", &[("admin", "printf dairy-admin")]);
 
     let out = run_builtin_ok(root, "farmyard/tasks", &[]);
 
@@ -256,17 +290,15 @@ run = "printf root"
 
 #[test]
 fn run_manifest_task_relative_prefixed_builtin_tasks_target_catalog_root_only() {
-    let root = temp_workspace("builtin-tasks-relative-prefixed-catalog");
+    let root = setup_root_with_catalogs(
+        "builtin-tasks-relative-prefixed-catalog",
+        &[("froyo", &[("validate", "printf froyo-validate")])],
+    );
     let dairy = create_workspace_dir(&root, "dairy");
-    let froyo = create_workspace_dir(&root, "froyo");
-
     write_manifest(
         &root.join("effigy.toml"),
-        r#"[tasks.root-only]
-run = "printf root"
-"#,
+        "[tasks.root-only]\nrun = \"printf root\"\n",
     );
-    write_catalog_tasks(&froyo, "froyo", &[("validate", "printf froyo-validate")]);
 
     let out = run_builtin_ok(dairy, "../froyo/tasks", &[]);
 

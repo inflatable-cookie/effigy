@@ -1,11 +1,14 @@
 use super::*;
 
-#[test]
-fn run_manifest_task_builtin_catalogs_renders_diagnostics_and_resolution_probe() {
-    let root = temp_workspace("builtin-catalogs");
+struct CatalogsResolveCase {
+    workspace: &'static str,
+    args: &'static [&'static str],
+    expected: &'static [&'static str],
+}
+
+fn write_root_and_farmyard_api_catalog(root: &PathBuf) {
     let farmyard = root.join("farmyard");
     fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-
     write_manifest(
         &root.join("effigy.toml"),
         "[tasks.root]\nrun = \"printf root\"\n",
@@ -14,56 +17,62 @@ fn run_manifest_task_builtin_catalogs_renders_diagnostics_and_resolution_probe()
         &farmyard.join("effigy.toml"),
         "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
     );
+}
 
-    let out = run_builtin_ok(root, "catalogs", &["--resolve", "farmyard/api"]);
-    assert_contains_all(&out, &["Resolution: farmyard/api", "catalog: farmyard"]);
+fn parse_catalogs_json(out: &str) -> serde_json::Value {
+    serde_json::from_str(out).expect("json parse")
 }
 
 #[test]
-fn run_manifest_task_builtin_catalogs_resolve_supports_managed_profile_invocation() {
-    let root = temp_workspace("builtin-catalogs-resolve-managed-profile");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
+fn run_manifest_task_builtin_catalogs_renders_diagnostics_and_resolution_probe() {
+    let cases = [
+        CatalogsResolveCase {
+            workspace: "builtin-catalogs",
+            args: &["--resolve", "farmyard/api"],
+            expected: &["Resolution: farmyard/api", "catalog: farmyard"],
+        },
+        CatalogsResolveCase {
+            workspace: "builtin-catalogs-resolve-managed-profile",
+            args: &["--resolve", "dev front"],
+            expected: &[
+                "Resolution: dev front",
+                "status: ok",
+                "catalog: root",
+                "task: dev",
+                "managed profile `front` resolved via invocation `dev front`",
+            ],
+        },
+    ];
+
+    for case in cases {
+        let root = temp_workspace(case.workspace);
+        if case.workspace == "builtin-catalogs" {
+            write_root_and_farmyard_api_catalog(&root);
+        } else {
+            write_manifest(
+                &root.join("effigy.toml"),
+                r#"[tasks.dev]
 mode = "tui"
 concurrent = [{ run = "printf default-ok" }]
 
 [tasks.dev.profiles.front]
 concurrent = [{ run = "printf front-ok" }]
 "#,
-    );
-
-    let out = run_builtin_ok(root, "catalogs", &["--resolve", "dev front"]);
-    assert_contains_all(
-        &out,
-        &[
-            "Resolution: dev front",
-            "status: ok",
-            "catalog: root",
-            "task: dev",
-            "managed profile `front` resolved via invocation `dev front`",
-        ],
-    );
+            );
+        }
+        let out = run_builtin_ok(root, "catalogs", case.args);
+        assert_contains_all(&out, case.expected);
+    }
 }
 
 #[test]
 fn run_manifest_task_builtin_catalogs_json_renders_probe_payload() {
     let root = temp_workspace("builtin-catalogs-json");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.root]\nrun = \"printf root\"\n",
-    );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
-    );
+    write_root_and_farmyard_api_catalog(&root);
 
     let out = run_builtin_ok(root, "catalogs", &["--json", "--resolve", "farmyard/api"]);
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
+    let parsed = parse_catalogs_json(&out);
     assert_eq!(parsed["schema"], "effigy.tasks.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert!(parsed["catalogs"].is_array());
@@ -89,7 +98,7 @@ concurrent = [{ run = "printf front-ok" }]
 
     let out = run_builtin_ok(root, "catalogs", &["--json", "--resolve", "dev front"]);
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
+    let parsed = parse_catalogs_json(&out);
     assert_eq!(parsed["resolve"]["selector"], "dev front");
     assert_eq!(parsed["resolve"]["status"], "ok");
     assert_eq!(parsed["resolve"]["catalog"], "root");
@@ -115,7 +124,7 @@ fn run_manifest_task_builtin_catalogs_json_reports_resolution_errors() {
 
     let out = run_builtin_ok(root, "catalogs", &["--json", "--resolve", "farmyard/api"]);
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
+    let parsed = parse_catalogs_json(&out);
     assert_eq!(parsed["schema"], "effigy.tasks.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert_eq!(parsed["resolve"]["status"], "error");
@@ -128,12 +137,7 @@ fn run_manifest_task_builtin_catalogs_json_reports_resolution_errors() {
 #[test]
 fn run_manifest_task_builtin_catalogs_json_compact_output_has_no_newlines() {
     let root = temp_workspace("builtin-catalogs-json-compact");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
-    );
+    write_root_and_farmyard_api_catalog(&root);
 
     let out = run_builtin_ok(
         root,
@@ -142,7 +146,7 @@ fn run_manifest_task_builtin_catalogs_json_compact_output_has_no_newlines() {
     );
 
     assert!(!out.contains('\n'));
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("json parse");
+    let parsed = parse_catalogs_json(&out);
     assert_eq!(parsed["resolve"]["status"], "ok");
 }
 
