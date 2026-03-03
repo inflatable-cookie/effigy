@@ -15,6 +15,20 @@ pub(crate) fn write_catalogs_with_tasks(root: &PathBuf, catalogs: &[(&str, &[(&s
     }
 }
 
+pub(crate) fn write_farmyard_and_cream_dev_catalogs(root: &PathBuf) {
+    write_catalogs_with_tasks(
+        root,
+        &[
+            ("farmyard", &[("api", "printf farmyard-api")]),
+            ("cream", &[("dev", "printf cream-dev")]),
+        ],
+    );
+}
+
+pub(crate) fn write_froyo_validate_catalog(root: &PathBuf) {
+    write_catalogs_with_tasks(root, &[("froyo", &[("validate", "printf froyo-validate")])]);
+}
+
 pub(crate) fn write_managed_admin_profile_manifest(root: &PathBuf) {
     write_root_manifest(
         root,
