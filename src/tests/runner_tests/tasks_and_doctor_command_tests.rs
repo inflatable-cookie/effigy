@@ -20,6 +20,12 @@ fn assert_tasks_manifest_parse_error_contains_any(root: PathBuf, expected: &[&st
     }
 }
 
+struct ParseRejectionCase {
+    workspace: &'static str,
+    manifest: &'static str,
+    expected: &'static [&'static str],
+}
+
 fn run_doctor_task(root: PathBuf, args: &[&str]) -> Result<String, RunnerError> {
     run_manifest_task_with_cwd(
         &TaskInvocation {
@@ -38,158 +44,68 @@ fn assert_doctor_non_zero_contains(err: RunnerError, expected: &[&str]) {
 }
 
 #[test]
-fn run_tasks_rejects_legacy_builtin_config_group() {
-    let root = temp_workspace("reject-legacy-builtin-group");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[builtin.test]
-max_parallel = 2
-"#,
-    );
-    assert_tasks_manifest_parse_error_contains_any(root, &["unknown field `builtin`"]);
-}
+fn run_tasks_rejects_invalid_manifest_shapes() {
+    let cases = [
+        ParseRejectionCase {
+            workspace: "reject-legacy-builtin-group",
+            manifest: "[builtin.test]\nmax_parallel = 2\n",
+            expected: &["unknown field `builtin`"],
+        },
+        ParseRejectionCase {
+            workspace: "reject-unknown-test-field",
+            manifest: "[test]\nmax_parallels = 2\n",
+            expected: &["unknown field `max_parallels`"],
+        },
+        ParseRejectionCase {
+            workspace: "reject-unknown-package-manager-field",
+            manifest: "[package_manager]\njss = \"pnpm\"\n",
+            expected: &["unknown field `jss`"],
+        },
+        ParseRejectionCase {
+            workspace: "reject-unknown-test-runner-override-field",
+            manifest: "[test.runners.vitest]\ncmd = \"vitest run\"\n",
+            expected: &["unknown field `cmd`", "data did not match any variant"],
+        },
+        ParseRejectionCase {
+            workspace: "reject-unknown-task-field",
+            manifest: "[tasks.dev]\nrun = \"printf dev\"\nfial_on_non_zero = true\n",
+            expected: &[
+                "unknown field `fial_on_non_zero`",
+                "data did not match any variant",
+            ],
+        },
+        ParseRejectionCase {
+            workspace: "reject-unknown-process-field",
+            manifest: "[tasks.dev]\nmode = \"tui\"\nconcurrent = [{ run = \"printf api\", tas = \"api\" }]\n",
+            expected: &["unknown field `tas`", "data did not match any variant"],
+        },
+        ParseRejectionCase {
+            workspace: "reject-legacy-managed-processes-block",
+            manifest: "[tasks.dev]\nmode = \"tui\"\n\n[tasks.dev.processes.api]\nrun = \"printf api\"\n",
+            expected: &["unknown field `processes`", "data did not match any variant"],
+        },
+        ParseRejectionCase {
+            workspace: "reject-legacy-managed-profile-list-entry",
+            manifest: "[tasks.dev]\nmode = \"tui\"\n\n[tasks.dev.profiles]\ndefault = [\"farmyard/api\"]\n",
+            expected: &["invalid type", "data did not match any variant"],
+        },
+        ParseRejectionCase {
+            workspace: "reject-unknown-run-step-field",
+            manifest: "[tasks.reset-db]\nrun = [\n  { run = \"echo one\", rnu = \"echo two\" }\n]\n",
+            expected: &["unknown field `rnu`", "data did not match any variant"],
+        },
+        ParseRejectionCase {
+            workspace: "reject-unknown-catalog-field",
+            manifest: "[catalog]\nalias = \"farmyard\"\naliass = \"dup\"\n",
+            expected: &["unknown field `aliass`"],
+        },
+    ];
 
-#[test]
-fn run_tasks_rejects_unknown_test_config_field() {
-    let root = temp_workspace("reject-unknown-test-field");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[test]
-max_parallels = 2
-"#,
-    );
-    assert_tasks_manifest_parse_error_contains_any(root, &["unknown field `max_parallels`"]);
-}
-
-#[test]
-fn run_tasks_rejects_unknown_package_manager_field() {
-    let root = temp_workspace("reject-unknown-package-manager-field");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[package_manager]
-jss = "pnpm"
-"#,
-    );
-    assert_tasks_manifest_parse_error_contains_any(root, &["unknown field `jss`"]);
-}
-
-#[test]
-fn run_tasks_rejects_unknown_test_runner_override_field() {
-    let root = temp_workspace("reject-unknown-test-runner-override-field");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[test.runners.vitest]
-cmd = "vitest run"
-"#,
-    );
-    assert_tasks_manifest_parse_error_contains_any(
-        root,
-        &["unknown field `cmd`", "data did not match any variant"],
-    );
-}
-
-#[test]
-fn run_tasks_rejects_unknown_task_field() {
-    let root = temp_workspace("reject-unknown-task-field");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
-run = "printf dev"
-fial_on_non_zero = true
-"#,
-    );
-    assert_tasks_manifest_parse_error_contains_any(
-        root,
-        &[
-            "unknown field `fial_on_non_zero`",
-            "data did not match any variant",
-        ],
-    );
-}
-
-#[test]
-fn run_tasks_rejects_unknown_process_field() {
-    let root = temp_workspace("reject-unknown-process-field");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
-mode = "tui"
-concurrent = [{ run = "printf api", tas = "api" }]
-"#,
-    );
-    assert_tasks_manifest_parse_error_contains_any(
-        root,
-        &["unknown field `tas`", "data did not match any variant"],
-    );
-}
-
-#[test]
-fn run_tasks_rejects_legacy_managed_processes_block() {
-    let root = temp_workspace("reject-legacy-managed-processes-block");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
-mode = "tui"
-
-[tasks.dev.processes.api]
-run = "printf api"
-"#,
-    );
-    assert_tasks_manifest_parse_error_contains_any(
-        root,
-        &[
-            "unknown field `processes`",
-            "data did not match any variant",
-        ],
-    );
-}
-
-#[test]
-fn run_tasks_rejects_legacy_managed_profile_list_entry() {
-    let root = temp_workspace("reject-legacy-managed-profile-list-entry");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
-mode = "tui"
-
-[tasks.dev.profiles]
-default = ["farmyard/api"]
-"#,
-    );
-    assert_tasks_manifest_parse_error_contains_any(
-        root,
-        &["invalid type", "data did not match any variant"],
-    );
-}
-
-#[test]
-fn run_tasks_rejects_unknown_run_step_field() {
-    let root = temp_workspace("reject-unknown-run-step-field");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.reset-db]
-run = [
-  { run = "echo one", rnu = "echo two" }
-]
-"#,
-    );
-    assert_tasks_manifest_parse_error_contains_any(
-        root,
-        &["unknown field `rnu`", "data did not match any variant"],
-    );
-}
-
-#[test]
-fn run_tasks_rejects_unknown_catalog_field() {
-    let root = temp_workspace("reject-unknown-catalog-field");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[catalog]
-alias = "farmyard"
-aliass = "dup"
-"#,
-    );
-    assert_tasks_manifest_parse_error_contains_any(root, &["unknown field `aliass`"]);
+    for case in cases {
+        let root = temp_workspace(case.workspace);
+        write_manifest(&root.join("effigy.toml"), case.manifest);
+        assert_tasks_manifest_parse_error_contains_any(root, case.expected);
+    }
 }
 
 #[test]

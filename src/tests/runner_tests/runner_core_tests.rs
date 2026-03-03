@@ -49,6 +49,27 @@ fn write_executable(path: &PathBuf, script: &str) {
     fs::set_permissions(path, perms).expect("chmod");
 }
 
+fn write_empty_manifest(root: &PathBuf) {
+    write_manifest(&root.join("effigy.toml"), "");
+}
+
+fn write_build_task_manifest(root: &PathBuf, run: &str) {
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!("[tasks.build]\nrun = \"{run}\"\n"),
+    );
+}
+
+fn write_package_json_scripts(root: &PathBuf, scripts: &[(&str, &str)]) {
+    let entries = scripts
+        .iter()
+        .map(|(name, command)| format!("    \"{name}\": \"{command}\""))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let package_json = format!("{{\n  \"scripts\": {{\n{entries}\n  }}\n}}\n");
+    fs::write(root.join("package.json"), package_json).expect("write package scripts");
+}
+
 #[test]
 fn parse_task_runtime_args_extracts_repo_verbose_and_passthrough() {
     let args = vec![
@@ -125,7 +146,7 @@ fn run_manifest_task_health_without_definition_shows_doctor_migration_message() 
 #[test]
 fn run_manifest_task_builtin_watch_without_help_requires_owner_policy() {
     let root = temp_workspace("builtin-watch-owner-required-legacy");
-    write_manifest(&root.join("effigy.toml"), "");
+    write_empty_manifest(&root);
 
     let err = run_builtin_err(root, "watch", &[]);
     assert_task_invocation_error_contains(err, &["--owner <effigy|external>` is required"]);
@@ -212,17 +233,10 @@ fn run_manifest_task_builtin_init_json_reports_write_status() {
 #[test]
 fn run_manifest_task_builtin_migrate_preview_reports_candidates_without_writing() {
     let root = temp_workspace("builtin-migrate-preview");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "build": "npm run compile",
-    "test": "vitest run"
-  }
-}
-"#,
-    )
-    .expect("write package scripts");
+    write_package_json_scripts(
+        &root,
+        &[("build", "npm run compile"), ("test", "vitest run")],
+    );
 
     let out = run_builtin_ok(root.clone(), "migrate", &[]);
     assert_contains_all(
@@ -244,17 +258,10 @@ fn run_manifest_task_builtin_migrate_preview_reports_candidates_without_writing(
 #[test]
 fn run_manifest_task_builtin_migrate_apply_writes_ready_imports() {
     let root = temp_workspace("builtin-migrate-apply");
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "build": "npm run compile",
-    "test": "vitest run"
-  }
-}
-"#,
-    )
-    .expect("write package scripts");
+    write_package_json_scripts(
+        &root,
+        &[("build", "npm run compile"), ("test", "vitest run")],
+    );
 
     let out = run_builtin_ok(root.clone(), "migrate", &["--apply"]);
     assert_contains_all(&out, &["mode: apply", "Applied: wrote"]);
@@ -267,12 +274,7 @@ fn run_manifest_task_builtin_migrate_apply_writes_ready_imports() {
 #[test]
 fn run_manifest_task_builtin_migrate_preserves_package_source_file() {
     let root = temp_workspace("builtin-migrate-preserves-source");
-    let source = r#"{
-  "scripts": {
-    "build": "npm run compile"
-  }
-}
-"#;
+    let source = "{\n  \"scripts\": {\n    \"build\": \"npm run compile\"\n  }\n}\n";
     fs::write(root.join("package.json"), source).expect("write package scripts");
 
     let _ = run_builtin_ok(root.clone(), "migrate", &["--apply"]);
@@ -288,17 +290,7 @@ fn run_manifest_task_builtin_migrate_conflicts_require_manual_remediation() {
         &root.join("effigy.toml"),
         "[tasks]\nbuild = \"printf old\"\n",
     );
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "build": "npm run compile",
-    "lint": "eslint ."
-  }
-}
-"#,
-    )
-    .expect("write package scripts");
+    write_package_json_scripts(&root, &[("build", "npm run compile"), ("lint", "eslint .")]);
 
     let out = run_builtin_ok(root.clone(), "migrate", &["--apply"]);
     assert_contains_all(
@@ -321,17 +313,10 @@ fn run_manifest_task_builtin_migrate_json_reports_schema_and_conflicts() {
         &root.join("effigy.toml"),
         "[tasks]\nbuild = \"printf old\"\n",
     );
-    fs::write(
-        root.join("package.json"),
-        r#"{
-  "scripts": {
-    "build": "npm run compile",
-    "test": "vitest run"
-  }
-}
-"#,
-    )
-    .expect("write package scripts");
+    write_package_json_scripts(
+        &root,
+        &[("build", "npm run compile"), ("test", "vitest run")],
+    );
 
     let out = run_builtin_ok(root, "migrate", &["--json"]);
     assert_contains_all(
@@ -348,7 +333,7 @@ fn run_manifest_task_builtin_migrate_json_reports_schema_and_conflicts() {
 #[test]
 fn run_manifest_task_builtin_watch_help_renders_topic() {
     let root = temp_workspace("builtin-watch-help");
-    write_manifest(&root.join("effigy.toml"), "");
+    write_empty_manifest(&root);
 
     let out = run_builtin_ok(root, "watch", &["--help"]);
     assert_contains_all(
@@ -364,7 +349,7 @@ fn run_manifest_task_builtin_watch_help_renders_topic() {
 #[test]
 fn run_manifest_task_builtin_watch_rejects_unknown_args() {
     let root = temp_workspace("builtin-watch-unknown-arg");
-    write_manifest(&root.join("effigy.toml"), "");
+    write_empty_manifest(&root);
 
     let err = run_builtin_err(root, "watch", &["--wat"]);
     assert_task_invocation_error_contains(
@@ -376,10 +361,7 @@ fn run_manifest_task_builtin_watch_rejects_unknown_args() {
 #[test]
 fn run_manifest_task_builtin_watch_requires_explicit_owner_policy() {
     let root = temp_workspace("builtin-watch-owner-required");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.build]\nrun = \"printf ok\"\n",
-    );
+    write_build_task_manifest(&root, "printf ok");
 
     let err = run_builtin_err(root, "watch", &["build", "--once"]);
     assert_task_invocation_error_contains(err, &["--owner <effigy|external>` is required"]);
@@ -388,10 +370,7 @@ fn run_manifest_task_builtin_watch_requires_explicit_owner_policy() {
 #[test]
 fn run_manifest_task_builtin_watch_external_owner_rejects_nested_loop() {
     let root = temp_workspace("builtin-watch-owner-external");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.build]\nrun = \"printf ok\"\n",
-    );
+    write_build_task_manifest(&root, "printf ok");
 
     let err = run_builtin_err(root, "watch", &["--owner", "external", "build", "--once"]);
     assert_task_invocation_error_contains(
@@ -421,10 +400,7 @@ fn run_manifest_task_builtin_watch_once_executes_target_task() {
 fn run_manifest_task_builtin_watch_rejects_concurrent_watch_owner_for_same_target() {
     let _guard = lock_test();
     let root = temp_workspace("builtin-watch-lock-conflict");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.build]\nrun = \"sleep 2\"\n",
-    );
+    write_build_task_manifest(&root, "sleep 2");
 
     let root_for_thread = root.clone();
     let join = thread::spawn(move || {
@@ -456,7 +432,7 @@ fn run_manifest_task_builtin_watch_rejects_concurrent_watch_owner_for_same_targe
 #[test]
 fn run_manifest_task_builtin_init_help_renders_topic() {
     let root = temp_workspace("builtin-init-help");
-    write_manifest(&root.join("effigy.toml"), "");
+    write_empty_manifest(&root);
 
     let out = run_builtin_ok(root, "init", &["--help"]);
     assert_contains_all(
@@ -468,7 +444,7 @@ fn run_manifest_task_builtin_init_help_renders_topic() {
 #[test]
 fn run_manifest_task_builtin_migrate_help_json_uses_help_schema() {
     let root = temp_workspace("builtin-migrate-help-json");
-    write_manifest(&root.join("effigy.toml"), "");
+    write_empty_manifest(&root);
 
     let out = run_builtin_ok(root, "migrate", &["--help", "--json"]);
     assert_contains_all(
@@ -480,7 +456,7 @@ fn run_manifest_task_builtin_migrate_help_json_uses_help_schema() {
 #[test]
 fn run_manifest_task_builtin_completion_help_renders_topic() {
     let root = temp_workspace("builtin-completion-help");
-    write_manifest(&root.join("effigy.toml"), "");
+    write_empty_manifest(&root);
 
     let out = run_builtin_ok(root, "completion", &["--help"]);
     assert_contains_all(
@@ -495,7 +471,7 @@ fn run_manifest_task_builtin_completion_help_renders_topic() {
 #[test]
 fn run_manifest_task_builtin_completion_bash_outputs_script() {
     let root = temp_workspace("builtin-completion-bash");
-    write_manifest(&root.join("effigy.toml"), "");
+    write_empty_manifest(&root);
 
     let out = run_builtin_ok(root, "completion", &["bash"]);
     assert_contains_all(&out, &["complete -F _effigy effigy", "cache completion"]);
@@ -504,7 +480,7 @@ fn run_manifest_task_builtin_completion_bash_outputs_script() {
 #[test]
 fn run_manifest_task_builtin_completion_json_uses_completion_schema() {
     let root = temp_workspace("builtin-completion-json");
-    write_manifest(&root.join("effigy.toml"), "");
+    write_empty_manifest(&root);
 
     let out = run_builtin_ok(root, "completion", &["zsh", "--json"]);
     assert_contains_all(
