@@ -6,6 +6,12 @@ fn create_workspace_dir(root: &PathBuf, name: &str) -> PathBuf {
     dir
 }
 
+fn create_workspace_path(root: &PathBuf, relative: &str) -> PathBuf {
+    let path = root.join(relative);
+    fs::create_dir_all(&path).expect("mkdir workspace path");
+    path
+}
+
 fn write_catalog_tasks(dir: &PathBuf, alias: Option<&str>, tasks: &[(&str, &str)]) {
     let mut manifest = String::new();
     if let Some(alias) = alias {
@@ -43,36 +49,37 @@ fn assert_catalog_alias_conflict(err: RunnerError, expected_alias: &str) {
     }
 }
 
-#[test]
-fn run_manifest_task_prefixed_uses_named_catalog() {
-    let root = temp_workspace("prefixed");
-    let farmyard = create_workspace_dir(&root, "farmyard");
-
+fn write_root_ping_task(root: &PathBuf) {
     write_manifest(
         &root.join("effigy.toml"),
         "[tasks.ping]\nrun = \"printf root\"\n",
     );
-    write_catalog_tasks(&farmyard, Some("farmyard"), &[("ping", "printf farmyard")]);
+}
 
-    let out = run_builtin_ok(root.clone(), "farmyard/ping", &[]);
+fn setup_root_and_farmyard_ping(workspace: &str) -> (PathBuf, PathBuf) {
+    let root = temp_workspace(workspace);
+    let farmyard = create_workspace_dir(&root, "farmyard");
+    write_root_ping_task(&root);
+    write_catalog_tasks(&farmyard, Some("farmyard"), &[("ping", "printf farmyard")]);
+    (root, farmyard)
+}
+
+fn assert_builtin_ok_empty(cwd: PathBuf, task: &str, args: &[&str]) {
+    let out = run_builtin_ok(cwd, task, args);
     assert_eq!(out, "");
 }
 
 #[test]
+fn run_manifest_task_prefixed_uses_named_catalog() {
+    let (root, _) = setup_root_and_farmyard_ping("prefixed");
+    assert_builtin_ok_empty(root, "farmyard/ping", &[]);
+}
+
+#[test]
 fn run_manifest_task_unprefixed_prefers_nearest_catalog_in_scope() {
-    let root = temp_workspace("nearest");
-    let farmyard = root.join("farmyard");
-    let nested = farmyard.join("crates/api");
-    fs::create_dir_all(&nested).expect("mkdir");
-
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.ping]\nrun = \"printf root\"\n",
-    );
-    write_catalog_tasks(&farmyard, Some("farmyard"), &[("ping", "printf farmyard")]);
-
-    let out = run_builtin_ok(nested, "ping", &[]);
-    assert_eq!(out, "");
+    let (root, _) = setup_root_and_farmyard_ping("nearest");
+    let nested = create_workspace_path(&root, "farmyard/crates/api");
+    assert_builtin_ok_empty(nested, "ping", &[]);
 }
 
 #[test]
@@ -88,7 +95,7 @@ fn run_manifest_task_unprefixed_reports_ambiguity_on_equal_shallow_depth() {
     );
     write_catalog_tasks(&dairy, Some("dairy"), &[("reset-db", "printf dairy")]);
 
-    let err = run_builtin_err(root.clone(), "reset-db", &[]);
+    let err = run_builtin_err(root, "reset-db", &[]);
 
     assert_task_ambiguous_reset_db(err);
 }
@@ -106,8 +113,7 @@ fn run_manifest_task_relative_prefix_resolves_catalog_by_path() {
         &[("validate", "printf froyo-validate")],
     );
 
-    let out = run_builtin_ok(dairy, "../froyo/validate", &[]);
-    assert_eq!(out, "");
+    assert_builtin_ok_empty(dairy, "../froyo/validate", &[]);
 }
 
 #[test]
@@ -139,10 +145,8 @@ fn run_manifest_task_relative_prefix_prefers_alias_collision_over_path_resolutio
 #[test]
 fn run_manifest_task_relative_prefix_supports_multi_parent_traversal() {
     let root = temp_workspace("relative-prefix-multi-parent");
-    let app = root.join("apps/web/src");
-    let shared = root.join("shared");
-    fs::create_dir_all(&app).expect("mkdir app");
-    fs::create_dir_all(&shared).expect("mkdir shared");
+    let app = create_workspace_path(&root, "apps/web/src");
+    let shared = create_workspace_path(&root, "shared");
 
     write_catalog_tasks(&shared, Some("shared"), &[("lint", "printf shared-lint")]);
 
@@ -181,8 +185,7 @@ alias = "acowtancy"
         "symlinked underlay catalog should be discovered"
     );
 
-    let out = run_builtin_ok(root, "underlay/ping", &[]);
-    assert_eq!(out, "");
+    assert_builtin_ok_empty(root, "underlay/ping", &[]);
 }
 
 #[cfg(unix)]
