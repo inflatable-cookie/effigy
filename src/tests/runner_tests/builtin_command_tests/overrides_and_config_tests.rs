@@ -217,3 +217,51 @@ cargo = [
     assert!(parts[0].ends_with("/.cache/cargo/direct-home"));
     assert!(parts[1].ends_with("/.cache/cargo/direct-target"));
 }
+
+#[test]
+fn run_manifest_task_builtin_test_applies_manifest_cargo_env_for_configured_cargo_suite() {
+    let _guard = lock_test();
+    let root = temp_workspace("builtin-test-cargo-env-configured-suite");
+    write_root_manifest(
+        &root,
+        r#"[env]
+CARGO_HOME = "{project}/.cache/cargo/configured-home"
+CARGO_TARGET_DIR = "{project}/.cache/cargo/configured-target"
+
+[test.suites]
+integration = "cargo nextest run --workspace"
+"#,
+    );
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    let cargo_stub = bin_dir.join("cargo");
+    let marker = root.join("cargo-env-configured.log");
+    write_executable(
+        &cargo_stub,
+        "#!/bin/sh\nprintf \"%s|%s\" \"$CARGO_HOME\" \"$CARGO_TARGET_DIR\" > \"$EFFIGY_TEST_CARGO_ENV_FILE\"\n",
+    );
+
+    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
+    let path = format!("{}:{}", bin_dir.display(), prior_path);
+    let _env = EnvGuard::set_many(&[
+        ("PATH", Some(path)),
+        (
+            "EFFIGY_TEST_CARGO_ENV_FILE",
+            Some(marker.display().to_string()),
+        ),
+    ]);
+
+    let out = run_builtin_ok(root.clone(), "test", &[]);
+    assert_contains_all(&out, &["Test Results", "root"]);
+
+    let rendered = fs::read_to_string(&marker).expect("read cargo env marker");
+    let parts = rendered.split('|').collect::<Vec<&str>>();
+    assert_eq!(
+        parts.len(),
+        2,
+        "expected cargo env marker format `home|target`"
+    );
+    assert!(parts[0].ends_with("/.cache/cargo/configured-home"));
+    assert!(parts[1].ends_with("/.cache/cargo/configured-target"));
+}
