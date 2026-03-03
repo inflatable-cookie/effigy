@@ -167,3 +167,12 @@ fn run_doctor_fix_reports_skipped_when_manifest_invalid() {
         &["Fix Actions", "manifest.health_task_scaffold", "skipped"],
     );
 }
+
+#[test]
+fn run_doctor_reports_unknown_argument_grouping() {
+    let root = temp_workspace("doctor-unknown-argument-grouping");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let err = run_doctor_task(root, &["--wat", "--huh"]).expect_err("doctor should reject args");
+    assert_task_invocation_error_contains(err, &["unknown argument(s) for built-in `doctor`: --wat --huh"]);
+}

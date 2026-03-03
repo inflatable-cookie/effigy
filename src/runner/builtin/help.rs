@@ -4,6 +4,7 @@ use crate::{render_help, HelpTopic, TaskInvocation};
 
 use super::super::render::{encode_pretty_json_optional, render_utf8, standard_renderer};
 use super::super::RunnerError;
+use super::arg_parser::BuiltinArgParser;
 use super::unknown_builtin_args;
 
 pub(super) fn run_builtin_help(
@@ -11,7 +12,8 @@ pub(super) fn run_builtin_help(
     args: &[String],
 ) -> Result<Option<String>, RunnerError> {
     let mut output_json = false;
-    for arg in args {
+    let mut parser = BuiltinArgParser::new(args);
+    while let Some(arg) = parser.next() {
         if arg == "--json" {
             output_json = true;
             continue;

@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::{TaskInvocation, TasksArgs};
 
 use super::super::{run_tasks, RunnerError, TaskRuntimeArgs};
+use super::arg_parser::BuiltinArgParser;
 use super::{reject_verbose_root_for_builtin, unknown_builtin_args};
 
 pub(super) fn run_builtin_tasks(
@@ -13,47 +14,33 @@ pub(super) fn run_builtin_tasks(
 ) -> Result<String, RunnerError> {
     reject_verbose_root_for_builtin(&task.name, runtime_args)?;
 
+    let mut parser = BuiltinArgParser::new(&runtime_args.passthrough);
     let mut task_name: Option<String> = None;
     let mut resolve_selector: Option<String> = None;
     let mut output_json = false;
     let mut pretty_json = true;
-    let mut i = 0usize;
-    while i < runtime_args.passthrough.len() {
-        let arg = &runtime_args.passthrough[i];
+    while let Some(arg) = parser.next() {
         if arg == "--task" {
-            let Some(value) = runtime_args.passthrough.get(i + 1) else {
-                return Err(RunnerError::TaskInvocation(
-                    "task argument --task requires a value".to_owned(),
-                ));
-            };
-            task_name = Some(value.clone());
-            i += 2;
+            let value = parser.next_value("task argument --task requires a value")?;
+            task_name = Some(value.to_owned());
             continue;
         }
         if arg == "--resolve" {
-            let Some(value) = runtime_args.passthrough.get(i + 1) else {
-                return Err(RunnerError::TaskInvocation(format!(
-                    "{} argument --resolve requires a value",
-                    task.name
-                )));
-            };
-            resolve_selector = Some(value.clone());
-            i += 2;
+            let value =
+                parser.next_value(&format!("{} argument --resolve requires a value", task.name))?;
+            resolve_selector = Some(value.to_owned());
             continue;
         }
         if arg == "--json" {
             output_json = true;
-            i += 1;
             continue;
         }
         if arg == "--pretty" {
-            let Some(value) = runtime_args.passthrough.get(i + 1) else {
-                return Err(RunnerError::TaskInvocation(format!(
-                    "{} argument --pretty requires a value (`true` or `false`)",
-                    task.name
-                )));
-            };
-            pretty_json = match value.as_str() {
+            let value = parser.next_value(&format!(
+                "{} argument --pretty requires a value (`true` or `false`)",
+                task.name
+            ))?;
+            pretty_json = match value {
                 "true" => true,
                 "false" => false,
                 _ => {
@@ -63,7 +50,6 @@ pub(super) fn run_builtin_tasks(
                     )));
                 }
             };
-            i += 2;
             continue;
         }
         return Err(unknown_builtin_args(&task.name, &runtime_args.passthrough));
