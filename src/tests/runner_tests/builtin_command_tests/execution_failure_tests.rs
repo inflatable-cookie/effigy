@@ -39,6 +39,11 @@ fn run_manifest_task_builtin_test_json_failure_includes_results_and_failures() {
                 .collect::<Vec<&str>>();
             assert!(target_names.contains(&"dairy"));
             assert!(target_names.contains(&"farmyard"));
+            assert!(parsed["targets"]
+                .as_array()
+                .expect("targets array")
+                .iter()
+                .all(|entry| entry["cargo_env_match"].is_string()));
         }
         other => panic!("unexpected error: {other}"),
     }

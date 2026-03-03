@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io::IsTerminal;
 
 use crate::ui::theme::resolve_color_enabled;
@@ -13,6 +14,7 @@ mod payload;
 
 pub(crate) fn render_builtin_test_results(
     results: &[BuiltinTestExecResult],
+    targets: &[BuiltinTestTarget],
     verbose: bool,
 ) -> Result<String, RunnerError> {
     let color_enabled =
@@ -22,21 +24,35 @@ pub(crate) fn render_builtin_test_results(
     renderer.section("Test Results")?;
     renderer.key_values(&[KeyValue::new("targets", results.len().to_string())])?;
     renderer.text("")?;
+    let cargo_env_match_by_root = targets
+        .iter()
+        .map(|target| {
+            (
+                target.root.display().to_string(),
+                target.cargo_env_match.as_str().to_owned(),
+            )
+        })
+        .collect::<BTreeMap<String, String>>();
     let mut ordered = results
         .iter()
         .map(|result| {
+            let root = result.root.display().to_string();
             (
                 result.name.clone(),
                 result.runner.clone(),
-                result.root.display().to_string(),
+                root.clone(),
+                cargo_env_match_by_root
+                    .get(&root)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_owned()),
                 result.command.clone(),
                 result.success,
                 result.code,
             )
         })
-        .collect::<Vec<(String, String, String, String, bool, Option<i32>)>>();
+        .collect::<Vec<(String, String, String, String, String, bool, Option<i32>)>>();
     ordered.sort_by(|a, b| a.0.cmp(&b.0));
-    for (name, runner, root, command, success, code) in ordered {
+    for (name, runner, root, cargo_env_match, command, success, code) in ordered {
         let status = if success {
             "ok".to_owned()
         } else {
@@ -46,7 +62,9 @@ pub(crate) fn render_builtin_test_results(
             }
         };
         let value = if verbose {
-            format!("{status}  runner:{runner}  root:{root}  command:{command}")
+            format!(
+                "{status}  runner:{runner}  root:{root}  cargo-env-match:{cargo_env_match}  command:{command}"
+            )
         } else {
             status
         };
@@ -114,7 +132,7 @@ pub(crate) fn finalize_builtin_test_outcome(
         if let Some(json) = rendered_json {
             return Ok(Some(json));
         }
-        let rendered_text = render_builtin_test_results(results, verbose_results)?;
+        let rendered_text = render_builtin_test_results(results, targets, verbose_results)?;
         return Ok(Some(rendered_text));
     }
 
@@ -125,7 +143,7 @@ pub(crate) fn finalize_builtin_test_outcome(
         });
     }
 
-    let rendered_text = render_builtin_test_results(results, verbose_results)?;
+    let rendered_text = render_builtin_test_results(results, targets, verbose_results)?;
     let rendered =
         append_builtin_test_filter_hint(rendered_text, results, requested_suite, passthrough);
     Err(RunnerError::BuiltinTestNonZero { failures, rendered })

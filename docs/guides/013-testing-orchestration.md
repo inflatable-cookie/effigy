@@ -95,7 +95,7 @@ If unset, Effigy defaults to `3` workers.
 
 Result rendering:
 - default is compact per-target status only,
-- `--verbose-results` includes runner/root/command details per target.
+- `--verbose-results` includes runner/root/cargo-env-match/command details per target.
 
 TUI diagnostics:
 - set `EFFIGY_TUI_DIAGNOSTICS=1` when running `effigy test --tui` to emit post-run runtime diagnostics and recent trace lines for emulator/debug troubleshooting.

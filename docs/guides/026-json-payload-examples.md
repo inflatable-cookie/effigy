@@ -223,6 +223,7 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
       "name": "api/vitest",
       "root": "/workspace/app/services/api",
       "runner": "vitest",
+      "cargo_env_match": "prefix-aware",
       "command": "bun x vitest run user-service",
       "success": false,
       "code": 1,
