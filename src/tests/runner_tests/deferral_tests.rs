@@ -55,13 +55,6 @@ fn assert_defer_loop_detected(err: RunnerError, expected_depth: u8) {
     }
 }
 
-fn write_executable(path: &PathBuf, script: &str) {
-    fs::write(path, script).expect("write executable");
-    let mut perms = fs::metadata(path).expect("metadata").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(path, perms).expect("chmod");
-}
-
 fn setup_composer_stub(root: &PathBuf, script: &str, marker_file: &PathBuf) -> EnvGuard {
     let bin_dir = root.join("bin");
     fs::create_dir_all(&bin_dir).expect("mkdir bin");

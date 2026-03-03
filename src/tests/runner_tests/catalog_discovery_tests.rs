@@ -1,26 +1,9 @@
 use super::*;
 
-fn create_workspace_dir(root: &PathBuf, name: &str) -> PathBuf {
-    let dir = root.join(name);
-    fs::create_dir_all(&dir).expect("mkdir workspace dir");
-    dir
-}
-
 fn create_workspace_path(root: &PathBuf, relative: &str) -> PathBuf {
     let path = root.join(relative);
     fs::create_dir_all(&path).expect("mkdir workspace path");
     path
-}
-
-fn write_catalog_tasks(dir: &PathBuf, alias: Option<&str>, tasks: &[(&str, &str)]) {
-    let mut manifest = String::new();
-    if let Some(alias) = alias {
-        manifest.push_str(&format!("[catalog]\nalias = \"{}\"\n", alias));
-    }
-    for (task, run) in tasks {
-        manifest.push_str(&format!("[tasks.{}]\nrun = \"{}\"\n", task, run));
-    }
-    write_manifest(&dir.join("effigy.toml"), &manifest);
 }
 
 fn assert_task_ambiguous_reset_db(err: RunnerError) {
@@ -62,11 +45,6 @@ fn setup_root_and_farmyard_ping(workspace: &str) -> (PathBuf, PathBuf) {
     write_root_ping_task(&root);
     write_catalog_tasks(&farmyard, Some("farmyard"), &[("ping", "printf farmyard")]);
     (root, farmyard)
-}
-
-fn assert_builtin_ok_empty(cwd: PathBuf, task: &str, args: &[&str]) {
-    let out = run_builtin_ok(cwd, task, args);
-    assert_eq!(out, "");
 }
 
 #[test]

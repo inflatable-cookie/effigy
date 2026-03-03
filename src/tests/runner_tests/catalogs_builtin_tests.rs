@@ -1,9 +1,5 @@
 use super::*;
 
-fn write_root_manifest(root: &PathBuf, body: &str) {
-    write_manifest(&root.join("effigy.toml"), body);
-}
-
 #[derive(Clone, Copy)]
 enum CatalogResolveFixture {
     RootAndFarmyardApi,

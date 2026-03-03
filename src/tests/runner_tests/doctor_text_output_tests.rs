@@ -1,20 +1,10 @@
 use super::*;
 
-fn write_root_manifest(root: &PathBuf, body: &str) {
-    write_manifest(&root.join("effigy.toml"), body);
-}
-
 fn doctor_nonzero_rendered(err: RunnerError) -> String {
     match err {
         RunnerError::DoctorNonZero { rendered, .. } => rendered,
         other => panic!("unexpected error: {other}"),
     }
-}
-
-fn create_workspace_dir(root: &PathBuf, name: &str) -> PathBuf {
-    let dir = root.join(name);
-    fs::create_dir_all(&dir).expect("mkdir workspace dir");
-    dir
 }
 
 fn run_doctor_err_from_cwd(root: &PathBuf, fix: bool) -> RunnerError {

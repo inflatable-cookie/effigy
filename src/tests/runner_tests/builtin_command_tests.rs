@@ -1,9 +1,5 @@
 use super::*;
 
-fn write_root_manifest(root: &PathBuf, body: &str) {
-    write_manifest(&root.join("effigy.toml"), body);
-}
-
 fn write_package_json_with_test_script(root: &PathBuf) {
     fs::write(
         root.join("package.json"),
@@ -35,13 +31,6 @@ fn write_multi_suite_cargo_manifest(root: &PathBuf) {
 fn setup_multi_suite_repo(root: &PathBuf) {
     write_package_json_with_test_script(root);
     write_multi_suite_cargo_manifest(root);
-}
-
-fn write_executable(path: &PathBuf, script: &str) {
-    fs::write(path, script).expect("write executable");
-    let mut perms = fs::metadata(path).expect("stat").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(path, perms).expect("chmod");
 }
 
 fn write_test_suites_manifest(root: &PathBuf, suites: &[(&str, &str)]) {
@@ -108,11 +97,6 @@ js = "{package_manager}"
 "#
         ),
     );
-}
-
-fn assert_builtin_test_ok_empty(root: PathBuf, args: &[&str]) {
-    let out = run_builtin_ok(root, "test", args);
-    assert_eq!(out, "");
 }
 
 fn assert_builtin_test_non_zero(
@@ -479,7 +463,7 @@ fn run_manifest_task_explicit_test_task_overrides_builtin_auto_detection() {
     );
     write_package_json_with_test_script(&root);
 
-    assert_builtin_test_ok_empty(root.clone(), &[]);
+    assert_builtin_ok_empty(root.clone(), "test", &[]);
     assert!(
         root.join("explicit-test.log").exists(),
         "explicit task should run before builtin test detection"
@@ -495,7 +479,7 @@ fn run_manifest_task_builtin_test_falls_through_to_deferral_when_no_detection_ma
         "[defer]\nrun = \"test {request} = 'test' && test {args} = '--watch'\"\n",
     );
 
-    assert_builtin_test_ok_empty(root, &["--watch"]);
+    assert_builtin_ok_empty(root, "test", &["--watch"]);
 }
 
 #[test]
