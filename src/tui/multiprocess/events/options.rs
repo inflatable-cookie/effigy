@@ -4,7 +4,7 @@ use std::time::Instant;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::process_manager::ProcessSupervisor;
-use crate::tui::core::{toggle_follow_for_active, LogEntry, LogEntryKind};
+use crate::tui::core::{LogEntry, LogEntryKind};
 
 use super::super::render::options_actions;
 use super::super::state::{OptionsAction, SessionState};
@@ -22,12 +22,9 @@ pub(super) fn handle_options_overlay_key(
         return Ok(None);
     }
 
-    let follow_active = *state
-        .follow_mode
-        .get(&state.process_names[state.active_index])
-        .unwrap_or(&true);
+    let follow_active = state.follow_for(state.active_process());
     let actions = options_actions(follow_active);
-    let active = state.process_names[state.active_index].clone();
+    let active = state.active_process().to_owned();
     match key.code {
         KeyCode::Esc => {
             state.show_options = false;
@@ -100,12 +97,11 @@ fn apply_options_action(
 ) -> Result<bool, MultiProcessTuiError> {
     match action {
         OptionsAction::ToggleFollow => {
-            toggle_follow_for_active(
-                &mut state.follow_mode,
-                &mut state.scroll_offsets,
-                active,
-                max_offset,
-            );
+            let follow = state.follow_for(active);
+            state.set_follow_for(active, !follow);
+            if !follow {
+                state.set_scroll_offset_for(active, max_offset);
+            }
             Ok(false)
         }
         OptionsAction::Restart => {
