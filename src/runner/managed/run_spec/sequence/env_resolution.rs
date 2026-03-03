@@ -8,7 +8,9 @@ use crate::runner::{LoadedCatalog, ManifestManagedRunStep, RunnerError};
 
 use super::dotenv::resolve_dotenv_env_entry;
 use super::env_files::normalize_env_file_directive;
-use super::pathing::{normalize_path, resolve_catalog_reference_root, split_catalog_env_reference};
+use super::pathing::{
+    find_catalog_by_normalized_root, resolve_catalog_reference_root, split_catalog_env_reference,
+};
 
 pub(super) struct StepEnvAccumulator {
     chained_env: BTreeMap<String, String>,
@@ -138,9 +140,7 @@ fn resolve_manifest_env_entry<'a>(
     };
 
     let target_catalog_root = resolve_catalog_reference_root(catalog_path, repo_root);
-    let target_catalog = catalogs
-        .iter()
-        .find(|catalog| normalize_path(&catalog.catalog_root) == target_catalog_root)?;
+    let target_catalog = find_catalog_by_normalized_root(catalogs, &target_catalog_root)?;
     let entry = target_catalog.manifest.env.get(env_key)?;
     Some((env_key.to_owned(), entry))
 }
