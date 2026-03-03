@@ -111,6 +111,23 @@ concurrent = [{{ name = "tests", task = "{}" }}]
     );
 }
 
+struct ManagedPlanCase {
+    workspace: &'static str,
+}
+
+struct ManagedStreamBuiltinTestCase {
+    workspace: &'static str,
+    suite: &'static str,
+    task_ref: &'static str,
+}
+
+struct ManagedTaskRefInvalidCase {
+    workspace: &'static str,
+    manifest: &'static str,
+    expected_reference: &'static str,
+    expected_detail: &'static str,
+}
+
 fn assert_managed_process_invalid_definition(
     err: RunnerError,
     expected_task: &str,
@@ -345,35 +362,23 @@ concurrent = [
 }
 
 #[test]
-fn run_manifest_task_managed_tui_supports_independent_tab_order() {
-    let _guard = lock_test();
-    let root = temp_workspace("managed-tab-order");
-    let _env = managed_tui_env();
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
-mode = "tui"
-concurrent = [
-  { name = "api", run = "printf api", start = 1, tab = 3 },
-  { name = "jobs", run = "printf jobs", start = 2, tab = 4 },
-  { name = "cream", run = "printf cream", start = 3, tab = 2 },
-  { name = "dairy", run = "printf dairy", start = 4, tab = 1 }
-]
-"#,
-    );
-
-    let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
-    assert_contains_all(&out, &["tab-order: dairy, cream, api, jobs"]);
-}
-
-#[test]
 fn run_manifest_task_managed_tui_supports_ranked_tab_order_map() {
     let _guard = lock_test();
-    let root = temp_workspace("managed-tab-order-ranked");
     let _env = managed_tui_env();
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
+    let cases = [
+        ManagedPlanCase {
+            workspace: "managed-tab-order",
+        },
+        ManagedPlanCase {
+            workspace: "managed-tab-order-ranked",
+        },
+    ];
+
+    for case in cases {
+        let root = temp_workspace(case.workspace);
+        write_manifest(
+            &root.join("effigy.toml"),
+            r#"[tasks.dev]
 mode = "tui"
 concurrent = [
   { name = "api", run = "printf api", start = 1, tab = 3 },
@@ -382,10 +387,11 @@ concurrent = [
   { name = "dairy", run = "printf dairy", start = 4, tab = 1 }
 ]
 "#,
-    );
+        );
 
-    let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
-    assert_contains_all(&out, &["tab-order: dairy, cream, api, jobs"]);
+        let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
+        assert_contains_all(&out, &["tab-order: dairy, cream, api, jobs"]);
+    }
 }
 
 #[test]
@@ -588,30 +594,6 @@ concurrent = [{ task = "farmyard/api" }]
 }
 
 #[test]
-fn run_manifest_task_managed_tui_rejects_unterminated_quote_in_compact_profile_task_ref() {
-    let _guard = lock_test();
-    let root = temp_workspace("managed-compact-profile-ref-unterminated-quote");
-    let _env = managed_tui_env();
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
-mode = "tui"
-concurrent = [{ name = "tests", task = 'test "unterminated' }]
-"#,
-    );
-
-    let err =
-        run_dev_with_repo(&root, &[]).expect_err("invalid compact profile task ref should fail");
-    assert_managed_task_reference_invalid(
-        err,
-        "dev",
-        "tests",
-        "test \"unterminated",
-        "unterminated quote",
-    );
-}
-
-#[test]
 fn run_manifest_task_managed_tui_process_run_array_supports_task_refs() {
     let _guard = lock_test();
     let root = temp_workspace("managed-process-run-array");
@@ -635,43 +617,51 @@ run = ["printf start", { task = "farmyard/api" }, "printf done"]
 }
 
 #[test]
-fn run_manifest_task_managed_tui_rejects_unterminated_quote_in_process_task_ref() {
+fn run_manifest_task_managed_tui_rejects_invalid_task_ref_syntax() {
     let _guard = lock_test();
-    let root = temp_workspace("managed-process-task-ref-unterminated-quote");
     let _env = managed_tui_env();
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
+    let cases = [
+        ManagedTaskRefInvalidCase {
+            workspace: "managed-compact-profile-ref-unterminated-quote",
+            manifest: r#"[tasks.dev]
 mode = "tui"
 concurrent = [{ name = "tests", task = 'test "unterminated' }]
 "#,
-    );
-
-    let err = run_dev_with_repo(&root, &[]).expect_err("invalid process task ref should fail");
-    assert_managed_task_reference_invalid(
-        err,
-        "dev",
-        "tests",
-        "test \"unterminated",
-        "unterminated quote",
-    );
-}
-
-#[test]
-fn run_manifest_task_managed_tui_rejects_trailing_escape_in_process_task_ref() {
-    let _guard = lock_test();
-    let root = temp_workspace("managed-process-task-ref-trailing-escape");
-    let _env = managed_tui_env();
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.dev]
+            expected_reference: "test \"unterminated",
+            expected_detail: "unterminated quote",
+        },
+        ManagedTaskRefInvalidCase {
+            workspace: "managed-process-task-ref-unterminated-quote",
+            manifest: r#"[tasks.dev]
+mode = "tui"
+concurrent = [{ name = "tests", task = 'test "unterminated' }]
+"#,
+            expected_reference: "test \"unterminated",
+            expected_detail: "unterminated quote",
+        },
+        ManagedTaskRefInvalidCase {
+            workspace: "managed-process-task-ref-trailing-escape",
+            manifest: r#"[tasks.dev]
 mode = "tui"
 concurrent = [{ name = "tests", task = "test vitest \\" }]
 "#,
-    );
+            expected_reference: "test vitest \\",
+            expected_detail: "trailing escape",
+        },
+    ];
 
-    let err = run_dev_with_repo(&root, &[]).expect_err("invalid process task ref should fail");
-    assert_managed_task_reference_invalid(err, "dev", "tests", "test vitest \\", "trailing escape");
+    for case in cases {
+        let root = temp_workspace(case.workspace);
+        write_manifest(&root.join("effigy.toml"), case.manifest);
+        let err = run_dev_with_repo(&root, &[]).expect_err("invalid process task ref should fail");
+        assert_managed_task_reference_invalid(
+            err,
+            "dev",
+            "tests",
+            case.expected_reference,
+            case.expected_detail,
+        );
+    }
 }
 
 #[test]
@@ -824,49 +814,37 @@ concurrent = [{ name = "front-only", run = "printf front-ok" }]
 }
 
 #[test]
-fn run_manifest_task_managed_stream_process_task_ref_supports_builtin_test() {
-    let _guard = lock_test();
-    let root = temp_workspace("managed-stream-builtin-test-task-ref");
-    let marker = root.join("builtin-test-called.log");
-    write_managed_stream_builtin_test_manifest(&root, "unit", "test", &marker);
-    let _env = managed_stream_env();
-
-    let out = run_dev(&root, &["default"]).expect("run managed stream with builtin test task ref");
-    assert_contains_all(&out, &["Managed Task Runtime", "root: ok"]);
-    assert!(marker.exists(), "built-in test task ref should execute");
-}
-
-#[test]
-fn run_manifest_task_managed_stream_process_task_ref_supports_builtin_test_with_inline_suite_arg() {
-    let _guard = lock_test();
-    let root = temp_workspace("managed-stream-builtin-test-task-ref-inline-suite");
-    let marker = root.join("builtin-test-called.log");
-    write_managed_stream_builtin_test_manifest(&root, "vitest", "test vitest", &marker);
-    let _env = managed_stream_env();
-
-    let out = run_dev(&root, &["default"])
-        .expect("run managed stream with builtin test task ref and suite arg");
-    assert_contains_all(&out, &["Managed Task Runtime", "root: ok"]);
-    assert!(
-        marker.exists(),
-        "built-in test task ref with suite arg should execute"
-    );
-}
-
-#[test]
 fn run_manifest_task_managed_stream_profile_entry_supports_builtin_test() {
     let _guard = lock_test();
-    let root = temp_workspace("managed-stream-builtin-test-profile-entry");
-    let marker = root.join("builtin-test-called.log");
-    write_managed_stream_builtin_test_manifest(&root, "unit", "test", &marker);
     let _env = managed_stream_env();
+    let cases = [
+        ManagedStreamBuiltinTestCase {
+            workspace: "managed-stream-builtin-test-task-ref",
+            suite: "unit",
+            task_ref: "test",
+        },
+        ManagedStreamBuiltinTestCase {
+            workspace: "managed-stream-builtin-test-task-ref-inline-suite",
+            suite: "vitest",
+            task_ref: "test vitest",
+        },
+        ManagedStreamBuiltinTestCase {
+            workspace: "managed-stream-builtin-test-profile-entry",
+            suite: "unit",
+            task_ref: "test",
+        },
+    ];
 
-    let out = run_dev(&root, &["default"]).expect("run managed stream with builtin profile entry");
-    assert_contains_all(&out, &["Managed Task Runtime", "root: ok"]);
-    assert!(
-        marker.exists(),
-        "built-in test profile entry should execute"
-    );
+    for case in cases {
+        let root = temp_workspace(case.workspace);
+        let marker = root.join("builtin-test-called.log");
+        write_managed_stream_builtin_test_manifest(&root, case.suite, case.task_ref, &marker);
+
+        let out =
+            run_dev(&root, &["default"]).expect("run managed stream with builtin profile entry");
+        assert_contains_all(&out, &["Managed Task Runtime", "root: ok"]);
+        assert!(marker.exists(), "built-in test task ref should execute");
+    }
 }
 
 #[test]
