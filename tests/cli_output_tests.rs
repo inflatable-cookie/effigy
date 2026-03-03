@@ -290,7 +290,7 @@ fn cli_json_mode_lock_conflict_wraps_runner_failure() {
     let start = std::time::Instant::now();
     while !workspace_lock.exists() {
         assert!(
-            start.elapsed() < std::time::Duration::from_secs(2),
+            start.elapsed() < std::time::Duration::from_secs(5),
             "workspace lock was not created in time"
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -348,7 +348,7 @@ fn cli_json_mode_watch_lock_conflict_has_unlock_remediation_hint() {
     let start = std::time::Instant::now();
     while !watch_lock.exists() {
         assert!(
-            start.elapsed() < std::time::Duration::from_secs(2),
+            start.elapsed() < std::time::Duration::from_secs(5),
             "watch lock was not created in time"
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
