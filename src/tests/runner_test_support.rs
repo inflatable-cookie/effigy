@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use super::super::contract_test_support::write_manifest as write_manifest_shared;
 pub(super) use super::super::contract_test_support::{
-    lock_test, temp_workspace, with_cwd, EnvGuard,
+    lock_test, temp_workspace, wait_for_path_exists, with_cwd, EnvGuard,
 };
 
 pub(super) fn write_manifest(path: &PathBuf, body: &str) {

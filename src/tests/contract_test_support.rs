@@ -1,7 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub(super) fn parse_json(text: &str) -> serde_json::Value {
     serde_json::from_str(text).expect("parse json")
@@ -43,6 +44,18 @@ pub(super) fn lock_test() -> MutexGuard<'static, ()> {
     match test_lock().lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+pub(super) fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) {
+    let started = Instant::now();
+    while !path.exists() {
+        assert!(
+            started.elapsed() < timeout,
+            "{label} was not created in time: {}",
+            path.display()
+        );
+        thread::sleep(Duration::from_millis(20));
     }
 }
 
