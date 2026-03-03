@@ -1,32 +1,14 @@
 use super::*;
 
-fn create_workspace_dir(root: &PathBuf, name: &str) -> PathBuf {
-    let dir = root.join(name);
-    fs::create_dir_all(&dir).expect("mkdir workspace dir");
-    dir
-}
-
-fn write_root_manifest(root: &PathBuf, body: &str) {
-    write_manifest(&root.join("effigy.toml"), body);
-}
-
 fn write_root_dev_task_manifest(root: &PathBuf) {
     write_root_manifest(root, "[tasks.dev]\nrun = \"printf root\"\n");
-}
-
-fn write_catalog_tasks(dir: &PathBuf, alias: &str, tasks: &[(&str, &str)]) {
-    let mut manifest = format!("[catalog]\nalias = \"{}\"\n", alias);
-    for (task, run) in tasks {
-        manifest.push_str(&format!("[tasks.{}]\nrun = \"{}\"\n", task, run));
-    }
-    write_manifest(&dir.join("effigy.toml"), &manifest);
 }
 
 fn setup_root_and_farmyard_catalog(name: &str) -> PathBuf {
     let root = temp_workspace(name);
     let farmyard = create_workspace_dir(&root, "farmyard");
     write_root_dev_task_manifest(&root);
-    write_catalog_tasks(&farmyard, "farmyard", &[("reset-db", "printf farmyard")]);
+    write_catalog_tasks(&farmyard, Some("farmyard"), &[("reset-db", "printf farmyard")]);
     root
 }
 
@@ -34,7 +16,7 @@ fn setup_root_with_catalogs(name: &str, catalogs: &[(&str, &[(&str, &str)])]) ->
     let root = temp_workspace(name);
     for (dir_name, tasks) in catalogs {
         let dir = create_workspace_dir(&root, dir_name);
-        write_catalog_tasks(&dir, dir_name, tasks);
+        write_catalog_tasks(&dir, Some(dir_name), tasks);
     }
     root
 }
@@ -53,11 +35,6 @@ concurrent = [{{ run = "printf api" }}]
             profile
         ),
     );
-}
-
-fn assert_builtin_ok_empty(root: PathBuf, task: &str, args: &[&str]) {
-    let out = run_builtin_ok(root, task, args);
-    assert_eq!(out, "");
 }
 
 fn json_task_column(parsed: &serde_json::Value, field: &str) -> Vec<String> {

@@ -50,6 +50,34 @@ fn write_manifest(path: &PathBuf, body: &str) {
     fs::write(path, body).expect("write manifest");
 }
 
+fn write_root_manifest(root: &PathBuf, body: &str) {
+    write_manifest(&root.join("effigy.toml"), body);
+}
+
+fn create_workspace_dir(root: &PathBuf, name: &str) -> PathBuf {
+    let dir = root.join(name);
+    fs::create_dir_all(&dir).expect("mkdir workspace dir");
+    dir
+}
+
+fn write_catalog_tasks(dir: &PathBuf, alias: Option<&str>, tasks: &[(&str, &str)]) {
+    let mut manifest = String::new();
+    if let Some(alias) = alias {
+        manifest.push_str(&format!("[catalog]\nalias = \"{alias}\"\n"));
+    }
+    for (task, run) in tasks {
+        manifest.push_str(&format!("[tasks.{task}]\nrun = \"{run}\"\n"));
+    }
+    write_manifest(&dir.join("effigy.toml"), &manifest);
+}
+
+fn write_executable(path: &PathBuf, script: &str) {
+    fs::write(path, script).expect("write executable");
+    let mut perms = fs::metadata(path).expect("stat").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).expect("chmod");
+}
+
 fn run_builtin_ok(root: PathBuf, name: &str, args: &[&str]) -> String {
     run_manifest_task_with_cwd(
         &TaskInvocation {
@@ -70,6 +98,11 @@ fn run_builtin_err(root: PathBuf, name: &str, args: &[&str]) -> RunnerError {
         root,
     )
     .expect_err("built-in invocation should fail")
+}
+
+fn assert_builtin_ok_empty(root: PathBuf, name: &str, args: &[&str]) {
+    let out = run_builtin_ok(root, name, args);
+    assert_eq!(out, "");
 }
 
 fn assert_contains_all(rendered: &str, expected: &[&str]) {

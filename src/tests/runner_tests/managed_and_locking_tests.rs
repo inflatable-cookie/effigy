@@ -54,28 +54,10 @@ fn managed_stream_env() -> EnvGuard {
     EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))])
 }
 
-fn create_workspace_dir(root: &PathBuf, name: &str) -> PathBuf {
-    let dir = root.join(name);
-    fs::create_dir_all(&dir).expect("mkdir workspace dir");
-    dir
-}
-
-fn write_root_manifest(root: &PathBuf, manifest: &str) {
-    write_manifest(&root.join("effigy.toml"), manifest);
-}
-
-fn write_catalog_tasks(dir: &PathBuf, alias: &str, tasks: &[(&str, &str)]) {
-    let mut manifest = format!("[catalog]\nalias = \"{}\"\n", alias);
-    for (task, run) in tasks {
-        manifest.push_str(&format!("[tasks.{}]\nrun = \"{}\"\n", task, run));
-    }
-    write_manifest(&dir.join("effigy.toml"), &manifest);
-}
-
 fn write_catalogs_with_tasks(root: &PathBuf, catalogs: &[(&str, &[(&str, &str)])]) {
     for (name, tasks) in catalogs {
         let dir = create_workspace_dir(root, name);
-        write_catalog_tasks(&dir, name, tasks);
+        write_catalog_tasks(&dir, Some(name), tasks);
     }
 }
 
@@ -632,7 +614,7 @@ concurrent = [{ name = "combo", task = "combo" }]
 run = ["printf start", { task = "farmyard/api" }, "printf done"]
 "#,
     );
-    write_catalog_tasks(&farmyard, "farmyard", &[("api", "printf farmyard-api")]);
+    write_catalog_tasks(&farmyard, Some("farmyard"), &[("api", "printf farmyard-api")]);
 
     let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
     assert_contains_all(&out, &["printf start", "farmyard-api", "printf done", "cd"]);

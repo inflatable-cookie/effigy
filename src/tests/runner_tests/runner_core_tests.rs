@@ -42,17 +42,6 @@ fn assert_lock_conflict(err: RunnerError, expected_scope: &str, expected_remedia
     }
 }
 
-fn write_executable(path: &PathBuf, script: &str) {
-    fs::write(path, script).expect("write executable");
-    let mut perms = fs::metadata(path).expect("stat").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(path, perms).expect("chmod");
-}
-
-fn write_root_manifest(root: &PathBuf, body: &str) {
-    write_manifest(&root.join("effigy.toml"), body);
-}
-
 fn write_empty_manifest(root: &PathBuf) {
     write_root_manifest(root, "");
 }
