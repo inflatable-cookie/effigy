@@ -7,7 +7,10 @@ use crate::runner::util::parse_dotenv_entries;
 use crate::runner::{LoadedCatalog, RunnerError};
 
 use super::env_files::resolve_env_file_paths;
-use super::pathing::{normalize_path, resolve_catalog_reference_root, split_catalog_env_reference};
+use super::pathing::{
+    find_catalog_by_normalized_root, normalize_path, resolve_catalog_reference_root,
+    split_catalog_env_reference,
+};
 
 pub(super) fn resolve_dotenv_env_entry(
     entry_ref: &str,
@@ -18,9 +21,7 @@ pub(super) fn resolve_dotenv_env_entry(
 ) -> Result<Option<(String, String)>, RunnerError> {
     if let Some((catalog_path, env_key)) = split_catalog_env_reference(entry_ref) {
         let target_catalog_root = resolve_catalog_reference_root(catalog_path, repo_root);
-        let Some(target_catalog) = catalogs
-            .iter()
-            .find(|catalog| normalize_path(&catalog.catalog_root) == target_catalog_root)
+        let Some(target_catalog) = find_catalog_by_normalized_root(catalogs, &target_catalog_root)
         else {
             return Ok(None);
         };
