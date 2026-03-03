@@ -99,7 +99,6 @@ pub(crate) fn finalize_builtin_test_outcome(
         .collect::<Vec<(String, Option<i32>)>>();
     failures.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let rendered_text = render_builtin_test_results(results, verbose_results)?;
     let rendered_json = if output_json {
         Some(render_builtin_test_results_json(
             results,
@@ -112,7 +111,11 @@ pub(crate) fn finalize_builtin_test_outcome(
     };
 
     if failures.is_empty() {
-        return Ok(Some(rendered_json.unwrap_or(rendered_text)));
+        if let Some(json) = rendered_json {
+            return Ok(Some(json));
+        }
+        let rendered_text = render_builtin_test_results(results, verbose_results)?;
+        return Ok(Some(rendered_text));
     }
 
     if let Some(json) = rendered_json {
@@ -122,11 +125,8 @@ pub(crate) fn finalize_builtin_test_outcome(
         });
     }
 
-    let rendered = append_builtin_test_filter_hint(
-        rendered_text,
-        results,
-        requested_suite,
-        passthrough,
-    );
+    let rendered_text = render_builtin_test_results(results, verbose_results)?;
+    let rendered =
+        append_builtin_test_filter_hint(rendered_text, results, requested_suite, passthrough);
     Err(RunnerError::BuiltinTestNonZero { failures, rendered })
 }

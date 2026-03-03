@@ -8,7 +8,11 @@ fn setup_root_and_farmyard_catalog(name: &str) -> PathBuf {
     let root = temp_workspace(name);
     let farmyard = create_workspace_dir(&root, "farmyard");
     write_root_dev_task_manifest(&root);
-    write_catalog_tasks(&farmyard, Some("farmyard"), &[("reset-db", "printf farmyard")]);
+    write_catalog_tasks(
+        &farmyard,
+        Some("farmyard"),
+        &[("reset-db", "printf farmyard")],
+    );
     root
 }
 
