@@ -90,6 +90,33 @@ fn assert_task_invocation_error_contains(err: RunnerError, expected: &[&str]) {
     }
 }
 
+fn assert_task_manifest_parse_runner_error_contains_any(err: RunnerError, expected: &[&str]) {
+    match err {
+        RunnerError::TaskManifestParse { error, .. } => {
+            assert_manifest_parse_error_contains_any(&error, expected);
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+fn assert_doctor_non_zero_contains(err: RunnerError, expected: &[&str]) {
+    match err {
+        RunnerError::DoctorNonZero { rendered, .. } => assert_contains_all(&rendered, expected),
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+fn assert_task_command_failure_code(err: RunnerError, expected_code: Option<Option<i32>>) {
+    match err {
+        RunnerError::TaskCommandFailure { code, .. } => {
+            if let Some(expected) = expected_code {
+                assert_eq!(code, expected);
+            }
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
 fn assert_manifest_parse_error_contains_any(error: &toml::de::Error, expected: &[&str]) {
     let rendered = error.to_string();
     assert!(

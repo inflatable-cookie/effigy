@@ -8,17 +8,6 @@ fn run_validate_err(root: &PathBuf, args: &[&str]) -> RunnerError {
     run_builtin_err(root.clone(), "validate", args)
 }
 
-fn assert_task_command_failure(err: RunnerError, expected_code: Option<Option<i32>>) {
-    match err {
-        RunnerError::TaskCommandFailure { code, .. } => {
-            if let Some(expected) = expected_code {
-                assert_eq!(code, expected);
-            }
-        }
-        other => panic!("unexpected error: {other}"),
-    }
-}
-
 struct RunArrayInvocationErrorCase {
     workspace: &'static str,
     manifest: &'static str,
@@ -261,7 +250,7 @@ run = [
     );
 
     let err = run_validate_err(&root, &[]);
-    assert_task_command_failure(err, Some(Some(124)));
+    assert_task_command_failure_code(err, Some(Some(124)));
 }
 
 #[test]
@@ -285,7 +274,7 @@ run = [
     );
 
     let err = run_validate_err(&root, &[]);
-    assert_task_command_failure(err, None);
+    assert_task_command_failure_code(err, None);
     let body = fs::read_to_string(marker).expect("read marker");
     assert!(body.contains("good"));
 }
