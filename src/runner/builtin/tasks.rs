@@ -4,7 +4,7 @@ use crate::{TaskInvocation, TasksArgs};
 
 use super::super::{run_tasks, RunnerError, TaskRuntimeArgs};
 use super::arg_parser::BuiltinArgParser;
-use super::{reject_verbose_root_for_builtin, unknown_builtin_args};
+use super::{ensure_no_unknown_builtin_args, reject_verbose_root_for_builtin};
 
 pub(super) fn run_builtin_tasks(
     task: &TaskInvocation,
@@ -19,6 +19,7 @@ pub(super) fn run_builtin_tasks(
     let mut resolve_selector: Option<String> = None;
     let mut output_json = false;
     let mut pretty_json = true;
+    let mut unknown = Vec::<String>::new();
     while let Some(arg) = parser.next() {
         if arg == "--task" {
             let value = parser.next_value("task argument --task requires a value")?;
@@ -52,8 +53,9 @@ pub(super) fn run_builtin_tasks(
             )?;
             continue;
         }
-        return Err(unknown_builtin_args(&task.name, &runtime_args.passthrough));
+        unknown.push(arg.to_owned());
     }
+    ensure_no_unknown_builtin_args(&task.name, &unknown)?;
 
     if !output_json && !pretty_json {
         return Err(RunnerError::TaskInvocation(format!(

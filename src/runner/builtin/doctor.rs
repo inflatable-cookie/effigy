@@ -4,7 +4,7 @@ use crate::TaskInvocation;
 
 use super::super::{run_doctor, RunnerError, TaskRuntimeArgs};
 use super::arg_parser::BuiltinArgParser;
-use super::{reject_verbose_root_for_builtin, unknown_builtin_args};
+use super::{ensure_no_unknown_builtin_args, reject_verbose_root_for_builtin};
 
 pub(super) fn run_builtin_doctor(
     task: &TaskInvocation,
@@ -35,9 +35,7 @@ pub(super) fn run_builtin_doctor(
             }
         }
     }
-    if !unknown.is_empty() {
-        return Err(unknown_builtin_args(&task.name, &unknown));
-    }
+    ensure_no_unknown_builtin_args(&task.name, &unknown)?;
 
     run_doctor(crate::DoctorArgs {
         repo_override: Some(target_root.to_path_buf()),

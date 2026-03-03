@@ -2,7 +2,7 @@ use crate::TaskInvocation;
 
 use super::super::super::RunnerError;
 use super::super::arg_parser::BuiltinArgParser;
-use super::super::unknown_builtin_args;
+use super::super::ensure_no_unknown_builtin_args;
 
 #[derive(Debug, Clone)]
 pub(super) struct ConfigOptions {
@@ -43,9 +43,7 @@ pub(super) fn parse_config_options(
         }
     }
 
-    if !unknown.is_empty() {
-        return Err(unknown_builtin_args(&task.name, &unknown));
-    }
+    ensure_no_unknown_builtin_args(&task.name, &unknown)?;
     if minimal && !schema {
         return Err(RunnerError::TaskInvocation(
             "`--minimal` requires `--schema` for built-in `config`".to_owned(),
