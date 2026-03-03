@@ -10,6 +10,7 @@ mod dispatch;
 mod output;
 
 use super::super::{LoadedCatalog, RunnerError, TaskRuntimeArgs};
+use super::reject_verbose_root_for_builtin;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CacheCommand {
@@ -31,11 +32,7 @@ pub(super) fn run_builtin_cache(
     catalogs: &[LoadedCatalog],
     invocation_cwd: &Path,
 ) -> Result<Option<String>, RunnerError> {
-    if runtime_args.verbose_root {
-        return Err(RunnerError::TaskInvocation(
-            "`--verbose-root` is not supported for built-in `cache`".to_owned(),
-        ));
-    }
+    reject_verbose_root_for_builtin(&task.name, runtime_args)?;
 
     if runtime_args
         .passthrough

@@ -17,6 +17,25 @@ mod test;
 mod unlock;
 mod watch;
 
+pub(super) fn reject_verbose_root_for_builtin(
+    task_name: &str,
+    runtime_args: &TaskRuntimeArgs,
+) -> Result<(), RunnerError> {
+    if runtime_args.verbose_root {
+        return Err(RunnerError::TaskInvocation(format!(
+            "`--verbose-root` is not supported for built-in `{task_name}`",
+        )));
+    }
+    Ok(())
+}
+
+pub(super) fn unknown_builtin_args(task_name: &str, args: &[String]) -> RunnerError {
+    RunnerError::TaskInvocation(format!(
+        "unknown argument(s) for built-in `{task_name}`: {}",
+        args.join(" ")
+    ))
+}
+
 fn is_builtin_task(task_name: &str) -> bool {
     BUILTIN_TASKS.iter().any(|(name, _)| *name == task_name) || task_name == "catalogs"
 }

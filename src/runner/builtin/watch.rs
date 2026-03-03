@@ -4,6 +4,7 @@ use crate::TaskInvocation;
 
 use super::super::locking::{acquire_scopes, LockScope};
 use super::super::{run_manifest_task_with_cwd, RunnerError, TaskRuntimeArgs};
+use super::reject_verbose_root_for_builtin;
 
 mod options;
 mod output;
@@ -18,11 +19,7 @@ pub(super) fn run_builtin_watch(
     runtime_args: &TaskRuntimeArgs,
     target_root: &Path,
 ) -> Result<Option<String>, RunnerError> {
-    if runtime_args.verbose_root {
-        return Err(RunnerError::TaskInvocation(
-            "`--verbose-root` is not supported for built-in `watch`".to_owned(),
-        ));
-    }
+    reject_verbose_root_for_builtin(&task.name, runtime_args)?;
 
     let request = parse_watch_request(task, &runtime_args.passthrough)?;
     if request.help {
