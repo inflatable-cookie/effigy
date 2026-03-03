@@ -21,6 +21,9 @@ pub(super) fn run_builtin_tasks(
     let mut pretty_json = true;
     let mut unknown = Vec::<String>::new();
     while let Some(arg) = parser.next() {
+        if parser.consume_json_flag(arg, &mut output_json) {
+            continue;
+        }
         if arg == "--task" {
             let value = parser.next_value("task argument --task requires a value")?;
             task_name = Some(value.to_owned());
@@ -32,10 +35,6 @@ pub(super) fn run_builtin_tasks(
                 task.name
             ))?;
             resolve_selector = Some(value.to_owned());
-            continue;
-        }
-        if arg == "--json" {
-            output_json = true;
             continue;
         }
         if arg == "--pretty" {

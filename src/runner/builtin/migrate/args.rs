@@ -17,28 +17,23 @@ pub(super) fn parse_migrate_args(
     let mut package_path: Option<PathBuf> = None;
     let mut script_filter = std::collections::BTreeSet::<String>::new();
     while let Some(arg) = parser.next() {
-        match arg {
-            "--json" => {
-                parser.bool_flag(&mut output_json);
-            }
-            "--help" | "-h" => {
-                parser.bool_flag(&mut help);
-            }
-            "--apply" => {
-                parser.bool_flag(&mut apply);
-            }
-            "--from" => {
-                let value = parser.string_flag_value("`--from` requires a file path")?;
-                package_path = Some(PathBuf::from(value));
-            }
-            "--script" => {
-                let value = parser.string_flag_value("`--script` requires a script name")?;
-                script_filter.insert(value);
-            }
-            unknown => {
-                return Err(unknown_builtin_arg(&task.name, unknown));
-            }
+        if parser.consume_json_flag(arg, &mut output_json)
+            || parser.consume_help_flag(arg, &mut help)
+            || parser.consume_flag(arg, "--apply", &mut apply)
+        {
+            continue;
         }
+        if arg == "--from" {
+            let value = parser.string_flag_value("`--from` requires a file path")?;
+            package_path = Some(PathBuf::from(value));
+            continue;
+        }
+        if arg == "--script" {
+            let value = parser.string_flag_value("`--script` requires a script name")?;
+            script_filter.insert(value);
+            continue;
+        }
+        return Err(unknown_builtin_arg(&task.name, arg));
     }
     Ok(MigrateArgs {
         output_json,

@@ -26,8 +26,24 @@ impl<'a> BuiltinArgParser<'a> {
         Ok(value.as_str())
     }
 
-    pub(super) fn bool_flag(&mut self, value: &mut bool) {
+    pub(super) fn consume_flag(&self, arg: &str, flag: &str, value: &mut bool) -> bool {
+        if arg != flag {
+            return false;
+        }
         *value = true;
+        true
+    }
+
+    pub(super) fn consume_json_flag(&self, arg: &str, value: &mut bool) -> bool {
+        self.consume_flag(arg, "--json", value)
+    }
+
+    pub(super) fn consume_help_flag(&self, arg: &str, value: &mut bool) -> bool {
+        if arg == "--help" || arg == "-h" {
+            *value = true;
+            return true;
+        }
+        false
     }
 
     pub(super) fn string_flag_value(
