@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::super::super::{LoadedCatalog, TaskSelector, DEFAULT_BUILTIN_TEST_MAX_PARALLEL};
@@ -21,6 +22,7 @@ pub(super) struct BuiltinTestTarget {
     pub(super) plans: Vec<BuiltinResolvedPlan>,
     pub(super) fallback_chain: Vec<String>,
     pub(super) suite_source: String,
+    pub(super) cargo_env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy)]

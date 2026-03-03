@@ -49,6 +49,8 @@ Use this section as a fast reference for task env behavior.
   - `KEY=value`
   - `export KEY=value`
   - quoted values with matching single or double quotes.
+- Built-in cargo test suites inherit manifest `CARGO_*`:
+  - `effigy test` auto-applies `[env]` `CARGO_*` entries to `cargo-nextest`/`cargo-test` execution.
 
 Canonical source and examples:
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)

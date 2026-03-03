@@ -21,6 +21,7 @@ Operating and debugging day-to-day:
 1. [`guides/025-command-reference-matrix.md`](./guides/025-command-reference-matrix.md)
 2. [`guides/023-troubleshooting-and-failure-recipes.md`](./guides/023-troubleshooting-and-failure-recipes.md)
 3. [`guides/019-watch-init-migrate-phase-1.md`](./guides/019-watch-init-migrate-phase-1.md)
+4. [`guides/README.md#env-resolution-cheatsheet`](./guides/README.md#env-resolution-cheatsheet)
 
 Automating and validating CI:
 1. [`guides/017-json-output-contracts.md`](./guides/017-json-output-contracts.md)
@@ -37,6 +38,7 @@ Maintaining docs process:
 
 Primary navigation page:
 - [`guides/README.md`](./guides/README.md)
+- Env reference shortcut: [`guides/README.md#env-resolution-cheatsheet`](./guides/README.md#env-resolution-cheatsheet)
 
 Guide structure standard:
 - practical guides should end with `Expected Outcome`, `Related Guides`, and `Next Step`.

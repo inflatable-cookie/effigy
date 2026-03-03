@@ -218,6 +218,7 @@ Behavior:
 - named entry resolution order is `[env]` -> process env -> dotenv fallback (`.env` or `env_file` override)
 - referenced tasks keep their own `env` when called via `task = "..."` entries
 - env value token substitution supports `{project}` and `{repo}` (aliases for catalog root path)
+- built-in `test` also reads manifest `[env]` for `CARGO_*` keys and applies them automatically to cargo suites (`cargo-nextest`/`cargo-test`)
 
 ## 12) Multi-Catalog Monorepo Baseline
 
