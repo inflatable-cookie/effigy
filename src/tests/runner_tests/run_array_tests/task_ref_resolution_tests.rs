@@ -132,3 +132,62 @@ unit = "sh -lc 'printf called > \"{}\"'"
         "prefixed built-in test task ref should execute"
     );
 }
+
+#[test]
+fn run_manifest_task_run_array_task_reference_preserves_referenced_task_env() {
+    let root = temp_workspace("run-array-task-ref-task-env");
+    let marker = root.join("task-ref-task-env.log");
+    write_validate_manifest(
+        &root,
+        &format!(
+            r#"[tasks.capture]
+run = "sh -lc 'printf %s \"$CARGO_HOME\" > \"{}\"'"
+env = {{ CARGO_HOME = "{{project}}/.cargo/referenced-home" }}
+
+[tasks.validate]
+run = [{{ task = "capture" }}]
+"#,
+            marker.display()
+        ),
+    );
+
+    assert_validate_ok_empty(&root, &[]);
+    let body = fs::read_to_string(&marker).expect("read marker");
+    let canonical_root = fs::canonicalize(&root).expect("canonicalize root");
+    assert_eq!(
+        body,
+        format!("{}/.cargo/referenced-home", canonical_root.display())
+    );
+}
+
+#[test]
+fn run_manifest_task_run_array_env_directive_applies_to_task_ref_steps() {
+    let root = temp_workspace("run-array-env-directive-task-ref");
+    let marker = root.join("task-ref-env-directive.log");
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[env]
+CARGO_HOME = "{{project}}/.cargo/from-directive"
+
+[tasks.capture]
+run = "sh -lc 'printf %s \"$CARGO_HOME\" > \"{}\"'"
+
+[tasks.api]
+run = [
+  {{ env = "CARGO_HOME" }},
+  {{ task = "capture" }}
+]
+"#,
+            marker.display()
+        ),
+    );
+
+    assert_eq!(run_builtin_ok(root.clone(), "api", &[]), "");
+    let body = fs::read_to_string(&marker).expect("read marker");
+    let canonical_root = fs::canonicalize(&root).expect("canonicalize root");
+    assert_eq!(
+        body,
+        format!("{}/.cargo/from-directive", canonical_root.display())
+    );
+}

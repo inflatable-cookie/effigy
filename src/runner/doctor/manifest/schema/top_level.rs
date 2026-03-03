@@ -9,6 +9,7 @@ pub(super) fn validate_top_level_keys(
     let allowed_top = [
         "catalog",
         "defer",
+        "env",
         "test",
         "package_manager",
         "shell",

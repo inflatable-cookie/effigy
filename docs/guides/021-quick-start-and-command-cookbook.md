@@ -48,6 +48,20 @@ effigy app/db:reset
 
 More manifest patterns: [`022-manifest-cookbook.md`](./022-manifest-cookbook.md).
 
+Per-task Cargo isolation example:
+
+```toml
+[env]
+CARGO_HOME = "{project}/.effigy/cargo/home"
+CARGO_TARGET_DIR = "{project}/.effigy/cargo/target"
+
+[tasks]
+build = [{ env = "CARGO_HOME" }, { env = "CARGO_TARGET_DIR" }, { run = "cargo build --workspace" }]
+```
+
+Use this when multiple repos build concurrently and you want project-local Cargo directories.
+Cross-catalog reuse is also supported: `{ env = "../shared/CARGO_HOME" }`.
+
 ## 3) Daily Operator Commands
 
 Task discovery and routing:

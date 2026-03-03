@@ -37,6 +37,7 @@ pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &
         validate_task_table_keys(context, task_name, task_table);
         validate_task_mode(context, task_name, task_table.get("mode"));
         validate_task_run_field(context, task_name, task_table.get("run"));
+        validate_task_env_field(context, task_name, task_table.get("env"));
 
         if let Some(concurrent) = task_table.get("concurrent") {
             validate_concurrent_array(
@@ -81,7 +82,7 @@ fn validate_task_table_keys(
     for key in task_table.keys() {
         if !matches!(
             key.as_str(),
-            "run" | "mode" | "fail_on_non_zero" | "shell" | "concurrent" | "profiles"
+            "run" | "env" | "mode" | "fail_on_non_zero" | "shell" | "concurrent" | "profiles"
         ) {
             context.unsupported_key(&format!("tasks.{task_name}.{key}"));
         }
@@ -119,5 +120,33 @@ fn validate_task_run_field(
             SchemaContext::value_type(run),
             "expected string command or run-step array",
         );
+    }
+}
+
+fn validate_task_env_field(
+    context: &mut SchemaContext<'_, '_>,
+    task_name: &str,
+    env: Option<&Value>,
+) {
+    let Some(env) = env else {
+        return;
+    };
+    let Some(env_table) = env.as_table() else {
+        context.unsupported_value(
+            &format!("tasks.{task_name}.env"),
+            SchemaContext::value_type(env),
+            "expected table of string values",
+        );
+        return;
+    };
+
+    for (key, value) in env_table {
+        if !value.is_str() {
+            context.unsupported_value(
+                &format!("tasks.{task_name}.env.{key}"),
+                SchemaContext::value_type(value),
+                "expected string",
+            );
+        }
     }
 }

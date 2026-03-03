@@ -52,6 +52,8 @@ pub(super) fn resolve_task_reference_run(
     let run_rendered = render_task_run_spec(
         &parsed.selector.task_name,
         run_spec,
+        &selection.task.env,
+        &selection.catalog.manifest.env,
         &parsed.args_rendered,
         &selection.catalog.catalog_root,
         catalogs,
@@ -104,6 +106,8 @@ pub(super) fn resolve_task_reference_step(
     let nested = render_task_run_spec(
         &parsed.selector.task_name,
         run_spec,
+        &selection.task.env,
+        &selection.catalog.manifest.env,
         &merged_args_rendered,
         &selection.catalog.catalog_root,
         catalogs,

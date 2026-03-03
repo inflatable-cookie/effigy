@@ -102,6 +102,33 @@ Example:
 concurrent = [{ run = "bun run admin:dev", start = 1, tab = 1 }]
 ```
 
+## Task Environment
+
+Definition:
+- Per-task runtime environment map defined as `tasks.<name>.env`.
+- Keys are environment variable names, values are strings injected for that task's command execution.
+- Run arrays also support `env` directive steps (`{ env = { ... } }` or `{ env = "<profile>" }`) that update env for later entries in that chain.
+- `env = "<catalog-path>/<name>"` in run arrays resolves named env entries from another catalog's `[env]` table (relative to current catalog unless absolute).
+- Named entries are declared under top-level `[env]` as either direct values (`NAME = "value"`) or grouped profile arrays (`name = [{ KEY = "value" }, ...]`).
+
+Example:
+
+```toml
+[tasks.build]
+run = "cargo build --workspace"
+env = { CARGO_HOME = "{project}/.effigy/cargo/home", CARGO_TARGET_DIR = "{project}/.effigy/cargo/target" }
+```
+
+## Task Template Tokens
+
+Definition:
+- Placeholders available in task-related templates.
+- `run` command templates support `{project}`, `{repo}`, and `{args}`.
+- `tasks.<name>.env` values support `{project}` and `{repo}`.
+
+Notes:
+- `{project}` and `{repo}` both resolve to the selected catalog root path.
+
 ## Lock Scope
 
 Definition:

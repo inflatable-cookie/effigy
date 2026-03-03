@@ -96,6 +96,15 @@ alias = "catalog-a"
 [tasks."db:reset"]
 run = "cargo run -p app-db --bin reset_dev_db {args}"
 
+[env]
+CARGO_HOME = "{project}/.effigy/cargo/home"
+CARGO_TARGET_DIR = "{project}/.effigy/cargo/target"
+
+[tasks.api]
+run = [{ env = "CARGO_HOME" }, { env = "CARGO_TARGET_DIR" }, { run = "cargo run -p api" }]
+# or pull a named env value from another catalog root:
+# run = [{ env = "../shared/CARGO_HOME" }, { run = "cargo run -p api" }]
+
 [tasks.build.cache]
 enabled = true
 inputs = ["src/**/*.rs", "Cargo.toml"]
@@ -104,9 +113,12 @@ env = ["RUSTFLAGS", "NODE_ENV"]
 ```
 
 Interpolation tokens:
+- `{project}`: resolved catalog root path (alias of `{repo}`)
 - `{repo}`: resolved catalog root (shell-quoted)
 - `{args}`: passthrough args (shell-quoted)
 - `{request}`: original unresolved selector (deferral only)
+- in `tasks.<name>.env` values and `[env]` entries, `{project}`/`{repo}` resolve to the catalog root path
+- run-array `env = "<catalog-path>/<name>"` resolves `<name>` from another catalog's `[env]` table (path is relative to current catalog unless absolute)
 
 ## Resolution Model
 

@@ -18,6 +18,8 @@ pub(super) struct TaskManifest {
     #[serde(default)]
     pub(super) defer: Option<ManifestDefer>,
     #[serde(default)]
+    pub(super) env: BTreeMap<String, ManifestEnvEntry>,
+    #[serde(default)]
     pub(super) test: Option<ManifestTestConfig>,
     #[serde(default)]
     pub(super) package_manager: Option<ManifestPackageManagerConfig>,
@@ -55,6 +57,8 @@ pub(super) enum ManifestJsPackageManager {
 pub(super) struct ManifestTask {
     #[serde(default)]
     pub(super) run: Option<ManifestManagedRun>,
+    #[serde(default)]
+    pub(super) env: BTreeMap<String, String>,
     #[serde(default)]
     pub(super) mode: Option<String>,
     #[serde(default)]
@@ -108,6 +112,8 @@ pub(super) struct ManifestManagedRunStepTable {
     #[serde(default)]
     pub(super) task: Option<String>,
     #[serde(default)]
+    pub(super) env: Option<ManifestRunStepEnv>,
+    #[serde(default)]
     pub(super) id: Option<String>,
     #[serde(default)]
     pub(super) depends_on: Vec<String>,
@@ -119,6 +125,20 @@ pub(super) struct ManifestManagedRunStepTable {
     pub(super) retry_delay_ms: Option<u64>,
     #[serde(default)]
     pub(super) fail_fast: Option<bool>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+pub(super) enum ManifestRunStepEnv {
+    Inline(BTreeMap<String, String>),
+    Profile(String),
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+pub(super) enum ManifestEnvEntry {
+    Value(String),
+    Profile(Vec<BTreeMap<String, String>>),
 }
 
 #[derive(Debug, serde::Deserialize)]
