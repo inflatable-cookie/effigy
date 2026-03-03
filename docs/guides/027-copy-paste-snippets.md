@@ -135,6 +135,7 @@ js = "bun"
 
 [test]
 max_parallel = 3
+cargo_env_match = "prefix-aware"
 
 [test.suites]
 unit = "bun x vitest run"

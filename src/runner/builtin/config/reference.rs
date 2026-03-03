@@ -42,6 +42,11 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Run
         "# Built-in test fanout and execution behavior.",
     ))?;
     renderer.text("max_parallel = 3")?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# cargo env auto-apply matcher: executable-only|prefix-aware|shell-aware",
+    ))?;
+    renderer.text("cargo_env_match = \"prefix-aware\"")?;
     renderer.text("")?;
     renderer.text("[test.suites]")?;
     renderer.text(&muted_comment(
@@ -152,7 +157,9 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Run
         color_enabled,
         "# Or switch dotenv source mid-chain:",
     ))?;
-    renderer.text("run = [{ env_file = \".env.local\" }, { env = \"DATABASE_URL\" }, { task = \"migrate\" }]")?;
+    renderer.text(
+        "run = [{ env_file = \".env.local\" }, { env = \"DATABASE_URL\" }, { task = \"migrate\" }]",
+    )?;
     renderer.text("run = [{ env_file = [\".env.local\", \".env.test\"] }, { env = \"DATABASE_URL\" }, { task = \"migrate\" }]")?;
     renderer.text(&muted_comment(
         color_enabled,

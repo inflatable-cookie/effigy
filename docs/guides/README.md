@@ -51,6 +51,7 @@ Use this section as a fast reference for task env behavior.
   - quoted values with matching single or double quotes.
 - Built-in cargo test suites inherit manifest `CARGO_*`:
   - `effigy test` auto-applies `[env]` `CARGO_*` entries to `cargo-nextest`/`cargo-test` execution.
+  - `[test].cargo_env_match` controls matching scope: `executable-only`, `prefix-aware` (default), `shell-aware`.
 
 Canonical source and examples:
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)

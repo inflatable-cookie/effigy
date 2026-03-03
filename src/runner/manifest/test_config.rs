@@ -6,9 +6,20 @@ pub(in crate::runner) struct ManifestTestConfig {
     #[serde(default)]
     pub(in crate::runner) max_parallel: Option<usize>,
     #[serde(default)]
+    pub(in crate::runner) cargo_env_match: ManifestCargoEnvMatchMode,
+    #[serde(default)]
     pub(in crate::runner) runners: BTreeMap<String, ManifestTestRunnerOverride>,
     #[serde(default)]
     pub(in crate::runner) suites: BTreeMap<String, ManifestTestSuite>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(in crate::runner) enum ManifestCargoEnvMatchMode {
+    ExecutableOnly,
+    #[default]
+    PrefixAware,
+    ShellAware,
 }
 
 #[derive(Debug, serde::Deserialize)]

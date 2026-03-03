@@ -73,6 +73,8 @@ pub(crate) fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.text("js = \"bun\"  # optional: bun|pnpm|npm|direct")?;
     renderer.text("[test]")?;
     renderer.text("max_parallel = 2")?;
+    renderer
+        .text("cargo_env_match = \"prefix-aware\"  # executable-only|prefix-aware|shell-aware")?;
     renderer.text("[test.suites]")?;
     renderer.text("unit = \"bun x vitest run\"")?;
     renderer.text("integration = \"cargo nextest run\"")?;

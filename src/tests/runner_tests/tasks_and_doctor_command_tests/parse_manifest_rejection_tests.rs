@@ -25,6 +25,11 @@ fn run_tasks_rejects_invalid_manifest_shapes() {
             expected: &["unknown field `max_parallels`"],
         },
         ParseRejectionCase {
+            workspace: "reject-invalid-cargo-env-match-mode",
+            manifest: "[test]\ncargo_env_match = \"shell\"\n",
+            expected: &["unknown variant `shell`"],
+        },
+        ParseRejectionCase {
             workspace: "reject-unknown-package-manager-field",
             manifest: "[package_manager]\njss = \"pnpm\"\n",
             expected: &["unknown field `jss`"],

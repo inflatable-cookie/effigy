@@ -34,8 +34,13 @@ Included sources:
 Matching behavior:
 - applies to command shapes that resolve to cargo executables (`cargo`, `cargo-nextest`, `/abs/path/cargo`, `/abs/path/cargo-nextest`)
 - supports common wrappers and prefixes before cargo (`env`, `exec`, `command`, leading `KEY=value` assignments)
-- does not apply to shell-wrapped commands where cargo is inside a shell string (for example `sh -lc "cargo test --workspace"`)
+- in default `prefix-aware` mode, does not apply to shell-wrapped commands where cargo is inside a shell string (for example `sh -lc "cargo test --workspace"`)
 - does not apply to non-cargo executables
+
+Matcher tuning:
+- default mode is `prefix-aware`
+- set `[test].cargo_env_match = "executable-only"` to only match direct cargo executables (no wrappers/prefixes)
+- set `[test].cargo_env_match = "shell-aware"` to also match shell-wrapped cargo commands (for example `sh -lc 'cargo nextest run --workspace'`)
 
 Value substitution:
 - `{project}` and `{repo}` in `[env]` `CARGO_*` values resolve to the executing catalog root for each built-in test target.

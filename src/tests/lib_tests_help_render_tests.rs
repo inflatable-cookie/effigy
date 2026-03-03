@@ -78,14 +78,16 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("js = \"bun\""));
     assert!(rendered.contains("[test]"));
     assert!(rendered.contains("max_parallel = 2"));
+    assert!(rendered.contains("cargo_env_match = \"prefix-aware\""));
     assert!(rendered.contains("[test.suites]"));
     assert!(rendered.contains("unit = \"bun x vitest run\""));
     assert!(rendered.contains("[test.runners]"));
     assert!(rendered.contains("vitest = \"bun x vitest run\""));
     assert!(!rendered.contains("[tasks.test]"));
     assert!(rendered.contains("Task-ref chain with quoted args"));
-    assert!(rendered
-        .contains("run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"));
+    assert!(rendered.contains(
+        "run = [{ task = \"test vitest \\\"user service\\\"\" }, \"printf validate-ok\"]"
+    ));
     assert!(rendered.contains("Task-ref chain parsing is shell-like tokenization only"));
 }
 
