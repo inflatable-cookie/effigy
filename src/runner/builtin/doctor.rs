@@ -3,18 +3,14 @@ use std::path::Path;
 use crate::TaskInvocation;
 
 use super::super::{run_doctor, RunnerError, TaskRuntimeArgs};
+use super::{reject_verbose_root_for_builtin, unknown_builtin_args};
 
 pub(super) fn run_builtin_doctor(
     task: &TaskInvocation,
     runtime_args: &TaskRuntimeArgs,
     target_root: &Path,
 ) -> Result<String, RunnerError> {
-    if runtime_args.verbose_root {
-        return Err(RunnerError::TaskInvocation(format!(
-            "`--verbose-root` is not supported for built-in `{}`",
-            task.name
-        )));
-    }
+    reject_verbose_root_for_builtin(&task.name, runtime_args)?;
 
     let mut output_json = false;
     let mut fix = false;
@@ -41,11 +37,7 @@ pub(super) fn run_builtin_doctor(
         }
     }
     if !unknown.is_empty() {
-        return Err(RunnerError::TaskInvocation(format!(
-            "unknown argument(s) for built-in `{}`: {}",
-            task.name,
-            unknown.join(" ")
-        )));
+        return Err(unknown_builtin_args(&task.name, &unknown));
     }
 
     run_doctor(crate::DoctorArgs {

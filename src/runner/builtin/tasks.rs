@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::{TaskInvocation, TasksArgs};
 
 use super::super::{run_tasks, RunnerError, TaskRuntimeArgs};
+use super::{reject_verbose_root_for_builtin, unknown_builtin_args};
 
 pub(super) fn run_builtin_tasks(
     task: &TaskInvocation,
@@ -10,12 +11,7 @@ pub(super) fn run_builtin_tasks(
     target_root: &Path,
     catalogs_compat_alias: bool,
 ) -> Result<String, RunnerError> {
-    if runtime_args.verbose_root {
-        return Err(RunnerError::TaskInvocation(format!(
-            "`--verbose-root` is not supported for built-in `{}`",
-            task.name
-        )));
-    }
+    reject_verbose_root_for_builtin(&task.name, runtime_args)?;
 
     let mut task_name: Option<String> = None;
     let mut resolve_selector: Option<String> = None;
@@ -70,11 +66,7 @@ pub(super) fn run_builtin_tasks(
             i += 2;
             continue;
         }
-        return Err(RunnerError::TaskInvocation(format!(
-            "unknown argument(s) for built-in `{}`: {}",
-            task.name,
-            runtime_args.passthrough.join(" ")
-        )));
+        return Err(unknown_builtin_args(&task.name, &runtime_args.passthrough));
     }
 
     if !output_json && !pretty_json {

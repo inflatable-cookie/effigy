@@ -5,6 +5,7 @@ use serde_json::json;
 use crate::TaskInvocation;
 
 use super::super::{RunnerError, TaskRuntimeArgs};
+use super::reject_verbose_root_for_builtin;
 
 mod candidates;
 mod help;
@@ -19,11 +20,7 @@ pub(super) fn run_builtin_completion(
     runtime_args: &TaskRuntimeArgs,
     target_root: &Path,
 ) -> Result<Option<String>, RunnerError> {
-    if runtime_args.verbose_root {
-        return Err(RunnerError::TaskInvocation(
-            "`--verbose-root` is not supported for built-in `completion`".to_owned(),
-        ));
-    }
+    reject_verbose_root_for_builtin(&task.name, runtime_args)?;
 
     let candidate_mode = runtime_args
         .passthrough
