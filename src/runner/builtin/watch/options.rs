@@ -49,31 +49,14 @@ pub(super) fn parse_watch_request(
             "--owner" => {
                 let value =
                     parser.next_value("`--owner` requires a value (`effigy` or `external`)")?;
-                owner = match value {
-                    "effigy" => Some(WatchOwner::Effigy),
-                    "external" => Some(WatchOwner::External),
-                    _ => {
-                        return Err(RunnerError::TaskInvocation(format!(
-                            "invalid `--owner` value `{value}` (expected `effigy` or `external`)"
-                        )));
-                    }
-                };
+                owner = Some(parse_watch_owner(value)?);
             }
             "--debounce-ms" => {
-                let parsed = parser.u64_flag_value(
+                debounce_ms = parse_positive_u64_flag(
+                    &mut parser,
+                    "--debounce-ms",
                     "`--debounce-ms` requires a numeric value",
-                    |value| {
-                        format!(
-                            "invalid `--debounce-ms` value `{value}` (expected a positive integer)"
-                        )
-                    },
                 )?;
-                if parsed == 0 {
-                    return Err(RunnerError::TaskInvocation(
-                        "`--debounce-ms` must be greater than zero".to_owned(),
-                    ));
-                }
-                debounce_ms = parsed;
             }
             "--include" => {
                 let value = parser.string_flag_value("`--include` requires a glob value")?;
@@ -87,20 +70,11 @@ pub(super) fn parse_watch_request(
                 max_runs = Some(1);
             }
             "--max-runs" => {
-                let parsed = parser.usize_flag_value(
+                max_runs = Some(parse_positive_usize_flag(
+                    &mut parser,
+                    "--max-runs",
                     "`--max-runs` requires a numeric value",
-                    |value| {
-                        format!(
-                            "invalid `--max-runs` value `{value}` (expected an integer >= 1)"
-                        )
-                    },
-                )?;
-                if parsed == 0 {
-                    return Err(RunnerError::TaskInvocation(
-                        "`--max-runs` must be greater than zero".to_owned(),
-                    ));
-                }
-                max_runs = Some(parsed);
+                )?);
             }
             "--" => {
                 return Err(RunnerError::TaskInvocation(
@@ -130,4 +104,46 @@ pub(super) fn parse_watch_request(
         max_runs,
         target,
     })
+}
+
+fn parse_watch_owner(value: &str) -> Result<WatchOwner, RunnerError> {
+    match value {
+        "effigy" => Ok(WatchOwner::Effigy),
+        "external" => Ok(WatchOwner::External),
+        _ => Err(RunnerError::TaskInvocation(format!(
+            "invalid `--owner` value `{value}` (expected `effigy` or `external`)"
+        ))),
+    }
+}
+
+fn parse_positive_u64_flag(
+    parser: &mut BuiltinArgParser<'_>,
+    flag: &str,
+    missing_message: &str,
+) -> Result<u64, RunnerError> {
+    let parsed = parser.u64_flag_value(missing_message, |value| {
+        format!("invalid `{flag}` value `{value}` (expected a positive integer)")
+    })?;
+    if parsed == 0 {
+        return Err(RunnerError::TaskInvocation(format!(
+            "`{flag}` must be greater than zero"
+        )));
+    }
+    Ok(parsed)
+}
+
+fn parse_positive_usize_flag(
+    parser: &mut BuiltinArgParser<'_>,
+    flag: &str,
+    missing_message: &str,
+) -> Result<usize, RunnerError> {
+    let parsed = parser.usize_flag_value(missing_message, |value| {
+        format!("invalid `{flag}` value `{value}` (expected an integer >= 1)")
+    })?;
+    if parsed == 0 {
+        return Err(RunnerError::TaskInvocation(format!(
+            "`{flag}` must be greater than zero"
+        )));
+    }
+    Ok(parsed)
 }
