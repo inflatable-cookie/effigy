@@ -1,34 +1,26 @@
-use std::collections::{BTreeSet, HashMap};
-use std::fs;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-use super::super::super::super::catalog::discover_catalogs;
 use super::super::super::super::RunnerError;
-use super::super::scripts::command_names;
+use self::manifests::{
+    discover_completion_candidates, manifest_stamps_unchanged, ManifestStamp,
+};
+use self::policy::{
+    completion_candidates_cache_ttl_policy, parse_completion_candidates_cache_ttl_policy,
+    CompletionCandidatesCacheTtlPolicy,
+};
 
-const COMPLETION_CANDIDATES_CACHE_TTL_ENV: &str = "EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS";
-const DEFAULT_CANDIDATE_CACHE_TTL_MS: u64 = 2_000;
-const MIN_CANDIDATE_CACHE_TTL_MS: u64 = 100;
-const MAX_CANDIDATE_CACHE_TTL_MS: u64 = 60_000;
+mod manifests;
+mod policy;
 
 pub(super) fn completion_candidates_cache_ttl_ms() -> u64 {
-    parse_completion_candidates_cache_ttl_policy(
-        std::env::var(COMPLETION_CANDIDATES_CACHE_TTL_ENV)
-            .ok()
-            .as_deref(),
-    )
-    .ttl_ms
+    completion_candidates_cache_ttl_policy().ttl_ms
 }
 
 pub(super) fn completion_candidates_cache_ttl_source() -> &'static str {
-    parse_completion_candidates_cache_ttl_policy(
-        std::env::var(COMPLETION_CANDIDATES_CACHE_TTL_ENV)
-            .ok()
-            .as_deref(),
-    )
-    .source
+    completion_candidates_cache_ttl_policy().source
 }
 
 #[derive(Clone)]
@@ -36,14 +28,6 @@ struct CompletionCandidatesSnapshot {
     created_at: Instant,
     manifest_stamps: Vec<ManifestStamp>,
     candidates: Vec<String>,
-}
-
-#[derive(Clone, PartialEq, Eq)]
-struct ManifestStamp {
-    path: PathBuf,
-    modified_epoch_ns: Option<u128>,
-    len_bytes: Option<u64>,
-    content_hash_fnv1a64: Option<u64>,
 }
 
 static COMPLETION_CANDIDATES_CACHE: OnceLock<
@@ -151,98 +135,6 @@ fn read_cached_completion_candidates(
         manifest_count: snapshot.manifest_stamps.len(),
         cache_age_ms: now.duration_since(snapshot.created_at).as_millis(),
     })
-}
-
-fn discover_completion_candidates(
-    repo_root: &Path,
-) -> Result<(Vec<String>, Vec<ManifestStamp>), RunnerError> {
-    let mut candidates: BTreeSet<String> = command_names().into_iter().map(str::to_owned).collect();
-    let mut manifest_stamps: Vec<ManifestStamp> = Vec::new();
-    match discover_catalogs(repo_root) {
-        Ok(catalogs) => {
-            for catalog in catalogs {
-                manifest_stamps.push(read_manifest_stamp(&catalog.manifest_path));
-                for task_name in catalog.manifest.tasks.keys() {
-                    candidates.insert(task_name.clone());
-                    candidates.insert(format!("{}/{}", catalog.alias, task_name));
-                }
-            }
-        }
-        Err(RunnerError::TaskCatalogsMissing { .. }) => {}
-        Err(error) => return Err(error),
-    }
-    manifest_stamps.sort_by(|a, b| a.path.cmp(&b.path));
-
-    Ok((
-        candidates.into_iter().collect::<Vec<String>>(),
-        manifest_stamps,
-    ))
-}
-
-fn manifest_stamps_unchanged(expected: &[ManifestStamp]) -> bool {
-    expected
-        .iter()
-        .all(|stamp| read_manifest_stamp(&stamp.path) == *stamp)
-}
-
-fn read_manifest_stamp(path: &Path) -> ManifestStamp {
-    let metadata = fs::metadata(path).ok();
-    let modified_epoch_ns = metadata
-        .as_ref()
-        .and_then(|metadata| metadata.modified().ok())
-        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_nanos());
-    let contents = fs::read(path).ok();
-    let len_bytes = contents
-        .as_ref()
-        .map(|bytes| bytes.len() as u64)
-        .or_else(|| metadata.as_ref().map(|value| value.len()));
-    let content_hash_fnv1a64 = contents.as_ref().map(|bytes| fnv1a64(bytes));
-
-    ManifestStamp {
-        path: path.to_path_buf(),
-        modified_epoch_ns,
-        len_bytes,
-        content_hash_fnv1a64,
-    }
-}
-
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    const OFFSET_BASIS: u64 = 0xcbf29ce484222325;
-    const PRIME: u64 = 0x100000001b3;
-    let mut hash = OFFSET_BASIS;
-    for byte in bytes {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(PRIME);
-    }
-    hash
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct CompletionCandidatesCacheTtlPolicy {
-    ttl_ms: u64,
-    source: &'static str,
-}
-
-fn parse_completion_candidates_cache_ttl_policy(
-    raw: Option<&str>,
-) -> CompletionCandidatesCacheTtlPolicy {
-    match raw {
-        Some(value) => match value.parse::<u64>() {
-            Ok(parsed) => CompletionCandidatesCacheTtlPolicy {
-                ttl_ms: parsed.clamp(MIN_CANDIDATE_CACHE_TTL_MS, MAX_CANDIDATE_CACHE_TTL_MS),
-                source: "env",
-            },
-            Err(_) => CompletionCandidatesCacheTtlPolicy {
-                ttl_ms: DEFAULT_CANDIDATE_CACHE_TTL_MS,
-                source: "env_invalid",
-            },
-        },
-        None => CompletionCandidatesCacheTtlPolicy {
-            ttl_ms: DEFAULT_CANDIDATE_CACHE_TTL_MS,
-            source: "default",
-        },
-    }
 }
 
 #[cfg(test)]
