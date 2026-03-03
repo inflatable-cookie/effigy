@@ -4,11 +4,12 @@ use std::path::Path;
 
 use crate::runner::builtin::test::planning::BuiltinTestTarget;
 use crate::runner::builtin::test::suite_selection::render_available_suites;
-use crate::runner::util::shell_quote;
 use crate::runner::RunnerError;
 use crate::ui::theme::resolve_color_enabled;
 use crate::ui::{KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer};
 use crate::TaskInvocation;
+
+use super::plan_projection::project_target_plan;
 
 pub(super) fn render_builtin_test_plan_text(
     task: &TaskInvocation,
@@ -34,14 +35,8 @@ pub(super) fn render_builtin_test_plan_text(
     let summary_lines = targets
         .iter()
         .map(|target| {
-            let available_suites = target
-                .plans
-                .iter()
-                .map(|plan| plan.suite.as_str())
-                .collect::<BTreeSet<&str>>()
-                .into_iter()
-                .collect::<Vec<&str>>()
-                .join(", ");
+            let projection = project_target_plan(target, requested_suite, passthrough);
+            let available_suites = projection.available_suites.join(", ");
             format!(
                 "{}: source={} suites={}",
                 target.name, target.suite_source, available_suites
@@ -51,40 +46,11 @@ pub(super) fn render_builtin_test_plan_text(
     renderer.bullet_list("targets", &summary_lines)?;
     renderer.text("")?;
     for target in targets {
-        let available_suites = target
-            .plans
-            .iter()
-            .map(|plan| plan.suite.as_str())
-            .collect::<BTreeSet<&str>>()
-            .into_iter()
-            .collect::<Vec<&str>>()
-            .join(", ");
-        let mut selected_plans = target.plans.clone();
-        if let Some(requested) = requested_suite {
-            selected_plans.retain(|plan| plan.suite == requested);
-        }
+        let projection = project_target_plan(target, requested_suite, passthrough);
+        let available_suites = projection.available_suites.join(", ");
         renderer.section(&format!("Target: {}", target.name))?;
-        if !selected_plans.is_empty() {
-            let args_rendered = passthrough
-                .iter()
-                .map(|arg| shell_quote(arg))
-                .collect::<Vec<String>>()
-                .join(" ");
-            let runners = selected_plans
-                .iter()
-                .map(|plan| plan.suite.as_str())
-                .collect::<Vec<&str>>()
-                .join(", ");
-            let commands = selected_plans
-                .iter()
-                .map(|plan| {
-                    if args_rendered.is_empty() {
-                        plan.command.clone()
-                    } else {
-                        format!("{} {}", plan.command, args_rendered)
-                    }
-                })
-                .collect::<Vec<String>>();
+        if !projection.selected_suites.is_empty() {
+            let runners = projection.selected_suites.join(", ");
             renderer.key_values(&[
                 KeyValue::new("root", target.root.display().to_string()),
                 KeyValue::new("runner", runners),
@@ -92,15 +58,9 @@ pub(super) fn render_builtin_test_plan_text(
                 KeyValue::new("suite-source", target.suite_source.clone()),
             ])?;
             renderer.text("")?;
-            renderer.bullet_list("command", &commands)?;
+            renderer.bullet_list("command", &projection.commands)?;
             renderer.text("")?;
-            let mut evidence = Vec::<String>::new();
-            for plan in &selected_plans {
-                for line in &plan.evidence {
-                    evidence.push(format!("{}: {line}", plan.suite));
-                }
-            }
-            renderer.bullet_list("evidence", &evidence)?;
+            renderer.bullet_list("evidence", &projection.evidence)?;
         } else {
             renderer.key_values(&[
                 KeyValue::new("root", target.root.display().to_string()),

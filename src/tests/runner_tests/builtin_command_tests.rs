@@ -423,6 +423,67 @@ fn run_manifest_task_builtin_test_plan_json_recovery_has_versioned_schema() {
 }
 
 #[test]
+fn run_manifest_task_builtin_test_plan_text_and_json_projection_consistency() {
+    let root = temp_workspace("builtin-test-plan-projection-consistency");
+    write_test_suites_manifest(
+        &root,
+        &[
+            ("unit", "pnpm exec vitest run"),
+            ("integration", "pnpm exec vitest run --project integration"),
+        ],
+    );
+
+    let text = run_builtin_ok(root.clone(), "test", &["--plan", "unit", "user-service"]);
+    let json = run_builtin_ok(
+        root,
+        "test",
+        &["--plan", "--json", "unit", "user-service"],
+    );
+    let parsed = parse_json_output(&json);
+    let target = &parsed["targets"][0];
+
+    let available_suites = target["available_suites"]
+        .as_array()
+        .expect("available suites array")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<&str>>();
+    let selected_suites = target["selected_suites"]
+        .as_array()
+        .expect("selected suites array")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<&str>>();
+    assert_eq!(selected_suites, vec!["unit"]);
+
+    for suite in available_suites {
+        assert!(text.contains(suite), "missing suite in text output: {suite}");
+    }
+    for command in target["commands"]
+        .as_array()
+        .expect("commands array")
+        .iter()
+        .filter_map(|value| value.as_str())
+    {
+        assert!(
+            text.contains(command),
+            "missing command in text output: {command}"
+        );
+    }
+    for evidence in target["evidence"]
+        .as_array()
+        .expect("evidence array")
+        .iter()
+        .filter_map(|value| value.as_str())
+    {
+        assert!(
+            text.contains(evidence),
+            "missing evidence in text output: {evidence}"
+        );
+    }
+}
+
+#[test]
 fn run_manifest_task_builtin_test_supports_positional_suite_selector() {
     let root = temp_workspace("builtin-test-suite-selector");
     setup_multi_suite_repo(&root);
