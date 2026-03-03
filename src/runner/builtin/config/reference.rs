@@ -114,6 +114,45 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Run
         "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
     )?;
     renderer.text("")?;
+    renderer.text("[env]")?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Reusable env entries for run-array directives (`{ env = \"<name>\" }` or `{ env = \"<catalog-path>/<name>\" }`).",
+    ))?;
+    renderer.text("CARGO_HOME = \"{project}/.effigy/cargo/home\"")?;
+    renderer.text("CARGO_TARGET_DIR = \"{project}/.effigy/cargo/target\"")?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Optional grouped profile form:",
+    ))?;
+    renderer.text(
+        "cargo = [{ CARGO_HOME = \"{project}/.effigy/cargo/home\" }, { CARGO_TARGET_DIR = \"{project}/.effigy/cargo/target\" }]",
+    )?;
+    renderer.text("")?;
+    renderer.text("[tasks.api]")?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Example run-array env directive: applies from this point forward in the chain.",
+    ))?;
+    renderer.text(
+        "run = [{ env = \"CARGO_HOME\" }, { env = \"CARGO_TARGET_DIR\" }, { run = \"cargo run -p api\" }]",
+    )?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Cross-catalog reference example (relative to current catalog root):",
+    ))?;
+    renderer.text("run = [{ env = \"../shared/CARGO_HOME\" }, { task = \"build\" }]")?;
+    renderer.text("")?;
+    renderer.text("[tasks.rust-build]")?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Task-local environment variables with {project}/{repo} path substitution.",
+    ))?;
+    renderer.text("run = \"cargo build -p api\"")?;
+    renderer.text(
+        "env = { CARGO_HOME = \"{project}/.effigy/cargo-home\", CARGO_TARGET_DIR = \"{project}/.effigy/cargo-target\" }",
+    )?;
+    renderer.text("")?;
     renderer.text("[tasks.build.cache]")?;
     renderer.text(&muted_comment(
         color_enabled,

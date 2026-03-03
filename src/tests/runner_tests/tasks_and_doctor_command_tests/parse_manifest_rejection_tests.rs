@@ -67,6 +67,11 @@ fn run_tasks_rejects_invalid_manifest_shapes() {
             manifest: "[catalog]\nalias = \"farmyard\"\naliass = \"dup\"\n",
             expected: &["unknown field `aliass`"],
         },
+        ParseRejectionCase {
+            workspace: "reject-invalid-env-profile-shape",
+            manifest: "[env]\ncargo = { CARGO_HOME = \"tmp\" }\n",
+            expected: &["invalid type", "data did not match any variant"],
+        },
     ];
 
     for case in cases {

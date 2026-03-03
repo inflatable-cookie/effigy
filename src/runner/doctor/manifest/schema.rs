@@ -6,6 +6,7 @@ use toml::Value;
 use super::super::{DoctorFinding, DoctorSeverity};
 
 mod diagnostics;
+mod env_section;
 mod package_manager;
 mod tables;
 mod tasks;
@@ -13,6 +14,7 @@ mod test_section;
 mod top_level;
 
 use diagnostics::SchemaContext;
+use env_section::validate_env_section;
 use package_manager::validate_package_manager_section;
 use tables::validate_known_table;
 use tasks::validate_tasks_table;
@@ -38,6 +40,9 @@ pub(super) fn validate_manifest_schema(
     }
     if let Some(defer) = table.get("defer") {
         validate_known_table(&mut context, "defer", defer, &["run"]);
+    }
+    if let Some(env) = table.get("env") {
+        validate_env_section(&mut context, env);
     }
     if let Some(shell) = table.get("shell") {
         validate_known_table(&mut context, "shell", shell, &["run"]);

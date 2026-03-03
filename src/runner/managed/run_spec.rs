@@ -1,4 +1,7 @@
+use std::collections::BTreeMap;
 use std::path::Path;
+
+use crate::runner::manifest::ManifestEnvEntry;
 
 use super::super::{LoadedCatalog, ManifestManagedRun, RunnerError};
 #[path = "run_spec/command.rs"]
@@ -8,11 +11,13 @@ mod run_step;
 #[path = "run_spec/sequence.rs"]
 mod sequence;
 
-use command::render_command_template;
+use command::{render_command_template, wrap_command_with_task_env};
 
 pub(super) fn render_task_run_spec(
     task_name: &str,
     run: &ManifestManagedRun,
+    task_env: &BTreeMap<String, String>,
+    env_profiles: &BTreeMap<String, ManifestEnvEntry>,
     args_rendered: &str,
     repo_root: &Path,
     catalogs: &[LoadedCatalog],
@@ -24,18 +29,20 @@ pub(super) fn render_task_run_spec(
             "task `{task_name}` run expansion exceeded maximum nested task references (12)"
         )));
     }
-    match run {
+    let rendered = match run {
         ManifestManagedRun::Command(command) => {
-            Ok(render_command_template(command, repo_root, args_rendered))
+            render_command_template(command, repo_root, args_rendered)
         }
         ManifestManagedRun::Sequence(steps) => sequence::render_run_sequence(
             task_name,
             steps,
+            env_profiles,
             args_rendered,
             repo_root,
             catalogs,
             task_scope_cwd,
             depth + 1,
-        ),
-    }
+        )?,
+    };
+    Ok(wrap_command_with_task_env(rendered, task_env, repo_root))
 }

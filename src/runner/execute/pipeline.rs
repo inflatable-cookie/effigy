@@ -137,6 +137,8 @@ fn build_task_command(
     render_task_run_spec(
         &preflight.selector.task_name,
         run_spec,
+        &selection.task.env,
+        &selection.catalog.manifest.env,
         &args_rendered,
         &selection.catalog.catalog_root,
         &preflight.catalogs,

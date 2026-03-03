@@ -154,7 +154,36 @@ effigy test unit
 effigy test integration
 ```
 
-## 6) Deferral Compatibility Snippet
+## 6) Cargo Isolation Per Task
+
+```toml
+[catalog]
+alias = "api"
+
+[env]
+CARGO_HOME = "{project}/.effigy/cargo/home"
+CARGO_TARGET_DIR = "{project}/.effigy/cargo/target"
+
+[tasks]
+build = [{ env = "CARGO_HOME" }, { env = "CARGO_TARGET_DIR" }, { run = "cargo build --workspace" }]
+check = [
+  { env = "CARGO_HOME" },
+  { env = "CARGO_TARGET_DIR" },
+  { run = "cargo check --workspace" }
+]
+```
+
+Run:
+
+```sh
+effigy build
+effigy check
+```
+
+Use when several repos build at the same time and you need project-local Cargo directories.
+You can also reference named env values from another catalog root with `env = "../shared/CARGO_HOME"`.
+
+## 7) Deferral Compatibility Snippet
 
 ```toml
 [defer]

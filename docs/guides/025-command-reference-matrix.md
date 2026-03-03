@@ -65,6 +65,11 @@ effigy completion candidates [--repo <PATH>] [--prefix <value>] [--json]
 - `unlock` accepts either explicit scopes or `--all` (not both).
 - `cache` phase-1 works only for tasks with explicit `[tasks.<name>.cache]` opt-in.
 - `cache invalidate` accepts selectors or `--all` (not both).
+- task-local runtime env is supported with `env = { KEY = "value" }` under task definitions (full table or compact inline table).
+- run arrays also support env directives (`{ env = { ... } }` or `{ env = "<profile>" }`) to update env for later entries in the chain.
+- run-array env directives also support cross-catalog indirection via `env = "<catalog-path>/<name>"` (path relative to current catalog unless absolute).
+- top-level `[env]` defines reusable named entries for run-array indirection; entries can be direct values (`NAME = "value"`) or grouped profile arrays (`name = [{ KEY = "value" }, ...]`).
+- `tasks.<name>.env` values support `{project}` and `{repo}` catalog-root token substitution.
 - `completion` command list is sourced from the built-in command index (`BUILTIN_TASKS`) to reduce drift with command discovery output.
 - `completion candidates` includes built-ins plus discovered `<task>` and `<catalog>/<task>` selectors.
 - `completion candidates` JSON payload reports `cache_hit`, `cache_state`, `cache_age_ms` (on hit), `cache_ttl_ms` (on hit), `effective_cache_ttl_ms`, `cache_ttl_source`, and `manifest_count` for memoized candidate scans.

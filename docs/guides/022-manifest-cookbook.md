@@ -37,7 +37,7 @@ run = "bun run build"
 fail_on_non_zero = true
 ```
 
-Use full task tables when you need settings (`fail_on_non_zero`, `mode`, `profiles`, etc.).
+Use full task tables when you need settings (`fail_on_non_zero`, `env`, `mode`, `profiles`, etc.).
 
 ## 4) DAG-Style Validation Flow
 
@@ -52,6 +52,36 @@ run = [
 ```
 
 Use when you need dependency-aware orchestration, retry policy, and per-step timeouts.
+
+## 4b) Run-Array Env Directives
+
+```toml
+[env]
+CARGO_HOME = "{project}/.effigy/cargo/home"
+CARGO_TARGET_DIR = "{project}/.effigy/cargo/target"
+# Optional grouped profile form:
+cargo = [{ CARGO_HOME = "{project}/.effigy/cargo/home" }, { CARGO_TARGET_DIR = "{project}/.effigy/cargo/target" }]
+
+[tasks.api]
+run = [
+  { env = "CARGO_HOME" },
+  { env = "CARGO_TARGET_DIR" },
+  { run = "cargo run -p api" },
+  { env = { RUST_LOG = "debug" } },
+  { run = "cargo run -p jobs" }
+]
+```
+
+Use this when you want env changes to take effect at specific points in a run chain.
+
+Behavior:
+- an `env` step updates the effective env for subsequent run-array entries
+- `env = "<name>"` resolves an entry from top-level `[env]`
+- `env = "<catalog-path>/<name>"` resolves `<name>` from another catalog `[env]` table (relative to current catalog root unless absolute)
+- `[env].<name>` can be either a single value (`KEY = "value"`) or a grouped profile array (`name = [{ KEY = "value" }, ...]`)
+- `env` steps can be mixed with `run` and `task` steps
+- `tasks.<name>.env` still applies globally to the whole task; run-array `env` steps can override later entries
+- `{project}`/`{repo}` in env values always resolve from the task currently executing
 
 ## 5) Managed Dev Stack (`mode = "tui"`)
 
@@ -150,7 +180,37 @@ Inspection and invalidation:
 - `effigy cache invalidate build`
 - `effigy cache invalidate --all`
 
-## 11) Multi-Catalog Monorepo Baseline
+## 11) Task-Local Runtime Env (Cargo Isolation)
+
+Compact inline-table shape:
+
+```toml
+[env]
+CARGO_HOME = "{project}/.effigy/cargo/home"
+CARGO_TARGET_DIR = "{project}/.effigy/cargo/target"
+
+[tasks]
+build = [{ env = "CARGO_HOME" }, { env = "CARGO_TARGET_DIR" }, { run = "cargo build --workspace" }]
+```
+
+Full task-table shape:
+
+```toml
+[tasks.build]
+run = "cargo build --workspace"
+env = { CARGO_HOME = "{project}/.effigy/cargo/home", CARGO_TARGET_DIR = "{project}/.effigy/cargo/target" }
+```
+
+Use this when multiple repos build concurrently and you need project-local Cargo state to avoid cross-repo contention.
+
+Behavior:
+- process environment is inherited by default
+- `tasks.<name>.env` overrides inherited values for that task
+- run-array env directives support either inline maps (`env = { ... }`) or named entries (`env = "CARGO_HOME"`/`env = "cargo"` from `[env]`)
+- referenced tasks keep their own `env` when called via `task = "..."` entries
+- env value token substitution supports `{project}` and `{repo}` (aliases for catalog root path)
+
+## 12) Multi-Catalog Monorepo Baseline
 
 Root `effigy.toml`:
 
@@ -191,9 +251,13 @@ Use catalog aliases to keep task ownership local while retaining root-level orch
 - Discovery scans for `effigy.toml` recursively.
 - Catalog aliases must be unique across discovered manifests.
 - Useful interpolation tokens in run commands:
+  - `{project}` catalog root path (shell-quoted alias of `{repo}`)
   - `{repo}` catalog root path (shell-quoted)
   - `{args}` passthrough args (shell-quoted)
   - `{request}` unresolved selector (deferral only)
+- Useful interpolation tokens in `tasks.<name>.env` values and `[env]` entries:
+  - `{project}` catalog root path
+  - `{repo}` alias of `{project}`
 
 ## Related Guides
 

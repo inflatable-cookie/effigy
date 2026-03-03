@@ -13,6 +13,7 @@ pub(super) fn validate_run_step_table(
             key.as_str(),
             "run"
                 | "task"
+                | "env"
                 | "id"
                 | "depends_on"
                 | "timeout_ms"
@@ -49,6 +50,7 @@ pub(super) fn validate_run_step_table(
         step_table.get("fail_fast"),
         "fail_fast",
     );
+    validate_env_table(context, task_name, index, step_table.get("env"));
 }
 
 fn validate_depends_on(
@@ -112,5 +114,43 @@ fn validate_boolean_field(
             SchemaContext::value_type(value),
             "expected boolean",
         );
+    }
+}
+
+fn validate_env_table(
+    context: &mut SchemaContext<'_, '_>,
+    task_name: &str,
+    index: usize,
+    value: Option<&Value>,
+) {
+    let Some(value) = value else {
+        return;
+    };
+    if let Some(profile_name) = value.as_str() {
+        if profile_name.trim().is_empty() {
+            context.unsupported_value(
+                &format!("tasks.{task_name}.run[{index}].env"),
+                "empty string",
+                "expected non-empty profile name",
+            );
+        }
+        return;
+    }
+    let Some(table) = value.as_table() else {
+        context.unsupported_value(
+            &format!("tasks.{task_name}.run[{index}].env"),
+            SchemaContext::value_type(value),
+            "expected table of string values or string profile name",
+        );
+        return;
+    };
+    for (key, entry) in table {
+        if !entry.is_str() {
+            context.unsupported_value(
+                &format!("tasks.{task_name}.run[{index}].env.{key}"),
+                SchemaContext::value_type(entry),
+                "expected string",
+            );
+        }
     }
 }
