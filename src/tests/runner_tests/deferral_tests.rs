@@ -10,6 +10,20 @@ fn run_task(root: &PathBuf, name: &str, args: &[&str]) -> Result<String, RunnerE
     )
 }
 
+struct DeferredTaskCase {
+    workspace: &'static str,
+    defer_run: &'static str,
+    request: &'static str,
+    args: &'static [&'static str],
+}
+
+struct ImplicitFallbackDisabledCase {
+    workspace: &'static str,
+    create_effigy_marker: bool,
+    create_composer_marker: bool,
+    use_nested_markers: bool,
+}
+
 fn assert_task_not_found_any(err: RunnerError) {
     match err {
         RunnerError::TaskNotFoundAny { .. } => {}
@@ -48,48 +62,65 @@ fn setup_composer_stub(root: &PathBuf, script: &str, marker_file: &PathBuf) -> E
     ])
 }
 
-#[test]
-fn run_manifest_task_defers_when_unprefixed_task_missing() {
-    let _guard = lock_test();
-    let root = temp_workspace("defer-missing");
+fn write_defer_manifest(root: &PathBuf, defer_run: &str) {
     write_manifest(
         &root.join("effigy.toml"),
-        "[defer]\nrun = \"printf deferred\"\n",
+        &format!("[defer]\nrun = \"{defer_run}\"\n"),
     );
+}
 
-    let out = run_task(&root, "unknown-task", &[]).expect("deferred run should succeed");
+fn write_implicit_deferral_markers(
+    root: &PathBuf,
+    create_effigy_marker: bool,
+    create_composer_marker: bool,
+    nested: bool,
+) {
+    let marker_root = if nested {
+        let nested_root = root.join("nested");
+        fs::create_dir_all(&nested_root).expect("mkdir nested");
+        nested_root
+    } else {
+        root.clone()
+    };
 
-    assert_eq!(out, "");
+    if create_effigy_marker {
+        fs::write(marker_root.join("effigy.json"), "{}\n").expect("write effigy marker");
+    }
+    if create_composer_marker {
+        fs::write(marker_root.join("composer.json"), "{}\n").expect("write composer marker");
+    }
 }
 
 #[test]
-fn run_manifest_task_defers_and_supports_request_and_args_tokens() {
+fn run_manifest_task_defers_when_task_missing_with_token_support() {
     let _guard = lock_test();
-    let root = temp_workspace("defer-tokens");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[defer]\nrun = \"test {request} = 'unknown-task' && test {args} = '--dry-run'\"\n",
-    );
+    let cases = [
+        DeferredTaskCase {
+            workspace: "defer-missing",
+            defer_run: "printf deferred",
+            request: "unknown-task",
+            args: &[],
+        },
+        DeferredTaskCase {
+            workspace: "defer-tokens",
+            defer_run: "test {request} = 'unknown-task' && test {args} = '--dry-run'",
+            request: "unknown-task",
+            args: &["--dry-run"],
+        },
+        DeferredTaskCase {
+            workspace: "defer-path-like-request",
+            defer_run: "test {request} = 'services/api/dev' && test {args} = '--watch'",
+            request: "services/api/dev",
+            args: &["--watch"],
+        },
+    ];
 
-    let out = run_task(&root, "unknown-task", &["--dry-run"])
-        .expect("deferred token substitution should succeed");
-
-    assert_eq!(out, "");
-}
-
-#[test]
-fn run_manifest_task_defers_for_path_like_request_when_prefix_not_found() {
-    let _guard = lock_test();
-    let root = temp_workspace("defer-path-like-request");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[defer]\nrun = \"test {request} = 'services/api/dev' && test {args} = '--watch'\"\n",
-    );
-
-    let out = run_task(&root, "services/api/dev", &["--watch"])
-        .expect("path-like deferred request should succeed");
-
-    assert_eq!(out, "");
+    for case in cases {
+        let root = temp_workspace(case.workspace);
+        write_defer_manifest(&root, case.defer_run);
+        let out = run_task(&root, case.request, case.args).expect("deferred run should succeed");
+        assert_eq!(out, "");
+    }
 }
 
 #[test]
@@ -98,7 +129,7 @@ fn run_manifest_task_defers_to_prefixed_catalog_handler() {
     let root = temp_workspace("defer-prefixed");
     let farmyard = root.join("farmyard");
     fs::create_dir_all(&farmyard).expect("mkdir");
-    write_manifest(&root.join("effigy.toml"), "[defer]\nrun = \"false\"\n");
+    write_defer_manifest(&root, "false");
     write_manifest(
         &farmyard.join("effigy.toml"),
         "[catalog]\nalias = \"farmyard\"\n[defer]\nrun = \"printf farmyard-deferred\"\n",
@@ -113,10 +144,7 @@ fn run_manifest_task_defers_to_prefixed_catalog_handler() {
 fn run_manifest_task_deferral_loop_guard_fails() {
     let _guard = lock_test();
     let root = temp_workspace("defer-loop");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[defer]\nrun = \"printf deferred\"\n",
-    );
+    write_defer_manifest(&root, "printf deferred");
 
     std::env::set_var("EFFIGY_DEFER_DEPTH", "1");
     let err = run_task(&root, "unknown-task", &[]).expect_err("loop guard should fail");
@@ -128,8 +156,7 @@ fn run_manifest_task_deferral_loop_guard_fails() {
 fn run_manifest_task_implicitly_defers_to_root_when_no_configured_deferral() {
     let _guard = lock_test();
     let root = temp_workspace("implicit-root-defer");
-    fs::write(root.join("effigy.json"), "{}\n").expect("write effigy marker");
-    fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
+    write_implicit_deferral_markers(&root, true, true, false);
 
     let args_log = root.join("composer-args.log");
     let _env = setup_composer_stub(
@@ -146,81 +173,60 @@ fn run_manifest_task_implicitly_defers_to_root_when_no_configured_deferral() {
 }
 
 #[test]
-fn run_manifest_task_does_not_implicitly_defer_without_effigy_json_marker() {
+fn run_manifest_task_does_not_implicitly_defer_when_markers_missing_or_nested() {
     let _guard = lock_test();
-    let root = temp_workspace("implicit-root-defer-missing-effigy-json");
-    fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
+    let cases = [
+        ImplicitFallbackDisabledCase {
+            workspace: "implicit-root-defer-missing-effigy-json",
+            create_effigy_marker: false,
+            create_composer_marker: true,
+            use_nested_markers: false,
+        },
+        ImplicitFallbackDisabledCase {
+            workspace: "implicit-root-defer-missing-composer-json",
+            create_effigy_marker: true,
+            create_composer_marker: false,
+            use_nested_markers: false,
+        },
+        ImplicitFallbackDisabledCase {
+            workspace: "implicit-root-defer-nested-markers-only",
+            create_effigy_marker: true,
+            create_composer_marker: true,
+            use_nested_markers: true,
+        },
+    ];
 
-    let marker = root.join("composer-called.log");
-    let _env = setup_composer_stub(
-        &root,
-        "#!/bin/sh\nprintf called > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit 0\n",
-        &marker,
-    );
-    let err = run_task(&root, "version", &[])
-        .expect_err("implicit deferral should not run without effigy.json marker");
-    assert_task_not_found_any(err);
-    assert!(
-        !marker.exists(),
-        "composer fallback should not be invoked when effigy.json is missing"
-    );
-}
+    for case in cases {
+        let root = temp_workspace(case.workspace);
+        write_implicit_deferral_markers(
+            &root,
+            case.create_effigy_marker,
+            case.create_composer_marker,
+            case.use_nested_markers,
+        );
 
-#[test]
-fn run_manifest_task_does_not_implicitly_defer_without_composer_json_marker() {
-    let _guard = lock_test();
-    let root = temp_workspace("implicit-root-defer-missing-composer-json");
-    fs::write(root.join("effigy.json"), "{}\n").expect("write effigy marker");
-
-    let marker = root.join("composer-called.log");
-    let _env = setup_composer_stub(
-        &root,
-        "#!/bin/sh\nprintf called > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit 0\n",
-        &marker,
-    );
-    let err = run_task(&root, "version", &[])
-        .expect_err("implicit deferral should not run without composer.json marker");
-    assert_task_not_found_any(err);
-    assert!(
-        !marker.exists(),
-        "composer fallback should not be invoked when composer.json is missing"
-    );
-}
-
-#[test]
-fn run_manifest_task_does_not_implicitly_defer_when_markers_exist_only_in_nested_directory() {
-    let _guard = lock_test();
-    let root = temp_workspace("implicit-root-defer-nested-markers-only");
-    let nested = root.join("nested");
-    fs::create_dir_all(&nested).expect("mkdir nested");
-    fs::write(nested.join("effigy.json"), "{}\n").expect("write nested effigy marker");
-    fs::write(nested.join("composer.json"), "{}\n").expect("write nested composer marker");
-
-    let marker = root.join("composer-called.log");
-    let _env = setup_composer_stub(
-        &root,
-        "#!/bin/sh\nprintf called > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit 0\n",
-        &marker,
-    );
-    let err = run_task(&root, "version", &[])
-        .expect_err("implicit deferral should not run from nested marker files");
-    assert_task_not_found_any(err);
-    assert!(
-        !marker.exists(),
-        "composer fallback should not be invoked when markers are only nested"
-    );
+        let marker = root.join("composer-called.log");
+        let _env = setup_composer_stub(
+            &root,
+            "#!/bin/sh\nprintf called > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit 0\n",
+            &marker,
+        );
+        let err = run_task(&root, "version", &[])
+            .expect_err("implicit deferral should not run when required root markers are missing");
+        assert_task_not_found_any(err);
+        assert!(
+            !marker.exists(),
+            "composer fallback should not be invoked when required root markers are unavailable"
+        );
+    }
 }
 
 #[test]
 fn run_manifest_task_explicit_deferral_wins_over_implicit_root_deferral() {
     let _guard = lock_test();
     let root = temp_workspace("explicit-over-implicit");
-    fs::write(root.join("effigy.json"), "{}\n").expect("write effigy marker");
-    fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[defer]\nrun = \"printf explicit\"\n",
-    );
+    write_implicit_deferral_markers(&root, true, true, false);
+    write_defer_manifest(&root, "printf explicit");
 
     let marker = root.join("composer-called.log");
     let _env = setup_composer_stub(
