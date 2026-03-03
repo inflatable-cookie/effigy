@@ -1,12 +1,13 @@
 use super::{
-    contract_test_support::{parse_json, temp_workspace, write_manifest},
+    contract_test_support::{
+        parse_json, temp_workspace, test_lock, with_cwd, write_manifest, EnvGuard,
+    },
     run_doctor, run_manifest_task_with_cwd, run_tasks, DoctorArgs, RunnerError, TasksArgs,
 };
 use crate::TaskInvocation;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -862,50 +863,4 @@ fn catalog_task_run_json_contract_failure_has_versioned_shape() {
     assert_eq!(parsed["exit_code"], 9);
     assert_eq!(parsed["stdout"], "fail-out");
     assert_eq!(parsed["stderr"], "fail-err");
-}
-
-fn with_cwd<F, T>(cwd: &PathBuf, f: F) -> T
-where
-    F: FnOnce() -> T,
-{
-    let _guard = test_lock().lock().expect("lock");
-    let original = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(cwd).expect("set cwd");
-    let out = f();
-    std::env::set_current_dir(original).expect("restore cwd");
-    out
-}
-
-fn test_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-struct EnvGuard {
-    original: Vec<(String, Option<String>)>,
-}
-
-impl EnvGuard {
-    fn set_many(entries: &[(&str, Option<String>)]) -> Self {
-        let mut original = Vec::with_capacity(entries.len());
-        for (key, value) in entries {
-            original.push(((*key).to_owned(), std::env::var(key).ok()));
-            match value {
-                Some(v) => std::env::set_var(key, v),
-                None => std::env::remove_var(key),
-            }
-        }
-        Self { original }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (key, value) in self.original.drain(..) {
-            match value {
-                Some(v) => std::env::set_var(key, v),
-                None => std::env::remove_var(key),
-            }
-        }
-    }
 }

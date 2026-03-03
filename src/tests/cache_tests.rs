@@ -1,13 +1,14 @@
-use super::run_manifest_task_with_cwd;
+use super::{
+    contract_test_support::{lock_test, temp_workspace, write_manifest, EnvGuard},
+    run_manifest_task_with_cwd,
+};
 use crate::TaskInvocation;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::Path;
 
 #[test]
 fn task_cache_hit_skips_unchanged_rerun() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("cache-hit-skip");
     let marker = root.join("runs.log");
     write_cached_manifest(&root, &marker, "printf run");
@@ -40,7 +41,7 @@ fn task_cache_hit_skips_unchanged_rerun() {
 
 #[test]
 fn task_cache_invalidates_on_input_change() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("cache-input-change");
     let marker = root.join("runs.log");
     write_cached_manifest(&root, &marker, "printf run");
@@ -57,7 +58,7 @@ fn task_cache_invalidates_on_input_change() {
 
 #[test]
 fn task_cache_invalidates_on_selected_env_change() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("cache-env-change");
     let marker = root.join("runs.log");
     write_cached_manifest(&root, &marker, "printf run");
@@ -76,7 +77,7 @@ fn task_cache_invalidates_on_selected_env_change() {
 
 #[test]
 fn task_cache_invalidates_on_command_change() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("cache-command-change");
     let marker = root.join("runs.log");
     fs::write(root.join("input.txt"), "alpha\n").expect("write input");
@@ -94,7 +95,7 @@ fn task_cache_invalidates_on_command_change() {
 
 #[test]
 fn task_cache_invalidates_when_declared_output_is_missing() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("cache-missing-output");
     let marker = root.join("runs.log");
     write_cached_manifest(&root, &marker, "printf run");
@@ -111,7 +112,7 @@ fn task_cache_invalidates_when_declared_output_is_missing() {
 
 #[test]
 fn non_opt_in_task_always_executes() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("cache-non-opt-in");
     let marker = root.join("runs.log");
     write_manifest(
@@ -131,7 +132,7 @@ fn non_opt_in_task_always_executes() {
 
 #[test]
 fn cache_builtin_inspect_and_invalidate_paths_are_available() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let root = temp_workspace("cache-builtin-paths");
     let marker = root.join("runs.log");
     write_cached_manifest(&root, &marker, "printf run");
@@ -190,57 +191,4 @@ fn write_cached_manifest(root: &Path, marker: &Path, marker_write: &str) {
             marker.display()
         ),
     );
-}
-
-fn write_manifest(path: &Path, body: &str) {
-    fs::write(path, body).expect("write manifest");
-}
-
-fn temp_dir(name: &str) -> PathBuf {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    std::env::temp_dir().join(format!("effigy-cache-{name}-{ts}"))
-}
-
-fn temp_workspace(name: &str) -> PathBuf {
-    let root = temp_dir(name);
-    fs::create_dir_all(&root).expect("mkdir workspace");
-    fs::write(root.join("package.json"), "{}\n").expect("write package marker");
-    root
-}
-
-fn test_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-struct EnvGuard {
-    original: Vec<(String, Option<String>)>,
-}
-
-impl EnvGuard {
-    fn set_many(entries: &[(&str, Option<String>)]) -> Self {
-        let mut original = Vec::with_capacity(entries.len());
-        for (key, value) in entries {
-            original.push(((*key).to_owned(), std::env::var(key).ok()));
-            match value {
-                Some(v) => std::env::set_var(key, v),
-                None => std::env::remove_var(key),
-            }
-        }
-        Self { original }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (key, value) in &self.original {
-            match value {
-                Some(v) => std::env::set_var(key, v),
-                None => std::env::remove_var(key),
-            }
-        }
-    }
 }
