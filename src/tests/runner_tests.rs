@@ -29,7 +29,7 @@ mod doctor_text_output_tests;
 #[path = "runner_tests/deferral_tests.rs"]
 mod deferral_tests;
 
-#[path = "runner_tests/managed_and_locking_tests.rs"]
+#[path = "runner_tests/managed_and_locking_tests/mod.rs"]
 mod managed_and_locking_tests;
 
 #[path = "runner_test_support.rs"]
