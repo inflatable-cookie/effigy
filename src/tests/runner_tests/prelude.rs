@@ -31,6 +31,24 @@ pub(super) fn setup_root_with_catalog_tasks(
     root
 }
 
+pub(super) fn create_workspace_path(root: &PathBuf, relative: &str) -> PathBuf {
+    let path = root.join(relative);
+    fs::create_dir_all(&path).expect("mkdir workspace path");
+    path
+}
+
+pub(super) fn write_root_ping_task(root: &PathBuf) {
+    write_manifest(&root.join("effigy.toml"), "[tasks.ping]\nrun = \"printf root\"\n");
+}
+
+pub(super) fn setup_root_and_farmyard_ping(workspace: &str) -> (PathBuf, PathBuf) {
+    let root = temp_workspace(workspace);
+    let farmyard = create_workspace_dir(&root, "farmyard");
+    write_root_ping_task(&root);
+    write_catalog_tasks(&farmyard, Some("farmyard"), &[("ping", "printf farmyard")]);
+    (root, farmyard)
+}
+
 pub(super) fn write_managed_dev_profile_manifest(root: &PathBuf, profile: &str) {
     write_root_manifest(
         root,

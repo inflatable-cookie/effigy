@@ -1,4 +1,4 @@
-#[path = "runner_tests/catalog_discovery_tests.rs"]
+#[path = "runner_tests/catalog_discovery_tests/mod.rs"]
 mod catalog_discovery_tests;
 
 #[path = "runner_tests/runner_core_tests/mod.rs"]
