@@ -134,3 +134,17 @@ pub(super) fn run_catalogs_ok(root: PathBuf, args: &[&str]) -> String {
 pub(super) fn run_catalogs_err(root: PathBuf, args: &[&str]) -> RunnerError {
     run_builtin_err(root, "catalogs", args)
 }
+
+pub(super) fn workspace_with_empty_manifest(name: &str) -> PathBuf {
+    let root = temp_workspace(name);
+    write_root_manifest(&root, "");
+    root
+}
+
+pub(super) fn run_config_ok(root: PathBuf, args: &[&str]) -> String {
+    run_builtin_ok(root, "config", args)
+}
+
+pub(super) fn run_config_err(root: PathBuf, args: &[&str]) -> RunnerError {
+    run_builtin_err(root, "config", args)
+}

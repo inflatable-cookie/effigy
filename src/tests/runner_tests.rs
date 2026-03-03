@@ -19,7 +19,7 @@ mod catalogs_builtin_tests;
 #[path = "runner_tests/tasks_and_doctor_command_tests.rs"]
 mod tasks_and_doctor_command_tests;
 
-#[path = "runner_tests/config_builtin_tests.rs"]
+#[path = "runner_tests/config_builtin_tests/mod.rs"]
 mod config_builtin_tests;
 
 #[cfg(unix)]
