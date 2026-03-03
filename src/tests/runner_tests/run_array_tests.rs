@@ -1,4 +1,4 @@
-use super::*;
+use super::prelude::*;
 
 fn run_validate_ok(root: &PathBuf, args: &[&str]) -> String {
     run_builtin_ok(root.clone(), "validate", args)

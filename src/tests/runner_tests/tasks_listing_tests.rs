@@ -1,4 +1,4 @@
-use super::*;
+use super::prelude::*;
 
 fn write_root_dev_task_manifest(root: &PathBuf) {
     write_root_manifest(root, "[tasks.dev]\nrun = \"printf root\"\n");

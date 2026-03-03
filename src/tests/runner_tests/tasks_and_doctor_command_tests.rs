@@ -1,4 +1,4 @@
-use super::*;
+use super::prelude::*;
 
 fn assert_tasks_manifest_parse_error_contains_any(root: PathBuf, expected: &[&str]) {
     let err = run_tasks_with_repo(root).expect_err("expected manifest parse failure");

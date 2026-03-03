@@ -1,4 +1,4 @@
-use super::*;
+use super::prelude::*;
 
 fn doctor_nonzero_rendered(err: RunnerError) -> String {
     match err {
