@@ -1,6 +1,7 @@
 use crate::TaskInvocation;
 
 use super::super::super::RunnerError;
+use super::super::arg_parser::BuiltinArgParser;
 use super::super::unknown_builtin_args;
 
 #[derive(Debug, Clone)]
@@ -16,40 +17,30 @@ pub(super) fn parse_config_options(
     task: &TaskInvocation,
     args: &[String],
 ) -> Result<ConfigOptions, RunnerError> {
+    let mut parser = BuiltinArgParser::new(args);
     let mut schema = false;
     let mut minimal = false;
     let mut output_json = false;
     let mut target: Option<String> = None;
     let mut runner: Option<String> = None;
     let mut unknown = Vec::<String>::new();
-    let mut i = 0usize;
-    while i < args.len() {
-        let arg = &args[i];
-        match arg.as_str() {
+    while let Some(arg) = parser.next() {
+        match arg {
             "--schema" => schema = true,
             "--minimal" => minimal = true,
             "--json" => output_json = true,
             "--target" => {
-                let Some(value) = args.get(i + 1) else {
-                    return Err(RunnerError::TaskInvocation(
-                        "`--target` requires a value for built-in `config`".to_owned(),
-                    ));
-                };
+                let value = parser
+                    .next_value("`--target` requires a value for built-in `config`")?;
                 target = Some(value.to_lowercase());
-                i += 1;
             }
             "--runner" => {
-                let Some(value) = args.get(i + 1) else {
-                    return Err(RunnerError::TaskInvocation(
-                        "`--runner` requires a value for built-in `config`".to_owned(),
-                    ));
-                };
+                let value = parser
+                    .next_value("`--runner` requires a value for built-in `config`")?;
                 runner = Some(value.to_lowercase());
-                i += 1;
             }
-            _ => unknown.push(arg.clone()),
+            _ => unknown.push(arg.to_owned()),
         }
-        i += 1;
     }
 
     if !unknown.is_empty() {

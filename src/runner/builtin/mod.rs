@@ -12,6 +12,7 @@ mod doctor;
 mod help;
 mod init;
 mod migrate;
+mod arg_parser;
 mod tasks;
 mod test;
 mod unlock;
