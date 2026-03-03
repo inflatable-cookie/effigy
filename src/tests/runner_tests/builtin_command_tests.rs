@@ -64,6 +64,40 @@ fn install_local_vitest_marker(root: &PathBuf, marker: &PathBuf) {
     );
 }
 
+struct BuiltinTestErrorCase {
+    workspace: &'static str,
+    args: &'static [&'static str],
+    expected: &'static [&'static str],
+}
+
+struct BuiltinTestRecoveryCase {
+    workspace: &'static str,
+    args: &'static [&'static str],
+    expected: &'static [&'static str],
+}
+
+fn setup_fanout_catalog_repo(root: &PathBuf) -> (PathBuf, PathBuf) {
+    let farmyard = root.join("farmyard");
+    let dairy = root.join("dairy");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf root\"\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.ping]\nrun = \"printf ok\"\n",
+    );
+    write_manifest(
+        &dairy.join("effigy.toml"),
+        "[catalog]\nalias = \"dairy\"\n[tasks.ping]\nrun = \"printf ok\"\n",
+    );
+    write_package_json_with_test_script(&farmyard);
+    write_package_json_with_test_script(&dairy);
+    (farmyard, dairy)
+}
+
 fn assert_builtin_test_non_zero(
     err: RunnerError,
     expected_failures: Option<Vec<(String, Option<i32>)>>,
@@ -308,41 +342,73 @@ fn run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo() {
 }
 
 #[test]
-fn run_manifest_task_builtin_test_with_named_args_errors_when_multi_suite_is_ambiguous() {
-    let root = temp_workspace("builtin-test-multi-suite-ambiguous");
-    setup_multi_suite_repo(&root);
+fn run_manifest_task_builtin_test_multi_suite_selector_errors_include_recovery_hints() {
+    let cases = [
+        BuiltinTestErrorCase {
+            workspace: "builtin-test-multi-suite-ambiguous",
+            args: &["user-service"],
+            expected: &[
+                "ambiguous",
+                "vitest",
+                "cargo-",
+                "Try one of:",
+                "Use `effigy test --plan <args>`",
+                "effigy test vitest user-service",
+                "effigy test cargo-",
+            ],
+        },
+        BuiltinTestErrorCase {
+            workspace: "builtin-test-mistyped-suite-suggestion",
+            args: &["viteest", "user-service"],
+            expected: &[
+                "runner `viteest` is not available",
+                "Did you mean `vitest`?",
+                "Try: effigy test vitest user-service",
+                "Use `effigy test --plan <args>`",
+            ],
+        },
+    ];
 
-    let err = run_builtin_err(root, "test", &["user-service"]);
-    assert_task_invocation_error_contains(
-        err,
-        &[
-            "ambiguous",
-            "vitest",
-            "cargo-",
-            "Try one of:",
-            "Use `effigy test --plan <args>`",
-            "effigy test vitest user-service",
-            "effigy test cargo-",
-        ],
-    );
+    for case in cases {
+        let root = temp_workspace(case.workspace);
+        setup_multi_suite_repo(&root);
+        let err = run_builtin_err(root, "test", case.args);
+        assert_task_invocation_error_contains(err, case.expected);
+    }
 }
 
 #[test]
-fn run_manifest_task_builtin_test_plan_with_named_args_in_multi_suite_returns_recovery_output() {
-    let root = temp_workspace("builtin-test-multi-suite-plan-recovery");
-    setup_multi_suite_repo(&root);
+fn run_manifest_task_builtin_test_plan_multi_suite_recovery_outputs_hints() {
+    let cases = [
+        BuiltinTestRecoveryCase {
+            workspace: "builtin-test-multi-suite-plan-recovery",
+            args: &["--plan", "user-service"],
+            expected: &[
+                "Test Plan",
+                "runtime: plan-recovery",
+                "available-suites:",
+                "ambiguous",
+                "Try one of:",
+            ],
+        },
+        BuiltinTestRecoveryCase {
+            workspace: "builtin-test-plan-mistyped-suite-recovery",
+            args: &["--plan", "viteest", "user-service"],
+            expected: &[
+                "Test Plan",
+                "runtime: plan-recovery",
+                "Did you mean `vitest`?",
+                "Try: effigy test vitest user-service",
+            ],
+        },
+    ];
 
-    let out = run_builtin_ok(root, "test", &["--plan", "user-service"]);
-    assert_contains_all(
-        &out,
-        &[
-            "Test Plan",
-            "runtime: plan-recovery",
-            "available-suites:",
-            "ambiguous",
-            "Try one of:",
-        ],
-    );
+    for case in cases {
+        let root = temp_workspace(case.workspace);
+        setup_multi_suite_repo(&root);
+        let out = run_builtin_ok(root, "test", case.args);
+        assert_contains_all(&out, case.expected);
+    }
 }
 
 #[test]
@@ -372,23 +438,6 @@ fn run_manifest_task_builtin_test_supports_positional_suite_selector() {
 }
 
 #[test]
-fn run_manifest_task_builtin_test_plan_mistyped_suite_returns_recovery_output() {
-    let root = temp_workspace("builtin-test-plan-mistyped-suite-recovery");
-    setup_multi_suite_repo(&root);
-
-    let out = run_builtin_ok(root, "test", &["--plan", "viteest", "user-service"]);
-    assert_contains_all(
-        &out,
-        &[
-            "Test Plan",
-            "runtime: plan-recovery",
-            "Did you mean `vitest`?",
-            "Try: effigy test vitest user-service",
-        ],
-    );
-}
-
-#[test]
 fn run_manifest_task_builtin_test_errors_for_unavailable_positional_suite_selector() {
     let root = temp_workspace("builtin-test-suite-selector-unavailable");
     write_package_json_with_test_script(&root);
@@ -403,23 +452,6 @@ fn run_manifest_task_builtin_test_errors_for_unavailable_positional_suite_select
             "Try one of:",
             "Use `effigy test --plan <args>`",
             "effigy test vitest",
-        ],
-    );
-}
-
-#[test]
-fn run_manifest_task_builtin_test_mistyped_suite_suggests_nearest_runner() {
-    let root = temp_workspace("builtin-test-mistyped-suite-suggestion");
-    setup_multi_suite_repo(&root);
-
-    let err = run_builtin_err(root, "test", &["viteest", "user-service"]);
-    assert_task_invocation_error_contains(
-        err,
-        &[
-            "runner `viteest` is not available",
-            "Did you mean `vitest`?",
-            "Try: effigy test vitest user-service",
-            "Use `effigy test --plan <args>`",
         ],
     );
 }
@@ -459,25 +491,7 @@ fn run_manifest_task_builtin_test_falls_through_to_deferral_when_no_detection_ma
 #[test]
 fn run_manifest_task_builtin_test_fans_out_across_catalog_roots() {
     let root = temp_workspace("builtin-test-fanout");
-    let farmyard = root.join("farmyard");
-    let dairy = root.join("dairy");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.dev]\nrun = \"printf root\"\n",
-    );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.ping]\nrun = \"printf ok\"\n",
-    );
-    write_manifest(
-        &dairy.join("effigy.toml"),
-        "[catalog]\nalias = \"dairy\"\n[tasks.ping]\nrun = \"printf ok\"\n",
-    );
-
-    write_package_json_with_test_script(&farmyard);
-    write_package_json_with_test_script(&dairy);
+    let (farmyard, dairy) = setup_fanout_catalog_repo(&root);
     let farmyard_marker = farmyard.join("vitest-called.log");
     let dairy_marker = dairy.join("vitest-called.log");
     install_local_vitest_marker(&farmyard, &farmyard_marker);
@@ -494,25 +508,7 @@ fn run_manifest_task_builtin_test_fans_out_across_catalog_roots() {
 #[test]
 fn run_manifest_task_prefixed_builtin_test_targets_catalog_root_only() {
     let root = temp_workspace("builtin-test-prefixed-catalog");
-    let farmyard = root.join("farmyard");
-    let dairy = root.join("dairy");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.dev]\nrun = \"printf root\"\n",
-    );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.ping]\nrun = \"printf ok\"\n",
-    );
-    write_manifest(
-        &dairy.join("effigy.toml"),
-        "[catalog]\nalias = \"dairy\"\n[tasks.ping]\nrun = \"printf ok\"\n",
-    );
-
-    write_package_json_with_test_script(&farmyard);
-    write_package_json_with_test_script(&dairy);
+    let (farmyard, dairy) = setup_fanout_catalog_repo(&root);
     let farmyard_marker = farmyard.join("vitest-called.log");
     let dairy_marker = dairy.join("vitest-called.log");
     install_local_vitest_marker(&farmyard, &farmyard_marker);
@@ -528,25 +524,7 @@ fn run_manifest_task_prefixed_builtin_test_targets_catalog_root_only() {
 #[test]
 fn run_manifest_task_builtin_test_failure_keeps_rendered_results_summary() {
     let root = temp_workspace("builtin-test-fanout-failure-summary");
-    let farmyard = root.join("farmyard");
-    let dairy = root.join("dairy");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.dev]\nrun = \"printf root\"\n",
-    );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.ping]\nrun = \"printf ok\"\n",
-    );
-    write_manifest(
-        &dairy.join("effigy.toml"),
-        "[catalog]\nalias = \"dairy\"\n[tasks.ping]\nrun = \"printf ok\"\n",
-    );
-
-    write_package_json_with_test_script(&farmyard);
-    write_package_json_with_test_script(&dairy);
+    let (farmyard, dairy) = setup_fanout_catalog_repo(&root);
     install_local_vitest(&farmyard, "#!/bin/sh\nexit 1\n");
     install_local_vitest(&dairy, "#!/bin/sh\nexit 0\n");
 
