@@ -1,0 +1,4 @@
+mod concurrent_configuration_tests;
+mod profile_and_selection_tests;
+mod shell_behavior_tests;
+mod task_reference_tests;
