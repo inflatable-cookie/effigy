@@ -24,6 +24,23 @@ struct ImplicitFallbackDisabledCase {
     use_nested_markers: bool,
 }
 
+enum ImplicitDeferralExpectation {
+    DeferredViaComposer { expected_args: &'static str },
+    TaskNotFoundWithoutComposer,
+    ExplicitDeferralWithoutComposer,
+}
+
+struct ImplicitDeferralCase {
+    workspace: &'static str,
+    create_effigy_marker: bool,
+    create_composer_marker: bool,
+    use_nested_markers: bool,
+    explicit_defer_run: Option<&'static str>,
+    request: &'static str,
+    args: &'static [&'static str],
+    expectation: ImplicitDeferralExpectation,
+}
+
 fn assert_task_not_found_any(err: RunnerError) {
     match err {
         RunnerError::TaskNotFoundAny { .. } => {}
@@ -91,6 +108,58 @@ fn write_implicit_deferral_markers(
     }
 }
 
+fn composer_script(exit_code: u8) -> String {
+    format!(
+        "#!/bin/sh\nprintf \"%s\\n\" \"$@\" > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit {exit_code}\n"
+    )
+}
+
+fn run_implicit_deferral_case(case: &ImplicitDeferralCase) {
+    let root = temp_workspace(case.workspace);
+    write_implicit_deferral_markers(
+        &root,
+        case.create_effigy_marker,
+        case.create_composer_marker,
+        case.use_nested_markers,
+    );
+    if let Some(defer_run) = case.explicit_defer_run {
+        write_defer_manifest(&root, defer_run);
+    }
+
+    let marker = root.join("composer-args.log");
+    let composer_exit = match case.expectation {
+        ImplicitDeferralExpectation::ExplicitDeferralWithoutComposer => 99,
+        _ => 0,
+    };
+    let _env = setup_composer_stub(&root, &composer_script(composer_exit), &marker);
+
+    match case.expectation {
+        ImplicitDeferralExpectation::DeferredViaComposer { expected_args } => {
+            let out = run_task(&root, case.request, case.args)
+                .expect("implicit root deferral should succeed");
+            assert_eq!(out, "");
+            let args = fs::read_to_string(marker).expect("read composer args");
+            assert_eq!(args, expected_args);
+        }
+        ImplicitDeferralExpectation::TaskNotFoundWithoutComposer => {
+            let err = run_task(&root, case.request, case.args).expect_err(
+                "implicit deferral should not run when required root markers are missing",
+            );
+            assert_task_not_found_any(err);
+            assert!(
+                !marker.exists(),
+                "composer fallback should not be invoked when required root markers are unavailable"
+            );
+        }
+        ImplicitDeferralExpectation::ExplicitDeferralWithoutComposer => {
+            let out = run_task(&root, case.request, case.args)
+                .expect("explicit deferral should succeed");
+            assert_eq!(out, "");
+            assert!(!marker.exists(), "composer fallback should not be invoked");
+        }
+    }
+}
+
 #[test]
 fn run_manifest_task_defers_when_task_missing_with_token_support() {
     let _guard = lock_test();
@@ -146,36 +215,15 @@ fn run_manifest_task_deferral_loop_guard_fails() {
     let root = temp_workspace("defer-loop");
     write_defer_manifest(&root, "printf deferred");
 
-    std::env::set_var("EFFIGY_DEFER_DEPTH", "1");
+    let _env = EnvGuard::set_many(&[("EFFIGY_DEFER_DEPTH", Some("1".to_owned()))]);
     let err = run_task(&root, "unknown-task", &[]).expect_err("loop guard should fail");
-    std::env::remove_var("EFFIGY_DEFER_DEPTH");
     assert_defer_loop_detected(err, 1);
 }
 
 #[test]
-fn run_manifest_task_implicitly_defers_to_root_when_no_configured_deferral() {
+fn run_manifest_task_implicit_deferral_matrix() {
     let _guard = lock_test();
-    let root = temp_workspace("implicit-root-defer");
-    write_implicit_deferral_markers(&root, true, true, false);
-
-    let args_log = root.join("composer-args.log");
-    let _env = setup_composer_stub(
-        &root,
-        "#!/bin/sh\nprintf \"%s\\n\" \"$@\" > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\n",
-        &args_log,
-    );
-    let out =
-        run_task(&root, "version", &["--dry-run"]).expect("implicit root deferral should succeed");
-
-    assert_eq!(out, "");
-    let args = fs::read_to_string(args_log).expect("read composer args");
-    assert_eq!(args, "global\nexec\neffigy\n--\nversion\n--dry-run\n");
-}
-
-#[test]
-fn run_manifest_task_does_not_implicitly_defer_when_markers_missing_or_nested() {
-    let _guard = lock_test();
-    let cases = [
+    let fallback_disabled_cases = [
         ImplicitFallbackDisabledCase {
             workspace: "implicit-root-defer-missing-effigy-json",
             create_effigy_marker: false,
@@ -196,46 +244,44 @@ fn run_manifest_task_does_not_implicitly_defer_when_markers_missing_or_nested() 
         },
     ];
 
-    for case in cases {
-        let root = temp_workspace(case.workspace);
-        write_implicit_deferral_markers(
-            &root,
-            case.create_effigy_marker,
-            case.create_composer_marker,
-            case.use_nested_markers,
-        );
-
-        let marker = root.join("composer-called.log");
-        let _env = setup_composer_stub(
-            &root,
-            "#!/bin/sh\nprintf called > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit 0\n",
-            &marker,
-        );
-        let err = run_task(&root, "version", &[])
-            .expect_err("implicit deferral should not run when required root markers are missing");
-        assert_task_not_found_any(err);
-        assert!(
-            !marker.exists(),
-            "composer fallback should not be invoked when required root markers are unavailable"
-        );
-    }
-}
-
-#[test]
-fn run_manifest_task_explicit_deferral_wins_over_implicit_root_deferral() {
-    let _guard = lock_test();
-    let root = temp_workspace("explicit-over-implicit");
-    write_implicit_deferral_markers(&root, true, true, false);
-    write_defer_manifest(&root, "printf explicit");
-
-    let marker = root.join("composer-called.log");
-    let _env = setup_composer_stub(
-        &root,
-        "#!/bin/sh\nprintf called > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit 99\n",
-        &marker,
+    let mut cases = vec![ImplicitDeferralCase {
+        workspace: "implicit-root-defer",
+        create_effigy_marker: true,
+        create_composer_marker: true,
+        use_nested_markers: false,
+        explicit_defer_run: None,
+        request: "version",
+        args: &["--dry-run"],
+        expectation: ImplicitDeferralExpectation::DeferredViaComposer {
+            expected_args: "global\nexec\neffigy\n--\nversion\n--dry-run\n",
+        },
+    }];
+    cases.extend(
+        fallback_disabled_cases
+            .iter()
+            .map(|case| ImplicitDeferralCase {
+                workspace: case.workspace,
+                create_effigy_marker: case.create_effigy_marker,
+                create_composer_marker: case.create_composer_marker,
+                use_nested_markers: case.use_nested_markers,
+                explicit_defer_run: None,
+                request: "version",
+                args: &[],
+                expectation: ImplicitDeferralExpectation::TaskNotFoundWithoutComposer,
+            }),
     );
-    let out = run_task(&root, "missing", &[]).expect("explicit deferral should succeed");
+    cases.push(ImplicitDeferralCase {
+        workspace: "explicit-over-implicit",
+        create_effigy_marker: true,
+        create_composer_marker: true,
+        use_nested_markers: false,
+        explicit_defer_run: Some("printf explicit"),
+        request: "missing",
+        args: &[],
+        expectation: ImplicitDeferralExpectation::ExplicitDeferralWithoutComposer,
+    });
 
-    assert_eq!(out, "");
-    assert!(!marker.exists(), "composer fallback should not be invoked");
+    for case in &cases {
+        run_implicit_deferral_case(case);
+    }
 }
