@@ -9,6 +9,44 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+fn parse_json(text: &str) -> serde_json::Value {
+    serde_json::from_str(text).expect("parse json")
+}
+
+fn assert_schema_v1(parsed: &serde_json::Value, schema: &str) {
+    assert_eq!(parsed["schema"], schema);
+    assert_eq!(parsed["schema_version"], 1);
+}
+
+fn run_invocation_json(root: PathBuf, name: &str, args: &[&str]) -> serde_json::Value {
+    let out = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: name.to_owned(),
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        },
+        root,
+    )
+    .expect("run invocation");
+    parse_json(&out)
+}
+
+fn run_completion_candidates_json(root: PathBuf) -> serde_json::Value {
+    run_invocation_json(root, "completion", &["candidates", "--json"])
+}
+
+fn assert_candidates_cache_policy(
+    parsed: &serde_json::Value,
+    hit: bool,
+    state: &str,
+    effective_ttl_ms: i64,
+    ttl_source: &str,
+) {
+    assert_eq!(parsed["cache_hit"], hit);
+    assert_eq!(parsed["cache_state"], state);
+    assert_eq!(parsed["effective_cache_ttl_ms"], effective_ttl_ms);
+    assert_eq!(parsed["cache_ttl_source"], ttl_source);
+}
+
 #[test]
 fn tasks_json_contract_has_versioned_top_level_shape() {
     let root = temp_workspace("tasks-json-contract");
@@ -34,9 +72,8 @@ fn tasks_json_contract_has_versioned_top_level_shape() {
     })
     .expect("run tasks json");
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.tasks.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.tasks.v1");
     assert!(parsed["catalog_tasks"].is_array());
     assert!(parsed["managed_profiles"].is_array());
     assert!(parsed["builtin_tasks"].is_array());
@@ -56,9 +93,8 @@ fn tasks_filtered_json_contract_has_versioned_shape_and_filter_fields() {
     })
     .expect("run filtered tasks json");
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.tasks.filtered.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.tasks.filtered.v1");
     assert_eq!(parsed["filter"], "test");
     assert!(parsed["matches"].is_array());
     assert!(parsed["managed_profile_matches"].is_array());
@@ -87,8 +123,8 @@ fn tasks_json_contract_with_resolve_has_diagnostics_and_probe_fields() {
     })
     .expect("run tasks json resolve");
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.tasks.v1");
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.tasks.v1");
     assert!(parsed["catalogs"].is_array());
     assert!(parsed["precedence"].is_array());
     assert_eq!(parsed["resolve"]["status"], "ok");
@@ -119,8 +155,8 @@ fn tasks_filtered_json_contract_with_resolve_has_diagnostics_and_probe_fields() 
     })
     .expect("run filtered tasks json resolve");
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.tasks.filtered.v1");
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.tasks.filtered.v1");
     assert_eq!(parsed["filter"], "build");
     assert!(parsed["catalogs"].is_array());
     assert!(parsed["precedence"].is_array());
@@ -148,9 +184,8 @@ fn doctor_json_contract_has_versioned_top_level_shape() {
     })
     .expect("run doctor json");
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.doctor.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.doctor.v1");
     assert_eq!(parsed["ok"], true);
     assert!(parsed["summary"].is_object());
     assert!(parsed["findings"].is_array());
@@ -175,9 +210,8 @@ fn doctor_json_contract_with_health_stdout_remains_valid_json() {
     })
     .expect("run doctor json");
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.doctor.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.doctor.v1");
     assert_eq!(parsed["ok"], true);
     assert!(parsed["findings"].is_array());
 }
@@ -210,9 +244,8 @@ fn doctor_explain_json_contract_has_selection_and_deferral_fields() {
     })
     .expect("run doctor explain json");
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.doctor.explain.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.doctor.explain.v1");
     assert_eq!(parsed["request"]["task"], "farmyard/build");
     assert!(parsed["request"]["args"].is_array());
     assert_eq!(parsed["selection"]["status"], "ok");
@@ -252,7 +285,7 @@ fn doctor_explain_json_snapshot_prefix_is_stable() {
     })
     .expect("run doctor explain json");
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    let parsed = parse_json(&out);
     let keys = parsed
         .as_object()
         .expect("object")
@@ -273,7 +306,7 @@ fn doctor_explain_json_snapshot_prefix_is_stable() {
             "selection".to_owned(),
         ]
     );
-    assert_eq!(parsed["schema"], "effigy.doctor.explain.v1");
+    assert_schema_v1(&parsed, "effigy.doctor.explain.v1");
     assert_eq!(parsed["request"]["task"], "farmyard/build");
     assert_eq!(
         parsed["reasoning"]["selection"],
@@ -303,9 +336,8 @@ fn builtin_test_plan_json_contract_has_versioned_shape_and_suite_source_fields()
     )
     .expect("run test --plan --json");
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.test.plan.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.test.plan.v1");
     assert!(parsed["targets"].is_array());
     let first = parsed["targets"]
         .as_array()
@@ -349,9 +381,8 @@ fn builtin_test_results_json_contract_has_versioned_shape_and_hint_fields() {
         RunnerError::BuiltinTestNonZero { rendered, .. } => rendered,
         other => panic!("unexpected error: {other}"),
     };
-    let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.test.results.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = parse_json(&rendered);
+    assert_schema_v1(&parsed, "effigy.test.results.v1");
     assert!(parsed["targets"].is_array());
     assert!(parsed["failures"].is_array());
     assert!(parsed["hint"].is_object());
@@ -363,19 +394,8 @@ fn builtin_test_results_json_contract_has_versioned_shape_and_hint_fields() {
 
 #[test]
 fn builtin_help_json_contract_has_versioned_shape() {
-    let root = temp_workspace("help-json-contract");
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "help".to_owned(),
-            args: vec!["--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run help --json");
-
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.help.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = run_invocation_json(temp_workspace("help-json-contract"), "help", &["--json"]);
+    assert_schema_v1(&parsed, "effigy.help.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["topic"], "general");
     assert!(parsed["text"]
@@ -385,19 +405,12 @@ fn builtin_help_json_contract_has_versioned_shape() {
 
 #[test]
 fn builtin_config_json_contract_has_versioned_shape() {
-    let root = temp_workspace("config-json-contract");
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "config".to_owned(),
-            args: vec!["--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run config --json");
-
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.config.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = run_invocation_json(
+        temp_workspace("config-json-contract"),
+        "config",
+        &["--json"],
+    );
+    assert_schema_v1(&parsed, "effigy.config.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["mode"], "reference");
     assert!(parsed["text"]
@@ -409,19 +422,8 @@ fn builtin_config_json_contract_has_versioned_shape() {
 fn builtin_completion_json_contract_has_versioned_shape() {
     let root = temp_workspace("completion-json-contract");
     write_manifest(&root.join("effigy.toml"), "");
-
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "completion".to_owned(),
-            args: vec!["bash".to_owned(), "--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run completion --json");
-
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.completion.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = run_invocation_json(root, "completion", &["bash", "--json"]);
+    assert_schema_v1(&parsed, "effigy.completion.v1");
     assert_eq!(parsed["shell"], "bash");
     assert!(parsed["script"].is_string());
     assert!(parsed["commands"].is_array());
@@ -443,32 +445,18 @@ fn builtin_completion_candidates_json_contract_has_versioned_shape() {
         "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "completion".to_owned(),
-            args: vec![
-                "candidates".to_owned(),
-                "--prefix".to_owned(),
-                "farm".to_owned(),
-                "--json".to_owned(),
-            ],
-        },
+    let parsed = run_invocation_json(
         root,
-    )
-    .expect("run completion candidates --json");
-
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.completion.candidates.v1");
-    assert_eq!(parsed["schema_version"], 1);
+        "completion",
+        &["candidates", "--prefix", "farm", "--json"],
+    );
+    assert_schema_v1(&parsed, "effigy.completion.candidates.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["prefix"], "farm");
-    assert_eq!(parsed["cache_hit"], false);
-    assert_eq!(parsed["cache_state"], "miss_initial");
+    assert_candidates_cache_policy(&parsed, false, "miss_initial", 2000, "default");
     assert_eq!(parsed["manifest_count"], 2);
     assert!(parsed["cache_age_ms"].is_null());
     assert!(parsed["cache_ttl_ms"].is_null());
-    assert_eq!(parsed["effective_cache_ttl_ms"], 2000);
-    assert_eq!(parsed["cache_ttl_source"], "default");
     let candidates = parsed["candidates"].as_array().expect("candidates array");
     assert!(candidates
         .iter()
@@ -485,17 +473,9 @@ fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_re
         "[tasks.build]\nrun = \"printf root\"\n",
     );
 
-    let first = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "completion".to_owned(),
-            args: vec!["candidates".to_owned(), "--json".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("run completion candidates first");
-    let first_parsed: serde_json::Value = serde_json::from_str(&first).expect("parse first json");
-    assert_eq!(first_parsed["cache_hit"], false);
-    assert_eq!(first_parsed["cache_state"], "miss_initial");
+    let first_parsed = run_completion_candidates_json(root.clone());
+    assert_eq!(first_parsed["schema"], "effigy.completion.candidates.v1");
+    assert_candidates_cache_policy(&first_parsed, false, "miss_initial", 2000, "default");
     assert!(first_parsed["cache_age_ms"].is_null());
     assert!(first_parsed["cache_ttl_ms"].is_null());
     let effective_ttl_ms = first_parsed["effective_cache_ttl_ms"]
@@ -508,16 +488,7 @@ fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_re
         .expect("cache_ttl_source must be string");
     assert!(matches!(ttl_source, "default" | "env"));
 
-    let second = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "completion".to_owned(),
-            args: vec!["candidates".to_owned(), "--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run completion candidates second");
-    let second_parsed: serde_json::Value =
-        serde_json::from_str(&second).expect("parse second json");
+    let second_parsed = run_completion_candidates_json(root);
     assert_eq!(second_parsed["cache_hit"], true);
     assert_eq!(second_parsed["cache_state"], "hit");
     assert_eq!(second_parsed["manifest_count"], 1);
@@ -546,40 +517,17 @@ fn builtin_completion_candidates_json_contract_expires_cache_after_ttl() {
         "[tasks.build]\nrun = \"printf root\"\n",
     );
 
-    let first = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "completion".to_owned(),
-            args: vec!["candidates".to_owned(), "--json".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("run completion candidates first");
-    let first_parsed: serde_json::Value = serde_json::from_str(&first).expect("parse first json");
-    assert_eq!(first_parsed["cache_hit"], false);
-    assert_eq!(first_parsed["cache_state"], "miss_initial");
+    let first_parsed = run_completion_candidates_json(root.clone());
+    assert_candidates_cache_policy(&first_parsed, false, "miss_initial", 2000, "default");
     assert!(first_parsed["cache_age_ms"].is_null());
     assert!(first_parsed["cache_ttl_ms"].is_null());
-    assert_eq!(first_parsed["effective_cache_ttl_ms"], 2000);
-    assert_eq!(first_parsed["cache_ttl_source"], "default");
 
     thread::sleep(Duration::from_millis(2200));
 
-    let second = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "completion".to_owned(),
-            args: vec!["candidates".to_owned(), "--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run completion candidates second");
-    let second_parsed: serde_json::Value =
-        serde_json::from_str(&second).expect("parse second json");
-    assert_eq!(second_parsed["cache_hit"], false);
-    assert_eq!(second_parsed["cache_state"], "miss_ttl");
+    let second_parsed = run_completion_candidates_json(root);
+    assert_candidates_cache_policy(&second_parsed, false, "miss_ttl", 2000, "default");
     assert!(second_parsed["cache_age_ms"].is_null());
     assert!(second_parsed["cache_ttl_ms"].is_null());
-    assert_eq!(second_parsed["effective_cache_ttl_ms"], 2000);
-    assert_eq!(second_parsed["cache_ttl_source"], "default");
 }
 
 #[test]
@@ -591,21 +539,10 @@ fn builtin_completion_candidates_json_contract_invalidates_cache_on_manifest_cha
     let manifest_path = root.join("effigy.toml");
     write_manifest(&manifest_path, "[tasks.build]\nrun = \"printf root\"\n");
 
-    let first = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "completion".to_owned(),
-            args: vec!["candidates".to_owned(), "--json".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("run completion candidates first");
-    let first_parsed: serde_json::Value = serde_json::from_str(&first).expect("parse first json");
-    assert_eq!(first_parsed["cache_hit"], false);
-    assert_eq!(first_parsed["cache_state"], "miss_initial");
+    let first_parsed = run_completion_candidates_json(root.clone());
+    assert_candidates_cache_policy(&first_parsed, false, "miss_initial", 2000, "default");
     assert!(first_parsed["cache_age_ms"].is_null());
     assert!(first_parsed["cache_ttl_ms"].is_null());
-    assert_eq!(first_parsed["effective_cache_ttl_ms"], 2000);
-    assert_eq!(first_parsed["cache_ttl_source"], "default");
 
     let original_modified = fs::metadata(&manifest_path)
         .expect("manifest metadata")
@@ -623,22 +560,16 @@ fn builtin_completion_candidates_json_contract_invalidates_cache_on_manifest_cha
         .set_times(fs::FileTimes::new().set_modified(original_modified))
         .expect("restore manifest modified time");
 
-    let second = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "completion".to_owned(),
-            args: vec!["candidates".to_owned(), "--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run completion candidates after manifest change");
-    let second_parsed: serde_json::Value =
-        serde_json::from_str(&second).expect("parse second json");
-    assert_eq!(second_parsed["cache_hit"], false);
-    assert_eq!(second_parsed["cache_state"], "miss_manifest_change");
+    let second_parsed = run_completion_candidates_json(root);
+    assert_candidates_cache_policy(
+        &second_parsed,
+        false,
+        "miss_manifest_change",
+        2000,
+        "default",
+    );
     assert!(second_parsed["cache_age_ms"].is_null());
     assert!(second_parsed["cache_ttl_ms"].is_null());
-    assert_eq!(second_parsed["effective_cache_ttl_ms"], 2000);
-    assert_eq!(second_parsed["cache_ttl_source"], "default");
     assert!(second_parsed["candidates"]
         .as_array()
         .expect("candidates array")
@@ -659,32 +590,12 @@ fn builtin_completion_candidates_json_contract_reports_env_ttl_policy() {
         "[tasks.build]\nrun = \"printf root\"\n",
     );
 
-    let first = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "completion".to_owned(),
-            args: vec!["candidates".to_owned(), "--json".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("run completion candidates first");
-    let first_parsed: serde_json::Value = serde_json::from_str(&first).expect("parse first json");
-    assert_eq!(first_parsed["cache_hit"], false);
-    assert_eq!(first_parsed["cache_state"], "miss_initial");
-    assert_eq!(first_parsed["effective_cache_ttl_ms"], 750);
-    assert_eq!(first_parsed["cache_ttl_source"], "env");
+    let first_parsed = run_completion_candidates_json(root.clone());
+    assert_candidates_cache_policy(&first_parsed, false, "miss_initial", 750, "env");
     assert!(first_parsed["cache_age_ms"].is_null());
     assert!(first_parsed["cache_ttl_ms"].is_null());
 
-    let second = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "completion".to_owned(),
-            args: vec!["candidates".to_owned(), "--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run completion candidates second");
-    let second_parsed: serde_json::Value =
-        serde_json::from_str(&second).expect("parse second json");
+    let second_parsed = run_completion_candidates_json(root);
     assert_eq!(second_parsed["cache_hit"], true);
     assert_eq!(second_parsed["cache_state"], "hit");
     assert_eq!(second_parsed["effective_cache_ttl_ms"], 750);
@@ -705,19 +616,8 @@ fn builtin_completion_candidates_json_contract_reports_invalid_env_ttl_policy() 
         "[tasks.build]\nrun = \"printf root\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "completion".to_owned(),
-            args: vec!["candidates".to_owned(), "--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run completion candidates");
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["cache_hit"], false);
-    assert_eq!(parsed["cache_state"], "miss_initial");
-    assert_eq!(parsed["effective_cache_ttl_ms"], 2000);
-    assert_eq!(parsed["cache_ttl_source"], "env_invalid");
+    let parsed = run_completion_candidates_json(root);
+    assert_candidates_cache_policy(&parsed, false, "miss_initial", 2000, "env_invalid");
     assert!(parsed["cache_age_ms"].is_null());
     assert!(parsed["cache_ttl_ms"].is_null());
 }
@@ -822,19 +722,8 @@ fn builtin_completion_candidates_help_json_uses_help_schema() {
 
 #[test]
 fn builtin_init_json_contract_has_versioned_shape() {
-    let root = temp_workspace("init-json-contract");
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "init".to_owned(),
-            args: vec!["--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run init --json");
-
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.init.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = run_invocation_json(temp_workspace("init-json-contract"), "init", &["--json"]);
+    assert_schema_v1(&parsed, "effigy.init.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["written"], true);
     assert_eq!(parsed["dry_run"], false);
@@ -865,18 +754,8 @@ fn builtin_migrate_json_contract_has_versioned_shape() {
         "[tasks]\nbuild = \"printf old\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "migrate".to_owned(),
-            args: vec!["--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run migrate --json");
-
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.migrate.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = run_invocation_json(root, "migrate", &["--json"]);
+    assert_schema_v1(&parsed, "effigy.migrate.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["apply"], false);
     assert_eq!(parsed["written"], false);
@@ -890,23 +769,13 @@ fn builtin_unlock_json_contract_has_versioned_shape() {
     fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
     fs::write(root.join(".effigy/locks/workspace.lock"), "{}").expect("write workspace lock");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "unlock".to_owned(),
-            args: vec![
-                "--repo".to_owned(),
-                root.display().to_string(),
-                "--json".to_owned(),
-                "workspace".to_owned(),
-            ],
-        },
+    let repo_arg = root.display().to_string();
+    let parsed = run_invocation_json(
         root,
-    )
-    .expect("run unlock --json");
-
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.unlock.v1");
-    assert_eq!(parsed["schema_version"], 1);
+        "unlock",
+        &["--repo", &repo_arg, "--json", "workspace"],
+    );
+    assert_schema_v1(&parsed, "effigy.unlock.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["all"], false);
     assert!(parsed["removed"].is_array());
@@ -921,24 +790,12 @@ fn builtin_watch_bounded_json_contract_has_versioned_shape() {
         "[tasks.build]\nrun = \"printf ok\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "watch".to_owned(),
-            args: vec![
-                "--owner".to_owned(),
-                "effigy".to_owned(),
-                "--once".to_owned(),
-                "--json".to_owned(),
-                "build".to_owned(),
-            ],
-        },
+    let parsed = run_invocation_json(
         root,
-    )
-    .expect("run watch --once --json");
-
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.watch.v1");
-    assert_eq!(parsed["schema_version"], 1);
+        "watch",
+        &["--owner", "effigy", "--once", "--json", "build"],
+    );
+    assert_schema_v1(&parsed, "effigy.watch.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["runs"], 1);
 }
@@ -957,18 +814,8 @@ fn task_run_json_contract_reclaims_stale_lock_and_remains_valid_payload() {
     )
     .expect("write stale lock");
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "build".to_owned(),
-            args: vec!["--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run build --json with stale lock");
-
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.task.run.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = run_invocation_json(root, "build", &["--json"]);
+    assert_schema_v1(&parsed, "effigy.task.run.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["task"], "build");
     assert_eq!(parsed["exit_code"], 0);
@@ -982,18 +829,8 @@ fn catalog_task_run_json_contract_success_has_versioned_shape() {
         "[tasks.build]\nrun = \"printf build-ok\"\n",
     );
 
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "build".to_owned(),
-            args: vec!["--json".to_owned()],
-        },
-        root,
-    )
-    .expect("run build --json");
-
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.task.run.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = run_invocation_json(root, "build", &["--json"]);
+    assert_schema_v1(&parsed, "effigy.task.run.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["task"], "build");
     assert_eq!(parsed["exit_code"], 0);
@@ -1021,9 +858,8 @@ fn catalog_task_run_json_contract_failure_has_versioned_shape() {
         RunnerError::CommandJsonFailure { rendered } => rendered,
         other => panic!("unexpected error: {other}"),
     };
-    let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("parse json");
-    assert_eq!(parsed["schema"], "effigy.task.run.v1");
-    assert_eq!(parsed["schema_version"], 1);
+    let parsed = parse_json(&rendered);
+    assert_schema_v1(&parsed, "effigy.task.run.v1");
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["task"], "fail");
     assert_eq!(parsed["exit_code"], 9);
