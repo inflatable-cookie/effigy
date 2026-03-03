@@ -1,5 +1,9 @@
 use super::*;
 
+fn write_root_manifest(root: &PathBuf, body: &str) {
+    write_manifest(&root.join("effigy.toml"), body);
+}
+
 struct ConfigErrorCase {
     workspace: &'static str,
     args: &'static [&'static str],
@@ -8,7 +12,7 @@ struct ConfigErrorCase {
 
 fn workspace_with_empty_manifest(name: &str) -> PathBuf {
     let root = temp_workspace(name);
-    write_manifest(&root.join("effigy.toml"), "");
+    write_root_manifest(&root, "");
     root
 }
 
