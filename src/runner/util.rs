@@ -1,7 +1,11 @@
 #[path = "util/parsing.rs"]
 mod parsing;
+#[path = "util/dotenv.rs"]
+mod dotenv;
 #[path = "util/shell.rs"]
 mod shell;
+
+use std::collections::BTreeMap;
 
 pub(super) fn normalize_builtin_test_suite(raw: &str) -> Option<&'static str> {
     parsing::normalize_builtin_test_suite(raw)
@@ -29,6 +33,10 @@ pub(super) fn render_task_selector(selector: &super::TaskSelector) -> String {
 
 pub(super) fn render_passthrough_args(args: &[String]) -> String {
     parsing::render_passthrough_args(args)
+}
+
+pub(super) fn parse_dotenv_entries(src: &str) -> BTreeMap<String, String> {
+    dotenv::parse_dotenv_entries(src)
 }
 
 pub(super) fn with_local_node_bin_path(process: &mut std::process::Command, cwd: &std::path::Path) {

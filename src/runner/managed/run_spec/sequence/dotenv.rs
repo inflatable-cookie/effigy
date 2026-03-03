@@ -3,6 +3,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use crate::runner::util::parse_dotenv_entries;
 use crate::runner::{LoadedCatalog, RunnerError};
 
 use super::env_files::resolve_env_file_paths;
@@ -78,36 +79,5 @@ fn parse_dotenv_file(env_file: &Path) -> Result<BTreeMap<String, String>, Runner
             )));
         }
     };
-
-    let mut entries = BTreeMap::new();
-    for raw_line in src.lines() {
-        let mut line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some(exported) = line.strip_prefix("export ") {
-            line = exported.trim_start();
-        }
-        let Some((key_raw, value_raw)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key_raw.trim();
-        if key.is_empty() {
-            continue;
-        }
-        let value = strip_matching_quotes(value_raw.trim());
-        entries.insert(key.to_owned(), value.to_owned());
-    }
-    Ok(entries)
-}
-
-fn strip_matching_quotes(value: &str) -> &str {
-    if value.len() >= 2
-        && ((value.starts_with('"') && value.ends_with('"'))
-            || (value.starts_with('\'') && value.ends_with('\'')))
-    {
-        &value[1..value.len() - 1]
-    } else {
-        value
-    }
+    Ok(parse_dotenv_entries(&src))
 }

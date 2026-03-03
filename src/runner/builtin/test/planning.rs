@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use super::super::super::{LoadedCatalog, TaskSelector, DEFAULT_BUILTIN_TEST_MAX_PARALLEL};
 use crate::runner::manifest::ManifestCargoEnvMatchMode;
 
-#[path = "planning/resolve.rs"]
+#[path = "planning/resolve/mod.rs"]
 mod resolve;
 #[path = "planning/runnable.rs"]
 mod runnable;
