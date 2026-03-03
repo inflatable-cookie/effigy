@@ -8,6 +8,7 @@ pub(super) struct ProjectedTargetPlan {
     pub(super) selected_suites: Vec<String>,
     pub(super) commands: Vec<String>,
     pub(super) evidence: Vec<String>,
+    pub(super) cargo_env_match: String,
 }
 
 pub(super) fn project_target_plan(
@@ -51,5 +52,6 @@ pub(super) fn project_target_plan(
         selected_suites,
         commands,
         evidence,
+        cargo_env_match: target.cargo_env_match.as_str().to_owned(),
     }
 }

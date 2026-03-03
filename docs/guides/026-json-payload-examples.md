@@ -183,6 +183,7 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
       "name": "api",
       "root": "/workspace/app/services/api",
       "suite_source": "auto-detect",
+      "cargo_env_match": "prefix-aware",
       "available_suites": [
         "vitest",
         "cargo-nextest"

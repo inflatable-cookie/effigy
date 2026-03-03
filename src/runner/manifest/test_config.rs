@@ -22,6 +22,16 @@ pub(in crate::runner) enum ManifestCargoEnvMatchMode {
     ShellAware,
 }
 
+impl ManifestCargoEnvMatchMode {
+    pub(in crate::runner) fn as_str(self) -> &'static str {
+        match self {
+            ManifestCargoEnvMatchMode::ExecutableOnly => "executable-only",
+            ManifestCargoEnvMatchMode::PrefixAware => "prefix-aware",
+            ManifestCargoEnvMatchMode::ShellAware => "shell-aware",
+        }
+    }
+}
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(untagged)]
 pub(in crate::runner) enum ManifestTestRunnerOverride {

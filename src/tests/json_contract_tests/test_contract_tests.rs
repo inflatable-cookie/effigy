@@ -29,6 +29,7 @@ fn builtin_test_plan_json_contract_has_versioned_shape_and_suite_source_fields()
         .as_array()
         .and_then(|targets| targets.first())
         .expect("target entry");
+    assert!(first["cargo_env_match"].is_string());
     assert!(first["suite_source"].is_string());
     assert!(first["available_suites"].is_array());
     assert!(first["fallback_chain"].is_array());

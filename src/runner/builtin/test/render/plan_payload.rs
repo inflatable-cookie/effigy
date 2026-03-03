@@ -24,6 +24,7 @@ pub(super) fn build_builtin_test_plan_payload(
                 "name": target.name,
                 "root": target.root.display().to_string(),
                 "suite_source": target.suite_source,
+                "cargo_env_match": projection.cargo_env_match,
                 "available_suites": projection.available_suites,
                 "selected_suites": projection.selected_suites,
                 "commands": projection.commands,
