@@ -1,14 +1,10 @@
 use crossterm::event::KeyEvent;
 
 use crate::process_manager::{ProcessEventKind, ProcessSupervisor};
-use crate::tui::core::{LogEntry, LogEntryKind, ProcessExitState};
 
-use super::config::{EVENT_DRAIN_WAIT, VT_PARSER_COLS, VT_PARSER_ROWS, VT_PARSER_SCROLLBACK};
+use super::config::EVENT_DRAIN_WAIT;
 use super::diagnostics::RuntimeDiagnostics;
 use super::state::SessionState;
-use super::terminal_text::{
-    ingest_log_payload, is_expected_shutdown_diagnostic, push_entry, sanitize_log_text,
-};
 use super::{MultiProcessTuiError, MultiProcessTuiOptions};
 
 mod input;
@@ -18,7 +14,7 @@ mod options;
 mod process;
 use key_command::{handle_command_key, handle_pre_dispatch_key, handle_shell_shortcuts};
 use key_insert::handle_insert_key;
-use process::{payload_line_count, should_skip_plain_output_due_to_vt};
+use process::{handle_chunk_event, handle_exit_event, handle_stderr_event, handle_stdout_event};
 
 pub(super) enum LoopControl {
     Continue,
@@ -51,98 +47,19 @@ pub(super) fn drain_process_events(
         }
         match event_item.kind {
             ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {
-                let had_output = state.mark_process_received_output(&event_item.process);
-                if vt_emulator_enabled {
-                    if !had_output {
-                        state.vt_parsers.insert(
-                            event_item.process.clone(),
-                            vt100::Parser::new(
-                                VT_PARSER_ROWS,
-                                VT_PARSER_COLS,
-                                VT_PARSER_SCROLLBACK,
-                            ),
-                        );
-                        state.set_vt_saw_chunk_for(&event_item.process, false);
-                        diagnostics.record_vt_reset(&event_item.process);
-                    }
-                    if let Some(chunk) = event_item.chunk.as_ref() {
-                        if let Some(parser) = state.vt_parser_mut_for(&event_item.process) {
-                            parser.process(chunk);
-                            state.set_vt_saw_chunk_for(&event_item.process, true);
-                            match event_item.kind {
-                                ProcessEventKind::StdoutChunk => diagnostics
-                                    .record_stdout_chunk(&event_item.process, chunk.len()),
-                                ProcessEventKind::StderrChunk => diagnostics
-                                    .record_stderr_chunk(&event_item.process, chunk.len()),
-                                _ => {}
-                            }
-                        }
-                    }
-                }
+                handle_chunk_event(&event_item, state, diagnostics, vt_emulator_enabled)
             }
             ProcessEventKind::Stdout => {
-                if should_skip_plain_output_due_to_vt(
-                    state,
-                    &event_item.process,
-                    vt_emulator_enabled,
-                ) {
+                if handle_stdout_event(&event_item, state, diagnostics, vt_emulator_enabled) {
                     continue;
-                }
-                state.mark_process_received_output(&event_item.process);
-                diagnostics.record_stdout_lines(payload_line_count(&event_item.payload));
-                if let Some(buffer) = state.logs.get_mut(&event_item.process) {
-                    ingest_log_payload(buffer, LogEntryKind::Stdout, &event_item.payload);
                 }
             }
             ProcessEventKind::Stderr => {
-                if should_skip_plain_output_due_to_vt(
-                    state,
-                    &event_item.process,
-                    vt_emulator_enabled,
-                ) {
+                if handle_stderr_event(&event_item, state, diagnostics, vt_emulator_enabled) {
                     continue;
                 }
-                state.mark_process_received_output(&event_item.process);
-                diagnostics.record_stderr_lines(payload_line_count(&event_item.payload));
-                if let Some(buffer) = state.logs.get_mut(&event_item.process) {
-                    ingest_log_payload(buffer, LogEntryKind::Stderr, &event_item.payload);
-                }
             }
-            ProcessEventKind::Exit => {
-                diagnostics.record_exit_event(&event_item.process, &event_item.payload);
-                let pending_restart = state.restart_pending_for(&event_item.process);
-                if pending_restart
-                    && (is_expected_shutdown_diagnostic(&event_item.payload)
-                        || event_item.payload.trim() == "exit=0")
-                {
-                    continue;
-                }
-                state.clear_restart_pending_for(&event_item.process);
-                if event_item.payload.trim() == "exit=0"
-                    || is_expected_shutdown_diagnostic(&event_item.payload)
-                {
-                    state.observed_non_zero.remove(&event_item.process);
-                    state
-                        .exit_states
-                        .insert(event_item.process.clone(), ProcessExitState::Success);
-                } else {
-                    state
-                        .observed_non_zero
-                        .insert(event_item.process.clone(), event_item.payload.clone());
-                    state
-                        .exit_states
-                        .insert(event_item.process.clone(), ProcessExitState::Failure);
-                }
-                if let Some(buffer) = state.logs.get_mut(&event_item.process) {
-                    push_entry(
-                        buffer,
-                        LogEntry {
-                            kind: LogEntryKind::Exit,
-                            line: sanitize_log_text(&event_item.payload),
-                        },
-                    );
-                }
-            }
+            ProcessEventKind::Exit => handle_exit_event(&event_item, state, diagnostics),
         }
     }
 }
