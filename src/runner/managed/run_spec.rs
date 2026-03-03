@@ -8,7 +8,7 @@ use super::super::{LoadedCatalog, ManifestManagedRun, RunnerError};
 mod command;
 #[path = "run_spec/run_step.rs"]
 mod run_step;
-#[path = "run_spec/sequence.rs"]
+#[path = "run_spec/sequence/mod.rs"]
 mod sequence;
 
 use command::{render_command_template, wrap_command_with_task_env};
