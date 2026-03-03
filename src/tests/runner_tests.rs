@@ -79,17 +79,14 @@ fn write_executable(path: &PathBuf, script: &str) {
 }
 
 fn run_builtin_ok(root: PathBuf, name: &str, args: &[&str]) -> String {
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: name.to_owned(),
-            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
-        },
-        root,
-    )
-    .expect("built-in invocation should succeed")
+    run_builtin(root, name, args).expect("built-in invocation should succeed")
 }
 
 fn run_builtin_err(root: PathBuf, name: &str, args: &[&str]) -> RunnerError {
+    run_builtin(root, name, args).expect_err("built-in invocation should fail")
+}
+
+fn run_builtin(root: PathBuf, name: &str, args: &[&str]) -> Result<String, RunnerError> {
     run_manifest_task_with_cwd(
         &TaskInvocation {
             name: name.to_owned(),
@@ -97,7 +94,6 @@ fn run_builtin_err(root: PathBuf, name: &str, args: &[&str]) -> RunnerError {
         },
         root,
     )
-    .expect_err("built-in invocation should fail")
 }
 
 fn assert_builtin_ok_empty(root: PathBuf, name: &str, args: &[&str]) {
@@ -180,6 +176,20 @@ fn run_tasks_from_repo(
         })
     })
     .expect("run tasks")
+}
+
+fn run_tasks_with_repo(root: PathBuf) -> Result<String, RunnerError> {
+    run_tasks(TasksArgs {
+        repo_override: Some(root),
+        task_name: None,
+        resolve_selector: None,
+        output_json: false,
+        pretty_json: true,
+    })
+}
+
+fn run_doctor_task(root: PathBuf, args: &[&str]) -> Result<String, RunnerError> {
+    run_builtin(root, "doctor", args)
 }
 
 fn temp_dir(name: &str) -> PathBuf {
