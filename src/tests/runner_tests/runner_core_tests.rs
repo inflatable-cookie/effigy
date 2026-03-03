@@ -70,6 +70,28 @@ fn write_package_json_scripts(root: &PathBuf, scripts: &[(&str, &str)]) {
     fs::write(root.join("package.json"), package_json).expect("write package scripts");
 }
 
+struct BuiltinErrorCase {
+    workspace: &'static str,
+    command: &'static str,
+    args: &'static [&'static str],
+    manifest: &'static str,
+    expected: &'static [&'static str],
+}
+
+struct BuiltinHelpCase {
+    workspace: &'static str,
+    command: &'static str,
+    args: &'static [&'static str],
+    expected: &'static [&'static str],
+}
+
+fn assert_builtin_help_case(case: &BuiltinHelpCase) {
+    let root = temp_workspace(case.workspace);
+    write_empty_manifest(&root);
+    let out = run_builtin_ok(root, case.command, case.args);
+    assert_contains_all(&out, case.expected);
+}
+
 #[test]
 fn parse_task_runtime_args_extracts_repo_verbose_and_passthrough() {
     let args = vec![
@@ -117,39 +139,30 @@ fn run_manifest_task_unknown_prefix_returns_catalog_error() {
 }
 
 #[test]
-fn run_manifest_task_repo_pulse_shows_doctor_migration_message() {
-    let root = temp_workspace("repo-pulse-migration-message");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.build]\nrun = \"printf ok\"\n",
-    );
+fn run_manifest_task_removed_builtins_show_migration_message() {
+    let cases = [
+        BuiltinErrorCase {
+            workspace: "repo-pulse-migration-message",
+            command: "repo-pulse",
+            args: &[],
+            manifest: "[tasks.build]\nrun = \"printf ok\"\n",
+            expected: &["no longer a built-in command", "effigy doctor"],
+        },
+        BuiltinErrorCase {
+            workspace: "health-migration-message",
+            command: "health",
+            args: &[],
+            manifest: "[tasks.build]\nrun = \"printf ok\"\n",
+            expected: &["no longer a built-in command", "define `tasks.health`"],
+        },
+    ];
 
-    let err = run_builtin_err(root, "repo-pulse", &[]);
-    assert_task_invocation_error_contains(err, &["no longer a built-in command", "effigy doctor"]);
-}
-
-#[test]
-fn run_manifest_task_health_without_definition_shows_doctor_migration_message() {
-    let root = temp_workspace("health-migration-message");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.build]\nrun = \"printf ok\"\n",
-    );
-
-    let err = run_builtin_err(root, "health", &[]);
-    assert_task_invocation_error_contains(
-        err,
-        &["no longer a built-in command", "define `tasks.health`"],
-    );
-}
-
-#[test]
-fn run_manifest_task_builtin_watch_without_help_requires_owner_policy() {
-    let root = temp_workspace("builtin-watch-owner-required-legacy");
-    write_empty_manifest(&root);
-
-    let err = run_builtin_err(root, "watch", &[]);
-    assert_task_invocation_error_contains(err, &["--owner <effigy|external>` is required"]);
+    for case in cases {
+        let root = temp_workspace(case.workspace);
+        write_manifest(&root.join("effigy.toml"), case.manifest);
+        let err = run_builtin_err(root, case.command, case.args);
+        assert_task_invocation_error_contains(err, case.expected);
+    }
 }
 
 #[test]
@@ -347,36 +360,44 @@ fn run_manifest_task_builtin_watch_help_renders_topic() {
 }
 
 #[test]
-fn run_manifest_task_builtin_watch_rejects_unknown_args() {
-    let root = temp_workspace("builtin-watch-unknown-arg");
-    write_empty_manifest(&root);
+fn run_manifest_task_builtin_watch_validates_owner_and_arguments() {
+    let cases = [
+        BuiltinErrorCase {
+            workspace: "builtin-watch-owner-required-legacy",
+            command: "watch",
+            args: &[],
+            manifest: "",
+            expected: &["--owner <effigy|external>` is required"],
+        },
+        BuiltinErrorCase {
+            workspace: "builtin-watch-unknown-arg",
+            command: "watch",
+            args: &["--wat"],
+            manifest: "",
+            expected: &["unknown argument(s) for built-in `watch`: --wat"],
+        },
+        BuiltinErrorCase {
+            workspace: "builtin-watch-owner-required",
+            command: "watch",
+            args: &["build", "--once"],
+            manifest: "[tasks.build]\nrun = \"printf ok\"\n",
+            expected: &["--owner <effigy|external>` is required"],
+        },
+        BuiltinErrorCase {
+            workspace: "builtin-watch-owner-external",
+            command: "watch",
+            args: &["--owner", "external", "build", "--once"],
+            manifest: "[tasks.build]\nrun = \"printf ok\"\n",
+            expected: &["watch owner `external`", "Run the task directly"],
+        },
+    ];
 
-    let err = run_builtin_err(root, "watch", &["--wat"]);
-    assert_task_invocation_error_contains(
-        err,
-        &["unknown argument(s) for built-in `watch`: --wat"],
-    );
-}
-
-#[test]
-fn run_manifest_task_builtin_watch_requires_explicit_owner_policy() {
-    let root = temp_workspace("builtin-watch-owner-required");
-    write_build_task_manifest(&root, "printf ok");
-
-    let err = run_builtin_err(root, "watch", &["build", "--once"]);
-    assert_task_invocation_error_contains(err, &["--owner <effigy|external>` is required"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_watch_external_owner_rejects_nested_loop() {
-    let root = temp_workspace("builtin-watch-owner-external");
-    write_build_task_manifest(&root, "printf ok");
-
-    let err = run_builtin_err(root, "watch", &["--owner", "external", "build", "--once"]);
-    assert_task_invocation_error_contains(
-        err,
-        &["watch owner `external`", "Run the task directly"],
-    );
+    for case in cases {
+        let root = temp_workspace(case.workspace);
+        write_manifest(&root.join("effigy.toml"), case.manifest);
+        let err = run_builtin_err(root, case.command, case.args);
+        assert_task_invocation_error_contains(err, case.expected);
+    }
 }
 
 #[test]
@@ -430,42 +451,34 @@ fn run_manifest_task_builtin_watch_rejects_concurrent_watch_owner_for_same_targe
 }
 
 #[test]
-fn run_manifest_task_builtin_init_help_renders_topic() {
-    let root = temp_workspace("builtin-init-help");
-    write_empty_manifest(&root);
+fn run_manifest_task_builtin_help_topics_render_expected_content() {
+    let cases = [
+        BuiltinHelpCase {
+            workspace: "builtin-init-help",
+            command: "init",
+            args: &["--help"],
+            expected: &["init Help", "effigy init [--dry-run] [--force] [--json]"],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-migrate-help-json",
+            command: "migrate",
+            args: &["--help", "--json"],
+            expected: &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"migrate\""],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-completion-help",
+            command: "completion",
+            args: &["--help"],
+            expected: &[
+                "completion Help",
+                "effigy completion <bash|zsh|fish> [--json]",
+            ],
+        },
+    ];
 
-    let out = run_builtin_ok(root, "init", &["--help"]);
-    assert_contains_all(
-        &out,
-        &["init Help", "effigy init [--dry-run] [--force] [--json]"],
-    );
-}
-
-#[test]
-fn run_manifest_task_builtin_migrate_help_json_uses_help_schema() {
-    let root = temp_workspace("builtin-migrate-help-json");
-    write_empty_manifest(&root);
-
-    let out = run_builtin_ok(root, "migrate", &["--help", "--json"]);
-    assert_contains_all(
-        &out,
-        &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"migrate\""],
-    );
-}
-
-#[test]
-fn run_manifest_task_builtin_completion_help_renders_topic() {
-    let root = temp_workspace("builtin-completion-help");
-    write_empty_manifest(&root);
-
-    let out = run_builtin_ok(root, "completion", &["--help"]);
-    assert_contains_all(
-        &out,
-        &[
-            "completion Help",
-            "effigy completion <bash|zsh|fish> [--json]",
-        ],
-    );
+    for case in cases {
+        assert_builtin_help_case(&case);
+    }
 }
 
 #[test]
