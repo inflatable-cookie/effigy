@@ -75,6 +75,8 @@ effigy completion candidates [--repo <PATH>] [--prefix <value>] [--json]
 - for cross-catalog `env = "<catalog-path>/<name>"`, dotenv fallback uses that target catalog root (including `env_file` overrides) and does not check process env.
 - `tasks.<name>.env` values support `{project}` and `{repo}` catalog-root token substitution.
 - built-in `test` automatically applies manifest `[env]` `CARGO_*` values to cargo suites (`cargo-nextest` and `cargo-test`), including grouped profile entries.
+- built-in cargo-env auto-apply matching accepts optional `env`/`exec`/`command` wrappers, leading `KEY=value` assignments, and path-qualified cargo binaries.
+- built-in cargo-env auto-apply intentionally does not match shell-wrapped commands such as `sh -lc "cargo test --workspace"`.
 - `completion` command list is sourced from the built-in command index (`BUILTIN_TASKS`) to reduce drift with command discovery output.
 - `completion candidates` includes built-ins plus discovered `<task>` and `<catalog>/<task>` selectors.
 - `completion candidates` JSON payload reports `cache_hit`, `cache_state`, `cache_age_ms` (on hit), `cache_ttl_ms` (on hit), `effective_cache_ttl_ms`, `cache_ttl_source`, and `manifest_count` for memoized candidate scans.
