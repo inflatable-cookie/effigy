@@ -1,7 +1,8 @@
-use super::{run_manifest_task_with_cwd, TaskInvocation};
+use super::{
+    contract_test_support::{parse_json, temp_workspace, write_manifest},
+    run_manifest_task_with_cwd, TaskInvocation,
+};
 use std::fs;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn catalogs_text_contract_includes_core_sections_and_probe_fields() {
@@ -68,7 +69,7 @@ fn catalogs_json_pretty_contract_uses_tasks_schema_top_level_shape() {
     .expect("run catalogs pretty json");
 
     assert!(out.contains('\n'));
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    let parsed = parse_json(&out);
     assert_eq!(parsed["schema"], "effigy.tasks.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert!(parsed["catalog_tasks"].is_array());
@@ -107,7 +108,7 @@ fn catalogs_json_compact_contract_is_single_line_and_valid_json() {
 
     assert!(!out.contains('\n'));
     assert!(!out.contains('\n'));
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    let parsed = parse_json(&out);
     assert_eq!(parsed["schema"], "effigy.tasks.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert_eq!(parsed["resolve"]["status"], "ok");
@@ -136,7 +137,7 @@ fn catalogs_json_contract_reports_builtin_resolve_as_ok() {
     )
     .expect("run catalogs builtin resolve json");
 
-    let parsed: serde_json::Value = serde_json::from_str(&out).expect("parse json");
+    let parsed = parse_json(&out);
     assert_eq!(parsed["schema"], "effigy.tasks.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert_eq!(parsed["resolve"]["status"], "ok");
@@ -152,23 +153,4 @@ fn catalogs_json_contract_reports_builtin_resolve_as_ok() {
             .iter()
             .filter_map(|item| item.as_str())
             .any(|item| item.contains("resolved built-in task `test`"))));
-}
-
-fn write_manifest(path: &PathBuf, body: &str) {
-    fs::write(path, body).expect("write manifest");
-}
-
-fn temp_dir(name: &str) -> PathBuf {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    std::env::temp_dir().join(format!("effigy-catalogs-contract-{name}-{ts}"))
-}
-
-fn temp_workspace(name: &str) -> PathBuf {
-    let root = temp_dir(name);
-    fs::create_dir_all(&root).expect("mkdir workspace");
-    fs::write(root.join("package.json"), "{}\n").expect("write package marker");
-    root
 }
