@@ -3,49 +3,37 @@ use std::path::PathBuf;
 use crate::TaskInvocation;
 
 use super::{MigrateArgs, RunnerError};
+use super::super::arg_parser::BuiltinArgParser;
 use super::super::unknown_builtin_args;
 
 pub(super) fn parse_migrate_args(
     task: &TaskInvocation,
     args: &[String],
 ) -> Result<MigrateArgs, RunnerError> {
+    let mut parser = BuiltinArgParser::new(args);
     let mut output_json = false;
     let mut help = false;
     let mut apply = false;
     let mut package_path: Option<PathBuf> = None;
     let mut script_filter = std::collections::BTreeSet::<String>::new();
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
+    while let Some(arg) = parser.next() {
+        match arg {
             "--json" => {
                 output_json = true;
-                i += 1;
             }
             "--help" | "-h" => {
                 help = true;
-                i += 1;
             }
             "--apply" => {
                 apply = true;
-                i += 1;
             }
             "--from" => {
-                let Some(value) = args.get(i + 1) else {
-                    return Err(RunnerError::TaskInvocation(
-                        "`--from` requires a file path".to_owned(),
-                    ));
-                };
+                let value = parser.next_value("`--from` requires a file path")?;
                 package_path = Some(PathBuf::from(value));
-                i += 2;
             }
             "--script" => {
-                let Some(value) = args.get(i + 1) else {
-                    return Err(RunnerError::TaskInvocation(
-                        "`--script` requires a script name".to_owned(),
-                    ));
-                };
-                script_filter.insert(value.clone());
-                i += 2;
+                let value = parser.next_value("`--script` requires a script name")?;
+                script_filter.insert(value.to_owned());
             }
             unknown => {
                 return Err(unknown_builtin_args(&task.name, &[unknown.to_owned()]));
