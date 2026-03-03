@@ -169,3 +169,68 @@ pub(super) fn handle_command_key(
 
     LoopControl::Continue
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::process_manager::ProcessSupervisor;
+    use crate::tui::core::{InputMode, ProcessExitState};
+
+    use super::{
+        handle_pre_dispatch_key, handle_shell_shortcuts, LoopControl, MultiProcessTuiOptions,
+        SessionState,
+    };
+
+    fn empty_supervisor() -> ProcessSupervisor {
+        ProcessSupervisor::spawn(PathBuf::from("."), Vec::new()).expect("spawn empty supervisor")
+    }
+
+    #[test]
+    fn shell_shortcut_control_g_toggles_shell_capture_mode() {
+        let supervisor = empty_supervisor();
+        let mut state = SessionState::new(vec!["shell".to_owned()], 2000, 240, 8000);
+        state.shell_capture_mode = false;
+        state.input_mode = InputMode::Insert;
+
+        let key = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL);
+        let control = handle_shell_shortcuts(&key, &supervisor, &mut state, "shell", true)
+            .expect("shortcut handling");
+
+        assert!(matches!(control, Some(LoopControl::Continue)));
+        assert!(state.shell_capture_mode);
+        assert_eq!(state.input_mode, InputMode::Command);
+    }
+
+    #[test]
+    fn pre_dispatch_esc_quits_only_when_all_processes_exited() {
+        let mut state = SessionState::new(vec!["api".to_owned(), "db".to_owned()], 2000, 240, 8000);
+        state
+            .exit_states
+            .insert("api".to_owned(), ProcessExitState::Success);
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+
+        let control = handle_pre_dispatch_key(
+            &key,
+            &mut state,
+            MultiProcessTuiOptions {
+                esc_quit_on_complete: true,
+            },
+        );
+        assert!(control.is_none());
+
+        state
+            .exit_states
+            .insert("db".to_owned(), ProcessExitState::Failure);
+        let control = handle_pre_dispatch_key(
+            &key,
+            &mut state,
+            MultiProcessTuiOptions {
+                esc_quit_on_complete: true,
+            },
+        );
+        assert!(matches!(control, Some(LoopControl::Quit)));
+    }
+}
