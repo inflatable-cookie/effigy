@@ -56,9 +56,8 @@ pub(super) fn build_active_view_model(
 
     let now = Instant::now();
     let active_elapsed = state
-        .process_started_at
-        .get(&snapshot.name)
-        .map(|started| now.saturating_duration_since(*started))
+        .process_started_at_for(&snapshot.name)
+        .map(|started| now.saturating_duration_since(started))
         .unwrap_or_default();
 
     ActiveViewModel {
@@ -79,11 +78,11 @@ pub(super) fn build_active_view_model(
 fn active_snapshot(state: &SessionState) -> ActiveSnapshot {
     let name = state.active_process().to_owned();
     ActiveSnapshot {
-        is_follow: *state.follow_mode.get(&name).unwrap_or(&true),
-        stored_offset: *state.scroll_offsets.get(&name).unwrap_or(&0usize),
-        vt_has_chunks: *state.vt_saw_chunk.get(&name).unwrap_or(&false),
-        output_seen: *state.output_seen.get(&name).unwrap_or(&false),
-        restart_count: *state.process_restart_count.get(&name).unwrap_or(&0),
+        is_follow: state.follow_for(&name),
+        stored_offset: state.scroll_offset_for(&name),
+        vt_has_chunks: state.vt_saw_chunk_for(&name),
+        output_seen: state.output_seen_for(&name),
+        restart_count: state.restart_count_for(&name),
         name,
     }
 }
@@ -118,7 +117,7 @@ fn build_vt_scroll_view(
         snapshot.stored_offset,
         snapshot.is_follow,
     );
-    if let Some(buffer) = state.logs.get(&snapshot.name) {
+    if let Some(buffer) = state.logs_for(&snapshot.name) {
         rendered.extend(
             buffer
                 .iter()
@@ -126,7 +125,7 @@ fn build_vt_scroll_view(
                 .cloned(),
         );
     }
-    state.scroll_offsets.insert(snapshot.name.clone(), clamped);
+    state.set_scroll_offset_for(&snapshot.name, clamped);
     ViewScroll {
         logs: rendered,
         scroll_offset: clamped,
@@ -142,13 +141,12 @@ fn build_plain_scroll_view(
     output_height: usize,
 ) -> ViewScroll {
     let rendered = state
-        .logs
-        .get(&snapshot.name)
+        .logs_for(&snapshot.name)
         .map(|entries| entries.iter().cloned().collect::<Vec<LogEntry>>())
         .unwrap_or_default();
     let max_offset = rendered.len().saturating_sub(output_height);
     let clamped = snapshot.stored_offset.min(max_offset);
-    state.scroll_offsets.insert(snapshot.name.clone(), clamped);
+    state.set_scroll_offset_for(&snapshot.name, clamped);
     ViewScroll {
         logs: rendered,
         scroll_offset: clamped,
@@ -171,8 +169,7 @@ fn shell_cursor(
         return None;
     }
     state
-        .vt_parsers
-        .get(active_process)
+        .vt_parser_for(active_process)
         .map(VtParser::screen)
         .map(|screen| screen.cursor_position())
 }

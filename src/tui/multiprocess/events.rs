@@ -41,104 +41,94 @@ pub(super) fn drain_process_events(
             break;
         };
         drained_events += 1;
-        if let Some(buffer) = state.logs.get_mut(&event_item.process) {
-            match event_item.kind {
-                ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {
-                    let had_output = mark_process_received_output(
-                        &mut state.restart_pending,
-                        &mut state.output_seen,
-                        &event_item.process,
-                    );
-                    if vt_emulator_enabled {
-                        if !had_output {
-                            state.vt_parsers.insert(
-                                event_item.process.clone(),
-                                vt100::Parser::new(
-                                    VT_PARSER_ROWS,
-                                    VT_PARSER_COLS,
-                                    VT_PARSER_SCROLLBACK,
-                                ),
-                            );
-                            state.vt_saw_chunk.insert(event_item.process.clone(), false);
-                            diagnostics.record_vt_reset(&event_item.process);
-                        }
-                        if let Some(chunk) = event_item.chunk.as_ref() {
-                            if let Some(parser) = state.vt_parsers.get_mut(&event_item.process) {
-                                parser.process(chunk);
-                                state.vt_saw_chunk.insert(event_item.process.clone(), true);
-                                match event_item.kind {
-                                    ProcessEventKind::StdoutChunk => diagnostics
-                                        .record_stdout_chunk(&event_item.process, chunk.len()),
-                                    ProcessEventKind::StderrChunk => diagnostics
-                                        .record_stderr_chunk(&event_item.process, chunk.len()),
-                                    _ => {}
-                                }
+        if !state.logs.contains_key(&event_item.process) {
+            continue;
+        }
+        match event_item.kind {
+            ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {
+                let had_output = state.mark_process_received_output(&event_item.process);
+                if vt_emulator_enabled {
+                    if !had_output {
+                        state.vt_parsers.insert(
+                            event_item.process.clone(),
+                            vt100::Parser::new(
+                                VT_PARSER_ROWS,
+                                VT_PARSER_COLS,
+                                VT_PARSER_SCROLLBACK,
+                            ),
+                        );
+                        state.set_vt_saw_chunk_for(&event_item.process, false);
+                        diagnostics.record_vt_reset(&event_item.process);
+                    }
+                    if let Some(chunk) = event_item.chunk.as_ref() {
+                        if let Some(parser) = state.vt_parser_mut_for(&event_item.process) {
+                            parser.process(chunk);
+                            state.set_vt_saw_chunk_for(&event_item.process, true);
+                            match event_item.kind {
+                                ProcessEventKind::StdoutChunk => diagnostics
+                                    .record_stdout_chunk(&event_item.process, chunk.len()),
+                                ProcessEventKind::StderrChunk => diagnostics
+                                    .record_stderr_chunk(&event_item.process, chunk.len()),
+                                _ => {}
                             }
                         }
                     }
                 }
-                ProcessEventKind::Stdout => {
-                    if should_skip_plain_output_due_to_vt(
-                        &state.vt_saw_chunk,
-                        &event_item.process,
-                        vt_emulator_enabled,
-                    ) {
-                        continue;
-                    }
-                    mark_process_received_output(
-                        &mut state.restart_pending,
-                        &mut state.output_seen,
-                        &event_item.process,
-                    );
-                    diagnostics.record_stdout_lines(payload_line_count(&event_item.payload));
+            }
+            ProcessEventKind::Stdout => {
+                if should_skip_plain_output_due_to_vt(
+                    state,
+                    &event_item.process,
+                    vt_emulator_enabled,
+                ) {
+                    continue;
+                }
+                state.mark_process_received_output(&event_item.process);
+                diagnostics.record_stdout_lines(payload_line_count(&event_item.payload));
+                if let Some(buffer) = state.logs.get_mut(&event_item.process) {
                     ingest_log_payload(buffer, LogEntryKind::Stdout, &event_item.payload);
                 }
-                ProcessEventKind::Stderr => {
-                    if should_skip_plain_output_due_to_vt(
-                        &state.vt_saw_chunk,
-                        &event_item.process,
-                        vt_emulator_enabled,
-                    ) {
-                        continue;
-                    }
-                    mark_process_received_output(
-                        &mut state.restart_pending,
-                        &mut state.output_seen,
-                        &event_item.process,
-                    );
-                    diagnostics.record_stderr_lines(payload_line_count(&event_item.payload));
+            }
+            ProcessEventKind::Stderr => {
+                if should_skip_plain_output_due_to_vt(
+                    state,
+                    &event_item.process,
+                    vt_emulator_enabled,
+                ) {
+                    continue;
+                }
+                state.mark_process_received_output(&event_item.process);
+                diagnostics.record_stderr_lines(payload_line_count(&event_item.payload));
+                if let Some(buffer) = state.logs.get_mut(&event_item.process) {
                     ingest_log_payload(buffer, LogEntryKind::Stderr, &event_item.payload);
                 }
-                ProcessEventKind::Exit => {
-                    diagnostics.record_exit_event(&event_item.process, &event_item.payload);
-                    let pending_restart = *state
-                        .restart_pending
-                        .get(&event_item.process)
-                        .unwrap_or(&false);
-                    if pending_restart
-                        && (is_expected_shutdown_diagnostic(&event_item.payload)
-                            || event_item.payload.trim() == "exit=0")
-                    {
-                        continue;
-                    }
+            }
+            ProcessEventKind::Exit => {
+                diagnostics.record_exit_event(&event_item.process, &event_item.payload);
+                let pending_restart = state.restart_pending_for(&event_item.process);
+                if pending_restart
+                    && (is_expected_shutdown_diagnostic(&event_item.payload)
+                        || event_item.payload.trim() == "exit=0")
+                {
+                    continue;
+                }
+                state.clear_restart_pending_for(&event_item.process);
+                if event_item.payload.trim() == "exit=0"
+                    || is_expected_shutdown_diagnostic(&event_item.payload)
+                {
+                    state.observed_non_zero.remove(&event_item.process);
                     state
-                        .restart_pending
-                        .insert(event_item.process.clone(), false);
-                    if event_item.payload.trim() == "exit=0"
-                        || is_expected_shutdown_diagnostic(&event_item.payload)
-                    {
-                        state.observed_non_zero.remove(&event_item.process);
-                        state
-                            .exit_states
-                            .insert(event_item.process.clone(), ProcessExitState::Success);
-                    } else {
-                        state
-                            .observed_non_zero
-                            .insert(event_item.process.clone(), event_item.payload.clone());
-                        state
-                            .exit_states
-                            .insert(event_item.process.clone(), ProcessExitState::Failure);
-                    }
+                        .exit_states
+                        .insert(event_item.process.clone(), ProcessExitState::Success);
+                } else {
+                    state
+                        .observed_non_zero
+                        .insert(event_item.process.clone(), event_item.payload.clone());
+                    state
+                        .exit_states
+                        .insert(event_item.process.clone(), ProcessExitState::Failure);
+                }
+                if let Some(buffer) = state.logs.get_mut(&event_item.process) {
                     push_entry(
                         buffer,
                         LogEntry {
@@ -147,7 +137,7 @@ pub(super) fn drain_process_events(
                         },
                     );
                 }
-            };
+            }
         }
     }
 }
@@ -281,52 +271,48 @@ pub(super) fn handle_key_event(
             state.active_index = prev_index(state.active_index, state.process_names.len());
         }
         KeyCode::Up => {
-            let active = &state.process_names[state.active_index];
-            if let Some(follow) = state.follow_mode.get_mut(active) {
-                *follow = false;
-            }
-            if let Some(offset) = state.scroll_offsets.get_mut(active) {
-                *offset = offset.saturating_sub(1);
-            }
+            let active = state.active_process().to_owned();
+            state.set_follow_for(&active, false);
+            state
+                .set_scroll_offset_for(&active, state.scroll_offset_for(&active).saturating_sub(1));
         }
         KeyCode::Down => {
-            let active = &state.process_names[state.active_index];
-            if let Some(offset) = state.scroll_offsets.get_mut(active) {
-                *offset = offset.saturating_add(1).min(max_offset);
-            }
+            let active = state.active_process().to_owned();
+            state.set_scroll_offset_for(
+                &active,
+                state
+                    .scroll_offset_for(&active)
+                    .saturating_add(1)
+                    .min(max_offset),
+            );
         }
         KeyCode::PageUp => {
-            let active = &state.process_names[state.active_index];
-            if let Some(follow) = state.follow_mode.get_mut(active) {
-                *follow = false;
-            }
-            if let Some(offset) = state.scroll_offsets.get_mut(active) {
-                *offset = offset.saturating_sub(10);
-            }
+            let active = state.active_process().to_owned();
+            state.set_follow_for(&active, false);
+            state.set_scroll_offset_for(
+                &active,
+                state.scroll_offset_for(&active).saturating_sub(10),
+            );
         }
         KeyCode::PageDown => {
-            let active = &state.process_names[state.active_index];
-            if let Some(offset) = state.scroll_offsets.get_mut(active) {
-                *offset = offset.saturating_add(10).min(max_offset);
-            }
+            let active = state.active_process().to_owned();
+            state.set_scroll_offset_for(
+                &active,
+                state
+                    .scroll_offset_for(&active)
+                    .saturating_add(10)
+                    .min(max_offset),
+            );
         }
         KeyCode::Home => {
-            let active = &state.process_names[state.active_index];
-            if let Some(follow) = state.follow_mode.get_mut(active) {
-                *follow = false;
-            }
-            if let Some(offset) = state.scroll_offsets.get_mut(active) {
-                *offset = 0;
-            }
+            let active = state.active_process().to_owned();
+            state.set_follow_for(&active, false);
+            state.set_scroll_offset_for(&active, 0);
         }
         KeyCode::End => {
-            let active = &state.process_names[state.active_index];
-            if let Some(follow) = state.follow_mode.get_mut(active) {
-                *follow = true;
-            }
-            if let Some(offset) = state.scroll_offsets.get_mut(active) {
-                *offset = max_offset;
-            }
+            let active = state.active_process().to_owned();
+            state.set_follow_for(&active, true);
+            state.set_scroll_offset_for(&active, max_offset);
         }
         KeyCode::Esc => {
             state.show_help = false;
@@ -350,22 +336,11 @@ fn payload_line_count(raw: &str) -> usize {
 }
 
 fn should_skip_plain_output_due_to_vt(
-    vt_saw_chunk: &std::collections::HashMap<String, bool>,
+    state: &SessionState,
     process: &str,
     vt_emulator_enabled: bool,
 ) -> bool {
-    vt_emulator_enabled && *vt_saw_chunk.get(process).unwrap_or(&false)
-}
-
-fn mark_process_received_output(
-    restart_pending: &mut std::collections::HashMap<String, bool>,
-    output_seen: &mut std::collections::HashMap<String, bool>,
-    process: &str,
-) -> bool {
-    restart_pending.insert(process.to_owned(), false);
-    let had_output = *output_seen.get(process).unwrap_or(&false);
-    output_seen.insert(process.to_owned(), true);
-    had_output
+    vt_emulator_enabled && state.vt_saw_chunk_for(process)
 }
 
 fn shell_key_input(key: &KeyEvent) -> Option<String> {
