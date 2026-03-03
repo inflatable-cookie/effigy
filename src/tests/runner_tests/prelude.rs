@@ -10,3 +10,39 @@ pub(super) use std::os::unix::fs::symlink;
 pub(super) use std::path::PathBuf;
 pub(super) use std::thread;
 pub(super) use std::time::{Duration, Instant};
+
+pub(super) fn write_root_dev_task_manifest(root: &PathBuf) {
+    write_root_manifest(root, "[tasks.dev]\nrun = \"printf root\"\n");
+}
+
+pub(super) fn setup_root_with_catalog_tasks(
+    name: &str,
+    catalogs: &[(&str, &[(&str, &str)])],
+    include_root_dev_task: bool,
+) -> PathBuf {
+    let root = temp_workspace(name);
+    if include_root_dev_task {
+        write_root_dev_task_manifest(&root);
+    }
+    for (dir_name, tasks) in catalogs {
+        let dir = create_workspace_dir(&root, dir_name);
+        write_catalog_tasks(&dir, Some(dir_name), tasks);
+    }
+    root
+}
+
+pub(super) fn write_managed_dev_profile_manifest(root: &PathBuf, profile: &str) {
+    write_root_manifest(
+        root,
+        &format!(
+            r#"[tasks.dev]
+mode = "tui"
+concurrent = [{{ run = "printf api" }}]
+
+[tasks.dev.profiles.{}]
+concurrent = [{{ run = "printf api" }}]
+"#,
+            profile
+        ),
+    );
+}
