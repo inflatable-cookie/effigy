@@ -46,3 +46,24 @@ concurrent = [{{ run = "printf api" }}]
         ),
     );
 }
+
+pub(super) fn run_task_in_workspace(
+    root: &PathBuf,
+    name: &str,
+    args: &[&str],
+) -> Result<String, RunnerError> {
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: name.to_owned(),
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        },
+        root.clone(),
+    )
+}
+
+pub(super) fn write_defer_manifest(root: &PathBuf, defer_run: &str) {
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!("[defer]\nrun = \"{defer_run}\"\n"),
+    );
+}

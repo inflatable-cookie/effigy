@@ -26,7 +26,7 @@ mod config_builtin_tests;
 #[path = "runner_tests/doctor_text_output_tests.rs"]
 mod doctor_text_output_tests;
 
-#[path = "runner_tests/deferral_tests.rs"]
+#[path = "runner_tests/deferral_tests/mod.rs"]
 mod deferral_tests;
 
 #[path = "runner_tests/managed_and_locking_tests/mod.rs"]
