@@ -78,3 +78,55 @@ pub(crate) fn append_builtin_test_filter_hint(
 ) -> String {
     hint::append_builtin_test_filter_hint(rendered, results, requested_suite, passthrough)
 }
+
+pub(crate) fn finalize_builtin_test_outcome(
+    results: &[BuiltinTestExecResult],
+    targets: &[BuiltinTestTarget],
+    requested_suite: Option<&str>,
+    passthrough: &[String],
+    verbose_results: bool,
+    output_json: bool,
+) -> Result<Option<String>, RunnerError> {
+    let mut failures = results
+        .iter()
+        .filter_map(|result| {
+            if result.success {
+                None
+            } else {
+                Some((result.name.clone(), result.code))
+            }
+        })
+        .collect::<Vec<(String, Option<i32>)>>();
+    failures.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let rendered_text = render_builtin_test_results(results, verbose_results)?;
+    let rendered_json = if output_json {
+        Some(render_builtin_test_results_json(
+            results,
+            targets,
+            requested_suite,
+            passthrough,
+        )?)
+    } else {
+        None
+    };
+
+    if failures.is_empty() {
+        return Ok(Some(rendered_json.unwrap_or(rendered_text)));
+    }
+
+    if let Some(json) = rendered_json {
+        return Err(RunnerError::BuiltinTestNonZero {
+            failures,
+            rendered: json,
+        });
+    }
+
+    let rendered = append_builtin_test_filter_hint(
+        rendered_text,
+        results,
+        requested_suite,
+        passthrough,
+    );
+    Err(RunnerError::BuiltinTestNonZero { failures, rendered })
+}

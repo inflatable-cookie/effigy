@@ -57,48 +57,14 @@ pub(super) fn try_run_builtin_test(
     } else {
         execution::run_builtin_test_targets_parallel(runnable, max_parallel, flags.output_json)?
     };
-    let mut failures = results
-        .iter()
-        .filter_map(|result| {
-            if result.success {
-                None
-            } else {
-                Some((result.name.clone(), result.code))
-            }
-        })
-        .collect::<Vec<(String, Option<i32>)>>();
-    failures.sort_by(|a, b| a.0.cmp(&b.0));
-    let rendered = render::render_builtin_test_results(&results, flags.verbose_results)?;
-    let rendered_json = if flags.output_json {
-        Some(render::render_builtin_test_results_json(
-            &results,
-            &targets,
-            suite_selection.requested_suite.as_deref(),
-            &suite_selection.passthrough,
-        )?)
-    } else {
-        None
-    };
-    if failures.is_empty() {
-        if let Some(json) = rendered_json {
-            Ok(Some(json))
-        } else {
-            Ok(Some(rendered))
-        }
-    } else if let Some(json) = rendered_json {
-        Err(RunnerError::BuiltinTestNonZero {
-            failures,
-            rendered: json,
-        })
-    } else {
-        let rendered = render::append_builtin_test_filter_hint(
-            rendered,
-            &results,
-            suite_selection.requested_suite.as_deref(),
-            &suite_selection.passthrough,
-        );
-        Err(RunnerError::BuiltinTestNonZero { failures, rendered })
-    }
+    render::finalize_builtin_test_outcome(
+        &results,
+        &targets,
+        suite_selection.requested_suite.as_deref(),
+        &suite_selection.passthrough,
+        flags.verbose_results,
+        flags.output_json,
+    )
 }
 
 #[cfg(test)]
