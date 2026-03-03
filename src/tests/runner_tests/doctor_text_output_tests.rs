@@ -1,5 +1,9 @@
 use super::*;
 
+fn write_root_manifest(root: &PathBuf, body: &str) {
+    write_manifest(&root.join("effigy.toml"), body);
+}
+
 fn doctor_nonzero_rendered(err: RunnerError) -> String {
     match err {
         RunnerError::DoctorNonZero { rendered, .. } => rendered,
@@ -26,13 +30,21 @@ fn run_doctor_err_from_cwd(root: &PathBuf, fix: bool) -> RunnerError {
     .expect_err("doctor should fail")
 }
 
+fn setup_doctor_explain_catalog_workspace(name: &str) -> PathBuf {
+    let root = temp_workspace(name);
+    let farmyard = create_workspace_dir(&root, "farmyard");
+    write_root_manifest(&root, "[tasks.root]\nrun = \"printf root\"\n");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.build]\nrun = \"printf farmyard\"\n",
+    );
+    root
+}
+
 #[test]
 fn run_doctor_text_output_has_blank_line_between_sections() {
     let root = temp_workspace("doctor-section-spacing");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.health]\nrun = \"printf ok\"\n",
-    );
+    write_root_manifest(&root, "[tasks.health]\nrun = \"printf ok\"\n");
 
     let out = run_builtin_ok(root, "doctor", &[]);
 
@@ -43,16 +55,7 @@ fn run_doctor_text_output_has_blank_line_between_sections() {
 
 #[test]
 fn run_doctor_explain_text_reports_resolution_selection() {
-    let root = temp_workspace("doctor-explain-selection");
-    let farmyard = create_workspace_dir(&root, "farmyard");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.root]\nrun = \"printf root\"\n",
-    );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.build]\nrun = \"printf farmyard\"\n",
-    );
+    let root = setup_doctor_explain_catalog_workspace("doctor-explain-selection");
 
     let out = run_builtin_ok(root, "doctor", &["farmyard/build"]);
 
@@ -72,16 +75,7 @@ fn run_doctor_explain_text_reports_resolution_selection() {
 
 #[test]
 fn run_doctor_explain_text_snapshot_prefix_block_is_stable() {
-    let root = temp_workspace("doctor-explain-snapshot-prefix");
-    let farmyard = create_workspace_dir(&root, "farmyard");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.root]\nrun = \"printf root\"\n",
-    );
-    write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.build]\nrun = \"printf farmyard\"\n",
-    );
+    let root = setup_doctor_explain_catalog_workspace("doctor-explain-snapshot-prefix");
 
     let out = run_builtin_ok(root, "doctor", &["farmyard/build", "--", "--watch"]);
 
@@ -122,10 +116,7 @@ fn run_doctor_explain_text_snapshot_prefix_block_is_stable() {
 #[test]
 fn run_doctor_explain_text_reports_deferral_reasoning_on_missing_task() {
     let root = temp_workspace("doctor-explain-deferral");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[defer]\nrun = \"printf deferred\"\n",
-    );
+    write_root_manifest(&root, "[defer]\nrun = \"printf deferred\"\n");
 
     let out = run_builtin_ok(root, "doctor", &["missing-task"]);
 
@@ -145,7 +136,7 @@ fn run_doctor_explain_text_reports_deferral_reasoning_on_missing_task() {
 #[test]
 fn run_doctor_explain_rejects_fix_mode() {
     let root = temp_workspace("doctor-explain-fix-invalid");
-    write_manifest(&root.join("effigy.toml"), "");
+    write_root_manifest(&root, "");
 
     let err = run_builtin_err(root, "doctor", &["--fix", "build"]);
     assert_task_invocation_error_contains(err, &["`--fix` is not supported with explain mode"]);
@@ -154,8 +145,8 @@ fn run_doctor_explain_rejects_fix_mode() {
 #[test]
 fn run_doctor_verbose_text_output_includes_per_finding_entries() {
     let root = temp_workspace("doctor-verbose-entries");
-    write_manifest(
-        &root.join("effigy.toml"),
+    write_root_manifest(
+        &root,
         r#"[tasks.alpha]
 run = [{ task = "missing/task" }]
 
@@ -183,10 +174,7 @@ run = [{ task = "missing/task" }]
 #[test]
 fn run_doctor_groups_findings_in_severity_first_order() {
     let root = temp_workspace("doctor-severity-order");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[catalog]\nalias = \"root\"\nunknown_key = true\n",
-    );
+    write_root_manifest(&root, "[catalog]\nalias = \"root\"\nunknown_key = true\n");
 
     let err = run_doctor_err_from_cwd(&root, false);
 
@@ -218,8 +206,8 @@ fn run_doctor_groups_same_severity_findings_in_alphabetical_order() {
     let root = temp_workspace("doctor-same-severity-order");
     let broken = create_workspace_dir(&root, "broken");
 
-    write_manifest(
-        &root.join("effigy.toml"),
+    write_root_manifest(
+        &root,
         "[tasks.health]\nrun = \"sh -lc 'printf health-failed; exit 3'\"\n",
     );
     fs::write(broken.join("effigy.toml"), "[tasks\nbad = true\n").expect("write bad manifest");

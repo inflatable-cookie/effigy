@@ -1,5 +1,9 @@
 use super::*;
 
+fn write_root_manifest(root: &PathBuf, body: &str) {
+    write_manifest(&root.join("effigy.toml"), body);
+}
+
 fn write_package_json_with_test_script(root: &PathBuf) {
     fs::write(
         root.join("package.json"),
@@ -45,7 +49,7 @@ fn write_test_suites_manifest(root: &PathBuf, suites: &[(&str, &str)]) {
     for (suite, cmd) in suites {
         manifest.push_str(&format!("{} = \"{}\"\n", suite, cmd));
     }
-    write_manifest(&root.join("effigy.toml"), &manifest);
+    write_root_manifest(root, &manifest);
 }
 
 fn install_local_vitest(root: &PathBuf, script: &str) {
@@ -81,10 +85,7 @@ fn setup_fanout_catalog_repo(root: &PathBuf) -> (PathBuf, PathBuf) {
     let dairy = root.join("dairy");
     fs::create_dir_all(&farmyard).expect("mkdir farmyard");
     fs::create_dir_all(&dairy).expect("mkdir dairy");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.dev]\nrun = \"printf root\"\n",
-    );
+    write_root_manifest(root, "[tasks.dev]\nrun = \"printf root\"\n");
     write_manifest(
         &farmyard.join("effigy.toml"),
         "[catalog]\nalias = \"farmyard\"\n[tasks.ping]\nrun = \"printf ok\"\n",
@@ -96,6 +97,22 @@ fn setup_fanout_catalog_repo(root: &PathBuf) -> (PathBuf, PathBuf) {
     write_package_json_with_test_script(&farmyard);
     write_package_json_with_test_script(&dairy);
     (farmyard, dairy)
+}
+
+fn write_js_package_manager_manifest(root: &PathBuf, package_manager: &str) {
+    write_root_manifest(
+        root,
+        &format!(
+            r#"[package_manager]
+js = "{package_manager}"
+"#
+        ),
+    );
+}
+
+fn assert_builtin_test_ok_empty(root: PathBuf, args: &[&str]) {
+    let out = run_builtin_ok(root, "test", args);
+    assert_eq!(out, "");
 }
 
 fn assert_builtin_test_non_zero(
@@ -180,10 +197,7 @@ fn run_manifest_task_builtin_test_plan_mixed_workspace_reports_configured_and_au
     fs::create_dir_all(&farmyard).expect("mkdir farmyard");
     fs::create_dir_all(&dairy).expect("mkdir dairy");
 
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.dev]\nrun = \"printf root\"\n",
-    );
+    write_root_manifest(&root, "[tasks.dev]\nrun = \"printf root\"\n");
     write_manifest(
         &farmyard.join("effigy.toml"),
         r#"[catalog]
@@ -229,7 +243,7 @@ unit = "sh -lc 'printf configured > \"{}\"'"
 "#,
         configured_marker.display()
     );
-    write_manifest(&root.join("effigy.toml"), &manifest);
+    write_root_manifest(&root, &manifest);
     write_package_json_with_test_script(&root);
     install_local_vitest_marker(&root, &vitest_marker);
 
@@ -272,7 +286,7 @@ integration = "sh -lc 'printf integration > \"{}\"'"
         unit_marker.display(),
         integration_marker.display()
     );
-    write_manifest(&root.join("effigy.toml"), &manifest);
+    write_root_manifest(&root, &manifest);
 
     let out = run_builtin_ok(root, "test", &["unit"]);
     assert_contains_all(&out, &["Test Results"]);
@@ -459,15 +473,13 @@ fn run_manifest_task_builtin_test_errors_for_unavailable_positional_suite_select
 #[test]
 fn run_manifest_task_explicit_test_task_overrides_builtin_auto_detection() {
     let root = temp_workspace("builtin-test-explicit-override");
-    write_manifest(
-        &root.join("effigy.toml"),
+    write_root_manifest(
+        &root,
         "[tasks.test]\nrun = \"printf explicit > explicit-test.log\"\n",
     );
     write_package_json_with_test_script(&root);
 
-    let out = run_builtin_ok(root.clone(), "test", &[]);
-
-    assert_eq!(out, "");
+    assert_builtin_test_ok_empty(root.clone(), &[]);
     assert!(
         root.join("explicit-test.log").exists(),
         "explicit task should run before builtin test detection"
@@ -478,14 +490,12 @@ fn run_manifest_task_explicit_test_task_overrides_builtin_auto_detection() {
 fn run_manifest_task_builtin_test_falls_through_to_deferral_when_no_detection_matches() {
     let _guard = lock_test();
     let root = temp_workspace("builtin-test-defers");
-    write_manifest(
-        &root.join("effigy.toml"),
+    write_root_manifest(
+        &root,
         "[defer]\nrun = \"test {request} = 'test' && test {args} = '--watch'\"\n",
     );
 
-    let out = run_builtin_ok(root, "test", &["--watch"]);
-
-    assert_eq!(out, "");
+    assert_builtin_test_ok_empty(root, &["--watch"]);
 }
 
 #[test]
@@ -590,12 +600,7 @@ fn run_manifest_task_builtin_test_tui_flag_falls_back_to_text_when_non_interacti
 #[test]
 fn run_manifest_task_builtin_test_plan_respects_configured_package_manager() {
     let root = temp_workspace("builtin-test-plan-package-manager");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[package_manager]
-js = "pnpm"
-"#,
-    );
+    write_js_package_manager_manifest(&root, "pnpm");
     write_package_json_with_vitest_dev_dependency(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan"]);
@@ -606,12 +611,7 @@ js = "pnpm"
 fn run_manifest_task_builtin_test_exec_uses_configured_package_manager() {
     let _guard = lock_test();
     let root = temp_workspace("builtin-test-exec-package-manager");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[package_manager]
-js = "bun"
-"#,
-    );
+    write_js_package_manager_manifest(&root, "bun");
     write_package_json_with_vitest_dev_dependency(&root);
 
     let bin_dir = root.join("bin");
@@ -643,8 +643,8 @@ js = "bun"
 #[test]
 fn run_manifest_task_builtin_test_plan_respects_runner_command_override() {
     let root = temp_workspace("builtin-test-plan-runner-override");
-    write_manifest(
-        &root.join("effigy.toml"),
+    write_root_manifest(
+        &root,
         r#"[test.runners]
 vitest = "pnpm exec vitest run --config vitest.config.ts"
 "#,
@@ -664,8 +664,8 @@ vitest = "pnpm exec vitest run --config vitest.config.ts"
 #[test]
 fn run_manifest_task_builtin_test_runner_override_wins_over_package_manager() {
     let root = temp_workspace("builtin-test-plan-override-precedence");
-    write_manifest(
-        &root.join("effigy.toml"),
+    write_root_manifest(
+        &root,
         r#"[package_manager]
 js = "bun"
 
@@ -689,7 +689,7 @@ vitest = "npx vitest run --reporter=dot"
 #[test]
 fn run_manifest_task_builtin_config_prints_reference() {
     let root = temp_workspace("builtin-config");
-    write_manifest(&root.join("effigy.toml"), "");
+    write_root_manifest(&root, "");
 
     let out = run_builtin_ok(root, "config", &[]);
     assert_contains_all(
