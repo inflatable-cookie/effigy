@@ -184,6 +184,10 @@ pub enum RunnerError {
 mod tests;
 
 #[cfg(test)]
+#[path = "../tests/contract_test_support.rs"]
+mod contract_test_support;
+
+#[cfg(test)]
 #[path = "../tests/catalogs_contract_tests.rs"]
 mod catalogs_contract_tests;
 

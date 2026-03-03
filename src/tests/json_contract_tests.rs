@@ -1,4 +1,5 @@
 use super::{
+    contract_test_support::{parse_json, temp_workspace, write_manifest},
     run_doctor, run_manifest_task_with_cwd, run_tasks, DoctorArgs, RunnerError, TasksArgs,
 };
 use crate::TaskInvocation;
@@ -7,11 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-fn parse_json(text: &str) -> serde_json::Value {
-    serde_json::from_str(text).expect("parse json")
-}
+use std::time::Duration;
 
 fn assert_schema_v1(parsed: &serde_json::Value, schema: &str) {
     assert_eq!(parsed["schema"], schema);
@@ -865,25 +862,6 @@ fn catalog_task_run_json_contract_failure_has_versioned_shape() {
     assert_eq!(parsed["exit_code"], 9);
     assert_eq!(parsed["stdout"], "fail-out");
     assert_eq!(parsed["stderr"], "fail-err");
-}
-
-fn write_manifest(path: &PathBuf, body: &str) {
-    fs::write(path, body).expect("write manifest");
-}
-
-fn temp_dir(name: &str) -> PathBuf {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    std::env::temp_dir().join(format!("effigy-json-contract-{name}-{ts}"))
-}
-
-fn temp_workspace(name: &str) -> PathBuf {
-    let root = temp_dir(name);
-    fs::create_dir_all(&root).expect("mkdir workspace");
-    fs::write(root.join("package.json"), "{}\n").expect("write package marker");
-    root
 }
 
 fn with_cwd<F, T>(cwd: &PathBuf, f: F) -> T
