@@ -1,94 +1,14 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
-use crossterm::event::{KeyCode, KeyEvent};
-
 use crate::process_manager::ProcessSupervisor;
 use crate::tui::core::{LogEntry, LogEntryKind};
 
-use super::super::render::options_actions;
-use super::super::state::{OptionsAction, SessionState};
-use super::super::terminal_text::{push_entry, sanitize_log_text};
-use super::super::MultiProcessTuiError;
-use super::LoopControl;
+use super::super::super::state::{OptionsAction, SessionState};
+use super::super::super::terminal_text::{push_entry, sanitize_log_text};
+use super::super::super::MultiProcessTuiError;
 
-pub(super) fn handle_options_overlay_key(
-    key: &KeyEvent,
-    supervisor: &ProcessSupervisor,
-    state: &mut SessionState,
-    max_offset: usize,
-) -> Result<Option<LoopControl>, MultiProcessTuiError> {
-    if !state.show_options {
-        return Ok(None);
-    }
-
-    let follow_active = state.follow_for(state.active_process());
-    let actions = options_actions(follow_active);
-    let active = state.active_process().to_owned();
-    match key.code {
-        KeyCode::Esc => {
-            state.show_options = false;
-        }
-        KeyCode::Char('o') => {
-            state.show_options = false;
-        }
-        KeyCode::Up => {
-            state.options_index = state.options_index.saturating_sub(1);
-        }
-        KeyCode::Down => {
-            let max = actions.len().saturating_sub(1);
-            state.options_index = (state.options_index + 1).min(max);
-        }
-        KeyCode::Char('f') => {
-            if apply_options_action(
-                OptionsAction::ToggleFollow,
-                &active,
-                supervisor,
-                state,
-                max_offset,
-            )? {
-                return Ok(Some(LoopControl::Quit));
-            }
-        }
-        KeyCode::Char('r') => {
-            if apply_options_action(
-                OptionsAction::Restart,
-                &active,
-                supervisor,
-                state,
-                max_offset,
-            )? {
-                return Ok(Some(LoopControl::Quit));
-            }
-            state.show_options = false;
-        }
-        KeyCode::Char('s') => {
-            if apply_options_action(OptionsAction::Stop, &active, supervisor, state, max_offset)? {
-                return Ok(Some(LoopControl::Quit));
-            }
-            state.show_options = false;
-        }
-        KeyCode::Char('q') => {
-            if apply_options_action(OptionsAction::Quit, &active, supervisor, state, max_offset)? {
-                return Ok(Some(LoopControl::Quit));
-            }
-            state.show_options = false;
-        }
-        KeyCode::Enter => {
-            let action = actions[state.options_index];
-            if apply_options_action(action, &active, supervisor, state, max_offset)? {
-                return Ok(Some(LoopControl::Quit));
-            }
-            if !matches!(action, OptionsAction::ToggleFollow) {
-                state.show_options = false;
-            }
-        }
-        _ => {}
-    }
-    Ok(Some(LoopControl::Continue))
-}
-
-fn apply_options_action(
+pub(super) fn apply_options_action(
     action: OptionsAction,
     active: &str,
     supervisor: &ProcessSupervisor,
