@@ -1,6 +1,10 @@
 use super::{
-    builtin_test_max_parallel, discover_catalogs, parse_task_runtime_args, parse_task_selector,
-    run_doctor, run_manifest_task_with_cwd, run_tasks, RunnerError, TaskRuntimeArgs,
+    builtin_test_max_parallel,
+    contract_test_support::{
+        lock_test, temp_workspace, with_cwd, write_manifest as write_manifest_shared, EnvGuard,
+    },
+    discover_catalogs, parse_task_runtime_args, parse_task_selector, run_doctor,
+    run_manifest_task_with_cwd, run_tasks, RunnerError, TaskRuntimeArgs,
 };
 use crate::{DoctorArgs, TaskInvocation, TasksArgs};
 use std::fs;
@@ -8,9 +12,8 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 #[path = "runner_tests/catalog_discovery_tests.rs"]
 mod catalog_discovery_tests;
@@ -47,7 +50,7 @@ mod deferral_tests;
 mod managed_and_locking_tests;
 
 fn write_manifest(path: &PathBuf, body: &str) {
-    fs::write(path, body).expect("write manifest");
+    write_manifest_shared(path, body);
 }
 
 fn write_root_manifest(root: &PathBuf, body: &str) {
@@ -258,72 +261,4 @@ fn run_tasks_with_repo(root: PathBuf) -> Result<String, RunnerError> {
 
 fn run_doctor_task(root: PathBuf, args: &[&str]) -> Result<String, RunnerError> {
     run_builtin(root, "doctor", args)
-}
-
-fn temp_dir(name: &str) -> PathBuf {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    std::env::temp_dir().join(format!("effigy-runner-{name}-{ts}"))
-}
-
-fn temp_workspace(name: &str) -> PathBuf {
-    let root = temp_dir(name);
-    fs::create_dir_all(&root).expect("mkdir workspace");
-    fs::write(root.join("package.json"), "{}\n").expect("write package marker");
-    root
-}
-
-fn with_cwd<F, T>(cwd: &PathBuf, f: F) -> T
-where
-    F: FnOnce() -> T,
-{
-    let _guard = lock_test();
-    let original = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(cwd).expect("set cwd");
-    let out = f();
-    std::env::set_current_dir(original).expect("restore cwd");
-    out
-}
-
-fn test_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn lock_test() -> MutexGuard<'static, ()> {
-    match test_lock().lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    }
-}
-
-struct EnvGuard {
-    original: Vec<(String, Option<String>)>,
-}
-
-impl EnvGuard {
-    fn set_many(entries: &[(&str, Option<String>)]) -> Self {
-        let mut original = Vec::with_capacity(entries.len());
-        for (key, value) in entries {
-            original.push(((*key).to_owned(), std::env::var(key).ok()));
-            match value {
-                Some(v) => std::env::set_var(key, v),
-                None => std::env::remove_var(key),
-            }
-        }
-        Self { original }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (key, value) in &self.original {
-            match value {
-                Some(v) => std::env::set_var(key, v),
-                None => std::env::remove_var(key),
-            }
-        }
-    }
 }
