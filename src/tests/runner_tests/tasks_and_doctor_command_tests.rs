@@ -12,12 +12,7 @@ fn run_tasks_with_repo(root: PathBuf) -> Result<String, RunnerError> {
 
 fn assert_tasks_manifest_parse_error_contains_any(root: PathBuf, expected: &[&str]) {
     let err = run_tasks_with_repo(root).expect_err("expected manifest parse failure");
-    match err {
-        RunnerError::TaskManifestParse { error, .. } => {
-            assert_manifest_parse_error_contains_any(&error, expected);
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_task_manifest_parse_runner_error_contains_any(err, expected);
 }
 
 struct ParseRejectionCase {
@@ -34,13 +29,6 @@ fn run_doctor_task(root: PathBuf, args: &[&str]) -> Result<String, RunnerError> 
         },
         root,
     )
-}
-
-fn assert_doctor_non_zero_contains(err: RunnerError, expected: &[&str]) {
-    match err {
-        RunnerError::DoctorNonZero { rendered, .. } => assert_contains_all(&rendered, expected),
-        other => panic!("unexpected error: {other}"),
-    }
 }
 
 #[test]
