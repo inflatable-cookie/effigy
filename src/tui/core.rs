@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +44,7 @@ pub(crate) fn prev_index(current: usize, len: usize) -> usize {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn toggle_follow_for_active(
     follow_mode: &mut HashMap<String, bool>,
     scroll_offsets: &mut HashMap<String, usize>,
