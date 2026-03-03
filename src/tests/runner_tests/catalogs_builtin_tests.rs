@@ -36,14 +36,6 @@ concurrent = [{ run = "printf front-ok" }]
     );
 }
 
-fn write_root_task_manifest(root: &PathBuf) {
-    write_root_manifest(root, "[tasks.root]\nrun = \"printf root\"\n");
-}
-
-fn parse_catalogs_json(out: &str) -> serde_json::Value {
-    serde_json::from_str(out).expect("json parse")
-}
-
 #[test]
 fn run_manifest_task_builtin_catalogs_renders_diagnostics_and_resolution_probe() {
     let cases = [
@@ -71,7 +63,9 @@ fn run_manifest_task_builtin_catalogs_renders_diagnostics_and_resolution_probe()
         let root = temp_workspace(case.workspace);
         match case.fixture {
             CatalogResolveFixture::RootAndFarmyardApi => write_root_and_farmyard_api_catalog(&root),
-            CatalogResolveFixture::ManagedProfileInvocation => write_managed_profile_manifest(&root),
+            CatalogResolveFixture::ManagedProfileInvocation => {
+                write_managed_profile_manifest(&root)
+            }
         }
         let out = run_builtin_ok(root, "catalogs", case.args);
         assert_contains_all(&out, case.expected);
@@ -85,7 +79,7 @@ fn run_manifest_task_builtin_catalogs_json_renders_probe_payload() {
 
     let out = run_builtin_ok(root, "catalogs", &["--json", "--resolve", "farmyard/api"]);
 
-    let parsed = parse_catalogs_json(&out);
+    let parsed = parse_json_output(&out);
     assert_eq!(parsed["schema"], "effigy.tasks.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert!(parsed["catalogs"].is_array());
@@ -102,7 +96,7 @@ fn run_manifest_task_builtin_catalogs_json_resolve_supports_managed_profile_invo
 
     let out = run_builtin_ok(root, "catalogs", &["--json", "--resolve", "dev front"]);
 
-    let parsed = parse_catalogs_json(&out);
+    let parsed = parse_json_output(&out);
     assert_eq!(parsed["resolve"]["selector"], "dev front");
     assert_eq!(parsed["resolve"]["status"], "ok");
     assert_eq!(parsed["resolve"]["catalog"], "root");
@@ -121,11 +115,11 @@ fn run_manifest_task_builtin_catalogs_json_resolve_supports_managed_profile_invo
 #[test]
 fn run_manifest_task_builtin_catalogs_json_reports_resolution_errors() {
     let root = temp_workspace("builtin-catalogs-json-error");
-    write_root_task_manifest(&root);
+    write_root_manifest(&root, "[tasks.root]\nrun = \"printf root\"\n");
 
     let out = run_builtin_ok(root, "catalogs", &["--json", "--resolve", "farmyard/api"]);
 
-    let parsed = parse_catalogs_json(&out);
+    let parsed = parse_json_output(&out);
     assert_eq!(parsed["schema"], "effigy.tasks.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert_eq!(parsed["resolve"]["status"], "error");
@@ -147,14 +141,14 @@ fn run_manifest_task_builtin_catalogs_json_compact_output_has_no_newlines() {
     );
 
     assert!(!out.contains('\n'));
-    let parsed = parse_catalogs_json(&out);
+    let parsed = parse_json_output(&out);
     assert_eq!(parsed["resolve"]["status"], "ok");
 }
 
 #[test]
 fn run_manifest_task_builtin_catalogs_pretty_requires_json() {
     let root = temp_workspace("builtin-catalogs-pretty-requires-json");
-    write_root_task_manifest(&root);
+    write_root_manifest(&root, "[tasks.root]\nrun = \"printf root\"\n");
 
     let err = run_builtin_err(root, "catalogs", &["--pretty", "false"]);
     assert_task_invocation_error_contains(
@@ -166,7 +160,7 @@ fn run_manifest_task_builtin_catalogs_pretty_requires_json() {
 #[test]
 fn run_manifest_task_builtin_catalogs_rejects_invalid_pretty_value() {
     let root = temp_workspace("builtin-catalogs-invalid-pretty");
-    write_root_task_manifest(&root);
+    write_root_manifest(&root, "[tasks.root]\nrun = \"printf root\"\n");
 
     let err = run_builtin_err(root, "catalogs", &["--json", "--pretty", "nope"]);
     assert_task_invocation_error_contains(err, &["value `nope` is invalid"]);
@@ -175,7 +169,7 @@ fn run_manifest_task_builtin_catalogs_rejects_invalid_pretty_value() {
 #[test]
 fn run_manifest_task_builtin_catalogs_validates_missing_value_flags() {
     let root = temp_workspace("builtin-catalogs-missing-values");
-    write_root_task_manifest(&root);
+    write_root_manifest(&root, "[tasks.root]\nrun = \"printf root\"\n");
 
     let err = run_builtin_err(root.clone(), "catalogs", &["--resolve"]);
     assert_task_invocation_error_contains(err, &["catalogs argument --resolve requires a value"]);
@@ -193,7 +187,7 @@ fn run_manifest_task_builtin_catalogs_validates_missing_value_flags() {
 #[test]
 fn run_manifest_task_builtin_catalogs_reports_unknown_argument_grouping() {
     let root = temp_workspace("builtin-catalogs-unknown-args");
-    write_root_task_manifest(&root);
+    write_root_manifest(&root, "[tasks.root]\nrun = \"printf root\"\n");
 
     let err = run_builtin_err(root, "catalogs", &["--wat", "--huh"]);
     assert_task_invocation_error_contains(

@@ -1,15 +1,5 @@
 use super::*;
 
-fn run_tasks_with_repo(root: PathBuf) -> Result<String, RunnerError> {
-    run_tasks(TasksArgs {
-        repo_override: Some(root),
-        task_name: None,
-        resolve_selector: None,
-        output_json: false,
-        pretty_json: true,
-    })
-}
-
 fn assert_tasks_manifest_parse_error_contains_any(root: PathBuf, expected: &[&str]) {
     let err = run_tasks_with_repo(root).expect_err("expected manifest parse failure");
     assert_task_manifest_parse_runner_error_contains_any(err, expected);
@@ -19,16 +9,6 @@ struct ParseRejectionCase {
     workspace: &'static str,
     manifest: &'static str,
     expected: &'static [&'static str],
-}
-
-fn run_doctor_task(root: PathBuf, args: &[&str]) -> Result<String, RunnerError> {
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "doctor".to_owned(),
-            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
-        },
-        root,
-    )
 }
 
 #[test]
@@ -174,5 +154,8 @@ fn run_doctor_reports_unknown_argument_grouping() {
     write_manifest(&root.join("effigy.toml"), "");
 
     let err = run_doctor_task(root, &["--wat", "--huh"]).expect_err("doctor should reject args");
-    assert_task_invocation_error_contains(err, &["unknown argument(s) for built-in `doctor`: --wat --huh"]);
+    assert_task_invocation_error_contains(
+        err,
+        &["unknown argument(s) for built-in `doctor`: --wat --huh"],
+    );
 }
