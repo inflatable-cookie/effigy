@@ -38,7 +38,18 @@ pub(super) fn run_builtin_tasks(
             continue;
         }
         if arg == "--pretty" {
-            pretty_json = parse_pretty_json_value(&mut parser, &task.name)?;
+            pretty_json = parser.bool_literal_flag_value(
+                &format!(
+                    "{} argument --pretty requires a value (`true` or `false`)",
+                    task.name
+                ),
+                |value| {
+                    format!(
+                        "{} argument --pretty value `{value}` is invalid (expected `true` or `false`)",
+                        task.name
+                    )
+                },
+            )?;
             continue;
         }
         return Err(unknown_builtin_args(&task.name, &runtime_args.passthrough));
@@ -59,22 +70,4 @@ pub(super) fn run_builtin_tasks(
         output_json,
         pretty_json,
     })
-}
-
-fn parse_pretty_json_value(
-    parser: &mut BuiltinArgParser<'_>,
-    task_name: &str,
-) -> Result<bool, RunnerError> {
-    let value = parser.next_value(&format!(
-        "{} argument --pretty requires a value (`true` or `false`)",
-        task_name
-    ))?;
-    match value {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        _ => Err(RunnerError::TaskInvocation(format!(
-            "{} argument --pretty value `{value}` is invalid (expected `true` or `false`)",
-            task_name
-        ))),
-    }
 }
