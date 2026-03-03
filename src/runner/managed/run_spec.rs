@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::runner::manifest::ManifestEnvEntry;
+use crate::runner::manifest::{ManifestEnvEntry, ManifestEnvFileDirective};
 
 use super::super::{LoadedCatalog, ManifestManagedRun, RunnerError};
 #[path = "run_spec/command.rs"]
@@ -17,6 +17,7 @@ pub(super) fn render_task_run_spec(
     task_name: &str,
     run: &ManifestManagedRun,
     task_env: &BTreeMap<String, String>,
+    task_env_file: Option<&ManifestEnvFileDirective>,
     env_profiles: &BTreeMap<String, ManifestEnvEntry>,
     args_rendered: &str,
     repo_root: &Path,
@@ -36,6 +37,7 @@ pub(super) fn render_task_run_spec(
         ManifestManagedRun::Sequence(steps) => sequence::render_run_sequence(
             task_name,
             steps,
+            task_env_file,
             env_profiles,
             args_rendered,
             repo_root,

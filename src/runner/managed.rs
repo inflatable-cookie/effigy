@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::runner::manifest::ManifestEnvEntry;
+use crate::runner::manifest::{ManifestEnvEntry, ManifestEnvFileDirective};
 
 use super::{
     LoadedCatalog, ManagedTaskPlan, ManifestManagedConcurrentEntry, ManifestManagedRun,
@@ -68,6 +68,7 @@ pub(super) fn render_task_run_spec(
     task_name: &str,
     run: &ManifestManagedRun,
     task_env: &BTreeMap<String, String>,
+    task_env_file: Option<&ManifestEnvFileDirective>,
     env_profiles: &BTreeMap<String, ManifestEnvEntry>,
     args_rendered: &str,
     repo_root: &Path,
@@ -79,6 +80,7 @@ pub(super) fn render_task_run_spec(
         task_name,
         run,
         task_env,
+        task_env_file,
         env_profiles,
         args_rendered,
         repo_root,

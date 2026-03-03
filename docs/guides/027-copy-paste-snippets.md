@@ -161,14 +161,15 @@ effigy test integration
 alias = "api"
 
 [env]
-CARGO_HOME = "{project}/.effigy/cargo/home"
-CARGO_TARGET_DIR = "{project}/.effigy/cargo/target"
+cargo = [
+  { CARGO_HOME = "{project}/.effigy/cargo/home" },
+  { CARGO_TARGET_DIR = "{project}/.effigy/cargo/target" }
+]
 
 [tasks]
-build = [{ env = "CARGO_HOME" }, { env = "CARGO_TARGET_DIR" }, { run = "cargo build --workspace" }]
+build = [{ env = "cargo" }, { run = "cargo build --workspace" }]
 check = [
-  { env = "CARGO_HOME" },
-  { env = "CARGO_TARGET_DIR" },
+  { env = "cargo" },
   { run = "cargo check --workspace" }
 ]
 ```
@@ -182,6 +183,22 @@ effigy check
 
 Use when several repos build at the same time and you need project-local Cargo directories.
 You can also reference named env values from another catalog root with `env = "../shared/CARGO_HOME"`.
+
+If `env = "<NAME>"` is not found in `[env]` or the process environment, Effigy falls back to dotenv files.
+By default it reads `.env`; override per-task or mid-chain with `env_file`:
+
+```toml
+[tasks.test]
+env_file = ".env.test"
+run = [{ env = "DATABASE_URL" }, { run = "cargo test --workspace" }]
+
+[tasks.migrate]
+run = [
+  { env_file = [".env.local", ".env.test"] },
+  { env = "DATABASE_URL" },
+  { task = "db:migrate" }
+]
+```
 
 ## 7) Deferral Compatibility Snippet
 

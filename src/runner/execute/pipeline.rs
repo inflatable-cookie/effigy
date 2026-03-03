@@ -138,6 +138,7 @@ fn build_task_command(
         &preflight.selector.task_name,
         run_spec,
         &selection.task.env,
+        selection.task.env_file.as_ref(),
         &selection.catalog.manifest.env,
         &args_rendered,
         &selection.catalog.catalog_root,

@@ -14,6 +14,7 @@ pub(super) fn validate_run_step_table(
             "run"
                 | "task"
                 | "env"
+                | "env_file"
                 | "id"
                 | "depends_on"
                 | "timeout_ms"
@@ -51,6 +52,7 @@ pub(super) fn validate_run_step_table(
         "fail_fast",
     );
     validate_env_table(context, task_name, index, step_table.get("env"));
+    validate_env_file(context, task_name, index, step_table.get("env_file"));
 }
 
 fn validate_depends_on(
@@ -150,6 +152,60 @@ fn validate_env_table(
                 &format!("tasks.{task_name}.run[{index}].env.{key}"),
                 SchemaContext::value_type(entry),
                 "expected string",
+            );
+        }
+    }
+}
+
+fn validate_env_file(
+    context: &mut SchemaContext<'_, '_>,
+    task_name: &str,
+    index: usize,
+    value: Option<&Value>,
+) {
+    let Some(value) = value else {
+        return;
+    };
+    if let Some(raw) = value.as_str() {
+        if raw.trim().is_empty() {
+            context.unsupported_value(
+                &format!("tasks.{task_name}.run[{index}].env_file"),
+                "empty string",
+                "expected non-empty string",
+            );
+        }
+        return;
+    }
+    let Some(entries) = value.as_array() else {
+        context.unsupported_value(
+            &format!("tasks.{task_name}.run[{index}].env_file"),
+            SchemaContext::value_type(value),
+            "expected string or array of strings",
+        );
+        return;
+    };
+    if entries.is_empty() {
+        context.unsupported_value(
+            &format!("tasks.{task_name}.run[{index}].env_file"),
+            "empty array",
+            "expected non-empty array of strings",
+        );
+        return;
+    }
+    for (entry_index, entry) in entries.iter().enumerate() {
+        let Some(raw) = entry.as_str() else {
+            context.unsupported_value(
+                &format!("tasks.{task_name}.run[{index}].env_file[{entry_index}]"),
+                SchemaContext::value_type(entry),
+                "expected string",
+            );
+            continue;
+        };
+        if raw.trim().is_empty() {
+            context.unsupported_value(
+                &format!("tasks.{task_name}.run[{index}].env_file[{entry_index}]"),
+                "empty string",
+                "expected non-empty string",
             );
         }
     }

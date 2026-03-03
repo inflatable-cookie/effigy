@@ -110,6 +110,11 @@ Definition:
 - Run arrays also support `env` directive steps (`{ env = { ... } }` or `{ env = "<profile>" }`) that update env for later entries in that chain.
 - `env = "<catalog-path>/<name>"` in run arrays resolves named env entries from another catalog's `[env]` table (relative to current catalog unless absolute).
 - Named entries are declared under top-level `[env]` as either direct values (`NAME = "value"`) or grouped profile arrays (`name = [{ KEY = "value" }, ...]`).
+- If a named entry is missing in `[env]`, effigy falls back to process env and `<catalog-root>/.env` for that key.
+- Cross-catalog named refs (`env = "<catalog-path>/<name>"`) use target-catalog `[env]` and dotenv only (no process-env fallback).
+- `tasks.<name>.env_file` (or run-step `env_file` directives) can point fallback resolution at one file or an ordered file list.
+- `env` and `env_file` directive entries may be standalone no-op steps used to mutate env state before later `run`/`task` entries.
+- Dotenv parsing accepts `KEY=value` or `export KEY=value` lines; matching single/double quotes are stripped from values.
 
 Example:
 

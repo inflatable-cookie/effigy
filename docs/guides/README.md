@@ -23,6 +23,38 @@ References:
 - [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
 - [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)
 
+## Env Resolution Cheatsheet
+
+Use this section as a fast reference for task env behavior.
+
+- Reusable named entries live in top-level `[env]`.
+  - Value form: `KEY = "value"`.
+  - Grouped profile form: `cargo = [{ CARGO_HOME = "..." }, { CARGO_TARGET_DIR = "..." }]`.
+- Run arrays can apply env in sequence with directives.
+  - Named: `{ env = "CARGO_HOME" }` or `{ env = "cargo" }`.
+  - Inline map: `{ env = { RUST_LOG = "debug" } }`.
+  - Cross-catalog: `{ env = "../shared/CARGO_HOME" }`.
+- Named env resolution order:
+  1. `[env]` entry in the selected catalog (or referenced catalog for cross-catalog refs)
+  2. process environment (same-catalog refs only)
+  3. dotenv fallback (`.env` by default)
+- Dotenv source override:
+  - task-level: `tasks.<name>.env_file = ".env.test"` or `[".env.local", ".env.test"]`
+  - run-step override: `{ env_file = ".env.local" }` or `{ env_file = [".env.local", ".env.test"] }`
+  - ordered arrays are first-match wins by key.
+- `env` and `env_file` run steps can be standalone state updates with no `run`/`task`.
+- Token substitution is supported in env values:
+  - `{project}` and `{repo}` resolve to the current catalog root path.
+- Dotenv parsing accepts:
+  - `KEY=value`
+  - `export KEY=value`
+  - quoted values with matching single or double quotes.
+
+Canonical source and examples:
+- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+
 ## By Persona
 
 ### New User
