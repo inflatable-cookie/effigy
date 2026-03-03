@@ -185,7 +185,8 @@ Inspect:
 Fix:
 - if you want built-in auto-apply behavior, avoid overriding with explicit `tasks.test`
 - define `CARGO_*` values in the selected catalog `[env]`
-- use cargo command forms directly (for example `cargo test ...`, `env FOO=bar cargo test ...`) instead of `sh -lc "cargo ..."` wrappers
+- by default (`cargo_env_match = "prefix-aware"`), use cargo command forms directly (for example `cargo test ...`, `env FOO=bar cargo test ...`) instead of `sh -lc "cargo ..."` wrappers
+- if shell wrapping is required, set `[test].cargo_env_match = "shell-aware"`
 
 ### Symptom: built-in cargo suite command did not receive manifest `CARGO_*` env
 
@@ -202,7 +203,8 @@ env RUST_LOG=info cargo test --workspace
 /usr/local/bin/cargo nextest run --workspace
 ```
 
-- avoid shell-string wrappers where cargo is not the executable token (for example `sh -lc "cargo test --workspace"`)
+- when using default matching (`prefix-aware`), avoid shell-string wrappers where cargo is not the executable token (for example `sh -lc "cargo test --workspace"`)
+- if shell wrappers are unavoidable, opt in with `[test].cargo_env_match = "shell-aware"`
 
 ## 5) Watch Mode and Lock Errors
 

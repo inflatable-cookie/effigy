@@ -8,6 +8,7 @@ mod task_defs;
 mod test_config;
 
 use task_defs::deserialize_tasks;
+pub(super) use test_config::ManifestCargoEnvMatchMode;
 use test_config::ManifestTestConfig;
 
 #[derive(Debug, serde::Deserialize)]

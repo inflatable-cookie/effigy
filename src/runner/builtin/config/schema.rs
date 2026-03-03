@@ -125,6 +125,8 @@ fn section_test_lines(minimal: bool, runner: Option<&str>) -> Vec<String> {
                 "[test]",
                 "# Built-in test fanout and execution behavior.",
                 "max_parallel = 3",
+                "# cargo env auto-apply matcher: executable-only|prefix-aware|shell-aware",
+                "cargo_env_match = \"prefix-aware\"",
                 "",
                 "[test.suites]",
                 "# Optional named suite commands used as source of truth.",

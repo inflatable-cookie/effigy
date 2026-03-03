@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::runner::builtin::test::planning::{BuiltinTestRunnable, BuiltinTestTarget};
+use crate::runner::manifest::ManifestCargoEnvMatchMode;
 use crate::runner::util::shell_quote;
 
 pub(super) fn collect_builtin_test_runnable_targets(
@@ -25,6 +26,7 @@ pub(super) fn collect_builtin_test_runnable_targets(
                     command: maybe_wrap_with_cargo_env(
                         plan.command,
                         &target.cargo_env,
+                        target.cargo_env_match,
                         &target.root,
                     ),
                 })
@@ -56,9 +58,10 @@ pub(super) fn apply_passthrough_to_runnable(
 fn maybe_wrap_with_cargo_env(
     command: String,
     cargo_env: &BTreeMap<String, String>,
+    cargo_env_match: ManifestCargoEnvMatchMode,
     root: &Path,
 ) -> String {
-    if cargo_env.is_empty() || !is_cargo_command(&command) {
+    if cargo_env.is_empty() || !is_cargo_command_for_mode(&command, cargo_env_match) {
         return command;
     }
 
@@ -77,7 +80,23 @@ fn maybe_wrap_with_cargo_env(
     format!("env {env_args} sh -lc {}", shell_quote(&command))
 }
 
-fn is_cargo_command(command: &str) -> bool {
+fn is_cargo_command_for_mode(command: &str, mode: ManifestCargoEnvMatchMode) -> bool {
+    match mode {
+        ManifestCargoEnvMatchMode::ExecutableOnly => {
+            let mut tokens = command.split_whitespace();
+            let Some(executable) = tokens.next() else {
+                return false;
+            };
+            is_cargo_executable_token(executable)
+        }
+        ManifestCargoEnvMatchMode::PrefixAware => is_prefixed_cargo_command(command),
+        ManifestCargoEnvMatchMode::ShellAware => {
+            is_prefixed_cargo_command(command) || is_shell_wrapped_cargo_command(command)
+        }
+    }
+}
+
+fn is_prefixed_cargo_command(command: &str) -> bool {
     let mut tokens = command.split_whitespace().peekable();
     if tokens.peek().is_none() {
         return false;
@@ -122,6 +141,55 @@ fn is_cargo_command(command: &str) -> bool {
         return false;
     };
 
+    is_cargo_executable_token(executable)
+}
+
+fn is_shell_wrapped_cargo_command(command: &str) -> bool {
+    let mut tokens = command.split_whitespace();
+    let Some(shell) = tokens.next() else {
+        return false;
+    };
+    if !is_shell_executable_token(shell) {
+        return false;
+    }
+    let Some(option) = tokens.next() else {
+        return false;
+    };
+    if option != "-c" && option != "-lc" {
+        return false;
+    }
+
+    let nested = tokens.collect::<Vec<&str>>().join(" ");
+    if nested.is_empty() {
+        return false;
+    }
+    let nested = strip_wrapping_quotes(&nested);
+    is_prefixed_cargo_command(nested)
+}
+
+fn strip_wrapping_quotes(value: &str) -> &str {
+    let bytes = value.as_bytes();
+    if bytes.len() >= 2
+        && ((bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'')
+            || (bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"'))
+    {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    }
+}
+
+fn is_shell_executable_token(token: &str) -> bool {
+    matches!(
+        token,
+        "sh" | "bash" | "zsh" | "dash" | "ksh" | "fish" | "/bin/sh" | "/bin/bash" | "/bin/zsh"
+    ) || token.ends_with("/sh")
+        || token.ends_with("/bash")
+        || token.ends_with("/zsh")
+        || token.ends_with("/dash")
+}
+
+fn is_cargo_executable_token(executable: &str) -> bool {
     executable == "cargo"
         || executable == "cargo-nextest"
         || executable.ends_with("/cargo")

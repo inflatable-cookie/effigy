@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::runner::builtin::test::planning::{BuiltinResolvedPlan, BuiltinTestTarget};
-use crate::runner::manifest::ManifestEnvEntry;
+use crate::runner::manifest::{ManifestCargoEnvMatchMode, ManifestEnvEntry};
 use crate::runner::util::normalize_builtin_test_suite;
 use crate::runner::{LoadedCatalog, ManifestJsPackageManager};
 
@@ -12,6 +12,7 @@ struct BuiltinTestTargetConfig {
     package_manager: Option<ManifestJsPackageManager>,
     runner_overrides: BTreeMap<String, String>,
     cargo_env: BTreeMap<String, String>,
+    cargo_env_match: ManifestCargoEnvMatchMode,
 }
 
 pub(super) fn resolve_builtin_test_targets(
@@ -21,7 +22,7 @@ pub(super) fn resolve_builtin_test_targets(
 ) -> Vec<BuiltinTestTarget> {
     if let Some(prefix) = prefix {
         if let Some(catalog) = catalogs.iter().find(|catalog| catalog.alias == prefix) {
-            let (plans, suite_source, cargo_env) =
+            let (plans, suite_source, cargo_env, cargo_env_match) =
                 resolve_target_test_plans(catalogs, &catalog.catalog_root);
             if plans.is_empty() {
                 return Vec::new();
@@ -33,6 +34,7 @@ pub(super) fn resolve_builtin_test_targets(
                 plans,
                 suite_source,
                 cargo_env,
+                cargo_env_match,
             }];
         }
         return Vec::new();
@@ -49,7 +51,8 @@ pub(super) fn resolve_builtin_test_targets(
         roots.insert(resolved_root.to_path_buf(), "root".to_owned());
     }
     for (root, name) in roots {
-        let (plans, suite_source, cargo_env) = resolve_target_test_plans(catalogs, &root);
+        let (plans, suite_source, cargo_env, cargo_env_match) =
+            resolve_target_test_plans(catalogs, &root);
         if plans.is_empty() {
             continue;
         }
@@ -60,6 +63,7 @@ pub(super) fn resolve_builtin_test_targets(
             plans,
             suite_source,
             cargo_env,
+            cargo_env_match,
         });
     }
     targets
@@ -82,9 +86,15 @@ fn render_fallback_chain(plans: &[BuiltinResolvedPlan]) -> Vec<String> {
 fn resolve_target_test_plans(
     catalogs: &[LoadedCatalog],
     target_root: &Path,
-) -> (Vec<BuiltinResolvedPlan>, String, BTreeMap<String, String>) {
+) -> (
+    Vec<BuiltinResolvedPlan>,
+    String,
+    BTreeMap<String, String>,
+    ManifestCargoEnvMatchMode,
+) {
     let config = resolve_target_test_config(catalogs, target_root);
     let cargo_env = config.cargo_env.clone();
+    let cargo_env_match = config.cargo_env_match;
     if !config.configured_suites.is_empty() {
         return (
             config
@@ -98,6 +108,7 @@ fn resolve_target_test_plans(
                 .collect::<Vec<BuiltinResolvedPlan>>(),
             "configured".to_owned(),
             cargo_env,
+            cargo_env_match,
         );
     }
 
@@ -119,6 +130,7 @@ fn resolve_target_test_plans(
             .collect::<Vec<BuiltinResolvedPlan>>(),
         "auto-detected".to_owned(),
         cargo_env,
+        cargo_env_match,
     )
 }
 
@@ -156,11 +168,21 @@ fn resolve_target_test_config(
         })
         .unwrap_or_default();
     let cargo_env = catalog.map(resolve_manifest_cargo_env).unwrap_or_default();
+    let cargo_env_match = catalog
+        .and_then(|entry| {
+            entry
+                .manifest
+                .test
+                .as_ref()
+                .map(|test| test.cargo_env_match)
+        })
+        .unwrap_or_default();
     BuiltinTestTargetConfig {
         configured_suites,
         package_manager,
         runner_overrides,
         cargo_env,
+        cargo_env_match,
     }
 }
 

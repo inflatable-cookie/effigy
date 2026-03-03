@@ -7,20 +7,45 @@ pub(super) fn validate_test_section(context: &mut SchemaContext<'_, '_>, test: &
         context.unsupported_value(
             "test",
             SchemaContext::value_type(test),
-            "expected table with optional keys: max_parallel, runners, suites",
+            "expected table with optional keys: max_parallel, cargo_env_match, runners, suites",
         );
         return;
     };
     for key in test_table.keys() {
-        if !matches!(key.as_str(), "max_parallel" | "runners" | "suites") {
+        if !matches!(
+            key.as_str(),
+            "max_parallel" | "cargo_env_match" | "runners" | "suites"
+        ) {
             context.unsupported_key(&format!("test.{key}"));
         }
+    }
+    if let Some(cargo_env_match) = test_table.get("cargo_env_match") {
+        validate_test_cargo_env_match(context, cargo_env_match);
     }
     if let Some(runners) = test_table.get("runners") {
         validate_test_runners(context, runners);
     }
     if let Some(suites) = test_table.get("suites") {
         validate_test_suites(context, suites);
+    }
+}
+
+fn validate_test_cargo_env_match(context: &mut SchemaContext<'_, '_>, value: &Value) {
+    let Some(raw) = value.as_str() else {
+        context.unsupported_value(
+            "test.cargo_env_match",
+            SchemaContext::value_type(value),
+            "expected one of: executable-only, prefix-aware, shell-aware",
+        );
+        return;
+    };
+
+    if !matches!(raw, "executable-only" | "prefix-aware" | "shell-aware") {
+        context.unsupported_value(
+            "test.cargo_env_match",
+            SchemaContext::value_type(value),
+            "expected one of: executable-only, prefix-aware, shell-aware",
+        );
     }
 }
 

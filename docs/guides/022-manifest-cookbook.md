@@ -122,6 +122,7 @@ js = "bun"
 
 [test]
 max_parallel = 2
+cargo_env_match = "prefix-aware"
 
 [test.suites]
 unit = "bun x vitest run"
@@ -219,6 +220,9 @@ Behavior:
 - referenced tasks keep their own `env` when called via `task = "..."` entries
 - env value token substitution supports `{project}` and `{repo}` (aliases for catalog root path)
 - built-in `test` also reads manifest `[env]` for `CARGO_*` keys and applies them automatically to cargo suites (`cargo-nextest`/`cargo-test`)
+- set `[test].cargo_env_match = "executable-only"` for direct cargo binary token matching only
+- set `[test].cargo_env_match = "prefix-aware"` (default) to include wrapper/prefix forms like `env KEY=value cargo ...`
+- set `[test].cargo_env_match = "shell-aware"` to include shell-wrapped forms like `sh -lc 'cargo test --workspace'`
 
 ## 12) Multi-Catalog Monorepo Baseline
 

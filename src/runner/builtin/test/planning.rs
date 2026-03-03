@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::super::super::{LoadedCatalog, TaskSelector, DEFAULT_BUILTIN_TEST_MAX_PARALLEL};
+use crate::runner::manifest::ManifestCargoEnvMatchMode;
 
 #[path = "planning/resolve.rs"]
 mod resolve;
@@ -23,6 +24,7 @@ pub(super) struct BuiltinTestTarget {
     pub(super) fallback_chain: Vec<String>,
     pub(super) suite_source: String,
     pub(super) cargo_env: BTreeMap<String, String>,
+    pub(super) cargo_env_match: ManifestCargoEnvMatchMode,
 }
 
 #[derive(Debug, Clone, Copy)]

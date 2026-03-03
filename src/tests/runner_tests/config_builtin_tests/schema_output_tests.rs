@@ -10,6 +10,7 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
         &[
             "Canonical strict-valid effigy.toml schema template",
             "[package_manager]",
+            "cargo_env_match = \"prefix-aware\"",
             "[test.runners]",
             "concurrent = [",
             "task = \"test vitest \\\"user service\\\"\"",
@@ -41,7 +42,14 @@ fn run_manifest_task_builtin_config_schema_target_prints_selected_section() {
     let root = workspace_with_empty_manifest("builtin-config-schema-target");
 
     let out = run_config_ok(root, &["--schema", "--target", "test"]);
-    assert_contains_all(&out, &["(test target)", "[test.runners]"]);
+    assert_contains_all(
+        &out,
+        &[
+            "(test target)",
+            "cargo_env_match = \"prefix-aware\"",
+            "[test.runners]",
+        ],
+    );
     assert!(!out.contains("[tasks]"));
 }
 
