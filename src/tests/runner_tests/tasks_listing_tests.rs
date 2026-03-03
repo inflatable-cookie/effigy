@@ -6,12 +6,27 @@ fn create_workspace_dir(root: &PathBuf, name: &str) -> PathBuf {
     dir
 }
 
+fn write_root_dev_task_manifest(root: &PathBuf) {
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf root\"\n",
+    );
+}
+
 fn write_catalog_tasks(dir: &PathBuf, alias: &str, tasks: &[(&str, &str)]) {
     let mut manifest = format!("[catalog]\nalias = \"{}\"\n", alias);
     for (task, run) in tasks {
         manifest.push_str(&format!("[tasks.{}]\nrun = \"{}\"\n", task, run));
     }
     write_manifest(&dir.join("effigy.toml"), &manifest);
+}
+
+fn setup_root_and_farmyard_catalog(name: &str) -> PathBuf {
+    let root = temp_workspace(name);
+    let farmyard = create_workspace_dir(&root, "farmyard");
+    write_root_dev_task_manifest(&root);
+    write_catalog_tasks(&farmyard, "farmyard", &[("reset-db", "printf farmyard")]);
+    root
 }
 
 fn write_managed_dev_manifest(root: &PathBuf, profile: &str) {
@@ -42,13 +57,7 @@ fn json_task_column(parsed: &serde_json::Value, field: &str) -> Vec<String> {
 
 #[test]
 fn run_tasks_lists_catalogs_and_tasks() {
-    let root = temp_workspace("list-tasks");
-    let farmyard = create_workspace_dir(&root, "farmyard");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.dev]\nrun = \"printf root\"\n",
-    );
-    write_catalog_tasks(&farmyard, "farmyard", &[("reset-db", "printf farmyard")]);
+    let root = setup_root_and_farmyard_catalog("list-tasks");
 
     let out = run_tasks_from_repo(&root, None, None, false);
     assert_contains_all(&out, &["root", "farmyard", "reset-db"]);
@@ -110,13 +119,7 @@ reset-db = [{ task = "drop-db" }, { task = "migrate-db" }]
 
 #[test]
 fn run_tasks_with_task_filter_reports_only_matches() {
-    let root = temp_workspace("task-filter");
-    let farmyard = create_workspace_dir(&root, "farmyard");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.dev]\nrun = \"printf root\"\n",
-    );
-    write_catalog_tasks(&farmyard, "farmyard", &[("reset-db", "printf farmyard")]);
+    let root = setup_root_and_farmyard_catalog("task-filter");
 
     let out = run_tasks_from_repo(&root, Some("reset-db"), None, false);
     assert_contains_all(&out, &["Task Matches: reset-db", "farmyard", "reset-db"]);
@@ -158,13 +161,7 @@ fn run_tasks_without_catalogs_still_lists_builtin_tasks() {
 
 #[test]
 fn run_tasks_json_renders_machine_readable_payload() {
-    let root = temp_workspace("tasks-json");
-    let farmyard = create_workspace_dir(&root, "farmyard");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.dev]\nrun = \"printf root\"\n",
-    );
-    write_catalog_tasks(&farmyard, "farmyard", &[("reset-db", "printf farmyard")]);
+    let root = setup_root_and_farmyard_catalog("tasks-json");
 
     let out = run_tasks_from_repo(&root, None, None, true);
 

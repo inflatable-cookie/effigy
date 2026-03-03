@@ -1,9 +1,20 @@
 use super::*;
 
+struct ConfigErrorCase {
+    workspace: &'static str,
+    args: &'static [&'static str],
+    expected: &'static [&'static str],
+}
+
+fn workspace_with_empty_manifest(name: &str) -> PathBuf {
+    let root = temp_workspace(name);
+    write_manifest(&root.join("effigy.toml"), "");
+    root
+}
+
 #[test]
 fn run_manifest_task_builtin_config_has_blank_line_between_sections() {
-    let root = temp_workspace("builtin-config-section-spacing");
-    write_manifest(&root.join("effigy.toml"), "");
+    let root = workspace_with_empty_manifest("builtin-config-section-spacing");
 
     let out = run_builtin_ok(root, "config", &[]);
     assert_contains_all(
@@ -14,8 +25,7 @@ fn run_manifest_task_builtin_config_has_blank_line_between_sections() {
 
 #[test]
 fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
-    let root = temp_workspace("builtin-config-schema");
-    write_manifest(&root.join("effigy.toml"), "");
+    let root = workspace_with_empty_manifest("builtin-config-schema");
 
     let out = run_builtin_ok(root, "config", &["--schema"]);
     assert_contains_all(
@@ -34,8 +44,7 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
 
 #[test]
 fn run_manifest_task_builtin_config_schema_minimal_prints_starter_template() {
-    let root = temp_workspace("builtin-config-schema-minimal");
-    write_manifest(&root.join("effigy.toml"), "");
+    let root = workspace_with_empty_manifest("builtin-config-schema-minimal");
 
     let out = run_builtin_ok(root, "config", &["--schema", "--minimal"]);
     assert_contains_all(
@@ -52,8 +61,7 @@ fn run_manifest_task_builtin_config_schema_minimal_prints_starter_template() {
 
 #[test]
 fn run_manifest_task_builtin_config_schema_target_prints_selected_section() {
-    let root = temp_workspace("builtin-config-schema-target");
-    write_manifest(&root.join("effigy.toml"), "");
+    let root = workspace_with_empty_manifest("builtin-config-schema-target");
 
     let out = run_builtin_ok(root, "config", &["--schema", "--target", "test"]);
     assert_contains_all(&out, &["(test target)", "[test.runners]"]);
@@ -62,8 +70,7 @@ fn run_manifest_task_builtin_config_schema_target_prints_selected_section() {
 
 #[test]
 fn run_manifest_task_builtin_config_schema_target_tasks_includes_quoted_task_ref_examples() {
-    let root = temp_workspace("builtin-config-schema-target-tasks");
-    write_manifest(&root.join("effigy.toml"), "");
+    let root = workspace_with_empty_manifest("builtin-config-schema-target-tasks");
 
     let out = run_builtin_ok(root, "config", &["--schema", "--target", "tasks"]);
     assert_contains_all(
@@ -79,8 +86,7 @@ fn run_manifest_task_builtin_config_schema_target_tasks_includes_quoted_task_ref
 
 #[test]
 fn run_manifest_task_builtin_config_schema_target_test_runner_prints_single_runner_snippet() {
-    let root = temp_workspace("builtin-config-schema-target-test-runner");
-    write_manifest(&root.join("effigy.toml"), "");
+    let root = workspace_with_empty_manifest("builtin-config-schema-target-test-runner");
 
     let out = run_builtin_ok(
         root,
@@ -100,84 +106,53 @@ fn run_manifest_task_builtin_config_schema_target_test_runner_prints_single_runn
 }
 
 #[test]
-fn run_manifest_task_builtin_config_target_requires_schema_flag() {
-    let root = temp_workspace("builtin-config-target-requires-schema");
-    write_manifest(&root.join("effigy.toml"), "");
+fn run_manifest_task_builtin_config_rejects_invalid_flag_combinations() {
+    let cases = [
+        ConfigErrorCase {
+            workspace: "builtin-config-target-requires-schema",
+            args: &["--target", "test"],
+            expected: &["`--target` requires `--schema`"],
+        },
+        ConfigErrorCase {
+            workspace: "builtin-config-runner-requires-schema",
+            args: &["--runner", "vitest"],
+            expected: &["`--runner` requires `--schema`"],
+        },
+        ConfigErrorCase {
+            workspace: "builtin-config-runner-requires-test-target",
+            args: &["--schema", "--target", "tasks", "--runner", "vitest"],
+            expected: &["`--runner` requires `--target test`"],
+        },
+        ConfigErrorCase {
+            workspace: "builtin-config-invalid-runner",
+            args: &["--schema", "--target", "test", "--runner", "jest"],
+            expected: &["invalid `--runner` value `jest`"],
+        },
+        ConfigErrorCase {
+            workspace: "builtin-config-target-requires-value",
+            args: &["--schema", "--target"],
+            expected: &["`--target` requires a value"],
+        },
+        ConfigErrorCase {
+            workspace: "builtin-config-invalid-target",
+            args: &["--schema", "--target", "python"],
+            expected: &["invalid `--target` value `python`"],
+        },
+        ConfigErrorCase {
+            workspace: "builtin-config-minimal-requires-schema",
+            args: &["--minimal"],
+            expected: &["`--minimal` requires `--schema`"],
+        },
+        ConfigErrorCase {
+            workspace: "builtin-config-unknown-args",
+            args: &["--wat"],
+            expected: &["unknown argument(s) for built-in `config`: --wat"],
+        },
+    ];
 
-    let err = run_builtin_err(root, "config", &["--target", "test"]);
-    assert_task_invocation_error_contains(err, &["`--target` requires `--schema`"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_config_runner_requires_schema_flag() {
-    let root = temp_workspace("builtin-config-runner-requires-schema");
-    write_manifest(&root.join("effigy.toml"), "");
-
-    let err = run_builtin_err(root, "config", &["--runner", "vitest"]);
-    assert_task_invocation_error_contains(err, &["`--runner` requires `--schema`"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_config_runner_requires_test_target() {
-    let root = temp_workspace("builtin-config-runner-requires-test-target");
-    write_manifest(&root.join("effigy.toml"), "");
-
-    let err = run_builtin_err(
-        root,
-        "config",
-        &["--schema", "--target", "tasks", "--runner", "vitest"],
-    );
-    assert_task_invocation_error_contains(err, &["`--runner` requires `--target test`"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_config_rejects_invalid_runner_value() {
-    let root = temp_workspace("builtin-config-invalid-runner");
-    write_manifest(&root.join("effigy.toml"), "");
-
-    let err = run_builtin_err(
-        root,
-        "config",
-        &["--schema", "--target", "test", "--runner", "jest"],
-    );
-    assert_task_invocation_error_contains(err, &["invalid `--runner` value `jest`"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_config_target_requires_value() {
-    let root = temp_workspace("builtin-config-target-requires-value");
-    write_manifest(&root.join("effigy.toml"), "");
-
-    let err = run_builtin_err(root, "config", &["--schema", "--target"]);
-    assert_task_invocation_error_contains(err, &["`--target` requires a value"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_config_rejects_invalid_target_value() {
-    let root = temp_workspace("builtin-config-invalid-target");
-    write_manifest(&root.join("effigy.toml"), "");
-
-    let err = run_builtin_err(root, "config", &["--schema", "--target", "python"]);
-    assert_task_invocation_error_contains(err, &["invalid `--target` value `python`"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_config_minimal_requires_schema_flag() {
-    let root = temp_workspace("builtin-config-minimal-requires-schema");
-    write_manifest(&root.join("effigy.toml"), "");
-
-    let err = run_builtin_err(root, "config", &["--minimal"]);
-    assert_task_invocation_error_contains(err, &["`--minimal` requires `--schema`"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_config_rejects_unknown_args() {
-    let root = temp_workspace("builtin-config-unknown-args");
-    write_manifest(&root.join("effigy.toml"), "");
-
-    let err = run_builtin_err(root, "config", &["--wat"]);
-    assert_task_invocation_error_contains(
-        err,
-        &["unknown argument(s) for built-in `config`: --wat"],
-    );
+    for case in cases {
+        let root = workspace_with_empty_manifest(case.workspace);
+        let err = run_builtin_err(root, "config", case.args);
+        assert_task_invocation_error_contains(err, case.expected);
+    }
 }
