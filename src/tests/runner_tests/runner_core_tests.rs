@@ -335,6 +335,40 @@ fn run_manifest_task_builtin_migrate_json_reports_schema_and_conflicts() {
 }
 
 #[test]
+fn run_manifest_task_builtin_migrate_validates_arguments() {
+    let cases = [
+        BuiltinErrorCase {
+            workspace: "builtin-migrate-missing-from-value",
+            command: "migrate",
+            args: &["--from"],
+            manifest: "",
+            expected: &["`--from` requires a file path"],
+        },
+        BuiltinErrorCase {
+            workspace: "builtin-migrate-missing-script-value",
+            command: "migrate",
+            args: &["--script"],
+            manifest: "",
+            expected: &["`--script` requires a script name"],
+        },
+        BuiltinErrorCase {
+            workspace: "builtin-migrate-unknown-arg",
+            command: "migrate",
+            args: &["--wat"],
+            manifest: "",
+            expected: &["unknown argument(s) for built-in `migrate`: --wat"],
+        },
+    ];
+
+    for case in cases {
+        let root = temp_workspace(case.workspace);
+        write_root_manifest(&root, case.manifest);
+        let err = run_builtin_err(root, case.command, case.args);
+        assert_task_invocation_error_contains(err, case.expected);
+    }
+}
+
+#[test]
 fn run_manifest_task_builtin_watch_help_renders_topic() {
     let root = temp_workspace("builtin-watch-help");
     write_empty_manifest(&root);
@@ -380,6 +414,41 @@ fn run_manifest_task_builtin_watch_validates_owner_and_arguments() {
             args: &["--owner", "external", "build", "--once"],
             manifest: "[tasks.build]\nrun = \"printf ok\"\n",
             expected: &["watch owner `external`", "Run the task directly"],
+        },
+        BuiltinErrorCase {
+            workspace: "builtin-watch-missing-max-runs-value",
+            command: "watch",
+            args: &["--owner", "effigy", "--max-runs"],
+            manifest: "",
+            expected: &["`--max-runs` requires a numeric value"],
+        },
+        BuiltinErrorCase {
+            workspace: "builtin-watch-invalid-max-runs-value",
+            command: "watch",
+            args: &["--owner", "effigy", "--max-runs", "nope"],
+            manifest: "",
+            expected: &["invalid `--max-runs` value `nope`"],
+        },
+        BuiltinErrorCase {
+            workspace: "builtin-watch-zero-max-runs-value",
+            command: "watch",
+            args: &["--owner", "effigy", "--max-runs", "0"],
+            manifest: "",
+            expected: &["`--max-runs` must be greater than zero"],
+        },
+        BuiltinErrorCase {
+            workspace: "builtin-watch-missing-debounce-value",
+            command: "watch",
+            args: &["--owner", "effigy", "--debounce-ms"],
+            manifest: "",
+            expected: &["`--debounce-ms` requires a numeric value"],
+        },
+        BuiltinErrorCase {
+            workspace: "builtin-watch-invalid-debounce-value",
+            command: "watch",
+            args: &["--owner", "effigy", "--debounce-ms", "nope"],
+            manifest: "",
+            expected: &["invalid `--debounce-ms` value `nope`"],
         },
     ];
 

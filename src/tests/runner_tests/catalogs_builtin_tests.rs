@@ -171,3 +171,33 @@ fn run_manifest_task_builtin_catalogs_rejects_invalid_pretty_value() {
     let err = run_builtin_err(root, "catalogs", &["--json", "--pretty", "nope"]);
     assert_task_invocation_error_contains(err, &["value `nope` is invalid"]);
 }
+
+#[test]
+fn run_manifest_task_builtin_catalogs_validates_missing_value_flags() {
+    let root = temp_workspace("builtin-catalogs-missing-values");
+    write_root_task_manifest(&root);
+
+    let err = run_builtin_err(root.clone(), "catalogs", &["--resolve"]);
+    assert_task_invocation_error_contains(err, &["catalogs argument --resolve requires a value"]);
+
+    let err = run_builtin_err(root.clone(), "catalogs", &["--json", "--pretty"]);
+    assert_task_invocation_error_contains(
+        err,
+        &["catalogs argument --pretty requires a value (`true` or `false`)"],
+    );
+
+    let err = run_builtin_err(root, "catalogs", &["--task"]);
+    assert_task_invocation_error_contains(err, &["task argument --task requires a value"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_catalogs_reports_unknown_argument_grouping() {
+    let root = temp_workspace("builtin-catalogs-unknown-args");
+    write_root_task_manifest(&root);
+
+    let err = run_builtin_err(root, "catalogs", &["--wat", "--huh"]);
+    assert_task_invocation_error_contains(
+        err,
+        &["unknown argument(s) for built-in `catalogs`: --wat --huh"],
+    );
+}

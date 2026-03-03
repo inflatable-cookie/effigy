@@ -6,6 +6,7 @@ use crate::{render_help, HelpTopic, TaskInvocation};
 
 use super::super::render::{encode_pretty_json_optional, render_utf8, standard_renderer};
 use super::super::{RunnerError, TASK_MANIFEST_FILE};
+use super::arg_parser::BuiltinArgParser;
 use super::unknown_builtin_args;
 
 pub(super) fn run_builtin_init(
@@ -13,18 +14,19 @@ pub(super) fn run_builtin_init(
     args: &[String],
     target_root: &Path,
 ) -> Result<Option<String>, RunnerError> {
+    let mut parser = BuiltinArgParser::new(args);
     let mut output_json = false;
     let mut help = false;
     let mut force = false;
     let mut dry_run = false;
     let mut unknown = Vec::<String>::new();
-    for arg in args {
-        match arg.as_str() {
+    while let Some(arg) = parser.next() {
+        match arg {
             "--json" => output_json = true,
             "--help" | "-h" => help = true,
             "--force" => force = true,
             "--dry-run" => dry_run = true,
-            _ => unknown.push(arg.clone()),
+            _ => unknown.push(arg.to_owned()),
         }
     }
     if !unknown.is_empty() {
