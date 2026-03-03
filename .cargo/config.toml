@@ -4,3 +4,6 @@ qa-docs = "run --bin effigy-qa -- --docs-only"
 qa-json = "run --bin effigy-qa -- --json-only"
 qa-json-ci = "run --bin effigy-qa -- --json-only --ci"
 qa-release = "run --bin effigy-release-qa --"
+
+[build]
+target-dir = ".cache/cargo/target"
