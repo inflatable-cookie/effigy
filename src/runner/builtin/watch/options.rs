@@ -2,7 +2,7 @@ use crate::TaskInvocation;
 
 use super::super::super::RunnerError;
 use super::super::arg_parser::BuiltinArgParser;
-use super::super::unknown_builtin_args;
+use super::super::unknown_builtin_arg;
 
 const DEFAULT_DEBOUNCE_MS: u64 = 400;
 
@@ -90,7 +90,7 @@ pub(super) fn parse_watch_request(
                 ));
             }
             _ if arg.starts_with('-') => {
-                return Err(unknown_builtin_args(&task.name, &[arg.to_owned()]));
+                return Err(unknown_builtin_arg(&task.name, arg));
             }
             _ => {
                 target = Some(TaskInvocation {

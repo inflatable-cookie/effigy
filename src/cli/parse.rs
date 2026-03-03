@@ -32,6 +32,10 @@ impl std::fmt::Display for CliParseError {
 
 impl std::error::Error for CliParseError {}
 
+fn unknown_argument(arg: impl Into<String>) -> CliParseError {
+    CliParseError::UnknownArgument(arg.into())
+}
+
 pub fn strip_global_json_flags(args: Vec<String>) -> (Vec<String>, bool) {
     let mut stripped = Vec::with_capacity(args.len());
     let mut json_mode = false;
@@ -98,7 +102,7 @@ where
         "--help" | "-h" | "help" => Ok(Command::Help(HelpTopic::General)),
         "doctor" => parse_doctor(args),
         "tasks" | "catalogs" => parse_tasks(args),
-        _ if cmd.starts_with('-') => Err(CliParseError::UnknownArgument(cmd)),
+        _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
     }
 }
@@ -147,7 +151,7 @@ where
                 pretty_json = parse_pretty_bool(value)?;
             }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
-            other => return Err(CliParseError::UnknownArgument(other.to_owned())),
+            other => return Err(unknown_argument(other)),
         }
     }
 
@@ -216,10 +220,7 @@ where
     }))
 }
 
-fn next_required_value<I>(
-    args: &mut I,
-    missing: CliParseError,
-) -> Result<String, CliParseError>
+fn next_required_value<I>(args: &mut I, missing: CliParseError) -> Result<String, CliParseError>
 where
     I: Iterator<Item = String>,
 {
@@ -234,9 +235,16 @@ where
 }
 
 fn parse_pretty_bool(value: String) -> Result<bool, CliParseError> {
+    parse_bool_literal(value, CliParseError::InvalidPrettyValue)
+}
+
+fn parse_bool_literal<F>(value: String, invalid: F) -> Result<bool, CliParseError>
+where
+    F: FnOnce(String) -> CliParseError,
+{
     match value.as_str() {
         "true" => Ok(true),
         "false" => Ok(false),
-        _ => Err(CliParseError::InvalidPrettyValue(value)),
+        _ => Err(invalid(value)),
     }
 }

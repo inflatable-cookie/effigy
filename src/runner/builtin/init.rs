@@ -7,7 +7,7 @@ use crate::{render_help, HelpTopic, TaskInvocation};
 use super::super::render::{encode_pretty_json_optional, render_utf8, standard_renderer};
 use super::super::{RunnerError, TASK_MANIFEST_FILE};
 use super::arg_parser::BuiltinArgParser;
-use super::unknown_builtin_args;
+use super::ensure_no_unknown_builtin_args;
 
 pub(super) fn run_builtin_init(
     task: &TaskInvocation,
@@ -29,9 +29,7 @@ pub(super) fn run_builtin_init(
             _ => unknown.push(arg.to_owned()),
         }
     }
-    if !unknown.is_empty() {
-        return Err(unknown_builtin_args(&task.name, &unknown));
-    }
+    ensure_no_unknown_builtin_args(&task.name, &unknown)?;
 
     if help {
         let mut renderer = standard_renderer(output_json);

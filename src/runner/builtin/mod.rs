@@ -5,6 +5,7 @@ use crate::TaskInvocation;
 use super::catalog::resolve_catalog_by_prefix;
 use super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector, BUILTIN_TASKS};
 
+mod arg_parser;
 mod cache;
 mod completion;
 mod config;
@@ -12,7 +13,6 @@ mod doctor;
 mod help;
 mod init;
 mod migrate;
-mod arg_parser;
 mod tasks;
 mod test;
 mod unlock;
@@ -35,6 +35,20 @@ pub(super) fn unknown_builtin_args(task_name: &str, args: &[String]) -> RunnerEr
         "unknown argument(s) for built-in `{task_name}`: {}",
         args.join(" ")
     ))
+}
+
+pub(super) fn unknown_builtin_arg(task_name: &str, arg: &str) -> RunnerError {
+    unknown_builtin_args(task_name, &[arg.to_owned()])
+}
+
+pub(super) fn ensure_no_unknown_builtin_args(
+    task_name: &str,
+    unknown: &[String],
+) -> Result<(), RunnerError> {
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    Err(unknown_builtin_args(task_name, unknown))
 }
 
 fn is_builtin_task(task_name: &str) -> bool {

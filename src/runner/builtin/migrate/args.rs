@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use crate::TaskInvocation;
 
-use super::{MigrateArgs, RunnerError};
 use super::super::arg_parser::BuiltinArgParser;
-use super::super::unknown_builtin_args;
+use super::super::unknown_builtin_arg;
+use super::{MigrateArgs, RunnerError};
 
 pub(super) fn parse_migrate_args(
     task: &TaskInvocation,
@@ -36,7 +36,7 @@ pub(super) fn parse_migrate_args(
                 script_filter.insert(value);
             }
             unknown => {
-                return Err(unknown_builtin_args(&task.name, &[unknown.to_owned()]));
+                return Err(unknown_builtin_arg(&task.name, unknown));
             }
         }
     }
