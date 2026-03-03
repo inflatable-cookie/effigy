@@ -23,6 +23,34 @@ Per target root:
 
 If `tasks.test` exists in the selected catalog, that explicit task always wins.
 
+## Built-in Cargo Env Auto-Apply
+
+When built-in `test` runs cargo suites (detected or configured), Effigy automatically applies manifest `[env]` entries whose keys start with `CARGO_`.
+
+Included sources:
+- direct `[env]` entries (for example `CARGO_HOME = "..."`)
+- grouped profile arrays under `[env]` (for example `cargo = [{ CARGO_HOME = "..." }, ...]`)
+
+Matching behavior:
+- applies to command shapes that resolve to cargo executables (`cargo`, `cargo-nextest`, `/abs/path/cargo`, `/abs/path/cargo-nextest`)
+- supports common wrappers and prefixes before cargo (`env`, `exec`, `command`, leading `KEY=value` assignments)
+- does not apply to shell-wrapped commands where cargo is inside a shell string (for example `sh -lc "cargo test --workspace"`)
+- does not apply to non-cargo executables
+
+Value substitution:
+- `{project}` and `{repo}` in `[env]` `CARGO_*` values resolve to the executing catalog root for each built-in test target.
+
+Example:
+
+```toml
+[env]
+CARGO_HOME = "{project}/.effigy/cargo/home"
+CARGO_TARGET_DIR = "{project}/.effigy/cargo/target"
+
+[test.suites]
+integration = "env RUST_LOG=info cargo nextest run --workspace"
+```
+
 ## Task Reference Chains
 
 Task-ref chains (`{ task = "..." }`) can target built-ins (including `test`) and include inline args.

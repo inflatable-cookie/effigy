@@ -168,6 +168,42 @@ Fix:
 - inspect per-target command/exit diagnostics,
 - rerun failing suite directly in that catalog root.
 
+### Symptom: `CARGO_HOME` / `CARGO_TARGET_DIR` is missing during `effigy test`
+
+Diagnosis:
+
+```sh
+effigy tasks --resolve test
+effigy test --plan
+```
+
+Inspect:
+- whether routing selected explicit `tasks.test` (instead of built-in `test`)
+- whether the planned command is cargo-shaped vs shell-wrapped
+- whether the selected catalog defines `[env]` `CARGO_*` entries
+
+Fix:
+- if you want built-in auto-apply behavior, avoid overriding with explicit `tasks.test`
+- define `CARGO_*` values in the selected catalog `[env]`
+- use cargo command forms directly (for example `cargo test ...`, `env FOO=bar cargo test ...`) instead of `sh -lc "cargo ..."` wrappers
+
+### Symptom: built-in cargo suite command did not receive manifest `CARGO_*` env
+
+Diagnosis:
+- inspect command shape in `[test.suites]` and `effigy test --plan`
+
+Fix:
+- use a supported cargo executable form such as:
+
+```sh
+cargo test --workspace
+cargo-nextest run --workspace
+env RUST_LOG=info cargo test --workspace
+/usr/local/bin/cargo nextest run --workspace
+```
+
+- avoid shell-string wrappers where cargo is not the executable token (for example `sh -lc "cargo test --workspace"`)
+
 ## 5) Watch Mode and Lock Errors
 
 ### Symptom: ``--owner <effigy|external> is required``
