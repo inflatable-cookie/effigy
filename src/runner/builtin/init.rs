@@ -6,6 +6,7 @@ use crate::{render_help, HelpTopic, TaskInvocation};
 
 use super::super::render::{encode_pretty_json_optional, render_utf8, standard_renderer};
 use super::super::{RunnerError, TASK_MANIFEST_FILE};
+use super::unknown_builtin_args;
 
 pub(super) fn run_builtin_init(
     task: &TaskInvocation,
@@ -27,11 +28,7 @@ pub(super) fn run_builtin_init(
         }
     }
     if !unknown.is_empty() {
-        return Err(RunnerError::TaskInvocation(format!(
-            "unknown argument(s) for built-in `{}`: {}",
-            task.name,
-            unknown.join(" ")
-        )));
+        return Err(unknown_builtin_args(&task.name, &unknown));
     }
 
     if help {

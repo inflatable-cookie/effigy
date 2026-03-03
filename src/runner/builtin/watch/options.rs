@@ -1,6 +1,7 @@
 use crate::TaskInvocation;
 
 use super::super::super::RunnerError;
+use super::super::unknown_builtin_args;
 
 const DEFAULT_DEBOUNCE_MS: u64 = 400;
 
@@ -133,10 +134,7 @@ pub(super) fn parse_watch_request(
                 ));
             }
             _ if arg.starts_with('-') => {
-                return Err(RunnerError::TaskInvocation(format!(
-                    "unknown argument(s) for built-in `{}`: {}",
-                    task.name, arg
-                )));
+                return Err(unknown_builtin_args(&task.name, std::slice::from_ref(arg)));
             }
             _ => {
                 target = Some(TaskInvocation {

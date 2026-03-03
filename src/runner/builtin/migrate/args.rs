@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::TaskInvocation;
 
 use super::{MigrateArgs, RunnerError};
+use super::super::unknown_builtin_args;
 
 pub(super) fn parse_migrate_args(
     task: &TaskInvocation,
@@ -47,10 +48,7 @@ pub(super) fn parse_migrate_args(
                 i += 2;
             }
             unknown => {
-                return Err(RunnerError::TaskInvocation(format!(
-                    "unknown argument(s) for built-in `{}`: {}",
-                    task.name, unknown
-                )));
+                return Err(unknown_builtin_args(&task.name, &[unknown.to_owned()]));
             }
         }
     }

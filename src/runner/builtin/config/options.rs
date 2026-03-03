@@ -1,6 +1,7 @@
 use crate::TaskInvocation;
 
 use super::super::super::RunnerError;
+use super::super::unknown_builtin_args;
 
 #[derive(Debug, Clone)]
 pub(super) struct ConfigOptions {
@@ -52,11 +53,7 @@ pub(super) fn parse_config_options(
     }
 
     if !unknown.is_empty() {
-        return Err(RunnerError::TaskInvocation(format!(
-            "unknown argument(s) for built-in `{}`: {}",
-            task.name,
-            unknown.join(" ")
-        )));
+        return Err(unknown_builtin_args(&task.name, &unknown));
     }
     if minimal && !schema {
         return Err(RunnerError::TaskInvocation(
