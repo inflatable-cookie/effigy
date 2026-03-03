@@ -16,7 +16,7 @@ mod builtin_command_tests;
 #[path = "runner_tests/catalogs_builtin_tests/mod.rs"]
 mod catalogs_builtin_tests;
 
-#[path = "runner_tests/tasks_and_doctor_command_tests.rs"]
+#[path = "runner_tests/tasks_and_doctor_command_tests/mod.rs"]
 mod tasks_and_doctor_command_tests;
 
 #[path = "runner_tests/config_builtin_tests/mod.rs"]
