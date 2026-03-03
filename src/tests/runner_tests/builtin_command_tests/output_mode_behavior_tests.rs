@@ -1,0 +1,69 @@
+use super::prelude::*;
+
+#[test]
+fn run_manifest_task_builtin_test_json_suppresses_child_process_output() {
+    let root = temp_workspace("builtin-test-json-suppresses-child-output");
+    write_package_json_with_test_script(&root);
+    install_local_vitest(
+        &root,
+        "#!/bin/sh\nprintf noisy-stdout\nprintf noisy-stderr >&2\nexit 0\n",
+    );
+
+    let out = run_builtin_ok(root, "test", &["--json", "--run"]);
+
+    assert!(
+        !out.contains("noisy-stdout"),
+        "child stdout leaked into json output"
+    );
+    assert!(
+        !out.contains("noisy-stderr"),
+        "child stderr leaked into json output"
+    );
+    let parsed = parse_json_output(&out);
+    assert_eq!(parsed["schema"], "effigy.test.results.v1");
+}
+
+#[test]
+fn run_manifest_task_builtin_test_text_and_json_outputs_share_target_identity() {
+    let root = temp_workspace("builtin-test-json-text-target-parity");
+    write_package_json_with_test_script(&root);
+    let marker = root.join("vitest-called.log");
+    install_local_vitest_marker(&root, &marker);
+
+    let text = run_builtin_ok(root.clone(), "test", &["--run"]);
+    assert_contains_all(&text, &["Test Results", "root", "ok"]);
+
+    let json = run_builtin_ok(root, "test", &["--json", "--run"]);
+    let parsed = parse_json_output(&json);
+    assert_eq!(parsed["schema"], "effigy.test.results.v1");
+    assert_eq!(parsed["targets"][0]["target"], "root");
+    assert_eq!(parsed["targets"][0]["success"], true);
+}
+
+#[test]
+fn run_manifest_task_builtin_test_verbose_results_include_runner_root_and_command() {
+    let root = temp_workspace("builtin-test-verbose-results");
+    write_package_json_with_test_script(&root);
+    install_local_vitest(&root, "#!/bin/sh\nexit 0\n");
+
+    let out = run_builtin_ok(root, "test", &["--verbose-results", "--run"]);
+    assert_contains_all(
+        &out,
+        &[
+            "Test Results",
+            "runner:vitest",
+            "root:",
+            "command:vitest run '--run'",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_test_tui_flag_falls_back_to_text_when_non_interactive() {
+    let root = temp_workspace("builtin-test-tui-fallback");
+    write_package_json_with_test_script(&root);
+    install_local_vitest(&root, "#!/bin/sh\nexit 0\n");
+
+    let out = run_builtin_ok(root, "test", &["--tui"]);
+    assert_contains_all(&out, &["Test Results", "root"]);
+}

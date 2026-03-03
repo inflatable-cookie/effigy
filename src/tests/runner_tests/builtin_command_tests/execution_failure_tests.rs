@@ -1,0 +1,66 @@
+use super::prelude::*;
+
+#[test]
+fn run_manifest_task_builtin_test_failure_keeps_rendered_results_summary() {
+    let root = temp_workspace("builtin-test-fanout-failure-summary");
+    let (farmyard, dairy) = setup_fanout_catalog_repo(&root);
+    install_local_vitest(&farmyard, "#!/bin/sh\nexit 1\n");
+    install_local_vitest(&dairy, "#!/bin/sh\nexit 0\n");
+
+    let err = run_builtin_err(root, "test", &[]);
+
+    assert_builtin_test_non_zero(
+        err,
+        Some(vec![("farmyard".to_owned(), Some(1))]),
+        &["Test Results", "dairy", "ok", "farmyard", "exit=1"],
+        &["runner:vitest", "command:"],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_test_json_failure_includes_results_and_failures() {
+    let root = temp_workspace("builtin-test-fanout-failure-json");
+    let (farmyard, dairy) = setup_fanout_catalog_repo(&root);
+    install_local_vitest(&farmyard, "#!/bin/sh\nexit 1\n");
+    install_local_vitest(&dairy, "#!/bin/sh\nexit 0\n");
+
+    let err = run_builtin_err(root, "test", &["--json"]);
+    match err {
+        RunnerError::BuiltinTestNonZero { failures, rendered } => {
+            assert_eq!(failures, vec![("farmyard".to_owned(), Some(1))]);
+            let parsed = parse_json_output(&rendered);
+            assert_eq!(parsed["schema"], "effigy.test.results.v1");
+            assert_eq!(parsed["failures"][0]["target"], "farmyard");
+            let target_names = parsed["targets"]
+                .as_array()
+                .expect("targets array")
+                .iter()
+                .filter_map(|entry| entry["target"].as_str())
+                .collect::<Vec<&str>>();
+            assert!(target_names.contains(&"dairy"));
+            assert!(target_names.contains(&"farmyard"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_builtin_test_failure_with_suite_filter_shows_no_match_hint() {
+    let root = temp_workspace("builtin-test-filtered-failure-hint");
+    write_package_json_with_test_script(&root);
+    install_local_vitest(&root, "#!/bin/sh\nexit 1\n");
+
+    let err = run_builtin_err(root, "test", &["vitest", "user-service"]);
+
+    assert_builtin_test_non_zero(
+        err,
+        None,
+        &[
+            "Hint",
+            "often means no tests matched",
+            "vitest run 'user-service'",
+            "Try again without the filter",
+        ],
+        &[],
+    );
+}
