@@ -1,9 +1,9 @@
 use serde_json::Value;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[test]
 fn cli_tasks_no_color_output_has_no_ansi_sequences() {
@@ -287,14 +287,11 @@ fn cli_json_mode_lock_conflict_wraps_runner_failure() {
     });
 
     let workspace_lock = root.join(".effigy/locks/workspace.lock");
-    let start = std::time::Instant::now();
-    while !workspace_lock.exists() {
-        assert!(
-            start.elapsed() < std::time::Duration::from_secs(5),
-            "workspace lock was not created in time"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    wait_for_path_exists(
+        &workspace_lock,
+        Duration::from_secs(5),
+        "workspace lock for task=dev",
+    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")
@@ -345,14 +342,11 @@ fn cli_json_mode_watch_lock_conflict_has_unlock_remediation_hint() {
     });
 
     let watch_lock = root.join(".effigy/locks/task-watch-build.lock");
-    let start = std::time::Instant::now();
-    while !watch_lock.exists() {
-        assert!(
-            start.elapsed() < std::time::Duration::from_secs(5),
-            "watch lock was not created in time"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    wait_for_path_exists(
+        &watch_lock,
+        Duration::from_secs(5),
+        "watch lock for owner=effigy target=build",
+    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")
@@ -1331,4 +1325,16 @@ fn temp_workspace(name: &str) -> PathBuf {
     fs::create_dir_all(&root).expect("mkdir workspace");
     fs::write(root.join("package.json"), "{}\n").expect("write package marker");
     root
+}
+
+fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) {
+    let started = Instant::now();
+    while !path.exists() {
+        assert!(
+            started.elapsed() < timeout,
+            "{label} was not created in time: {}",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }

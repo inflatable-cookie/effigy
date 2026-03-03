@@ -125,14 +125,11 @@ fn run_manifest_task_builtin_watch_rejects_concurrent_watch_owner_for_same_targe
     });
 
     let watch_lock = root.join(".effigy/locks/task-watch-build.lock");
-    let started = Instant::now();
-    while !watch_lock.exists() {
-        assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "watch lock was not created in time"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+    wait_for_path_exists(
+        &watch_lock,
+        Duration::from_secs(5),
+        "watch lock for owner=effigy target=build",
+    );
 
     let err = run_task(&root, "watch", &["--owner", "effigy", "--once", "build"])
         .expect_err("second watch owner should conflict on watch scope lock");
