@@ -116,3 +116,21 @@ pub(super) fn setup_doctor_explain_catalog_workspace(name: &str) -> PathBuf {
     );
     root
 }
+
+pub(super) fn write_root_and_farmyard_api_catalog(root: &PathBuf) {
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    write_root_manifest(root, "[tasks.root]\nrun = \"printf root\"\n");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
+    );
+}
+
+pub(super) fn run_catalogs_ok(root: PathBuf, args: &[&str]) -> String {
+    run_builtin_ok(root, "catalogs", args)
+}
+
+pub(super) fn run_catalogs_err(root: PathBuf, args: &[&str]) -> RunnerError {
+    run_builtin_err(root, "catalogs", args)
+}
