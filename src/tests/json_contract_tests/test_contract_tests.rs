@@ -71,6 +71,7 @@ fn builtin_test_results_json_contract_has_versioned_shape_and_hint_fields() {
     let parsed = parse_json(&rendered);
     assert_schema_v1(&parsed, "effigy.test.results.v1");
     assert!(parsed["targets"].is_array());
+    assert!(parsed["targets"][0]["cargo_env_match"].is_string());
     assert!(parsed["failures"].is_array());
     assert!(parsed["hint"].is_object());
     assert_eq!(

@@ -19,6 +19,7 @@ pub(super) fn render_builtin_test_results_json(
             (
                 target.root.display().to_string(),
                 target.suite_source.clone(),
+                target.cargo_env_match.as_str().to_owned(),
                 target
                     .plans
                     .iter()
@@ -28,7 +29,7 @@ pub(super) fn render_builtin_test_results_json(
                     .collect::<Vec<String>>(),
             )
         })
-        .collect::<Vec<(String, String, Vec<String>)>>();
+        .collect::<Vec<(String, String, String, Vec<String>)>>();
     let mut failures = results
         .iter()
         .filter(|result| !result.success)
@@ -49,16 +50,23 @@ pub(super) fn render_builtin_test_results_json(
         .iter()
         .map(|result| {
             let root_rendered = result.root.display().to_string();
-            let (suite_source, available_suites) = suite_source_by_root
+            let (suite_source, cargo_env_match, available_suites) = suite_source_by_root
                 .iter()
-                .find(|(root, _, _)| root == &root_rendered)
-                .map(|(_, source, suites)| (source.clone(), suites.clone()))
-                .unwrap_or_else(|| ("unknown".to_owned(), vec![result.runner.clone()]));
+                .find(|(root, _, _, _)| root == &root_rendered)
+                .map(|(_, source, mode, suites)| (source.clone(), mode.clone(), suites.clone()))
+                .unwrap_or_else(|| {
+                    (
+                        "unknown".to_owned(),
+                        "unknown".to_owned(),
+                        vec![result.runner.clone()],
+                    )
+                });
             json!({
                 "target": result.name,
                 "suite": result.runner,
                 "root": root_rendered,
                 "suite_source": suite_source,
+                "cargo_env_match": cargo_env_match,
                 "available_suites": available_suites,
                 "command": result.command,
                 "success": result.success,

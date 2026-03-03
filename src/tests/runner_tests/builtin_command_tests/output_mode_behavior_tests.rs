@@ -37,6 +37,7 @@ fn run_manifest_task_builtin_test_text_and_json_outputs_share_target_identity() 
     let parsed = parse_json_output(&json);
     assert_eq!(parsed["schema"], "effigy.test.results.v1");
     assert_eq!(parsed["targets"][0]["target"], "root");
+    assert_eq!(parsed["targets"][0]["cargo_env_match"], "prefix-aware");
     assert_eq!(parsed["targets"][0]["success"], true);
 }
 
@@ -53,9 +54,32 @@ fn run_manifest_task_builtin_test_verbose_results_include_runner_root_and_comman
             "Test Results",
             "runner:vitest",
             "root:",
+            "cargo-env-match:prefix-aware",
             "command:vitest run '--run'",
         ],
     );
+}
+
+#[test]
+fn run_manifest_task_builtin_test_verbose_results_and_json_report_shell_aware_cargo_env_match() {
+    let root = temp_workspace("builtin-test-results-cargo-env-match-shell-aware");
+    write_root_manifest(
+        &root,
+        r#"[test]
+cargo_env_match = "shell-aware"
+
+[test.suites]
+integration = "sh -lc 'exit 0'"
+"#,
+    );
+
+    let text = run_builtin_ok(root.clone(), "test", &["--verbose-results"]);
+    assert_contains_all(&text, &["Test Results", "cargo-env-match:shell-aware"]);
+
+    let json = run_builtin_ok(root, "test", &["--json"]);
+    let parsed = parse_json_output(&json);
+    assert_eq!(parsed["schema"], "effigy.test.results.v1");
+    assert_eq!(parsed["targets"][0]["cargo_env_match"], "shell-aware");
 }
 
 #[test]
