@@ -94,40 +94,13 @@ where
         return Ok(Command::Help(HelpTopic::General));
     };
 
-    if cmd == "--help" || cmd == "-h" {
-        return Ok(Command::Help(HelpTopic::General));
+    match cmd.as_str() {
+        "--help" | "-h" | "help" => Ok(Command::Help(HelpTopic::General)),
+        "doctor" => parse_doctor(args),
+        "tasks" | "catalogs" => parse_tasks(args),
+        _ if cmd.starts_with('-') => Err(CliParseError::UnknownArgument(cmd)),
+        _ => parse_task_command(cmd, args),
     }
-    if cmd.starts_with('-') {
-        return Err(CliParseError::UnknownArgument(cmd));
-    }
-    if cmd == "help" {
-        return Ok(Command::Help(HelpTopic::General));
-    }
-
-    if cmd == "doctor" {
-        return parse_doctor(args);
-    }
-    if cmd == "tasks" {
-        return parse_tasks(args);
-    }
-    if cmd == "catalogs" {
-        return parse_tasks(args);
-    }
-    if let Some(topic) = builtin_help_topic(&cmd) {
-        let task_args = args.collect::<Vec<String>>();
-        if task_args.iter().any(|arg| arg == "--help" || arg == "-h") {
-            return Ok(Command::Help(topic));
-        }
-        return Ok(Command::Task(TaskInvocation {
-            name: cmd,
-            args: task_args,
-        }));
-    }
-
-    Ok(Command::Task(TaskInvocation {
-        name: cmd,
-        args: args.collect(),
-    }))
 }
 
 fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
@@ -153,36 +126,25 @@ where
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--repo" => {
-                let Some(path) = args.next() else {
-                    return Err(CliParseError::MissingRepoValue);
-                };
-                repo_override = Some(PathBuf::from(path));
-            }
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--task" => {
-                let Some(name) = args.next() else {
-                    return Err(CliParseError::MissingTaskNameValue);
-                };
-                task_name = Some(name);
+                task_name = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingTaskNameValue,
+                )?);
             }
             "--resolve" => {
-                let Some(selector) = args.next() else {
-                    return Err(CliParseError::MissingResolveSelectorValue);
-                };
-                resolve_selector = Some(selector);
+                resolve_selector = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingResolveSelectorValue,
+                )?);
             }
             "--json" => {
                 output_json = true;
             }
             "--pretty" => {
-                let Some(value) = args.next() else {
-                    return Err(CliParseError::MissingPrettyValue);
-                };
-                pretty_json = match value.as_str() {
-                    "true" => true,
-                    "false" => false,
-                    _ => return Err(CliParseError::InvalidPrettyValue(value)),
-                };
+                let value = next_required_value(&mut args, CliParseError::MissingPrettyValue)?;
+                pretty_json = parse_pretty_bool(value)?;
             }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
             other => return Err(CliParseError::UnknownArgument(other.to_owned())),
@@ -215,12 +177,7 @@ where
             continue;
         }
         match arg.as_str() {
-            "--repo" => {
-                let Some(path) = args.next() else {
-                    return Err(CliParseError::MissingRepoValue);
-                };
-                repo_override = Some(PathBuf::from(path));
-            }
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
             "--fix" => fix = true,
             "--verbose" => verbose = true,
@@ -241,4 +198,45 @@ where
         verbose,
         explain,
     }))
+}
+
+fn parse_task_command<I>(name: String, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let task_args = args.into_iter().collect::<Vec<String>>();
+    if let Some(topic) = builtin_help_topic(&name) {
+        if task_args.iter().any(|arg| arg == "--help" || arg == "-h") {
+            return Ok(Command::Help(topic));
+        }
+    }
+    Ok(Command::Task(TaskInvocation {
+        name,
+        args: task_args,
+    }))
+}
+
+fn next_required_value<I>(
+    args: &mut I,
+    missing: CliParseError,
+) -> Result<String, CliParseError>
+where
+    I: Iterator<Item = String>,
+{
+    args.next().ok_or(missing)
+}
+
+fn parse_repo_path<I>(args: &mut I) -> Result<PathBuf, CliParseError>
+where
+    I: Iterator<Item = String>,
+{
+    next_required_value(args, CliParseError::MissingRepoValue).map(PathBuf::from)
+}
+
+fn parse_pretty_bool(value: String) -> Result<bool, CliParseError> {
+    match value.as_str() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(CliParseError::InvalidPrettyValue(value)),
+    }
 }
