@@ -19,21 +19,21 @@ pub(super) fn parse_migrate_args(
     while let Some(arg) = parser.next() {
         match arg {
             "--json" => {
-                output_json = true;
+                parser.bool_flag(&mut output_json);
             }
             "--help" | "-h" => {
-                help = true;
+                parser.bool_flag(&mut help);
             }
             "--apply" => {
-                apply = true;
+                parser.bool_flag(&mut apply);
             }
             "--from" => {
-                let value = parser.next_value("`--from` requires a file path")?;
+                let value = parser.string_flag_value("`--from` requires a file path")?;
                 package_path = Some(PathBuf::from(value));
             }
             "--script" => {
-                let value = parser.next_value("`--script` requires a script name")?;
-                script_filter.insert(value.to_owned());
+                let value = parser.string_flag_value("`--script` requires a script name")?;
+                script_filter.insert(value);
             }
             unknown => {
                 return Err(unknown_builtin_args(&task.name, &[unknown.to_owned()]));
