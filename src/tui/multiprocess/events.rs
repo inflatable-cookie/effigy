@@ -1,9 +1,7 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::KeyEvent;
 
 use crate::process_manager::{ProcessEventKind, ProcessSupervisor};
-use crate::tui::core::{
-    next_index, prev_index, InputMode, LogEntry, LogEntryKind, ProcessExitState,
-};
+use crate::tui::core::{LogEntry, LogEntryKind, ProcessExitState};
 
 use super::config::{EVENT_DRAIN_WAIT, VT_PARSER_COLS, VT_PARSER_ROWS, VT_PARSER_SCROLLBACK};
 use super::diagnostics::RuntimeDiagnostics;
@@ -14,11 +12,13 @@ use super::terminal_text::{
 use super::{MultiProcessTuiError, MultiProcessTuiOptions};
 
 mod input;
+mod key_command;
+mod key_insert;
 mod options;
 mod process;
-
-use input::shell_key_input;
-use process::{all_processes_exited, payload_line_count, should_skip_plain_output_due_to_vt};
+use key_command::{handle_command_key, handle_pre_dispatch_key, handle_shell_shortcuts};
+use key_insert::handle_insert_key;
+use process::{payload_line_count, should_skip_plain_output_due_to_vt};
 
 pub(super) enum LoopControl {
     Continue,
@@ -162,171 +162,23 @@ pub(super) fn handle_key_event(
     let active_process = state.active_process().to_owned();
     let active_is_shell = active_process == "shell";
 
-    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
-        if active_is_shell && state.shell_capture_mode && !state.show_help && !state.show_options {
-            supervisor.send_input(&active_process, "\u{3}")?;
-            return Ok(LoopControl::Continue);
-        }
-        return Ok(LoopControl::Quit);
-    }
-    if active_is_shell
-        && key.modifiers.contains(KeyModifiers::CONTROL)
-        && matches!(key.code, KeyCode::Char('g'))
+    if let Some(control) =
+        handle_shell_shortcuts(key, supervisor, state, &active_process, active_is_shell)?
     {
-        state.shell_capture_mode = !state.shell_capture_mode;
-        state.input_mode = InputMode::Command;
-        return Ok(LoopControl::Continue);
+        return Ok(control);
     }
-    if active_is_shell && state.shell_capture_mode && !state.show_help && !state.show_options {
-        if let Some(input) = shell_key_input(key) {
-            supervisor.send_input(&active_process, &input)?;
-        }
-        return Ok(LoopControl::Continue);
-    }
-    if matches!(key.code, KeyCode::Esc)
-        && options.esc_quit_on_complete
-        && !state.show_help
-        && !state.show_options
-        && state.input_mode == InputMode::Command
-        && all_processes_exited(&state.exit_states, state.process_names.len())
-    {
-        return Ok(LoopControl::Quit);
-    }
-    if matches!(key.code, KeyCode::Tab) {
-        if active_is_shell {
-            if !state.shell_capture_mode {
-                state.shell_capture_mode = true;
-            }
-            return Ok(LoopControl::Continue);
-        }
-        state.input_mode = if state.input_mode == InputMode::Insert {
-            InputMode::Command
-        } else {
-            InputMode::Insert
-        };
-        if state.input_mode == InputMode::Insert {
-            state.show_help = false;
-            state.show_options = false;
-        }
-        return Ok(LoopControl::Continue);
+    if let Some(control) = handle_pre_dispatch_key(key, state, options) {
+        return Ok(control);
     }
     if let Some(control) = options::handle_options_overlay_key(key, supervisor, state, max_offset)?
     {
         return Ok(control);
     }
-    if state.input_mode == InputMode::Insert {
-        match key.code {
-            KeyCode::Enter => {
-                if !state.input_line.is_empty() {
-                    let target = &state.process_names[state.active_index];
-                    let mut payload = state.input_line.clone();
-                    payload.push('\n');
-                    supervisor.send_input(target, &payload)?;
-                    state.input_line.clear();
-                }
-            }
-            KeyCode::Backspace => {
-                state.input_line.pop();
-            }
-            KeyCode::Esc => {
-                state.input_mode = InputMode::Command;
-            }
-            KeyCode::Char(c) => {
-                state.input_line.push(c);
-            }
-            _ => {}
-        }
+    if state.input_mode == crate::tui::core::InputMode::Insert {
+        handle_insert_key(key, supervisor, state)?;
         return Ok(LoopControl::Continue);
     }
-
-    match key.code {
-        KeyCode::Char('i') => {
-            if state.process_names[state.active_index] != "shell" {
-                state.input_mode = InputMode::Insert;
-                state.show_help = false;
-                state.show_options = false;
-            }
-        }
-        KeyCode::Char('h') => {
-            state.show_help = !state.show_help;
-            if state.show_help {
-                state.show_options = false;
-            }
-        }
-        KeyCode::Char('o') => {
-            state.show_options = !state.show_options;
-            if state.show_options {
-                state.show_help = false;
-                state.options_index = 0;
-            }
-        }
-        KeyCode::BackTab => {
-            state.shell_capture_mode = false;
-            state.input_mode = InputMode::Command;
-            state.active_index = prev_index(state.active_index, state.process_names.len());
-        }
-        KeyCode::Right => {
-            state.shell_capture_mode = false;
-            state.input_mode = InputMode::Command;
-            state.active_index = next_index(state.active_index, state.process_names.len());
-        }
-        KeyCode::Left => {
-            state.shell_capture_mode = false;
-            state.input_mode = InputMode::Command;
-            state.active_index = prev_index(state.active_index, state.process_names.len());
-        }
-        KeyCode::Up => {
-            let active = state.active_process().to_owned();
-            state.set_follow_for(&active, false);
-            state
-                .set_scroll_offset_for(&active, state.scroll_offset_for(&active).saturating_sub(1));
-        }
-        KeyCode::Down => {
-            let active = state.active_process().to_owned();
-            state.set_scroll_offset_for(
-                &active,
-                state
-                    .scroll_offset_for(&active)
-                    .saturating_add(1)
-                    .min(max_offset),
-            );
-        }
-        KeyCode::PageUp => {
-            let active = state.active_process().to_owned();
-            state.set_follow_for(&active, false);
-            state.set_scroll_offset_for(
-                &active,
-                state.scroll_offset_for(&active).saturating_sub(10),
-            );
-        }
-        KeyCode::PageDown => {
-            let active = state.active_process().to_owned();
-            state.set_scroll_offset_for(
-                &active,
-                state
-                    .scroll_offset_for(&active)
-                    .saturating_add(10)
-                    .min(max_offset),
-            );
-        }
-        KeyCode::Home => {
-            let active = state.active_process().to_owned();
-            state.set_follow_for(&active, false);
-            state.set_scroll_offset_for(&active, 0);
-        }
-        KeyCode::End => {
-            let active = state.active_process().to_owned();
-            state.set_follow_for(&active, true);
-            state.set_scroll_offset_for(&active, max_offset);
-        }
-        KeyCode::Esc => {
-            state.show_help = false;
-            state.show_options = false;
-        }
-        _ => {}
-    }
-
-    Ok(LoopControl::Continue)
+    Ok(handle_command_key(key, state, max_offset))
 }
 #[cfg(test)]
 mod tests {
