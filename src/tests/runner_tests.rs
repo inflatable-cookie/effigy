@@ -78,6 +78,74 @@ fn write_executable(path: &PathBuf, script: &str) {
     fs::set_permissions(path, perms).expect("chmod");
 }
 
+fn write_package_json_with_test_script(root: &PathBuf) {
+    fs::write(
+        root.join("package.json"),
+        "{ \"scripts\": { \"test\": \"vitest\" } }\n",
+    )
+    .expect("write package");
+}
+
+fn write_package_json_with_vitest_dev_dependency(root: &PathBuf) {
+    fs::write(
+        root.join("package.json"),
+        r#"{
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}"#,
+    )
+    .expect("write package");
+}
+
+fn write_multi_suite_cargo_manifest(root: &PathBuf) {
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write cargo toml");
+}
+
+fn setup_multi_suite_repo(root: &PathBuf) {
+    write_package_json_with_test_script(root);
+    write_multi_suite_cargo_manifest(root);
+}
+
+fn write_test_suites_manifest(root: &PathBuf, suites: &[(&str, &str)]) {
+    let mut manifest = "[test.suites]\n".to_owned();
+    for (suite, cmd) in suites {
+        manifest.push_str(&format!("{suite} = \"{cmd}\"\n"));
+    }
+    write_root_manifest(root, &manifest);
+}
+
+fn install_local_vitest(root: &PathBuf, script: &str) {
+    let local_bin = root.join("node_modules/.bin");
+    fs::create_dir_all(&local_bin).expect("mkdir local bin");
+    write_executable(&local_bin.join("vitest"), script);
+}
+
+fn install_local_vitest_marker(root: &PathBuf, marker: &PathBuf) {
+    install_local_vitest(
+        root,
+        &format!(
+            "#!/bin/sh\nprintf called > \"{}\"\nexit 0\n",
+            marker.display()
+        ),
+    );
+}
+
+fn write_js_package_manager_manifest(root: &PathBuf, package_manager: &str) {
+    write_root_manifest(
+        root,
+        &format!(
+            r#"[package_manager]
+js = "{package_manager}"
+"#
+        ),
+    );
+}
+
 fn run_builtin_ok(root: PathBuf, name: &str, args: &[&str]) -> String {
     run_builtin(root, name, args).expect("built-in invocation should succeed")
 }
