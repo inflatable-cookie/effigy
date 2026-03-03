@@ -52,22 +52,12 @@ pub(super) fn render_output_pane(
     } = args;
     let active_is_shell = active_process == "shell";
     let output_height = area.height.saturating_sub(2) as usize;
-    let mut lines = Vec::with_capacity(active_logs.len() + 1);
-    if !active_is_shell {
-        lines.push(runtime_meta_line(active_elapsed, active_restart_count));
-    }
-    lines.extend(active_logs.iter().map(|entry| match entry.kind {
-        LogEntryKind::Stdout => ansi_line(&entry.line, Style::default()),
-        LogEntryKind::Stderr => {
-            let mut spans = vec![Span::styled("[stderr] ", Style::default().fg(Color::Red))];
-            spans.extend(ansi_line(&entry.line, Style::default()).spans);
-            Line::from(spans)
-        }
-        LogEntryKind::Exit => Line::from(vec![
-            Span::styled("[exit] ", Style::default().fg(Color::Yellow)),
-            Span::styled(entry.line.clone(), Style::default().fg(Color::Gray)),
-        ]),
-    }));
+    let lines = output_lines(
+        active_logs,
+        active_is_shell,
+        active_elapsed,
+        active_restart_count,
+    );
 
     let panel = panel_block(None, false, Color::DarkGray);
     let shell_inactive_style = if active_is_shell && !shell_capture_mode {
@@ -78,18 +68,11 @@ pub(super) fn render_output_pane(
         Style::default()
     };
     let logs = if !active_output_seen && !exit_states.contains_key(process_name) {
-        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let spinner = spinner_frames[spinner_tick % spinner_frames.len()];
-        Paragraph::new(vec![
-            runtime_meta_line(active_elapsed, active_restart_count),
-            Line::from(vec![
-                Span::styled(spinner.to_owned(), Style::default().fg(Color::Yellow)),
-                Span::styled(
-                    " waiting for first output...",
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]),
-        ])
+        Paragraph::new(waiting_for_output_lines(
+            spinner_tick,
+            active_elapsed,
+            active_restart_count,
+        ))
         .block(panel)
         .style(shell_inactive_style)
     } else {
@@ -152,4 +135,52 @@ pub(super) fn render_input_pane(
         Paragraph::new("")
     };
     frame.render_widget(input, area);
+}
+
+fn output_lines(
+    active_logs: &[LogEntry],
+    active_is_shell: bool,
+    active_elapsed: Duration,
+    active_restart_count: usize,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::with_capacity(active_logs.len() + 1);
+    if !active_is_shell {
+        lines.push(runtime_meta_line(active_elapsed, active_restart_count));
+    }
+    lines.extend(active_logs.iter().map(format_log_entry_line));
+    lines
+}
+
+fn waiting_for_output_lines(
+    spinner_tick: usize,
+    active_elapsed: Duration,
+    active_restart_count: usize,
+) -> Vec<Line<'static>> {
+    let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let spinner = spinner_frames[spinner_tick % spinner_frames.len()];
+    vec![
+        runtime_meta_line(active_elapsed, active_restart_count),
+        Line::from(vec![
+            Span::styled(spinner.to_owned(), Style::default().fg(Color::Yellow)),
+            Span::styled(
+                " waiting for first output...",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]),
+    ]
+}
+
+fn format_log_entry_line(entry: &LogEntry) -> Line<'static> {
+    match entry.kind {
+        LogEntryKind::Stdout => ansi_line(&entry.line, Style::default()),
+        LogEntryKind::Stderr => {
+            let mut spans = vec![Span::styled("[stderr] ", Style::default().fg(Color::Red))];
+            spans.extend(ansi_line(&entry.line, Style::default()).spans);
+            Line::from(spans)
+        }
+        LogEntryKind::Exit => Line::from(vec![
+            Span::styled("[exit] ", Style::default().fg(Color::Yellow)),
+            Span::styled(entry.line.clone(), Style::default().fg(Color::Gray)),
+        ]),
+    }
 }
