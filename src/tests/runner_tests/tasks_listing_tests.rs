@@ -6,11 +6,12 @@ fn create_workspace_dir(root: &PathBuf, name: &str) -> PathBuf {
     dir
 }
 
+fn write_root_manifest(root: &PathBuf, body: &str) {
+    write_manifest(&root.join("effigy.toml"), body);
+}
+
 fn write_root_dev_task_manifest(root: &PathBuf) {
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.dev]\nrun = \"printf root\"\n",
-    );
+    write_root_manifest(root, "[tasks.dev]\nrun = \"printf root\"\n");
 }
 
 fn write_catalog_tasks(dir: &PathBuf, alias: &str, tasks: &[(&str, &str)]) {
@@ -39,8 +40,8 @@ fn setup_root_with_catalogs(name: &str, catalogs: &[(&str, &[(&str, &str)])]) ->
 }
 
 fn write_managed_dev_manifest(root: &PathBuf, profile: &str) {
-    write_manifest(
-        &root.join("effigy.toml"),
+    write_root_manifest(
+        root,
         &format!(
             r#"[tasks.dev]
 mode = "tui"
@@ -52,6 +53,11 @@ concurrent = [{{ run = "printf api" }}]
             profile
         ),
     );
+}
+
+fn assert_builtin_ok_empty(root: PathBuf, task: &str, args: &[&str]) {
+    let out = run_builtin_ok(root, task, args);
+    assert_eq!(out, "");
 }
 
 fn json_task_column(parsed: &serde_json::Value, field: &str) -> Vec<String> {
@@ -83,8 +89,8 @@ fn run_tasks_lists_catalogs_and_tasks() {
 #[test]
 fn run_tasks_supports_compact_task_definitions() {
     let root = temp_workspace("compact-tasks");
-    write_manifest(
-        &root.join("effigy.toml"),
+    write_root_manifest(
+        &root,
         r#"[tasks]
 api = "printf api"
 jobs = "printf jobs"
@@ -98,8 +104,8 @@ jobs = "printf jobs"
 #[test]
 fn run_tasks_supports_mixed_compact_and_table_task_definitions() {
     let root = temp_workspace("mixed-compact-and-table");
-    write_manifest(
-        &root.join("effigy.toml"),
+    write_root_manifest(
+        &root,
         r#"[tasks]
 api = "printf api"
 
@@ -108,8 +114,7 @@ run = "printf dev"
 "#,
     );
 
-    let out = run_builtin_ok(root.clone(), "api", &[]);
-    assert_eq!(out, "");
+    assert_builtin_ok_empty(root.clone(), "api", &[]);
 
     let tasks = run_tasks_from_repo(&root, None, None, false);
     assert_contains_all(&tasks, &["api", "dev"]);
@@ -118,8 +123,8 @@ run = "printf dev"
 #[test]
 fn run_tasks_supports_compact_sequence_task_definitions() {
     let root = temp_workspace("compact-sequence-tasks");
-    write_manifest(
-        &root.join("effigy.toml"),
+    write_root_manifest(
+        &root,
         r#"[tasks]
 drop-db = "printf drop-db"
 migrate-db = "printf migrate-db"
@@ -127,8 +132,7 @@ reset-db = [{ task = "drop-db" }, { task = "migrate-db" }]
 "#,
     );
 
-    let out = run_builtin_ok(root.clone(), "reset-db", &[]);
-    assert_eq!(out, "");
+    assert_builtin_ok_empty(root.clone(), "reset-db", &[]);
 
     let tasks = run_tasks_from_repo(&root, Some("reset-db"), None, false);
     assert_contains_all(&tasks, &["reset-db", "<sequence:2>"]);
@@ -276,10 +280,7 @@ fn run_manifest_task_prefixed_builtin_tasks_targets_catalog_root_only() {
             ("dairy", &[("admin", "printf dairy-admin")]),
         ],
     );
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.root-only]\nrun = \"printf root\"\n",
-    );
+    write_root_manifest(&root, "[tasks.root-only]\nrun = \"printf root\"\n");
 
     let out = run_builtin_ok(root, "farmyard/tasks", &[]);
 
@@ -295,10 +296,7 @@ fn run_manifest_task_relative_prefixed_builtin_tasks_target_catalog_root_only() 
         &[("froyo", &[("validate", "printf froyo-validate")])],
     );
     let dairy = create_workspace_dir(&root, "dairy");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.root-only]\nrun = \"printf root\"\n",
-    );
+    write_root_manifest(&root, "[tasks.root-only]\nrun = \"printf root\"\n");
 
     let out = run_builtin_ok(dairy, "../froyo/tasks", &[]);
 

@@ -30,6 +30,11 @@ fn write_validate_manifest(root: &PathBuf, body: &str) {
     write_manifest(&root.join("effigy.toml"), body);
 }
 
+fn assert_validate_ok_empty(root: &PathBuf, args: &[&str]) {
+    let out = run_validate_ok(root, args);
+    assert_eq!(out, "");
+}
+
 #[test]
 fn run_manifest_task_run_array_supports_task_reference_steps() {
     let root = temp_workspace("run-array-task-refs");
@@ -231,8 +236,7 @@ run = [
         ),
     );
 
-    let out = run_validate_ok(&root, &[]);
-    assert_eq!(out, "");
+    assert_validate_ok_empty(&root, &[]);
     let body = fs::read_to_string(out_file).expect("read retry output");
     assert_eq!(body, "ok");
 }
@@ -296,9 +300,7 @@ run = [{{ task = "capture hello-world" }}]
         ),
     );
 
-    let out = run_validate_ok(&root, &[]);
-
-    assert_eq!(out, "");
+    assert_validate_ok_empty(&root, &[]);
     let body = fs::read_to_string(&marker).expect("read marker");
     assert_eq!(body, "hello-world");
 }
@@ -320,9 +322,7 @@ run = [{{ task = 'capture alpha "two words"' }}]
         ),
     );
 
-    let out = run_validate_ok(&root, &[]);
-
-    assert_eq!(out, "");
+    assert_validate_ok_empty(&root, &[]);
     let body = fs::read_to_string(&marker).expect("read marker");
     assert_eq!(body, "alpha|two words");
 }
