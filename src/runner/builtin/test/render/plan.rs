@@ -3,6 +3,8 @@ use std::path::Path;
 
 #[path = "plan_payload.rs"]
 mod plan_payload;
+#[path = "plan_projection.rs"]
+mod plan_projection;
 #[path = "plan_text.rs"]
 mod plan_text;
 
