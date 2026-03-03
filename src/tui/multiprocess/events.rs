@@ -44,11 +44,11 @@ pub(super) fn drain_process_events(
         if let Some(buffer) = state.logs.get_mut(&event_item.process) {
             match event_item.kind {
                 ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {
-                    state
-                        .restart_pending
-                        .insert(event_item.process.clone(), false);
-                    let had_output = *state.output_seen.get(&event_item.process).unwrap_or(&false);
-                    state.output_seen.insert(event_item.process.clone(), true);
+                    let had_output = mark_process_received_output(
+                        &mut state.restart_pending,
+                        &mut state.output_seen,
+                        &event_item.process,
+                    );
                     if vt_emulator_enabled {
                         if !had_output {
                             state.vt_parsers.insert(
@@ -78,34 +78,34 @@ pub(super) fn drain_process_events(
                     }
                 }
                 ProcessEventKind::Stdout => {
-                    if vt_emulator_enabled
-                        && *state
-                            .vt_saw_chunk
-                            .get(&event_item.process)
-                            .unwrap_or(&false)
-                    {
+                    if should_skip_plain_output_due_to_vt(
+                        &state.vt_saw_chunk,
+                        &event_item.process,
+                        vt_emulator_enabled,
+                    ) {
                         continue;
                     }
-                    state
-                        .restart_pending
-                        .insert(event_item.process.clone(), false);
-                    state.output_seen.insert(event_item.process.clone(), true);
+                    mark_process_received_output(
+                        &mut state.restart_pending,
+                        &mut state.output_seen,
+                        &event_item.process,
+                    );
                     diagnostics.record_stdout_lines(payload_line_count(&event_item.payload));
                     ingest_log_payload(buffer, LogEntryKind::Stdout, &event_item.payload);
                 }
                 ProcessEventKind::Stderr => {
-                    if vt_emulator_enabled
-                        && *state
-                            .vt_saw_chunk
-                            .get(&event_item.process)
-                            .unwrap_or(&false)
-                    {
+                    if should_skip_plain_output_due_to_vt(
+                        &state.vt_saw_chunk,
+                        &event_item.process,
+                        vt_emulator_enabled,
+                    ) {
                         continue;
                     }
-                    state
-                        .restart_pending
-                        .insert(event_item.process.clone(), false);
-                    state.output_seen.insert(event_item.process.clone(), true);
+                    mark_process_received_output(
+                        &mut state.restart_pending,
+                        &mut state.output_seen,
+                        &event_item.process,
+                    );
                     diagnostics.record_stderr_lines(payload_line_count(&event_item.payload));
                     ingest_log_payload(buffer, LogEntryKind::Stderr, &event_item.payload);
                 }
@@ -347,6 +347,25 @@ fn all_processes_exited(
 
 fn payload_line_count(raw: &str) -> usize {
     raw.lines().count().max(1)
+}
+
+fn should_skip_plain_output_due_to_vt(
+    vt_saw_chunk: &std::collections::HashMap<String, bool>,
+    process: &str,
+    vt_emulator_enabled: bool,
+) -> bool {
+    vt_emulator_enabled && *vt_saw_chunk.get(process).unwrap_or(&false)
+}
+
+fn mark_process_received_output(
+    restart_pending: &mut std::collections::HashMap<String, bool>,
+    output_seen: &mut std::collections::HashMap<String, bool>,
+    process: &str,
+) -> bool {
+    restart_pending.insert(process.to_owned(), false);
+    let had_output = *output_seen.get(process).unwrap_or(&false);
+    output_seen.insert(process.to_owned(), true);
+    had_output
 }
 
 fn shell_key_input(key: &KeyEvent) -> Option<String> {

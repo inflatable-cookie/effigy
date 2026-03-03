@@ -59,8 +59,9 @@ pub(crate) fn ingest_log_payload(
     kind: LogEntryKind,
     payload: &str,
 ) {
-    let (normalized, cursor_up) = normalize_terminal_payload(payload);
+    let normalized = normalize_terminal_payload(payload);
     let fragments = normalized
+        .text
         .split('\r')
         .map(sanitize_log_text)
         .filter(|line| !line.is_empty())
@@ -69,8 +70,8 @@ pub(crate) fn ingest_log_payload(
         return;
     }
 
-    if fragments.len() == 1 && !normalized.contains('\r') {
-        if cursor_up > 0 {
+    if fragments.len() == 1 && !normalized.text.contains('\r') {
+        if normalized.cursor_up > 0 {
             replace_last_renderable_line(buffer, kind, fragments[0].clone());
         } else {
             push_entry(
@@ -84,11 +85,9 @@ pub(crate) fn ingest_log_payload(
         return;
     }
 
-    let mut append_on_first_rewrite = false;
-    let mut first = true;
-    for fragment in fragments {
-        if first {
-            if cursor_up > 0 {
+    for (index, fragment) in fragments.into_iter().enumerate() {
+        if index == 0 {
+            if normalized.cursor_up > 0 {
                 replace_last_renderable_line(buffer, kind.clone(), fragment);
             } else {
                 push_entry(
@@ -99,83 +98,53 @@ pub(crate) fn ingest_log_payload(
                     },
                 );
             }
-            first = false;
             continue;
         }
-        if append_on_first_rewrite {
-            push_entry(
-                buffer,
-                LogEntry {
-                    kind: kind.clone(),
-                    line: fragment,
-                },
-            );
-            append_on_first_rewrite = false;
-        } else {
-            replace_last_renderable_line(buffer, kind.clone(), fragment);
-        }
+        replace_last_renderable_line(buffer, kind.clone(), fragment);
     }
 }
 
-fn normalize_terminal_payload(raw: &str) -> (String, usize) {
+#[derive(Debug, Default)]
+struct NormalizedPayload {
+    text: String,
+    cursor_up: usize,
+}
+
+fn normalize_terminal_payload(raw: &str) -> NormalizedPayload {
     let chars: Vec<char> = raw.chars().collect();
     let mut out = String::new();
     let mut i = 0usize;
     let mut cursor_up = 0usize;
     while i < chars.len() {
-        let ch = chars[i];
-        if ch == '\u{1b}' && i + 1 < chars.len() {
-            match chars[i + 1] {
-                '[' => {
-                    let start = i;
-                    i += 2;
-                    let mut params = String::new();
-                    while i < chars.len() {
-                        let final_byte = chars[i];
-                        if ('@'..='~').contains(&final_byte) {
-                            if final_byte == 'm' {
-                                out.extend(chars[start..=i].iter());
-                            } else if final_byte == 'A' {
-                                let count = params
-                                    .split(';')
-                                    .next()
-                                    .and_then(|value| {
-                                        if value.is_empty() {
-                                            Some(1usize)
-                                        } else {
-                                            value.parse::<usize>().ok()
-                                        }
-                                    })
-                                    .unwrap_or(1usize);
-                                cursor_up = cursor_up.saturating_add(count);
-                            }
-                            break;
-                        }
-                        params.push(final_byte);
-                        i += 1;
+        if let Some(sequence) = parse_escape_sequence(&chars, i) {
+            match sequence {
+                EscapeSequence::Csi {
+                    params,
+                    final_byte,
+                    end,
+                    start,
+                } => {
+                    if final_byte == 'm' {
+                        out.extend(chars[start..=end].iter());
+                    } else if final_byte == 'A' {
+                        cursor_up = cursor_up.saturating_add(parse_cursor_up_count(&params));
                     }
+                    i = end + 1;
+                    continue;
                 }
-                ']' => {
-                    i += 2;
-                    while i < chars.len() {
-                        if chars[i] == '\u{0007}' {
-                            break;
-                        }
-                        if chars[i] == '\u{1b}' && i + 1 < chars.len() && chars[i + 1] == '\\' {
-                            i += 1;
-                            break;
-                        }
-                        i += 1;
-                    }
+                EscapeSequence::Osc { end } => {
+                    i = end + 1;
+                    continue;
                 }
-                _ => {}
             }
-        } else {
-            out.push(ch);
         }
+        out.push(chars[i]);
         i += 1;
     }
-    (out, cursor_up)
+    NormalizedPayload {
+        text: out,
+        cursor_up,
+    }
 }
 
 fn replace_last_renderable_line(buffer: &mut VecDeque<LogEntry>, kind: LogEntryKind, line: String) {
@@ -213,26 +182,30 @@ pub(crate) fn ansi_line(raw: &str, base: Style) -> Line<'static> {
     let chars: Vec<char> = raw.chars().collect();
     let mut i = 0usize;
     while i < chars.len() {
-        if chars[i] == '\u{1b}' && i + 1 < chars.len() && chars[i + 1] == '[' {
-            if !buf.is_empty() {
-                spans.push(Span::styled(std::mem::take(&mut buf), style));
-            }
-            i += 2;
-            let mut code = String::new();
-            while i < chars.len() {
-                let final_byte = chars[i];
-                if ('@'..='~').contains(&final_byte) {
-                    if final_byte == 'm' {
-                        style = apply_sgr(style, &code, base);
+        if let Some(sequence) = parse_escape_sequence(&chars, i) {
+            match sequence {
+                EscapeSequence::Csi {
+                    params,
+                    final_byte,
+                    end,
+                    ..
+                } => {
+                    if !buf.is_empty() {
+                        spans.push(Span::styled(std::mem::take(&mut buf), style));
                     }
-                    break;
+                    if final_byte == 'm' {
+                        style = apply_sgr(style, &params, base);
+                    }
+                    i = end + 1;
+                    continue;
                 }
-                code.push(chars[i]);
-                i += 1;
+                EscapeSequence::Osc { end } => {
+                    i = end + 1;
+                    continue;
+                }
             }
-        } else {
-            buf.push(chars[i]);
         }
+        buf.push(chars[i]);
         i += 1;
     }
     if !buf.is_empty() {
@@ -242,6 +215,77 @@ pub(crate) fn ansi_line(raw: &str, base: Style) -> Line<'static> {
         return Line::from("");
     }
     Line::from(spans)
+}
+
+enum EscapeSequence {
+    Csi {
+        start: usize,
+        end: usize,
+        params: String,
+        final_byte: char,
+    },
+    Osc {
+        end: usize,
+    },
+}
+
+fn parse_escape_sequence(chars: &[char], start: usize) -> Option<EscapeSequence> {
+    if chars.get(start).copied()? != '\u{1b}' {
+        return None;
+    }
+    let next = chars.get(start + 1).copied()?;
+    match next {
+        '[' => parse_csi_sequence(chars, start),
+        ']' => parse_osc_sequence(chars, start),
+        _ => None,
+    }
+}
+
+fn parse_csi_sequence(chars: &[char], start: usize) -> Option<EscapeSequence> {
+    let mut i = start + 2;
+    let mut params = String::new();
+    while i < chars.len() {
+        let final_byte = chars[i];
+        if ('@'..='~').contains(&final_byte) {
+            return Some(EscapeSequence::Csi {
+                start,
+                end: i,
+                params,
+                final_byte,
+            });
+        }
+        params.push(final_byte);
+        i += 1;
+    }
+    None
+}
+
+fn parse_osc_sequence(chars: &[char], start: usize) -> Option<EscapeSequence> {
+    let mut i = start + 2;
+    while i < chars.len() {
+        if chars[i] == '\u{0007}' {
+            return Some(EscapeSequence::Osc { end: i });
+        }
+        if chars[i] == '\u{1b}' && i + 1 < chars.len() && chars[i + 1] == '\\' {
+            return Some(EscapeSequence::Osc { end: i + 1 });
+        }
+        i += 1;
+    }
+    None
+}
+
+fn parse_cursor_up_count(params: &str) -> usize {
+    params
+        .split(';')
+        .next()
+        .and_then(|value| {
+            if value.is_empty() {
+                Some(1usize)
+            } else {
+                value.parse::<usize>().ok()
+            }
+        })
+        .unwrap_or(1usize)
 }
 
 fn apply_sgr(current: Style, sgr: &str, base: Style) -> Style {
