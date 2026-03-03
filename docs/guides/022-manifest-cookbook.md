@@ -63,12 +63,13 @@ CARGO_TARGET_DIR = "{project}/.effigy/cargo/target"
 cargo = [{ CARGO_HOME = "{project}/.effigy/cargo/home" }, { CARGO_TARGET_DIR = "{project}/.effigy/cargo/target" }]
 
 [tasks.api]
+env_file = [".env.local", ".env.test"]
 run = [
-  { env = "CARGO_HOME" },
-  { env = "CARGO_TARGET_DIR" },
-  { run = "cargo run -p api" },
+  { env = "cargo" },
+  { env = "DATABASE_URL" },
+  { run = "cargo run -p api {args}" },
   { env = { RUST_LOG = "debug" } },
-  { run = "cargo run -p jobs" }
+  { task = "jobs" }
 ]
 ```
 
@@ -76,12 +77,19 @@ Use this when you want env changes to take effect at specific points in a run ch
 
 Behavior:
 - an `env` step updates the effective env for subsequent run-array entries
-- `env = "<name>"` resolves an entry from top-level `[env]`
-- `env = "<catalog-path>/<name>"` resolves `<name>` from another catalog `[env]` table (relative to current catalog root unless absolute)
+- an `env_file` step updates dotenv fallback sources for subsequent run-array entries
+- `env = "<name>"` resolves in order: top-level `[env]`, process env, then `<catalog-root>/.env`
+- `env = "<catalog-path>/<name>"` resolves `<name>` from another catalog `[env]` table, then that catalog `.env` (relative to current catalog root unless absolute)
+- cross-catalog refs (`env = "<catalog-path>/<name>"`) do not use process env fallback
 - `[env].<name>` can be either a single value (`KEY = "value"`) or a grouped profile array (`name = [{ KEY = "value" }, ...]`)
-- `env` steps can be mixed with `run` and `task` steps
+- `tasks.<name>.env_file` sets fallback dotenv for that task; accepts string or ordered array (`[".env.local", ".env.test"]`)
+- run arrays can update fallback dotenv mid-chain with `{ env_file = ".env.test" }` or `{ env_file = [".env.local", ".env.test"] }`
+- for array form, files are checked in order and first file containing the key wins
+- `env` and `env_file` steps can be mixed with `run` and `task` steps
+- `env`/`env_file` directives can be standalone entries with no `run`/`task` command (no-op step used for state changes)
 - `tasks.<name>.env` still applies globally to the whole task; run-array `env` steps can override later entries
 - `{project}`/`{repo}` in env values always resolve from the task currently executing
+- `.env` parsing accepts `KEY=value` and `export KEY=value`; matching single/double quotes are stripped from values
 
 ## 5) Managed Dev Stack (`mode = "tui"`)
 
@@ -207,6 +215,7 @@ Behavior:
 - process environment is inherited by default
 - `tasks.<name>.env` overrides inherited values for that task
 - run-array env directives support either inline maps (`env = { ... }`) or named entries (`env = "CARGO_HOME"`/`env = "cargo"` from `[env]`)
+- named entry resolution order is `[env]` -> process env -> dotenv fallback (`.env` or `env_file` override)
 - referenced tasks keep their own `env` when called via `task = "..."` entries
 - env value token substitution supports `{project}` and `{repo}` (aliases for catalog root path)
 

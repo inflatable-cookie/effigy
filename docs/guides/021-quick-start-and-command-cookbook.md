@@ -52,15 +52,27 @@ Per-task Cargo isolation example:
 
 ```toml
 [env]
-CARGO_HOME = "{project}/.effigy/cargo/home"
-CARGO_TARGET_DIR = "{project}/.effigy/cargo/target"
+cargo = [
+  { CARGO_HOME = "{project}/.effigy/cargo/home" },
+  { CARGO_TARGET_DIR = "{project}/.effigy/cargo/target" }
+]
 
 [tasks]
-build = [{ env = "CARGO_HOME" }, { env = "CARGO_TARGET_DIR" }, { run = "cargo build --workspace" }]
+build = [{ env = "cargo" }, { run = "cargo build --workspace" }]
 ```
 
 Use this when multiple repos build concurrently and you want project-local Cargo directories.
 Cross-catalog reuse is also supported: `{ env = "../shared/CARGO_HOME" }`.
+
+Named env directives also support `.env` fallback when no `[env]` or process value exists:
+
+```toml
+[tasks.test]
+env_file = [".env.local", ".env.test"]
+run = [{ env = "DATABASE_URL" }, { run = "cargo test --workspace" }]
+```
+
+Fallback order is `[env]` entry first, then process environment, then dotenv (`.env` by default, or `env_file` override).
 
 ## 3) Daily Operator Commands
 

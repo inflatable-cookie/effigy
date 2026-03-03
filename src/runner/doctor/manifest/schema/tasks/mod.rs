@@ -38,6 +38,7 @@ pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &
         validate_task_mode(context, task_name, task_table.get("mode"));
         validate_task_run_field(context, task_name, task_table.get("run"));
         validate_task_env_field(context, task_name, task_table.get("env"));
+        validate_task_env_file_field(context, task_name, task_table.get("env_file"));
 
         if let Some(concurrent) = task_table.get("concurrent") {
             validate_concurrent_array(
@@ -82,7 +83,14 @@ fn validate_task_table_keys(
     for key in task_table.keys() {
         if !matches!(
             key.as_str(),
-            "run" | "env" | "mode" | "fail_on_non_zero" | "shell" | "concurrent" | "profiles"
+            "run"
+                | "env"
+                | "env_file"
+                | "mode"
+                | "fail_on_non_zero"
+                | "shell"
+                | "concurrent"
+                | "profiles"
         ) {
             context.unsupported_key(&format!("tasks.{task_name}.{key}"));
         }
@@ -146,6 +154,59 @@ fn validate_task_env_field(
                 &format!("tasks.{task_name}.env.{key}"),
                 SchemaContext::value_type(value),
                 "expected string",
+            );
+        }
+    }
+}
+
+fn validate_task_env_file_field(
+    context: &mut SchemaContext<'_, '_>,
+    task_name: &str,
+    env_file: Option<&Value>,
+) {
+    let Some(env_file) = env_file else {
+        return;
+    };
+    if let Some(raw) = env_file.as_str() {
+        if raw.trim().is_empty() {
+            context.unsupported_value(
+                &format!("tasks.{task_name}.env_file"),
+                "empty string",
+                "expected non-empty string",
+            );
+        }
+        return;
+    }
+    let Some(entries) = env_file.as_array() else {
+        context.unsupported_value(
+            &format!("tasks.{task_name}.env_file"),
+            SchemaContext::value_type(env_file),
+            "expected string or array of strings",
+        );
+        return;
+    };
+    if entries.is_empty() {
+        context.unsupported_value(
+            &format!("tasks.{task_name}.env_file"),
+            "empty array",
+            "expected non-empty array of strings",
+        );
+        return;
+    }
+    for (index, entry) in entries.iter().enumerate() {
+        let Some(raw) = entry.as_str() else {
+            context.unsupported_value(
+                &format!("tasks.{task_name}.env_file[{index}]"),
+                SchemaContext::value_type(entry),
+                "expected string",
+            );
+            continue;
+        };
+        if raw.trim().is_empty() {
+            context.unsupported_value(
+                &format!("tasks.{task_name}.env_file[{index}]"),
+                "empty string",
+                "expected non-empty string",
             );
         }
     }

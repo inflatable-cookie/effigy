@@ -60,6 +60,8 @@ pub(super) struct ManifestTask {
     #[serde(default)]
     pub(super) env: BTreeMap<String, String>,
     #[serde(default)]
+    pub(super) env_file: Option<ManifestEnvFileDirective>,
+    #[serde(default)]
     pub(super) mode: Option<String>,
     #[serde(default)]
     pub(super) fail_on_non_zero: Option<bool>,
@@ -114,6 +116,8 @@ pub(super) struct ManifestManagedRunStepTable {
     #[serde(default)]
     pub(super) env: Option<ManifestRunStepEnv>,
     #[serde(default)]
+    pub(super) env_file: Option<ManifestEnvFileDirective>,
+    #[serde(default)]
     pub(super) id: Option<String>,
     #[serde(default)]
     pub(super) depends_on: Vec<String>,
@@ -132,6 +136,13 @@ pub(super) struct ManifestManagedRunStepTable {
 pub(super) enum ManifestRunStepEnv {
     Inline(BTreeMap<String, String>),
     Profile(String),
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+pub(super) enum ManifestEnvFileDirective {
+    Single(String),
+    Many(Vec<String>),
 }
 
 #[derive(Debug, serde::Deserialize)]

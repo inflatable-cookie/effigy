@@ -96,6 +96,37 @@ Fix:
 - correct TOML syntax and key names,
 - remove unsupported keys (manifest uses strict unknown-field rejection).
 
+### Symptom: `task <...> run step references unknown env entry <...>`
+
+Diagnosis:
+
+```sh
+effigy tasks --resolve <task-selector>
+```
+
+Inspect the selected catalog `effigy.toml`:
+- verify `[env]` contains the referenced entry name (`env = "<name>"`), or
+- verify cross-catalog path refs (`env = "../shared/<name>"`) point to a real catalog root.
+
+Fix:
+- define the missing entry in `[env]`, or
+- export it in process environment, or
+- add it to `.env` / `env_file` fallback for that catalog.
+
+### Symptom: `failed to read env file <...>`
+
+Diagnosis:
+
+```sh
+effigy doctor --verbose
+ls -la <catalog-root>/<env-file>
+```
+
+Fix:
+- correct the `env_file` path (task-level or run-step),
+- ensure file permissions allow read access,
+- use an ordered fallback list (`env_file = [".env.local", ".env.test"]`) when files are optional per environment.
+
 ## 4) Built-in Test Routing Errors
 
 ### Symptom: `built-in test is ambiguous for arguments ...`

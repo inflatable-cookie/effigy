@@ -58,7 +58,7 @@ fn resolve_table_task_run_step(
     match select_run_or_task(
         step.run.as_deref(),
         step.task.as_deref(),
-        step.env.is_some(),
+        step.env.is_some() || step.env_file.is_some(),
         || {
             RunnerError::TaskInvocation(format!(
                 "task `{task_name}` run step is invalid: define either `run` or `task`, not both"
@@ -92,7 +92,7 @@ enum RunOrTaskRef<'a> {
 fn select_run_or_task<'a, FBoth, FNone>(
     run: Option<&'a str>,
     task: Option<&'a str>,
-    has_env: bool,
+    has_env_directive: bool,
     both_error: FBoth,
     none_error: FNone,
 ) -> Result<RunOrTaskRef<'a>, RunnerError>
@@ -104,7 +104,7 @@ where
         (Some(run), None) => Ok(RunOrTaskRef::Run(run)),
         (None, Some(task)) => Ok(RunOrTaskRef::Task(task)),
         (Some(_), Some(_)) => Err(both_error()),
-        (None, None) if has_env => Ok(RunOrTaskRef::Noop),
+        (None, None) if has_env_directive => Ok(RunOrTaskRef::Noop),
         (None, None) => Err(none_error()),
     }
 }

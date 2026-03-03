@@ -69,6 +69,10 @@ effigy completion candidates [--repo <PATH>] [--prefix <value>] [--json]
 - run arrays also support env directives (`{ env = { ... } }` or `{ env = "<profile>" }`) to update env for later entries in the chain.
 - run-array env directives also support cross-catalog indirection via `env = "<catalog-path>/<name>"` (path relative to current catalog unless absolute).
 - top-level `[env]` defines reusable named entries for run-array indirection; entries can be direct values (`NAME = "value"`) or grouped profile arrays (`name = [{ KEY = "value" }, ...]`).
+- when a named env entry is not defined in `[env]`, effigy falls back to process env and `.env` lookup for that key.
+- task-level `env_file` and run-step `{ env_file = ... }` can override dotenv fallback source (`.env` by default); supports string or ordered array where first file containing a key wins.
+- run-step `env`/`env_file` directives can be standalone no-op state updates (no `run` or `task` key required).
+- for cross-catalog `env = "<catalog-path>/<name>"`, dotenv fallback uses that target catalog root (including `env_file` overrides) and does not check process env.
 - `tasks.<name>.env` values support `{project}` and `{repo}` catalog-root token substitution.
 - `completion` command list is sourced from the built-in command index (`BUILTIN_TASKS`) to reduce drift with command discovery output.
 - `completion candidates` includes built-ins plus discovered `<task>` and `<catalog>/<task>` selectors.

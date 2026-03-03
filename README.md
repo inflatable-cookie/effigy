@@ -99,11 +99,18 @@ run = "cargo run -p app-db --bin reset_dev_db {args}"
 [env]
 CARGO_HOME = "{project}/.effigy/cargo/home"
 CARGO_TARGET_DIR = "{project}/.effigy/cargo/target"
+cargo = [{ CARGO_HOME = "{project}/.effigy/cargo/home" }, { CARGO_TARGET_DIR = "{project}/.effigy/cargo/target" }]
 
 [tasks.api]
-run = [{ env = "CARGO_HOME" }, { env = "CARGO_TARGET_DIR" }, { run = "cargo run -p api" }]
+run = [{ env = "cargo" }, { env = { RUST_LOG = "info" } }, { run = "cargo run -p api {args}" }]
 # or pull a named env value from another catalog root:
 # run = [{ env = "../shared/CARGO_HOME" }, { run = "cargo run -p api" }]
+
+[tasks.test]
+env_file = [".env.local", ".env.test"]
+run = [{ env = "DATABASE_URL" }, { run = "cargo test -p api" }]
+# run arrays can switch dotenv source mid-chain:
+# run = [{ env_file = ".env.test" }, { env = "DATABASE_URL" }, { run = "cargo test -p api" }]
 
 [tasks.build.cache]
 enabled = true
@@ -118,7 +125,11 @@ Interpolation tokens:
 - `{args}`: passthrough args (shell-quoted)
 - `{request}`: original unresolved selector (deferral only)
 - in `tasks.<name>.env` values and `[env]` entries, `{project}`/`{repo}` resolve to the catalog root path
-- run-array `env = "<catalog-path>/<name>"` resolves `<name>` from another catalog's `[env]` table (path is relative to current catalog unless absolute)
+- run-array `env = "<name>"` resolves in order: top-level `[env]`, process env, then `<catalog-root>/.env`
+- run-array `env = "<catalog-path>/<name>"` resolves `<name>` from that catalog's `[env]`, then that catalog's `.env` (path is relative to current catalog unless absolute)
+- run-array `env`/`env_file` directives may be standalone entries (no `run`/`task`) to mutate env state for later steps
+- set `tasks.<name>.env_file = ".env.test"` (or `[".env.local", ".env.test"]`) to change dotenv fallback for that task; run arrays can also switch with `{ env_file = ".env.local" }` or `{ env_file = [".env.local", ".env.test"] }`
+- dotenv parsing accepts `KEY=value` and `export KEY=value` lines; matching single/double quotes around values are stripped
 
 ## Resolution Model
 

@@ -119,6 +119,10 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Run
         color_enabled,
         "# Reusable env entries for run-array directives (`{ env = \"<name>\" }` or `{ env = \"<catalog-path>/<name>\" }`).",
     ))?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Missing named entries fall back to process env, then <catalog-root>/.env.",
+    ))?;
     renderer.text("CARGO_HOME = \"{project}/.effigy/cargo/home\"")?;
     renderer.text("CARGO_TARGET_DIR = \"{project}/.effigy/cargo/target\"")?;
     renderer.text(&muted_comment(
@@ -137,6 +141,19 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Run
     renderer.text(
         "run = [{ env = \"CARGO_HOME\" }, { env = \"CARGO_TARGET_DIR\" }, { run = \"cargo run -p api\" }]",
     )?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Optional dotenv fallback override for this task:",
+    ))?;
+    renderer.text("env_file = \".env.test\"")?;
+    renderer.text("env_file = [\".env.local\", \".env.test\"]")?;
+    renderer.text("run = [{ env = \"DATABASE_URL\" }, { run = \"cargo test -p api\" }]")?;
+    renderer.text(&muted_comment(
+        color_enabled,
+        "# Or switch dotenv source mid-chain:",
+    ))?;
+    renderer.text("run = [{ env_file = \".env.local\" }, { env = \"DATABASE_URL\" }, { task = \"migrate\" }]")?;
+    renderer.text("run = [{ env_file = [\".env.local\", \".env.test\"] }, { env = \"DATABASE_URL\" }, { task = \"migrate\" }]")?;
     renderer.text(&muted_comment(
         color_enabled,
         "# Cross-catalog reference example (relative to current catalog root):",

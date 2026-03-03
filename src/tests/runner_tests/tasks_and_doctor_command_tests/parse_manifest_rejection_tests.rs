@@ -72,6 +72,16 @@ fn run_tasks_rejects_invalid_manifest_shapes() {
             manifest: "[env]\ncargo = { CARGO_HOME = \"tmp\" }\n",
             expected: &["invalid type", "data did not match any variant"],
         },
+        ParseRejectionCase {
+            workspace: "reject-invalid-task-env-file-type",
+            manifest: "[tasks.api]\nenv_file = true\nrun = \"printf api\"\n",
+            expected: &["data did not match any variant"],
+        },
+        ParseRejectionCase {
+            workspace: "reject-invalid-run-step-env-file-type",
+            manifest: "[tasks.api]\nrun = [{ env_file = 1 }, { run = \"printf api\" }]\n",
+            expected: &["data did not match any variant"],
+        },
     ];
 
     for case in cases {
