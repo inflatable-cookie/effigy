@@ -41,10 +41,10 @@ pub(super) fn parse_watch_request(
     while let Some(arg) = parser.next() {
         match arg {
             "--json" => {
-                output_json = true;
+                parser.bool_flag(&mut output_json);
             }
             "--help" | "-h" => {
-                help = true;
+                parser.bool_flag(&mut help);
             }
             "--owner" => {
                 let value =
@@ -60,12 +60,14 @@ pub(super) fn parse_watch_request(
                 };
             }
             "--debounce-ms" => {
-                let value = parser.next_value("`--debounce-ms` requires a numeric value")?;
-                let parsed = value.parse::<u64>().map_err(|_| {
-                    RunnerError::TaskInvocation(format!(
-                        "invalid `--debounce-ms` value `{value}` (expected a positive integer)"
-                    ))
-                })?;
+                let parsed = parser.u64_flag_value(
+                    "`--debounce-ms` requires a numeric value",
+                    |value| {
+                        format!(
+                            "invalid `--debounce-ms` value `{value}` (expected a positive integer)"
+                        )
+                    },
+                )?;
                 if parsed == 0 {
                     return Err(RunnerError::TaskInvocation(
                         "`--debounce-ms` must be greater than zero".to_owned(),
@@ -74,23 +76,25 @@ pub(super) fn parse_watch_request(
                 debounce_ms = parsed;
             }
             "--include" => {
-                let value = parser.next_value("`--include` requires a glob value")?;
-                include.push(value.to_owned());
+                let value = parser.string_flag_value("`--include` requires a glob value")?;
+                include.push(value);
             }
             "--exclude" => {
-                let value = parser.next_value("`--exclude` requires a glob value")?;
-                exclude.push(value.to_owned());
+                let value = parser.string_flag_value("`--exclude` requires a glob value")?;
+                exclude.push(value);
             }
             "--once" => {
                 max_runs = Some(1);
             }
             "--max-runs" => {
-                let value = parser.next_value("`--max-runs` requires a numeric value")?;
-                let parsed = value.parse::<usize>().map_err(|_| {
-                    RunnerError::TaskInvocation(format!(
-                        "invalid `--max-runs` value `{value}` (expected an integer >= 1)"
-                    ))
-                })?;
+                let parsed = parser.usize_flag_value(
+                    "`--max-runs` requires a numeric value",
+                    |value| {
+                        format!(
+                            "invalid `--max-runs` value `{value}` (expected an integer >= 1)"
+                        )
+                    },
+                )?;
                 if parsed == 0 {
                     return Err(RunnerError::TaskInvocation(
                         "`--max-runs` must be greater than zero".to_owned(),
