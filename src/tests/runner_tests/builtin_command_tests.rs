@@ -533,6 +533,33 @@ fn run_manifest_task_builtin_test_failure_keeps_rendered_results_summary() {
 }
 
 #[test]
+fn run_manifest_task_builtin_test_json_failure_includes_results_and_failures() {
+    let root = temp_workspace("builtin-test-fanout-failure-json");
+    let (farmyard, dairy) = setup_fanout_catalog_repo(&root);
+    install_local_vitest(&farmyard, "#!/bin/sh\nexit 1\n");
+    install_local_vitest(&dairy, "#!/bin/sh\nexit 0\n");
+
+    let err = run_builtin_err(root, "test", &["--json"]);
+    match err {
+        RunnerError::BuiltinTestNonZero { failures, rendered } => {
+            assert_eq!(failures, vec![("farmyard".to_owned(), Some(1))]);
+            let parsed = parse_json_output(&rendered);
+            assert_eq!(parsed["schema"], "effigy.test.results.v1");
+            assert_eq!(parsed["failures"][0]["target"], "farmyard");
+            let target_names = parsed["targets"]
+                .as_array()
+                .expect("targets array")
+                .iter()
+                .filter_map(|entry| entry["target"].as_str())
+                .collect::<Vec<&str>>();
+            assert!(target_names.contains(&"dairy"));
+            assert!(target_names.contains(&"farmyard"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
 fn run_manifest_task_builtin_test_failure_with_suite_filter_shows_no_match_hint() {
     let root = temp_workspace("builtin-test-filtered-failure-hint");
     write_package_json_with_test_script(&root);
@@ -551,6 +578,23 @@ fn run_manifest_task_builtin_test_failure_with_suite_filter_shows_no_match_hint(
         ],
         &[],
     );
+}
+
+#[test]
+fn run_manifest_task_builtin_test_text_and_json_outputs_share_target_identity() {
+    let root = temp_workspace("builtin-test-json-text-target-parity");
+    write_package_json_with_test_script(&root);
+    let marker = root.join("vitest-called.log");
+    install_local_vitest_marker(&root, &marker);
+
+    let text = run_builtin_ok(root.clone(), "test", &["--run"]);
+    assert_contains_all(&text, &["Test Results", "root", "ok"]);
+
+    let json = run_builtin_ok(root, "test", &["--json", "--run"]);
+    let parsed = parse_json_output(&json);
+    assert_eq!(parsed["schema"], "effigy.test.results.v1");
+    assert_eq!(parsed["targets"][0]["target"], "root");
+    assert_eq!(parsed["targets"][0]["success"], true);
 }
 
 #[test]
