@@ -6,6 +6,12 @@ use crate::runner::builtin::test::planning::{BuiltinResolvedPlan, BuiltinTestTar
 use crate::runner::util::normalize_builtin_test_suite;
 use crate::runner::{LoadedCatalog, ManifestJsPackageManager};
 
+struct BuiltinTestTargetConfig {
+    configured_suites: BTreeMap<String, String>,
+    package_manager: Option<ManifestJsPackageManager>,
+    runner_overrides: BTreeMap<String, String>,
+}
+
 pub(super) fn resolve_builtin_test_targets(
     prefix: Option<&str>,
     resolved_root: &Path,
@@ -72,10 +78,11 @@ fn resolve_target_test_plans(
     catalogs: &[LoadedCatalog],
     target_root: &Path,
 ) -> (Vec<BuiltinResolvedPlan>, String) {
-    let configured = builtin_test_configured_suites(catalogs, target_root);
-    if !configured.is_empty() {
+    let config = resolve_target_test_config(catalogs, target_root);
+    if !config.configured_suites.is_empty() {
         return (
-            configured
+            config
+                .configured_suites
                 .into_iter()
                 .map(|(suite, command)| BuiltinResolvedPlan {
                     suite: suite.clone(),
@@ -87,12 +94,16 @@ fn resolve_target_test_plans(
         );
     }
 
-    let package_manager = builtin_test_package_manager(catalogs, target_root);
-    let runner_overrides = builtin_test_runner_command_overrides(catalogs, target_root);
     (
         detect_test_runner_plans(target_root)
             .into_iter()
-            .map(|plan| apply_builtin_test_runner_config(plan, package_manager, &runner_overrides))
+            .map(|plan| {
+                apply_builtin_test_runner_config(
+                    plan,
+                    config.package_manager,
+                    &config.runner_overrides,
+                )
+            })
             .map(|plan| BuiltinResolvedPlan {
                 suite: plan.runner.label().to_owned(),
                 command: plan.command,
@@ -103,25 +114,13 @@ fn resolve_target_test_plans(
     )
 }
 
-fn builtin_test_package_manager(
+fn resolve_target_test_config(
     catalogs: &[LoadedCatalog],
     target_root: &Path,
-) -> Option<ManifestJsPackageManager> {
-    catalog_for_root(catalogs, target_root).and_then(|catalog| {
-        catalog
-            .manifest
-            .package_manager
-            .as_ref()
-            .and_then(|pm| pm.js)
-    })
-}
-
-fn builtin_test_configured_suites(
-    catalogs: &[LoadedCatalog],
-    target_root: &Path,
-) -> BTreeMap<String, String> {
-    catalog_for_root(catalogs, target_root)
-        .and_then(|catalog| catalog.manifest.test.as_ref())
+) -> BuiltinTestTargetConfig {
+    let catalog = catalog_for_root(catalogs, target_root);
+    let configured_suites = catalog
+        .and_then(|entry| entry.manifest.test.as_ref())
         .map(|test| {
             test.suites
                 .iter()
@@ -132,15 +131,11 @@ fn builtin_test_configured_suites(
                 })
                 .collect::<BTreeMap<String, String>>()
         })
-        .unwrap_or_default()
-}
-
-fn builtin_test_runner_command_overrides(
-    catalogs: &[LoadedCatalog],
-    target_root: &Path,
-) -> BTreeMap<String, String> {
-    catalog_for_root(catalogs, target_root)
-        .and_then(|catalog| catalog.manifest.test.as_ref())
+        .unwrap_or_default();
+    let package_manager =
+        catalog.and_then(|entry| entry.manifest.package_manager.as_ref().and_then(|pm| pm.js));
+    let runner_overrides = catalog
+        .and_then(|entry| entry.manifest.test.as_ref())
         .map(|test| {
             test.runners
                 .iter()
@@ -151,17 +146,25 @@ fn builtin_test_runner_command_overrides(
                 })
                 .collect::<BTreeMap<String, String>>()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    BuiltinTestTargetConfig {
+        configured_suites,
+        package_manager,
+        runner_overrides,
+    }
 }
 
-fn catalog_for_root<'a>(catalogs: &'a [LoadedCatalog], target_root: &Path) -> Option<&'a LoadedCatalog> {
-    catalogs.iter().find(|catalog| catalog.catalog_root == target_root)
+fn catalog_for_root<'a>(
+    catalogs: &'a [LoadedCatalog],
+    target_root: &Path,
+) -> Option<&'a LoadedCatalog> {
+    catalogs
+        .iter()
+        .find(|catalog| catalog.catalog_root == target_root)
 }
 
 fn normalize_suite_key(raw: &str) -> String {
-    normalize_builtin_test_suite(raw)
-        .unwrap_or(raw)
-        .to_owned()
+    normalize_builtin_test_suite(raw).unwrap_or(raw).to_owned()
 }
 
 fn apply_builtin_test_runner_config(

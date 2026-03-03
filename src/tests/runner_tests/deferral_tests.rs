@@ -145,8 +145,8 @@ fn run_implicit_deferral_case(case: &ImplicitDeferralCase) {
             );
         }
         ImplicitDeferralExpectation::ExplicitDeferralWithoutComposer => {
-            let out = run_task(&root, case.request, case.args)
-                .expect("explicit deferral should succeed");
+            let out =
+                run_task(&root, case.request, case.args).expect("explicit deferral should succeed");
             assert_eq!(out, "");
             assert!(!marker.exists(), "composer fallback should not be invoked");
         }

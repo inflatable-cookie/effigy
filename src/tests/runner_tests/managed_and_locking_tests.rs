@@ -361,7 +361,10 @@ concurrent = [
     );
 
     let out_default = run_dev_with_repo(&root, &[]).expect("default managed plan should render");
-    assert_contains_all(&out_default, &["profile: default", "default-api", "default-front"]);
+    assert_contains_all(
+        &out_default,
+        &["profile: default", "default-api", "default-front"],
+    );
     assert!(!out_default.contains("admin-api"));
 
     let out_admin = run_dev(&root, &["admin"]).expect("admin managed plan should render");
@@ -422,7 +425,13 @@ concurrent = [
     write_catalogs_with_tasks(
         &root,
         &[
-            ("farmyard", &[("api", "printf farmyard-api"), ("jobs", "printf farmyard-jobs")]),
+            (
+                "farmyard",
+                &[
+                    ("api", "printf farmyard-api"),
+                    ("jobs", "printf farmyard-jobs"),
+                ],
+            ),
             ("cream", &[("dev", "printf cream-dev")]),
             ("dairy", &[("dev", "printf dairy-dev")]),
         ],
@@ -455,7 +464,13 @@ concurrent = [
     write_catalogs_with_tasks(
         &root,
         &[
-            ("farmyard", &[("api", "printf farmyard-api"), ("jobs", "printf farmyard-jobs")]),
+            (
+                "farmyard",
+                &[
+                    ("api", "printf farmyard-api"),
+                    ("jobs", "printf farmyard-jobs"),
+                ],
+            ),
             ("cream", &[("dev", "printf cream-dev")]),
             ("dairy", &[("dev", "printf dairy-dev")]),
         ],
@@ -614,7 +629,11 @@ concurrent = [{ name = "combo", task = "combo" }]
 run = ["printf start", { task = "farmyard/api" }, "printf done"]
 "#,
     );
-    write_catalog_tasks(&farmyard, Some("farmyard"), &[("api", "printf farmyard-api")]);
+    write_catalog_tasks(
+        &farmyard,
+        Some("farmyard"),
+        &[("api", "printf farmyard-api")],
+    );
 
     let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
     assert_contains_all(&out, &["printf start", "farmyard-api", "printf done", "cd"]);
@@ -685,7 +704,10 @@ mode = "tui"
 concurrent = [{ name = "validate-stack", task = "../froyo/validate" }]
 "#,
     );
-    write_catalogs_with_tasks(&root, &[("froyo", &[("validate", "printf froyo-validate")])]);
+    write_catalogs_with_tasks(
+        &root,
+        &[("froyo", &[("validate", "printf froyo-validate")])],
+    );
 
     let out = run_task_with_repo(&root, "dairy/dev", &[]).expect("managed plan should render");
     assert_contains_all(
