@@ -78,6 +78,69 @@ fn maybe_wrap_with_cargo_env(
 }
 
 fn is_cargo_command(command: &str) -> bool {
-    let trimmed = command.trim_start();
-    trimmed == "cargo" || trimmed.starts_with("cargo ")
+    let mut tokens = command.split_whitespace().peekable();
+    if tokens.peek().is_none() {
+        return false;
+    }
+
+    // Support common env/exec wrappers before the actual executable token.
+    if tokens.peek().is_some_and(|token| *token == "env") {
+        tokens.next();
+        while let Some(token) = tokens.peek() {
+            if *token == "-i" {
+                tokens.next();
+                continue;
+            }
+            if *token == "-u" {
+                tokens.next();
+                let _ = tokens.next();
+                continue;
+            }
+            if token.starts_with('-') {
+                tokens.next();
+                continue;
+            }
+            if is_env_assignment_token(token) {
+                tokens.next();
+                continue;
+            }
+            break;
+        }
+    }
+
+    while tokens
+        .peek()
+        .is_some_and(|token| *token == "exec" || *token == "command")
+    {
+        tokens.next();
+    }
+    while tokens.peek().is_some_and(is_env_assignment_token) {
+        tokens.next();
+    }
+
+    let Some(executable) = tokens.next() else {
+        return false;
+    };
+
+    executable == "cargo"
+        || executable == "cargo-nextest"
+        || executable.ends_with("/cargo")
+        || executable.ends_with("/cargo-nextest")
+}
+
+fn is_env_assignment_token(token: &&str) -> bool {
+    let Some((key, _)) = token.split_once('=') else {
+        return false;
+    };
+    if key.is_empty() {
+        return false;
+    }
+    let mut chars = key.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first == '_' || first.is_ascii_alphabetic()) {
+        return false;
+    }
+    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
