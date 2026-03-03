@@ -23,7 +23,7 @@ mod tasks_and_doctor_command_tests;
 mod config_builtin_tests;
 
 #[cfg(unix)]
-#[path = "runner_tests/doctor_text_output_tests.rs"]
+#[path = "runner_tests/doctor_text_output_tests/mod.rs"]
 mod doctor_text_output_tests;
 
 #[path = "runner_tests/deferral_tests/mod.rs"]

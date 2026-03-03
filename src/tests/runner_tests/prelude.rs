@@ -67,3 +67,34 @@ pub(super) fn write_defer_manifest(root: &PathBuf, defer_run: &str) {
         &format!("[defer]\nrun = \"{defer_run}\"\n"),
     );
 }
+
+pub(super) fn doctor_nonzero_rendered(err: RunnerError) -> String {
+    match err {
+        RunnerError::DoctorNonZero { rendered, .. } => rendered,
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+pub(super) fn run_doctor_err_from_cwd(root: &PathBuf, fix: bool) -> RunnerError {
+    with_cwd(root, || {
+        run_doctor(DoctorArgs {
+            repo_override: None,
+            output_json: false,
+            fix,
+            verbose: false,
+            explain: None,
+        })
+    })
+    .expect_err("doctor should fail")
+}
+
+pub(super) fn setup_doctor_explain_catalog_workspace(name: &str) -> PathBuf {
+    let root = temp_workspace(name);
+    let farmyard = create_workspace_dir(&root, "farmyard");
+    write_root_manifest(&root, "[tasks.root]\nrun = \"printf root\"\n");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n[tasks.build]\nrun = \"printf farmyard\"\n",
+    );
+    root
+}
