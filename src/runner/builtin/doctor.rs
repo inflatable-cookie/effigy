@@ -20,20 +20,21 @@ pub(super) fn run_builtin_doctor(
     let mut explain: Option<TaskInvocation> = None;
     let mut unknown = Vec::<String>::new();
     while let Some(arg) = parser.next() {
-        match arg {
-            "--json" => output_json = true,
-            "--fix" => fix = true,
-            "--verbose" => verbose = true,
-            "-h" | "--help" => unknown.push(arg.to_owned()),
-            other if other.starts_with('-') => unknown.push(arg.to_owned()),
-            other => {
-                explain = Some(TaskInvocation {
-                    name: other.to_owned(),
-                    args: parser.remaining().to_vec(),
-                });
-                break;
-            }
+        if parser.consume_json_flag(arg, &mut output_json)
+            || parser.consume_flag(arg, "--fix", &mut fix)
+            || parser.consume_flag(arg, "--verbose", &mut verbose)
+        {
+            continue;
         }
+        if arg.starts_with('-') {
+            unknown.push(arg.to_owned());
+            continue;
+        }
+        explain = Some(TaskInvocation {
+            name: arg.to_owned(),
+            args: parser.remaining().to_vec(),
+        });
+        break;
     }
     ensure_no_unknown_builtin_args(&task.name, &unknown)?;
 

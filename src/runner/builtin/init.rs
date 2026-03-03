@@ -21,13 +21,14 @@ pub(super) fn run_builtin_init(
     let mut dry_run = false;
     let mut unknown = Vec::<String>::new();
     while let Some(arg) = parser.next() {
-        match arg {
-            "--json" => output_json = true,
-            "--help" | "-h" => help = true,
-            "--force" => force = true,
-            "--dry-run" => dry_run = true,
-            _ => unknown.push(arg.to_owned()),
+        if parser.consume_json_flag(arg, &mut output_json)
+            || parser.consume_help_flag(arg, &mut help)
+            || parser.consume_flag(arg, "--force", &mut force)
+            || parser.consume_flag(arg, "--dry-run", &mut dry_run)
+        {
+            continue;
         }
+        unknown.push(arg.to_owned());
     }
     ensure_no_unknown_builtin_args(&task.name, &unknown)?;
 

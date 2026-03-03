@@ -14,8 +14,7 @@ pub(super) fn run_builtin_help(
     let mut output_json = false;
     let mut parser = BuiltinArgParser::new(args);
     while let Some(arg) = parser.next() {
-        if arg == "--json" {
-            output_json = true;
+        if parser.consume_json_flag(arg, &mut output_json) {
             continue;
         }
         return Err(unknown_builtin_arg(&task.name, arg));

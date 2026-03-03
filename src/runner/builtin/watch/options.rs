@@ -39,13 +39,12 @@ pub(super) fn parse_watch_request(
     let mut target: Option<TaskInvocation> = None;
 
     while let Some(arg) = parser.next() {
+        if parser.consume_json_flag(arg, &mut output_json)
+            || parser.consume_help_flag(arg, &mut help)
+        {
+            continue;
+        }
         match arg {
-            "--json" => {
-                parser.bool_flag(&mut output_json);
-            }
-            "--help" | "-h" => {
-                parser.bool_flag(&mut help);
-            }
             "--owner" => {
                 owner = Some(parser.mapped_flag_value(
                     "`--owner` requires a value (`effigy` or `external`)",

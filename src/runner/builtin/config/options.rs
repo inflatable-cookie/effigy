@@ -25,22 +25,25 @@ pub(super) fn parse_config_options(
     let mut runner: Option<String> = None;
     let mut unknown = Vec::<String>::new();
     while let Some(arg) = parser.next() {
-        match arg {
-            "--schema" => parser.bool_flag(&mut schema),
-            "--minimal" => parser.bool_flag(&mut minimal),
-            "--json" => parser.bool_flag(&mut output_json),
-            "--target" => {
-                let value = parser
-                    .string_flag_value("`--target` requires a value for built-in `config`")?;
-                target = Some(value.to_lowercase());
-            }
-            "--runner" => {
-                let value = parser
-                    .string_flag_value("`--runner` requires a value for built-in `config`")?;
-                runner = Some(value.to_lowercase());
-            }
-            _ => unknown.push(arg.to_owned()),
+        if parser.consume_flag(arg, "--schema", &mut schema)
+            || parser.consume_flag(arg, "--minimal", &mut minimal)
+            || parser.consume_json_flag(arg, &mut output_json)
+        {
+            continue;
         }
+        if arg == "--target" {
+            let value =
+                parser.string_flag_value("`--target` requires a value for built-in `config`")?;
+            target = Some(value.to_lowercase());
+            continue;
+        }
+        if arg == "--runner" {
+            let value =
+                parser.string_flag_value("`--runner` requires a value for built-in `config`")?;
+            runner = Some(value.to_lowercase());
+            continue;
+        }
+        unknown.push(arg.to_owned());
     }
 
     ensure_no_unknown_builtin_args(&task.name, &unknown)?;
