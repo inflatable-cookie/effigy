@@ -1,11 +1,9 @@
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::Child;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[path = "process_manager/diagnostics.rs"]
 mod diagnostics;
@@ -13,6 +11,12 @@ mod diagnostics;
 mod lifecycle;
 #[path = "process_manager/signal.rs"]
 mod signal;
+#[path = "process_manager/supervisor_control.rs"]
+mod supervisor_control;
+#[path = "process_manager/supervisor_lookup.rs"]
+mod supervisor_lookup;
+#[path = "process_manager/supervisor_shutdown.rs"]
+mod supervisor_shutdown;
 #[path = "process_manager/streams.rs"]
 mod streams;
 
@@ -106,29 +110,6 @@ pub enum ShutdownProgress {
 }
 
 impl ProcessSupervisor {
-    fn child_handle(&self, process: &str) -> Option<Arc<Mutex<Child>>> {
-        let processes = self.processes.lock().expect("process map lock");
-        processes.get(process).cloned()
-    }
-
-    fn required_child_handle(&self, process: &str) -> Result<Arc<Mutex<Child>>, ProcessManagerError> {
-        self.child_handle(process)
-            .ok_or_else(|| ProcessManagerError::ProcessNotFound {
-                process: process.to_owned(),
-            })
-    }
-
-    fn all_child_handles(&self) -> Vec<Arc<Mutex<Child>>> {
-        let processes = self.processes.lock().expect("process map lock");
-        processes.values().cloned().collect()
-    }
-
-    fn terminate_child_graceful(&self, process: &str) -> Result<(), ProcessManagerError> {
-        let child = self.required_child_handle(process)?;
-        lifecycle::terminate_child_graceful(&child, PROCESS_GRACEFUL_STOP_TIMEOUT);
-        Ok(())
-    }
-
     pub fn spawn(
         _repo_root: PathBuf,
         processes: Vec<ProcessSpec>,
@@ -153,108 +134,6 @@ impl ProcessSupervisor {
 
     pub fn next_event_timeout(&self, timeout: Duration) -> Option<ProcessEvent> {
         self.events_rx.recv_timeout(timeout).ok()
-    }
-
-    pub fn send_input(&self, process: &str, input: &str) -> Result<(), ProcessManagerError> {
-        let child = self.child_handle(process);
-        let Some(child) = child else {
-            return Ok(());
-        };
-        let mut child = child.lock().expect("child lock");
-        let Some(stdin) = child.stdin.as_mut() else {
-            return Err(ProcessManagerError::MissingStdio {
-                process: process.to_owned(),
-            });
-        };
-        stdin
-            .write_all(input.as_bytes())
-            .and_then(|_| stdin.flush())
-            .map_err(|error| ProcessManagerError::InputWrite {
-                process: process.to_owned(),
-                error,
-            })
-    }
-
-    pub fn terminate_all(&self) {
-        let children = self.all_child_handles();
-        for child in children {
-            signal::send_kill(&mut child.lock().expect("child lock"));
-        }
-    }
-
-    pub fn terminate_process(&self, process: &str) -> Result<(), ProcessManagerError> {
-        self.terminate_child_graceful(process)
-    }
-
-    pub fn restart_process(&self, process: &str) -> Result<(), ProcessManagerError> {
-        let spec = self.specs.get(process).cloned().ok_or_else(|| {
-            ProcessManagerError::ProcessNotFound {
-                process: process.to_owned(),
-            }
-        })?;
-        if self.child_handle(process).is_some() {
-            self.terminate_child_graceful(process)?;
-        }
-        let mut restart_spec = spec;
-        restart_spec.start_after_ms = 0;
-        let replacement = lifecycle::spawn_process_instance(&restart_spec, &self.events_tx, false)?;
-        let mut processes = self.processes.lock().expect("process map lock");
-        processes.insert(process.to_owned(), replacement);
-        Ok(())
-    }
-
-    pub fn terminate_all_graceful(&self, timeout: Duration) {
-        self.terminate_all_graceful_with_progress(timeout, |_| {});
-    }
-
-    pub fn terminate_all_graceful_with_progress<F>(&self, timeout: Duration, mut on_progress: F)
-    where
-        F: FnMut(ShutdownProgress),
-    {
-        on_progress(ShutdownProgress::SendingTerm);
-        let children = self.all_child_handles();
-        for child in &children {
-            let mut child = child.lock().expect("child lock");
-            signal::send_terminate(&mut child);
-        }
-
-        on_progress(ShutdownProgress::Waiting);
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            let all_exited = children.iter().all(|child| {
-                child
-                    .lock()
-                    .expect("child lock")
-                    .try_wait()
-                    .ok()
-                    .flatten()
-                    .is_some()
-            });
-            if all_exited {
-                on_progress(ShutdownProgress::Complete {
-                    total: children.len(),
-                    forced: 0,
-                });
-                return;
-            }
-            thread::sleep(Duration::from_millis(40));
-        }
-
-        on_progress(ShutdownProgress::ForceKilling);
-        let mut forced = 0usize;
-        for child in &children {
-            let mut child = child.lock().expect("child lock");
-            let still_running = child.try_wait().ok().flatten().is_none();
-            if !still_running {
-                continue;
-            }
-            signal::send_kill(&mut child);
-            forced += 1;
-        }
-        on_progress(ShutdownProgress::Complete {
-            total: children.len(),
-            forced,
-        });
     }
 
     pub fn exit_diagnostics(&self) -> Vec<(String, String)> {

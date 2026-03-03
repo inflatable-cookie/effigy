@@ -8,8 +8,7 @@ use self::manifests::{
     discover_completion_candidates, manifest_stamps_unchanged, ManifestStamp,
 };
 use self::policy::{
-    completion_candidates_cache_ttl_policy, parse_completion_candidates_cache_ttl_policy,
-    CompletionCandidatesCacheTtlPolicy,
+    completion_candidates_cache_ttl_policy,
 };
 
 mod manifests;
@@ -139,7 +138,9 @@ fn read_cached_completion_candidates(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_completion_candidates_cache_ttl_policy, CompletionCandidatesCacheTtlPolicy};
+    use super::policy::{
+        parse_completion_candidates_cache_ttl_policy, CompletionCandidatesCacheTtlPolicy,
+    };
 
     #[test]
     fn completion_candidates_cache_ttl_defaults_when_unset() {
