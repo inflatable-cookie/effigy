@@ -1,7 +1,5 @@
-use super::{
-    contract_test_support::{lock_test, temp_workspace, write_manifest, EnvGuard},
-    run_manifest_task_with_cwd,
-};
+use super::{run_manifest_task_with_cwd, RunnerError};
+use crate::contract_test_support::{lock_test, temp_workspace, write_manifest, EnvGuard};
 use crate::TaskInvocation;
 use std::fs;
 use std::path::Path;
@@ -21,7 +19,7 @@ fn task_cache_hit_skips_unchanged_rerun() {
             name: "build".to_owned(),
             args: Vec::new(),
         },
-        root.clone(),
+        root.to_path_buf(),
     )
     .expect("first run");
 
@@ -30,7 +28,7 @@ fn task_cache_hit_skips_unchanged_rerun() {
             name: "build".to_owned(),
             args: Vec::new(),
         },
-        root.clone(),
+        root.to_path_buf(),
     )
     .expect("second run");
 
@@ -146,7 +144,7 @@ fn cache_builtin_inspect_and_invalidate_paths_are_available() {
             name: "cache".to_owned(),
             args: vec!["inspect".to_owned(), "build".to_owned()],
         },
-        root.clone(),
+        root.to_path_buf(),
     )
     .expect("inspect should succeed");
     assert!(inspect_present.contains("status: present"));
@@ -156,7 +154,7 @@ fn cache_builtin_inspect_and_invalidate_paths_are_available() {
             name: "cache".to_owned(),
             args: vec!["invalidate".to_owned(), "build".to_owned()],
         },
-        root.clone(),
+        root.to_path_buf(),
     )
     .expect("invalidate should succeed");
     assert!(invalidate.contains("removed: 1"));
@@ -172,6 +170,89 @@ fn cache_builtin_inspect_and_invalidate_paths_are_available() {
     assert!(inspect_missing.contains("status: missing"));
 }
 
+#[test]
+fn cache_builtin_requires_subcommand() {
+    let _guard = lock_test();
+    let root = temp_workspace("cache-builtin-requires-subcommand");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let err = run_cache_builtin(&root, &[]).expect_err("cache should require a subcommand");
+    assert_cache_task_invocation(
+        err,
+        "`cache` requires a subcommand: `inspect` or `invalidate`",
+    );
+}
+
+#[test]
+fn cache_builtin_rejects_unknown_subcommand() {
+    let _guard = lock_test();
+    let root = temp_workspace("cache-builtin-unknown-subcommand");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let err =
+        run_cache_builtin(&root, &["drop"]).expect_err("cache should reject unknown subcommand");
+    assert_cache_task_invocation(
+        err,
+        "unknown cache subcommand `drop` (expected `inspect` or `invalidate`)",
+    );
+}
+
+#[test]
+fn cache_builtin_inspect_rejects_invalid_flags() {
+    let _guard = lock_test();
+    let root = temp_workspace("cache-builtin-inspect-invalid-flags");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let unknown_flag =
+        run_cache_builtin(&root, &["inspect", "--wat"]).expect_err("inspect should reject --wat");
+    assert_cache_task_invocation(
+        unknown_flag,
+        "unknown argument(s) for built-in `cache`: --wat",
+    );
+
+    let all_flag =
+        run_cache_builtin(&root, &["inspect", "--all"]).expect_err("inspect should reject --all");
+    assert_cache_task_invocation(
+        all_flag,
+        "`cache inspect` does not support `--all`; use `cache invalidate --all`",
+    );
+
+    let too_many_selectors = run_cache_builtin(&root, &["inspect", "build", "test"])
+        .expect_err("inspect should reject multiple selectors");
+    assert_cache_task_invocation(
+        too_many_selectors,
+        "`cache inspect` accepts at most one selector",
+    );
+}
+
+#[test]
+fn cache_builtin_invalidate_rejects_invalid_selector_combinations_and_flags() {
+    let _guard = lock_test();
+    let root = temp_workspace("cache-builtin-invalidate-invalid-combinations");
+    write_manifest(&root.join("effigy.toml"), "");
+
+    let missing_selector =
+        run_cache_builtin(&root, &["invalidate"]).expect_err("invalidate should require selector");
+    assert_cache_task_invocation(
+        missing_selector,
+        "`cache invalidate` requires one or more selectors (or `--all`)",
+    );
+
+    let conflicting =
+        run_cache_builtin(&root, &["invalidate", "--all", "build"]).expect_err("invalid combo");
+    assert_cache_task_invocation(
+        conflicting,
+        "`cache invalidate` accepts either `--all` or selectors, not both",
+    );
+
+    let unknown_flag = run_cache_builtin(&root, &["invalidate", "--wat"])
+        .expect_err("invalidate should reject unknown flags");
+    assert_cache_task_invocation(
+        unknown_flag,
+        "unknown argument(s) for built-in `cache`: --wat",
+    );
+}
+
 fn run_task(root: &Path, name: &str) {
     run_manifest_task_with_cwd(
         &TaskInvocation {
@@ -181,6 +262,23 @@ fn run_task(root: &Path, name: &str) {
         root.to_path_buf(),
     )
     .expect("task run");
+}
+
+fn run_cache_builtin(root: &Path, args: &[&str]) -> Result<String, RunnerError> {
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "cache".to_owned(),
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        },
+        root.to_path_buf(),
+    )
+}
+
+fn assert_cache_task_invocation(err: RunnerError, expected: &str) {
+    match err {
+        RunnerError::TaskInvocation(message) => assert_eq!(message, expected),
+        other => panic!("unexpected error: {other}"),
+    }
 }
 
 fn write_cached_manifest(root: &Path, marker: &Path, marker_write: &str) {

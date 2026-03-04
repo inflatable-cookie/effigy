@@ -24,7 +24,7 @@ pub(super) struct StepRefContext {
 
 impl StepRefContext {
     pub(super) fn failure(&self, detail: impl ToString) -> RunnerError {
-        RunnerError::TaskInvocation(format!(
+        RunnerError::task_invocation(format!(
             "task `{}` run step task ref `{}` failed: {}",
             self.task_name,
             self.task_ref,
@@ -33,7 +33,7 @@ impl StepRefContext {
     }
 
     pub(super) fn invalid(&self, detail: impl ToString) -> RunnerError {
-        RunnerError::TaskInvocation(format!(
+        RunnerError::task_invocation(format!(
             "task `{}` run step task ref `{}` is invalid: {}",
             self.task_name,
             self.task_ref,

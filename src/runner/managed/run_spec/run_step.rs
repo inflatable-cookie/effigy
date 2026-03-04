@@ -1,19 +1,13 @@
-use std::path::Path;
-
 use crate::runner::manifest::ManifestManagedRunStepTable;
 
-use super::super::super::{LoadedCatalog, ManifestManagedRunStep, RunnerError};
+use super::super::super::{ManifestManagedRunStep, RunnerError};
 use super::super::references;
 use super::command::render_command_template;
+use super::RunSpecContext;
 
 pub(super) fn resolve_task_run_step(
-    task_name: &str,
     step: &ManifestManagedRunStep,
-    args_rendered: &str,
-    repo_root: &Path,
-    catalogs: &[LoadedCatalog],
-    task_scope_cwd: &Path,
-    depth: usize,
+    context: RunSpecContext<'_>,
 ) -> Result<String, RunnerError> {
     match step {
         ManifestManagedRunStep::Command(command) => {
@@ -23,61 +17,58 @@ pub(super) fn resolve_task_run_step(
                 .filter(|value| !value.is_empty())
             {
                 references::resolve_task_reference_step(
-                    task_name,
+                    context.task_name,
                     task_ref,
-                    args_rendered,
-                    catalogs,
-                    task_scope_cwd,
-                    depth,
+                    context.args_rendered,
+                    context.catalogs,
+                    context.task_scope_cwd,
+                    context.depth,
                 )
             } else {
-                Ok(render_command_template(command, repo_root, args_rendered))
+                Ok(render_command_template(
+                    command,
+                    context.repo_root,
+                    context.args_rendered,
+                ))
             }
         }
-        ManifestManagedRunStep::Step(step) => resolve_table_task_run_step(
-            task_name,
-            step,
-            args_rendered,
-            repo_root,
-            catalogs,
-            task_scope_cwd,
-            depth,
-        ),
+        ManifestManagedRunStep::Step(step) => resolve_table_task_run_step(step, context),
     }
 }
 
 fn resolve_table_task_run_step(
-    task_name: &str,
     step: &ManifestManagedRunStepTable,
-    args_rendered: &str,
-    repo_root: &Path,
-    catalogs: &[LoadedCatalog],
-    task_scope_cwd: &Path,
-    depth: usize,
+    context: RunSpecContext<'_>,
 ) -> Result<String, RunnerError> {
     match select_run_or_task(
         step.run.as_deref(),
         step.task.as_deref(),
         step.env.is_some() || step.env_file.is_some(),
         || {
-            RunnerError::TaskInvocation(format!(
-                "task `{task_name}` run step is invalid: define either `run` or `task`, not both"
+            RunnerError::task_invocation(format!(
+                "task `{}` run step is invalid: define either `run` or `task`, not both",
+                context.task_name
             ))
         },
         || {
-            RunnerError::TaskInvocation(format!(
-                "task `{task_name}` run step is invalid: missing both `run` and `task`"
+            RunnerError::task_invocation(format!(
+                "task `{}` run step is invalid: missing both `run` and `task`",
+                context.task_name
             ))
         },
     )? {
-        RunOrTaskRef::Run(run) => Ok(render_command_template(run, repo_root, args_rendered)),
+        RunOrTaskRef::Run(run) => Ok(render_command_template(
+            run,
+            context.repo_root,
+            context.args_rendered,
+        )),
         RunOrTaskRef::Task(task_ref) => references::resolve_task_reference_step(
-            task_name,
+            context.task_name,
             task_ref,
-            args_rendered,
-            catalogs,
-            task_scope_cwd,
-            depth,
+            context.args_rendered,
+            context.catalogs,
+            context.task_scope_cwd,
+            context.depth,
         ),
         RunOrTaskRef::Noop => Ok(":".to_owned()),
     }

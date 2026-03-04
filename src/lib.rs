@@ -1,4 +1,8 @@
 mod cli;
+mod data_loading;
+mod fs_probe;
+mod path_error_text;
+mod path_probe;
 pub mod process_manager;
 pub mod resolver;
 pub mod runner;
@@ -75,6 +79,10 @@ pub fn render_help<R: Renderer>(renderer: &mut R, topic: HelpTopic) -> UiResult<
 pub fn render_cli_header<R: Renderer>(renderer: &mut R, root: &Path) -> UiResult<()> {
     cli_help::render_cli_header(renderer, root)
 }
+
+#[cfg(test)]
+#[path = "tests/contract_test_support.rs"]
+mod contract_test_support;
 
 #[cfg(test)]
 #[path = "tests/lib_tests.rs"]

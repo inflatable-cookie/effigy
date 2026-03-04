@@ -24,13 +24,13 @@ fn run_manifest_task_defers_when_task_missing_with_token_support() {
         },
     ];
 
-    for case in cases {
+    assert_case_table(cases, |case| {
         let root = temp_workspace(case.workspace);
         write_defer_manifest(&root, case.defer_run);
         let out = run_task_in_workspace(&root, case.request, case.args)
             .expect("deferred run should succeed");
         assert_eq!(out, "");
-    }
+    });
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn run_manifest_task_implicit_deferral_matrix() {
         explicit_defer_run: None,
         request: "version",
         args: &["--dry-run"],
-        expectation: ImplicitDeferralExpectation::DeferredViaComposer {
+        expectation: ImplicitDeferralExpectation::Deferred {
             expected_args: "global\nexec\neffigy\n--\nversion\n--dry-run\n",
         },
     }];
@@ -80,7 +80,7 @@ fn run_manifest_task_implicit_deferral_matrix() {
                 explicit_defer_run: None,
                 request: "version",
                 args: &[],
-                expectation: ImplicitDeferralExpectation::TaskNotFoundWithoutComposer,
+                expectation: ImplicitDeferralExpectation::TaskNotFound,
             }),
     );
     cases.push(ImplicitDeferralCase {
@@ -91,10 +91,10 @@ fn run_manifest_task_implicit_deferral_matrix() {
         explicit_defer_run: Some("printf explicit"),
         request: "missing",
         args: &[],
-        expectation: ImplicitDeferralExpectation::ExplicitDeferralWithoutComposer,
+        expectation: ImplicitDeferralExpectation::ExplicitDeferral,
     });
 
-    for case in &cases {
+    assert_case_table(cases.iter(), |case| {
         run_implicit_deferral_case(case);
-    }
+    });
 }

@@ -14,15 +14,16 @@ impl SessionState {
         vt_cols: u16,
         vt_scrollback: usize,
     ) -> Self {
-        let logs = map_for_processes(&process_names, || std::collections::VecDeque::<LogEntry>::new());
+        let logs = map_for_processes(&process_names, std::collections::VecDeque::<LogEntry>::new);
         let scroll_offsets = map_for_processes(&process_names, || 0usize);
         let follow_mode = map_for_processes(&process_names, || true);
         let output_seen = map_for_processes(&process_names, || false);
         let restart_pending = map_for_processes(&process_names, || false);
         let process_started_at = map_for_processes(&process_names, Instant::now);
         let process_restart_count = map_for_processes(&process_names, || 0usize);
-        let vt_parsers =
-            map_for_processes(&process_names, || VtParser::new(vt_rows, vt_cols, vt_scrollback));
+        let vt_parsers = map_for_processes(&process_names, || {
+            VtParser::new(vt_rows, vt_cols, vt_scrollback)
+        });
         let vt_saw_chunk = map_for_processes(&process_names, || false);
 
         Self {

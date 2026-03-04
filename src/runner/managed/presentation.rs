@@ -1,11 +1,9 @@
 use std::io::IsTerminal;
 use std::path::Path;
 
-use crate::ui::theme::resolve_color_enabled;
-use crate::ui::{
-    KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer, SummaryCounts, TableSpec,
-};
+use crate::ui::{KeyValue, NoticeLevel, Renderer, SummaryCounts, TableSpec};
 
+use super::super::render::{render_utf8, text_renderer};
 use super::runtime;
 use super::{ManagedTaskPlan, RunnerError};
 
@@ -15,9 +13,7 @@ fn render_managed_task_plan(
     manifest_path: &Path,
     plan: ManagedTaskPlan,
 ) -> Result<String, RunnerError> {
-    let color_enabled =
-        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
-    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+    let mut renderer = text_renderer();
     renderer.section("Managed Task Plan")?;
     renderer.key_values(&[
         KeyValue::new("task", task_name.to_owned()),
@@ -77,9 +73,7 @@ fn render_managed_task_plan(
         warn: 1,
         err: 0,
     })?;
-    let out = renderer.into_inner();
-    String::from_utf8(out)
-        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
+    render_utf8(renderer.into_inner())
 }
 
 pub(super) fn run_or_render_managed_task(

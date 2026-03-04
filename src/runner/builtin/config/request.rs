@@ -1,0 +1,176 @@
+use crate::TaskInvocation;
+
+use super::super::super::RunnerError;
+use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
+use super::super::ensure_no_unknown_builtin_args;
+
+#[derive(Debug, Clone)]
+pub(super) struct ConfigRequest {
+    pub(super) schema: bool,
+    pub(super) minimal: bool,
+    pub(super) output_json: bool,
+    pub(super) target: Option<ConfigSchemaTarget>,
+    pub(super) runner: Option<ConfigTestRunner>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ConfigSchemaTarget {
+    PackageManager,
+    Test,
+    Tasks,
+    Defer,
+    Shell,
+}
+
+impl ConfigSchemaTarget {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::PackageManager => "package_manager",
+            Self::Test => "test",
+            Self::Tasks => "tasks",
+            Self::Defer => "defer",
+            Self::Shell => "shell",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ConfigTestRunner {
+    Vitest,
+    CargoNextest,
+    CargoTest,
+}
+
+impl ConfigTestRunner {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Vitest => "vitest",
+            Self::CargoNextest => "cargo-nextest",
+            Self::CargoTest => "cargo-test",
+        }
+    }
+}
+
+pub(super) fn parse_config_request(
+    task: &TaskInvocation,
+    args: &[String],
+) -> Result<ConfigRequest, RunnerError> {
+    let mut parser = BuiltinArgParser::new(args);
+    let mut schema = false;
+    let mut minimal = false;
+    let mut output_json = false;
+    let mut target: Option<ConfigSchemaTarget> = None;
+    let mut runner: Option<ConfigTestRunner> = None;
+    let unknown = parser.parse_loop_collect_unknown(|parser, arg| {
+        if parser.consume_flag(arg, "--schema", &mut schema)
+            || parser.consume_flag(arg, "--minimal", &mut minimal)
+            || parser.consume_json_flag(arg, &mut output_json)
+        {
+            return Ok(ParseLoopAction::Handled);
+        }
+        if arg == "--target" {
+            let value = parser.builtin_string_flag_value("config", "--target")?;
+            target = Some(parse_config_target(&value)?);
+            return Ok(ParseLoopAction::Handled);
+        }
+        if arg == "--runner" {
+            let value = parser.builtin_string_flag_value("config", "--runner")?;
+            runner = Some(parse_config_runner(&value)?);
+            return Ok(ParseLoopAction::Handled);
+        }
+        Ok(ParseLoopAction::Unknown)
+    })?;
+
+    ensure_no_unknown_builtin_args(&task.name, &unknown)?;
+    if minimal && !schema {
+        return Err(RunnerError::task_invocation(
+            "`--minimal` requires `--schema` for built-in `config`",
+        ));
+    }
+    if target.is_some() && !schema {
+        return Err(RunnerError::task_invocation(
+            "`--target` requires `--schema` for built-in `config`",
+        ));
+    }
+    if runner.is_some() && !schema {
+        return Err(RunnerError::task_invocation(
+            "`--runner` requires `--schema` for built-in `config`",
+        ));
+    }
+    if runner.is_some() && target != Some(ConfigSchemaTarget::Test) {
+        return Err(RunnerError::task_invocation(
+            "`--runner` requires `--target test` for built-in `config`",
+        ));
+    }
+
+    Ok(ConfigRequest {
+        schema,
+        minimal,
+        output_json,
+        target,
+        runner,
+    })
+}
+
+fn parse_config_target(value: &str) -> Result<ConfigSchemaTarget, RunnerError> {
+    if value.eq_ignore_ascii_case("package_manager") {
+        return Ok(ConfigSchemaTarget::PackageManager);
+    }
+    if value.eq_ignore_ascii_case("test") {
+        return Ok(ConfigSchemaTarget::Test);
+    }
+    if value.eq_ignore_ascii_case("tasks") {
+        return Ok(ConfigSchemaTarget::Tasks);
+    }
+    if value.eq_ignore_ascii_case("defer") {
+        return Ok(ConfigSchemaTarget::Defer);
+    }
+    if value.eq_ignore_ascii_case("shell") {
+        return Ok(ConfigSchemaTarget::Shell);
+    }
+
+    Err(RunnerError::task_invocation(format!(
+        "invalid `--target` value `{value}` for built-in `config` (supported: package_manager, test, tasks, defer, shell)"
+    )))
+}
+
+fn parse_config_runner(value: &str) -> Result<ConfigTestRunner, RunnerError> {
+    if value.eq_ignore_ascii_case("vitest") {
+        return Ok(ConfigTestRunner::Vitest);
+    }
+    if value.eq_ignore_ascii_case("nextest") || value.eq_ignore_ascii_case("cargo-nextest") {
+        return Ok(ConfigTestRunner::CargoNextest);
+    }
+    if value.eq_ignore_ascii_case("cargo-test") {
+        return Ok(ConfigTestRunner::CargoTest);
+    }
+
+    Err(RunnerError::task_invocation(format!(
+        "invalid `--runner` value `{value}` for built-in `config` (supported: vitest, cargo-nextest, cargo-test)"
+    )))
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) struct ConfigParseContract {
+    pub(in crate::runner) schema: bool,
+    pub(in crate::runner) minimal: bool,
+    pub(in crate::runner) output_json: bool,
+    pub(in crate::runner) target: Option<&'static str>,
+    pub(in crate::runner) runner: Option<&'static str>,
+}
+
+#[cfg(test)]
+pub(in crate::runner) fn parse_config_contract_request(
+    task: &TaskInvocation,
+    args: &[String],
+) -> Result<ConfigParseContract, RunnerError> {
+    let parsed = parse_config_request(task, args)?;
+    Ok(ConfigParseContract {
+        schema: parsed.schema,
+        minimal: parsed.minimal,
+        output_json: parsed.output_json,
+        target: parsed.target.map(ConfigSchemaTarget::as_str),
+        runner: parsed.runner.map(ConfigTestRunner::as_str),
+    })
+}

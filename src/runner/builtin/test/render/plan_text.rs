@@ -1,14 +1,13 @@
 use std::collections::BTreeSet;
-use std::io::IsTerminal;
 use std::path::Path;
 
 use crate::runner::builtin::test::planning::BuiltinTestTarget;
 use crate::runner::builtin::test::suite_selection::render_available_suites;
 use crate::runner::RunnerError;
-use crate::ui::theme::resolve_color_enabled;
-use crate::ui::{KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer};
+use crate::ui::{KeyValue, NoticeLevel, Renderer};
 use crate::TaskInvocation;
 
+use super::super::super::super::super::render::{render_utf8, text_renderer};
 use super::plan_projection::project_target_plan;
 
 pub(super) fn render_builtin_test_plan_text(
@@ -20,9 +19,7 @@ pub(super) fn render_builtin_test_plan_text(
     runnable_count: usize,
     runtime_mode: &str,
 ) -> Result<String, RunnerError> {
-    let color_enabled =
-        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
-    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+    let mut renderer = text_renderer();
     renderer.section("Test Plan")?;
     renderer.key_values(&[
         KeyValue::new("request", task.name.clone()),
@@ -81,9 +78,7 @@ pub(super) fn render_builtin_test_plan_text(
         renderer.bullet_list("fallback-chain", &target.fallback_chain)?;
         renderer.text("")?;
     }
-    let out = renderer.into_inner();
-    String::from_utf8(out)
-        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
+    render_utf8(renderer.into_inner())
 }
 
 pub(super) fn render_builtin_test_plan_recovery_text(
@@ -92,9 +87,7 @@ pub(super) fn render_builtin_test_plan_recovery_text(
     available_runners: &BTreeSet<String>,
     message: &str,
 ) -> Result<String, RunnerError> {
-    let color_enabled =
-        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
-    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+    let mut renderer = text_renderer();
     renderer.section("Test Plan")?;
     renderer.key_values(&[
         KeyValue::new("request", task.name.clone()),
@@ -107,7 +100,5 @@ pub(super) fn render_builtin_test_plan_recovery_text(
     ])?;
     renderer.text("")?;
     renderer.notice(NoticeLevel::Warning, message)?;
-    let out = renderer.into_inner();
-    String::from_utf8(out)
-        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
+    render_utf8(renderer.into_inner())
 }

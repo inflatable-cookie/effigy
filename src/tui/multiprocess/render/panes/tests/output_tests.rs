@@ -46,5 +46,8 @@ fn waiting_for_output_lines_uses_spinner_frame_and_message() {
     assert_eq!(lines.len(), 2);
     assert_eq!(lines[0].spans[0].content.as_ref(), "started: ");
     assert_eq!(lines[1].spans[0].content.as_ref(), "⠸");
-    assert_eq!(lines[1].spans[1].content.as_ref(), " waiting for first output...");
+    assert_eq!(
+        lines[1].spans[1].content.as_ref(),
+        " waiting for first output..."
+    );
 }

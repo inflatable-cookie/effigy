@@ -2,6 +2,8 @@ use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
+use crate::fs_probe::PathPresenceCache;
+
 use super::{TestRunner, TestRunnerCandidate, TestRunnerPlan};
 
 const VITEST_CONFIG_FILES: &[&str] = &[
@@ -14,6 +16,7 @@ const VITEST_CONFIG_FILES: &[&str] = &[
 
 pub(super) fn detect_vitest(repo_root: &Path) -> (Option<TestRunnerPlan>, TestRunnerCandidate) {
     let mut evidence = Vec::<String>::new();
+    let mut probe = PathPresenceCache::new();
     let package_json = repo_root.join("package.json");
     if let Ok(raw) = fs::read_to_string(&package_json) {
         if package_json_mentions_vitest(&raw) {
@@ -22,12 +25,12 @@ pub(super) fn detect_vitest(repo_root: &Path) -> (Option<TestRunnerPlan>, TestRu
     }
 
     for filename in VITEST_CONFIG_FILES {
-        if repo_root.join(filename).is_file() {
+        if probe.child_is_file(repo_root, filename) {
             evidence.push(format!("found `{filename}`"));
         }
     }
 
-    if repo_root.join("node_modules/.bin/vitest").is_file() {
+    if probe.child_is_file(repo_root, "node_modules/.bin/vitest") {
         evidence.push("found local `node_modules/.bin/vitest` executable".to_owned());
     }
 

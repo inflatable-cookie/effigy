@@ -1,8 +1,7 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::super::{LoadedCatalog, ManifestJsPackageManager, RunnerError};
-use super::{DoctorFinding, DoctorFixAction, DoctorSeverity};
+use super::{DoctorFixAction, DoctorState};
 
 mod fixers;
 mod scan;
@@ -17,10 +16,9 @@ type ManifestScanResult = (
 
 pub(super) fn collect_manifest_findings(
     resolved_root: &Path,
-    findings: &mut Vec<DoctorFinding>,
-    statuses: &mut HashMap<String, DoctorSeverity>,
+    state: &mut DoctorState,
 ) -> Result<ManifestScanResult, RunnerError> {
-    scan::collect_manifest_findings(resolved_root, findings, statuses)
+    scan::collect_manifest_findings(resolved_root, state)
 }
 
 pub(super) fn apply_fixers(

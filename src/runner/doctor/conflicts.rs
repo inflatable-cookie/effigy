@@ -1,31 +1,22 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use super::{add_finding, DoctorFinding, DoctorSeverity, LoadedCatalog};
+use super::contracts::{check_id, remediation};
+use super::{DoctorState, LoadedCatalog};
 
-pub(super) fn check_manifest_alias_conflicts(
-    catalogs: &[LoadedCatalog],
-    findings: &mut Vec<DoctorFinding>,
-    statuses: &mut HashMap<String, DoctorSeverity>,
-) {
+pub(super) fn check_manifest_alias_conflicts(catalogs: &[LoadedCatalog], state: &mut DoctorState) {
     let mut seen = HashMap::<String, PathBuf>::new();
     for catalog in catalogs {
         if let Some(first) = seen.insert(catalog.alias.clone(), catalog.manifest_path.clone()) {
-            add_finding(
-                findings,
-                statuses,
-                DoctorFinding {
-                    check_id: "manifest.conflicts".to_owned(),
-                    severity: DoctorSeverity::Error,
-                    evidence: format!(
-                        "duplicate catalog alias `{}` in {} and {}",
-                        catalog.alias,
-                        first.display(),
-                        catalog.manifest_path.display()
-                    ),
-                    remediation: "Set unique `[catalog].alias` values per manifest.".to_owned(),
-                    fixable: false,
-                },
+            state.add_check_error(
+                check_id::MANIFEST_CONFLICTS,
+                format!(
+                    "duplicate catalog alias `{}` in {} and {}",
+                    catalog.alias,
+                    first.display(),
+                    catalog.manifest_path.display()
+                ),
+                remediation::UNIQUE_CATALOG_ALIASES,
             );
         }
     }

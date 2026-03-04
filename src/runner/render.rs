@@ -2,7 +2,6 @@ use std::io::IsTerminal;
 use std::path::Path;
 
 use crate::resolver::ResolvedTarget;
-use crate::ui::theme::resolve_color_enabled;
 use crate::ui::{KeyValue, OutputMode, PlainRenderer, Renderer};
 
 use super::{RunnerError, TaskSelection, TaskSelector};
@@ -53,18 +52,31 @@ pub(super) fn render_task_resolution_trace(
 }
 
 pub(super) fn trace_renderer() -> PlainRenderer<Vec<u8>> {
-    let color_enabled =
-        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
-    PlainRenderer::new(Vec::<u8>::new(), color_enabled)
+    text_renderer()
 }
 
 pub(super) fn standard_renderer(output_json: bool) -> PlainRenderer<Vec<u8>> {
-    let color_enabled = if output_json {
-        false
-    } else {
-        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal())
-    };
+    plain_renderer(color_enabled_for_text_output(output_json))
+}
+
+pub(super) fn plain_renderer(color_enabled: bool) -> PlainRenderer<Vec<u8>> {
     PlainRenderer::new(Vec::<u8>::new(), color_enabled)
+}
+
+pub(super) fn text_renderer() -> PlainRenderer<Vec<u8>> {
+    plain_renderer(text_color_enabled())
+}
+
+pub(super) fn color_enabled_for_text_output(output_json: bool) -> bool {
+    !output_json && text_color_enabled()
+}
+
+pub(super) fn text_color_enabled() -> bool {
+    resolve_text_color_enabled(
+        OutputMode::from_env(),
+        std::io::stdout().is_terminal(),
+        std::env::var_os("NO_COLOR").is_some(),
+    )
 }
 
 pub(super) fn render_utf8(out: Vec<u8>) -> Result<String, RunnerError> {
@@ -88,4 +100,37 @@ pub(super) fn encode_pretty_json_optional(
     payload: &serde_json::Value,
 ) -> Result<Option<String>, RunnerError> {
     encode_json(payload, true).map(Some)
+}
+
+fn resolve_text_color_enabled(mode: OutputMode, is_tty: bool, no_color: bool) -> bool {
+    if no_color {
+        return false;
+    }
+    match mode {
+        OutputMode::Always => true,
+        OutputMode::Never => false,
+        OutputMode::Auto => is_tty,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_text_color_enabled_follows_output_mode_when_no_color_unset() {
+        assert!(!resolve_text_color_enabled(OutputMode::Auto, false, false));
+        assert!(resolve_text_color_enabled(OutputMode::Auto, true, false));
+        assert!(resolve_text_color_enabled(OutputMode::Always, false, false));
+        assert!(!resolve_text_color_enabled(OutputMode::Never, true, false));
+    }
+
+    #[test]
+    fn resolve_text_color_enabled_no_color_disables_styles() {
+        let modes = [OutputMode::Auto, OutputMode::Always, OutputMode::Never];
+        for mode in modes {
+            assert!(!resolve_text_color_enabled(mode, false, true));
+            assert!(!resolve_text_color_enabled(mode, true, true));
+        }
+    }
 }

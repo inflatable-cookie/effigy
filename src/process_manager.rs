@@ -11,14 +11,14 @@ mod diagnostics;
 mod lifecycle;
 #[path = "process_manager/signal.rs"]
 mod signal;
+#[path = "process_manager/streams.rs"]
+mod streams;
 #[path = "process_manager/supervisor_control.rs"]
 mod supervisor_control;
 #[path = "process_manager/supervisor_lookup.rs"]
 mod supervisor_lookup;
 #[path = "process_manager/supervisor_shutdown.rs"]
 mod supervisor_shutdown;
-#[path = "process_manager/streams.rs"]
-mod streams;
 
 use diagnostics::collect_exit_diagnostics;
 const PROCESS_GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(800);

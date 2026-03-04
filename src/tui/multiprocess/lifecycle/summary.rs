@@ -82,7 +82,12 @@ fn render_diagnostics_section(
     Ok(())
 }
 
-fn format_process_status(diagnostic: &str, elapsed: &str, color_enabled: bool, theme: Theme) -> String {
+fn format_process_status(
+    diagnostic: &str,
+    elapsed: &str,
+    color_enabled: bool,
+    theme: Theme,
+) -> String {
     if is_success_diagnostic(diagnostic) {
         if color_enabled {
             format!(

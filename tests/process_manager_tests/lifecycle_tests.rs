@@ -6,9 +6,11 @@ use super::support::{process_spec, process_spec_with_delay, temp_workspace};
 #[test]
 fn supervisor_graceful_shutdown_terminates_long_running_process() {
     let root = temp_workspace("supervisor-graceful-shutdown");
-    let supervisor =
-        ProcessSupervisor::spawn(root.clone(), vec![process_spec("sleeper", "sleep 30", &root)])
-            .expect("spawn");
+    let supervisor = ProcessSupervisor::spawn(
+        root.clone(),
+        vec![process_spec("sleeper", "sleep 30", &root)],
+    )
+    .expect("spawn");
 
     supervisor.terminate_all_graceful(Duration::from_millis(500));
 
@@ -63,9 +65,11 @@ fn supervisor_respects_process_start_delay() {
 #[test]
 fn supervisor_can_terminate_individual_process() {
     let root = temp_workspace("supervisor-stop-process");
-    let supervisor =
-        ProcessSupervisor::spawn(root.clone(), vec![process_spec("sleeper", "sleep 30", &root)])
-            .expect("spawn");
+    let supervisor = ProcessSupervisor::spawn(
+        root.clone(),
+        vec![process_spec("sleeper", "sleep 30", &root)],
+    )
+    .expect("spawn");
 
     supervisor
         .terminate_process("sleeper")

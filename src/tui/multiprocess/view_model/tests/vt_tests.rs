@@ -4,12 +4,8 @@ use crate::tui::multiprocess::view_model::build_active_view_model;
 
 #[test]
 fn vt_mode_clamps_scroll_offset_safely() {
-    let mut state = crate::tui::multiprocess::state::SessionState::new(
-        vec!["api".to_owned()],
-        2000,
-        240,
-        8000,
-    );
+    let mut state =
+        crate::tui::multiprocess::state::SessionState::new(vec!["api".to_owned()], 2000, 240, 8000);
     let parser = state.vt_parsers.get_mut("api").expect("api vt parser");
     parser.process(b"test-one\r\n");
     parser.process(b"test-two\r\n");

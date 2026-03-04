@@ -1,9 +1,9 @@
 pub(super) use super::super::prelude::*;
 
 pub(super) fn setup_path_with_probes(
-    root: &PathBuf,
+    root: &Path,
     probe_scripts: &[(&str, &str)],
-    marker: &PathBuf,
+    marker: &Path,
     clear_cargo_env: bool,
 ) -> EnvGuard {
     let bin_dir = root.join("bin");
@@ -29,7 +29,7 @@ pub(super) fn setup_path_with_probes(
     EnvGuard::set_many(&env_entries)
 }
 
-pub(super) fn assert_cargo_env_matches(marker: &PathBuf, expected_home: &str, expected_target: &str) {
+pub(super) fn assert_cargo_env_matches(marker: &Path, expected_home: &str, expected_target: &str) {
     let rendered = fs::read_to_string(marker).expect("read cargo env marker");
     let parts = rendered.split('|').collect::<Vec<&str>>();
     assert_eq!(
@@ -41,7 +41,7 @@ pub(super) fn assert_cargo_env_matches(marker: &PathBuf, expected_home: &str, ex
     assert!(parts[1].ends_with(expected_target));
 }
 
-pub(super) fn assert_cargo_env_absent(marker: &PathBuf) {
+pub(super) fn assert_cargo_env_absent(marker: &Path) {
     let rendered = fs::read_to_string(marker).expect("read cargo env marker");
     assert_eq!(rendered, "|");
 }

@@ -63,12 +63,12 @@ fn run_manifest_task_run_array_rejects_invalid_dag_metadata() {
         },
     ];
 
-    for case in cases {
+    assert_case_table(cases, |case| {
         let root = temp_workspace(case.workspace);
         write_validate_manifest(&root, case.manifest);
         let err = run_validate_err(&root, &[]);
         assert_task_invocation_error_contains(err, case.expected);
-    }
+    });
 }
 
 #[test]
@@ -92,6 +92,32 @@ run = [
             assert!(
                 message.contains("build -> lint -> build")
                     || message.contains("lint -> build -> lint")
+            );
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_run_array_depends_on_missing_id_error_text_is_stable() {
+    let root = temp_workspace("run-array-depends-on-missing-id-stable");
+    write_validate_manifest(
+        &root,
+        r#"[tasks.validate]
+run = [
+  { id = "lint", run = "printf lint-ok" },
+  { run = "printf build-ok", depends_on = ["lint"] }
+]
+"#,
+    );
+
+    let err = run_validate_err(&root, &[]);
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert_eq!(
+                message,
+                "task `validate` run step 2 defines `depends_on` but is missing a non-empty `id`"
             );
         }
         other => panic!("unexpected error: {other}"),

@@ -1,7 +1,5 @@
-use super::{
-    contract_test_support::{lock_test, temp_workspace, EnvGuard},
-    detect_test_runner, detect_test_runner_detailed, TestRunner,
-};
+use super::{detect_test_runner, detect_test_runner_detailed, TestRunner};
+use crate::contract_test_support::{lock_test, temp_workspace, EnvGuard};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 

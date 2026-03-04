@@ -5,8 +5,10 @@ use serde_json::json;
 use crate::TaskInvocation;
 
 use super::super::super::RunnerError;
+use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
+use super::super::ensure_no_unknown_builtin_args_with_prefix;
+use super::super::response::render_optional_text_or_schema_json_lazy;
 use super::super::TaskRuntimeArgs;
-use super::help::render_completion_candidates_help;
 
 mod cache;
 
@@ -26,98 +28,79 @@ struct CompletionCandidatesResult {
     cache_ttl_source: &'static str,
 }
 
+struct CompletionCandidatesRequest {
+    output_json: bool,
+    repo_override: Option<PathBuf>,
+    prefix: Option<String>,
+}
+
 pub(super) fn run_completion_candidates(
     task: &TaskInvocation,
     runtime_args: &TaskRuntimeArgs,
     target_root: &Path,
 ) -> Result<Option<String>, RunnerError> {
+    let request = parse_completion_candidates_request(task, &runtime_args.passthrough)?;
+
+    let repo_root = request
+        .repo_override
+        .unwrap_or_else(|| target_root.to_path_buf());
+    let completion_candidates =
+        collect_completion_candidates(&repo_root, request.prefix.as_deref())?;
+    render_optional_text_or_schema_json_lazy(
+        request.output_json,
+        "effigy.completion.candidates.v1",
+        || completion_candidates.candidates.join("\n"),
+        || {
+            json!({
+                "repo": repo_root.display().to_string(),
+                "prefix": request.prefix.as_deref(),
+                "candidates": &completion_candidates.candidates,
+                "cache_hit": completion_candidates.cache_hit,
+                "cache_state": completion_candidates.cache_state,
+                "manifest_count": completion_candidates.manifest_count,
+                "cache_age_ms": completion_candidates.cache_age_ms,
+                "cache_ttl_ms": completion_candidates.cache_ttl_ms,
+                "effective_cache_ttl_ms": completion_candidates.effective_cache_ttl_ms,
+                "cache_ttl_source": completion_candidates.cache_ttl_source,
+            })
+        },
+    )
+}
+
+fn parse_completion_candidates_request(
+    task: &TaskInvocation,
+    args: &[String],
+) -> Result<CompletionCandidatesRequest, RunnerError> {
+    let mut parser = BuiltinArgParser::new(args);
     let mut output_json = false;
-    let mut help = false;
     let mut repo_override: Option<PathBuf> = None;
     let mut prefix: Option<String> = None;
-    let mut i = 0usize;
-
-    while i < runtime_args.passthrough.len() {
-        match runtime_args.passthrough[i].as_str() {
-            "candidates" => {
-                i += 1;
-            }
-            "--json" => {
-                output_json = true;
-                i += 1;
-            }
-            "--help" | "-h" => {
-                help = true;
-                i += 1;
-            }
+    let unknown = parser.parse_loop_collect_unknown(|parser, arg| {
+        if arg == "candidates" || parser.consume_json_flag(arg, &mut output_json) {
+            return Ok(ParseLoopAction::Handled);
+        }
+        match arg {
             "--repo" => {
-                let Some(value) = runtime_args.passthrough.get(i + 1) else {
-                    return Err(RunnerError::TaskInvocation(
-                        "completion candidates argument --repo requires a value".to_owned(),
-                    ));
-                };
+                let value = parser.context_string_flag_value("completion candidates", "--repo")?;
                 repo_override = Some(PathBuf::from(value));
-                i += 2;
+                Ok(ParseLoopAction::Handled)
             }
             "--prefix" => {
-                let Some(value) = runtime_args.passthrough.get(i + 1) else {
-                    return Err(RunnerError::TaskInvocation(
-                        "completion candidates argument --prefix requires a value".to_owned(),
-                    ));
-                };
-                prefix = Some(value.clone());
-                i += 2;
+                let value =
+                    parser.context_string_flag_value("completion candidates", "--prefix")?;
+                prefix = Some(value);
+                Ok(ParseLoopAction::Handled)
             }
-            other => {
-                return Err(RunnerError::TaskInvocation(format!(
-                    "unknown argument(s) for built-in `{}`: candidates {other}",
-                    task.name
-                )));
-            }
+            _ => Ok(ParseLoopAction::Unknown),
         }
-    }
+    })?;
+    ensure_no_unknown_builtin_args_with_prefix(&task.name, "candidates", &unknown)?;
 
-    if help {
-        let text = render_completion_candidates_help();
-        if output_json {
-            let payload = json!({
-                "schema": "effigy.help.v1",
-                "schema_version": 1,
-                "ok": true,
-                "topic": "completion-candidates",
-                "text": text,
-            });
-            return serde_json::to_string_pretty(&payload)
-                .map(Some)
-                .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
-        }
-        return Ok(Some(text));
-    }
-
-    let repo_root = repo_override.unwrap_or_else(|| target_root.to_path_buf());
-    let completion_candidates = collect_completion_candidates(&repo_root, prefix.as_deref())?;
-    if output_json {
-        let payload = json!({
-            "schema": "effigy.completion.candidates.v1",
-            "schema_version": 1,
-            "ok": true,
-            "repo": repo_root.display().to_string(),
-            "prefix": prefix,
-            "candidates": completion_candidates.candidates,
-            "cache_hit": completion_candidates.cache_hit,
-            "cache_state": completion_candidates.cache_state,
-            "manifest_count": completion_candidates.manifest_count,
-            "cache_age_ms": completion_candidates.cache_age_ms,
-            "cache_ttl_ms": completion_candidates.cache_ttl_ms,
-            "effective_cache_ttl_ms": completion_candidates.effective_cache_ttl_ms,
-            "cache_ttl_source": completion_candidates.cache_ttl_source,
-        });
-        return serde_json::to_string_pretty(&payload)
-            .map(Some)
-            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
-    }
-
-    Ok(Some(completion_candidates.candidates.join("\n")))
+    Ok(CompletionCandidatesRequest {
+        output_json,
+        repo_override,
+        prefix,
+    })
 }
 
 fn collect_completion_candidates(

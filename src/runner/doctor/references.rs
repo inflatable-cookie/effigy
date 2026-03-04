@@ -1,48 +1,34 @@
-use std::collections::HashMap;
 use std::path::Path;
 
 use super::super::catalog::select_catalog_and_task;
 use super::super::util::parse_task_reference_invocation;
 use super::super::LoadedCatalog;
-use super::{DoctorFinding, DoctorSeverity};
+use super::contracts::{check_id, remediation};
+use super::task_graph;
+use super::DoctorState;
 
-pub(super) fn check_task_references(
-    catalogs: &[LoadedCatalog],
-    findings: &mut Vec<DoctorFinding>,
-    statuses: &mut HashMap<String, DoctorSeverity>,
-) {
-    let mut checker = ReferenceChecker::new(catalogs, findings, statuses);
+pub(super) fn check_task_references(catalogs: &[LoadedCatalog], state: &mut DoctorState) {
+    let mut checker = ReferenceChecker::new(catalogs, state);
     for catalog in catalogs {
-        for (task_name, task) in &catalog.manifest.tasks {
-            for reference in referenced_task_selectors(task) {
-                checker.validate_task_reference(
-                    &catalog.catalog_root,
-                    &catalog.manifest_path,
-                    task_name,
-                    reference,
-                );
-            }
-        }
+        task_graph::for_each_manifest_task_reference(&catalog.manifest, |task_name, reference| {
+            checker.validate_task_reference(
+                &catalog.catalog_root,
+                &catalog.manifest_path,
+                task_name,
+                reference,
+            );
+        });
     }
 }
 
 struct ReferenceChecker<'a, 'b> {
     catalogs: &'a [LoadedCatalog],
-    findings: &'b mut Vec<DoctorFinding>,
-    statuses: &'b mut HashMap<String, DoctorSeverity>,
+    state: &'b mut DoctorState,
 }
 
 impl<'a, 'b> ReferenceChecker<'a, 'b> {
-    fn new(
-        catalogs: &'a [LoadedCatalog],
-        findings: &'b mut Vec<DoctorFinding>,
-        statuses: &'b mut HashMap<String, DoctorSeverity>,
-    ) -> Self {
-        Self {
-            catalogs,
-            findings,
-            statuses,
-        }
+    fn new(catalogs: &'a [LoadedCatalog], state: &'b mut DoctorState) -> Self {
+        Self { catalogs, state }
     }
 
     fn validate_task_reference(
@@ -63,7 +49,7 @@ impl<'a, 'b> ReferenceChecker<'a, 'b> {
                         reference,
                         error
                     ),
-                    "Fix task reference syntax (`<task>` or `<catalog>/<task>`).",
+                    remediation::FIX_TASK_REFERENCE_SYNTAX,
                 );
                 return;
             }
@@ -84,7 +70,7 @@ impl<'a, 'b> ReferenceChecker<'a, 'b> {
                         reference,
                         error
                     ),
-                    "Update task reference to an existing task selector.",
+                    remediation::UPDATE_TASK_REFERENCE_TARGET,
                 );
                 return;
             }
@@ -98,55 +84,15 @@ impl<'a, 'b> ReferenceChecker<'a, 'b> {
                     task_name,
                     reference
                 ),
-                "Add a `run` command to the referenced task or reference a runnable task.",
+                remediation::REFERENCE_RUNNABLE_TASK,
             );
         }
     }
 
     fn push_resolution_error(&mut self, evidence: String, remediation: &str) {
-        super::add_finding(
-            self.findings,
-            self.statuses,
-            DoctorFinding {
-                check_id: "tasks.references.resolve".to_owned(),
-                severity: DoctorSeverity::Error,
-                evidence,
-                remediation: remediation.to_owned(),
-                fixable: false,
-            },
-        );
+        self.state
+            .add_check_error(check_id::TASK_REFERENCES_RESOLVE, evidence, remediation);
     }
-}
-
-fn referenced_task_selectors(task: &super::super::ManifestTask) -> Vec<&str> {
-    let mut references: Vec<&str> = Vec::new();
-    if let Some(run) = task.run.as_ref() {
-        match run {
-            super::super::ManifestManagedRun::Command(_) => {}
-            super::super::ManifestManagedRun::Sequence(steps) => {
-                for step in steps {
-                    if let super::super::ManifestManagedRunStep::Step(table) = step {
-                        if let Some(reference) = table.task.as_deref() {
-                            references.push(reference);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    for entry in &task.concurrent {
-        if let Some(reference) = entry.task.as_deref() {
-            references.push(reference);
-        }
-    }
-    for profile in task.profiles.values() {
-        for entry in &profile.concurrent {
-            if let Some(reference) = entry.task.as_deref() {
-                references.push(reference);
-            }
-        }
-    }
-    references
 }
 
 fn is_builtin_selector(task_name: &str) -> bool {

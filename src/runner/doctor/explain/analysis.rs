@@ -1,8 +1,7 @@
-use crate::ui::UiError;
-
 use super::super::super::deferral::{select_deferral, should_attempt_deferral};
 use super::super::super::{LoadedCatalog, RunnerError, TaskSelection, TaskSelector};
-use super::{CatalogSelectionMode, DeferralOutcome, SelectionOutcome};
+use super::contracts::{DeferralOutcome, SelectionOutcome};
+use super::CatalogSelectionMode;
 
 pub(super) fn candidate_catalogs(
     catalogs: &[LoadedCatalog],
@@ -138,8 +137,4 @@ fn deferral_not_considered() -> DeferralOutcome {
         working_dir: None,
         reasoning: super::DEFERRAL_NOT_CONSIDERED_REASON.to_owned(),
     }
-}
-
-pub(super) fn map_render_error(error: UiError) -> RunnerError {
-    RunnerError::Ui(format!("failed to render doctor explain output: {error}"))
 }

@@ -49,14 +49,8 @@ BAZ='single quoted'
 "#,
         );
         assert_eq!(parsed.get("FOO").map(String::as_str), Some("bar"));
-        assert_eq!(
-            parsed.get("BAR").map(String::as_str),
-            Some("quoted value")
-        );
-        assert_eq!(
-            parsed.get("BAZ").map(String::as_str),
-            Some("single quoted")
-        );
+        assert_eq!(parsed.get("BAR").map(String::as_str), Some("quoted value"));
+        assert_eq!(parsed.get("BAZ").map(String::as_str), Some("single quoted"));
     }
 
     #[test]

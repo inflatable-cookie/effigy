@@ -2,58 +2,40 @@ use std::path::Path;
 
 use serde_json::json;
 
-use crate::{render_help, HelpTopic, TaskInvocation};
+use crate::fs_probe::PathPresenceCache;
+use crate::{HelpTopic, TaskInvocation};
 
-use super::super::render::{encode_pretty_json_optional, render_utf8, standard_renderer};
 use super::super::{RunnerError, TASK_MANIFEST_FILE};
-use super::arg_parser::BuiltinArgParser;
-use super::ensure_no_unknown_builtin_args;
+use super::command_spec::run_builtin_command;
+use super::render_builtin_help_topic;
+use super::response::render_optional_text_or_schema_json_lazy;
+use super::text_doc::TextDoc;
+#[path = "init/request.rs"]
+mod request;
 
 pub(super) fn run_builtin_init(
     task: &TaskInvocation,
     args: &[String],
     target_root: &Path,
 ) -> Result<Option<String>, RunnerError> {
-    let mut parser = BuiltinArgParser::new(args);
-    let mut output_json = false;
-    let mut help = false;
-    let mut force = false;
-    let mut dry_run = false;
-    let mut unknown = Vec::<String>::new();
-    while let Some(arg) = parser.next() {
-        if parser.consume_json_flag(arg, &mut output_json)
-            || parser.consume_help_flag(arg, &mut help)
-            || parser.consume_flag(arg, "--force", &mut force)
-            || parser.consume_flag(arg, "--dry-run", &mut dry_run)
-        {
-            continue;
-        }
-        unknown.push(arg.to_owned());
-    }
-    ensure_no_unknown_builtin_args(&task.name, &unknown)?;
+    run_builtin_command(
+        args,
+        |output_json| render_builtin_help_topic(HelpTopic::Init, "init", output_json),
+        || request::parse_init_request(task, args),
+        |request: request::InitRequest| run_init_request(request, target_root),
+    )
+}
 
-    if help {
-        let mut renderer = standard_renderer(output_json);
-        render_help(&mut renderer, HelpTopic::Init)?;
-        let rendered = render_utf8(renderer.into_inner())?;
-        if output_json {
-            let payload = json!({
-                "schema": "effigy.help.v1",
-                "schema_version": 1,
-                "ok": true,
-                "topic": "init",
-                "text": rendered,
-            });
-            return encode_pretty_json_optional(&payload);
-        }
-        return Ok(Some(rendered));
-    }
-
+fn run_init_request(
+    request: request::InitRequest,
+    target_root: &Path,
+) -> Result<Option<String>, RunnerError> {
     let scaffold = render_init_scaffold();
     let manifest_path = target_root.join(TASK_MANIFEST_FILE);
-    let exists = manifest_path.exists();
-    if exists && !force && !dry_run {
-        return Err(RunnerError::TaskInvocation(format!(
+    let mut probe = PathPresenceCache::new();
+    let exists = probe.exists(&manifest_path);
+    if exists && !request.force && !request.dry_run {
+        return Err(RunnerError::task_invocation(format!(
             "{} already exists at {}. Use `effigy init --force` to overwrite or `effigy init --dry-run` to preview.",
             TASK_MANIFEST_FILE,
             manifest_path.display()
@@ -61,52 +43,49 @@ pub(super) fn run_builtin_init(
     }
 
     let mut written = false;
-    if !dry_run {
-        std::fs::write(&manifest_path, scaffold.as_bytes()).map_err(|error| {
-            RunnerError::TaskInvocation(format!(
-                "failed to write {}: {error}",
-                manifest_path.display()
-            ))
-        })?;
+    if !request.dry_run {
+        std::fs::write(&manifest_path, scaffold.as_bytes())
+            .map_err(|error| RunnerError::task_invocation_failed_write(&manifest_path, error))?;
         written = true;
     }
 
-    if output_json {
-        let payload = json!({
-            "schema": "effigy.init.v1",
-            "schema_version": 1,
-            "ok": true,
-            "path": manifest_path.display().to_string(),
-            "dry_run": dry_run,
-            "written": written,
-            "overwritten": exists && written,
-            "content": scaffold,
-        });
-        return encode_pretty_json_optional(&payload);
-    }
-
-    if dry_run {
-        return Ok(Some(scaffold));
-    }
-
-    let summary = if exists {
-        format!(
-            "Overwrote {} at {}.\nRun `effigy tasks` to inspect available tasks.",
-            TASK_MANIFEST_FILE,
-            manifest_path.display()
-        )
-    } else {
-        format!(
-            "Created {} at {}.\nRun `effigy tasks` to inspect available tasks.",
-            TASK_MANIFEST_FILE,
-            manifest_path.display()
-        )
-    };
-    Ok(Some(summary))
+    let payload_scaffold = scaffold.clone();
+    let payload_path = manifest_path.display().to_string();
+    render_optional_text_or_schema_json_lazy(
+        request.output_json,
+        "effigy.init.v1",
+        || {
+            if request.dry_run {
+                return scaffold;
+            }
+            if exists {
+                return format!(
+                    "Overwrote {} at {}.\nRun `effigy tasks` to inspect available tasks.",
+                    TASK_MANIFEST_FILE,
+                    manifest_path.display()
+                );
+            }
+            format!(
+                "Created {} at {}.\nRun `effigy tasks` to inspect available tasks.",
+                TASK_MANIFEST_FILE,
+                manifest_path.display()
+            )
+        },
+        || {
+            json!({
+                "path": payload_path,
+                "dry_run": request.dry_run,
+                "written": written,
+                "overwritten": exists && written,
+                "content": payload_scaffold,
+            })
+        },
+    )
 }
 
 fn render_init_scaffold() -> String {
-    [
+    let mut doc = TextDoc::new();
+    for line in [
         "# Baseline effigy.toml scaffold (phase 1)",
         "",
         "[tasks]",
@@ -129,6 +108,8 @@ fn render_init_scaffold() -> String {
         "#   { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }",
         "# ]",
         "",
-    ]
-    .join("\n")
+    ] {
+        doc.line(line);
+    }
+    doc.finish()
 }

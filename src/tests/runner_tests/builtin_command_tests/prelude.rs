@@ -1,18 +1,6 @@
 pub(super) use super::super::prelude::*;
 
-pub(super) struct BuiltinTestErrorCase {
-    pub(super) workspace: &'static str,
-    pub(super) args: &'static [&'static str],
-    pub(super) expected: &'static [&'static str],
-}
-
-pub(super) struct BuiltinTestRecoveryCase {
-    pub(super) workspace: &'static str,
-    pub(super) args: &'static [&'static str],
-    pub(super) expected: &'static [&'static str],
-}
-
-pub(super) fn setup_fanout_catalog_repo(root: &PathBuf) -> (PathBuf, PathBuf) {
+pub(super) fn setup_fanout_catalog_repo(root: &Path) -> (PathBuf, PathBuf) {
     let farmyard = root.join("farmyard");
     let dairy = root.join("dairy");
     fs::create_dir_all(&farmyard).expect("mkdir farmyard");

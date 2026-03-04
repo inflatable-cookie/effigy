@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::runner::builtin::test::planning::{BuiltinResolvedPlan, BuiltinTestTarget};
+use crate::runner::tooling::vitest_command_for_js_package_manager;
 use crate::runner::{LoadedCatalog, ManifestJsPackageManager};
 
 use self::plan_resolution::resolve_target_test_plans;
@@ -85,12 +86,7 @@ fn apply_builtin_test_runner_config(
 ) -> crate::testing::TestRunnerPlan {
     if plan.runner == crate::testing::TestRunner::Vitest {
         if let Some(manager) = package_manager {
-            let (command, manager_label) = match manager {
-                ManifestJsPackageManager::Bun => ("bun x vitest run", "bun"),
-                ManifestJsPackageManager::Pnpm => ("pnpm exec vitest run", "pnpm"),
-                ManifestJsPackageManager::Npm => ("npx vitest run", "npm"),
-                ManifestJsPackageManager::Direct => ("vitest run", "direct"),
-            };
+            let (command, manager_label) = vitest_command_for_js_package_manager(manager);
             plan.command = command.to_owned();
             plan.evidence
                 .push(format!("package_manager.js={manager_label}"));

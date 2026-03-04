@@ -4,105 +4,108 @@ use serde_json::json;
 
 use crate::TaskInvocation;
 
-use super::super::locking::{unlock_all, unlock_scopes, LockScope};
+use super::super::locking::{unlock_all, unlock_scopes};
 use super::super::RunnerError;
+use super::command_spec::run_builtin_command;
+use super::help_text::{render_titled_help, HelpSection};
+use super::render_builtin_help_text;
+use super::response::render_optional_text_or_schema_json_lazy;
+use super::text_doc::TextDoc;
+
+#[path = "unlock/request.rs"]
+mod request;
+use request::{parse_unlock_request, UnlockRequest};
 
 pub(super) fn run_builtin_unlock(
     task: &TaskInvocation,
     args: &[String],
     target_root: &Path,
 ) -> Result<Option<String>, RunnerError> {
-    let mut output_json = false;
-    let mut unlock_all_flag = false;
-    let mut scopes = Vec::<LockScope>::new();
-
-    for arg in args {
-        match arg.as_str() {
-            "--json" => output_json = true,
-            "--all" => unlock_all_flag = true,
-            "--help" | "-h" => {
-                return Ok(Some(render_unlock_help()));
-            }
-            value => {
-                let Some(scope) = LockScope::parse(value) else {
-                    return Err(RunnerError::TaskInvocation(format!(
-                        "`{}` unlock target `{value}` is invalid; expected `workspace`, `task:<name>`, or `profile:<task>/<profile>`",
-                        task.name
-                    )));
-                };
-                scopes.push(scope);
-            }
-        }
-    }
-
-    if unlock_all_flag && !scopes.is_empty() {
-        return Err(RunnerError::TaskInvocation(
-            "`unlock` accepts either `--all` or explicit scope values, not both".to_owned(),
-        ));
-    }
-    if !unlock_all_flag && scopes.is_empty() {
-        return Err(RunnerError::TaskInvocation(
-            "`unlock` requires at least one scope (or `--all`)".to_owned(),
-        ));
-    }
-
-    let result = if unlock_all_flag {
-        unlock_all(target_root)?
-    } else {
-        unlock_scopes(target_root, &scopes)?
-    };
-
-    if output_json {
-        let payload = json!({
-            "schema": "effigy.unlock.v1",
-            "schema_version": 1,
-            "ok": true,
-            "root": target_root.display().to_string(),
-            "removed": result.removed,
-            "missing": result.missing,
-            "all": unlock_all_flag,
-        });
-        return serde_json::to_string_pretty(&payload)
-            .map(Some)
-            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
-    }
-
-    let mut lines = vec![format!("unlock root: {}", target_root.display())];
-    if unlock_all_flag {
-        lines.push("mode: all".to_owned());
-    } else {
-        lines.push("mode: scopes".to_owned());
-    }
-    lines.push(format!("removed: {}", result.removed.len()));
-    for entry in result.removed {
-        lines.push(format!("- {entry}"));
-    }
-    if !result.missing.is_empty() {
-        lines.push(format!("missing: {}", result.missing.len()));
-        for entry in result.missing {
-            lines.push(format!("- {entry}"));
-        }
-    }
-    Ok(Some(lines.join("\n")))
+    run_builtin_command(
+        args,
+        |output_json| render_builtin_help_text("unlock", render_unlock_help(), output_json),
+        || parse_unlock_request(task, args),
+        |request: UnlockRequest| run_unlock_request(request, target_root),
+    )
 }
 
+fn run_unlock_request(
+    request: UnlockRequest,
+    target_root: &Path,
+) -> Result<Option<String>, RunnerError> {
+    let result = if request.unlock_all_flag {
+        unlock_all(target_root)?
+    } else {
+        unlock_scopes(target_root, &request.scopes)?
+    };
+    let removed = result.removed;
+    let missing = result.missing;
+
+    render_optional_text_or_schema_json_lazy(
+        request.output_json,
+        "effigy.unlock.v1",
+        || render_unlock_text(target_root, request.unlock_all_flag, &removed, &missing),
+        || {
+            json!({
+                "root": target_root.display().to_string(),
+                "removed": &removed,
+                "missing": &missing,
+                "all": request.unlock_all_flag,
+            })
+        },
+    )
+}
+
+#[cfg(test)]
+pub(in crate::runner) use request::parse_unlock_contract_request;
+
 fn render_unlock_help() -> String {
-    [
-        "unlock Help",
-        "",
-        "Usage",
-        "effigy unlock [--all | <scope>...] [--json]",
-        "",
-        "Scopes",
-        "- workspace",
-        "- task:<name>",
-        "- profile:<task>/<profile>",
-        "",
-        "Examples",
-        "- effigy unlock workspace",
-        "- effigy unlock task:dev profile:dev/admin",
-        "- effigy unlock --all",
-        "- effigy unlock --all --json",
-    ]
-    .join("\n")
+    render_titled_help(
+        "unlock",
+        &[
+            HelpSection::Plain {
+                heading: "Usage",
+                lines: &["effigy unlock [--all | <scope>...] [--json]"],
+            },
+            HelpSection::Bulleted {
+                heading: "Scopes",
+                items: &["workspace", "task:<name>", "profile:<task>/<profile>"],
+            },
+            HelpSection::Bulleted {
+                heading: "Examples",
+                items: &[
+                    "effigy unlock workspace",
+                    "effigy unlock task:dev profile:dev/admin",
+                    "effigy unlock --all",
+                    "effigy unlock --all --json",
+                ],
+            },
+        ],
+    )
+}
+
+fn render_unlock_text(
+    target_root: &Path,
+    unlock_all_flag: bool,
+    removed: &[String],
+    missing: &[String],
+) -> String {
+    let mut doc = TextDoc::new();
+    doc.kv("unlock root", target_root.display());
+    if unlock_all_flag {
+        doc.kv("mode", "all");
+    } else {
+        doc.kv("mode", "scopes");
+    }
+    doc.kv("removed", removed.len());
+    for entry in removed {
+        doc.bullet(entry);
+    }
+    if !missing.is_empty() {
+        doc.kv("missing", missing.len());
+        for entry in missing {
+            doc.bullet(entry);
+        }
+    }
+    doc.finish()
 }

@@ -3,14 +3,19 @@ use crate::DoctorArgs;
 use super::{CatalogSelectionMode, LoadedCatalog, ManifestJsPackageManager, RunnerError};
 
 mod conflicts;
+mod contracts;
 mod environment;
 mod explain;
+mod finding_templates;
 mod health;
 mod manifest;
 mod references;
 mod render;
+mod render_support;
 mod report;
 mod run;
+mod task_graph;
+mod text_blocks;
 
 pub(super) type DoctorSeverity = report::DoctorSeverity;
 pub(super) type DoctorFinding = report::DoctorFinding;
@@ -19,14 +24,6 @@ pub(super) type DoctorFixAction = report::DoctorFixAction;
 pub(super) type DoctorReport = report::DoctorReport;
 pub(super) type DoctorState = report::DoctorState;
 pub(super) type ManifestSnapshot = report::ManifestSnapshot;
-
-pub(super) fn add_finding(
-    findings: &mut Vec<DoctorFinding>,
-    statuses: &mut std::collections::HashMap<String, DoctorSeverity>,
-    finding: DoctorFinding,
-) {
-    report::add_finding(findings, statuses, finding);
-}
 
 pub(super) fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
     if let Some(request) = args.explain.clone() {

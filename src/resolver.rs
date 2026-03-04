@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::data_loading::read_utf8_or_default;
+use crate::fs_probe::PathPresenceCache;
 use crate::tasks::ResolutionMode;
 
 const ROOT_MARKERS: [&str; 4] = ["package.json", "composer.json", "Cargo.toml", ".git"];
@@ -59,9 +61,11 @@ pub fn resolve_target_root(
         });
     }
 
-    let nearest = find_nearest_candidate(&cwd).ok_or(ResolveError::NoCandidateRoot { cwd })?;
+    let mut probe = PathPresenceCache::new();
+    let nearest =
+        find_nearest_candidate(&cwd, &mut probe).ok_or(ResolveError::NoCandidateRoot { cwd })?;
 
-    if let Some(promoted) = maybe_promote_to_parent_workspace(&nearest) {
+    if let Some(promoted) = maybe_promote_to_parent_workspace(&nearest, &mut probe) {
         return Ok(promoted);
     }
 
@@ -76,10 +80,10 @@ pub fn resolve_target_root(
     })
 }
 
-fn find_nearest_candidate(cwd: &Path) -> Option<PathBuf> {
+fn find_nearest_candidate(cwd: &Path, probe: &mut PathPresenceCache) -> Option<PathBuf> {
     let mut current = Some(canonicalize_best_effort(cwd.to_path_buf()));
     while let Some(path) = current {
-        if is_candidate_root(&path) {
+        if is_candidate_root(&path, probe) {
             return Some(path);
         }
         current = path.parent().map(Path::to_path_buf);
@@ -87,11 +91,16 @@ fn find_nearest_candidate(cwd: &Path) -> Option<PathBuf> {
     None
 }
 
-fn is_candidate_root(path: &Path) -> bool {
-    ROOT_MARKERS.iter().any(|marker| path.join(marker).exists())
+fn is_candidate_root(path: &Path, probe: &mut PathPresenceCache) -> bool {
+    ROOT_MARKERS
+        .iter()
+        .any(|marker| probe.child_exists(path, marker))
 }
 
-fn maybe_promote_to_parent_workspace(child: &Path) -> Option<ResolvedTarget> {
+fn maybe_promote_to_parent_workspace(
+    child: &Path,
+    probe: &mut PathPresenceCache,
+) -> Option<ResolvedTarget> {
     let parent = child.parent()?;
     if !parent.is_dir() {
         return None;
@@ -103,7 +112,7 @@ fn maybe_promote_to_parent_workspace(child: &Path) -> Option<ResolvedTarget> {
     let mut should_promote = false;
 
     let parent_package = parent.join("package.json");
-    if parent_package.exists() {
+    if probe.exists(&parent_package) {
         let content = read_to_string(&parent_package);
         if content.contains("\"workspaces\"")
             && (content.contains(&child_name) || content.contains('*'))
@@ -114,7 +123,7 @@ fn maybe_promote_to_parent_workspace(child: &Path) -> Option<ResolvedTarget> {
     }
 
     let parent_cargo = parent.join("Cargo.toml");
-    if parent_cargo.exists() {
+    if probe.exists(&parent_cargo) {
         let content = read_to_string(&parent_cargo);
         if content.contains("[workspace]")
             && content.contains("members")
@@ -129,7 +138,7 @@ fn maybe_promote_to_parent_workspace(child: &Path) -> Option<ResolvedTarget> {
         return None;
     }
 
-    let child_has_own_git = child.join(".git").exists();
+    let child_has_own_git = probe.child_exists(child, ".git");
     if child_has_own_git {
         return Some(ResolvedTarget {
             resolved_root: child.to_path_buf(),
@@ -153,7 +162,7 @@ fn maybe_promote_to_parent_workspace(child: &Path) -> Option<ResolvedTarget> {
 }
 
 fn read_to_string(path: &Path) -> String {
-    fs::read_to_string(path).unwrap_or_default()
+    read_utf8_or_default(path)
 }
 
 fn canonicalize_best_effort(path: PathBuf) -> PathBuf {

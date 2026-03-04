@@ -57,7 +57,7 @@ fn run_tasks_lists_managed_profiles_with_invocation_labels() {
         },
     ];
 
-    for case in cases {
+    assert_case_table(cases, |case| {
         let root = temp_workspace(case.workspace);
         write_managed_dev_profile_manifest(&root, case.profile);
         let out = run_tasks_from_repo(&root, case.filter, None, case.output_json);
@@ -85,5 +85,5 @@ fn run_tasks_lists_managed_profiles_with_invocation_labels() {
             }
             assert!(!out.contains("dev default"));
         }
-    }
+    });
 }

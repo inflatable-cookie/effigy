@@ -10,7 +10,7 @@ fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_re
         "[tasks.build]\nrun = \"printf root\"\n",
     );
 
-    let first_parsed = run_completion_candidates_json(root.clone());
+    let first_parsed = run_completion_candidates_json(root.to_path_buf());
     assert_eq!(first_parsed["schema"], "effigy.completion.candidates.v1");
     assert_candidates_cache_policy(&first_parsed, false, "miss_initial", 2000, "default");
     assert!(first_parsed["cache_age_ms"].is_null());
@@ -54,7 +54,7 @@ fn builtin_completion_candidates_json_contract_expires_cache_after_ttl() {
         "[tasks.build]\nrun = \"printf root\"\n",
     );
 
-    let first_parsed = run_completion_candidates_json(root.clone());
+    let first_parsed = run_completion_candidates_json(root.to_path_buf());
     assert_candidates_cache_policy(&first_parsed, false, "miss_initial", 2000, "default");
     assert!(first_parsed["cache_age_ms"].is_null());
     assert!(first_parsed["cache_ttl_ms"].is_null());
@@ -76,7 +76,7 @@ fn builtin_completion_candidates_json_contract_invalidates_cache_on_manifest_cha
     let manifest_path = root.join("effigy.toml");
     write_manifest(&manifest_path, "[tasks.build]\nrun = \"printf root\"\n");
 
-    let first_parsed = run_completion_candidates_json(root.clone());
+    let first_parsed = run_completion_candidates_json(root.to_path_buf());
     assert_candidates_cache_policy(&first_parsed, false, "miss_initial", 2000, "default");
     assert!(first_parsed["cache_age_ms"].is_null());
     assert!(first_parsed["cache_ttl_ms"].is_null());
@@ -127,7 +127,7 @@ fn builtin_completion_candidates_json_contract_reports_env_ttl_policy() {
         "[tasks.build]\nrun = \"printf root\"\n",
     );
 
-    let first_parsed = run_completion_candidates_json(root.clone());
+    let first_parsed = run_completion_candidates_json(root.to_path_buf());
     assert_candidates_cache_policy(&first_parsed, false, "miss_initial", 750, "env");
     assert!(first_parsed["cache_age_ms"].is_null());
     assert!(first_parsed["cache_ttl_ms"].is_null());

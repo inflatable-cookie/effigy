@@ -1,13 +1,10 @@
-use std::collections::BTreeMap;
-use std::path::Path;
+use crate::runner::{ManifestManagedRunStep, RunnerError};
 
-use crate::runner::manifest::{ManifestEnvEntry, ManifestEnvFileDirective};
-use crate::runner::{LoadedCatalog, ManifestManagedRunStep, RunnerError};
-
+use self::env_resolution::StepEnvAccumulator;
 use super::super::scheduler;
 use super::command::wrap_command_with_task_env;
 use super::run_step::resolve_task_run_step;
-use self::env_resolution::StepEnvAccumulator;
+use super::RunSpecContext;
 
 mod dotenv;
 mod env_files;
@@ -15,46 +12,38 @@ mod env_resolution;
 mod pathing;
 
 pub(super) fn render_run_sequence(
-    task_name: &str,
     steps: &[ManifestManagedRunStep],
-    task_env_file: Option<&ManifestEnvFileDirective>,
-    env_profiles: &BTreeMap<String, ManifestEnvEntry>,
-    args_rendered: &str,
-    repo_root: &Path,
-    catalogs: &[LoadedCatalog],
-    task_scope_cwd: &Path,
-    depth: usize,
+    context: RunSpecContext<'_>,
 ) -> Result<String, RunnerError> {
     if steps.is_empty() {
-        return Err(RunnerError::TaskInvocation(format!(
-            "task `{task_name}` has an empty run array"
+        return Err(RunnerError::task_invocation(format!(
+            "task `{}` has an empty run array",
+            context.task_name
         )));
     }
 
     let mut commands = Vec::with_capacity(steps.len());
     let mut policies = Vec::with_capacity(steps.len());
-    let mut env_state = StepEnvAccumulator::new(task_env_file)?;
+    let mut env_state = StepEnvAccumulator::new(context.task_env_file)?;
 
     for step in steps {
-        env_state.apply_from_step(task_name, step, env_profiles, repo_root, catalogs)?;
-        let command = resolve_task_run_step(
-            task_name,
+        env_state.apply_from_step(
+            context.task_name,
             step,
-            args_rendered,
-            repo_root,
-            catalogs,
-            task_scope_cwd,
-            depth,
+            context.env_profiles,
+            context.repo_root,
+            context.catalogs,
         )?;
+        let command = resolve_task_run_step(step, context)?;
         commands.push(wrap_command_with_task_env(
             command,
             env_state.chained_env(),
-            repo_root,
+            context.repo_root,
         ));
         policies.push(scheduler::step_policy_for(step));
     }
 
-    render_run_sequence_with_schedule(task_name, steps, &commands, &policies)
+    render_run_sequence_with_schedule(context.task_name, steps, &commands, &policies)
 }
 
 fn render_run_sequence_with_schedule(

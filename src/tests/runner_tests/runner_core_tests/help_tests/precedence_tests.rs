@@ -1,0 +1,51 @@
+use super::prelude::*;
+
+#[test]
+fn run_manifest_task_builtin_help_precedence_contract_table() {
+    let cases = [
+        BuiltinHelpCase {
+            workspace: "builtin-cache-help-precedence",
+            command: "cache",
+            args: &["--wat", "--help"],
+            expected: &["cache Help", "effigy cache inspect"],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-completion-help-precedence",
+            command: "completion",
+            args: &["--help", "--wat"],
+            expected: &["completion Help", "effigy completion <bash|zsh|fish>"],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-completion-candidates-help-precedence",
+            command: "completion",
+            args: &["candidates", "--help", "--wat"],
+            expected: &[
+                "completion candidates Help",
+                "effigy completion candidates [--repo <path>] [--prefix <value>] [--json]",
+            ],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-completion-candidates-help-json-precedence",
+            command: "completion",
+            args: &["candidates", "--help", "--json", "--wat"],
+            expected: &[
+                "\"schema\": \"effigy.help.v1\"",
+                "\"topic\": \"completion-candidates\"",
+            ],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-config-help-precedence",
+            command: "config",
+            args: &["--help", "--wat"],
+            expected: &["effigy.toml Reference", "[tasks]"],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-unlock-help-precedence",
+            command: "unlock",
+            args: &["--wat", "--help"],
+            expected: &["unlock Help", "effigy unlock [--all | <scope>...] [--json]"],
+        },
+    ];
+
+    assert_builtin_help_case_table(&cases);
+}

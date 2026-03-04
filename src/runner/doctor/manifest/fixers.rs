@@ -3,6 +3,8 @@ use std::path::Path;
 
 use toml::Value;
 
+use crate::fs_probe::PathPresenceCache;
+
 use super::super::super::{LoadedCatalog, TASK_MANIFEST_FILE};
 use super::super::{DoctorFixAction, DoctorFixStatus};
 
@@ -39,7 +41,8 @@ impl HealthScaffoldFixer {
     }
 
     fn apply(&mut self) {
-        if !self.root_manifest.exists() {
+        let mut probe = PathPresenceCache::new();
+        if !probe.exists(&self.root_manifest) {
             self.create_manifest_with_health_placeholder();
             return;
         }

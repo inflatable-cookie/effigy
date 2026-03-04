@@ -14,14 +14,12 @@ pub(super) fn normalize_env_file_directive(
     };
 
     let entries = match env_file {
-        ManifestEnvFileDirective::Single(value) => vec![normalize_env_file_entry(
-            value,
-            field_label,
-            None,
-        )?],
+        ManifestEnvFileDirective::Single(value) => {
+            vec![normalize_env_file_entry(value, field_label, None)?]
+        }
         ManifestEnvFileDirective::Many(values) => {
             if values.is_empty() {
-                return Err(RunnerError::TaskInvocation(format!(
+                return Err(RunnerError::task_invocation(format!(
                     "{field_label} is invalid: array cannot be empty"
                 )));
             }
@@ -36,7 +34,10 @@ pub(super) fn normalize_env_file_directive(
     Ok(Some(entries))
 }
 
-pub(super) fn resolve_env_file_paths(catalog_root: &Path, env_files: Option<&[String]>) -> Vec<PathBuf> {
+pub(super) fn resolve_env_file_paths(
+    catalog_root: &Path,
+    env_files: Option<&[String]>,
+) -> Vec<PathBuf> {
     let defaults = vec![".env".to_owned()];
     let env_files = env_files.unwrap_or(defaults.as_slice());
     env_files
@@ -59,10 +60,8 @@ fn normalize_env_file_entry(
 ) -> Result<String, RunnerError> {
     let normalized = value.trim();
     if normalized.is_empty() {
-        let suffix = index
-            .map(|idx| format!("[{idx}]"))
-            .unwrap_or_else(String::new);
-        return Err(RunnerError::TaskInvocation(format!(
+        let suffix = index.map(|idx| format!("[{idx}]")).unwrap_or_default();
+        return Err(RunnerError::task_invocation(format!(
             "{field_label}{suffix} is invalid: value cannot be empty"
         )));
     }

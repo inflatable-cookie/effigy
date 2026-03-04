@@ -1,3 +1,5 @@
+#[path = "render/contracts.rs"]
+mod contracts;
 #[path = "render/grouping.rs"]
 mod grouping;
 #[path = "render/json_output.rs"]

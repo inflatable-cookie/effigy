@@ -22,7 +22,7 @@ pub(super) fn stamp_path(catalog_root: &Path, path: &Path) -> Result<PathStamp, 
 
     if metadata.is_file() {
         let body = fs::read(path).map_err(|error| {
-            RunnerError::TaskInvocation(format!(
+            RunnerError::task_invocation(format!(
                 "failed reading cache input {}: {error}",
                 path.display()
             ))

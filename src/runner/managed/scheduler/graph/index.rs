@@ -26,13 +26,13 @@ pub(super) fn build_step_index(
                 if let Some(raw_id) = table.id.as_deref() {
                     let id = raw_id.trim();
                     if id.is_empty() {
-                        return Err(RunnerError::TaskInvocation(format!(
+                        return Err(RunnerError::task_invocation(format!(
                             "task `{task_name}` run step {} has an empty `id`",
                             index + 1
                         )));
                     }
                     if !declared_ids.insert(id.to_owned()) {
-                        return Err(RunnerError::TaskInvocation(format!(
+                        return Err(RunnerError::task_invocation(format!(
                             "task `{task_name}` run sequence has duplicate step id `{id}`"
                         )));
                     }

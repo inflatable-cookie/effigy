@@ -10,6 +10,7 @@ mod plan_text;
 
 use crate::TaskInvocation;
 
+use super::super::super::response::render_text_or_json_lazy;
 use super::super::execution::should_run_builtin_test_tui;
 use super::super::planning::{BuiltinTestCliFlags, BuiltinTestTarget};
 use super::super::suite_selection::BuiltinSuiteSelectionError;
@@ -34,7 +35,7 @@ pub(crate) fn render_suite_selection_failure(
         )
         .map(Some);
     }
-    Err(RunnerError::TaskInvocation(selection_error.message))
+    Err(RunnerError::task_invocation(selection_error.message))
 }
 
 pub(crate) fn render_builtin_test_plan(
@@ -51,28 +52,29 @@ pub(crate) fn render_builtin_test_plan(
     } else {
         "text"
     };
-
-    if flags.output_json {
-        let payload = build_builtin_test_plan_payload(
-            task,
-            root,
-            targets,
-            requested_suite,
-            passthrough,
-            runtime_mode,
-        );
-        return serde_json::to_string_pretty(&payload)
-            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
-    }
-
-    render_builtin_test_plan_text(
-        task,
-        root,
-        targets,
-        requested_suite,
-        passthrough,
-        runnable_count,
-        runtime_mode,
+    render_text_or_json_lazy(
+        flags.output_json,
+        || {
+            render_builtin_test_plan_text(
+                task,
+                root,
+                targets,
+                requested_suite,
+                passthrough,
+                runnable_count,
+                runtime_mode,
+            )
+        },
+        || {
+            build_builtin_test_plan_payload(
+                task,
+                root,
+                targets,
+                requested_suite,
+                passthrough,
+                runtime_mode,
+            )
+        },
     )
 }
 
@@ -83,11 +85,9 @@ fn render_builtin_test_plan_recovery(
     message: &str,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    if output_json {
-        let payload =
-            build_builtin_test_plan_recovery_payload(task, root, available_runners, message);
-        return serde_json::to_string_pretty(&payload)
-            .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")));
-    }
-    render_builtin_test_plan_recovery_text(task, root, available_runners, message)
+    render_text_or_json_lazy(
+        output_json,
+        || render_builtin_test_plan_recovery_text(task, root, available_runners, message),
+        || build_builtin_test_plan_recovery_payload(task, root, available_runners, message),
+    )
 }

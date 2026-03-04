@@ -29,7 +29,7 @@ pub(super) fn load_cache_store(workspace_root: &Path) -> Result<TaskCacheStore, 
         error,
     })?;
     serde_json::from_str::<TaskCacheStore>(&raw).map_err(|error| {
-        RunnerError::TaskInvocation(format!(
+        RunnerError::task_invocation(format!(
             "failed to parse task cache store {}: {error}",
             path.display()
         ))

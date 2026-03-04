@@ -6,8 +6,8 @@ use crate::runner::manifest::ManifestCargoEnvMatchMode;
 use crate::runner::LoadedCatalog;
 use crate::testing::detect_test_runner_plans;
 
-use super::target_config::{resolve_target_test_config, BuiltinTestTargetConfig};
 use super::apply_builtin_test_runner_config;
+use super::target_config::{resolve_target_test_config, BuiltinTestTargetConfig};
 
 pub(super) fn resolve_target_test_plans(
     catalogs: &[LoadedCatalog],
@@ -45,9 +45,7 @@ pub(super) fn resolve_target_test_plans(
     (
         detect_test_runner_plans(target_root)
             .into_iter()
-            .map(|plan| {
-                apply_builtin_test_runner_config(plan, package_manager, &runner_overrides)
-            })
+            .map(|plan| apply_builtin_test_runner_config(plan, package_manager, &runner_overrides))
             .map(|plan| BuiltinResolvedPlan {
                 suite: plan.runner.label().to_owned(),
                 command: plan.command,

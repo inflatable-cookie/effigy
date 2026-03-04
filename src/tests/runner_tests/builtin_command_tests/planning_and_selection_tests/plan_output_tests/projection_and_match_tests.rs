@@ -11,7 +11,11 @@ fn run_manifest_task_builtin_test_plan_text_and_json_projection_consistency() {
         ],
     );
 
-    let text = run_builtin_ok(root.clone(), "test", &["--plan", "unit", "user-service"]);
+    let text = run_builtin_ok(
+        root.to_path_buf(),
+        "test",
+        &["--plan", "unit", "user-service"],
+    );
     let json = run_builtin_ok(root, "test", &["--plan", "--json", "unit", "user-service"]);
     let parsed = parse_json_output(&json);
     let target = &parsed["targets"][0];
@@ -74,7 +78,7 @@ integration = "sh -lc 'cargo nextest run --workspace'"
 "#,
     );
 
-    let text = run_builtin_ok(root.clone(), "test", &["--plan"]);
+    let text = run_builtin_ok(root.to_path_buf(), "test", &["--plan"]);
     assert_contains_all(
         &text,
         &[

@@ -8,7 +8,7 @@ fn assert_plan_schema_v1(parsed: &serde_json::Value) {
 #[test]
 fn run_manifest_task_builtin_test_plan_multi_suite_recovery_outputs_hints() {
     let cases = [
-        BuiltinTestRecoveryCase {
+        BuiltinInvocationCase {
             workspace: "builtin-test-multi-suite-plan-recovery",
             args: &["--plan", "user-service"],
             expected: &[
@@ -19,7 +19,7 @@ fn run_manifest_task_builtin_test_plan_multi_suite_recovery_outputs_hints() {
                 "Try one of:",
             ],
         },
-        BuiltinTestRecoveryCase {
+        BuiltinInvocationCase {
             workspace: "builtin-test-plan-mistyped-suite-recovery",
             args: &["--plan", "viteest", "user-service"],
             expected: &[
@@ -31,12 +31,7 @@ fn run_manifest_task_builtin_test_plan_multi_suite_recovery_outputs_hints() {
         },
     ];
 
-    for case in cases {
-        let root = temp_workspace(case.workspace);
-        setup_multi_suite_repo(&root);
-        let out = run_builtin_ok(root, "test", case.args);
-        assert_contains_all(&out, case.expected);
-    }
+    assert_builtin_ok_case_table_with_setup("test", &cases, setup_multi_suite_repo);
 }
 
 #[test]
@@ -49,4 +44,31 @@ fn run_manifest_task_builtin_test_plan_json_recovery_has_versioned_schema() {
     assert_plan_schema_v1(&parsed);
     assert_eq!(parsed["runtime"], "plan-recovery");
     assert!(parsed["recovery"].is_object());
+}
+
+#[test]
+fn run_manifest_task_builtin_test_plan_json_recovery_preserves_message_and_suite_candidates() {
+    let root = temp_workspace("builtin-test-plan-json-recovery-details");
+    setup_multi_suite_repo(&root);
+
+    let out = run_builtin_ok(
+        root,
+        "test",
+        &["--plan", "--json", "viteest", "user-service"],
+    );
+    let parsed = parse_json_output(&out);
+    assert_plan_schema_v1(&parsed);
+    let recovery_message = parsed["recovery"]["message"]
+        .as_str()
+        .expect("recovery.message string");
+    assert!(recovery_message.contains("runner `viteest` is not available"));
+    assert!(recovery_message.contains("Did you mean `vitest`?"));
+    assert!(recovery_message.contains("Use `effigy test --plan <args>`"));
+    let available = parsed["recovery"]["available_suites"]
+        .as_array()
+        .expect("available_suites array")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<&str>>();
+    assert_eq!(available, vec!["cargo-nextest", "vitest"]);
 }

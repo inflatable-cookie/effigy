@@ -12,8 +12,8 @@ fn run_manifest_task_defers_to_prefixed_catalog_handler() {
         "[catalog]\nalias = \"farmyard\"\n[defer]\nrun = \"printf farmyard-deferred\"\n",
     );
 
-    let out =
-        run_task_in_workspace(&root, "farmyard/missing", &[]).expect("prefixed deferral should succeed");
+    let out = run_task_in_workspace(&root, "farmyard/missing", &[])
+        .expect("prefixed deferral should succeed");
 
     assert_eq!(out, "");
 }

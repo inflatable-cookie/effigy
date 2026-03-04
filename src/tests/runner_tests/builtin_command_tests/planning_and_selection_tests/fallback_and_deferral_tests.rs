@@ -9,7 +9,7 @@ fn run_manifest_task_explicit_test_task_overrides_builtin_auto_detection() {
     );
     write_package_json_with_test_script(&root);
 
-    assert_builtin_ok_empty(root.clone(), "test", &[]);
+    assert_builtin_ok_empty(root.to_path_buf(), "test", &[]);
     assert!(
         root.join("explicit-test.log").exists(),
         "explicit task should run before builtin test detection"

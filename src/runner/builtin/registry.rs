@@ -1,0 +1,169 @@
+use std::path::Path;
+
+use crate::TaskInvocation;
+
+use super::super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector};
+use super::{cache, completion, config, doctor, help, init, migrate, tasks, test, unlock, watch};
+
+pub(super) struct BuiltinRegistryEntry {
+    pub(super) name: &'static str,
+    dispatch: BuiltinDispatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BuiltinDispatch {
+    Doctor,
+    Catalogs,
+    Tasks,
+    Config,
+    Help,
+    Watch,
+    Init,
+    Migrate,
+    Unlock,
+    Cache,
+    Completion,
+    Test,
+}
+
+const BUILTIN_REGISTRY: [BuiltinRegistryEntry; 12] = [
+    BuiltinRegistryEntry {
+        name: "doctor",
+        dispatch: BuiltinDispatch::Doctor,
+    },
+    BuiltinRegistryEntry {
+        name: "catalogs",
+        dispatch: BuiltinDispatch::Catalogs,
+    },
+    BuiltinRegistryEntry {
+        name: "tasks",
+        dispatch: BuiltinDispatch::Tasks,
+    },
+    BuiltinRegistryEntry {
+        name: "config",
+        dispatch: BuiltinDispatch::Config,
+    },
+    BuiltinRegistryEntry {
+        name: "help",
+        dispatch: BuiltinDispatch::Help,
+    },
+    BuiltinRegistryEntry {
+        name: "watch",
+        dispatch: BuiltinDispatch::Watch,
+    },
+    BuiltinRegistryEntry {
+        name: "init",
+        dispatch: BuiltinDispatch::Init,
+    },
+    BuiltinRegistryEntry {
+        name: "migrate",
+        dispatch: BuiltinDispatch::Migrate,
+    },
+    BuiltinRegistryEntry {
+        name: "unlock",
+        dispatch: BuiltinDispatch::Unlock,
+    },
+    BuiltinRegistryEntry {
+        name: "cache",
+        dispatch: BuiltinDispatch::Cache,
+    },
+    BuiltinRegistryEntry {
+        name: "completion",
+        dispatch: BuiltinDispatch::Completion,
+    },
+    BuiltinRegistryEntry {
+        name: "test",
+        dispatch: BuiltinDispatch::Test,
+    },
+];
+
+pub(super) fn builtin_registry_entry(task_name: &str) -> Option<&'static BuiltinRegistryEntry> {
+    BUILTIN_REGISTRY
+        .iter()
+        .find(|entry| entry.name == task_name)
+}
+
+impl BuiltinRegistryEntry {
+    pub(super) fn run(
+        &self,
+        selector: &TaskSelector,
+        task: &TaskInvocation,
+        runtime_args: &TaskRuntimeArgs,
+        target_root: &Path,
+        catalogs: &[LoadedCatalog],
+        invocation_cwd: &Path,
+    ) -> Result<Option<String>, RunnerError> {
+        self.dispatch.run(
+            selector,
+            task,
+            runtime_args,
+            target_root,
+            catalogs,
+            invocation_cwd,
+        )
+    }
+}
+
+impl BuiltinDispatch {
+    fn run(
+        self,
+        selector: &TaskSelector,
+        task: &TaskInvocation,
+        runtime_args: &TaskRuntimeArgs,
+        target_root: &Path,
+        catalogs: &[LoadedCatalog],
+        invocation_cwd: &Path,
+    ) -> Result<Option<String>, RunnerError> {
+        match self {
+            Self::Doctor => doctor::run_builtin_doctor(task, runtime_args, target_root),
+            Self::Catalogs => tasks::run_builtin_tasks(task, runtime_args, target_root, true),
+            Self::Tasks => tasks::run_builtin_tasks(task, runtime_args, target_root, false),
+            Self::Config => config::run_builtin_config(task, &runtime_args.passthrough),
+            Self::Help => help::run_builtin_help(task, &runtime_args.passthrough),
+            Self::Watch => watch::run_builtin_watch(task, runtime_args, target_root),
+            Self::Init => init::run_builtin_init(task, &runtime_args.passthrough, target_root),
+            Self::Migrate => {
+                migrate::run_builtin_migrate(task, &runtime_args.passthrough, target_root)
+            }
+            Self::Unlock => {
+                unlock::run_builtin_unlock(task, &runtime_args.passthrough, target_root)
+            }
+            Self::Cache => {
+                cache::run_builtin_cache(task, runtime_args, target_root, catalogs, invocation_cwd)
+            }
+            Self::Completion => completion::run_builtin_completion(task, runtime_args, target_root),
+            Self::Test => {
+                test::try_run_builtin_test(selector, task, runtime_args, target_root, catalogs)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::builtin_registry_entry;
+
+    #[test]
+    fn builtin_registry_contract_is_stable() {
+        let names = [
+            "doctor",
+            "catalogs",
+            "tasks",
+            "config",
+            "help",
+            "watch",
+            "init",
+            "migrate",
+            "unlock",
+            "cache",
+            "completion",
+            "test",
+        ];
+
+        for name in names {
+            let entry = builtin_registry_entry(name).expect("registry entry should exist");
+            assert_eq!(entry.name, name);
+        }
+        assert!(builtin_registry_entry("not-a-builtin").is_none());
+    }
+}

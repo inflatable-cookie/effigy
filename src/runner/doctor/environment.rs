@@ -1,53 +1,32 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use super::super::{
-    LoadedCatalog, ManifestJsPackageManager, ManifestManagedConcurrentEntry, ManifestManagedRun,
-    ManifestManagedRunStep, TaskManifest,
-};
-use super::{DoctorFinding, DoctorSeverity};
+use crate::fs_probe::PathPresenceCache;
+use crate::path_probe::command_available_in_path;
+
+use super::super::tooling::{js_package_manager_binary, required_tools_for_command};
+use super::super::{LoadedCatalog, ManifestJsPackageManager, TaskManifest};
+use super::contracts::{check_id, install_tool, remediation};
+use super::task_graph;
+use super::DoctorState;
 
 pub(super) fn check_environment_tools(
     workspace_root: &Path,
     catalogs: &[LoadedCatalog],
     preferred_js_pm: Option<ManifestJsPackageManager>,
-    findings: &mut Vec<DoctorFinding>,
-    statuses: &mut HashMap<String, DoctorSeverity>,
+    state: &mut DoctorState,
 ) {
     let mut required = HashSet::<String>::new();
     let mut availability = ToolAvailability::new();
 
-    if workspace_root.join("Cargo.toml").exists() {
-        add_required(&mut required, "cargo");
-        add_required(&mut required, "rustc");
-    }
-
-    let mut has_package_json = workspace_root.join("package.json").exists();
-    for catalog in catalogs {
-        if catalog.catalog_root.join("Cargo.toml").exists() {
-            add_required(&mut required, "cargo");
-            add_required(&mut required, "rustc");
-        }
-        if catalog.catalog_root.join("package.json").exists() {
-            has_package_json = true;
-        }
-        collect_required_tools_from_manifest(&catalog.manifest, &mut required);
-    }
+    let has_package_json =
+        collect_required_tools(workspace_root, catalogs, &preferred_js_pm, &mut required);
 
     if has_package_json {
-        add_required(&mut required, "node");
+        add_required_tools(&mut required, &["node"]);
         if let Some(pm) = preferred_js_pm {
-            match pm {
-                ManifestJsPackageManager::Bun => {
-                    add_required(&mut required, "bun");
-                }
-                ManifestJsPackageManager::Pnpm => {
-                    add_required(&mut required, "pnpm");
-                }
-                ManifestJsPackageManager::Npm => {
-                    add_required(&mut required, "npm");
-                }
-                ManifestJsPackageManager::Direct => {}
+            if let Some(binary) = js_package_manager_binary(pm) {
+                add_required_tools(&mut required, &[binary]);
             }
         }
     }
@@ -59,7 +38,7 @@ pub(super) fn check_environment_tools(
         .collect::<Vec<&str>>();
     missing.sort();
 
-    report_missing_tools(missing, findings, statuses);
+    report_missing_tools(missing, state);
 
     if has_package_json
         && preferred_js_pm.is_none()
@@ -67,19 +46,38 @@ pub(super) fn check_environment_tools(
         && !availability.is_available("pnpm")
         && !availability.is_available("npm")
     {
-        super::add_finding(
-            findings,
-            statuses,
-            DoctorFinding {
-                check_id: "environment.tools.required".to_owned(),
-                severity: DoctorSeverity::Warning,
-                evidence: "package.json detected but no JS package manager was found (bun/pnpm/npm)"
-                    .to_owned(),
-                remediation: "Install one of bun/pnpm/npm or define `[package_manager].js` to match your toolchain.".to_owned(),
-                fixable: false,
-            },
+        state.add_check_warning(
+            check_id::ENVIRONMENT_TOOLS_REQUIRED,
+            "package.json detected but no JS package manager was found (bun/pnpm/npm)",
+            remediation::INSTALL_JS_PM_OR_CONFIGURE,
         );
     }
+}
+
+fn collect_required_tools(
+    workspace_root: &Path,
+    catalogs: &[LoadedCatalog],
+    _preferred_js_pm: &Option<ManifestJsPackageManager>,
+    required: &mut HashSet<String>,
+) -> bool {
+    let mut probe = PathPresenceCache::new();
+
+    if probe.child_exists(workspace_root, "Cargo.toml") {
+        add_required_tools(required, &["cargo", "rustc"]);
+    }
+
+    let mut has_package_json = probe.child_exists(workspace_root, "package.json");
+    for catalog in catalogs {
+        if probe.child_exists(&catalog.catalog_root, "Cargo.toml") {
+            add_required_tools(required, &["cargo", "rustc"]);
+        }
+        if probe.child_exists(&catalog.catalog_root, "package.json") {
+            has_package_json = true;
+        }
+        collect_required_tools_from_manifest(&catalog.manifest, required);
+    }
+
+    has_package_json
 }
 
 struct ToolAvailability {
@@ -97,117 +95,32 @@ impl ToolAvailability {
         if let Some(available) = self.cache.get(tool) {
             return *available;
         }
-        let available = tool_available(tool);
+        let available = command_available_in_path(tool);
         self.cache.insert(tool.to_owned(), available);
         available
     }
 }
 
-fn add_required(required: &mut HashSet<String>, tool: &str) {
-    required.insert(tool.to_owned());
+fn add_required_tools(required: &mut HashSet<String>, tools: &[&str]) {
+    required.extend(tools.iter().map(|tool| (*tool).to_owned()));
 }
 
-fn report_missing_tools(
-    missing: Vec<&str>,
-    findings: &mut Vec<DoctorFinding>,
-    statuses: &mut HashMap<String, DoctorSeverity>,
-) {
+fn report_missing_tools(missing: Vec<&str>, state: &mut DoctorState) {
     for tool in missing {
-        super::add_finding(
-            findings,
-            statuses,
-            DoctorFinding {
-                check_id: "environment.tools.required".to_owned(),
-                severity: DoctorSeverity::Error,
-                evidence: format!("required tool `{tool}` is not available in PATH"),
-                remediation: format!("Install `{tool}` and re-run `effigy doctor`."),
-                fixable: false,
-            },
+        state.add_check_error(
+            check_id::ENVIRONMENT_TOOLS_REQUIRED,
+            format!("required tool `{tool}` is not available in PATH"),
+            install_tool(tool),
         );
     }
 }
 
 fn collect_required_tools_from_manifest(manifest: &TaskManifest, required: &mut HashSet<String>) {
-    for task in manifest.tasks.values() {
-        if let Some(run) = task.run.as_ref() {
-            match run {
-                ManifestManagedRun::Command(command) => detect_tools_in_command(command, required),
-                ManifestManagedRun::Sequence(steps) => {
-                    for step in steps {
-                        match step {
-                            ManifestManagedRunStep::Command(command) => {
-                                detect_tools_in_command(command, required)
-                            }
-                            ManifestManagedRunStep::Step(table) => {
-                                if let Some(run) = table.run.as_ref() {
-                                    detect_tools_in_command(run, required);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        collect_tools_from_entries(&task.concurrent, required);
-        for profile in task.profiles.values() {
-            collect_tools_from_entries(&profile.concurrent, required);
-        }
-    }
-}
-
-fn collect_tools_from_entries(
-    entries: &[ManifestManagedConcurrentEntry],
-    required: &mut HashSet<String>,
-) {
-    for entry in entries {
-        if let Some(run) = entry.run.as_ref() {
-            detect_tools_in_command(run, required);
-        }
-    }
+    task_graph::for_each_manifest_command(manifest, |command| {
+        detect_tools_in_command(command, required)
+    });
 }
 
 fn detect_tools_in_command(command: &str, required: &mut HashSet<String>) {
-    let head = command.split_whitespace().next().unwrap_or_default();
-    match head {
-        "cargo" => {
-            add_required(required, "cargo");
-            add_required(required, "rustc");
-        }
-        "bun" => {
-            add_required(required, "bun");
-            add_required(required, "node");
-        }
-        "pnpm" => {
-            add_required(required, "pnpm");
-            add_required(required, "node");
-        }
-        "npm" | "npx" => {
-            add_required(required, "npm");
-            add_required(required, "node");
-        }
-        "node" => {
-            add_required(required, "node");
-        }
-        _ => {}
-    }
-}
-
-fn tool_available(tool: &str) -> bool {
-    let Some(paths) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&paths).any(|dir| {
-        let candidate = dir.join(tool);
-        if candidate.is_file() {
-            return true;
-        }
-        #[cfg(windows)]
-        {
-            let exe = dir.join(format!("{tool}.exe"));
-            if exe.is_file() {
-                return true;
-            }
-        }
-        false
-    })
+    add_required_tools(required, required_tools_for_command(command));
 }

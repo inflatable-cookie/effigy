@@ -59,12 +59,12 @@ fn run_manifest_task_run_array_task_reference_rejects_invalid_inline_args() {
         },
     ];
 
-    for case in cases {
+    assert_case_table(cases, |case| {
         let root = temp_workspace(case.workspace);
         write_validate_manifest(&root, case.manifest);
         let err = run_validate_err(&root, &[]);
         assert_task_invocation_error_contains(err, &["run step task ref", case.expected_tail]);
-    }
+    });
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn run_manifest_task_run_array_supports_builtin_test_task_reference_steps() {
         },
     ];
 
-    for case in cases {
+    assert_case_table(cases, |case| {
         let root = temp_workspace(case.workspace);
         let marker = root.join("builtin-test-called.log");
         write_validate_manifest(
@@ -98,7 +98,7 @@ fn run_manifest_task_run_array_supports_builtin_test_task_reference_steps() {
         let out = run_validate_ok(&root, &["--verbose-root"]);
         assert_contains_all(&out, &["validate-ok"]);
         assert!(marker.exists(), "built-in test task ref should execute");
-    }
+    });
 }
 
 #[test]
@@ -183,7 +183,7 @@ run = [
         ),
     );
 
-    assert_eq!(run_builtin_ok(root.clone(), "api", &[]), "");
+    assert_eq!(run_builtin_ok(root.to_path_buf(), "api", &[]), "");
     let body = fs::read_to_string(&marker).expect("read marker");
     let canonical_root = fs::canonicalize(&root).expect("canonicalize root");
     assert_eq!(

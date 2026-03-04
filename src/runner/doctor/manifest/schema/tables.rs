@@ -2,6 +2,19 @@ use toml::Value;
 
 use super::diagnostics::SchemaContext;
 
+pub(super) fn validate_allowed_keys(
+    context: &mut SchemaContext<'_, '_>,
+    base_path: &str,
+    table: &toml::map::Map<String, Value>,
+    allowed_keys: &[&str],
+) {
+    for key in table.keys() {
+        if !allowed_keys.contains(&key.as_str()) {
+            context.unsupported_key(&format!("{base_path}.{key}"));
+        }
+    }
+}
+
 pub(super) fn validate_known_table(
     context: &mut SchemaContext<'_, '_>,
     table_name: &str,
@@ -16,11 +29,7 @@ pub(super) fn validate_known_table(
         );
         return;
     };
-    for key in table.keys() {
-        if !allowed_keys.contains(&key.as_str()) {
-            context.unsupported_key(&format!("{table_name}.{key}"));
-        }
-    }
+    validate_allowed_keys(context, table_name, table, allowed_keys);
 }
 
 pub(super) fn validate_concurrent_array(
@@ -46,13 +55,11 @@ pub(super) fn validate_concurrent_array(
             );
             continue;
         };
-        for key in table.keys() {
-            if !matches!(
-                key.as_str(),
-                "name" | "task" | "run" | "start" | "tab" | "start_after_ms"
-            ) {
-                context.unsupported_key(&format!("{path}[{index}].{key}"));
-            }
-        }
+        validate_allowed_keys(
+            context,
+            &format!("{path}[{index}]"),
+            table,
+            &["name", "task", "run", "start", "tab", "start_after_ms"],
+        );
     }
 }

@@ -3,8 +3,8 @@ use super::super::super::{RunnerError, TaskSelector};
 pub(super) fn parse_task_selector(raw: &str) -> Result<TaskSelector, RunnerError> {
     if let Some((prefix, task_name)) = raw.rsplit_once('/') {
         if prefix.trim().is_empty() || task_name.trim().is_empty() {
-            return Err(RunnerError::TaskInvocation(
-                "task name must be `<task>` or `<catalog>/<task>`".to_owned(),
+            return Err(RunnerError::task_invocation(
+                "task name must be `<task>` or `<catalog>/<task>`",
             ));
         }
         return Ok(TaskSelector {
@@ -14,9 +14,7 @@ pub(super) fn parse_task_selector(raw: &str) -> Result<TaskSelector, RunnerError
     }
 
     if raw.trim().is_empty() {
-        return Err(RunnerError::TaskInvocation(
-            "task name is required".to_owned(),
-        ));
+        return Err(RunnerError::task_invocation("task name is required"));
     }
 
     Ok(TaskSelector {

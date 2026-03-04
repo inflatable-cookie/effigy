@@ -31,8 +31,12 @@ pub(super) fn handle_chunk_event_impl(
     parser.process(chunk);
     state.set_vt_saw_chunk_for(&event_item.process, true);
     match event_item.kind {
-        ProcessEventKind::StdoutChunk => diagnostics.record_stdout_chunk(&event_item.process, chunk.len()),
-        ProcessEventKind::StderrChunk => diagnostics.record_stderr_chunk(&event_item.process, chunk.len()),
+        ProcessEventKind::StdoutChunk => {
+            diagnostics.record_stdout_chunk(&event_item.process, chunk.len())
+        }
+        ProcessEventKind::StderrChunk => {
+            diagnostics.record_stderr_chunk(&event_item.process, chunk.len())
+        }
         _ => {}
     }
 }

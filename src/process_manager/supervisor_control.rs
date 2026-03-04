@@ -35,13 +35,11 @@ impl ProcessSupervisor {
     }
 
     pub fn restart_process(&self, process: &str) -> Result<(), ProcessManagerError> {
-        let spec = self
-            .specs
-            .get(process)
-            .cloned()
-            .ok_or_else(|| ProcessManagerError::ProcessNotFound {
+        let spec = self.specs.get(process).cloned().ok_or_else(|| {
+            ProcessManagerError::ProcessNotFound {
                 process: process.to_owned(),
-            })?;
+            }
+        })?;
         if self.child_handle(process).is_some() {
             self.terminate_child_graceful(process)?;
         }

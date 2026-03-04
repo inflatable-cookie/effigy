@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 
 use toml::Value;
 
+use crate::data_loading::{parse_json, parse_toml, read_utf8};
+use crate::fs_probe::PathPresenceCache;
+
 use super::{MigrateScript, RunnerError};
 
 pub(super) fn resolve_package_path(target_root: &Path, package_path: Option<PathBuf>) -> PathBuf {
@@ -55,18 +58,10 @@ pub(super) fn apply_migration_if_requested(
             tasks.insert(script.name.clone(), Value::String(script.command.clone()));
         }
     }
-    let rendered = toml::to_string_pretty(manifest_doc).map_err(|error| {
-        RunnerError::TaskInvocation(format!(
-            "failed to render {}: {error}",
-            manifest_path.display()
-        ))
-    })?;
-    std::fs::write(manifest_path, rendered).map_err(|error| {
-        RunnerError::TaskInvocation(format!(
-            "failed to write {}: {error}",
-            manifest_path.display()
-        ))
-    })?;
+    let rendered = toml::to_string_pretty(manifest_doc)
+        .map_err(|error| RunnerError::task_invocation_failed_render(manifest_path, error))?;
+    std::fs::write(manifest_path, rendered)
+        .map_err(|error| RunnerError::task_invocation_failed_write(manifest_path, error))?;
     Ok(true)
 }
 
@@ -76,7 +71,7 @@ pub(super) fn load_package_scripts(path: &Path) -> Result<Vec<MigrateScript>, Ru
         return Ok(Vec::new());
     };
     let Some(obj) = scripts.as_object() else {
-        return Err(RunnerError::TaskInvocation(format!(
+        return Err(RunnerError::task_invocation(format!(
             "invalid `scripts` field in {} (expected object)",
             path.display()
         )));
@@ -98,14 +93,15 @@ pub(super) fn load_manifest_and_existing_tasks(
     manifest_path: &Path,
 ) -> Result<(Value, BTreeSet<String>), RunnerError> {
     let mut existing = BTreeSet::<String>::new();
-    if !manifest_path.exists() {
+    let mut probe = PathPresenceCache::new();
+    if !probe.exists(manifest_path) {
         return Ok((Value::Table(Default::default()), existing));
     }
 
     let parsed = read_toml_path(manifest_path)?;
     if let Some(tasks) = parsed.get("tasks") {
         let Some(task_table) = tasks.as_table() else {
-            return Err(RunnerError::TaskInvocation(format!(
+            return Err(RunnerError::task_invocation(format!(
                 "`tasks` in {} must be a table",
                 manifest_path.display()
             )));
@@ -122,7 +118,7 @@ fn ensure_tasks_table<'a>(
     manifest_path: &Path,
 ) -> Result<&'a mut toml::map::Map<String, Value>, RunnerError> {
     let Some(root) = manifest.as_table_mut() else {
-        return Err(RunnerError::TaskInvocation(format!(
+        return Err(RunnerError::task_invocation(format!(
             "manifest root in {} must be a table",
             manifest_path.display()
         )));
@@ -131,13 +127,13 @@ fn ensure_tasks_table<'a>(
         root.insert("tasks".to_owned(), Value::Table(Default::default()));
     }
     let Some(tasks) = root.get_mut("tasks") else {
-        return Err(RunnerError::TaskInvocation(format!(
+        return Err(RunnerError::task_invocation(format!(
             "failed to prepare `[tasks]` in {}",
             manifest_path.display()
         )));
     };
     tasks.as_table_mut().ok_or_else(|| {
-        RunnerError::TaskInvocation(format!(
+        RunnerError::task_invocation(format!(
             "`tasks` in {} must be a table",
             manifest_path.display()
         ))
@@ -145,21 +141,17 @@ fn ensure_tasks_table<'a>(
 }
 
 fn read_path(path: &Path) -> Result<String, RunnerError> {
-    std::fs::read_to_string(path).map_err(|error| {
-        RunnerError::TaskInvocation(format!("failed to read {}: {error}", path.display()))
-    })
+    read_utf8(path).map_err(|error| RunnerError::task_invocation_failed_read(path, error))
 }
 
 fn read_json_path(path: &Path) -> Result<serde_json::Value, RunnerError> {
     let raw = read_path(path)?;
-    serde_json::from_str::<serde_json::Value>(&raw).map_err(|error| {
-        RunnerError::TaskInvocation(format!("failed to parse {}: {error}", path.display()))
-    })
+    parse_json::<serde_json::Value>(&raw)
+        .map_err(|error| RunnerError::task_invocation_failed_parse(path, error))
 }
 
 fn read_toml_path(path: &Path) -> Result<Value, RunnerError> {
     let raw = read_path(path)?;
-    toml::from_str::<Value>(&raw).map_err(|error| {
-        RunnerError::TaskInvocation(format!("failed to parse {}: {error}", path.display()))
-    })
+    parse_toml::<Value>(&raw)
+        .map_err(|error| RunnerError::task_invocation_failed_parse(path, error))
 }

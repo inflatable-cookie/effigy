@@ -103,5 +103,8 @@ api = [
     );
 
     let err = run_builtin_err(root, "project2/api", &[]);
-    assert_task_invocation_error_contains(err, &["unknown env entry `../sub-project1/MISSING_VAR`"]);
+    assert_task_invocation_error_contains(
+        err,
+        &["unknown env entry `../sub-project1/MISSING_VAR`"],
+    );
 }

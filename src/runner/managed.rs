@@ -1,7 +1,4 @@
-use std::collections::BTreeMap;
 use std::path::Path;
-
-use crate::runner::manifest::{ManifestEnvEntry, ManifestEnvFileDirective};
 
 use super::{
     LoadedCatalog, ManagedTaskPlan, ManifestManagedConcurrentEntry, ManifestManagedRun,
@@ -19,6 +16,7 @@ mod scheduler;
 use profiles::{
     available_concurrent_profiles, concurrent_entries_for_profile, has_concurrent_schema,
 };
+pub(super) use run_spec::RunSpecContext;
 
 pub(super) const DEFAULT_MANAGED_PROFILE: &str = profiles::DEFAULT_MANAGED_PROFILE;
 
@@ -65,29 +63,10 @@ pub(super) fn managed_available_profiles(task: &ManifestTask) -> Vec<String> {
 }
 
 pub(super) fn render_task_run_spec(
-    task_name: &str,
     run: &ManifestManagedRun,
-    task_env: &BTreeMap<String, String>,
-    task_env_file: Option<&ManifestEnvFileDirective>,
-    env_profiles: &BTreeMap<String, ManifestEnvEntry>,
-    args_rendered: &str,
-    repo_root: &Path,
-    catalogs: &[LoadedCatalog],
-    task_scope_cwd: &Path,
-    depth: usize,
+    context: RunSpecContext<'_>,
 ) -> Result<String, RunnerError> {
-    run_spec::render_task_run_spec(
-        task_name,
-        run,
-        task_env,
-        task_env_file,
-        env_profiles,
-        args_rendered,
-        repo_root,
-        catalogs,
-        task_scope_cwd,
-        depth,
-    )
+    run_spec::render_task_run_spec(run, context)
 }
 
 fn requested_profile_name(runtime_args: &TaskRuntimeArgs) -> String {

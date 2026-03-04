@@ -41,7 +41,10 @@ fn exit_event_marks_failure_and_sanitizes_rendered_log_line() {
         state.observed_non_zero.get("api"),
         Some(&"exit=1\u{0000}".to_owned())
     );
-    assert_eq!(state.exit_states.get("api"), Some(&ProcessExitState::Failure));
+    assert_eq!(
+        state.exit_states.get("api"),
+        Some(&ProcessExitState::Failure)
+    );
     let entry = state
         .logs_for("api")
         .and_then(|logs| logs.back())
@@ -61,6 +64,9 @@ fn exit_event_marks_success_and_clears_observed_non_zero() {
 
     handle_exit_event(&event, &mut state, &mut diagnostics);
 
-    assert_eq!(state.exit_states.get("api"), Some(&ProcessExitState::Success));
+    assert_eq!(
+        state.exit_states.get("api"),
+        Some(&ProcessExitState::Success)
+    );
     assert!(!state.observed_non_zero.contains_key("api"));
 }

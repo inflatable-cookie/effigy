@@ -8,14 +8,14 @@ pub(crate) fn managed_stream_env() -> EnvGuard {
     EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))])
 }
 
-pub(crate) fn write_catalogs_with_tasks(root: &PathBuf, catalogs: &[(&str, &[(&str, &str)])]) {
+pub(crate) fn write_catalogs_with_tasks(root: &Path, catalogs: &[(&str, &[(&str, &str)])]) {
     for (name, tasks) in catalogs {
         let dir = create_workspace_dir(root, name);
         write_catalog_tasks(&dir, Some(name), tasks);
     }
 }
 
-pub(crate) fn write_farmyard_and_cream_dev_catalogs(root: &PathBuf) {
+pub(crate) fn write_farmyard_and_cream_dev_catalogs(root: &Path) {
     write_catalogs_with_tasks(
         root,
         &[
@@ -25,11 +25,11 @@ pub(crate) fn write_farmyard_and_cream_dev_catalogs(root: &PathBuf) {
     );
 }
 
-pub(crate) fn write_froyo_validate_catalog(root: &PathBuf) {
+pub(crate) fn write_froyo_validate_catalog(root: &Path) {
     write_catalogs_with_tasks(root, &[("froyo", &[("validate", "printf froyo-validate")])]);
 }
 
-pub(crate) fn write_managed_admin_profile_manifest(root: &PathBuf) {
+pub(crate) fn write_managed_admin_profile_manifest(root: &Path) {
     write_root_manifest(
         root,
         r#"[tasks.dev]
@@ -50,10 +50,10 @@ concurrent = [
 }
 
 pub(crate) fn write_managed_stream_builtin_test_manifest(
-    root: &PathBuf,
+    root: &Path,
     suite: &str,
     test_task_ref: &str,
-    marker: &PathBuf,
+    marker: &Path,
 ) {
     write_root_manifest(
         root,
@@ -72,7 +72,7 @@ concurrent = [{{ name = "tests", task = "{}" }}]
     );
 }
 
-pub(crate) fn write_managed_stream_profile_manifest(root: &PathBuf) {
+pub(crate) fn write_managed_stream_profile_manifest(root: &Path) {
     write_root_manifest(
         root,
         r#"[tasks.dev]

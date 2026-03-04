@@ -84,7 +84,7 @@ fn run_manifest_task_managed_stream_profile_entry_supports_builtin_test() {
         },
     ];
 
-    for case in cases {
+    assert_case_table(cases, |case| {
         let root = temp_workspace(case.workspace);
         let marker = root.join("builtin-test-called.log");
         write_managed_stream_builtin_test_manifest(&root, case.suite, case.task_ref, &marker);
@@ -93,7 +93,7 @@ fn run_manifest_task_managed_stream_profile_entry_supports_builtin_test() {
             run_dev(&root, &["default"]).expect("run managed stream with builtin profile entry");
         assert_contains_all(&out, &["Managed Task Runtime", "root: ok"]);
         assert!(marker.exists(), "built-in test task ref should execute");
-    }
+    });
 }
 
 #[test]

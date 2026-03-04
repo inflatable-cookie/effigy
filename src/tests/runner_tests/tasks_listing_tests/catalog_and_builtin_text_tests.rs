@@ -36,7 +36,7 @@ run = "printf dev"
 "#,
     );
 
-    assert_builtin_ok_empty(root.clone(), "api", &[]);
+    assert_builtin_ok_empty(root.to_path_buf(), "api", &[]);
 
     let tasks = run_tasks_from_repo(&root, None, None, false);
     assert_contains_all(&tasks, &["api", "dev"]);
@@ -54,7 +54,7 @@ reset-db = [{ task = "drop-db" }, { task = "migrate-db" }]
 "#,
     );
 
-    assert_builtin_ok_empty(root.clone(), "reset-db", &[]);
+    assert_builtin_ok_empty(root.to_path_buf(), "reset-db", &[]);
 
     let tasks = run_tasks_from_repo(&root, Some("reset-db"), None, false);
     assert_contains_all(&tasks, &["reset-db", "<sequence:2>"]);

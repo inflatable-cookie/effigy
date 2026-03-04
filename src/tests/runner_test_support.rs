@@ -2,28 +2,28 @@ use super::super::{run_manifest_task_with_cwd, run_tasks, RunnerError};
 use crate::{TaskInvocation, TasksArgs};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use super::super::contract_test_support::write_manifest as write_manifest_shared;
-pub(super) use super::super::contract_test_support::{
+use crate::contract_test_support::write_manifest as write_manifest_shared;
+pub(super) use crate::contract_test_support::{
     lock_test, temp_workspace, wait_for_path_exists, with_cwd, EnvGuard,
 };
 
-pub(super) fn write_manifest(path: &PathBuf, body: &str) {
+pub(super) fn write_manifest(path: &Path, body: &str) {
     write_manifest_shared(path, body);
 }
 
-pub(super) fn write_root_manifest(root: &PathBuf, body: &str) {
+pub(super) fn write_root_manifest(root: &Path, body: &str) {
     write_manifest(&root.join("effigy.toml"), body);
 }
 
-pub(super) fn create_workspace_dir(root: &PathBuf, name: &str) -> PathBuf {
+pub(super) fn create_workspace_dir(root: &Path, name: &str) -> PathBuf {
     let dir = root.join(name);
     fs::create_dir_all(&dir).expect("mkdir workspace dir");
     dir
 }
 
-pub(super) fn write_catalog_tasks(dir: &PathBuf, alias: Option<&str>, tasks: &[(&str, &str)]) {
+pub(super) fn write_catalog_tasks(dir: &Path, alias: Option<&str>, tasks: &[(&str, &str)]) {
     let mut manifest = String::new();
     if let Some(alias) = alias {
         manifest.push_str(&format!("[catalog]\nalias = \"{alias}\"\n"));
@@ -34,14 +34,14 @@ pub(super) fn write_catalog_tasks(dir: &PathBuf, alias: Option<&str>, tasks: &[(
     write_manifest(&dir.join("effigy.toml"), &manifest);
 }
 
-pub(super) fn write_executable(path: &PathBuf, script: &str) {
+pub(super) fn write_executable(path: &Path, script: &str) {
     fs::write(path, script).expect("write executable");
     let mut perms = fs::metadata(path).expect("stat").permissions();
     perms.set_mode(0o755);
     fs::set_permissions(path, perms).expect("chmod");
 }
 
-pub(super) fn write_package_json_with_test_script(root: &PathBuf) {
+pub(super) fn write_package_json_with_test_script(root: &Path) {
     fs::write(
         root.join("package.json"),
         "{ \"scripts\": { \"test\": \"vitest\" } }\n",
@@ -49,7 +49,7 @@ pub(super) fn write_package_json_with_test_script(root: &PathBuf) {
     .expect("write package");
 }
 
-pub(super) fn write_package_json_with_vitest_dev_dependency(root: &PathBuf) {
+pub(super) fn write_package_json_with_vitest_dev_dependency(root: &Path) {
     fs::write(
         root.join("package.json"),
         r#"{
@@ -61,7 +61,7 @@ pub(super) fn write_package_json_with_vitest_dev_dependency(root: &PathBuf) {
     .expect("write package");
 }
 
-pub(super) fn write_multi_suite_cargo_manifest(root: &PathBuf) {
+pub(super) fn write_multi_suite_cargo_manifest(root: &Path) {
     fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
@@ -69,12 +69,12 @@ pub(super) fn write_multi_suite_cargo_manifest(root: &PathBuf) {
     .expect("write cargo toml");
 }
 
-pub(super) fn setup_multi_suite_repo(root: &PathBuf) {
+pub(super) fn setup_multi_suite_repo(root: &Path) {
     write_package_json_with_test_script(root);
     write_multi_suite_cargo_manifest(root);
 }
 
-pub(super) fn write_test_suites_manifest(root: &PathBuf, suites: &[(&str, &str)]) {
+pub(super) fn write_test_suites_manifest(root: &Path, suites: &[(&str, &str)]) {
     let mut manifest = "[test.suites]\n".to_owned();
     for (suite, cmd) in suites {
         manifest.push_str(&format!("{suite} = \"{cmd}\"\n"));
@@ -82,13 +82,13 @@ pub(super) fn write_test_suites_manifest(root: &PathBuf, suites: &[(&str, &str)]
     write_root_manifest(root, &manifest);
 }
 
-pub(super) fn install_local_vitest(root: &PathBuf, script: &str) {
+pub(super) fn install_local_vitest(root: &Path, script: &str) {
     let local_bin = root.join("node_modules/.bin");
     fs::create_dir_all(&local_bin).expect("mkdir local bin");
     write_executable(&local_bin.join("vitest"), script);
 }
 
-pub(super) fn install_local_vitest_marker(root: &PathBuf, marker: &PathBuf) {
+pub(super) fn install_local_vitest_marker(root: &Path, marker: &Path) {
     install_local_vitest(
         root,
         &format!(
@@ -98,7 +98,7 @@ pub(super) fn install_local_vitest_marker(root: &PathBuf, marker: &PathBuf) {
     );
 }
 
-pub(super) fn write_js_package_manager_manifest(root: &PathBuf, package_manager: &str) {
+pub(super) fn write_js_package_manager_manifest(root: &Path, package_manager: &str) {
     write_root_manifest(
         root,
         &format!(
@@ -198,7 +198,7 @@ pub(super) fn parse_json_output(rendered: &str) -> serde_json::Value {
 }
 
 pub(super) fn run_tasks_from_repo(
-    root: &PathBuf,
+    root: &Path,
     task_name: Option<&str>,
     resolve_selector: Option<&str>,
     output_json: bool,

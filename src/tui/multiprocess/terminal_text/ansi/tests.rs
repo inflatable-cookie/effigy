@@ -9,7 +9,10 @@ fn parse_escape_sequence_supports_csi_and_osc_forms() {
 
     assert!(matches!(
         parse_escape_sequence(&csi_chars, 0),
-        Some(EscapeSequence::Csi { final_byte: 'm', .. })
+        Some(EscapeSequence::Csi {
+            final_byte: 'm',
+            ..
+        })
     ));
     assert!(matches!(
         parse_escape_sequence(&osc_bel_chars, 0),

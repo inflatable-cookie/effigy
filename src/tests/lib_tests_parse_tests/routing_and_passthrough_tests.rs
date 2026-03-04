@@ -36,7 +36,6 @@ fn parse_repo_pulse_help_flag_is_passthrough_after_builtin_removal() {
     );
 }
 
-
 #[test]
 fn parse_runtime_task_passthrough() {
     let cmd = parse_command(vec![
@@ -54,7 +53,6 @@ fn parse_runtime_task_passthrough() {
         })
     );
 }
-
 
 #[test]
 fn parse_watch_passthrough_without_help() {

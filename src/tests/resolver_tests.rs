@@ -8,7 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn resolves_explicit_override() {
     let root = temp_dir("explicit");
     fs::create_dir_all(&root).expect("create root");
-    let resolved = resolve_target_root(root.clone(), Some(root.clone())).expect("resolve");
+    let resolved =
+        resolve_target_root(root.to_path_buf(), Some(root.to_path_buf())).expect("resolve");
     assert_eq!(resolved.resolution_mode, ResolutionMode::Explicit);
     assert_eq!(resolved.resolved_root, canonicalize_best_effort(root));
 }
