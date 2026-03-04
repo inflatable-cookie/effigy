@@ -48,7 +48,7 @@ fn step_dependencies(
             } else {
                 let step_id = table.id.as_deref().map(str::trim).unwrap_or_default();
                 if step_id.is_empty() {
-                    return Err(RunnerError::TaskInvocation(format!(
+                    return Err(RunnerError::task_invocation(format!(
                         "task `{task_name}` run step {} defines `depends_on` but is missing a non-empty `id`",
                         index + 1
                     )));
@@ -56,17 +56,17 @@ fn step_dependencies(
                 for raw_dep in &table.depends_on {
                     let dep = raw_dep.trim();
                     if dep.is_empty() {
-                        return Err(RunnerError::TaskInvocation(format!(
+                        return Err(RunnerError::task_invocation(format!(
                             "task `{task_name}` run step `{step_id}` has an empty dependency in `depends_on`"
                         )));
                     }
                     let Some(dep_index) = id_to_index.get(dep).copied() else {
-                        return Err(RunnerError::TaskInvocation(format!(
+                        return Err(RunnerError::task_invocation(format!(
                             "task `{task_name}` run step `{step_id}` depends on missing step `{dep}`"
                         )));
                     };
                     if dep_index == index {
-                        return Err(RunnerError::TaskInvocation(format!(
+                        return Err(RunnerError::task_invocation(format!(
                             "task `{task_name}` run step `{step_id}` cannot depend on itself"
                         )));
                     }

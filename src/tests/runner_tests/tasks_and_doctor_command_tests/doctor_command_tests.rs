@@ -41,7 +41,7 @@ fn run_doctor_fix_scaffolds_health_task_when_missing() {
         "[tasks.build]\nrun = \"printf ok\"\n",
     );
 
-    let out = run_doctor_task(root.clone(), &["--fix"]).expect("doctor --fix");
+    let out = run_doctor_task(root.to_path_buf(), &["--fix"]).expect("doctor --fix");
 
     let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read manifest");
     assert!(manifest.contains("health = \"printf health-check-placeholder\""));
@@ -59,17 +59,5 @@ fn run_doctor_fix_reports_skipped_when_manifest_invalid() {
     assert_doctor_non_zero_contains(
         err,
         &["Fix Actions", "manifest.health_task_scaffold", "skipped"],
-    );
-}
-
-#[test]
-fn run_doctor_reports_unknown_argument_grouping() {
-    let root = temp_workspace("doctor-unknown-argument-grouping");
-    write_manifest(&root.join("effigy.toml"), "");
-
-    let err = run_doctor_task(root, &["--wat", "--huh"]).expect_err("doctor should reject args");
-    assert_task_invocation_error_contains(
-        err,
-        &["unknown argument(s) for built-in `doctor`: --wat --huh"],
     );
 }

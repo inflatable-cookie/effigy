@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use super::CliParseError;
 
-pub(super) fn next_required_value<I>(args: &mut I, missing: CliParseError) -> Result<String, CliParseError>
+pub(super) fn next_required_value<I>(
+    args: &mut I,
+    missing: CliParseError,
+) -> Result<String, CliParseError>
 where
     I: Iterator<Item = String>,
 {

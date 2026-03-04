@@ -62,7 +62,6 @@ fn parse_doctor_with_explain_target_and_args() {
     );
 }
 
-
 #[test]
 fn parse_tasks_with_filters() {
     let cmd = parse_command(vec![
@@ -100,4 +99,3 @@ fn parse_tasks_supports_json_flag() {
         })
     );
 }
-

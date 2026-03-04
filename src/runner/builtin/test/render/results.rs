@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
-use std::io::IsTerminal;
 
-use crate::ui::theme::resolve_color_enabled;
-use crate::ui::{KeyValue, OutputMode, PlainRenderer, Renderer};
+use crate::ui::{KeyValue, Renderer};
 
+use super::super::super::super::render::{render_utf8, text_renderer};
+use super::super::super::response::render_text_or_json_lazy;
 use super::super::planning::BuiltinTestTarget;
 use super::super::{BuiltinTestExecResult, RunnerError};
 
@@ -17,9 +17,7 @@ pub(crate) fn render_builtin_test_results(
     targets: &[BuiltinTestTarget],
     verbose: bool,
 ) -> Result<String, RunnerError> {
-    let color_enabled =
-        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
-    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+    let mut renderer = text_renderer();
     renderer.text("")?;
     renderer.section("Test Results")?;
     renderer.key_values(&[KeyValue::new("targets", results.len().to_string())])?;
@@ -71,21 +69,7 @@ pub(crate) fn render_builtin_test_results(
         renderer.key_values(&[KeyValue::new(name, value)])?;
     }
     renderer.text("")?;
-    let out = renderer.into_inner();
-    String::from_utf8(out)
-        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
-}
-
-pub(crate) fn render_builtin_test_results_json(
-    results: &[BuiltinTestExecResult],
-    targets: &[BuiltinTestTarget],
-    requested_suite: Option<&str>,
-    passthrough: &[String],
-) -> Result<String, RunnerError> {
-    let payload =
-        payload::render_builtin_test_results_json(results, targets, requested_suite, passthrough);
-    serde_json::to_string_pretty(&payload)
-        .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
+    render_utf8(renderer.into_inner())
 }
 
 pub(crate) fn append_builtin_test_filter_hint(
@@ -117,34 +101,61 @@ pub(crate) fn finalize_builtin_test_outcome(
         .collect::<Vec<(String, Option<i32>)>>();
     failures.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let rendered_json = if output_json {
-        Some(render_builtin_test_results_json(
+    if failures.is_empty() {
+        let rendered = render_builtin_test_outcome_rendered(
             results,
             targets,
             requested_suite,
             passthrough,
-        )?)
-    } else {
-        None
-    };
-
-    if failures.is_empty() {
-        if let Some(json) = rendered_json {
-            return Ok(Some(json));
-        }
-        let rendered_text = render_builtin_test_results(results, targets, verbose_results)?;
-        return Ok(Some(rendered_text));
+            verbose_results,
+            output_json,
+            false,
+        )?;
+        return Ok(Some(rendered));
     }
 
-    if let Some(json) = rendered_json {
-        return Err(RunnerError::BuiltinTestNonZero {
-            failures,
-            rendered: json,
-        });
-    }
-
-    let rendered_text = render_builtin_test_results(results, targets, verbose_results)?;
-    let rendered =
-        append_builtin_test_filter_hint(rendered_text, results, requested_suite, passthrough);
+    let rendered = render_builtin_test_outcome_rendered(
+        results,
+        targets,
+        requested_suite,
+        passthrough,
+        verbose_results,
+        output_json,
+        true,
+    )?;
     Err(RunnerError::BuiltinTestNonZero { failures, rendered })
+}
+
+fn render_builtin_test_outcome_rendered(
+    results: &[BuiltinTestExecResult],
+    targets: &[BuiltinTestTarget],
+    requested_suite: Option<&str>,
+    passthrough: &[String],
+    verbose_results: bool,
+    output_json: bool,
+    include_filter_hint: bool,
+) -> Result<String, RunnerError> {
+    render_text_or_json_lazy(
+        output_json,
+        || {
+            let rendered = render_builtin_test_results(results, targets, verbose_results)?;
+            if include_filter_hint {
+                return Ok(append_builtin_test_filter_hint(
+                    rendered,
+                    results,
+                    requested_suite,
+                    passthrough,
+                ));
+            }
+            Ok(rendered)
+        },
+        || {
+            payload::render_builtin_test_results_json(
+                results,
+                targets,
+                requested_suite,
+                passthrough,
+            )
+        },
+    )
 }

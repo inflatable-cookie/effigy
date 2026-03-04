@@ -11,12 +11,8 @@ fn shell_cursor_is_reported_only_for_shell_when_vt_enabled() {
     let shell_view = build_active_view_model(&mut shell_state, 5, 80, true);
     assert!(shell_view.shell_cursor.is_some());
 
-    let mut api_state = crate::tui::multiprocess::state::SessionState::new(
-        vec!["api".to_owned()],
-        2000,
-        240,
-        8000,
-    );
+    let mut api_state =
+        crate::tui::multiprocess::state::SessionState::new(vec!["api".to_owned()], 2000, 240, 8000);
     let api_view = build_active_view_model(&mut api_state, 5, 80, true);
     assert!(api_view.shell_cursor.is_none());
 

@@ -1,6 +1,7 @@
 use toml::Value;
 
 use super::diagnostics::SchemaContext;
+use super::values::validate_table_string_values;
 
 pub(super) fn validate_env_section(context: &mut SchemaContext<'_, '_>, env: &Value) {
     let Some(table) = env.as_table() else {
@@ -29,15 +30,7 @@ pub(super) fn validate_env_section(context: &mut SchemaContext<'_, '_>, env: &Va
                 );
                 continue;
             };
-            for (key, value) in env_table {
-                if !value.is_str() {
-                    context.unsupported_value(
-                        &format!("env.{profile}[{index}].{key}"),
-                        SchemaContext::value_type(value),
-                        "expected string",
-                    );
-                }
-            }
+            validate_table_string_values(context, &format!("env.{profile}[{index}]"), env_table);
         }
     }
 }

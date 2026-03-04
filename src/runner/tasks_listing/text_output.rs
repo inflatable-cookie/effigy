@@ -1,8 +1,6 @@
-use std::io::IsTerminal;
 use std::path::Path;
 
-use crate::ui::theme::{resolve_color_enabled, Theme};
-use crate::ui::{OutputMode, PlainRenderer};
+use crate::ui::theme::Theme;
 
 #[path = "text_output/filtered.rs"]
 mod filtered;
@@ -23,9 +21,8 @@ pub(super) fn render_tasks_text(
     ordered_catalogs: &[&LoadedCatalog],
     resolved_root: &Path,
 ) -> Result<String, RunnerError> {
-    let color_enabled =
-        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
-    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+    let color_enabled = render::text_color_enabled();
+    let mut renderer = render::plain_renderer(color_enabled);
     let theme = Theme::default();
 
     match context.text_mode() {

@@ -52,7 +52,11 @@ fn sanitize_log_text_removes_control_bytes_but_keeps_ansi() {
 #[test]
 fn ingest_log_payload_carriage_return_overwrites_last_line() {
     let mut buffer = VecDeque::new();
-    ingest_log_payload(&mut buffer, LogEntryKind::Stdout, "building\rfinished\rdone");
+    ingest_log_payload(
+        &mut buffer,
+        LogEntryKind::Stdout,
+        "building\rfinished\rdone",
+    );
     assert_eq!(buffer.len(), 1);
     let line = buffer.back().expect("line");
     assert!(matches!(line.kind, LogEntryKind::Stdout));

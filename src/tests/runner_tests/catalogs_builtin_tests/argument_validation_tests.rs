@@ -1,52 +1,49 @@
 use super::prelude::*;
 
-#[test]
-fn run_manifest_task_builtin_catalogs_pretty_requires_json() {
-    let root = temp_workspace("builtin-catalogs-pretty-requires-json");
-    write_root_manifest(&root, "[tasks.root]\nrun = \"printf root\"\n");
-
-    let err = run_catalogs_err(root, &["--pretty", "false"]);
-    assert_task_invocation_error_contains(
-        err,
-        &["`--pretty` is only supported together with `--json`"],
-    );
+fn setup_root_catalog_manifest(root: &Path) {
+    write_root_manifest(root, "[tasks.root]\nrun = \"printf root\"\n");
 }
 
 #[test]
-fn run_manifest_task_builtin_catalogs_rejects_invalid_pretty_value() {
-    let root = temp_workspace("builtin-catalogs-invalid-pretty");
-    write_root_manifest(&root, "[tasks.root]\nrun = \"printf root\"\n");
+fn run_manifest_task_builtin_catalogs_argument_validation_contract_table() {
+    let cases = [
+        BuiltinInvocationSetupCase {
+            workspace: "builtin-catalogs-pretty-requires-json",
+            args: &["--pretty", "false"],
+            expected: &["`--pretty` is only supported together with `--json`"],
+            setup: setup_root_catalog_manifest,
+        },
+        BuiltinInvocationSetupCase {
+            workspace: "builtin-catalogs-invalid-pretty",
+            args: &["--json", "--pretty", "nope"],
+            expected: &["value `nope` is invalid"],
+            setup: setup_root_catalog_manifest,
+        },
+        BuiltinInvocationSetupCase {
+            workspace: "builtin-catalogs-missing-resolve-value",
+            args: &["--resolve"],
+            expected: &["catalogs argument --resolve requires a value"],
+            setup: setup_root_catalog_manifest,
+        },
+        BuiltinInvocationSetupCase {
+            workspace: "builtin-catalogs-missing-pretty-value",
+            args: &["--json", "--pretty"],
+            expected: &["catalogs argument --pretty requires a value (`true` or `false`)"],
+            setup: setup_root_catalog_manifest,
+        },
+        BuiltinInvocationSetupCase {
+            workspace: "builtin-catalogs-missing-task-value",
+            args: &["--task"],
+            expected: &["task argument --task requires a value"],
+            setup: setup_root_catalog_manifest,
+        },
+        BuiltinInvocationSetupCase {
+            workspace: "builtin-catalogs-unknown-args",
+            args: &["--wat", "--huh"],
+            expected: &["unknown argument(s) for built-in `catalogs`: --wat --huh"],
+            setup: setup_root_catalog_manifest,
+        },
+    ];
 
-    let err = run_catalogs_err(root, &["--json", "--pretty", "nope"]);
-    assert_task_invocation_error_contains(err, &["value `nope` is invalid"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_catalogs_validates_missing_value_flags() {
-    let root = temp_workspace("builtin-catalogs-missing-values");
-    write_root_manifest(&root, "[tasks.root]\nrun = \"printf root\"\n");
-
-    let err = run_catalogs_err(root.clone(), &["--resolve"]);
-    assert_task_invocation_error_contains(err, &["catalogs argument --resolve requires a value"]);
-
-    let err = run_catalogs_err(root.clone(), &["--json", "--pretty"]);
-    assert_task_invocation_error_contains(
-        err,
-        &["catalogs argument --pretty requires a value (`true` or `false`)"],
-    );
-
-    let err = run_catalogs_err(root, &["--task"]);
-    assert_task_invocation_error_contains(err, &["task argument --task requires a value"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_catalogs_reports_unknown_argument_grouping() {
-    let root = temp_workspace("builtin-catalogs-unknown-args");
-    write_root_manifest(&root, "[tasks.root]\nrun = \"printf root\"\n");
-
-    let err = run_catalogs_err(root, &["--wat", "--huh"]);
-    assert_task_invocation_error_contains(
-        err,
-        &["unknown argument(s) for built-in `catalogs`: --wat --huh"],
-    );
+    assert_builtin_error_case_table_with_case_setup("catalogs", &cases);
 }

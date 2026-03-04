@@ -1,7 +1,10 @@
 use toml::Value;
 
 use super::diagnostics::SchemaContext;
-use super::tables::validate_concurrent_array;
+use super::tables::{validate_allowed_keys, validate_concurrent_array};
+use super::values::{
+    validate_non_empty_string_or_array_of_non_empty_strings, validate_table_string_values,
+};
 
 mod profiles;
 mod run_steps;
@@ -80,21 +83,21 @@ fn validate_task_table_keys(
     task_name: &str,
     task_table: &toml::map::Map<String, Value>,
 ) {
-    for key in task_table.keys() {
-        if !matches!(
-            key.as_str(),
-            "run"
-                | "env"
-                | "env_file"
-                | "mode"
-                | "fail_on_non_zero"
-                | "shell"
-                | "concurrent"
-                | "profiles"
-        ) {
-            context.unsupported_key(&format!("tasks.{task_name}.{key}"));
-        }
-    }
+    validate_allowed_keys(
+        context,
+        &format!("tasks.{task_name}"),
+        task_table,
+        &[
+            "run",
+            "env",
+            "env_file",
+            "mode",
+            "fail_on_non_zero",
+            "shell",
+            "concurrent",
+            "profiles",
+        ],
+    );
 }
 
 fn validate_task_mode(context: &mut SchemaContext<'_, '_>, task_name: &str, mode: Option<&Value>) {
@@ -147,16 +150,7 @@ fn validate_task_env_field(
         );
         return;
     };
-
-    for (key, value) in env_table {
-        if !value.is_str() {
-            context.unsupported_value(
-                &format!("tasks.{task_name}.env.{key}"),
-                SchemaContext::value_type(value),
-                "expected string",
-            );
-        }
-    }
+    validate_table_string_values(context, &format!("tasks.{task_name}.env"), env_table);
 }
 
 fn validate_task_env_file_field(
@@ -167,47 +161,10 @@ fn validate_task_env_file_field(
     let Some(env_file) = env_file else {
         return;
     };
-    if let Some(raw) = env_file.as_str() {
-        if raw.trim().is_empty() {
-            context.unsupported_value(
-                &format!("tasks.{task_name}.env_file"),
-                "empty string",
-                "expected non-empty string",
-            );
-        }
-        return;
-    }
-    let Some(entries) = env_file.as_array() else {
-        context.unsupported_value(
-            &format!("tasks.{task_name}.env_file"),
-            SchemaContext::value_type(env_file),
-            "expected string or array of strings",
-        );
-        return;
-    };
-    if entries.is_empty() {
-        context.unsupported_value(
-            &format!("tasks.{task_name}.env_file"),
-            "empty array",
-            "expected non-empty array of strings",
-        );
-        return;
-    }
-    for (index, entry) in entries.iter().enumerate() {
-        let Some(raw) = entry.as_str() else {
-            context.unsupported_value(
-                &format!("tasks.{task_name}.env_file[{index}]"),
-                SchemaContext::value_type(entry),
-                "expected string",
-            );
-            continue;
-        };
-        if raw.trim().is_empty() {
-            context.unsupported_value(
-                &format!("tasks.{task_name}.env_file[{index}]"),
-                "empty string",
-                "expected non-empty string",
-            );
-        }
-    }
+    validate_non_empty_string_or_array_of_non_empty_strings(
+        context,
+        &format!("tasks.{task_name}.env_file"),
+        env_file,
+        "expected string or array of strings",
+    );
 }

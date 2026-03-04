@@ -30,7 +30,7 @@ fn run_manifest_task_builtin_test_text_and_json_outputs_share_target_identity() 
     let marker = root.join("vitest-called.log");
     install_local_vitest_marker(&root, &marker);
 
-    let text = run_builtin_ok(root.clone(), "test", &["--run"]);
+    let text = run_builtin_ok(root.to_path_buf(), "test", &["--run"]);
     assert_contains_all(&text, &["Test Results", "root", "ok"]);
 
     let json = run_builtin_ok(root, "test", &["--json", "--run"]);
@@ -73,7 +73,7 @@ integration = "sh -lc 'exit 0'"
 "#,
     );
 
-    let text = run_builtin_ok(root.clone(), "test", &["--verbose-results"]);
+    let text = run_builtin_ok(root.to_path_buf(), "test", &["--verbose-results"]);
     assert_contains_all(&text, &["Test Results", "cargo-env-match:shell-aware"]);
 
     let json = run_builtin_ok(root, "test", &["--json"]);

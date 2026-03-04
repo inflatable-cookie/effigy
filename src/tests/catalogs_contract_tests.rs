@@ -1,7 +1,5 @@
-use super::{
-    contract_test_support::{parse_json, temp_workspace, write_manifest},
-    run_manifest_task_with_cwd, TaskInvocation,
-};
+use super::{run_manifest_task_with_cwd, TaskInvocation};
+use crate::contract_test_support::{parse_json, temp_workspace, write_manifest};
 use std::fs;
 
 #[test]

@@ -1,6 +1,6 @@
 use super::{find_subrepo_candidates, read_package_scripts, should_expect_root_task_surface};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]

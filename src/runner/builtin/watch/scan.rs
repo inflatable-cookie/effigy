@@ -88,7 +88,7 @@ pub(super) fn collect_snapshot(
     let mut snapshot = HashMap::<PathBuf, FileStamp>::new();
     for entry in WalkDir::new(root).follow_links(false) {
         let entry = entry.map_err(|error| {
-            RunnerError::TaskInvocation(format!(
+            RunnerError::task_invocation(format!(
                 "watch scan failed under {}: {error}",
                 root.display()
             ))
@@ -106,7 +106,7 @@ pub(super) fn collect_snapshot(
             continue;
         }
         let metadata = entry.metadata().map_err(|error| {
-            RunnerError::TaskInvocation(format!(
+            RunnerError::task_invocation(format!(
                 "watch metadata read failed for {}: {error}",
                 path.display()
             ))
@@ -126,12 +126,12 @@ fn build_glob_set(patterns: &[String], label: &str) -> Result<GlobSet, RunnerErr
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
         let glob = Glob::new(pattern).map_err(|error| {
-            RunnerError::TaskInvocation(format!("invalid `{label}` glob `{pattern}`: {error}"))
+            RunnerError::task_invocation(format!("invalid `{label}` glob `{pattern}`: {error}"))
         })?;
         builder.add(glob);
     }
     builder.build().map_err(|error| {
-        RunnerError::TaskInvocation(format!("failed to compile `{label}` glob set: {error}"))
+        RunnerError::task_invocation(format!("failed to compile `{label}` glob set: {error}"))
     })
 }
 

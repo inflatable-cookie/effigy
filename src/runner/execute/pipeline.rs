@@ -3,7 +3,7 @@ use crate::TaskInvocation;
 use super::super::cache::check_task_cache;
 use super::super::locking::{acquire_scopes, LockScope};
 use super::super::managed::{
-    render_task_run_spec, resolve_managed_task_plan, run_or_render_managed_task,
+    render_task_run_spec, resolve_managed_task_plan, run_or_render_managed_task, RunSpecContext,
 };
 use super::super::util::render_passthrough_args;
 use super::super::{RunnerError, TaskSelection};
@@ -135,15 +135,17 @@ fn build_task_command(
                 path: selection.catalog.manifest_path.clone(),
             })?;
     render_task_run_spec(
-        &preflight.selector.task_name,
         run_spec,
-        &selection.task.env,
-        selection.task.env_file.as_ref(),
-        &selection.catalog.manifest.env,
-        &args_rendered,
-        &selection.catalog.catalog_root,
-        &preflight.catalogs,
-        &selection.catalog.catalog_root,
-        0,
+        RunSpecContext {
+            task_name: &preflight.selector.task_name,
+            task_env: &selection.task.env,
+            task_env_file: selection.task.env_file.as_ref(),
+            env_profiles: &selection.catalog.manifest.env,
+            args_rendered: &args_rendered,
+            repo_root: &selection.catalog.catalog_root,
+            catalogs: &preflight.catalogs,
+            task_scope_cwd: &selection.catalog.catalog_root,
+            depth: 0,
+        },
     )
 }

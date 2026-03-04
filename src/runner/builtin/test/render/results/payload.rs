@@ -5,6 +5,7 @@ use serde_json::json;
 use crate::runner::builtin::test::planning::BuiltinTestTarget;
 use crate::runner::builtin::test::BuiltinTestExecResult;
 
+use super::super::super::super::response::schema_payload_versioned;
 use super::hint::build_builtin_test_filter_hint_payload;
 
 pub(super) fn render_builtin_test_results_json(
@@ -75,11 +76,12 @@ pub(super) fn render_builtin_test_results_json(
         })
         .collect::<Vec<serde_json::Value>>();
 
-    json!({
-        "schema": "effigy.test.results.v1",
-        "schema_version": 1,
-        "targets": target_values,
-        "failures": failures,
-        "hint": build_builtin_test_filter_hint_payload(results, requested_suite, passthrough),
-    })
+    schema_payload_versioned(
+        "effigy.test.results.v1",
+        json!({
+            "targets": target_values,
+            "failures": failures,
+            "hint": build_builtin_test_filter_hint_payload(results, requested_suite, passthrough),
+        }),
+    )
 }

@@ -4,9 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::runner::manifest::{
-    ManifestEnvEntry, ManifestManagedRunStepTable, ManifestRunStepEnv,
-};
+use crate::runner::manifest::{ManifestEnvEntry, ManifestManagedRunStepTable, ManifestRunStepEnv};
 use crate::runner::{ManifestManagedRunStep, RunnerError};
 
 use super::StepEnvAccumulator;
@@ -141,10 +139,8 @@ fn apply_from_step_profile_resolution_errors_for_empty_name() {
 
     match err {
         RunnerError::TaskInvocation(message) => {
-            assert!(
-                message
-                    .contains("task `dev` run step is invalid: env profile name cannot be empty")
-            );
+            assert!(message
+                .contains("task `dev` run step is invalid: env profile name cannot be empty"));
         }
         other => panic!("unexpected error: {other}"),
     }

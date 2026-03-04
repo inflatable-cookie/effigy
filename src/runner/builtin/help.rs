@@ -1,37 +1,23 @@
-use serde_json::json;
+use crate::{HelpTopic, TaskInvocation};
 
-use crate::{render_help, HelpTopic, TaskInvocation};
-
-use super::super::render::{encode_pretty_json_optional, render_utf8, standard_renderer};
 use super::super::RunnerError;
-use super::arg_parser::BuiltinArgParser;
-use super::unknown_builtin_arg;
+use super::command_spec::run_builtin_command;
+use super::render_builtin_help_topic;
+#[path = "help/request.rs"]
+mod request;
 
 pub(super) fn run_builtin_help(
     task: &TaskInvocation,
     args: &[String],
 ) -> Result<Option<String>, RunnerError> {
-    let mut output_json = false;
-    let mut parser = BuiltinArgParser::new(args);
-    while let Some(arg) = parser.next() {
-        if parser.consume_json_flag(arg, &mut output_json) {
-            continue;
-        }
-        return Err(unknown_builtin_arg(&task.name, arg));
-    }
-
-    let mut renderer = standard_renderer(output_json);
-    render_help(&mut renderer, HelpTopic::General)?;
-    let rendered = render_utf8(renderer.into_inner())?;
-    if output_json {
-        let payload = json!({
-            "schema": "effigy.help.v1",
-            "schema_version": 1,
-            "ok": true,
-            "topic": "general",
-            "text": rendered,
-        });
-        return encode_pretty_json_optional(&payload);
-    }
-    Ok(Some(rendered))
+    run_builtin_command(
+        args,
+        |output_json| render_builtin_help_topic(HelpTopic::General, "general", output_json),
+        || request::parse_help_request(task, args),
+        |request: request::HelpRequest| {
+            let rendered =
+                render_builtin_help_topic(HelpTopic::General, "general", request.output_json)?;
+            Ok(Some(rendered))
+        },
+    )
 }

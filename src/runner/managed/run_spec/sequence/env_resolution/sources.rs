@@ -17,9 +17,7 @@ pub(super) fn resolve_manifest_env_entry<'a>(
     if let Some(local) = local_env_entries.get(entry_ref) {
         return Some((entry_ref.to_owned(), local));
     }
-    let Some((catalog_path, env_key)) = split_catalog_env_reference(entry_ref) else {
-        return None;
-    };
+    let (catalog_path, env_key) = split_catalog_env_reference(entry_ref)?;
 
     let target_catalog_root = resolve_catalog_reference_root(catalog_path, repo_root);
     let target_catalog = find_catalog_by_normalized_root(catalogs, &target_catalog_root)?;
@@ -37,7 +35,7 @@ pub(super) fn resolve_process_env_entry(entry_ref: &str) -> Option<(String, Stri
 }
 
 pub(super) fn unknown_env_entry_error(task_name: &str, entry_ref: &str) -> RunnerError {
-    RunnerError::TaskInvocation(format!(
+    RunnerError::task_invocation(format!(
         "task `{task_name}` run step references unknown env entry `{entry_ref}`"
     ))
 }

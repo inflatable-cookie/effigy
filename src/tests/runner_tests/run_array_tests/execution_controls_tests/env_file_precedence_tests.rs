@@ -18,8 +18,11 @@ run = [
         ),
     );
     fs::write(root.join(".env"), "DATABASE_URL=postgres://from-default\n").expect("write .env");
-    fs::write(root.join(".env.test"), "DATABASE_URL=postgres://from-test\n")
-        .expect("write .env.test");
+    fs::write(
+        root.join(".env.test"),
+        "DATABASE_URL=postgres://from-test\n",
+    )
+    .expect("write .env.test");
 
     assert_task_output_equals(&root, "api", &marker, "postgres://from-test");
 }
@@ -42,8 +45,11 @@ api = [
         ),
     );
     fs::write(root.join(".env"), "DATABASE_URL=postgres://from-default\n").expect("write .env");
-    fs::write(root.join(".env.test"), "DATABASE_URL=postgres://from-test\n")
-        .expect("write .env.test");
+    fs::write(
+        root.join(".env.test"),
+        "DATABASE_URL=postgres://from-test\n",
+    )
+    .expect("write .env.test");
 
     assert_task_output_equals(&root, "api", &marker, "postgres://from-test");
 }
@@ -66,10 +72,16 @@ run = [
             marker.display()
         ),
     );
-    fs::write(root.join(".env.test"), "DATABASE_URL=postgres://from-test\n")
-        .expect("write .env.test");
-    fs::write(root.join(".env.local"), "DATABASE_URL=postgres://from-local\n")
-        .expect("write .env.local");
+    fs::write(
+        root.join(".env.test"),
+        "DATABASE_URL=postgres://from-test\n",
+    )
+    .expect("write .env.test");
+    fs::write(
+        root.join(".env.local"),
+        "DATABASE_URL=postgres://from-local\n",
+    )
+    .expect("write .env.local");
 
     assert_task_output_equals(&root, "api", &marker, "postgres://from-local");
 }
@@ -91,10 +103,16 @@ run = [
             marker.display()
         ),
     );
-    fs::write(root.join(".env.test"), "DATABASE_URL=postgres://from-test\n")
-        .expect("write .env.test");
-    fs::write(root.join(".env.local"), "DATABASE_URL=postgres://from-local\n")
-        .expect("write .env.local");
+    fs::write(
+        root.join(".env.test"),
+        "DATABASE_URL=postgres://from-test\n",
+    )
+    .expect("write .env.test");
+    fs::write(
+        root.join(".env.local"),
+        "DATABASE_URL=postgres://from-local\n",
+    )
+    .expect("write .env.local");
 
     assert_task_output_equals(&root, "api", &marker, "postgres://from-local");
 }
@@ -116,10 +134,16 @@ api = [
             marker.display()
         ),
     );
-    fs::write(root.join(".env.test"), "DATABASE_URL=postgres://from-test\n")
-        .expect("write .env.test");
-    fs::write(root.join(".env.local"), "DATABASE_URL=postgres://from-local\n")
-        .expect("write .env.local");
+    fs::write(
+        root.join(".env.test"),
+        "DATABASE_URL=postgres://from-test\n",
+    )
+    .expect("write .env.test");
+    fs::write(
+        root.join(".env.local"),
+        "DATABASE_URL=postgres://from-local\n",
+    )
+    .expect("write .env.local");
 
     assert_task_output_equals(&root, "api", &marker, "postgres://from-local");
 }

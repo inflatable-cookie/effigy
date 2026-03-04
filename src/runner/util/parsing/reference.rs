@@ -6,9 +6,7 @@ pub(super) fn parse_task_reference_invocation(
 ) -> Result<(TaskSelector, Vec<String>), RunnerError> {
     let parts = split_task_reference_words(raw)?;
     let Some(selector_raw) = parts.first() else {
-        return Err(RunnerError::TaskInvocation(
-            "task reference is required".to_owned(),
-        ));
+        return Err(RunnerError::task_invocation("task reference is required"));
     };
     let selector = super::selector::parse_task_selector(selector_raw)?;
     let args = parts.iter().skip(1).cloned().collect::<Vec<String>>();
@@ -78,13 +76,13 @@ fn split_task_reference_words(raw: &str) -> Result<Vec<String>, RunnerError> {
     }
 
     if escaping {
-        return Err(RunnerError::TaskInvocation(
-            "task reference has trailing escape (`\\`)".to_owned(),
+        return Err(RunnerError::task_invocation(
+            "task reference has trailing escape (`\\`)",
         ));
     }
     if in_single || in_double {
-        return Err(RunnerError::TaskInvocation(
-            "task reference has an unterminated quote".to_owned(),
+        return Err(RunnerError::task_invocation(
+            "task reference has an unterminated quote",
         ));
     }
     if token_started {

@@ -31,7 +31,7 @@ pub(super) fn digest_directory(root: &Path) -> Result<String, RunnerError> {
         if metadata.is_file() {
             hasher.update(b"f");
             let body = fs::read(path).map_err(|error| {
-                RunnerError::TaskInvocation(format!(
+                RunnerError::task_invocation(format!(
                     "failed reading cache directory input {}: {error}",
                     path.display()
                 ))

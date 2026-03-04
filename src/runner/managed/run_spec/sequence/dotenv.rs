@@ -74,7 +74,7 @@ fn parse_dotenv_file(env_file: &Path) -> Result<BTreeMap<String, String>, Runner
         Ok(src) => src,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(BTreeMap::new()),
         Err(error) => {
-            return Err(RunnerError::TaskInvocation(format!(
+            return Err(RunnerError::task_invocation(format!(
                 "failed to read env file `{}`: {error}",
                 env_file.display()
             )));

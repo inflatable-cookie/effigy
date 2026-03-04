@@ -73,10 +73,5 @@ pub fn detect_test_runner_detailed(repo_root: &Path) -> TestRunnerDetection {
 }
 
 #[cfg(test)]
-#[allow(dead_code)]
-#[path = "tests/contract_test_support.rs"]
-mod contract_test_support;
-
-#[cfg(test)]
 #[path = "tests/testing_tests.rs"]
 mod tests;

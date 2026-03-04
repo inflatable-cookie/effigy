@@ -1,5 +1,11 @@
 use super::{parse_task_reference_invocation, RunnerError};
 
+fn assert_case_table<T>(cases: impl IntoIterator<Item = T>, mut assert_case: impl FnMut(T)) {
+    for case in cases {
+        assert_case(case);
+    }
+}
+
 #[test]
 fn parse_task_reference_invocation_table_valid_cases() {
     struct Case {
@@ -42,7 +48,7 @@ fn parse_task_reference_invocation_table_valid_cases() {
         },
     ];
 
-    for case in cases {
+    assert_case_table(cases, |case| {
         let (selector, args) =
             parse_task_reference_invocation(case.raw).expect("parse task reference invocation");
         assert_eq!(selector.prefix.as_deref(), case.prefix, "raw={}", case.raw);
@@ -53,7 +59,7 @@ fn parse_task_reference_invocation_table_valid_cases() {
             .map(|value| (*value).to_owned())
             .collect::<Vec<_>>();
         assert_eq!(args, expected, "raw={}", case.raw);
-    }
+    });
 }
 
 #[test]
@@ -66,7 +72,7 @@ fn parse_task_reference_invocation_table_invalid_cases() {
         ("   ", "task reference is required"),
     ];
 
-    for (raw, expected) in cases {
+    assert_case_table(cases, |(raw, expected)| {
         let err = parse_task_reference_invocation(raw).expect_err("expected parse failure");
         match err {
             RunnerError::TaskInvocation(message) => {
@@ -74,5 +80,5 @@ fn parse_task_reference_invocation_table_invalid_cases() {
             }
             other => panic!("raw={raw}, unexpected error: {other}"),
         }
-    }
+    });
 }

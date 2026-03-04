@@ -27,7 +27,7 @@ pub(super) fn has_glob_magic(value: &str) -> bool {
 
 fn resolve_glob_matches(catalog_root: &Path, pattern: &str) -> Result<Vec<PathBuf>, RunnerError> {
     let glob = Glob::new(pattern).map_err(|error| {
-        RunnerError::TaskInvocation(format!(
+        RunnerError::task_invocation(format!(
             "invalid cache declaration glob `{pattern}`: {error}"
         ))
     })?;

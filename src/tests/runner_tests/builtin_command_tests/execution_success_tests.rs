@@ -7,7 +7,7 @@ fn run_manifest_task_builtin_test_executes_local_vitest() {
     write_package_json_with_test_script(&root);
     install_local_vitest_marker(&root, &marker);
 
-    let out = run_builtin_ok(root.clone(), "test", &["--run"]);
+    let out = run_builtin_ok(root.to_path_buf(), "test", &["--run"]);
     assert_contains_all(&out, &["Test Results", "targets:", "root"]);
     assert!(!out.contains("runner:vitest"));
     assert!(!out.contains("command:"));
@@ -30,7 +30,7 @@ fn run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo() {
     let vitest_marker = root.join("vitest-called.log");
     install_local_vitest_marker(&root, &vitest_marker);
 
-    let out = run_builtin_ok(root.clone(), "test", &[]);
+    let out = run_builtin_ok(root.to_path_buf(), "test", &[]);
     assert_contains_all(&out, &["Test Results", "root/vitest", "root/cargo-"]);
     assert!(vitest_marker.exists(), "vitest suite should run");
 }

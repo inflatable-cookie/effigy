@@ -1,12 +1,11 @@
-use std::io::IsTerminal;
 use std::path::Path;
 use std::time::Duration;
 
 use crate::process_manager::{ProcessEventKind, ProcessSpec, ProcessSupervisor};
 use crate::tui::{run_multiprocess_tui, MultiProcessTuiOptions};
-use crate::ui::theme::resolve_color_enabled;
-use crate::ui::{KeyValue, NoticeLevel, OutputMode, PlainRenderer, Renderer, SummaryCounts};
+use crate::ui::{KeyValue, NoticeLevel, Renderer, SummaryCounts};
 
+use super::super::render::{render_utf8, text_renderer};
 use super::super::{ManagedTaskPlan, RunnerError};
 
 pub(super) fn run_managed_task_tui(
@@ -71,9 +70,7 @@ pub(super) fn run_managed_task_runtime(
     let expected = specs.len();
     let supervisor = ProcessSupervisor::spawn(repo_root.to_path_buf(), specs)?;
 
-    let color_enabled =
-        resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal());
-    let mut renderer = PlainRenderer::new(Vec::<u8>::new(), color_enabled);
+    let mut renderer = text_renderer();
     renderer.section("Managed Task Runtime")?;
     renderer.key_values(&[
         KeyValue::new("task", task_name.to_owned()),
@@ -144,7 +141,5 @@ pub(super) fn run_managed_task_runtime(
         warn: 1,
         err: 0,
     })?;
-    let out = renderer.into_inner();
-    String::from_utf8(out)
-        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
+    render_utf8(renderer.into_inner())
 }

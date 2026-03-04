@@ -16,7 +16,7 @@ pub(super) fn state_with_processes(processes: &[&str]) -> SessionState {
     )
 }
 
-#[path = "navigation_tests.rs"]
-mod navigation_tests;
 #[path = "dispatch_tests.rs"]
 mod dispatch_tests;
+#[path = "navigation_tests.rs"]
+mod navigation_tests;

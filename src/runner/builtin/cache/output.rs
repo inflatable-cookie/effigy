@@ -1,63 +1,59 @@
 use std::path::Path;
 
 use super::super::super::cache::TaskCacheEntry;
-use super::RunnerError;
-
-pub(super) fn encode_cache_json(payload: serde_json::Value) -> Result<Option<String>, RunnerError> {
-    serde_json::to_string_pretty(&payload)
-        .map(Some)
-        .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
-}
+use super::super::text_doc::TextDoc;
 
 pub(super) fn render_inspect_text(
     target_root: &Path,
     selector_raw: &str,
-    entry: Option<TaskCacheEntry>,
+    entry: Option<&TaskCacheEntry>,
 ) -> String {
-    let mut lines = vec![format!("cache root: {}", target_root.display())];
-    lines.push(format!("selector: {selector_raw}"));
+    let mut doc = TextDoc::new();
+    doc.kv("cache root", target_root.display());
+    doc.kv("selector", selector_raw);
     match entry {
         Some(entry) => {
-            lines.push("status: present".to_owned());
-            lines.push(format!("fingerprint: {}", entry.fingerprint));
-            lines.push(format!(
-                "updated_at_epoch_ms: {}",
-                entry.updated_at_epoch_ms
-            ));
-            lines.push(format!("command: {}", entry.command));
-            lines.push(format!("outputs_exist: {}", entry.outputs_exist));
+            doc.kv("status", "present");
+            doc.kv("fingerprint", &entry.fingerprint);
+            doc.kv("updated_at_epoch_ms", entry.updated_at_epoch_ms);
+            doc.kv("command", &entry.command);
+            doc.kv("outputs_exist", entry.outputs_exist);
         }
-        None => lines.push("status: missing".to_owned()),
+        None => {
+            doc.kv("status", "missing");
+        }
     }
-    lines.join("\n")
+    doc.finish()
 }
 
-pub(super) fn render_inspect_all_text(target_root: &Path, entries: Vec<TaskCacheEntry>) -> String {
-    let mut lines = vec![format!("cache root: {}", target_root.display())];
-    lines.push(format!("entries: {}", entries.len()));
+pub(super) fn render_inspect_all_text(target_root: &Path, entries: &[TaskCacheEntry]) -> String {
+    let mut doc = TextDoc::new();
+    doc.kv("cache root", target_root.display());
+    doc.kv("entries", entries.len());
     for entry in entries {
-        lines.push(format!(
-            "- {} [{}] fingerprint={} outputs_exist={}",
+        doc.bullet(format!(
+            "{} [{}] fingerprint={} outputs_exist={}",
             entry.task_name, entry.manifest_path, entry.fingerprint, entry.outputs_exist
         ));
     }
-    lines.join("\n")
+    doc.finish()
 }
 
 pub(super) fn render_invalidate_text(
     target_root: &Path,
     invalidate_all: bool,
-    removed: Vec<String>,
+    removed: &[String],
 ) -> String {
-    let mut lines = vec![format!("cache root: {}", target_root.display())];
+    let mut doc = TextDoc::new();
+    doc.kv("cache root", target_root.display());
     if invalidate_all {
-        lines.push("mode: all".to_owned());
+        doc.kv("mode", "all");
     } else {
-        lines.push("mode: selectors".to_owned());
+        doc.kv("mode", "selectors");
     }
-    lines.push(format!("removed: {}", removed.len()));
+    doc.kv("removed", removed.len());
     for key in removed {
-        lines.push(format!("- {key}"));
+        doc.bullet(key);
     }
-    lines.join("\n")
+    doc.finish()
 }

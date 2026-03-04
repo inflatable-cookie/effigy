@@ -5,37 +5,20 @@ use crate::TaskInvocation;
 
 #[path = "explain/analysis.rs"]
 mod analysis;
+#[path = "explain/contracts.rs"]
+mod contracts;
 #[path = "explain/render.rs"]
 mod render;
 
 use super::super::catalog::{discover_catalogs, select_catalog_and_task};
 use super::super::util::parse_task_selector;
 use super::{CatalogSelectionMode, RunnerError};
-
-const DEFERRAL_NOT_CONSIDERED_REASON: &str =
+pub(super) const DEFERRAL_NOT_CONSIDERED_REASON: &str =
     "deferral was not considered because the selection outcome does not trigger deferral";
-const DEFERRAL_SELECTED_REASON: &str =
+pub(super) const DEFERRAL_SELECTED_REASON: &str =
     "deferral was selected from configured or implicit fallback routing";
-const DEFERRAL_NOT_FOUND_REASON: &str =
+pub(super) const DEFERRAL_NOT_FOUND_REASON: &str =
     "deferral was considered but no eligible fallback route was found";
-
-struct SelectionOutcome {
-    status: String,
-    catalog: Option<String>,
-    mode: Option<String>,
-    evidence: Vec<String>,
-    error: Option<String>,
-    ambiguity_candidates: Vec<String>,
-    reasoning: String,
-}
-
-struct DeferralOutcome {
-    considered: bool,
-    selected: bool,
-    source: Option<String>,
-    working_dir: Option<String>,
-    reasoning: String,
-}
 
 pub(super) fn run_doctor_explain(
     request: TaskInvocation,
@@ -45,9 +28,8 @@ pub(super) fn run_doctor_explain(
     verbose: bool,
 ) -> Result<String, RunnerError> {
     if fix {
-        return Err(RunnerError::TaskInvocation(
-            "`--fix` is not supported with explain mode (`effigy doctor <task> <args>`)."
-                .to_owned(),
+        return Err(RunnerError::task_invocation(
+            "`--fix` is not supported with explain mode (`effigy doctor <task> <args>`).",
         ));
     }
 

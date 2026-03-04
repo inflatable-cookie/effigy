@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::path::Path;
 
 use toml::Value;
 
-use super::super::{DoctorFinding, DoctorSeverity};
+use super::super::DoctorState;
 
 mod diagnostics;
 mod env_section;
@@ -12,6 +11,7 @@ mod tables;
 mod tasks;
 mod test_section;
 mod top_level;
+mod values;
 
 use diagnostics::SchemaContext;
 use env_section::validate_env_section;
@@ -24,10 +24,9 @@ use top_level::validate_top_level_keys;
 pub(super) fn validate_manifest_schema(
     manifest_path: &Path,
     value: &Value,
-    findings: &mut Vec<DoctorFinding>,
-    statuses: &mut HashMap<String, DoctorSeverity>,
+    state: &mut DoctorState,
 ) {
-    let mut context = SchemaContext::new(manifest_path, findings, statuses);
+    let mut context = SchemaContext::new(manifest_path, state);
     let Some(table) = value.as_table() else {
         context.unsupported_manifest_root();
         return;

@@ -1,5 +1,6 @@
 use serde_json::json;
 
+use super::super::render::encode_json;
 use super::super::RunnerError;
 
 pub(super) fn render_task_cache_hit_json(
@@ -63,8 +64,7 @@ fn task_run_payload(
 }
 
 fn encode_task_run_json(payload: &serde_json::Value) -> Result<String, RunnerError> {
-    serde_json::to_string_pretty(payload)
-        .map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
+    encode_json(payload, true)
 }
 
 fn render_selector(selector: &super::super::TaskSelector) -> String {

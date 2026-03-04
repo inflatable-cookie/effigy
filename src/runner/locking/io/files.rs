@@ -9,7 +9,7 @@ pub(super) fn read_lock_record(path: &Path) -> Result<super::LockRecord, RunnerE
         error,
     })?;
     serde_json::from_slice::<super::LockRecord>(&body).map_err(|error| {
-        RunnerError::TaskInvocation(format!(
+        RunnerError::task_invocation(format!(
             "failed to parse lock record {}: {error}",
             path.display()
         ))

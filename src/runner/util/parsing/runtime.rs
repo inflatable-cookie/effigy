@@ -20,8 +20,8 @@ pub(super) fn parse_task_runtime_args(args: &[String]) -> Result<TaskRuntimeArgs
         let arg = &args[i];
         if arg == "--repo" {
             let Some(value) = args.get(i + 1) else {
-                return Err(RunnerError::TaskInvocation(
-                    "task argument --repo requires a value".to_owned(),
+                return Err(RunnerError::task_invocation(
+                    "task argument --repo requires a value",
                 ));
             };
             repo = Some(PathBuf::from(value));

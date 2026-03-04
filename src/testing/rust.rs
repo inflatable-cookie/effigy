@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use crate::fs_probe::PathPresenceCache;
+use crate::path_probe::command_available_in_path;
 
 use super::{TestRunner, TestRunnerCandidate, TestRunnerPlan};
 
@@ -10,8 +13,8 @@ pub(super) fn detect_rust(
     Option<TestRunnerPlan>,
     TestRunnerCandidate,
 ) {
-    let cargo_toml = repo_root.join("Cargo.toml");
-    if !cargo_toml.is_file() {
+    let mut probe = PathPresenceCache::new();
+    if !probe.child_is_file(repo_root, "Cargo.toml") {
         return (
             None,
             TestRunnerCandidate {
@@ -30,7 +33,7 @@ pub(super) fn detect_rust(
         );
     }
     let mut evidence = vec!["found `Cargo.toml`".to_owned()];
-    if command_on_path("cargo-nextest") {
+    if command_available_in_path("cargo-nextest") {
         evidence.push("found `cargo-nextest` on PATH".to_owned());
         return (
             Some(TestRunnerPlan {
@@ -81,12 +84,4 @@ pub(super) fn detect_rust(
             reason: evidence.join("; "),
         },
     )
-}
-
-fn command_on_path(command: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|value| std::env::split_paths(&value).collect::<Vec<PathBuf>>())
-        .unwrap_or_default()
-        .into_iter()
-        .any(|dir| dir.join(command).is_file())
 }

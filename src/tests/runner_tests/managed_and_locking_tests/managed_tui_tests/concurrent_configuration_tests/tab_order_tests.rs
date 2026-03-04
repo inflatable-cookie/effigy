@@ -13,13 +13,13 @@ fn run_manifest_task_managed_tui_supports_ranked_tab_order_map() {
         },
     ];
 
-    for case in cases {
+    assert_case_table(cases, |case| {
         let root = temp_workspace(case.workspace);
         write_ranked_name_manifest(&root);
 
         let out = run_dev_with_repo(&root, &[]).expect("managed plan should render");
         assert_contains_all(&out, &["tab-order: dairy, cream, api, jobs"]);
-    }
+    });
 }
 
 #[test]

@@ -10,7 +10,7 @@ mod parser;
 use super::super::catalog::select_catalog_and_task;
 use super::super::util::shell_quote;
 use super::super::{LoadedCatalog, RunnerError};
-use super::run_spec::render_task_run_spec;
+use super::run_spec::{render_task_run_spec, RunSpecContext};
 use context::{ManagedRefContext, StepRefContext};
 use invocation::render_builtin_task_reference_invocation;
 use parser::{is_builtin_task_selector, merge_args_rendered, parse_task_ref};
@@ -50,16 +50,18 @@ pub(super) fn resolve_task_reference_run(
         ))
     })?;
     let run_rendered = render_task_run_spec(
-        &parsed.selector.task_name,
         run_spec,
-        &selection.task.env,
-        selection.task.env_file.as_ref(),
-        &selection.catalog.manifest.env,
-        &parsed.args_rendered,
-        &selection.catalog.catalog_root,
-        catalogs,
-        &selection.catalog.catalog_root,
-        0,
+        RunSpecContext {
+            task_name: &parsed.selector.task_name,
+            task_env: &selection.task.env,
+            task_env_file: selection.task.env_file.as_ref(),
+            env_profiles: &selection.catalog.manifest.env,
+            args_rendered: &parsed.args_rendered,
+            repo_root: &selection.catalog.catalog_root,
+            catalogs,
+            task_scope_cwd: &selection.catalog.catalog_root,
+            depth: 0,
+        },
     )
     .map_err(|error| context.invalid(error))?;
     Ok((run_rendered, selection.catalog.catalog_root.clone()))
@@ -105,16 +107,18 @@ pub(super) fn resolve_task_reference_step(
         ))
     })?;
     let nested = render_task_run_spec(
-        &parsed.selector.task_name,
         run_spec,
-        &selection.task.env,
-        selection.task.env_file.as_ref(),
-        &selection.catalog.manifest.env,
-        &merged_args_rendered,
-        &selection.catalog.catalog_root,
-        catalogs,
-        &selection.catalog.catalog_root,
-        depth,
+        RunSpecContext {
+            task_name: &parsed.selector.task_name,
+            task_env: &selection.task.env,
+            task_env_file: selection.task.env_file.as_ref(),
+            env_profiles: &selection.catalog.manifest.env,
+            args_rendered: &merged_args_rendered,
+            repo_root: &selection.catalog.catalog_root,
+            catalogs,
+            task_scope_cwd: &selection.catalog.catalog_root,
+            depth,
+        },
     )?;
     Ok(format!(
         "(cd {} && {})",

@@ -1,22 +1,21 @@
-use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 
 use toml::Value;
 
 use super::super::super::catalog::{default_alias, discover_manifest_paths};
 use super::super::super::{LoadedCatalog, ManifestJsPackageManager, RunnerError, TaskManifest};
-use super::super::{DoctorFinding, DoctorSeverity};
+use super::super::finding_templates::ManifestParseFinding;
+use super::super::DoctorState;
 use super::schema::validate_manifest_schema;
 use super::ManifestScanResult;
+use crate::data_loading::{parse_toml, read_utf8};
 
 pub(super) fn collect_manifest_findings(
     resolved_root: &Path,
-    findings: &mut Vec<DoctorFinding>,
-    statuses: &mut HashMap<String, DoctorSeverity>,
+    state: &mut DoctorState,
 ) -> Result<ManifestScanResult, RunnerError> {
     let manifest_paths = discover_manifest_paths(resolved_root)?;
-    let mut context = ScanContext::new(resolved_root, findings, statuses);
+    let mut context = ScanContext::new(resolved_root, state);
     for manifest_path in &manifest_paths {
         context.process_manifest_path(manifest_path);
     }
@@ -25,23 +24,17 @@ pub(super) fn collect_manifest_findings(
 
 struct ScanContext<'a, 'b> {
     resolved_root: &'a Path,
-    findings: &'b mut Vec<DoctorFinding>,
-    statuses: &'b mut HashMap<String, DoctorSeverity>,
+    state: &'b mut DoctorState,
     parsed_catalogs: Vec<LoadedCatalog>,
     preferred_js_pm: Option<ManifestJsPackageManager>,
     parse_ok_any: bool,
 }
 
 impl<'a, 'b> ScanContext<'a, 'b> {
-    fn new(
-        resolved_root: &'a Path,
-        findings: &'b mut Vec<DoctorFinding>,
-        statuses: &'b mut HashMap<String, DoctorSeverity>,
-    ) -> Self {
+    fn new(resolved_root: &'a Path, state: &'b mut DoctorState) -> Self {
         Self {
             resolved_root,
-            findings,
-            statuses,
+            state,
             parsed_catalogs: Vec::new(),
             preferred_js_pm: None,
             parse_ok_any: false,
@@ -62,32 +55,29 @@ impl<'a, 'b> ScanContext<'a, 'b> {
     }
 
     fn read_manifest_source(&mut self, manifest_path: &Path) -> Option<String> {
-        match fs::read_to_string(manifest_path) {
+        match read_utf8(manifest_path) {
             Ok(source) => Some(source),
             Err(error) => {
-                self.push_manifest_parse_error(
-                    format!("failed to read {}: {error}", manifest_path.display()),
-                    "Fix file permissions/path issues and re-run `effigy doctor`.",
-                );
+                self.push_manifest_parse_error(ManifestParseFinding::read_failure(
+                    manifest_path,
+                    error,
+                ));
                 None
             }
         }
     }
 
     fn validate_manifest_syntax_and_schema(&mut self, manifest_path: &Path, source: &str) -> bool {
-        match source.parse::<Value>() {
+        match parse_toml::<Value>(source) {
             Ok(raw) => {
-                validate_manifest_schema(manifest_path, &raw, self.findings, self.statuses);
+                validate_manifest_schema(manifest_path, &raw, self.state);
                 true
             }
             Err(error) => {
-                self.push_manifest_parse_error(
-                    format!(
-                        "failed to parse TOML syntax in {}: {error}",
-                        manifest_path.display()
-                    ),
-                    "Fix TOML syntax and re-run `effigy doctor`.",
-                );
+                self.push_manifest_parse_error(ManifestParseFinding::toml_syntax_failure(
+                    manifest_path,
+                    error,
+                ));
                 false
             }
         }
@@ -98,16 +88,13 @@ impl<'a, 'b> ScanContext<'a, 'b> {
         manifest_path: &Path,
         source: &str,
     ) -> Option<TaskManifest> {
-        match toml::from_str::<TaskManifest>(source) {
+        match parse_toml::<TaskManifest>(source) {
             Ok(manifest) => Some(manifest),
             Err(error) => {
-                self.push_manifest_parse_error(
-                    format!(
-                        "strict manifest parse failed in {}: {error}",
-                        manifest_path.display()
-                    ),
-                    "Align keys/types with `effigy config --schema` and retry.",
-                );
+                self.push_manifest_parse_error(ManifestParseFinding::strict_parse_failure(
+                    manifest_path,
+                    error,
+                ));
                 None
             }
         }
@@ -143,18 +130,8 @@ impl<'a, 'b> ScanContext<'a, 'b> {
         });
     }
 
-    fn push_manifest_parse_error(&mut self, evidence: String, remediation: &str) {
-        super::super::add_finding(
-            self.findings,
-            self.statuses,
-            DoctorFinding {
-                check_id: "manifest.parse".to_owned(),
-                severity: DoctorSeverity::Error,
-                evidence,
-                remediation: remediation.to_owned(),
-                fixable: false,
-            },
-        );
+    fn push_manifest_parse_error(&mut self, finding: ManifestParseFinding) {
+        finding.emit(self.state);
     }
 
     fn finish(self, manifest_paths: Vec<std::path::PathBuf>) -> ManifestScanResult {

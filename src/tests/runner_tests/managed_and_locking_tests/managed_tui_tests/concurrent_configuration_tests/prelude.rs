@@ -1,6 +1,6 @@
 pub(super) use super::super::super::prelude::*;
 
-pub(super) fn write_ranked_task_ref_manifest(root: &PathBuf, jobs_start_after_ms: Option<u32>) {
+pub(super) fn write_ranked_task_ref_manifest(root: &Path, jobs_start_after_ms: Option<u32>) {
     let jobs_delay = jobs_start_after_ms
         .map(|ms| format!(", start_after_ms = {ms}"))
         .unwrap_or_default();
@@ -21,7 +21,7 @@ concurrent = [
     );
 }
 
-pub(super) fn write_ranked_name_manifest(root: &PathBuf) {
+pub(super) fn write_ranked_name_manifest(root: &Path) {
     write_root_manifest(
         root,
         r#"[tasks.dev]
@@ -36,13 +36,16 @@ concurrent = [
     );
 }
 
-pub(super) fn write_ranked_catalog_tasks(root: &PathBuf) {
+pub(super) fn write_ranked_catalog_tasks(root: &Path) {
     write_catalogs_with_tasks(
         root,
         &[
             (
                 "farmyard",
-                &[("api", "printf farmyard-api"), ("jobs", "printf farmyard-jobs")],
+                &[
+                    ("api", "printf farmyard-api"),
+                    ("jobs", "printf farmyard-jobs"),
+                ],
             ),
             ("cream", &[("dev", "printf cream-dev")]),
             ("dairy", &[("dev", "printf dairy-dev")]),

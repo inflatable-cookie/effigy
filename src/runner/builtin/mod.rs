@@ -1,59 +1,33 @@
 use std::path::{Path, PathBuf};
 
-use crate::TaskInvocation;
-
 use super::catalog::resolve_catalog_by_prefix;
-use super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector, BUILTIN_TASKS};
+use super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector};
+use crate::TaskInvocation;
 
 mod arg_parser;
 mod cache;
+mod command_spec;
 mod completion;
 mod config;
 mod doctor;
 mod help;
+mod help_text;
 mod init;
 mod migrate;
+mod registry;
+mod response;
+mod support;
 mod tasks;
 mod test;
+mod text_doc;
 mod unlock;
 mod watch;
 
-pub(super) fn reject_verbose_root_for_builtin(
-    task_name: &str,
-    runtime_args: &TaskRuntimeArgs,
-) -> Result<(), RunnerError> {
-    if runtime_args.verbose_root {
-        return Err(RunnerError::TaskInvocation(format!(
-            "`--verbose-root` is not supported for built-in `{task_name}`",
-        )));
-    }
-    Ok(())
-}
-
-pub(super) fn unknown_builtin_args(task_name: &str, args: &[String]) -> RunnerError {
-    RunnerError::TaskInvocation(format!(
-        "unknown argument(s) for built-in `{task_name}`: {}",
-        args.join(" ")
-    ))
-}
-
-pub(super) fn unknown_builtin_arg(task_name: &str, arg: &str) -> RunnerError {
-    unknown_builtin_args(task_name, &[arg.to_owned()])
-}
-
-pub(super) fn ensure_no_unknown_builtin_args(
-    task_name: &str,
-    unknown: &[String],
-) -> Result<(), RunnerError> {
-    if unknown.is_empty() {
-        return Ok(());
-    }
-    Err(unknown_builtin_args(task_name, unknown))
-}
-
-fn is_builtin_task(task_name: &str) -> bool {
-    BUILTIN_TASKS.iter().any(|(name, _)| *name == task_name) || task_name == "catalogs"
-}
+pub(super) use support::{
+    ensure_no_unknown_builtin_args, ensure_no_unknown_builtin_args_with_prefix,
+    has_builtin_help_flag, has_builtin_json_flag, reject_verbose_root_for_builtin,
+    render_builtin_help_text, render_builtin_help_topic,
+};
 
 fn resolve_builtin_task_target_root(
     selector: &TaskSelector,
@@ -68,6 +42,19 @@ fn resolve_builtin_task_target_root(
     Some(resolved_root.to_path_buf())
 }
 
+#[cfg(test)]
+pub(super) use completion::parse_completion_contract_request;
+#[cfg(test)]
+pub(in crate::runner) use completion::CompletionParseContract;
+#[cfg(test)]
+pub(super) use config::parse_config_contract_request;
+#[cfg(test)]
+pub(in crate::runner) use config::ConfigParseContract;
+#[cfg(test)]
+pub(super) use unlock::parse_unlock_contract_request;
+#[cfg(test)]
+pub(super) use watch::parse_watch_contract_request;
+
 pub(super) fn try_run_builtin_task(
     selector: &TaskSelector,
     task: &TaskInvocation,
@@ -76,9 +63,9 @@ pub(super) fn try_run_builtin_task(
     catalogs: &[LoadedCatalog],
     invocation_cwd: &Path,
 ) -> Result<Option<String>, RunnerError> {
-    if !is_builtin_task(&selector.task_name) {
+    let Some(entry) = registry::builtin_registry_entry(&selector.task_name) else {
         return Ok(None);
-    }
+    };
 
     let Some(target_root) =
         resolve_builtin_task_target_root(selector, resolved_root, catalogs, invocation_cwd)
@@ -86,23 +73,14 @@ pub(super) fn try_run_builtin_task(
         return Ok(None);
     };
 
-    match selector.task_name.as_str() {
-        "doctor" => doctor::run_builtin_doctor(task, runtime_args, &target_root).map(Some),
-        "catalogs" => tasks::run_builtin_tasks(task, runtime_args, &target_root, true).map(Some),
-        "tasks" => tasks::run_builtin_tasks(task, runtime_args, &target_root, false).map(Some),
-        "config" => config::run_builtin_config(task, &runtime_args.passthrough),
-        "help" => help::run_builtin_help(task, &runtime_args.passthrough),
-        "watch" => watch::run_builtin_watch(task, runtime_args, &target_root),
-        "init" => init::run_builtin_init(task, &runtime_args.passthrough, &target_root),
-        "migrate" => migrate::run_builtin_migrate(task, &runtime_args.passthrough, &target_root),
-        "unlock" => unlock::run_builtin_unlock(task, &runtime_args.passthrough, &target_root),
-        "cache" => {
-            cache::run_builtin_cache(task, runtime_args, &target_root, catalogs, invocation_cwd)
-        }
-        "completion" => completion::run_builtin_completion(task, runtime_args, &target_root),
-        "test" => test::try_run_builtin_test(selector, task, runtime_args, &target_root, catalogs),
-        _ => Ok(None),
-    }
+    entry.run(
+        selector,
+        task,
+        runtime_args,
+        &target_root,
+        catalogs,
+        invocation_cwd,
+    )
 }
 
 #[cfg(test)]

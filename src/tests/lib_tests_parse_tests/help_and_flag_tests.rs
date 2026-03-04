@@ -54,7 +54,6 @@ fn parse_command_rejects_removed_json_raw_flag_token() {
     assert_eq!(err.to_string(), "unknown argument: --json-raw");
 }
 
-
 #[test]
 fn parse_tasks_help_is_scoped() {
     let cmd =
@@ -109,4 +108,3 @@ fn parse_migrate_help_is_scoped() {
         .expect("parse should succeed");
     assert_eq!(cmd, Command::Help(HelpTopic::Migrate));
 }
-

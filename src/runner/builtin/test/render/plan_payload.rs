@@ -6,6 +6,7 @@ use serde_json::json;
 use crate::runner::builtin::test::planning::BuiltinTestTarget;
 use crate::TaskInvocation;
 
+use super::super::super::super::response::schema_payload_versioned;
 use super::plan_projection::project_target_plan;
 
 pub(super) fn build_builtin_test_plan_payload(
@@ -33,15 +34,16 @@ pub(super) fn build_builtin_test_plan_payload(
             })
         })
         .collect::<Vec<serde_json::Value>>();
-    json!({
-        "schema": "effigy.test.plan.v1",
-        "schema_version": 1,
-        "request": task.name,
-        "root": resolved_root.display().to_string(),
-        "runtime": runtime_mode,
-        "targets": target_values,
-        "recovery": serde_json::Value::Null,
-    })
+    schema_payload_versioned(
+        "effigy.test.plan.v1",
+        json!({
+            "request": task.name,
+            "root": resolved_root.display().to_string(),
+            "runtime": runtime_mode,
+            "targets": target_values,
+            "recovery": serde_json::Value::Null,
+        }),
+    )
 }
 
 pub(super) fn build_builtin_test_plan_recovery_payload(
@@ -50,16 +52,17 @@ pub(super) fn build_builtin_test_plan_recovery_payload(
     available_runners: &BTreeSet<String>,
     message: &str,
 ) -> serde_json::Value {
-    json!({
-        "schema": "effigy.test.plan.v1",
-        "schema_version": 1,
-        "request": task.name,
-        "root": root.display().to_string(),
-        "runtime": "plan-recovery",
-        "targets": [],
-        "recovery": {
-            "message": message,
-            "available_suites": available_runners.iter().cloned().collect::<Vec<String>>(),
-        }
-    })
+    schema_payload_versioned(
+        "effigy.test.plan.v1",
+        json!({
+            "request": task.name,
+            "root": root.display().to_string(),
+            "runtime": "plan-recovery",
+            "targets": [],
+            "recovery": {
+                "message": message,
+                "available_suites": available_runners.iter().cloned().collect::<Vec<String>>(),
+            }
+        }),
+    )
 }

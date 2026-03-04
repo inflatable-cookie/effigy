@@ -43,7 +43,7 @@ fn removed_builtin_invocation_error(selector: &TaskSelector) -> Option<RunnerErr
         return None;
     }
     let request = removed_builtin_request(selector);
-    Some(RunnerError::TaskInvocation(format!(
+    Some(RunnerError::task_invocation(format!(
         "`{request}` is no longer a built-in command. Use `effigy doctor` for consolidated health checks, or define `tasks.health` in your manifest for project-owned checks."
     )))
 }

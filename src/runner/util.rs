@@ -1,7 +1,7 @@
-#[path = "util/parsing.rs"]
-mod parsing;
 #[path = "util/dotenv.rs"]
 mod dotenv;
+#[path = "util/parsing.rs"]
+mod parsing;
 #[path = "util/shell.rs"]
 mod shell;
 

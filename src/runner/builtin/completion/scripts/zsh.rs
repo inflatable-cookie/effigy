@@ -1,33 +1,31 @@
+use super::super::super::text_doc::TextDoc;
 use super::command_index::{command_names, command_options, command_rows};
 
 pub(super) fn render_zsh_completion() -> String {
-    let mut lines = vec![
-        "#compdef effigy".to_owned(),
-        "".to_owned(),
-        "local -a commands".to_owned(),
-        "commands=(".to_owned(),
-    ];
+    let mut doc = TextDoc::new();
+    doc.line("#compdef effigy");
+    doc.blank();
+    doc.line("local -a commands");
+    doc.line("commands=(");
 
     for (name, description) in command_rows() {
-        lines.push(format!("  '{name}:{description}'"));
+        doc.line(format!("  '{name}:{description}'"));
     }
 
-    lines.extend_from_slice(&[
-        ")".to_owned(),
-        "".to_owned(),
-        "if (( CURRENT == 2 )); then".to_owned(),
-        "  local -a dynamic_commands".to_owned(),
-        "  dynamic_commands=(${(f)\"$(effigy completion candidates --prefix $words[CURRENT] 2>/dev/null)\"})".to_owned(),
-        "  if (( ${#dynamic_commands[@]} > 0 )); then".to_owned(),
-        "    _describe 'command-or-task' dynamic_commands".to_owned(),
-        "    return".to_owned(),
-        "  fi".to_owned(),
-        "  _describe 'command' commands".to_owned(),
-        "  return".to_owned(),
-        "fi".to_owned(),
-        "".to_owned(),
-        "case $words[2] in".to_owned(),
-    ]);
+    doc.line(")");
+    doc.blank();
+    doc.line("if (( CURRENT == 2 )); then");
+    doc.line("  local -a dynamic_commands");
+    doc.line("  dynamic_commands=(${(f)\"$(effigy completion candidates --prefix $words[CURRENT] 2>/dev/null)\"})");
+    doc.line("  if (( ${#dynamic_commands[@]} > 0 )); then");
+    doc.line("    _describe 'command-or-task' dynamic_commands");
+    doc.line("    return");
+    doc.line("  fi");
+    doc.line("  _describe 'command' commands");
+    doc.line("  return");
+    doc.line("fi");
+    doc.blank();
+    doc.line("case $words[2] in");
 
     for command in command_names() {
         let options = command_options(command)
@@ -35,11 +33,11 @@ pub(super) fn render_zsh_completion() -> String {
             .map(|opt| format!("'{opt}[option]'"))
             .collect::<Vec<String>>()
             .join(" ");
-        lines.push(format!("  {command})"));
-        lines.push(format!("    _arguments {options}"));
-        lines.push("    ;;".to_owned());
+        doc.line(format!("  {command})"));
+        doc.line(format!("    _arguments {options}"));
+        doc.line("    ;;");
     }
 
-    lines.push("esac".to_owned());
-    lines.join("\n")
+    doc.line("esac");
+    doc.finish()
 }

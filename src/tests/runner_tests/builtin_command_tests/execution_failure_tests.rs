@@ -50,6 +50,29 @@ fn run_manifest_task_builtin_test_json_failure_includes_results_and_failures() {
 }
 
 #[test]
+fn run_manifest_task_builtin_test_json_failure_does_not_include_text_hint_footer() {
+    let root = temp_workspace("builtin-test-json-filtered-failure-no-hint");
+    write_package_json_with_test_script(&root);
+    install_local_vitest(&root, "#!/bin/sh\nexit 1\n");
+
+    let err = run_builtin_err(root, "test", &["--json", "vitest", "user-service"]);
+    match err {
+        RunnerError::BuiltinTestNonZero { rendered, .. } => {
+            assert!(!rendered.contains("\nHint\n────\n"));
+            let parsed = parse_json_output(&rendered);
+            assert_eq!(parsed["schema"], "effigy.test.results.v1");
+            assert!(parsed["failures"].is_array());
+            assert_eq!(parsed["hint"]["kind"], "selected-suite-filter-no-match");
+            assert_eq!(
+                parsed["hint"]["suggestion"],
+                "Try again without the filter to verify suite execution."
+            );
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
 fn run_manifest_task_builtin_test_failure_with_suite_filter_shows_no_match_hint() {
     let root = temp_workspace("builtin-test-filtered-failure-hint");
     write_package_json_with_test_script(&root);

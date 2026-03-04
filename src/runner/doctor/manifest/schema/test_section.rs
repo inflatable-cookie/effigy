@@ -1,6 +1,7 @@
 use toml::Value;
 
 use super::diagnostics::SchemaContext;
+use super::tables::validate_allowed_keys;
 
 pub(super) fn validate_test_section(context: &mut SchemaContext<'_, '_>, test: &Value) {
     let Some(test_table) = test.as_table() else {
@@ -11,14 +12,12 @@ pub(super) fn validate_test_section(context: &mut SchemaContext<'_, '_>, test: &
         );
         return;
     };
-    for key in test_table.keys() {
-        if !matches!(
-            key.as_str(),
-            "max_parallel" | "cargo_env_match" | "runners" | "suites"
-        ) {
-            context.unsupported_key(&format!("test.{key}"));
-        }
-    }
+    validate_allowed_keys(
+        context,
+        "test",
+        test_table,
+        &["max_parallel", "cargo_env_match", "runners", "suites"],
+    );
     if let Some(cargo_env_match) = test_table.get("cargo_env_match") {
         validate_test_cargo_env_match(context, cargo_env_match);
     }
@@ -61,11 +60,12 @@ fn validate_test_runners(context: &mut SchemaContext<'_, '_>, runners: &Value) {
 
     for (runner_name, runner_value) in runners_table {
         if let Some(inner) = runner_value.as_table() {
-            for key in inner.keys() {
-                if key != "command" {
-                    context.unsupported_key(&format!("test.runners.{runner_name}.{key}"));
-                }
-            }
+            validate_allowed_keys(
+                context,
+                &format!("test.runners.{runner_name}"),
+                inner,
+                &["command"],
+            );
         } else if !runner_value.is_str() {
             context.unsupported_value(
                 &format!("test.runners.{runner_name}"),
@@ -88,11 +88,12 @@ fn validate_test_suites(context: &mut SchemaContext<'_, '_>, suites: &Value) {
 
     for (suite_name, suite_value) in suites_table {
         if let Some(inner) = suite_value.as_table() {
-            for key in inner.keys() {
-                if key != "run" {
-                    context.unsupported_key(&format!("test.suites.{suite_name}.{key}"));
-                }
-            }
+            validate_allowed_keys(
+                context,
+                &format!("test.suites.{suite_name}"),
+                inner,
+                &["run"],
+            );
         } else if !suite_value.is_str() {
             context.unsupported_value(
                 &format!("test.suites.{suite_name}"),

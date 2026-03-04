@@ -1,17 +1,24 @@
 use super::prelude::*;
 
+fn setup_root_and_farmyard_api(root: &Path) {
+    write_root_and_farmyard_api_catalog(root);
+}
+
+fn setup_managed_front_profile(root: &Path) {
+    write_managed_dev_profile_manifest(root, "front");
+}
+
 #[test]
 fn run_manifest_task_builtin_catalogs_renders_diagnostics_and_resolution_probe() {
     let cases = [
-        CatalogsResolveCase {
+        BuiltinInvocationSetupCase {
             workspace: "builtin-catalogs",
-            fixture: CatalogResolveFixture::RootAndFarmyardApi,
             args: &["--resolve", "farmyard/api"],
             expected: &["Resolution: farmyard/api", "catalog: farmyard"],
+            setup: setup_root_and_farmyard_api,
         },
-        CatalogsResolveCase {
+        BuiltinInvocationSetupCase {
             workspace: "builtin-catalogs-resolve-managed-profile",
-            fixture: CatalogResolveFixture::ManagedProfileInvocation,
             args: &["--resolve", "dev front"],
             expected: &[
                 "Resolution: dev front",
@@ -20,18 +27,9 @@ fn run_manifest_task_builtin_catalogs_renders_diagnostics_and_resolution_probe()
                 "task: dev",
                 "managed profile `front` resolved via invocation `dev front`",
             ],
+            setup: setup_managed_front_profile,
         },
     ];
 
-    for case in cases {
-        let root = temp_workspace(case.workspace);
-        match case.fixture {
-            CatalogResolveFixture::RootAndFarmyardApi => write_root_and_farmyard_api_catalog(&root),
-            CatalogResolveFixture::ManagedProfileInvocation => {
-                write_managed_dev_profile_manifest(&root, "front")
-            }
-        }
-        let out = run_catalogs_ok(root, case.args);
-        assert_contains_all(&out, case.expected);
-    }
+    assert_builtin_ok_case_table_with_case_setup("catalogs", &cases);
 }

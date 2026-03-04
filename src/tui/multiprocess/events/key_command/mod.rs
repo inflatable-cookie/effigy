@@ -33,13 +33,7 @@ pub(super) fn handle_shell_shortcuts(
     active_process: &str,
     active_is_shell: bool,
 ) -> Result<Option<LoopControl>, MultiProcessTuiError> {
-    shell_shortcuts::handle_shell_shortcuts(
-        key,
-        supervisor,
-        state,
-        active_process,
-        active_is_shell,
-    )
+    shell_shortcuts::handle_shell_shortcuts(key, supervisor, state, active_process, active_is_shell)
 }
 
 #[cfg(test)]

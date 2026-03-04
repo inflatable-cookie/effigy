@@ -26,6 +26,7 @@ mod tasks_diagnostics;
 mod tasks_listing;
 mod tasks_probe;
 mod tasks_view;
+mod tooling;
 mod util;
 
 use builtin::try_run_builtin_task;
@@ -50,9 +51,13 @@ use util::parse_task_selector;
 pub(super) const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize =
     model::DEFAULT_BUILTIN_TEST_MAX_PARALLEL;
 
-#[cfg(test)]
-use bridges::builtin_test_max_parallel;
 use bridges::run_manifest_task_with_cwd;
+#[cfg(test)]
+use bridges::{
+    builtin_test_max_parallel, parse_completion_contract_request, parse_config_contract_request,
+    parse_unlock_contract_request, parse_watch_contract_request, CompletionParseContract,
+    ConfigParseContract,
+};
 pub use entrypoints::{resolve_command_root, run_command, run_doctor, run_tasks};
 
 #[derive(Debug)]
@@ -182,10 +187,6 @@ pub enum RunnerError {
 #[cfg(test)]
 #[path = "../tests/runner_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "../tests/contract_test_support.rs"]
-mod contract_test_support;
 
 #[cfg(test)]
 #[path = "../tests/catalogs_contract_tests.rs"]

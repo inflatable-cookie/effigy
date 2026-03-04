@@ -27,14 +27,14 @@ pub(super) fn build_run_sequence_schedule(
     let dependents = build_step_dependents(&dependencies);
 
     if let Some(cycle) = detect_dependency_cycle(&dependencies, &step_index.display_names) {
-        return Err(RunnerError::TaskInvocation(format!(
+        return Err(RunnerError::task_invocation(format!(
             "task `{task_name}` run sequence contains dependency cycle: {}",
             cycle.join(" -> ")
         )));
     }
 
     let Some(levels) = build_schedule_levels(steps.len(), &dependencies, &dependents) else {
-        return Err(RunnerError::TaskInvocation(format!(
+        return Err(RunnerError::task_invocation(format!(
             "task `{task_name}` run sequence contains dependency cycle"
         )));
     };
@@ -44,8 +44,8 @@ pub(super) fn build_run_sequence_schedule(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::super::manifest::ManifestManagedRunStepTable;
+    use super::*;
 
     fn command_step(run: &str) -> ManifestManagedRunStep {
         ManifestManagedRunStep::Command(run.to_owned())
@@ -102,10 +102,7 @@ mod tests {
 
     #[test]
     fn schedule_errors_on_dependency_cycle_with_named_path() {
-        let steps = vec![
-            table_step(Some("a"), &["b"]),
-            table_step(Some("b"), &["a"]),
-        ];
+        let steps = vec![table_step(Some("a"), &["b"]), table_step(Some("b"), &["a"])];
 
         let err = build_run_sequence_schedule("dev", &steps).expect_err("cycle error");
         match err {

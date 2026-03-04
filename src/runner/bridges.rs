@@ -6,6 +6,13 @@ use crate::TaskInvocation;
 use super::LoadedCatalog;
 use super::RunnerError;
 
+#[cfg(test)]
+pub(super) use super::builtin::{
+    parse_completion_contract_request, parse_config_contract_request,
+    parse_unlock_contract_request, parse_watch_contract_request, CompletionParseContract,
+    ConfigParseContract,
+};
+
 pub(super) fn run_manifest_task_with_cwd(
     task: &TaskInvocation,
     cwd: PathBuf,

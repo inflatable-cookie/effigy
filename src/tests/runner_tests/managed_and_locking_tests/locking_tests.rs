@@ -11,7 +11,7 @@ run = "sleep 1"
 "#,
     );
 
-    let root_for_thread = root.clone();
+    let root_for_thread = root.to_path_buf();
     let join = thread::spawn(move || run_dev(&root_for_thread, &[]));
 
     std::thread::sleep(Duration::from_millis(120));
@@ -60,4 +60,31 @@ fn run_manifest_task_builtin_unlock_clears_explicit_scopes() {
     assert_contains_all(&out, &["removed: 2"]);
     assert!(!root.join(".effigy/locks/workspace.lock").exists());
     assert!(!root.join(".effigy/locks/task-dev.lock").exists());
+}
+
+#[test]
+fn run_manifest_task_builtin_unlock_requires_scope_or_all() {
+    let _guard = lock_test();
+    let root = temp_workspace("unlock-requires-scope-or-all");
+    fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
+
+    let err = run_unlock_with_repo(&root, &[]).expect_err("unlock should require scope or --all");
+    assert_task_invocation_error_contains(
+        err,
+        &["`unlock` requires at least one scope (or `--all`)"],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_unlock_rejects_all_with_explicit_scope() {
+    let _guard = lock_test();
+    let root = temp_workspace("unlock-rejects-all-with-scope");
+    fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
+
+    let err = run_unlock_with_repo(&root, &["--all", "workspace"])
+        .expect_err("unlock should reject --all with explicit scope");
+    assert_task_invocation_error_contains(
+        err,
+        &["`unlock` accepts either `--all` or explicit scope values, not both"],
+    );
 }

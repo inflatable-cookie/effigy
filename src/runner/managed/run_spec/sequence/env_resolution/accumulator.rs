@@ -1,9 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::runner::manifest::{
-    ManifestEnvEntry, ManifestEnvFileDirective, ManifestRunStepEnv,
-};
+use crate::runner::manifest::{ManifestEnvEntry, ManifestEnvFileDirective, ManifestRunStepEnv};
 use crate::runner::{LoadedCatalog, ManifestManagedRunStep, RunnerError};
 
 use super::super::dotenv::resolve_dotenv_env_entry;
@@ -81,7 +79,7 @@ impl StepEnvAccumulator {
             ManifestRunStepEnv::Profile(profile_name_raw) => {
                 let profile_name = profile_name_raw.trim();
                 if profile_name.is_empty() {
-                    return Err(RunnerError::TaskInvocation(format!(
+                    return Err(RunnerError::task_invocation(format!(
                         "task `{task_name}` run step is invalid: env profile name cannot be empty"
                     )));
                 }

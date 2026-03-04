@@ -1,8 +1,8 @@
 pub(super) use super::super::{
-    contract_test_support::{
-        parse_json, temp_workspace, test_lock, with_cwd, write_manifest, EnvGuard,
-    },
     run_doctor, run_manifest_task_with_cwd, run_tasks, DoctorArgs, RunnerError, TasksArgs,
+};
+pub(super) use crate::contract_test_support::{
+    parse_json, temp_workspace, test_lock, with_cwd, write_manifest, EnvGuard,
 };
 pub(super) use crate::TaskInvocation;
 pub(super) use std::fs;

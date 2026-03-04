@@ -1,4 +1,5 @@
 use super::super::{RunnerError, TASK_MANIFEST_FILE};
+use crate::path_error_text::{failed_to_parse_path, failed_to_read_path};
 
 #[path = "display/builtin.rs"]
 mod builtin;
@@ -34,10 +35,10 @@ pub(super) fn fmt_runner_error(
             write!(f, "failed to read directory {}: {error}", path.display())
         }
         RunnerError::TaskManifestRead { path, error } => {
-            write!(f, "failed to read {}: {error}", path.display())
+            write!(f, "{}", failed_to_read_path(path, error))
         }
         RunnerError::TaskManifestParse { path, error } => {
-            write!(f, "failed to parse {}: {error}", path.display())
+            write!(f, "{}", failed_to_parse_path(path, error))
         }
         RunnerError::TaskCatalogAliasConflict {
             alias,
