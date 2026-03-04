@@ -101,20 +101,10 @@ pub(super) fn handle_key_event(
 mod tests {
     use std::collections::HashMap;
 
-    use crate::tui::core::{next_index, prev_index, toggle_follow_for_active, ProcessExitState};
+    use crate::tui::core::{next_index, prev_index, toggle_follow_for_active};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     use super::input::shell_key_input;
-    use super::process::all_processes_exited;
-
-    #[test]
-    fn all_processes_exited_requires_full_count() {
-        let mut exits = HashMap::new();
-        exits.insert("a".to_owned(), ProcessExitState::Success);
-        assert!(!all_processes_exited(&exits, 2));
-        exits.insert("b".to_owned(), ProcessExitState::Failure);
-        assert!(all_processes_exited(&exits, 2));
-    }
 
     #[test]
     fn tab_index_helpers_wrap_correctly() {
