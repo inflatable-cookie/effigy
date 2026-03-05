@@ -7,6 +7,7 @@ use super::super::super::tasks_view::render_resolution_probe_block;
 use super::super::super::RunnerError;
 use super::super::filtering::FilteredTaskModel;
 use super::super::row_projection::BuiltinTaskRow;
+use super::model::prepare_catalog_match_task_rows;
 use super::rows::render_catalog_match_rows;
 use super::sections::render_builtin_rows_section;
 
@@ -26,14 +27,12 @@ pub(super) fn render_filtered_tasks_text(
         return Ok(());
     }
 
-    let _ = render_catalog_match_rows(
-        renderer,
-        color_enabled,
-        theme,
-        resolved_root,
-        filtered_model.task_name(),
+    let matched_rows = prepare_catalog_match_task_rows(
         filtered_model.catalog_matches(),
-    )?;
+        filtered_model.task_name(),
+        resolved_root,
+    );
+    render_catalog_match_rows(renderer, color_enabled, theme, matched_rows.as_slice())?;
     render_filtered_followup_sections(
         renderer,
         color_enabled,
