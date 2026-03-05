@@ -16,9 +16,12 @@ mod init;
 mod migrate;
 mod registry;
 mod response;
+mod scan;
 mod support;
 mod tasks;
 mod test;
+#[cfg(test)]
+mod test_support;
 mod text_doc;
 mod unlock;
 mod watch;
@@ -43,17 +46,14 @@ fn resolve_builtin_task_target_root(
 }
 
 #[cfg(test)]
-pub(super) use completion::parse_completion_contract_request;
+pub(in crate::runner) use test_support::CompletionParseContract;
 #[cfg(test)]
-pub(in crate::runner) use completion::CompletionParseContract;
+pub(in crate::runner) use test_support::ConfigParseContract;
 #[cfg(test)]
-pub(super) use config::parse_config_contract_request;
-#[cfg(test)]
-pub(in crate::runner) use config::ConfigParseContract;
-#[cfg(test)]
-pub(super) use unlock::parse_unlock_contract_request;
-#[cfg(test)]
-pub(super) use watch::parse_watch_contract_request;
+pub(in crate::runner) use test_support::{
+    builtin_test_max_parallel, parse_completion_contract_request, parse_config_contract_request,
+    parse_unlock_contract_request, parse_watch_contract_request,
+};
 
 pub(super) fn try_run_builtin_task(
     selector: &TaskSelector,
@@ -81,9 +81,4 @@ pub(super) fn try_run_builtin_task(
         catalogs,
         invocation_cwd,
     )
-}
-
-#[cfg(test)]
-pub(super) fn builtin_test_max_parallel(catalogs: &[LoadedCatalog], resolved_root: &Path) -> usize {
-    test::builtin_test_max_parallel(catalogs, resolved_root)
 }
