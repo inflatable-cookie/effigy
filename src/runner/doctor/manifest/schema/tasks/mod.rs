@@ -93,7 +93,6 @@ fn validate_task_table_keys(
             "env_file",
             "mode",
             "fail_on_non_zero",
-            "shell",
             "concurrent",
             "profiles",
         ],

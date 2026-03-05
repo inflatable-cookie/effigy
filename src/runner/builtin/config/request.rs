@@ -2,7 +2,6 @@ use crate::TaskInvocation;
 
 use super::super::super::RunnerError;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
-use super::super::ensure_no_unknown_builtin_args;
 
 #[derive(Debug, Clone)]
 pub(super) struct ConfigRequest {
@@ -61,7 +60,7 @@ pub(super) fn parse_config_request(
     let mut output_json = false;
     let mut target: Option<ConfigSchemaTarget> = None;
     let mut runner: Option<ConfigTestRunner> = None;
-    let unknown = parser.parse_loop_collect_unknown(|parser, arg| {
+    parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
         if parser.consume_flag(arg, "--schema", &mut schema)
             || parser.consume_flag(arg, "--minimal", &mut minimal)
             || parser.consume_json_flag(arg, &mut output_json)
@@ -80,8 +79,6 @@ pub(super) fn parse_config_request(
         }
         Ok(ParseLoopAction::Unknown)
     })?;
-
-    ensure_no_unknown_builtin_args(&task.name, &unknown)?;
     if minimal && !schema {
         return Err(RunnerError::task_invocation(
             "`--minimal` requires `--schema` for built-in `config`",

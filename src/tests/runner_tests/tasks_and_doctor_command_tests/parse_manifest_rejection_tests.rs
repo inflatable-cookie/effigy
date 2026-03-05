@@ -37,6 +37,11 @@ fn run_tasks_rejects_invalid_manifest_shapes() {
             ],
         },
         ManifestParseRejectionCase {
+            workspace: "reject-legacy-task-shell-flag",
+            manifest: "[tasks.dev]\nmode = \"tui\"\nshell = true\nconcurrent = [{ run = \"printf api\" }]\n",
+            expected: &["unknown field `shell`", "data did not match any variant"],
+        },
+        ManifestParseRejectionCase {
             workspace: "reject-unknown-process-field",
             manifest: "[tasks.dev]\nmode = \"tui\"\nconcurrent = [{ run = \"printf api\", tas = \"api\" }]\n",
             expected: &["unknown field `tas`", "data did not match any variant"],

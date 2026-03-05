@@ -23,13 +23,13 @@ Recommended compact profile schema:
 ```toml
 [tasks.dev]
 mode = "tui"
-shell = true
 
 concurrent = [
   { task = "catalog-a/api", start = 1, tab = 3 },
   { task = "catalog-a/jobs", start = 2, tab = 4, start_after_ms = 1200 },
   { task = "catalog-b/dev", start = 3, tab = 2 },
-  { run = "my-other-arbitrary-process", start = 4, tab = 1 }
+  { run = "my-other-arbitrary-process", start = 4, tab = 1 },
+  { task = "shell", start = 5, tab = 5 }
 ]
 
 [tasks.dev.profiles.admin]
@@ -44,8 +44,8 @@ Profile entries support:
 - direct task references (`catalog/task`) via `task = "..."`, or
 - arbitrary process commands via `run = "..."`, or
 - relative path task references (`../repo/task`) via `task = "..."`, resolved from the current catalog root.
+- integrated shell tab via `task = "shell"` (uses `[shell].run` or default shell command).
 - optional profile overrides via `[tasks.dev.profiles.<name>]` with their own `concurrent = [...]`.
-- optional integrated shell tab when `shell = true`.
 
 Optional global shell command override:
 
@@ -88,7 +88,7 @@ In this example, `../shared/validate` resolves relative to `dairy` catalog root.
 ## 3) Runtime Behavior
 
 - One tab per managed process.
-- When `shell = true`, includes an additional `shell` tab.
+- Include `{ task = "shell", ... }` in `concurrent` to enable a `shell` tab.
 - Non-shell tabs use input panel mode (`Tab` toggles command/insert; `Enter` sends input).
 - Shell tab uses direct terminal capture mode:
   - `Ctrl+G` toggles shell capture on/off.

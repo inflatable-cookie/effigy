@@ -2,7 +2,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use super::super::super::{
-    LoadedCatalog, ManagedProcessSpec, ManifestManagedConcurrentEntry, ManifestTask, TaskSelector,
+    LoadedCatalog, ManagedProcessSpec, ManifestManagedConcurrentEntry, TaskSelector,
+    DEFAULT_MANAGED_SHELL_RUN,
 };
 use super::super::references;
 use super::{invalid_managed_process_definition, select_run_or_task};
@@ -10,6 +11,7 @@ use super::{invalid_managed_process_definition, select_run_or_task};
 pub(super) fn resolve_concurrent_process_entries(
     selector: &TaskSelector,
     entries: &[ManifestManagedConcurrentEntry],
+    catalog: &LoadedCatalog,
     catalogs: &[LoadedCatalog],
     task_scope_cwd: &Path,
 ) -> Result<Vec<super::ConcurrentResolvedProcess>, super::super::super::RunnerError> {
@@ -26,8 +28,14 @@ pub(super) fn resolve_concurrent_process_entries(
             ));
         }
 
-        let (run, cwd) =
-            resolve_process_run_and_cwd(selector, &process_name, entry, catalogs, task_scope_cwd)?;
+        let (run, cwd) = resolve_process_run_and_cwd(
+            selector,
+            &process_name,
+            entry,
+            catalog,
+            catalogs,
+            task_scope_cwd,
+        )?;
         let start_rank = entry.start.unwrap_or(ordinal);
         let tab_rank = entry.tab.unwrap_or(start_rank);
         resolved.push(super::ConcurrentResolvedProcess {
@@ -60,6 +68,7 @@ fn resolve_process_run_and_cwd(
     selector: &TaskSelector,
     process_name: &str,
     entry: &ManifestManagedConcurrentEntry,
+    catalog: &LoadedCatalog,
     catalogs: &[LoadedCatalog],
     task_scope_cwd: &Path,
 ) -> Result<(String, PathBuf), super::super::super::RunnerError> {
@@ -81,46 +90,31 @@ fn resolve_process_run_and_cwd(
             )
         },
     )? {
-        super::RunOrTaskRef::Task(task_ref) => references::resolve_task_reference_run(
-            &selector.task_name,
-            process_name,
-            task_ref,
-            catalogs,
-            task_scope_cwd,
-        ),
+        super::RunOrTaskRef::Task(task_ref) => {
+            if task_ref.trim() == "shell" {
+                if process_name != "shell" {
+                    return Err(invalid_managed_process_definition(
+                        selector,
+                        process_name,
+                        "task `shell` must use process name `shell` (omit `name` or set `name = \"shell\"`)",
+                    ));
+                }
+                let shell_run = catalog
+                    .manifest
+                    .shell
+                    .as_ref()
+                    .and_then(|shell| shell.run.clone())
+                    .unwrap_or_else(|| DEFAULT_MANAGED_SHELL_RUN.to_owned());
+                return Ok((shell_run, task_scope_cwd.to_path_buf()));
+            }
+            references::resolve_task_reference_run(
+                &selector.task_name,
+                process_name,
+                task_ref,
+                catalogs,
+                task_scope_cwd,
+            )
+        }
         super::RunOrTaskRef::Run(run) => Ok((run.to_owned(), task_scope_cwd.to_path_buf())),
     }
-}
-
-pub(super) fn maybe_append_shell_process(
-    selector: &TaskSelector,
-    task: &ManifestTask,
-    catalog: &LoadedCatalog,
-    task_scope_cwd: &Path,
-    processes: &mut Vec<ManagedProcessSpec>,
-) -> Result<(), super::super::super::RunnerError> {
-    if !task.shell.unwrap_or(false) {
-        return Ok(());
-    }
-    let shell_name = "shell";
-    if processes.iter().any(|process| process.name == shell_name) {
-        return Err(invalid_managed_process_definition(
-            selector,
-            shell_name,
-            "reserved process name `shell` is already defined",
-        ));
-    }
-    let shell_run = catalog
-        .manifest
-        .shell
-        .as_ref()
-        .and_then(|shell| shell.run.clone())
-        .unwrap_or_else(|| super::DEFAULT_MANAGED_SHELL_RUN.to_owned());
-    processes.push(ManagedProcessSpec {
-        name: shell_name.to_owned(),
-        run: shell_run,
-        cwd: task_scope_cwd.to_path_buf(),
-        start_after_ms: 0,
-    });
-    Ok(())
 }

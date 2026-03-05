@@ -10,14 +10,14 @@ use super::catalog_projection::{
 };
 
 #[derive(Clone, Serialize)]
-pub(in crate::runner) struct CatalogTaskJsonRow {
+pub(in super::super) struct CatalogTaskJsonRow {
     task: Option<String>,
     run: Option<String>,
     manifest: String,
 }
 
 #[derive(Clone, Serialize)]
-pub(in crate::runner) struct ManagedProfileJsonRow {
+pub(in super::super) struct ManagedProfileJsonRow {
     task: String,
     run: String,
     manifest: String,
@@ -26,7 +26,7 @@ pub(in crate::runner) struct ManagedProfileJsonRow {
     parent_task: String,
 }
 
-pub(in crate::runner) struct CatalogTaskJsonRows {
+pub(in super::super) struct CatalogTaskJsonRows {
     task_rows: Vec<CatalogTaskJsonRow>,
     managed_profile_rows: Vec<ManagedProfileJsonRow>,
 }
@@ -39,7 +39,7 @@ impl CatalogTaskJsonRows {
         }
     }
 
-    pub(in crate::runner) fn into_parts(
+    pub(in super::super) fn into_parts(
         self,
     ) -> (Vec<CatalogTaskJsonRow>, Vec<ManagedProfileJsonRow>) {
         (self.task_rows, self.managed_profile_rows)
@@ -88,7 +88,7 @@ impl ManagedProfileJsonRow {
     }
 }
 
-pub(in crate::runner) fn prepare_all_catalog_rows_json(
+pub(in super::super) fn prepare_all_catalog_rows_json(
     ordered_catalogs: &[&LoadedCatalog],
 ) -> CatalogTaskJsonRows {
     let projected_rows = prepare_ordered_catalog_task_rows_for_path(ordered_catalogs);
@@ -102,7 +102,7 @@ pub(in crate::runner) fn prepare_all_catalog_rows_json(
     rows
 }
 
-pub(in crate::runner) fn prepare_filtered_rows_json(
+pub(in super::super) fn prepare_filtered_rows_json(
     matches: &[CatalogTaskMatch<'_>],
     task_name: &str,
 ) -> CatalogTaskJsonRows {

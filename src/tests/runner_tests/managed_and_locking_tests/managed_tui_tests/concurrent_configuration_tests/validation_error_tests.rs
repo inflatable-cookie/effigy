@@ -38,6 +38,16 @@ concurrent = [{ name = "api", run = "printf api", task = "api" }]
             expected_process: "api",
             expected_detail_substring: None,
         },
+        ManagedInvalidDefinitionCase {
+            workspace: "managed-shell-name-invalid",
+            manifest: r#"[tasks.dev]
+mode = "tui"
+concurrent = [{ name = "term", task = "shell" }]
+"#,
+            expected_task: "dev",
+            expected_process: "term",
+            expected_detail_substring: Some("task `shell` must use process name `shell`"),
+        },
     ];
 
     assert_managed_invalid_definition_case_table(&cases);
