@@ -2,8 +2,6 @@ use std::path::Path;
 
 use crate::TasksArgs;
 
-#[path = "tasks_listing/builtin_rows.rs"]
-mod builtin_rows;
 #[path = "tasks_listing/catalog_iteration.rs"]
 mod catalog_iteration;
 #[path = "tasks_listing/catalog_manifest.rs"]
@@ -18,6 +16,8 @@ mod render_context;
 mod row_projection;
 #[path = "tasks_listing/selection.rs"]
 mod selection;
+#[path = "tasks_listing/selection_dispatch.rs"]
+mod selection_dispatch;
 #[path = "tasks_listing/text_output.rs"]
 mod text_output;
 
