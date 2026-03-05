@@ -8,7 +8,7 @@ use super::super::super::RunnerError;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
 use super::super::response::render_optional_text_or_schema_json_lazy;
 use super::super::TaskRuntimeArgs;
-use super::request::COMPLETION_CANDIDATES_SUBCOMMAND;
+use super::surface::COMPLETION_CANDIDATES_SUBCOMMAND;
 
 mod cache;
 

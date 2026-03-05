@@ -1,4 +1,5 @@
-use super::super::{RunnerError, TASK_MANIFEST_FILE};
+use super::super::TASK_MANIFEST_FILE;
+use super::RunnerError;
 use crate::path_error_text::{failed_to_parse_path, failed_to_read_path};
 
 #[path = "display/builtin.rs"]

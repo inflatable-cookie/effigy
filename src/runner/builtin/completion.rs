@@ -15,6 +15,7 @@ mod help;
 #[path = "completion/request.rs"]
 mod request;
 mod scripts;
+mod surface;
 
 use candidates::run_completion_candidates;
 use help::{render_completion_candidates_help, render_completion_help};
