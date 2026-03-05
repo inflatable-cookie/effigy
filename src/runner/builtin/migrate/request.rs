@@ -15,9 +15,10 @@ pub(super) fn parse_migrate_request(
     let mut package_path: Option<PathBuf> = None;
     let mut script_filter = std::collections::BTreeSet::<String>::new();
     parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
-        if parser.consume_json_flag(arg, &mut output_json)
-            || parser.consume_flag(arg, "--apply", &mut apply)
-        {
+        if parser.consume_any_bool_flag(
+            arg,
+            &mut [("--json", &mut output_json), ("--apply", &mut apply)],
+        ) {
             return Ok(ParseLoopAction::Handled);
         }
         if arg == "--from" {

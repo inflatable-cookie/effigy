@@ -20,10 +20,14 @@ pub(super) fn parse_doctor_request(
     let mut verbose = false;
     let mut explain: Option<TaskInvocation> = None;
     parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
-        if parser.consume_json_flag(arg, &mut output_json)
-            || parser.consume_flag(arg, "--fix", &mut fix)
-            || parser.consume_flag(arg, "--verbose", &mut verbose)
-        {
+        if parser.consume_any_bool_flag(
+            arg,
+            &mut [
+                ("--json", &mut output_json),
+                ("--fix", &mut fix),
+                ("--verbose", &mut verbose),
+            ],
+        ) {
             return Ok(ParseLoopAction::Handled);
         }
         parser.unknown_if_flag_or(arg, |value| {

@@ -15,6 +15,20 @@ impl<'a> BuiltinArgParser<'a> {
         self.consume_flag(arg, "--json", value)
     }
 
+    pub(in super::super) fn consume_any_bool_flag(
+        &self,
+        arg: &str,
+        flags: &mut [(&str, &mut bool)],
+    ) -> bool {
+        for (flag, value) in flags.iter_mut() {
+            if arg == *flag {
+                **value = true;
+                return true;
+            }
+        }
+        false
+    }
+
     pub(in super::super) fn string_flag_value(
         &mut self,
         missing_message: &str,
@@ -30,14 +44,6 @@ impl<'a> BuiltinArgParser<'a> {
         self.string_flag_value(&Self::context_argument_requires_value_message(
             context, flag,
         ))
-    }
-
-    pub(in super::super) fn builtin_string_flag_value(
-        &mut self,
-        builtin: &str,
-        flag: &str,
-    ) -> Result<String, RunnerError> {
-        self.string_flag_value(&Self::builtin_flag_requires_value_message(builtin, flag))
     }
 
     pub(in super::super) fn flag_string_value(

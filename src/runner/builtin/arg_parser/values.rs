@@ -5,6 +5,15 @@ use crate::runner::RunnerError;
 use super::BuiltinArgParser;
 
 impl BuiltinArgParser<'_> {
+    pub(in super::super) fn choice_ignore_ascii_case<T: Copy>(
+        value: &str,
+        choices: &[(&str, T)],
+    ) -> Option<T> {
+        choices.iter().find_map(|(candidate, mapped)| {
+            value.eq_ignore_ascii_case(candidate).then_some(*mapped)
+        })
+    }
+
     fn parsed_flag_value<T, F>(
         &mut self,
         missing_message: &str,
@@ -77,6 +86,27 @@ impl BuiltinArgParser<'_> {
             &format!("`{flag}` requires a value ({quoted_choices})"),
             map,
             |value| format!("invalid `{flag}` value `{value}` (expected {quoted_choices})"),
+        )
+    }
+
+    pub(in super::super) fn builtin_choice_flag_value<T, M>(
+        &mut self,
+        builtin: &str,
+        flag: &str,
+        supported_values: &str,
+        map: M,
+    ) -> Result<T, RunnerError>
+    where
+        M: FnOnce(&str) -> Option<T>,
+    {
+        self.mapped_flag_value(
+            &Self::builtin_flag_requires_value_message(builtin, flag),
+            map,
+            |value| {
+                format!(
+                    "invalid `{flag}` value `{value}` for built-in `{builtin}` (supported: {supported_values})"
+                )
+            },
         )
     }
 
