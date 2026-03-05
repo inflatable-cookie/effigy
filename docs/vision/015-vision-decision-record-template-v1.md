@@ -45,7 +45,7 @@ Controls
 Traceability
 - Related Exception: <VE-YYYY-NN or none>
 - Related Risk: <VR-XX or none>
-- Related Artifacts: <roadmap/report/doc links>
+- Related Artifacts: <roadmap/log/doc links>
 ```
 
 ## 3. Quality Rules
@@ -58,7 +58,7 @@ Traceability
 ## 4. Governance Integration
 
 1. Reference decision records in governance reviews (`009`).
-2. Use decision IDs in release/report notes where impact is visible.
+2. Use decision IDs in release/log notes where impact is visible.
 3. Revisit active high-impact decisions quarterly until stabilized.
 
 ## Next Task

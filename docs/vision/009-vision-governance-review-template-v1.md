@@ -67,4 +67,4 @@ Actions
 
 ## Next Task
 
-Integrate this template into reports guidance so governance reviews use a single consistent structure.
+Integrate this template into logs guidance so governance reviews use a single consistent structure.

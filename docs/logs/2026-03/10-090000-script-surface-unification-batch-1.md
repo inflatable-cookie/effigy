@@ -140,7 +140,7 @@ Rationale:
   - result: pass (canonical cargo QA aliases confirmed)
 - command: `./scripts/check-doc-reports-index.sh`
   - result: pass (new script-unification report index entry validated)
-- command: `./scripts/check-doc-links.sh README.md docs/guides/024-ci-and-automation-recipes.md docs/reports/README.md docs/reports/2026-03-10-script-surface-unification-batch-1.md`
+- command: `./scripts/check-doc-links.sh README.md docs/guides/024-ci-and-automation-recipes.md docs/logs/README.md docs/logs/2026-03/10-090000-script-surface-unification-batch-1.md`
   - result: pass (updated docs links validated for wave-1 edits)
 - command: `for f in scripts/{add-report-index-entry.sh,check-distribution-artifact-pipeline-smoke.sh,check-distribution-first-publish.sh,check-distribution-metadata.sh,check-distribution-preflight.sh,check-release-install-from-tag.sh,check-release-smoke.sh,validate-distribution-artifacts.sh,generate-distribution-closeout-report.sh,update-homebrew-formula-from-metadata.sh,validate-json-contract-selection-artifact.sh,check-selection-artifact-validator-smoke.sh}; do bash -n \"$f\"; done`
   - result: pass (wrapper-policy annotation pass did not introduce shell syntax regressions)

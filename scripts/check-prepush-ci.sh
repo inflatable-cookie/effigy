@@ -19,6 +19,6 @@ run_step "library tests" cargo test --lib
 run_step "cli output tests" cargo test --test cli_output_tests
 run_step "docs links" ./scripts/check-doc-links.sh
 run_step "docs json examples" ./scripts/check-doc-json-examples.sh
-run_step "docs reports index" ./scripts/check-doc-reports-index.sh
+run_step "docs logs index" ./scripts/check-doc-logs-index.sh
 
 echo "[ok] pre-push ci checks passed"

@@ -2,7 +2,7 @@
 
 Date: 2026-03-01
 Owner: Effigy
-Related roadmap: `docs/roadmap/backlog/distribution-channels.md`
+Related roadmap: `docs/roadmaps/backlog/distribution-channels.md`
 
 ## Scope
 
@@ -23,7 +23,7 @@ Related roadmap: `docs/roadmap/backlog/distribution-channels.md`
 - Updated backlog status:
   - marked Phase D checklist items complete
   - marked deliverable `CI install recipes and migration guidance` complete
-  - file: `docs/roadmap/backlog/distribution-channels.md`
+  - file: `docs/roadmaps/backlog/distribution-channels.md`
 
 ## Validation
 

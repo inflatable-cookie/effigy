@@ -40,10 +40,10 @@ while IFS= read -r hit; do
 
   echo "[error] missing workflow path in ${file#$ROOT_DIR/}:${line}: $workflow_path" >&2
   status=1
-done < <(find "$ROOT_DIR/docs" -name '*.md' ! -path "$ROOT_DIR/docs/reports/*" -print0 | xargs -0 rg -n -o "$pattern" || true)
+done < <(find "$ROOT_DIR/docs" -name '*.md' ! -path "$ROOT_DIR/docs/logs/*" -print0 | xargs -0 rg -n -o "$pattern" || true)
 
 if [[ $matches -eq 0 ]]; then
-  echo "[warn] no workflow references found in non-report docs"
+  echo "[warn] no workflow references found in non-log docs"
 fi
 
 if [[ $status -ne 0 ]]; then

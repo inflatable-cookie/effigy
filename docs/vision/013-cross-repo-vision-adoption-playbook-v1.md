@@ -28,7 +28,7 @@ Purpose: provide a repeatable approach for rolling Effigy vision standards acros
 
 1. Establish routine governance reviews (`009`) and metric tracking (`003`).
 2. Reduce repeated exceptions by fixing structural causes.
-3. Confirm release/report artifacts consistently include vision deltas.
+3. Confirm release/log artifacts consistently include vision deltas.
 
 ### Phase 4: Continuous Improvement
 
@@ -44,7 +44,7 @@ Each repository should adopt at minimum:
 2. Exception policy usage and owner model.
 3. Governance review cadence with named owners.
 4. Maturity scorecard with evidence-backed staging.
-5. Release/report language that includes vision target deltas.
+5. Release/log language that includes vision target deltas.
 
 ## 4. Escalation Signals
 

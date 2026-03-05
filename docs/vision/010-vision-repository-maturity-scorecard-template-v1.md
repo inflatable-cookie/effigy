@@ -37,7 +37,7 @@ Summary
 Dimension Scores
 | Tag | Stage | Evidence | Gap | Owner |
 | --- | --- | --- | --- | --- |
-| ROUTE | <0-4> | <tests/outputs/reports> | <what blocks next stage> | <role> |
+| ROUTE | <0-4> | <tests/outputs/logs> | <what blocks next stage> | <role> |
 | CONTRACT | <0-4> | <checks/docs/schema refs> | <what blocks next stage> | <role> |
 | OPERATE | <0-4> | <diagnostics/workflow evidence> | <what blocks next stage> | <role> |
 | MAINT | <0-4> | <module/refactor evidence> | <what blocks next stage> | <role> |

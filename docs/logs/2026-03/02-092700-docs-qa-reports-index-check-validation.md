@@ -9,12 +9,12 @@ Related roadmap: shell completion and command discovery polish
 
 ## Changes
 - Added `scripts/check-doc-reports-index.sh`:
-  - validates every `docs/reports/*.md` file is indexed in `docs/reports/README.md`
+  - validates every `docs/logs/*.md` file is indexed in `docs/logs/README.md`
   - fails on stale index links that reference missing files
 - Wired the checker into:
   - `scripts/check-quality-gates.sh --docs-only`
   - `scripts/check-prepush-ci.sh`
-- Backfilled missing historical report links in `docs/reports/README.md` so the new gate starts from a clean baseline.
+- Backfilled missing historical report links in `docs/logs/README.md` so the new gate starts from a clean baseline.
 - Updated docs QA guide `029-docs-qa-checklist-and-validation.md` with checker behavior.
 
 ## Validation
@@ -24,7 +24,7 @@ Related roadmap: shell completion and command discovery polish
   - result: pass
 
 ## Risks / Follow-ups
-- Any report renames now require synchronized `docs/reports/README.md` updates or docs QA will fail.
+- Any report renames now require synchronized `docs/logs/README.md` updates or docs QA will fail.
 
 ## Next
 - Add a small helper script to auto-append newly created report files into the reports README section to reduce manual index churn.

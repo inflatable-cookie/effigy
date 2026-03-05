@@ -2,7 +2,7 @@
 
 Date: 2026-03-02
 Owner: Effigy
-Related roadmap: `docs/roadmap/backlog/distribution-channels.md`
+Related roadmap: `docs/roadmaps/backlog/distribution-channels.md`
 
 ## Scope
 
@@ -12,7 +12,7 @@ Related roadmap: `docs/roadmap/backlog/distribution-channels.md`
 ## Changes
 
 - Updated acceptance status in:
-  - `docs/roadmap/backlog/distribution-channels.md`
+  - `docs/roadmaps/backlog/distribution-channels.md`
 - Added explicit closeout status notes for publish-cycle blockers.
 
 ## Validation

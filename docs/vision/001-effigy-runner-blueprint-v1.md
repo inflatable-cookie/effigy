@@ -23,11 +23,11 @@ Purpose: define Effigy's architectural ideals, measurable target envelopes, and 
 - Refactors preserve command contracts while reducing coupling and branch complexity.
 
 5. Evidence-driven delivery.
-- Release gates and report artifacts prove behavior, not just implementation intent.
+- Release gates and log artifacts prove behavior, not just implementation intent.
 
 ## 2. North-Star Targets (v1 Envelopes)
 
-These are target envelopes, not guarantees. They should be tightened with measured baselines in CI and release reports.
+These are target envelopes, not guarantees. They should be tightened with measured baselines in CI and release logs.
 
 ### Resolution and Explainability Targets
 
@@ -54,7 +54,7 @@ These are target envelopes, not guarantees. They should be tightened with measur
 | JSON coverage | All supported command paths remain under `effigy.command.v1` envelope coverage |
 | Schema governance | Contract index and examples stay synchronized with runtime output |
 | Gate repeatability | QA/release gates pass consistently in local and CI contexts using documented commands |
-| Report quality | Validation and release reports include reproducible command evidence and explicit outcomes |
+| Log quality | Validation and release logs include reproducible command evidence and explicit outcomes |
 
 ### Maintainability Targets
 
@@ -62,7 +62,7 @@ These are target envelopes, not guarantees. They should be tightened with measur
 | --- | --- |
 | Module boundaries | Built-in command flows isolate parse/request logic from execution and rendering |
 | Refactor safety | Behavior-preserving refactors are backed by contract and targeted behavioral tests |
-| Docs drift control | Guides/roadmaps/reports retain stable terminology and command shapes |
+| Docs drift control | Guides/roadmaps/logs retain stable terminology and command shapes |
 | Complexity burn-down | New feature work avoids reintroducing oversized multi-responsibility modules |
 
 ## 3. Architecture Shape
@@ -79,7 +79,7 @@ These are target envelopes, not guarantees. They should be tightened with measur
 - Built-in command dispatch, manifest task execution, deferral, lock policy, cache hooks.
 
 4. Diagnostic and governance services.
-- Doctor workflows, explain reasoning, contract shaping, release/report support.
+- Doctor workflows, explain reasoning, contract shaping, release/log support.
 
 5. Presentation surfaces.
 - Text renderer, JSON envelope/payload emitters, multiprocess TUI runtime.
@@ -97,7 +97,7 @@ These are target envelopes, not guarantees. They should be tightened with measur
 1. Keep contract tests and CLI envelope tests as non-optional gate layers.
 2. Preserve deterministic failure messaging for routing and policy errors.
 3. Continue modularization by extracting cohesive submodules from orchestration hotspots.
-4. Treat docs QA scripts and report indexes as runtime-adjacent quality infrastructure.
+4. Treat docs QA scripts and log indexes as runtime-adjacent quality infrastructure.
 
 ## 5. Differentiators
 
@@ -109,7 +109,7 @@ These are target envelopes, not guarantees. They should be tightened with measur
 ## 6. Initial Realignment Directions
 
 1. Add vision tags and target-envelope sections to roadmap and high-traffic guides.
-2. Standardize report families with an explicit "Vision Target Delta" section.
+2. Standardize log families with an explicit "Vision Target Delta" section.
 3. Link release and distribution checklists to measurable target movement.
 4. Add an index-level policy for keeping contracts/examples/guides synchronized.
 
@@ -117,7 +117,7 @@ These are target envelopes, not guarantees. They should be tightened with measur
 
 1. Vision tags and target envelopes are applied to core roadmap and guide artifacts.
 2. Compliance evidence is produced with explicit pass/fail outcomes.
-3. At least one release/readiness report includes vision-target deltas.
+3. At least one release/readiness log includes vision-target deltas.
 4. Exceptions to blueprint constraints are documented with rationale.
 
 ## Next Task

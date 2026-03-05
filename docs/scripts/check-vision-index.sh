@@ -42,7 +42,7 @@ done < "$artifact_lines_file"
 while IFS= read -r execution_file; do
   [[ -z "$execution_file" ]] && continue
   rel_execution="${execution_file#$VISION_DIR/}"
-  echo "[error] execution artifact present in docs/vision/: $rel_execution (move to docs/reports/vision-history/)" >&2
+  echo "[error] execution artifact present in docs/vision/: $rel_execution (move to docs/vision/history/)" >&2
   status=1
 done < <(find "$VISION_DIR" -maxdepth 1 -type f \( -name '*-batch-*-closeout-*.md' -o -name '*-compliance-checklist-*.md' \) | sort)
 

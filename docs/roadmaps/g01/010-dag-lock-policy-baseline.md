@@ -130,3 +130,5 @@ These are locked as phase defaults unless explicitly superseded:
 - [x] Node-level timeout/retry/fail-fast execution policy layer.
 - [x] Filesystem lock model with scope isolation and stale-lock recovery.
 - [x] Test suite and docs updates for DAG/lock/policy baseline.
+
+Generation: `g01`

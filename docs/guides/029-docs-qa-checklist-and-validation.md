@@ -18,8 +18,8 @@ Manual checks:
 - command examples match current CLI flags and behavior
 - JSON examples use current schema names and versions
 - completion-candidates examples include both hit and miss telemetry variants
-- new report artifacts are indexed in `docs/reports/README.md`
-- new report artifacts include a `Vision Target Delta` section
+- new log artifacts are indexed in `docs/logs/README.md`
+- new log artifacts include a `Vision Target Delta` section
 - roadmap/guides vision metadata checks pass via `docs/scripts/check-vision-metadata.sh`
 - docs-referenced workflow paths resolve via `docs/scripts/check-doc-workflow-paths.sh`
 - vision artifact index is consistent via `docs/scripts/check-vision-index.sh`
@@ -48,14 +48,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate docs links, JSON examples, and report index
+      - name: Validate docs links, JSON examples, and logs index
         run: ./scripts/check-quality-gates.sh --docs-only
 
       - name: Validate vision metadata coverage
         run: ./docs/scripts/check-vision-metadata.sh
 ```
 
-This ensures markdown links resolve, key JSON examples stay contract-aligned, reports remain indexed, and vision metadata coverage is enforced on every pull request/push.
+This ensures markdown links resolve, key JSON examples stay contract-aligned, logs remain indexed, and vision metadata coverage is enforced on every pull request/push.
 `./scripts/check-quality-gates.sh --docs-only` now runs `./docs/scripts/check-vision-metadata.sh` directly.
 `./docs/scripts/check-vision-metadata.sh` runs `check-doc-workflow-paths`, `check-vision-index`, `check-vision-next-task`, and `check-vision-next-task-regression`.
 
@@ -91,23 +91,23 @@ Behavior:
   - `cache_ttl_source`
 - asserts first block stays `cache_state=hit` and second block stays a miss (`cache_hit=false`)
 
-## 5) What the Report Index Checker Validates
+## 5) What the Logs Index Checker Validates
 
 Script:
-- `scripts/check-doc-reports-index.sh`
+- `scripts/check-doc-logs-index.sh`
 
 Behavior:
-- scans `docs/reports/*.md` and excludes `docs/reports/README.md`
-- parses report links from `docs/reports/README.md`
-- fails when any report file is missing from the index
-- fails when index entries point to non-existent report files
+- scans `docs/logs/YYYY-MM/*.md` and excludes `docs/logs/README.md`
+- parses log links from `docs/logs/README.md`
+- fails when any log file is missing from the index
+- fails when index entries point to non-existent log files
 
 Helper:
-- `scripts/add-report-index-entry.sh <report-file>` inserts a missing report entry ahead of archived links.
+- `scripts/add-log-index-entry.sh <log-file>` inserts a missing log entry ahead of archived links.
 
 Forward-only policy cutoff:
-- reports dated on or after `2026-03-06` must include a `## Vision Target Delta` section
-- reports before `2026-03-06` do not require backfill
+- logs dated on or after `2026-03-06` must include a `## Vision Target Delta` section
+- logs before `2026-03-06` do not require backfill
 
 ## 6) Common Failure Modes
 
@@ -158,8 +158,8 @@ Copy into PR description:
 - [ ] New guide linked from docs entry points
 - [ ] Command and JSON examples verified against current behavior
 - [ ] Completion-candidates JSON examples include hit + miss telemetry variants
-- [ ] New report files indexed in `docs/reports/README.md`
-- [ ] New report files dated on/after `2026-03-06` include `Vision Target Delta`
+- [ ] New log files indexed in `docs/logs/README.md`
+- [ ] New log files dated on/after `2026-03-06` include `Vision Target Delta`
 ```
 
 Allowlist-change PRs should use:
@@ -186,8 +186,8 @@ cargo qa-docs
 # vision next-task regression fixtures
 ./docs/scripts/check-vision-next-task-regression.sh
 
-# index a newly added report artifact
-./scripts/add-report-index-entry.sh docs/reports/YYYY-MM-DD-topic.md
+# index a newly added log artifact
+./scripts/add-log-index-entry.sh docs/logs/YYYY-MM/DD-HHMMSS-topic.md
 
 # json contracts only
 cargo qa-json-ci

@@ -6,16 +6,16 @@ set -euo pipefail
 # - Prefer cargo/Effigy command entrypoints for operator-driven runs.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPORTS_DIR="$ROOT_DIR/docs/reports"
-INDEX_FILE="$REPORTS_DIR/README.md"
+LOGS_DIR="$ROOT_DIR/docs/logs"
+INDEX_FILE="$LOGS_DIR/README.md"
 
 usage() {
   cat >&2 <<USAGE
-usage: $(basename "$0") <report-file>
+usage: $(basename "$0") <log-file>
 
 Examples:
-  $(basename "$0") 2026-03-02-my-report.md
-  $(basename "$0") docs/reports/2026-03-02-my-report.md
+  $(basename "$0") 2026-03/02-160000-my-log.md
+  $(basename "$0") docs/logs/2026-03/02-160000-my-log.md
 USAGE
 }
 
@@ -25,33 +25,44 @@ if [[ $# -ne 1 ]]; then
 fi
 
 input="$1"
-base_name="$(basename "$input")"
-report_path="$REPORTS_DIR/$base_name"
+input="${input#./}"
+relative_path="$input"
 
-if [[ "$base_name" == "README.md" ]]; then
-  echo "[error] README.md is not a report artifact" >&2
+if [[ "$relative_path" == docs/logs/* ]]; then
+  relative_path="${relative_path#docs/logs/}"
+fi
+
+log_path="$LOGS_DIR/$relative_path"
+
+if [[ "$relative_path" == "README.md" ]]; then
+  echo "[error] README.md is not a log artifact" >&2
   exit 1
 fi
 
-if [[ "${base_name##*.}" != "md" ]]; then
-  echo "[error] report must be a .md file: $base_name" >&2
+if [[ "${relative_path##*.}" != "md" ]]; then
+  echo "[error] log must be a .md file: $relative_path" >&2
   exit 1
 fi
 
-if [[ ! -f "$report_path" ]]; then
-  echo "[error] report file not found: $report_path" >&2
+if [[ ! "$relative_path" =~ ^[0-9]{4}-[0-9]{2}/[0-9]{2}-[0-9]{6}-.+\.md$ ]]; then
+  echo "[error] log path must match YYYY-MM/DD-HHMMSS-slug.md: $relative_path" >&2
+  exit 1
+fi
+
+if [[ ! -f "$log_path" ]]; then
+  echo "[error] log file not found: $log_path" >&2
   exit 1
 fi
 
 if [[ ! -f "$INDEX_FILE" ]]; then
-  echo "[error] reports index not found: $INDEX_FILE" >&2
+  echo "[error] logs index not found: $INDEX_FILE" >&2
   exit 1
 fi
 
-entry="- [\`$base_name\`](./$base_name)"
+entry="- [\`$relative_path\`](./$relative_path)"
 
 if rg -Fq -- "$entry" "$INDEX_FILE"; then
-  echo "report already indexed: $base_name"
+  echo "log already indexed: $relative_path"
   exit 0
 fi
 
@@ -60,7 +71,7 @@ trap 'rm -f "$tmp_file"' EXIT
 
 awk -v entry="$entry" '
   BEGIN { inserted = 0 }
-  /^## Archived Validation Reports$/ && inserted == 0 {
+  /^## Archived Validation Logs$/ && inserted == 0 {
     print entry
     print ""
     inserted = 1
@@ -76,4 +87,4 @@ awk -v entry="$entry" '
 
 mv "$tmp_file" "$INDEX_FILE"
 
-echo "indexed report: $base_name"
+echo "indexed log: $relative_path"

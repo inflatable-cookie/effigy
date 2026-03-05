@@ -143,3 +143,5 @@ Batch C phase-1 starts only when:
 - [x] `effigy init` baseline scaffold command.
 - [x] `effigy migrate` package-script preview/apply helper.
 - [x] Tests and docs for onboarding/watch/migration flows.
+
+Generation: `g01`

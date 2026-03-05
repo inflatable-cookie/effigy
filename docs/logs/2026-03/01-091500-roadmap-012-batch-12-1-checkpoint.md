@@ -1,7 +1,7 @@
 # Roadmap 012 Batch 12.1 Checkpoint (Builtin Test Consolidation)
 
 Date: 2026-03-01
-Roadmap: [012 - Codebase Consolidation and Health](../roadmap/012-codebase-consolidation-and-health.md)
+Roadmap: [g01.012 - Codebase Consolidation and Health](../../roadmaps/g01/012-codebase-consolidation-and-health.md)
 
 ## Scope
 

@@ -61,9 +61,9 @@ A version can be tagged for channel publication only if all are true:
 - [ ] Rollback candidate tag identified (previous known-good).
 - [x] Distribution metadata validated (crate metadata, install docs, checksum path):
   - `./scripts/check-distribution-metadata.sh [--tag <tag>]`
-- [x] First-publish evidence artifacts can be validated and rendered into closeout report:
+- [x] First-publish evidence artifacts can be validated and rendered into closeout log:
   - `./scripts/validate-distribution-artifacts.sh --artifacts-dir <dir> [--expect-homebrew]`
-  - `./scripts/generate-distribution-closeout-report.sh --tag <tag> --artifacts-dir <dir> [--expect-homebrew]`
+  - `./scripts/generate-distribution-closeout-log.sh --tag <tag> --artifacts-dir <dir> [--expect-homebrew]`
 
 Automation entrypoint:
 - `cargo qa-release` (wraps `scripts/check-release-gates.sh`, including distribution metadata validation)
@@ -93,7 +93,7 @@ Hotfix expectations:
 
 - Use `PATCH` bump within same `MINOR` line.
 - Include focused regression test for root cause.
-- Add short checkpoint report under `docs/reports/`.
+- Add short checkpoint log under `docs/logs/YYYY-MM/`.
 
 ## 7) Support Window (Initial)
 

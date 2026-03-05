@@ -28,15 +28,15 @@ Run this sequence in one release window:
 2. Validate install from tag.
 3. Publish crate and validate crates.io install.
 4. Update Homebrew formula and validate fresh install + upgrade path.
-5. Capture one consolidated channel matrix report.
+5. Capture one consolidated channel matrix log.
 
 Optional one-command execution helper:
 
 ```bash
 ./scripts/check-distribution-first-publish.sh --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
-./scripts/generate-distribution-closeout-report.sh --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
+./scripts/generate-distribution-closeout-log.sh --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
 # use --expect-homebrew when Homebrew checks are expected in this release window
-# ./scripts/generate-distribution-closeout-report.sh --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z --expect-homebrew
+# ./scripts/generate-distribution-closeout-log.sh --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z --expect-homebrew
 ```
 
 ## 3) Command Matrix
@@ -89,10 +89,10 @@ effigy --json help
 - crates.io install output log
 - Homebrew fresh install + upgrade logs
 - CI pinned install log
-- one dated checkpoint report in `docs/reports/`
+- one dated checkpoint log in `docs/logs/YYYY-MM/`
 
-When using the helper script, attach per-step logs from `--artifacts-dir` directly in the checkpoint report.
-The closeout report can be generated from those logs using `generate-distribution-closeout-report.sh`.
+When using the helper script, attach per-step logs from `--artifacts-dir` directly in the checkpoint log.
+The closeout log can be generated from those logs using `generate-distribution-closeout-log.sh`.
 Artifact completeness can be checked directly with `validate-distribution-artifacts.sh`.
 The first-publish helper also writes `distribution-summary.env` in the artifacts directory and validates artifacts before returning success.
 Local tooling sanity for this pipeline can be checked with `check-distribution-artifact-pipeline-smoke.sh`.
@@ -110,7 +110,7 @@ This runbook is the execution evidence source for:
 
 If any channel fails:
 1. stop rollout completion claims for this batch
-2. record failure in checkpoint report with exact command and output summary
+2. record failure in checkpoint log with exact command and output summary
 3. rollback to previous known-good version/tag
 4. re-run failed channel only after fix is merged
 
@@ -123,4 +123,4 @@ If any channel fails:
 
 ## Next Step
 
-When a release tag exists, execute this runbook and publish a single acceptance-closeout report that updates remaining criteria in `distribution-channels.md`.
+When a release tag exists, execute this runbook and publish a single acceptance-closeout log that updates remaining criteria in `distribution-channels.md`.

@@ -6,23 +6,23 @@ Purpose: record Batch 2 implementation coverage and residual gaps for Effigy vis
 
 ## 1. Scope Completed
 
-1. Added roadmap vision metadata sections (`Vision Alignment`, `Primary Tags`, `Target Envelope`, `Vision Target Delta`) to `docs/roadmap/001` through `012`.
+1. Added roadmap vision metadata sections (`Vision Alignment`, `Primary Tags`, `Target Envelope`, `Vision Target Delta`) to `docs/roadmaps/001` through `012`.
 2. Added concise `Vision Alignment` sections to core guides `016` through `026` with primary tags and target movement intent.
 3. Standardized report guidance to require `Vision Target Delta` in:
-- `docs/reports/README.md` report template guidance
+- `docs/logs/README.md` report template guidance
 - `docs/guides/036-release-notes-authoring-template-and-examples.md`
 - `docs/guides/014-release-checklist-template.md`
 - `docs/guides/029-docs-qa-checklist-and-validation.md`
 4. Added target-linked promotion criteria to backlog docs:
-- `docs/roadmap/backlog/README.md`
-- `docs/roadmap/backlog/distribution-channels.md`
-- `docs/roadmap/backlog/release-contract-v0.md`
+- `docs/roadmaps/backlog/README.md`
+- `docs/roadmaps/backlog/distribution-channels.md`
+- `docs/roadmaps/backlog/release-contract-v0.md`
 
 ## 2. Compliance Results
 
 | Artifact Group | Required additions | Result |
 | --- | --- | --- |
-| `docs/roadmap/001-012*.md` | vision metadata sections | Pass |
+| `docs/roadmaps/g01/001-012*.md` | vision metadata sections | Pass |
 | `docs/guides/016-026*.md` | vision alignment notes | Pass |
 | report guidance | `Vision Target Delta` requirement | Pass |
 | backlog roadmaps | target-linked promotion criteria | Pass |
@@ -33,7 +33,7 @@ Manual spot checks completed:
 
 1. Roadmaps: `001`, `008`, `012`
 2. Guides: `016`, `021`, `025`
-3. Report guidance: `docs/reports/README.md`, `docs/guides/036-release-notes-authoring-template-and-examples.md`, `docs/guides/029-docs-qa-checklist-and-validation.md`
+3. Report guidance: `docs/logs/README.md`, `docs/guides/036-release-notes-authoring-template-and-examples.md`, `docs/guides/029-docs-qa-checklist-and-validation.md`
 
 Docs QA command:
 

@@ -43,8 +43,8 @@ Each exception must be documented in one short record containing:
 
 ## 5. Reporting and Visibility
 
-1. Active exceptions should be summarized in release-readiness or validation reports.
-2. Reports should include exception count, nearing-expiry items, and overdue items.
+1. Active exceptions should be summarized in release-readiness or validation logs.
+2. Logs should include exception count, nearing-expiry items, and overdue items.
 3. Closed exceptions should link to evidence showing restoration completed.
 
 ## 6. Non-Negotiable Constraints
@@ -56,7 +56,7 @@ Each exception must be documented in one short record containing:
 
 ## 7. Adoption Steps
 
-1. Add exception section templates to release and validation report workflows.
+1. Add exception section templates to release and validation log workflows.
 2. Add a docs QA check that flags missing expiry or owner fields in active exceptions.
 3. Add a periodic review cadence aligned with release checkpoints.
 

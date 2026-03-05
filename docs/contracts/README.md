@@ -23,8 +23,8 @@ This folder contains machine-consumer JSON contract artifacts used by Effigy com
 ## Change Policy
 
 1. Update contract files in the same PR as runtime schema changes.
-2. Include a dated report entry in `docs/reports/` when schema or selection shape changes.
-3. Include `Vision Target Delta` notes in release/report artifacts for contract-impacting updates.
+2. Include a dated log entry in `docs/logs/` when schema or selection shape changes.
+3. Include `Vision Target Delta` notes in release/log artifacts for contract-impacting updates.
 4. Keep schema IDs/version values additive unless a deliberate compatibility break is documented.
 
 ## Next Task

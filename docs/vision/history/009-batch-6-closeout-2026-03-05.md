@@ -10,7 +10,7 @@ Purpose: close Batch 6 by making workflow-path validation part of the docs-only 
 - `scripts/check-quality-gates.sh` now runs `docs/scripts/check-doc-workflow-paths.sh` under `--docs-only`.
 
 2. Added explicit historical-report exception policy:
-- `docs/reports/README.md`
+- `docs/logs/README.md`
 - `docs/guides/036-release-notes-authoring-template-and-examples.md`
 
 3. Updated docs QA guidance to reflect the integrated gate behavior:

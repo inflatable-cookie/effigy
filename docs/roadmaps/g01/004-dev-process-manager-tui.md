@@ -114,7 +114,7 @@ Notes:
 - [ ] Add integration tests for process spawn/stop and stdin passthrough.
 - [x] Add docs for authoring `mode=tui` task manifests.
 - [x] Add migration examples for existing multi-process dev scripts.
-- [x] Publish a report with real-project smoke validation (`acowtancy` as first adopter).
+- [x] Publish a log with real-project smoke validation (`acowtancy` as first adopter).
 
 ## 7) Acceptance Criteria
 
@@ -139,4 +139,6 @@ Notes:
 - [x] Managed-task schema support in runner.
 - [x] Process supervisor runtime.
 - [x] Ratatui tabbed process manager.
-- [x] Docs + migration examples + validation report.
+- [x] Docs + migration examples + validation log.
+
+Generation: `g01`

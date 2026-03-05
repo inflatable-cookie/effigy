@@ -2,7 +2,7 @@
 
 Status: Draft
 Owner: Platform Lead + Docs Owners
-Purpose: define how vision strategy should be communicated into roadmap, guides, and reports without dilution or drift.
+Purpose: define how vision strategy should be communicated into roadmap, guides, and logs without dilution or drift.
 
 ## 1. Communication Goals
 
@@ -31,10 +31,10 @@ Purpose: define how vision strategy should be communicated into roadmap, guides,
 2. Operator-facing guidance should preserve deterministic and actionable behavior language.
 3. Terminology should remain consistent with vision canon (`012`).
 
-### Vision -> Reports
+### Vision -> Logs
 
-1. Release and validation reports should include "Vision Target Delta" summaries.
-2. Reports should surface risk and exception status when relevant (`004`, `005`).
+1. Release and validation logs should include "Vision Target Delta" summaries.
+2. Logs should surface risk and exception status when relevant (`004`, `005`).
 3. Governance review template (`009`) should be used for cadence reporting.
 
 ## 4. Communication Cadence

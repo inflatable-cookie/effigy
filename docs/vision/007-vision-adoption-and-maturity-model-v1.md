@@ -34,7 +34,7 @@ Purpose: define maturity stages for adopting Effigy vision standards across repo
 
 1. Metrics and SLOs are tracked with regular cadence and ownership.
 2. Risk and exception governance is active and time-bounded.
-3. Roadmap and reports explicitly reference vision-tag movement.
+3. Roadmap and logs explicitly reference vision-tag movement.
 
 ### Stage 4: Scaled and Self-Correcting
 
@@ -56,7 +56,7 @@ Use these dimensions to determine stage per repository:
 
 1. Advancement requires meeting all prior stage criteria.
 2. Temporary exceptions are allowed only if they are recorded and time-bounded.
-3. A stage claim should include evidence references in reports or check outputs.
+3. A stage claim should include evidence references in logs or check outputs.
 
 ## 5. Recommended Use
 

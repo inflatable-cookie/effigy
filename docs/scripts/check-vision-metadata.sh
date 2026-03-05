@@ -15,18 +15,18 @@ require_heading() {
 status=0
 
 roadmap_files=(
-  "$ROOT_DIR/docs/roadmap/001-effigy-foundation.md"
-  "$ROOT_DIR/docs/roadmap/002-deferral-fallback-system.md"
-  "$ROOT_DIR/docs/roadmap/003-coloured-output-and-widgets.md"
-  "$ROOT_DIR/docs/roadmap/004-dev-process-manager-tui.md"
-  "$ROOT_DIR/docs/roadmap/005-unified-testing-orchestration.md"
-  "$ROOT_DIR/docs/roadmap/006-tui-terminal-emulation.md"
-  "$ROOT_DIR/docs/roadmap/007-test-runner-selection-and-environment-policy.md"
-  "$ROOT_DIR/docs/roadmap/008-universal-json-command-coverage.md"
-  "$ROOT_DIR/docs/roadmap/009-doctor-health-consolidation.md"
-  "$ROOT_DIR/docs/roadmap/010-dag-lock-policy-baseline.md"
-  "$ROOT_DIR/docs/roadmap/011-watch-init-migrate-phase-1.md"
-  "$ROOT_DIR/docs/roadmap/012-codebase-consolidation-and-health.md"
+  "$ROOT_DIR/docs/roadmaps/g01/001-effigy-foundation.md"
+  "$ROOT_DIR/docs/roadmaps/g01/002-deferral-fallback-system.md"
+  "$ROOT_DIR/docs/roadmaps/g01/003-coloured-output-and-widgets.md"
+  "$ROOT_DIR/docs/roadmaps/g01/004-dev-process-manager-tui.md"
+  "$ROOT_DIR/docs/roadmaps/g01/005-unified-testing-orchestration.md"
+  "$ROOT_DIR/docs/roadmaps/g01/006-tui-terminal-emulation.md"
+  "$ROOT_DIR/docs/roadmaps/g01/007-test-runner-selection-and-environment-policy.md"
+  "$ROOT_DIR/docs/roadmaps/g01/008-universal-json-command-coverage.md"
+  "$ROOT_DIR/docs/roadmaps/g01/009-doctor-health-consolidation.md"
+  "$ROOT_DIR/docs/roadmaps/g01/010-dag-lock-policy-baseline.md"
+  "$ROOT_DIR/docs/roadmaps/g01/011-watch-init-migrate-phase-1.md"
+  "$ROOT_DIR/docs/roadmaps/g01/012-codebase-consolidation-and-health.md"
 )
 
 for file in "${roadmap_files[@]}"; do
@@ -55,7 +55,7 @@ for file in "${guides[@]}"; do
 done
 
 report_policy_files=(
-  "$ROOT_DIR/docs/reports/README.md"
+  "$ROOT_DIR/docs/logs/README.md"
   "$ROOT_DIR/docs/guides/036-release-notes-authoring-template-and-examples.md"
 )
 
@@ -67,7 +67,7 @@ for file in "${report_policy_files[@]}"; do
 done
 
 cutoff_policy_files=(
-  "$ROOT_DIR/docs/reports/README.md"
+  "$ROOT_DIR/docs/logs/README.md"
   "$ROOT_DIR/docs/guides/029-docs-qa-checklist-and-validation.md"
 )
 

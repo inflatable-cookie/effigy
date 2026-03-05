@@ -56,7 +56,7 @@ Effigy has been extracted from Underlay, but needs first-class project structure
 ### Phase 1.3 - Documentation baseline
 - [x] Create architecture docs scaffold.
 - [x] Create roadmap index and phase-001 tracker.
-- [x] Create reports conventions and templates.
+- [x] Create logs conventions and templates.
 
 ### Phase 1.4 - Packaging and PATH workflow
 - [x] Document PATH installation options (`cargo install --path`, local bin link).
@@ -75,11 +75,13 @@ Effigy has been extracted from Underlay, but needs first-class project structure
 - [x] Risk: cargo-run wrappers hide lock/contention issues.
   - Mitigation: document PATH-first execution and provide fallback wrapper guidance.
 - [x] Risk: migration drift between repos.
-  - Mitigation: keep a single report checklist with verification evidence.
+  - Mitigation: keep a single log checklist with verification evidence.
 
 ## 7) Deliverables
 
 - [x] Standalone `effigy` runner crate.
 - [x] Migrated consuming repos (initial set).
-- [x] Docs skeleton (`architecture`, `roadmap`, `reports`).
+- [x] Docs skeleton (`architecture`, `roadmaps`, `logs`).
 - [x] PATH + release runbook.
+
+Generation: `g01`

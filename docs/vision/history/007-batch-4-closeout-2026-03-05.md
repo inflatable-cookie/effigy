@@ -11,7 +11,7 @@ Purpose: close Batch 4 by adding CI workflow enforcement for vision metadata che
   - `Validate vision metadata coverage` now runs `./docs/scripts/check-vision-metadata.sh`
 
 2. Added forward-only report cutoff date policy (`2026-03-06`) in:
-- `docs/reports/README.md`
+- `docs/logs/README.md`
 - `docs/guides/029-docs-qa-checklist-and-validation.md`
 
 3. Corrected docs QA workflow reference path to current repository layout:

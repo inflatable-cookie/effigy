@@ -34,12 +34,12 @@ Each risk is tracked with:
 ## 4. Closure Rules
 
 1. A risk can move to monitoring-only when signals remain below threshold for two review cycles.
-2. Closed risks should retain historical note in reports history with closure rationale.
+2. Closed risks should retain historical note in logs history with closure rationale.
 3. Reopened risks keep original ID and append a reopen reason/date.
 
 ## 5. Governance Notes
 
-1. This register is strategy-level; implementation details belong in roadmap/report artifacts.
+1. This register is strategy-level; implementation details belong in roadmap/log artifacts.
 2. Risk list should stay short and high signal.
 3. Add new risks only when they materially threaten one or more vision tags.
 

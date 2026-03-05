@@ -67,7 +67,7 @@ For now, version is controlled in `Cargo.toml`.
    - `./scripts/check-release-install-from-tag.sh --tag v0.__.__`
 3. CLI help and core commands run from installed PATH binary.
 4. Wrapper fallback still operational in at least one consumer repo.
-5. Update roadmap/report docs with validation evidence.
+5. Update roadmap/log docs with validation evidence.
 6. Bump `Cargo.toml` version if required.
 7. Commit, tag, and push release branch.
 

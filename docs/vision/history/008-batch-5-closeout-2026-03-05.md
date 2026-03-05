@@ -18,8 +18,8 @@ Purpose: close Batch 5 by formalizing CI layout conventions and enforcing docs-r
 - `docs/guides/036-release-notes-authoring-template-and-examples.md`
 - `docs/guides/042-homebrew-tap-and-release-automation.md`
 - `docs/guides/044-distribution-first-publish-execution-runbook.md`
-- `docs/roadmap/backlog/distribution-channels.md`
-- `docs/roadmap/backlog/release-contract-v0.md`
+- `docs/roadmaps/backlog/distribution-channels.md`
+- `docs/roadmaps/backlog/release-contract-v0.md`
 
 4. Documented CI layout conventions and enforcement commands in docs process guides:
 - `docs/guides/029-docs-qa-checklist-and-validation.md`
@@ -45,7 +45,7 @@ Purpose: close Batch 5 by formalizing CI layout conventions and enforcing docs-r
 
 ## 4. Residual Gaps
 
-1. Historical reports in `docs/reports/` intentionally retain original path references where they reflect historical context.
+1. Historical reports in `docs/logs/` intentionally retain original path references where they reflect historical context.
 2. `cargo qa-docs` does not yet execute `check-doc-workflow-paths.sh` directly; enforcement currently occurs via `check-vision-metadata.sh`.
 
 ## 5. Decision

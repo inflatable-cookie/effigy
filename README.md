@@ -192,7 +192,7 @@ effigy/
 │   ├── architecture/
 │   ├── contracts/
 │   ├── guides/
-│   ├── roadmap/
-│   └── reports/
+│   ├── roadmaps/
+│   └── logs/
 └── Cargo.toml
 ```

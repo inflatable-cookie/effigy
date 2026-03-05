@@ -39,7 +39,7 @@ When a metric is reported, include:
 1. `Metric`: name and tag.
 2. `Observed`: measured value/window.
 3. `SLO`: target threshold.
-4. `Delta`: movement since previous report.
+4. `Delta`: movement since previous log.
 5. `Action`: follow-up when below target.
 
 ## 5. Guardrails
@@ -50,4 +50,4 @@ When a metric is reported, include:
 
 ## Next Task
 
-Define the minimum evidence package and source-of-truth files used to compute each metric in release and monthly reports.
+Define the minimum evidence package and source-of-truth files used to compute each metric in release and monthly logs.
