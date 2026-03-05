@@ -5,6 +5,24 @@ Owner: Platform
 Created: 2026-02-26
 Depends on: 001, 002, 003, 004
 
+
+## Vision Alignment
+
+This roadmap converges test orchestration into one built-in contract for mixed ecosystem workspaces.
+
+## Primary Tags
+
+- `OPERATE`
+- `CONTRACT`
+
+## Target Envelope
+
+- Test selection and execution are deterministic, explainable, and reportable across repo layouts.
+
+## Vision Target Delta
+
+- Moved from per-repo custom test conventions to consistent built-in orchestration behavior.
+
 ## 1) Problem
 
 Effigy can run project-defined test tasks, but teams still have to manually encode common testing conventions in every repo. This creates duplication and uneven defaults across TypeScript and Rust projects, especially in mixed workspace setups.

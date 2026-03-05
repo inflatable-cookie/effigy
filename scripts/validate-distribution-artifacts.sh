@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Wrapper policy:
+# - Compatibility entrypoint retained for CI/release/docs tooling.
+# - Prefer cargo/Effigy command entrypoints for operator-driven runs.
+
 ARTIFACTS_DIR=""
 EXPECT_HOMEBREW=0
 

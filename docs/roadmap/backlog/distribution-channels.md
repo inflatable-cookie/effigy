@@ -61,8 +61,8 @@ Effigy is still evolving, so distribution planning should be staged and reversib
 - [x] Automate formula bump on release tags.
 - [x] Define bottle/checksum/update strategy.
   - implementation hooks:
-    - `.github/workflows/homebrew-tap-metadata.yml` (metadata artifact generation)
-    - `.github/workflows/homebrew-tap-formula-pr.yml` (tap PR automation from artifact)
+    - `.github-bak/workflows/homebrew-tap-metadata.yml` (metadata artifact generation)
+    - `.github-bak/workflows/homebrew-tap-formula-pr.yml` (tap PR automation from artifact)
 
 ### Phase D - CI + Team Adoption
 - [x] Add pinned-version install snippets for CI.
@@ -114,3 +114,17 @@ Before marking this backlog item complete, execute:
 - `./scripts/check-distribution-first-publish.sh --tag <tag> --artifacts-dir <dir>`
 - `./scripts/generate-distribution-closeout-report.sh --tag <tag> --artifacts-dir <dir> [--expect-homebrew]`
 - one dated acceptance-closeout report with channel matrix evidence
+
+## 10) Vision Target Movement Criteria
+
+Primary tags:
+- `RELEASE`
+- `MAINT`
+
+Target envelope:
+- Effigy distribution is repeatable across channels with one canonical binary source and reversible rollout controls.
+
+Promotion signals:
+- one completed publish cycle includes validated install evidence for tag install, crates install, and Homebrew flow
+- rollback path is executed or dry-run validated and documented in a dated report
+- release contract checklist is fully linked to channel artifacts with no open blockers

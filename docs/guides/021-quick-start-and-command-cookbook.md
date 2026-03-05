@@ -4,6 +4,12 @@ This guide is the shortest path from install to useful daily commands.
 
 Use this page for first-run workflows. Use [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for full command/flag lookup.
 
+
+## Vision Alignment
+
+- Primary tags: `OPERATE`, `RELEASE`
+- Target movement: first-run command paths are short, consistent, and aligned to stable invocation surfaces.
+
 ## 1) Quick Start (5 Minutes)
 
 Run from source:

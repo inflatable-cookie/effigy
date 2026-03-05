@@ -69,7 +69,7 @@ Automation entrypoint:
 - `cargo qa-release` (wraps `scripts/check-release-gates.sh`, including distribution metadata validation)
 
 CI automation:
-- `.github/workflows/release-gates.yml` on tag pushes (`v*`) and manual dispatch.
+- `.github-bak/workflows/release-gates.yml` on tag pushes (`v*`) and manual dispatch.
 
 Operational template:
 - [Release Checklist Template](../../guides/014-release-checklist-template.md)
@@ -107,3 +107,17 @@ Start `v1` contract planning when:
 - distribution channels are stable for at least two release cycles,
 - no major migration pain reported across active workspaces,
 - CLI/config surface is mostly additive for one full `MINOR` cycle.
+
+## 9) Vision Target Movement Criteria
+
+Primary tags:
+- `CONTRACT`
+- `RELEASE`
+
+Target envelope:
+- Release behavior remains predictable for operators and automation while `v0.x` compatibility boundaries stay explicit.
+
+Promotion signals:
+- each release note/checkpoint includes measurable `Vision Target Delta` and compatibility status
+- release gates pass without manual contract exceptions for two consecutive cycles
+- rollback and hotfix procedures are executed in practice at least once (drill or real) and documented

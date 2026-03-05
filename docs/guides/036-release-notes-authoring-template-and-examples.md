@@ -8,10 +8,11 @@ Every release note should include these sections in this order:
 
 1. `Summary`
 2. `User-Visible Changes`
-3. `Migration Notes`
-4. `Validation`
-5. `Rollback Notes`
-6. `Compatibility`
+3. `Vision Target Delta`
+4. `Migration Notes`
+5. `Validation`
+6. `Rollback Notes`
+7. `Compatibility`
 
 ## 2) Template
 
@@ -31,6 +32,11 @@ Release: <version or milestone label>
 ## User-Visible Changes
 - Command/behavior changes visible to operators.
 - New flags, output fields, or workflow changes.
+
+## Vision Target Delta
+- Primary tags: `ROUTE|CONTRACT|OPERATE|MAINT|RELEASE`
+- Movement: baseline `...` -> current `...`
+- Remaining gap: `...` (or `None`)
 
 ## Migration Notes
 - Required user actions (if any).
@@ -73,6 +79,11 @@ Release: milestone m1
 - New invocation: `effigy doctor <task> -- <args>`.
 - JSON payload schema includes `effigy.doctor.explain.v1` in envelope result.
 
+## Vision Target Delta
+- Primary tags: `ROUTE`, `OPERATE`
+- Movement: selector diagnosis moved from partial (`tasks --resolve` only) to explicit explain-mode diagnostics.
+- Remaining gap: broader explain examples for nested/symlinked catalogs.
+
 ## Migration Notes
 - Before: `effigy tasks --resolve <selector>` only.
 - After: use `effigy doctor <selector> -- <args>` when you need richer reasoning.
@@ -113,6 +124,11 @@ Release: milestone m1
 - CI now runs docs-link and JSON contract quality gates in workflow.
 - Selection artifact validation is enforced in CI.
 
+## Vision Target Delta
+- Primary tags: `CONTRACT`, `RELEASE`
+- Movement: contract validation moved from ad-hoc local checks to enforced CI policy gates.
+- Remaining gap: include richer changed-contract summaries in release artifacts.
+
 ## Migration Notes
 - Replace ad-hoc JSON checks with:
   - `./scripts/check-json-contracts-ci.sh`
@@ -126,7 +142,7 @@ Release: milestone m1
   - result: invalid payload fixtures rejected, valid fixture accepted
 
 ## Rollback Notes
-- Revert workflow changes in `.github/workflows/json-contracts.yml` if pipeline is blocked.
+- Revert workflow changes in `.github-bak/workflows/json-contracts.yml` if pipeline is blocked.
 - Keep local script-based checks as temporary fallback.
 
 ## Compatibility
@@ -142,7 +158,9 @@ Release: milestone m1
 - Prefer concrete commands over prose-only validation claims.
 - Keep migration notes explicit even when no migration is required (`None required`).
 - Use exact schema IDs in JSON-related notes.
+- Include measurable `Vision Target Delta` movement and remaining gaps.
 - Keep rollback instructions executable and short.
+- Keep historical references accurate when release notes describe past workflows; do not rewrite old evidence paths only for layout normalization.
 
 ## 6) Where to Link Release Notes
 
@@ -150,6 +168,12 @@ For each new release note:
 1. add file under `docs/reports/` with date-first naming
 2. add link to `docs/reports/README.md` under recent release notes
 3. reference from relevant guide(s) when behavior is user-impacting
+
+## 7) Historical Workflow Reference Rule
+
+- If a release note/report documents a workflow path that was correct at that time, keep that historical path as-is.
+- For current operational guidance (outside historical reports), use active workflow paths (`.github-bak/workflows/*.yml` in this repository layout).
+- Validation check `docs/scripts/check-doc-workflow-paths.sh` intentionally excludes `docs/reports/` to preserve historical evidence fidelity.
 
 ## Expected Outcome
 

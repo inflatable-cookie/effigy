@@ -2,6 +2,12 @@
 
 This guide describes how Effigy routes task requests across catalogs, including alias prefixes, path-based prefixes, and unprefixed fallback.
 
+
+## Vision Alignment
+
+- Primary tags: `ROUTE`, `OPERATE`
+- Target movement: routing precedence and resolution evidence remain deterministic and fast to diagnose.
+
 ## Command
 
 Use the built-in diagnostic task:

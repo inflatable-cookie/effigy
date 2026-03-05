@@ -101,6 +101,8 @@ Read:
 - Homebrew tap + release automation: [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
 - Wrapper channel evaluation + policy: [`043-wrapper-channel-evaluation-and-policy.md`](./043-wrapper-channel-evaluation-and-policy.md)
 - Distribution first-publish execution runbook: [`044-distribution-first-publish-execution-runbook.md`](./044-distribution-first-publish-execution-runbook.md)
+- Vision next-task allowlist maintenance: [`045-vision-next-task-allowlist-maintenance.md`](./045-vision-next-task-allowlist-maintenance.md)
+- Vision next-task allowlist PR checklist snippet: [`046-vision-next-task-allowlist-pr-checklist-snippet.md`](./046-vision-next-task-allowlist-pr-checklist-snippet.md)
 
 ## Supplemental
 

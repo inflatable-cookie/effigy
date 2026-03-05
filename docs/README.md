@@ -7,6 +7,7 @@ Effigy docs are organized by intent:
 - `guides/`: operator and contributor runbooks.
 - `roadmap/`: numbered implementation plans and checkpoints.
 - `reports/`: dated validation artifacts and release notes.
+- `vision/`: long-horizon direction and target envelopes.
 
 ## Recommended Reading Paths
 
@@ -28,6 +29,7 @@ Automating and validating CI:
 2. [`guides/024-ci-and-automation-recipes.md`](./guides/024-ci-and-automation-recipes.md)
 3. [`guides/026-json-payload-examples.md`](./guides/026-json-payload-examples.md)
 4. [`guides/029-docs-qa-checklist-and-validation.md`](./guides/029-docs-qa-checklist-and-validation.md)
+5. [`contracts/README.md`](./contracts/README.md)
 
 Maintaining docs process:
 1. [`guides/037-documentation-contribution-playbook.md`](./guides/037-documentation-contribution-playbook.md)
@@ -83,6 +85,14 @@ Docs operations (`029`-`040`):
 - [`guides/039-docs-drift-monitoring.md`](./guides/039-docs-drift-monitoring.md)
 - [`guides/040-docs-archive-and-deprecation-policy.md`](./guides/040-docs-archive-and-deprecation-policy.md)
 
+Distribution and governance extensions (`041`-`045`):
+- [`guides/041-distribution-ci-pinning-and-wrapper-migration.md`](./guides/041-distribution-ci-pinning-and-wrapper-migration.md)
+- [`guides/042-homebrew-tap-and-release-automation.md`](./guides/042-homebrew-tap-and-release-automation.md)
+- [`guides/043-wrapper-channel-evaluation-and-policy.md`](./guides/043-wrapper-channel-evaluation-and-policy.md)
+- [`guides/044-distribution-first-publish-execution-runbook.md`](./guides/044-distribution-first-publish-execution-runbook.md)
+- [`guides/045-vision-next-task-allowlist-maintenance.md`](./guides/045-vision-next-task-allowlist-maintenance.md)
+- [`guides/046-vision-next-task-allowlist-pr-checklist-snippet.md`](./guides/046-vision-next-task-allowlist-pr-checklist-snippet.md)
+
 Supplemental legacy navigation:
 - [`guides/028-docs-flow-map.md`](./guides/028-docs-flow-map.md)
 
@@ -91,6 +101,12 @@ Supplemental legacy navigation:
 - Canonical JSON mode is `effigy --json <command>`.
 - Top-level envelope schema is `effigy.command.v1`.
 - Validation index lives at [`contracts/json-schema-index.json`](./contracts/json-schema-index.json).
+- Ownership/drift policy lives at [`contracts/README.md`](./contracts/README.md).
+
+## Vision Notes
+
+- Vision index: [`vision/README.md`](./vision/README.md)
+- Vision rollout history: [`reports/vision-history/README.md`](./reports/vision-history/README.md)
 
 ## Terminology Canon
 

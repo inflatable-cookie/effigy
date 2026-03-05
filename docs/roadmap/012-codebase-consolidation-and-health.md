@@ -5,6 +5,25 @@ Owner: Platform
 Created: 2026-03-01
 Depends on: 001-011
 
+
+## Vision Alignment
+
+This roadmap protects long-term delivery speed by reducing structural complexity without contract regressions.
+
+## Primary Tags
+
+- `MAINT`
+- `CONTRACT`
+- `OPERATE`
+
+## Target Envelope
+
+- High-change command paths are modular enough for safe iteration while CLI/JSON behavior remains stable.
+
+## Vision Target Delta
+
+- Moved from concentrated complexity hotspots toward clearer boundaries and lower regression risk.
+
 ## 1) Problem
 
 Effigy shipped major feature breadth quickly across runner, doctor, managed runtime, and JSON contracts. The codebase now has several concentrated complexity hotspots that increase maintenance cost and bug risk:

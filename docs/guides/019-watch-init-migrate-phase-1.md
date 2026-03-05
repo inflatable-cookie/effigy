@@ -5,6 +5,12 @@ This guide covers the phase-1 contract for:
 - `effigy init`
 - `effigy migrate`
 
+
+## Vision Alignment
+
+- Primary tags: `ROUTE`, `OPERATE`, `MAINT`
+- Target movement: watch/init/migrate onboarding flows stay bounded, predictable, and low-friction.
+
 ## `effigy watch`
 
 Phase-1 watch mode is policy-first:

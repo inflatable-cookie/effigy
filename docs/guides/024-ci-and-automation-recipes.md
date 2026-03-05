@@ -2,13 +2,28 @@
 
 This guide provides copy-paste CI patterns for Effigy JSON contract and command-envelope automation.
 
+
+## Vision Alignment
+
+- Primary tags: `CONTRACT`, `RELEASE`, `OPERATE`
+- Target movement: CI recipes keep machine contracts enforceable and release gates repeatable.
+
 ## 1) What To Automate
 
-Primary contract checks in this repo:
+Canonical operator entrypoints:
+- `cargo qa`
+- `cargo qa-docs`
+- `cargo qa-json`
+- `cargo qa-json-ci`
+- `cargo qa-release`
+
+Compatibility wrapper scripts (retained for CI/release tooling integration):
 - `./scripts/check-json-contracts-ci.sh`
 - `./scripts/check-json-contracts.sh`
 - `./scripts/validate-json-contract-selection-artifact.sh`
 - `./scripts/check-selection-artifact-validator-smoke.sh`
+- `./docs/scripts/check-vision-metadata.sh`
+- `./docs/scripts/check-doc-workflow-paths.sh`
 - `./scripts/check-release-gates.sh`
 - `./scripts/check-release-smoke.sh`
 - `./scripts/check-release-install-from-tag.sh`
@@ -21,8 +36,8 @@ Primary contract checks in this repo:
 - `./scripts/update-homebrew-formula-from-metadata.sh`
 
 Related CI workflow:
-- `.github/workflows/distribution-artifact-pipeline-smoke.yml`
-- `.github/workflows/distribution-preflight.yml`
+- `.github-bak/workflows/distribution-artifact-pipeline-smoke.yml`
+- `.github-bak/workflows/distribution-preflight.yml`
 
 Primary JSON mode entrypoint:
 - `effigy --json <command>`
@@ -33,6 +48,7 @@ Before debugging CI, run locally:
 
 ```sh
 cargo qa
+cargo qa-json-ci
 cargo qa-release
 ./scripts/check-distribution-preflight.sh --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
 ./scripts/check-release-install-from-tag.sh --tag v0.__.__
@@ -41,9 +57,6 @@ cargo qa-release
 ./scripts/validate-distribution-artifacts.sh --artifacts-dir ./artifacts/distribution-v0.__.__
 ./scripts/generate-distribution-closeout-report.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 ./scripts/check-distribution-artifact-pipeline-smoke.sh
-./scripts/check-json-contracts-ci.sh
-./scripts/check-json-contracts.sh --fast --print-selected=json
-./scripts/check-json-contracts.sh --full --print-selected=text
 cargo qa-docs
 ```
 
@@ -258,10 +271,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: ./scripts/check-release-gates.sh
+      - run: cargo qa-release
 ```
 
-What `check-release-gates.sh` enforces:
+What `cargo qa-release` (via release-gates wrapper) enforces:
 - `cargo fmt --check`
 - full `cargo test`
 - docs + JSON quality gates (`check-quality-gates.sh --all --ci`)

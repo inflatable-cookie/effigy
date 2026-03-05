@@ -5,6 +5,24 @@ Owner: Platform
 Created: 2026-02-27
 Depends on: 005
 
+
+## Vision Alignment
+
+This roadmap clarifies selection and environment policy for named tests in mixed-suite repositories.
+
+## Primary Tags
+
+- `ROUTE`
+- `OPERATE`
+
+## Target Envelope
+
+- Named test invocations resolve unambiguously with minimal operator flags and stable environment expectations.
+
+## Vision Target Delta
+
+- Moved from broad fan-out ambiguity to explicit suite targeting and policy-driven runner selection.
+
 ## 1) Problem
 
 `effigy test` currently fans out to every detected suite. This is convenient for full runs, but ambiguous for named test invocations in mixed-suite repositories (for example Vitest + Rust). Effigy also needs a clearer strategy for environment flexibility without forcing heavy per-project configuration.

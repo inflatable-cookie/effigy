@@ -2,6 +2,12 @@
 
 This cookbook provides copy-paste manifest patterns you can adapt directly.
 
+
+## Vision Alignment
+
+- Primary tags: `ROUTE`, `MAINT`
+- Target movement: manifest patterns encode maintainable routing and execution conventions with minimal ambiguity.
+
 ## 1) Small Single-Repo Starter
 
 ```toml

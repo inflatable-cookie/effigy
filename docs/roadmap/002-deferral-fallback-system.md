@@ -5,6 +5,24 @@ Owner: Platform
 Created: 2026-02-26
 Depends on: 001
 
+
+## Vision Alignment
+
+This roadmap hardens unresolved-task handling so routing behavior stays deterministic during migration from legacy runners.
+
+## Primary Tags
+
+- `ROUTE`
+- `OPERATE`
+
+## Target Envelope
+
+- Unresolved selectors defer in a predictable, loop-safe way with clear operator-facing evidence.
+
+## Vision Target Delta
+
+- Moved from implicit legacy handoff behavior to an explicit, policy-bound fallback contract.
+
 ## 1) Problem
 
 Some repos still depend on a legacy task runner implementation. Effigy needs an opt-in fallback path so unresolved requests can be handed off without duplicating task names.

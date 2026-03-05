@@ -1,0 +1,19 @@
+# Actionable lead verbs for vision Next Task linting.
+execute
+run
+add
+update
+align
+publish
+document
+implement
+wire
+define
+create
+patch
+validate
+enforce
+verify
+integrate
+migrate
+refactor

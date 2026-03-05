@@ -14,6 +14,12 @@ effigy --json <catalog-or-root-task>
 
 When JSON mode is active, CLI preamble output is suppressed and output is pure JSON.
 
+
+## Vision Alignment
+
+- Primary tags: `CONTRACT`, `RELEASE`
+- Target movement: JSON envelopes stay canonical so CI/tooling integrations remain stable across command growth.
+
 ## Top-Level Contract
 
 ```json

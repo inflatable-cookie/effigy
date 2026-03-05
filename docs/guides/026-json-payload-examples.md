@@ -10,6 +10,12 @@ effigy --json <command>
 
 At runtime, these payloads are returned inside the top-level `effigy.command.v1` envelope in `result` (or in `error.details` for certain failures).
 
+
+## Vision Alignment
+
+- Primary tags: `CONTRACT`, `RELEASE`
+- Target movement: payload examples remain trustworthy fixtures for schema-aware consumers and release validation.
+
 ## 1) Envelope Example (`effigy.command.v1`)
 
 ```json

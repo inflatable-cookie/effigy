@@ -2,8 +2,8 @@ use crate::ui::theme::Theme;
 
 #[path = "text_output/filtered.rs"]
 mod filtered;
-#[path = "text_output/layout.rs"]
-mod layout;
+#[path = "text_output/model.rs"]
+mod model;
 #[path = "text_output/rows.rs"]
 mod rows;
 #[path = "text_output/sections.rs"]
@@ -11,7 +11,8 @@ mod sections;
 
 use super::super::tasks_view::render_resolution_probe_block;
 use super::super::{render, RunnerError};
-use super::render_context::{ListingRenderRequest, TextRenderDispatch};
+use super::prepared_listing::{prepare_listing_selection, PreparedListingSelection};
+use super::render_context::ListingRenderRequest;
 use super::ListingCatalogSnapshot;
 use filtered::render_filtered_tasks_text;
 use sections::render_default_tasks_text;
@@ -23,28 +24,33 @@ pub(super) fn render_tasks_text(
     let color_enabled = render::text_color_enabled();
     let mut renderer = render::plain_renderer(color_enabled);
     let theme = Theme::default();
+    let resolve_probe = request.resolve_probe();
 
-    match request.text_dispatch() {
-        TextRenderDispatch::ResolveOnly(probe) => {
-            render_resolution_probe_block(&mut renderer, probe, color_enabled, true)?
+    if let Some(probe) = request.resolve_only_probe() {
+        render_resolution_probe_block(&mut renderer, probe, color_enabled, true)?;
+    } else {
+        match prepare_listing_selection(request, snapshot)? {
+            PreparedListingSelection::Filtered {
+                filter,
+                filtered_model,
+            } => render_filtered_tasks_text(
+                &mut renderer,
+                color_enabled,
+                &theme,
+                filter,
+                &filtered_model,
+                resolve_probe,
+                snapshot.resolved_root(),
+            )?,
+            PreparedListingSelection::Catalog { ordered_catalogs } => render_default_tasks_text(
+                &mut renderer,
+                color_enabled,
+                &theme,
+                snapshot.catalogs(),
+                ordered_catalogs,
+                snapshot.resolved_root(),
+            )?,
         }
-        TextRenderDispatch::Filtered(filter) => render_filtered_tasks_text(
-            &mut renderer,
-            color_enabled,
-            &theme,
-            snapshot.catalogs(),
-            filter,
-            request.resolve_probe(),
-            snapshot.resolved_root(),
-        )?,
-        TextRenderDispatch::Catalog => render_default_tasks_text(
-            &mut renderer,
-            color_enabled,
-            &theme,
-            snapshot.catalogs(),
-            snapshot.ordered_catalogs(),
-            snapshot.resolved_root(),
-        )?,
     }
 
     render::render_utf8(renderer.into_inner())

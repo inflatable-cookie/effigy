@@ -1,5 +1,11 @@
 # Multiprocess TUI Config Contract
 
+## Vision Alignment
+
+- Primary tags: `OPERATE`, `MAINT`
+- Target envelope: TUI runtime tuning remains centralized, testable, and predictable under high-throughput process output.
+- Vision target delta: config contract guidance now explicitly anchors runtime knobs to operator and maintainability vision goals.
+
 ## Purpose
 
 Define the internal tuning contract for the multiprocess TUI runtime so performance and UX behavior can be adjusted in one place.

@@ -67,11 +67,11 @@ Add a release-triggered workflow in core repo:
   - call tap update automation (or open PR)
 
 Implemented metadata hook:
-- workflow: `.github/workflows/homebrew-tap-metadata.yml`
+- workflow: `.github-bak/workflows/homebrew-tap-metadata.yml`
 - output artifact: `homebrew-metadata-<tag>` containing `tag`, `version`, `url`, `sha256`, `formula`
 
 Implemented tap PR automation:
-- workflow: `.github/workflows/homebrew-tap-formula-pr.yml`
+- workflow: `.github-bak/workflows/homebrew-tap-formula-pr.yml`
 - trigger:
   - automatic on successful `Homebrew Tap Metadata` workflow runs
   - manual with `metadata_run_id` for replay/recovery

@@ -4,6 +4,12 @@ This guide maps common Effigy failures to focused diagnosis steps and concrete f
 
 Use [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for full command syntax and flag details.
 
+
+## Vision Alignment
+
+- Primary tags: `OPERATE`, `ROUTE`
+- Target movement: failure triage paths reduce time-to-diagnosis and keep remediation steps action-oriented.
+
 ## 1) Fast Triage Flow
 
 Start with:

@@ -2,6 +2,12 @@
 
 This guide covers the compact DAG run schema, step policy controls, and lock behavior introduced for roadmap 010.
 
+
+## Vision Alignment
+
+- Primary tags: `MAINT`, `OPERATE`
+- Target movement: orchestration policy and lock behavior remain deterministic under concurrent workflows.
+
 ## 1) DAG Run Steps
 
 Effigy supports linear sequences and DAG-style dependencies in `tasks.<name>.run`.

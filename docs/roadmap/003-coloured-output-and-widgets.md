@@ -5,6 +5,24 @@ Owner: Platform
 Created: 2026-02-26
 Depends on: 001
 
+
+## Vision Alignment
+
+This roadmap standardizes human-facing command output so operator workflows remain fast as command breadth grows.
+
+## Primary Tags
+
+- `OPERATE`
+- `MAINT`
+
+## Target Envelope
+
+- CLI output uses consistent widget primitives, color policy, and scanning structure across built-ins.
+
+## Vision Target Delta
+
+- Moved from ad-hoc text rendering to a reusable output layer with shared semantics.
+
 ## 1) Problem
 
 Effigy currently emits mostly plain-text output. As commands expand, output shape and tone can drift by feature owner, making failures harder to scan and success states less obvious. We need a consistent, reusable output layer for normal CLI mode that supports colour, structured blocks, and progress feedback without forcing a full-screen TUI.

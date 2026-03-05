@@ -5,6 +5,24 @@ Owner: Platform
 Created: 2026-02-26
 Depends on: none
 
+
+## Vision Alignment
+
+This roadmap establishes Effigy's baseline operating shape so later feature work can move quickly without process ambiguity.
+
+## Primary Tags
+
+- `MAINT`
+- `RELEASE`
+
+## Target Envelope
+
+- Project structure, docs, and release workflow are explicit enough that new roadmap threads do not need to re-derive delivery process.
+
+## Vision Target Delta
+
+- Moved from extracted code state to a maintainable standalone program with explicit release and documentation foundations.
+
 ## 1) Problem
 
 Effigy has been extracted from Underlay, but needs first-class project structure for roadmap-driven development, docs, and release evolution.

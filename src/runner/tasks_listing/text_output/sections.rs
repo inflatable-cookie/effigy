@@ -3,9 +3,9 @@ use std::path::Path;
 use crate::ui::theme::Theme;
 use crate::ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
 
-use super::super::super::{LoadedCatalog, RunnerError, BUILTIN_TASKS};
+use super::super::super::{LoadedCatalog, RunnerError};
 use super::super::catalog_manifest::{ordered_manifest_display_contexts, CatalogManifestContext};
-use super::layout::render_section_with_optional_rows;
+use super::super::row_projection::{builtin_task_rows, BuiltinTaskRow};
 use super::rows::{
     render_builtin_task_rows, render_catalog_alias_rows, render_ordered_catalog_task_rows,
 };
@@ -33,18 +33,18 @@ pub(super) fn render_default_tasks_text(
         color_enabled,
         theme,
         "Built-in Tasks",
-        &BUILTIN_TASKS,
+        builtin_task_rows(),
         &[],
     )?;
     Ok(())
 }
 
-pub(super) fn render_builtin_rows_section(
+pub(super) fn render_builtin_rows_section<'a>(
     renderer: &mut PlainRenderer<Vec<u8>>,
     color_enabled: bool,
     theme: &Theme,
     title: &str,
-    rows: &[(&str, &str)],
+    rows: impl IntoIterator<Item = BuiltinTaskRow<'a>>,
     notes: &[String],
 ) -> Result<(), RunnerError> {
     renderer.section(title)?;
@@ -95,13 +95,18 @@ fn render_catalog_scoped_section(
     render_header: impl FnOnce(&mut PlainRenderer<Vec<u8>>) -> Result<(), RunnerError>,
     render_rows: impl FnOnce(&mut PlainRenderer<Vec<u8>>) -> Result<bool, RunnerError>,
 ) -> Result<(), RunnerError> {
-    render_section_with_optional_rows(
-        renderer,
-        title,
-        !display_contexts.is_empty(),
-        render_header,
-        render_rows,
-    )
+    renderer.section(title)?;
+    render_header(renderer)?;
+    let has_rows = if display_contexts.is_empty() {
+        false
+    } else {
+        render_rows(renderer)?
+    };
+    if !has_rows {
+        renderer.notice(NoticeLevel::Info, "none")?;
+    }
+    renderer.text("")?;
+    Ok(())
 }
 
 fn render_info_notices(
