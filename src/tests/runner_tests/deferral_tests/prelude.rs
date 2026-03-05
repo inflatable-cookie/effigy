@@ -148,7 +148,7 @@ pub(super) fn assert_implicit_deferral_case_table(cases: &[ImplicitDeferralCase]
         cases,
         |case| case.workspace,
         |case| case.explicit_defer_run,
-        |case, root| run_implicit_deferral_case(case, root),
+        run_implicit_deferral_case,
     );
 }
 
