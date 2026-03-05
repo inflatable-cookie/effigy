@@ -17,9 +17,9 @@ fn run_manifest_task_builtin_test_plan_text_and_json_projection_consistency() {
         &["--plan", "unit", "user-service"],
     );
     let json = run_builtin_ok(root, "test", &["--plan", "--json", "unit", "user-service"]);
-    let parsed = parse_json_output(&json);
+    let parsed = parse_json_output_with_schema(&json, "effigy.test.plan.v1");
     let target = &parsed["targets"][0];
-    assert_eq!(target["cargo_env_match"], "prefix-aware");
+    assert_json_string_field_eq(target, "cargo_env_match", "prefix-aware");
 
     let available_suites = target["available_suites"]
         .as_array()
@@ -79,7 +79,7 @@ integration = "sh -lc 'cargo nextest run --workspace'"
     );
 
     let text = run_builtin_ok(root.to_path_buf(), "test", &["--plan"]);
-    assert_contains_all(
+    assert_output_contains_all(
         &text,
         &[
             "Target Summary",
@@ -89,6 +89,6 @@ integration = "sh -lc 'cargo nextest run --workspace'"
     );
 
     let json = run_builtin_ok(root, "test", &["--plan", "--json"]);
-    let parsed = parse_json_output(&json);
-    assert_eq!(parsed["targets"][0]["cargo_env_match"], "shell-aware");
+    let parsed = parse_json_output_with_schema(&json, "effigy.test.plan.v1");
+    assert_json_string_field_eq(&parsed["targets"][0], "cargo_env_match", "shell-aware");
 }

@@ -37,10 +37,10 @@ fn run_manifest_task_verbose_root_includes_resolution_trace() {
     );
 
     let out = run_task(&root, "farmyard/ping", &["--verbose-root"]).expect("run");
-
-    assert!(out.contains("Task Resolution"));
-    assert!(out.contains("catalog-alias: farmyard"));
-    assert!(out.contains("farmyard"));
+    assert_output_contains_all(
+        &out,
+        &["Task Resolution", "catalog-alias: farmyard", "farmyard"],
+    );
 }
 
 #[test]

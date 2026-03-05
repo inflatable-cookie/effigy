@@ -25,14 +25,13 @@ env = {{ CARGO_HOME = "{{project}}/.cargo/home", CARGO_TARGET_DIR = "{{repo}}/.c
 
     assert_run_task_ok_empty(&root, "build", &[]);
 
-    let body = fs::read_to_string(marker).expect("read marker");
     let canonical_root = fs::canonicalize(&root).expect("canonicalize root");
     let expected = format!(
         "{}/.cargo/home|{}/.cargo/target",
         canonical_root.display(),
         canonical_root.display()
     );
-    assert_eq!(body, expected);
+    assert_file_text_equals(&marker, &expected);
 }
 
 #[test]
@@ -51,10 +50,9 @@ build = {{ run = "sh -lc 'printf %s \"$CARGO_HOME\" > \"{}\"'", env = {{ CARGO_H
 
     assert_run_task_ok_empty(&root, "build", &[]);
 
-    let body = fs::read_to_string(marker).expect("read marker");
     let canonical_root = fs::canonicalize(&root).expect("canonicalize root");
-    assert_eq!(
-        body,
-        format!("{}/.cargo/inline-home", canonical_root.display())
+    assert_file_text_equals(
+        &marker,
+        &format!("{}/.cargo/inline-home", canonical_root.display()),
     );
 }

@@ -6,7 +6,7 @@ fn run_doctor_explain_text_reports_resolution_selection() {
 
     let out = run_builtin_ok(root, "doctor", &["farmyard/build"]);
 
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "Doctor Explain",
@@ -27,7 +27,7 @@ fn run_doctor_explain_text_reports_deferral_reasoning_on_missing_task() {
 
     let out = run_builtin_ok(root, "doctor", &["missing-task"]);
 
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "Doctor Explain",

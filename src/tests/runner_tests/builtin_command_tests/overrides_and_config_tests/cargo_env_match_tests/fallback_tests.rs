@@ -22,7 +22,7 @@ integration = "cargo nextest run --workspace"
     ]);
 
     let out = run_builtin_ok(root, "test", &[]);
-    assert_contains_all(&out, &["Test Results", "root"]);
+    assert_output_contains_all(&out, &["Test Results", "root"]);
     assert_cargo_env_matches(
         &marker,
         "/tmp/effigy-process-home",
@@ -50,7 +50,7 @@ integration = "cargo nextest run --workspace"
     let _path = setup_path_with_probes(&root, &[("cargo", CARGO_ENV_PROBE_SCRIPT)], &marker, true);
 
     let out = run_builtin_ok(root, "test", &[]);
-    assert_contains_all(&out, &["Test Results", "root"]);
+    assert_output_contains_all(&out, &["Test Results", "root"]);
     assert_cargo_env_matches(
         &marker,
         "/tmp/effigy-dotenv-home",
@@ -89,7 +89,7 @@ integration = "cargo nextest run --workspace"
     ]);
 
     let out = run_builtin_ok(root, "test", &[]);
-    assert_contains_all(&out, &["Test Results", "root"]);
+    assert_output_contains_all(&out, &["Test Results", "root"]);
     assert_cargo_env_matches(
         &marker,
         "/.cache/cargo/manifest-home",

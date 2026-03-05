@@ -6,7 +6,7 @@ fn run_manifest_task_builtin_watch_help_renders_topic() {
     write_empty_manifest(&root);
 
     let out = run_builtin_ok(root, "watch", &["--help"]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "watch Help",

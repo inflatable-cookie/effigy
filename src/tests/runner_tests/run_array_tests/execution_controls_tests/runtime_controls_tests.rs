@@ -1,151 +1,144 @@
 use super::prelude::*;
 
-#[test]
-fn run_manifest_task_run_array_executes_ready_steps_in_parallel() {
-    let _guard = lock_test();
-    let root = temp_workspace("run-array-parallel-ready-steps");
-    let marker = root.join("parallel-ready.log");
-    let _env = EnvGuard::set_many(&[("EFFIGY_DAG_MAX_PARALLEL", Some("2".to_owned()))]);
-    write_validate_manifest(
-        &root,
-        &format!(
-            r#"[tasks.validate]
+fn setup_parallel_ready_steps(root: &Path, marker: &Path) {
+    write_validate_manifest_template(
+        root,
+        r#"[tasks.validate]
 run = [
-  {{ id = "seed", run = "echo seed > \"{}\"" }},
-  {{ id = "a", run = "sh -lc 'echo a-start >> \"{}\"; sleep 0.8; echo a-end >> \"{}\"'", depends_on = ["seed"] }},
-  {{ id = "b", run = "sh -lc 'echo b-start >> \"{}\"; sleep 0.8; echo b-end >> \"{}\"'", depends_on = ["seed"] }}
+  { id = "seed", run = "echo seed > \"__MARKER__\"" },
+  { id = "a", run = "sh -lc 'echo a-start >> \"__MARKER__\"; sleep 0.8; echo a-end >> \"__MARKER__\"'", depends_on = ["seed"] },
+  { id = "b", run = "sh -lc 'echo b-start >> \"__MARKER__\"; sleep 0.8; echo b-end >> \"__MARKER__\"'", depends_on = ["seed"] }
 ]
 "#,
-            marker.display(),
-            marker.display(),
-            marker.display(),
-            marker.display(),
-            marker.display()
-        ),
-    );
-
-    let _ = run_validate_ok(&root, &[]);
-
-    let body = fs::read_to_string(marker).expect("read marker");
-    let lines: Vec<&str> = body.lines().collect();
-    assert!(
-        lines.contains(&"a-start")
-            && lines.contains(&"b-start")
-            && lines.contains(&"a-end")
-            && lines.contains(&"b-end"),
-        "expected start/end markers in log: {lines:?}"
-    );
-    let first_end_idx = lines
-        .iter()
-        .position(|line| *line == "a-end" || *line == "b-end")
-        .expect("expected end marker");
-    let starts_before_end = lines[..first_end_idx]
-        .iter()
-        .filter(|line| **line == "a-start" || **line == "b-start")
-        .count();
-    assert_eq!(
-        starts_before_end, 2,
-        "expected both ready steps to start before first completion, lines={lines:?}"
+        &[("__MARKER__", marker)],
     );
 }
 
-#[test]
-fn run_manifest_task_run_array_honors_parallel_cap() {
-    let _guard = lock_test();
-    let root = temp_workspace("run-array-parallel-cap");
-    let marker = root.join("parallel-cap.log");
-    let _env = EnvGuard::set_many(&[("EFFIGY_DAG_MAX_PARALLEL", Some("1".to_owned()))]);
-    write_validate_manifest(
-        &root,
-        &format!(
-            r#"[tasks.validate]
+fn setup_parallel_cap(root: &Path, marker: &Path) {
+    write_validate_manifest_template(
+        root,
+        r#"[tasks.validate]
 run = [
-  {{ id = "seed", run = "printf seed > \"{}\"" }},
-  {{ id = "a", run = "sh -lc 'sleep 0.8; printf a >> \"{}\"'", depends_on = ["seed"] }},
-  {{ id = "b", run = "sh -lc 'sleep 0.8; printf b >> \"{}\"'", depends_on = ["seed"] }}
+  { id = "seed", run = "printf seed > \"__MARKER__\"" },
+  { id = "a", run = "sh -lc 'sleep 0.8; printf a >> \"__MARKER__\"'", depends_on = ["seed"] },
+  { id = "b", run = "sh -lc 'sleep 0.8; printf b >> \"__MARKER__\"'", depends_on = ["seed"] }
 ]
 "#,
-            marker.display(),
-            marker.display(),
-            marker.display()
-        ),
-    );
-
-    let start = Instant::now();
-    let _ = run_validate_ok(&root, &[]);
-    let elapsed = start.elapsed();
-
-    let body = fs::read_to_string(marker).expect("read marker");
-    assert!(body.contains('a'));
-    assert!(body.contains('b'));
-    assert!(
-        elapsed >= Duration::from_millis(1400),
-        "expected capped schedule, elapsed={elapsed:?}"
+        &[("__MARKER__", marker)],
     );
 }
 
-#[test]
-fn run_manifest_task_run_array_retries_failing_step() {
-    let root = temp_workspace("run-array-retry-step");
+fn setup_retry_step(root: &Path, out_file: &Path) {
     let marker = root.join("retry.marker");
-    let out_file = root.join("retry.out");
-    write_validate_manifest(
-        &root,
-        &format!(
-            r#"[tasks.validate]
+    write_validate_manifest_template(
+        root,
+        r#"[tasks.validate]
 run = [
-  {{ id = "flaky", run = "sh -lc 'if [ -f \"{}\" ]; then printf ok > \"{}\"; exit 0; else touch \"{}\"; exit 7; fi'", retry = 1, retry_delay_ms = 10 }}
+  { id = "flaky", run = "sh -lc 'if [ -f \"__RETRY_MARKER__\" ]; then printf ok > \"__OUT_FILE__\"; exit 0; else touch \"__RETRY_MARKER__\"; exit 7; fi'", retry = 1, retry_delay_ms = 10 }
 ]
 "#,
-            marker.display(),
-            out_file.display(),
-            marker.display()
-        ),
+        &[("__RETRY_MARKER__", &marker), ("__OUT_FILE__", out_file)],
     );
-
-    assert_validate_ok_empty(&root, &[]);
-    let body = fs::read_to_string(out_file).expect("read retry output");
-    assert_eq!(body, "ok");
 }
 
-#[test]
-fn run_manifest_task_run_array_enforces_timeout_ms() {
-    let root = temp_workspace("run-array-timeout-step");
+fn setup_timeout_step(root: &Path) {
     write_validate_manifest(
-        &root,
+        root,
         r#"[tasks.validate]
 run = [
   { id = "slow", run = "sleep 1", timeout_ms = 100 }
 ]
 "#,
     );
+}
 
-    let err = run_validate_err(&root, &[]);
-    assert_task_command_failure_code(err, Some(Some(124)));
+fn setup_fail_fast_false(root: &Path, marker: &Path) {
+    write_validate_manifest_template(
+        root,
+        r#"[tasks.validate]
+run = [
+  { id = "seed", run = "printf seed > \"__MARKER__\"" },
+  { id = "bad", run = "sh -lc 'sleep 0.1; exit 9'", depends_on = ["seed"], fail_fast = false },
+  { id = "good", run = "printf good >> \"__MARKER__\"", depends_on = ["seed"] }
+]
+"#,
+        &[("__MARKER__", marker)],
+    );
+}
+
+fn setup_timeout_step_case(root: &Path, _marker: Option<&Path>) {
+    setup_timeout_step(root);
+}
+
+fn setup_fail_fast_false_case(root: &Path, marker: Option<&Path>) {
+    setup_fail_fast_false(root, marker.expect("fail-fast marker"));
 }
 
 #[test]
-fn run_manifest_task_run_array_fail_fast_false_allows_other_ready_steps() {
+fn run_manifest_task_run_array_runtime_flow_contract_table() {
     let _guard = lock_test();
-    let root = temp_workspace("run-array-fail-fast-false");
-    let marker = root.join("fail-fast-false.out");
-    write_validate_manifest(
-        &root,
-        &format!(
-            r#"[tasks.validate]
-run = [
-  {{ id = "seed", run = "printf seed > \"{}\"" }},
-  {{ id = "bad", run = "sh -lc 'sleep 0.1; exit 9'", depends_on = ["seed"], fail_fast = false }},
-  {{ id = "good", run = "printf good >> \"{}\"", depends_on = ["seed"] }}
-]
-"#,
-            marker.display(),
-            marker.display()
-        ),
-    );
+    let cases = [
+        RunArrayRuntimeFlowCase {
+            workspace: "run-array-parallel-ready-steps",
+            args: &[],
+            marker_rel: "parallel-ready.log",
+            dag_max_parallel: Some(2),
+            expected_marker: &["a-start", "a-end", "b-start", "b-end"],
+            start_markers: &["a-start", "b-start"],
+            end_markers: &["a-end", "b-end"],
+            min_elapsed_ms: None,
+            setup: setup_parallel_ready_steps,
+        },
+        RunArrayRuntimeFlowCase {
+            workspace: "run-array-parallel-cap",
+            args: &[],
+            marker_rel: "parallel-cap.log",
+            dag_max_parallel: Some(1),
+            expected_marker: &["a", "b"],
+            start_markers: &[],
+            end_markers: &[],
+            min_elapsed_ms: Some(1400),
+            setup: setup_parallel_cap,
+        },
+    ];
 
-    let err = run_validate_err(&root, &[]);
-    assert_task_command_failure_code(err, None);
-    let body = fs::read_to_string(marker).expect("read marker");
-    assert!(body.contains("good"));
+    assert_run_array_runtime_flow_case_table(&cases);
+}
+
+#[test]
+fn run_manifest_task_run_array_retries_failing_step() {
+    let cases = [RunArrayTaskOutputCase {
+        workspace: "run-array-retry-step",
+        task: "validate",
+        marker_rel: "retry.out",
+        expected: "ok",
+        setup: setup_retry_step,
+    }];
+
+    assert_run_array_task_output_case_table(&cases);
+}
+
+#[test]
+fn run_manifest_task_run_array_runtime_error_contract_table() {
+    let _guard = lock_test();
+    let cases = [
+        RunArrayRuntimeErrorCase {
+            workspace: "run-array-timeout-step",
+            args: &[],
+            marker_rel: None,
+            expected_marker: &[],
+            expected_code: Some(Some(124)),
+            setup: setup_timeout_step_case,
+        },
+        RunArrayRuntimeErrorCase {
+            workspace: "run-array-fail-fast-false",
+            args: &[],
+            marker_rel: Some("fail-fast-false.out"),
+            expected_marker: &["good"],
+            expected_code: None,
+            setup: setup_fail_fast_false_case,
+        },
+    ];
+
+    assert_run_array_runtime_error_case_table(&cases);
 }

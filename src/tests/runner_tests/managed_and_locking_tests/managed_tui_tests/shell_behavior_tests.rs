@@ -1,30 +1,19 @@
 use super::super::prelude::*;
 
-#[test]
-fn run_manifest_task_managed_tui_appends_shell_process_when_enabled() {
-    let _guard = lock_test();
-    let root = temp_workspace("managed-shell-enabled");
-    let _env = managed_tui_env();
+fn setup_shell_enabled(root: &Path) {
     write_root_manifest(
-        &root,
+        root,
         r#"[tasks.dev]
 mode = "tui"
 shell = true
 concurrent = [{ name = "api", run = "printf api" }]
 "#,
     );
-
-    let out = run_dev(&root, &[]).expect("managed plan should include shell process");
-    assert_contains_all(&out, &["shell", "exec ${SHELL:-/bin/zsh} -i"]);
 }
 
-#[test]
-fn run_manifest_task_managed_tui_uses_global_shell_run_override() {
-    let _guard = lock_test();
-    let root = temp_workspace("managed-shell-global-override");
-    let _env = managed_tui_env();
+fn setup_shell_global_override(root: &Path) {
     write_root_manifest(
-        &root,
+        root,
         r#"[shell]
 run = "exec ${SHELL:-/bin/bash} -i"
 
@@ -34,7 +23,30 @@ shell = true
 concurrent = [{ name = "api", run = "printf api" }]
 "#,
     );
+}
 
-    let out = run_dev(&root, &[]).expect("managed plan should include configured shell process");
-    assert_contains_all(&out, &["shell", "exec ${SHELL:-/bin/bash} -i"]);
+#[test]
+fn run_manifest_task_managed_tui_shell_behavior_contract_table() {
+    let _guard = lock_test();
+    let _env = managed_tui_env();
+    let cases = [
+        ManagedOutputCase {
+            workspace: "managed-shell-enabled",
+            invocation: ManagedInvocation::Dev,
+            args: &[],
+            expected: &["shell", "exec ${SHELL:-/bin/zsh} -i"],
+            expected_absent: &[],
+            setup: setup_shell_enabled,
+        },
+        ManagedOutputCase {
+            workspace: "managed-shell-global-override",
+            invocation: ManagedInvocation::Dev,
+            args: &[],
+            expected: &["shell", "exec ${SHELL:-/bin/bash} -i"],
+            expected_absent: &[],
+            setup: setup_shell_global_override,
+        },
+    ];
+
+    assert_managed_output_case_table(&cases);
 }

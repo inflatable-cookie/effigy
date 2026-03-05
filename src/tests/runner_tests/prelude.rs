@@ -16,8 +16,17 @@ pub(super) use std::time::{Duration, Instant};
 
 #[path = "prelude/case_tables.rs"]
 mod case_tables;
+#[path = "prelude/error_assertions.rs"]
+mod error_assertions;
 #[path = "prelude/fixtures.rs"]
 mod fixtures;
+#[path = "prelude/json_assertions.rs"]
+mod json_assertions;
+#[path = "prelude/output_assertions.rs"]
+mod output_assertions;
 
 pub(super) use case_tables::*;
+pub(super) use error_assertions::*;
 pub(super) use fixtures::*;
+pub(super) use json_assertions::*;
+pub(super) use output_assertions::*;

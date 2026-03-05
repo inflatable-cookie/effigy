@@ -46,7 +46,7 @@ fn run_manifest_task_relative_prefix_prefers_alias_collision_over_path_resolutio
 
     let out = run_builtin_ok(dairy, "../froyo/validate", &["--verbose-root"]);
 
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "catalog-alias: ../froyo",
@@ -65,7 +65,7 @@ fn run_manifest_task_relative_prefix_supports_multi_parent_traversal() {
 
     let out = run_builtin_ok(app, "../../../shared/lint", &["--verbose-root"]);
 
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "catalog-alias: shared",

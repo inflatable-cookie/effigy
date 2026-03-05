@@ -6,7 +6,7 @@ fn run_manifest_task_builtin_config_prints_reference() {
     write_root_manifest(&root, "");
 
     let out = run_builtin_ok(root, "config", &[]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "effigy.toml Reference",

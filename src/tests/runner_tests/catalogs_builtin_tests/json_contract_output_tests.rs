@@ -7,14 +7,12 @@ fn run_manifest_task_builtin_catalogs_json_renders_probe_payload() {
 
     let out = run_catalogs_ok(root, &["--json", "--resolve", "farmyard/api"]);
 
-    let parsed = parse_json_output(&out);
-    assert_eq!(parsed["schema"], "effigy.tasks.v1");
-    assert_eq!(parsed["schema_version"], 1);
-    assert!(parsed["catalogs"].is_array());
-    assert_eq!(parsed["resolve"]["status"], "ok");
-    assert_eq!(parsed["resolve"]["catalog"], "farmyard");
-    assert_eq!(parsed["resolve"]["task"], "api");
-    assert!(parsed["precedence"].is_array());
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks.v1", 1);
+    assert_json_array_field(&parsed, "catalogs");
+    assert_json_string_field_eq(&parsed["resolve"], "status", "ok");
+    assert_json_string_field_eq(&parsed["resolve"], "catalog", "farmyard");
+    assert_json_string_field_eq(&parsed["resolve"], "task", "api");
+    assert_json_array_field(&parsed, "precedence");
 }
 
 #[test]
@@ -24,11 +22,11 @@ fn run_manifest_task_builtin_catalogs_json_resolve_supports_managed_profile_invo
 
     let out = run_catalogs_ok(root, &["--json", "--resolve", "dev front"]);
 
-    let parsed = parse_json_output(&out);
-    assert_eq!(parsed["resolve"]["selector"], "dev front");
-    assert_eq!(parsed["resolve"]["status"], "ok");
-    assert_eq!(parsed["resolve"]["catalog"], "root");
-    assert_eq!(parsed["resolve"]["task"], "dev");
+    let parsed = parse_json_output_with_schema(&out, "effigy.tasks.v1");
+    assert_json_string_field_eq(&parsed["resolve"], "selector", "dev front");
+    assert_json_string_field_eq(&parsed["resolve"], "status", "ok");
+    assert_json_string_field_eq(&parsed["resolve"], "catalog", "root");
+    assert_json_string_field_eq(&parsed["resolve"], "task", "dev");
     let evidence = parsed["resolve"]["evidence"]
         .as_array()
         .expect("resolve evidence array")
@@ -47,10 +45,8 @@ fn run_manifest_task_builtin_catalogs_json_reports_resolution_errors() {
 
     let out = run_catalogs_ok(root, &["--json", "--resolve", "farmyard/api"]);
 
-    let parsed = parse_json_output(&out);
-    assert_eq!(parsed["schema"], "effigy.tasks.v1");
-    assert_eq!(parsed["schema_version"], 1);
-    assert_eq!(parsed["resolve"]["status"], "error");
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks.v1", 1);
+    assert_json_string_field_eq(&parsed["resolve"], "status", "error");
     assert_eq!(parsed["resolve"]["catalog"], serde_json::Value::Null);
     assert!(parsed["resolve"]["error"]
         .as_str()
@@ -67,7 +63,7 @@ fn run_manifest_task_builtin_catalogs_json_compact_output_has_no_newlines() {
         &["--json", "--pretty", "false", "--resolve", "farmyard/api"],
     );
 
-    assert!(!out.contains('\n'));
-    let parsed = parse_json_output(&out);
-    assert_eq!(parsed["resolve"]["status"], "ok");
+    assert_output_excludes_all(&out, &["\n"]);
+    let parsed = parse_json_output_with_schema(&out, "effigy.tasks.v1");
+    assert_json_string_field_eq(&parsed["resolve"], "status", "ok");
 }

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use super::{ManifestManagedRunStep, RunnerError};
 
@@ -13,7 +13,6 @@ pub(super) fn build_step_index(
     steps: &[ManifestManagedRunStep],
 ) -> Result<StepIndex, RunnerError> {
     let mut has_explicit_dependencies = false;
-    let mut declared_ids = HashSet::<String>::new();
     let mut id_to_index = BTreeMap::<String, usize>::new();
     let mut display_names = Vec::<String>::with_capacity(steps.len());
 
@@ -23,27 +22,17 @@ pub(super) fn build_step_index(
                 display_names.push(default_step_name(index));
             }
             ManifestManagedRunStep::Step(table) => {
-                if let Some(raw_id) = table.id.as_deref() {
-                    let id = raw_id.trim();
-                    if id.is_empty() {
-                        return Err(RunnerError::task_invocation(format!(
-                            "task `{task_name}` run step {} has an empty `id`",
-                            index + 1
-                        )));
-                    }
-                    if !declared_ids.insert(id.to_owned()) {
+                let mut display_name = default_step_name(index);
+                if let Some(id) = normalize_step_id(task_name, index, table.id.as_deref())? {
+                    if id_to_index.insert(id.clone(), index).is_some() {
                         return Err(RunnerError::task_invocation(format!(
                             "task `{task_name}` run sequence has duplicate step id `{id}`"
                         )));
                     }
-                    id_to_index.insert(id.to_owned(), index);
-                    display_names.push(id.to_owned());
-                } else {
-                    display_names.push(default_step_name(index));
+                    display_name = id;
                 }
-                if !table.depends_on.is_empty() {
-                    has_explicit_dependencies = true;
-                }
+                display_names.push(display_name);
+                has_explicit_dependencies |= !table.depends_on.is_empty();
             }
         }
     }
@@ -57,4 +46,22 @@ pub(super) fn build_step_index(
 
 fn default_step_name(index: usize) -> String {
     format!("step-{}", index + 1)
+}
+
+fn normalize_step_id(
+    task_name: &str,
+    index: usize,
+    raw_id: Option<&str>,
+) -> Result<Option<String>, RunnerError> {
+    let Some(raw_id) = raw_id else {
+        return Ok(None);
+    };
+    let id = raw_id.trim();
+    if id.is_empty() {
+        return Err(RunnerError::task_invocation(format!(
+            "task `{task_name}` run step {} has an empty `id`",
+            index + 1
+        )));
+    }
+    Ok(Some(id.to_owned()))
 }

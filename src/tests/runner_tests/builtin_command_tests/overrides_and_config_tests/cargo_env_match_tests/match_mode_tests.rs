@@ -56,7 +56,7 @@ integration = "env RUST_BACKTRACE=1 cargo nextest run --workspace"
     let _env = setup_path_with_probes(&root, &[("cargo", CARGO_ENV_PROBE_SCRIPT)], &marker, true);
 
     let out = run_builtin_ok(root, "test", &[]);
-    assert_contains_all(&out, &["Test Results", "root"]);
+    assert_output_contains_all(&out, &["Test Results", "root"]);
     assert_cargo_env_absent(&marker);
 }
 
@@ -80,7 +80,7 @@ integration = "sh -lc 'cargo nextest run --workspace'"
     let _env = setup_path_with_probes(&root, &[("cargo", CARGO_ENV_PROBE_SCRIPT)], &marker, true);
 
     let out = run_builtin_ok(root, "test", &[]);
-    assert_contains_all(&out, &["Test Results", "root"]);
+    assert_output_contains_all(&out, &["Test Results", "root"]);
     assert_cargo_env_absent(&marker);
 }
 
@@ -103,6 +103,6 @@ integration = "ct nextest run --workspace"
     let _env = setup_path_with_probes(&root, &[("ct", CARGO_ENV_PROBE_SCRIPT)], &marker, true);
 
     let out = run_builtin_ok(root, "test", &[]);
-    assert_contains_all(&out, &["Test Results", "root"]);
+    assert_output_contains_all(&out, &["Test Results", "root"]);
     assert_cargo_env_absent(&marker);
 }

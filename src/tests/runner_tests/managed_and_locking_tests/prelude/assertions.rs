@@ -1,5 +1,11 @@
 use super::*;
 
+fn run_dev_with_manifest_error(workspace: &str, manifest: &str, context: &str) -> RunnerError {
+    let root = temp_workspace(workspace);
+    write_root_manifest(&root, manifest);
+    run_dev_with_repo(&root, &[]).expect_err(context)
+}
+
 pub(crate) fn assert_managed_process_invalid_definition(
     err: RunnerError,
     expected_task: &str,
@@ -20,6 +26,22 @@ pub(crate) fn assert_managed_process_invalid_definition(
         }
         other => panic!("unexpected error: {other}"),
     }
+}
+
+pub(crate) fn assert_managed_invalid_definition_case_table(cases: &[ManagedInvalidDefinitionCase]) {
+    assert_case_table(cases.iter(), |case| {
+        let err = run_dev_with_manifest_error(
+            case.workspace,
+            case.manifest,
+            "invalid managed definition should fail",
+        );
+        assert_managed_process_invalid_definition(
+            err,
+            case.expected_task,
+            case.expected_process,
+            case.expected_detail_substring,
+        );
+    });
 }
 
 pub(crate) fn assert_managed_profile_not_found(
@@ -46,6 +68,23 @@ pub(crate) fn assert_managed_profile_not_found(
         }
         other => panic!("unexpected error: {other}"),
     }
+}
+
+pub(crate) fn assert_managed_task_ref_invalid_case_table(cases: &[ManagedTaskRefInvalidCase]) {
+    assert_case_table(cases.iter(), |case| {
+        let err = run_dev_with_manifest_error(
+            case.workspace,
+            case.manifest,
+            "invalid process task ref should fail",
+        );
+        assert_managed_task_reference_invalid(
+            err,
+            "dev",
+            "tests",
+            case.expected_reference,
+            case.expected_detail,
+        );
+    });
 }
 
 pub(crate) fn assert_managed_task_reference_invalid(
@@ -102,13 +141,5 @@ pub(crate) fn assert_lock_conflict(
     expected_scope: &str,
     expected_remediation: &str,
 ) {
-    match err {
-        RunnerError::TaskLockConflict {
-            scope, remediation, ..
-        } => {
-            assert_eq!(scope, expected_scope);
-            assert!(remediation.contains(expected_remediation));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_task_lock_conflict(err, expected_scope, expected_remediation);
 }

@@ -1,10 +1,5 @@
 use super::super::super::prelude::*;
 
-fn assert_plan_schema_v1(parsed: &serde_json::Value) {
-    assert_eq!(parsed["schema"], "effigy.test.plan.v1");
-    assert_eq!(parsed["schema_version"], 1);
-}
-
 #[test]
 fn run_manifest_task_builtin_test_plan_multi_suite_recovery_outputs_hints() {
     let cases = [
@@ -40,10 +35,9 @@ fn run_manifest_task_builtin_test_plan_json_recovery_has_versioned_schema() {
     setup_multi_suite_repo(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan", "--json", "user-service"]);
-    let parsed = parse_json_output(&out);
-    assert_plan_schema_v1(&parsed);
-    assert_eq!(parsed["runtime"], "plan-recovery");
-    assert!(parsed["recovery"].is_object());
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.test.plan.v1", 1);
+    assert_json_string_field_eq(&parsed, "runtime", "plan-recovery");
+    assert_json_object_field(&parsed, "recovery");
 }
 
 #[test]
@@ -56,8 +50,7 @@ fn run_manifest_task_builtin_test_plan_json_recovery_preserves_message_and_suite
         "test",
         &["--plan", "--json", "viteest", "user-service"],
     );
-    let parsed = parse_json_output(&out);
-    assert_plan_schema_v1(&parsed);
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.test.plan.v1", 1);
     let recovery_message = parsed["recovery"]["message"]
         .as_str()
         .expect("recovery.message string");

@@ -1,17 +1,12 @@
 use super::super::super::prelude::*;
 
-fn assert_plan_schema_v1(parsed: &serde_json::Value) {
-    assert_eq!(parsed["schema"], "effigy.test.plan.v1");
-    assert_eq!(parsed["schema_version"], 1);
-}
-
 #[test]
 fn run_manifest_task_builtin_test_plan_renders_detection_summary() {
     let root = temp_workspace("builtin-test-plan");
     write_package_json_with_vitest_dev_dependency(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan"]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "Test Plan",
@@ -35,10 +30,9 @@ fn run_manifest_task_builtin_test_plan_json_has_versioned_schema() {
     write_package_json_with_vitest_dev_dependency(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan", "--json"]);
-    let parsed = parse_json_output(&out);
-    assert_plan_schema_v1(&parsed);
-    assert!(parsed["targets"].is_array());
-    assert_eq!(parsed["targets"][0]["cargo_env_match"], "prefix-aware");
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.test.plan.v1", 1);
+    assert_json_array_field(&parsed, "targets");
+    assert_json_string_field_eq(&parsed["targets"][0], "cargo_env_match", "prefix-aware");
     assert_eq!(parsed["recovery"], serde_json::Value::Null);
 }
 
@@ -48,7 +42,7 @@ fn run_manifest_task_builtin_test_plan_marks_configured_suite_source() {
     write_test_suites_manifest(&root, &[("unit", "pnpm exec vitest run")]);
 
     let out = run_builtin_ok(root, "test", &["--plan"]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "Test Plan",
@@ -87,7 +81,7 @@ alias = "dairy"
     write_package_json_with_vitest_dev_dependency(&dairy);
 
     let out = run_builtin_ok(root, "test", &["--plan"]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "Target Summary",

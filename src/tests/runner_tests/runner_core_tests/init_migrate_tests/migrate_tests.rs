@@ -9,7 +9,7 @@ fn run_manifest_task_builtin_migrate_preview_reports_candidates_without_writing(
     );
 
     let out = run_builtin_ok(root.to_path_buf(), "migrate", &[]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "Migrate Preview",
@@ -19,10 +19,7 @@ fn run_manifest_task_builtin_migrate_preview_reports_candidates_without_writing(
             "No files were modified.",
         ],
     );
-    assert!(
-        !root.join("effigy.toml").exists(),
-        "preview mode should not write manifest"
-    );
+    assert_path_missing(&root.join("effigy.toml"), "migrate preview manifest");
 }
 
 #[test]
@@ -34,11 +31,15 @@ fn run_manifest_task_builtin_migrate_apply_writes_ready_imports() {
     );
 
     let out = run_builtin_ok(root.to_path_buf(), "migrate", &["--apply"]);
-    assert_contains_all(&out, &["mode: apply", "Applied: wrote"]);
-    let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read migrated manifest");
-    assert!(manifest.contains("[tasks]"));
-    assert!(manifest.contains("build = \"npm run compile\""));
-    assert!(manifest.contains("test = \"vitest run\""));
+    assert_output_contains_all(&out, &["mode: apply", "Applied: wrote"]);
+    assert_file_text_contains_all(
+        &root.join("effigy.toml"),
+        &[
+            "[tasks]",
+            "build = \"npm run compile\"",
+            "test = \"vitest run\"",
+        ],
+    );
 }
 
 #[test]
@@ -49,8 +50,7 @@ fn run_manifest_task_builtin_migrate_preserves_package_source_file() {
 
     let _ = run_builtin_ok(root.to_path_buf(), "migrate", &["--apply"]);
 
-    let package_after = fs::read_to_string(root.join("package.json")).expect("read package");
-    assert_eq!(package_after, source, "migration must be non-destructive");
+    assert_file_text_equals(&root.join("package.json"), source);
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn run_manifest_task_builtin_migrate_conflicts_require_manual_remediation() {
     write_package_json_scripts(&root, &[("build", "npm run compile"), ("lint", "eslint .")]);
 
     let out = run_builtin_ok(root.to_path_buf(), "migrate", &["--apply"]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "Manual Remediation",
@@ -68,9 +68,10 @@ fn run_manifest_task_builtin_migrate_conflicts_require_manual_remediation() {
             "+ tasks.lint = \"eslint .\"",
         ],
     );
-    let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read migrated manifest");
-    assert!(manifest.contains("build = \"printf old\""));
-    assert!(manifest.contains("lint = \"eslint .\""));
+    assert_file_text_contains_all(
+        &root.join("effigy.toml"),
+        &["build = \"printf old\"", "lint = \"eslint .\""],
+    );
 }
 
 #[test]
@@ -83,7 +84,7 @@ fn run_manifest_task_builtin_migrate_json_reports_schema_and_conflicts() {
     );
 
     let out = run_builtin_ok(root, "migrate", &["--json"]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "\"schema\": \"effigy.migrate.v1\"",

@@ -1,41 +1,47 @@
-#[path = "json_output/catalog_payload.rs"]
-mod catalog_payload;
-#[path = "json_output/filtered_payload.rs"]
-mod filtered_payload;
+#[path = "json_output/assembly.rs"]
+mod assembly;
+#[path = "json_output/payload.rs"]
+mod payload;
 #[path = "json_output/row_collector.rs"]
 mod row_collector;
 #[path = "json_output/rows.rs"]
 mod rows;
 
-use super::super::{render, LoadedCatalog, RunnerError};
-use super::render_context::ListingRenderContext;
-use catalog_payload::build_catalog_payload;
-use filtered_payload::build_filtered_tasks_payload;
+use super::super::{render, RunnerError};
+use super::render_context::ListingRenderRequest;
+use super::ListingCatalogSnapshot;
+use assembly::{build_tasks_payload, JsonPayloadSelection};
+use payload::JsonPayloadContext;
 
 pub(super) fn render_tasks_json(
-    context: &ListingRenderContext<'_>,
-    catalogs: &[LoadedCatalog],
-    ordered_catalogs: &[&LoadedCatalog],
-    catalog_diagnostics: &[serde_json::Value],
-    precedence: &[String],
+    request: ListingRenderRequest<'_>,
+    snapshot: &ListingCatalogSnapshot<'_>,
 ) -> Result<String, RunnerError> {
-    if let Some(filter) = context.filter() {
-        let payload = build_filtered_tasks_payload(
-            catalogs,
-            catalog_diagnostics,
-            precedence,
-            context.resolve_probe(),
-            filter,
-        )?;
-        return render::encode_json(&payload, context.pretty_json());
-    }
-
-    let payload = build_catalog_payload(
-        catalogs,
-        ordered_catalogs,
-        catalog_diagnostics,
-        precedence,
-        context.resolve_probe(),
+    let json_context = JsonPayloadContext::new(
+        snapshot.catalogs().len(),
+        snapshot.catalog_diagnostics(),
+        snapshot.precedence(),
+        request.resolve_probe(),
     );
-    render::encode_json(&payload, context.pretty_json())
+
+    let payload = request.dispatch_selection(
+        |filter| {
+            build_tasks_payload(
+                &json_context,
+                JsonPayloadSelection::Filtered {
+                    catalogs: snapshot.catalogs(),
+                    filter,
+                },
+            )
+        },
+        || {
+            build_tasks_payload(
+                &json_context,
+                JsonPayloadSelection::Catalog {
+                    ordered_catalogs: snapshot.ordered_catalogs(),
+                },
+            )
+        },
+    )?;
+    render::encode_json(&payload, request.pretty_json())
 }

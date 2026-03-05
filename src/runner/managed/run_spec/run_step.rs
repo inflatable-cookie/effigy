@@ -16,20 +16,9 @@ pub(super) fn resolve_task_run_step(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
-                references::resolve_task_reference_step(
-                    context.task_name,
-                    task_ref,
-                    context.args_rendered,
-                    context.catalogs,
-                    context.task_scope_cwd,
-                    context.depth,
-                )
+                resolve_selected_run_or_task(RunOrTaskRef::Task(task_ref), context)
             } else {
-                Ok(render_command_template(
-                    command,
-                    context.repo_root,
-                    context.args_rendered,
-                ))
+                resolve_selected_run_or_task(RunOrTaskRef::Run(command), context)
             }
         }
         ManifestManagedRunStep::Step(step) => resolve_table_task_run_step(step, context),
@@ -40,7 +29,7 @@ fn resolve_table_task_run_step(
     step: &ManifestManagedRunStepTable,
     context: RunSpecContext<'_>,
 ) -> Result<String, RunnerError> {
-    match select_run_or_task(
+    let selection = select_run_or_task(
         step.run.as_deref(),
         step.task.as_deref(),
         step.env.is_some() || step.env_file.is_some(),
@@ -56,7 +45,21 @@ fn resolve_table_task_run_step(
                 context.task_name
             ))
         },
-    )? {
+    )?;
+    resolve_selected_run_or_task(selection, context)
+}
+
+enum RunOrTaskRef<'a> {
+    Run(&'a str),
+    Task(&'a str),
+    Noop,
+}
+
+fn resolve_selected_run_or_task(
+    selection: RunOrTaskRef<'_>,
+    context: RunSpecContext<'_>,
+) -> Result<String, RunnerError> {
+    match selection {
         RunOrTaskRef::Run(run) => Ok(render_command_template(
             run,
             context.repo_root,
@@ -72,12 +75,6 @@ fn resolve_table_task_run_step(
         ),
         RunOrTaskRef::Noop => Ok(":".to_owned()),
     }
-}
-
-enum RunOrTaskRef<'a> {
-    Run(&'a str),
-    Task(&'a str),
-    Noop,
 }
 
 fn select_run_or_task<'a, FBoth, FNone>(

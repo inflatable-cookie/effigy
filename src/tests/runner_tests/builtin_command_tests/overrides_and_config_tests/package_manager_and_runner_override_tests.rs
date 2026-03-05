@@ -7,7 +7,7 @@ fn run_manifest_task_builtin_test_plan_respects_configured_package_manager() {
     write_package_json_with_vitest_dev_dependency(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan"]);
-    assert_contains_all(&out, &["pnpm exec vitest run", "package_manager.js=pnpm"]);
+    assert_output_contains_all(&out, &["pnpm exec vitest run", "package_manager.js=pnpm"]);
 }
 
 #[test]
@@ -37,9 +37,8 @@ fn run_manifest_task_builtin_test_exec_uses_configured_package_manager() {
     ]);
 
     let out = run_builtin_ok(root, "test", &["vitest"]);
-    assert_contains_all(&out, &["Test Results"]);
-    let args = fs::read_to_string(args_log).expect("read bun args");
-    assert_eq!(args, "x\nvitest\nrun\n");
+    assert_output_contains_all(&out, &["Test Results"]);
+    assert_file_text_equals(&args_log, "x\nvitest\nrun\n");
 }
 
 #[test]
@@ -54,7 +53,7 @@ vitest = "pnpm exec vitest run --config vitest.config.ts"
     write_package_json_with_vitest_dev_dependency(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan", "vitest"]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "pnpm exec vitest run --config vitest.config.ts",
@@ -78,7 +77,7 @@ vitest = "npx vitest run --reporter=dot"
     write_package_json_with_vitest_dev_dependency(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan", "vitest"]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "npx vitest run --reporter=dot",
@@ -94,5 +93,5 @@ fn run_manifest_task_builtin_test_plan_has_blank_line_between_sections() {
     write_package_json_with_vitest_dev_dependency(&root);
 
     let out = run_builtin_ok(root, "test", &["--plan"]);
-    assert_contains_all(&out, &["\n\nTarget Summary\n", "\n\nTarget: root\n"]);
+    assert_output_contains_all(&out, &["\n\nTarget Summary\n", "\n\nTarget: root\n"]);
 }

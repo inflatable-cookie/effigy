@@ -8,10 +8,9 @@ fn run_manifest_task_builtin_test_executes_local_vitest() {
     install_local_vitest_marker(&root, &marker);
 
     let out = run_builtin_ok(root.to_path_buf(), "test", &["--run"]);
-    assert_contains_all(&out, &["Test Results", "targets:", "root"]);
-    assert!(!out.contains("runner:vitest"));
-    assert!(!out.contains("command:"));
-    assert!(marker.exists(), "vitest stub should be invoked");
+    assert_output_contains_all(&out, &["Test Results", "targets:", "root"]);
+    assert_output_excludes_all(&out, &["runner:vitest", "command:"]);
+    assert_path_exists(&marker, "vitest stub marker");
 }
 
 #[test]
@@ -31,8 +30,8 @@ fn run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo() {
     install_local_vitest_marker(&root, &vitest_marker);
 
     let out = run_builtin_ok(root.to_path_buf(), "test", &[]);
-    assert_contains_all(&out, &["Test Results", "root/vitest", "root/cargo-"]);
-    assert!(vitest_marker.exists(), "vitest suite should run");
+    assert_output_contains_all(&out, &["Test Results", "root/vitest", "root/cargo-"]);
+    assert_path_exists(&vitest_marker, "vitest suite marker");
 }
 
 #[test]
@@ -45,11 +44,10 @@ fn run_manifest_task_builtin_test_fans_out_across_catalog_roots() {
     install_local_vitest_marker(&dairy, &dairy_marker);
 
     let out = run_builtin_ok(root, "test", &[]);
-    assert_contains_all(&out, &["Test Results", "targets:", "dairy", "farmyard"]);
-    assert!(!out.contains("runner:vitest"));
-    assert!(!out.contains("command:"));
-    assert!(farmyard_marker.exists(), "farmyard vitest should run");
-    assert!(dairy_marker.exists(), "dairy vitest should run");
+    assert_output_contains_all(&out, &["Test Results", "targets:", "dairy", "farmyard"]);
+    assert_output_excludes_all(&out, &["runner:vitest", "command:"]);
+    assert_path_exists(&farmyard_marker, "farmyard vitest marker");
+    assert_path_exists(&dairy_marker, "dairy vitest marker");
 }
 
 #[test]
@@ -62,8 +60,8 @@ fn run_manifest_task_prefixed_builtin_test_targets_catalog_root_only() {
     install_local_vitest_marker(&dairy, &dairy_marker);
 
     let out = run_builtin_ok(root, "farmyard/test", &[]);
-    assert_contains_all(&out, &["Test Results", "farmyard"]);
-    assert!(!out.contains("dairy"));
-    assert!(farmyard_marker.exists(), "farmyard vitest should run");
-    assert!(!dairy_marker.exists(), "dairy vitest should not run");
+    assert_output_contains_all(&out, &["Test Results", "farmyard"]);
+    assert_output_excludes_all(&out, &["dairy"]);
+    assert_path_exists(&farmyard_marker, "farmyard vitest marker");
+    assert_path_missing(&dairy_marker, "dairy vitest marker");
 }

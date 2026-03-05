@@ -3,10 +3,12 @@ use std::path::Path;
 use crate::ui::theme::Theme;
 use crate::ui::{NoticeLevel, PlainRenderer, Renderer};
 
-use super::super::super::tasks_view::{relative_display_path, render_resolution_probe_block};
-use super::super::super::{LoadedCatalog, ManifestTask, RunnerError};
+use super::super::super::tasks_view::render_resolution_probe_block;
+use super::super::super::{LoadedCatalog, RunnerError};
 use super::super::filtering::evaluate_task_filter;
-use super::rows::{render_builtin_task_rows, render_task_with_profiles};
+use super::layout::render_followup_sections;
+use super::rows::render_catalog_match_rows;
+use super::sections::render_builtin_rows_section;
 
 pub(super) fn render_filtered_tasks_text(
     renderer: &mut PlainRenderer<Vec<u8>>,
@@ -20,72 +22,57 @@ pub(super) fn render_filtered_tasks_text(
     let evaluation = evaluate_task_filter(catalogs, filter)?;
     renderer.section(&format!("Task Matches: {filter}"))?;
 
-    if evaluation.catalog_matches.is_empty() && evaluation.builtin_matches.is_empty() {
+    if !evaluation.has_matches() {
         renderer.notice(NoticeLevel::Warning, "no matches")?;
         return Ok(());
     }
 
-    render_filtered_catalog_task_matches(
+    let _ = render_catalog_match_rows(
         renderer,
         color_enabled,
         theme,
         resolved_root,
-        evaluation.catalog_matches.as_slice(),
-        &evaluation.task_name,
+        evaluation.task_name(),
+        evaluation.catalog_matches(),
     )?;
-
-    if !evaluation.builtin_matches.is_empty() || resolve_probe.is_some() {
-        renderer.text("")?;
-    }
-    if !evaluation.builtin_matches.is_empty() {
-        renderer.section("Built-in Task Matches")?;
-        render_builtin_task_rows(
-            renderer,
-            color_enabled,
-            theme,
-            evaluation.builtin_matches.as_slice(),
-        )?;
-        render_builtin_test_fallback_notice(renderer, evaluation.notes.as_slice())?;
-        if resolve_probe.is_some() {
-            renderer.text("")?;
-        }
-    }
-
-    if let Some(probe) = resolve_probe {
-        render_resolution_probe_block(renderer, probe, color_enabled, false)?;
-    }
+    render_filtered_followup_sections(
+        renderer,
+        color_enabled,
+        theme,
+        evaluation.builtin_matches(),
+        evaluation.notes(),
+        resolve_probe,
+    )?;
     Ok(())
 }
 
-fn render_filtered_catalog_task_matches(
+fn render_filtered_followup_sections(
     renderer: &mut PlainRenderer<Vec<u8>>,
     color_enabled: bool,
     theme: &Theme,
-    resolved_root: &Path,
-    matches: &[(&LoadedCatalog, &ManifestTask)],
-    task_name: &str,
-) -> Result<(), RunnerError> {
-    for (catalog, task) in matches {
-        let manifest = relative_display_path(resolved_root, &catalog.manifest_path);
-        render_task_with_profiles(
-            renderer,
-            color_enabled,
-            theme,
-            &manifest,
-            catalog,
-            task_name,
-            task,
-        )?;
-    }
-    Ok(())
-}
-
-fn render_builtin_test_fallback_notice(
-    renderer: &mut PlainRenderer<Vec<u8>>,
+    builtin_matches: &[(&str, &str)],
     notes: &[String],
+    resolve_probe: &Option<serde_json::Value>,
 ) -> Result<(), RunnerError> {
-    for note in notes {
-        renderer.notice(NoticeLevel::Info, note)?;
-    }
-    Ok(())
+    render_followup_sections(
+        renderer,
+        !builtin_matches.is_empty(),
+        |renderer| {
+            render_builtin_rows_section(
+                renderer,
+                color_enabled,
+                theme,
+                "Built-in Task Matches",
+                builtin_matches,
+                notes,
+            )
+        },
+        resolve_probe.is_some(),
+        |renderer| {
+            if let Some(probe) = resolve_probe {
+                render_resolution_probe_block(renderer, probe, color_enabled, false)?;
+            }
+            Ok(())
+        },
+    )
 }

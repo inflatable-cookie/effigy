@@ -16,12 +16,9 @@ unit = "sh -lc 'printf configured > \"{}\"'"
     install_local_vitest_marker(&root, &vitest_marker);
 
     let out = run_builtin_ok(root.to_path_buf(), "test", &["--verbose-results"]);
-    assert_contains_all(&out, &["Test Results", "runner:unit"]);
-    assert!(configured_marker.exists(), "configured suite should run");
-    assert!(
-        !vitest_marker.exists(),
-        "auto-detected vitest should not run"
-    );
+    assert_output_contains_all(&out, &["Test Results", "runner:unit"]);
+    assert_path_exists(&configured_marker, "configured suite marker");
+    assert_path_missing(&vitest_marker, "auto-detected vitest marker");
 }
 
 #[test]
@@ -57,12 +54,9 @@ integration = "sh -lc 'printf integration > \"{}\"'"
     write_root_manifest(&root, &manifest);
 
     let out = run_builtin_ok(root, "test", &["unit"]);
-    assert_contains_all(&out, &["Test Results"]);
-    assert!(unit_marker.exists(), "selected suite should run");
-    assert!(
-        !integration_marker.exists(),
-        "non-selected suite should not run"
-    );
+    assert_output_contains_all(&out, &["Test Results"]);
+    assert_path_exists(&unit_marker, "unit suite marker");
+    assert_path_missing(&integration_marker, "integration suite marker");
 }
 
 #[test]
@@ -104,9 +98,9 @@ fn run_manifest_task_builtin_test_supports_positional_suite_selector() {
     install_local_vitest_marker(&root, &vitest_marker);
 
     let out = run_builtin_ok(root.to_path_buf(), "test", &["vitest", "user-service"]);
-    assert_contains_all(&out, &["Test Results", "root/vitest"]);
-    assert!(!out.contains("root/cargo-"));
-    assert!(vitest_marker.exists(), "vitest suite should run");
+    assert_output_contains_all(&out, &["Test Results", "root/vitest"]);
+    assert_output_excludes_all(&out, &["root/cargo-"]);
+    assert_path_exists(&vitest_marker, "vitest suite marker");
 }
 
 #[test]

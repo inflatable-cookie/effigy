@@ -3,10 +3,12 @@ use std::path::Path;
 use crate::ui::theme::Theme;
 use crate::ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
 
-use super::super::super::tasks_view::{relative_display_path, style_text};
 use super::super::super::{LoadedCatalog, RunnerError, BUILTIN_TASKS};
-use super::super::catalog_rows::{assemble_catalog_rows, CatalogRow};
-use super::rows::{render_builtin_task_rows, render_task_with_profiles};
+use super::super::catalog_manifest::{ordered_manifest_display_contexts, CatalogManifestContext};
+use super::layout::render_section_with_optional_rows;
+use super::rows::{
+    render_builtin_task_rows, render_catalog_alias_rows, render_ordered_catalog_task_rows,
+};
 
 pub(super) fn render_default_tasks_text(
     renderer: &mut PlainRenderer<Vec<u8>>,
@@ -16,24 +18,38 @@ pub(super) fn render_default_tasks_text(
     ordered_catalogs: &[&LoadedCatalog],
     resolved_root: &Path,
 ) -> Result<(), RunnerError> {
+    let display_contexts: Vec<CatalogManifestContext<'_>> =
+        ordered_manifest_display_contexts(ordered_catalogs, resolved_root).collect();
     render_catalogs_section(
         renderer,
         color_enabled,
         theme,
         catalogs,
-        ordered_catalogs,
-        resolved_root,
+        display_contexts.as_slice(),
     )?;
-    render_tasks_section(
+    render_tasks_section(renderer, color_enabled, theme, display_contexts.as_slice())?;
+    render_builtin_rows_section(
         renderer,
         color_enabled,
         theme,
-        ordered_catalogs,
-        resolved_root,
+        "Built-in Tasks",
+        &BUILTIN_TASKS,
+        &[],
     )?;
-    renderer.section("Built-in Tasks")?;
-    render_builtin_task_rows(renderer, color_enabled, theme, &BUILTIN_TASKS)?;
     Ok(())
+}
+
+pub(super) fn render_builtin_rows_section(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    color_enabled: bool,
+    theme: &Theme,
+    title: &str,
+    rows: &[(&str, &str)],
+    notes: &[String],
+) -> Result<(), RunnerError> {
+    renderer.section(title)?;
+    render_builtin_task_rows(renderer, color_enabled, theme, rows)?;
+    render_info_notices(renderer, notes)
 }
 
 fn render_catalogs_section(
@@ -41,62 +57,59 @@ fn render_catalogs_section(
     color_enabled: bool,
     theme: &Theme,
     catalogs: &[LoadedCatalog],
-    ordered_catalogs: &[&LoadedCatalog],
-    resolved_root: &Path,
+    display_contexts: &[CatalogManifestContext<'_>],
 ) -> Result<(), RunnerError> {
-    renderer.section("Catalogs")?;
-    renderer.key_values(&[KeyValue::new("count", catalogs.len().to_string())])?;
-    if ordered_catalogs.is_empty() {
-        renderer.notice(NoticeLevel::Info, "none")?;
-    } else {
-        for catalog in ordered_catalogs {
-            let manifest = relative_display_path(resolved_root, &catalog.manifest_path);
-            renderer.text(&format!(
-                "- {} : {}",
-                style_text(color_enabled, theme.task_name, &catalog.alias),
-                style_text(color_enabled, theme.muted, &manifest),
-            ))?;
-        }
-    }
-    renderer.text("")?;
-    Ok(())
+    render_catalog_scoped_section(
+        renderer,
+        "Catalogs",
+        display_contexts,
+        |renderer| {
+            renderer.key_values(&[KeyValue::new("count", catalogs.len().to_string())])?;
+            Ok(())
+        },
+        |renderer| render_catalog_alias_rows(renderer, color_enabled, theme, display_contexts),
+    )
 }
 
 fn render_tasks_section(
     renderer: &mut PlainRenderer<Vec<u8>>,
     color_enabled: bool,
     theme: &Theme,
-    ordered_catalogs: &[&LoadedCatalog],
-    resolved_root: &Path,
+    display_contexts: &[CatalogManifestContext<'_>],
 ) -> Result<(), RunnerError> {
-    renderer.section("Tasks")?;
-    if ordered_catalogs.is_empty() {
-        renderer.notice(NoticeLevel::Info, "none")?;
-    } else {
-        let rows = assemble_catalog_rows(ordered_catalogs);
-        for row in rows.rows() {
-            if let CatalogRow::Task {
-                catalog,
-                task_name,
-                task,
-            } = row
-            {
-                let manifest = relative_display_path(resolved_root, &catalog.manifest_path);
-                render_task_with_profiles(
-                    renderer,
-                    color_enabled,
-                    theme,
-                    &manifest,
-                    catalog,
-                    task_name,
-                    task,
-                )?;
-            }
-        }
-        if !rows.has_tasks() {
-            renderer.notice(NoticeLevel::Info, "none")?;
-        }
+    render_catalog_scoped_section(
+        renderer,
+        "Tasks",
+        display_contexts,
+        |_| Ok(()),
+        |renderer| {
+            render_ordered_catalog_task_rows(renderer, color_enabled, theme, display_contexts)
+        },
+    )
+}
+
+fn render_catalog_scoped_section(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    title: &str,
+    display_contexts: &[CatalogManifestContext<'_>],
+    render_header: impl FnOnce(&mut PlainRenderer<Vec<u8>>) -> Result<(), RunnerError>,
+    render_rows: impl FnOnce(&mut PlainRenderer<Vec<u8>>) -> Result<bool, RunnerError>,
+) -> Result<(), RunnerError> {
+    render_section_with_optional_rows(
+        renderer,
+        title,
+        !display_contexts.is_empty(),
+        render_header,
+        render_rows,
+    )
+}
+
+fn render_info_notices(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    notices: &[String],
+) -> Result<(), RunnerError> {
+    for notice in notices {
+        renderer.notice(NoticeLevel::Info, notice)?;
     }
-    renderer.text("")?;
     Ok(())
 }

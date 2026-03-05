@@ -1,110 +1,82 @@
 use super::super::prelude::*;
 
-#[test]
-fn run_manifest_task_run_array_supports_relative_catalog_env_reference() {
-    let root = temp_workspace("run-array-env-relative-catalog-ref");
-    let sub_project1 = root.join("sub-project1");
-    let sub_project2 = root.join("sub-project2");
-    fs::create_dir_all(&sub_project1).expect("mkdir sub-project1");
-    fs::create_dir_all(&sub_project2).expect("mkdir sub-project2");
-    let marker = sub_project2.join("env-cross-catalog.out");
-
-    write_manifest(
-        &sub_project1.join("effigy.toml"),
-        r#"[catalog]
-alias = "project1"
-
-[env]
-MY_VAR = "my value"
-"#,
+fn setup_relative_catalog_env_reference(root: &Path, marker: &Path) {
+    write_catalog_manifest_with_alias(
+        root,
+        "sub-project1",
+        "project1",
+        r#"[env]
+MY_VAR = "my value""#,
     );
-    write_manifest(
-        &sub_project2.join("effigy.toml"),
-        &format!(
-            r#"[catalog]
-alias = "project2"
-
-[tasks]
-api = [
-  {{ env = "../sub-project1/MY_VAR" }},
-  {{ run = "sh -lc 'printf %s \"$MY_VAR\" > \"{}\"'" }}
-]
-"#,
-            marker.display()
-        ),
+    write_catalog_api_single_env_capture_manifest(
+        root,
+        "sub-project2",
+        "project2",
+        r#""../sub-project1/MY_VAR""#,
+        "MY_VAR",
+        marker,
     );
+}
 
-    assert_task_output_equals(&root, "project2/api", &marker, "my value");
+fn setup_relative_catalog_dotenv_env_reference(root: &Path, marker: &Path) {
+    write_catalog_manifest_with_alias(root, "sub-project1", "project1", "");
+    write_env_files(root, &[("sub-project1/.env", "MY_VAR=from-dotenv\n")]);
+    write_catalog_api_single_env_capture_manifest(
+        root,
+        "sub-project2",
+        "project2",
+        r#""../sub-project1/MY_VAR""#,
+        "MY_VAR",
+        marker,
+    );
+}
+
+fn setup_missing_relative_catalog_env_reference(root: &Path) {
+    write_catalog_manifest_with_alias(
+        root,
+        "sub-project1",
+        "project1",
+        r#"[env]
+MY_VAR = "my value""#,
+    );
+    write_catalog_api_unreachable_manifest(
+        root,
+        "sub-project2",
+        "project2",
+        r#""../sub-project1/MISSING_VAR""#,
+    );
 }
 
 #[test]
-fn run_manifest_task_run_array_supports_relative_catalog_dotenv_env_reference() {
-    let root = temp_workspace("run-array-env-relative-catalog-dotenv-ref");
-    let sub_project1 = root.join("sub-project1");
-    let sub_project2 = root.join("sub-project2");
-    fs::create_dir_all(&sub_project1).expect("mkdir sub-project1");
-    fs::create_dir_all(&sub_project2).expect("mkdir sub-project2");
-    let marker = sub_project2.join("env-cross-catalog-dotenv.out");
+fn run_manifest_task_run_array_relative_catalog_env_reference_contract_table() {
+    let cases = [
+        RunArrayTaskOutputCase {
+            workspace: "run-array-env-relative-catalog-ref",
+            task: "project2/api",
+            marker_rel: "sub-project2/env-cross-catalog.out",
+            expected: "my value",
+            setup: setup_relative_catalog_env_reference,
+        },
+        RunArrayTaskOutputCase {
+            workspace: "run-array-env-relative-catalog-dotenv-ref",
+            task: "project2/api",
+            marker_rel: "sub-project2/env-cross-catalog-dotenv.out",
+            expected: "from-dotenv",
+            setup: setup_relative_catalog_dotenv_env_reference,
+        },
+    ];
 
-    write_manifest(
-        &sub_project1.join("effigy.toml"),
-        r#"[catalog]
-alias = "project1"
-"#,
-    );
-    fs::write(sub_project1.join(".env"), "MY_VAR=from-dotenv\n").expect("write project1 .env");
-    write_manifest(
-        &sub_project2.join("effigy.toml"),
-        &format!(
-            r#"[catalog]
-alias = "project2"
-
-[tasks]
-api = [
-  {{ env = "../sub-project1/MY_VAR" }},
-  {{ run = "sh -lc 'printf %s \"$MY_VAR\" > \"{}\"'" }}
-]
-"#,
-            marker.display()
-        ),
-    );
-
-    assert_task_output_equals(&root, "project2/api", &marker, "from-dotenv");
+    assert_run_array_task_output_case_table(&cases);
 }
 
 #[test]
-fn run_manifest_task_run_array_errors_for_missing_relative_catalog_env_reference() {
-    let root = temp_workspace("run-array-env-relative-catalog-ref-missing");
-    let sub_project1 = root.join("sub-project1");
-    let sub_project2 = root.join("sub-project2");
-    fs::create_dir_all(&sub_project1).expect("mkdir sub-project1");
-    fs::create_dir_all(&sub_project2).expect("mkdir sub-project2");
+fn run_manifest_task_run_array_relative_catalog_env_reference_errors_are_stable() {
+    let cases = [RunArrayTaskInvocationErrorCase {
+        workspace: "run-array-env-relative-catalog-ref-missing",
+        task: "project2/api",
+        expected: &["unknown env entry `../sub-project1/MISSING_VAR`"],
+        setup: setup_missing_relative_catalog_env_reference,
+    }];
 
-    write_manifest(
-        &sub_project1.join("effigy.toml"),
-        r#"[catalog]
-alias = "project1"
-
-[env]
-MY_VAR = "my value"
-"#,
-    );
-    write_manifest(
-        &sub_project2.join("effigy.toml"),
-        r#"[catalog]
-alias = "project2"
-
-[tasks]
-api = [
-  { env = "../sub-project1/MISSING_VAR" },
-  { run = "printf unreachable" }
-]
-"#,
-    );
-
-    let err = run_builtin_err(root, "project2/api", &[]);
-    assert_task_invocation_error_contains(
-        err,
-        &["unknown env entry `../sub-project1/MISSING_VAR`"],
-    );
+    assert_run_array_task_invocation_error_case_table(&cases);
 }

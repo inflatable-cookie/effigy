@@ -84,3 +84,34 @@ concurrent = [{ name = "front-only", run = "printf front-ok" }]
 "#,
     );
 }
+
+pub(crate) fn write_managed_tui_dev_manifest(root: &Path, concurrent: &str) {
+    write_root_manifest(
+        root,
+        &format!("[tasks.dev]\nmode = \"tui\"\nconcurrent = {concurrent}\n"),
+    );
+}
+
+pub(crate) fn write_managed_tui_dev_manifest_with_extra(
+    root: &Path,
+    concurrent: &str,
+    extra_sections: &str,
+) {
+    write_root_manifest(
+        root,
+        &format!("[tasks.dev]\nmode = \"tui\"\nconcurrent = {concurrent}\n\n{extra_sections}\n"),
+    );
+}
+
+pub(crate) fn write_catalog_manifest_with_alias(
+    root: &Path,
+    catalog_dir: &str,
+    alias: &str,
+    body: &str,
+) {
+    let dir = create_workspace_dir(root, catalog_dir);
+    write_manifest(
+        &dir.join("effigy.toml"),
+        &format!("[catalog]\nalias = \"{alias}\"\n{body}\n"),
+    );
+}

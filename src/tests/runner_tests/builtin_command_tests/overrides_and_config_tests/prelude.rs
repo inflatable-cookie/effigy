@@ -30,7 +30,7 @@ pub(super) fn setup_path_with_probes(
 }
 
 pub(super) fn assert_cargo_env_matches(marker: &Path, expected_home: &str, expected_target: &str) {
-    let rendered = fs::read_to_string(marker).expect("read cargo env marker");
+    let rendered = read_file_text(marker);
     let parts = rendered.split('|').collect::<Vec<&str>>();
     assert_eq!(
         parts.len(),
@@ -42,6 +42,6 @@ pub(super) fn assert_cargo_env_matches(marker: &Path, expected_home: &str, expec
 }
 
 pub(super) fn assert_cargo_env_absent(marker: &Path) {
-    let rendered = fs::read_to_string(marker).expect("read cargo env marker");
+    let rendered = read_file_text(marker);
     assert_eq!(rendered, "|");
 }

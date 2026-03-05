@@ -1,41 +1,34 @@
 use super::prelude::*;
 
 #[test]
-fn run_manifest_task_run_array_supports_task_reference_steps() {
-    let root = temp_workspace("run-array-task-refs");
-    write_validate_manifest(
-        &root,
-        r#"[tasks.lint]
+fn run_manifest_task_run_array_validate_success_contract_table() {
+    let cases = [
+        RunArrayValidateOutputCase {
+            workspace: "run-array-task-refs",
+            manifest: r#"[tasks.lint]
 run = "printf lint-ok"
 
 [tasks.validate]
 run = [{ task = "lint" }, "printf validate-ok"]
 "#,
-    );
-
-    let out = run_validate_ok(&root, &["--verbose-root"]);
-    assert_contains_all(&out, &["printf lint-ok", "printf validate-ok"]);
-}
-
-#[test]
-fn run_manifest_task_run_array_accepts_dag_metadata() {
-    let root = temp_workspace("run-array-dag-metadata");
-    write_validate_manifest(
-        &root,
-        r#"[tasks.validate]
+            args: &["--verbose-root"],
+            expected: &["printf lint-ok", "printf validate-ok"],
+        },
+        RunArrayValidateOutputCase {
+            workspace: "run-array-dag-metadata",
+            manifest: r#"[tasks.validate]
 run = [
   { id = "lint", run = "printf lint-ok" },
   { id = "build", run = "printf build-ok", depends_on = ["lint"] },
   { run = "printf validate-ok" }
 ]
 "#,
-    );
+            args: &["--verbose-root"],
+            expected: &["printf lint-ok", "printf build-ok", "printf validate-ok"],
+        },
+    ];
 
-    let out = run_validate_ok(&root, &["--verbose-root"]);
-    assert_contains_all(
-        &out,
-        &["printf lint-ok", "printf build-ok", "printf validate-ok"],
-    );
+    assert_run_array_validate_output_case_table(&cases);
 }
 
 #[test]
@@ -63,63 +56,45 @@ fn run_manifest_task_run_array_rejects_invalid_dag_metadata() {
         },
     ];
 
-    assert_case_table(cases, |case| {
-        let root = temp_workspace(case.workspace);
-        write_validate_manifest(&root, case.manifest);
-        let err = run_validate_err(&root, &[]);
-        assert_task_invocation_error_contains(err, case.expected);
-    });
+    assert_run_array_validate_invocation_error_case_table(&cases);
 }
 
 #[test]
 fn run_manifest_task_run_array_rejects_dependency_cycles() {
-    let root = temp_workspace("run-array-dependency-cycles");
-    write_validate_manifest(
-        &root,
-        r#"[tasks.validate]
+    let cases = [RunArrayInvocationMessageCase {
+        workspace: "run-array-dependency-cycles",
+        manifest: r#"[tasks.validate]
 run = [
   { id = "lint", run = "printf lint-ok", depends_on = ["build"] },
   { id = "build", run = "printf build-ok", depends_on = ["lint"] }
 ]
 "#,
-    );
+        args: &[],
+        expected_all: &["contains dependency cycle"],
+        expected_any: &["build -> lint -> build", "lint -> build -> lint"],
+        expected_exact: None,
+    }];
 
-    let err = run_validate_err(&root, &[]);
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("contains dependency cycle"));
-            assert!(
-                message.contains("build -> lint -> build")
-                    || message.contains("lint -> build -> lint")
-            );
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_run_array_validate_invocation_message_case_table(&cases);
 }
 
 #[test]
 fn run_manifest_task_run_array_depends_on_missing_id_error_text_is_stable() {
-    let root = temp_workspace("run-array-depends-on-missing-id-stable");
-    write_validate_manifest(
-        &root,
-        r#"[tasks.validate]
+    let cases = [RunArrayInvocationMessageCase {
+        workspace: "run-array-depends-on-missing-id-stable",
+        manifest: r#"[tasks.validate]
 run = [
   { id = "lint", run = "printf lint-ok" },
   { run = "printf build-ok", depends_on = ["lint"] }
 ]
 "#,
-    );
+        args: &[],
+        expected_all: &[],
+        expected_any: &[],
+        expected_exact: Some(
+            "task `validate` run step 2 defines `depends_on` but is missing a non-empty `id`",
+        ),
+    }];
 
-    let err = run_validate_err(&root, &[]);
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert_eq!(
-                message,
-                "task `validate` run step 2 defines `depends_on` but is missing a non-empty `id`"
-            );
-        }
-        other => panic!("unexpected error: {other}"),
-    }
+    assert_run_array_validate_invocation_message_case_table(&cases);
 }

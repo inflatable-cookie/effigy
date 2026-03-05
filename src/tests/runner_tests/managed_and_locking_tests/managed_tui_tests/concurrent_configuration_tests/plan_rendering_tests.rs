@@ -1,12 +1,8 @@
 use super::prelude::*;
 
-#[test]
-fn run_manifest_task_managed_tui_supports_concurrent_entries() {
-    let _guard = lock_test();
-    let root = temp_workspace("managed-concurrent-entries");
-    let _env = managed_tui_env();
+fn setup_concurrent_entries(root: &Path) {
     write_root_manifest(
-        &root,
+        root,
         r#"[tasks.dev]
 mode = "tui"
 concurrent = [
@@ -22,37 +18,47 @@ run = "printf api"
 run = "printf front"
 "#,
     );
+}
 
-    assert_run_dev_with_repo_contains(
-        &root,
-        &[],
-        &[
-            "Managed Task Plan",
-            "profile: default",
-            "tab-order: front, process-2, api",
-            "printf api",
-            "printf background",
-            "printf front",
-            "250",
-        ],
-    );
+fn setup_single_definition_ordered_profile_entries(root: &Path) {
+    write_ranked_task_ref_manifest(root, Some(1200));
+    write_ranked_catalog_tasks(root);
 }
 
 #[test]
-fn run_manifest_task_managed_tui_supports_single_definition_ordered_profile_entries() {
+fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
     let _guard = lock_test();
-    let root = temp_workspace("managed-single-definition-ordered-profile");
     let _env = managed_tui_env();
-    write_ranked_task_ref_manifest(&root, Some(1200));
-    write_ranked_catalog_tasks(&root);
+    let cases = [
+        ManagedOutputCase {
+            workspace: "managed-concurrent-entries",
+            invocation: ManagedInvocation::DevWithRepo,
+            args: &[],
+            expected: &[
+                "Managed Task Plan",
+                "profile: default",
+                "tab-order: front, process-2, api",
+                "printf api",
+                "printf background",
+                "printf front",
+                "250",
+            ],
+            expected_absent: &[],
+            setup: setup_concurrent_entries,
+        },
+        ManagedOutputCase {
+            workspace: "managed-single-definition-ordered-profile",
+            invocation: ManagedInvocation::DevWithRepo,
+            args: &[],
+            expected: &[
+                "tab-order: dairy/dev, cream/dev, farmyard/api, farmyard/jobs",
+                "start-after-ms",
+                "1200",
+            ],
+            expected_absent: &[],
+            setup: setup_single_definition_ordered_profile_entries,
+        },
+    ];
 
-    assert_run_dev_with_repo_contains(
-        &root,
-        &[],
-        &[
-            "tab-order: dairy/dev, cream/dev, farmyard/api, farmyard/jobs",
-            "start-after-ms",
-            "1200",
-        ],
-    );
+    assert_managed_output_case_table(&cases);
 }

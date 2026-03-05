@@ -11,16 +11,8 @@ fn run_manifest_task_builtin_test_json_suppresses_child_process_output() {
 
     let out = run_builtin_ok(root, "test", &["--json", "--run"]);
 
-    assert!(
-        !out.contains("noisy-stdout"),
-        "child stdout leaked into json output"
-    );
-    assert!(
-        !out.contains("noisy-stderr"),
-        "child stderr leaked into json output"
-    );
-    let parsed = parse_json_output(&out);
-    assert_eq!(parsed["schema"], "effigy.test.results.v1");
+    assert_output_excludes_all(&out, &["noisy-stdout", "noisy-stderr"]);
+    let _parsed = parse_json_output_with_schema(&out, "effigy.test.results.v1");
 }
 
 #[test]
@@ -31,14 +23,13 @@ fn run_manifest_task_builtin_test_text_and_json_outputs_share_target_identity() 
     install_local_vitest_marker(&root, &marker);
 
     let text = run_builtin_ok(root.to_path_buf(), "test", &["--run"]);
-    assert_contains_all(&text, &["Test Results", "root", "ok"]);
+    assert_output_contains_all(&text, &["Test Results", "root", "ok"]);
 
     let json = run_builtin_ok(root, "test", &["--json", "--run"]);
-    let parsed = parse_json_output(&json);
-    assert_eq!(parsed["schema"], "effigy.test.results.v1");
-    assert_eq!(parsed["targets"][0]["target"], "root");
-    assert_eq!(parsed["targets"][0]["cargo_env_match"], "prefix-aware");
-    assert_eq!(parsed["targets"][0]["success"], true);
+    let parsed = parse_json_output_with_schema(&json, "effigy.test.results.v1");
+    assert_json_string_field_eq(&parsed["targets"][0], "target", "root");
+    assert_json_string_field_eq(&parsed["targets"][0], "cargo_env_match", "prefix-aware");
+    assert_json_bool_field_eq(&parsed["targets"][0], "success", true);
 }
 
 #[test]
@@ -48,7 +39,7 @@ fn run_manifest_task_builtin_test_verbose_results_include_runner_root_and_comman
     install_local_vitest(&root, "#!/bin/sh\nexit 0\n");
 
     let out = run_builtin_ok(root, "test", &["--verbose-results", "--run"]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "Test Results",
@@ -74,12 +65,11 @@ integration = "sh -lc 'exit 0'"
     );
 
     let text = run_builtin_ok(root.to_path_buf(), "test", &["--verbose-results"]);
-    assert_contains_all(&text, &["Test Results", "cargo-env-match:shell-aware"]);
+    assert_output_contains_all(&text, &["Test Results", "cargo-env-match:shell-aware"]);
 
     let json = run_builtin_ok(root, "test", &["--json"]);
-    let parsed = parse_json_output(&json);
-    assert_eq!(parsed["schema"], "effigy.test.results.v1");
-    assert_eq!(parsed["targets"][0]["cargo_env_match"], "shell-aware");
+    let parsed = parse_json_output_with_schema(&json, "effigy.test.results.v1");
+    assert_json_string_field_eq(&parsed["targets"][0], "cargo_env_match", "shell-aware");
 }
 
 #[test]
@@ -89,5 +79,5 @@ fn run_manifest_task_builtin_test_tui_flag_falls_back_to_text_when_non_interacti
     install_local_vitest(&root, "#!/bin/sh\nexit 0\n");
 
     let out = run_builtin_ok(root, "test", &["--tui"]);
-    assert_contains_all(&out, &["Test Results", "root"]);
+    assert_output_contains_all(&out, &["Test Results", "root"]);
 }
