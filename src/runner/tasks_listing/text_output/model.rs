@@ -2,12 +2,12 @@ use std::path::Path;
 
 use super::super::super::LoadedCatalog;
 use super::super::catalog_manifest::{manifest_display_context, ordered_manifest_display_contexts};
-use super::super::matches::CatalogTaskMatch;
 use super::super::prepared_task_rows::{
     prepare_matched_catalog_task_rows, prepare_ordered_catalog_task_rows,
     PreparedCatalogTaskProjection,
 };
 use super::super::row_projection::ProjectedCatalogTaskSignatureRow;
+use super::super::selection::CatalogTaskMatch;
 
 pub(super) struct PreparedCatalogAliasRow {
     alias: String,

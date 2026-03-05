@@ -1,10 +1,10 @@
 use super::super::super::LoadedCatalog;
 use super::super::catalog_manifest::manifest_path_context;
-use super::super::matches::CatalogTaskMatch;
 use super::super::prepared_task_rows::{
     prepare_matched_catalog_task_rows, prepare_ordered_catalog_task_rows,
     PreparedCatalogTaskProjection,
 };
+use super::super::selection::CatalogTaskMatch;
 use super::rows::{catalog_and_managed_rows_json, ManagedProfileRowJson, TaskRowJson};
 
 pub(super) struct PreparedJsonTaskRows {
