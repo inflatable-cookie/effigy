@@ -9,12 +9,3 @@ pub(super) fn catalog_tasks<'a>(
         .iter()
         .map(|(task_name, task)| (task_name.as_str(), task))
 }
-
-pub(super) fn for_each_catalog_task(
-    catalog: &LoadedCatalog,
-    mut visit: impl FnMut(&str, &ManifestTask),
-) {
-    for (task_name, task) in catalog_tasks(catalog) {
-        visit(task_name, task);
-    }
-}

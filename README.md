@@ -72,7 +72,7 @@ cargo qa-json-ci
 cargo qa-release
 ```
 
-Fallback:
+Compatibility wrappers (use when external tooling requires script entrypoints):
 
 ```bash
 ./scripts/check-quality-gates.sh

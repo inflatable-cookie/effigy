@@ -5,6 +5,24 @@ Owner: Platform
 Created: 2026-02-26
 Depends on: 001, 003
 
+
+## Vision Alignment
+
+This roadmap makes multi-service local orchestration first-class so development loops are deterministic and centralized.
+
+## Primary Tags
+
+- `OPERATE`
+- `MAINT`
+
+## Target Envelope
+
+- Managed process flows have predictable startup/shutdown/input behavior with one canonical terminal control surface.
+
+## Vision Target Delta
+
+- Moved from manual terminal orchestration to an integrated process-manager contract.
+
 ## 1) Problem
 
 Effigy can launch commands, but local multi-process development still requires manual terminal splitting and ad-hoc process coordination. For common flows (API + frontend + admin), we need a first-class interactive process manager so `effigy dev` can orchestrate and monitor all services in one terminal instance.

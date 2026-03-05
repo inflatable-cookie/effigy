@@ -45,6 +45,8 @@ if [[ "$RUN_DOCS" == true ]]; then
   "$ROOT_DIR/scripts/check-doc-json-examples.sh"
   echo "[info] quality gate: docs reports index"
   "$ROOT_DIR/scripts/check-doc-reports-index.sh"
+  echo "[info] quality gate: vision metadata"
+  "$ROOT_DIR/docs/scripts/check-vision-metadata.sh"
 fi
 
 if [[ "$RUN_JSON" == true ]]; then

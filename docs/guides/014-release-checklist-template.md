@@ -46,6 +46,7 @@ Owner: `name/team`
 - [ ] Changelog entry drafted.
 - [ ] Release notes drafted:
   - [ ] highlights
+  - [ ] vision target delta (tags, movement, remaining gap)
   - [ ] breaking changes (if any)
   - [ ] migration steps
 

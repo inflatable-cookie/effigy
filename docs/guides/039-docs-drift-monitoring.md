@@ -75,6 +75,16 @@ Pass criteria:
 Pass criteria:
 - docs-only quality gate passes
 
+### F) Workflow path reference coherence
+
+```sh
+./docs/scripts/check-doc-workflow-paths.sh
+```
+
+Pass criteria:
+- docs-referenced workflow paths exist in the current repository layout
+- no stale `.github/workflows/*.yml` references remain when `.github-bak/workflows/*.yml` is authoritative
+
 ## 3) Quarterly Deep Drift Sweep
 
 In addition to monthly checks:

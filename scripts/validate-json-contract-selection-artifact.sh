@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Wrapper policy:
+# - Compatibility entrypoint retained for CI/release/docs tooling.
+# - Prefer cargo/Effigy command entrypoints for operator-driven runs.
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTRACT_PATH="$ROOT_DIR/docs/contracts/json-selection-contract.json"
 ARTIFACT_PATH="${1:-$ROOT_DIR/json-contracts-selected.json}"

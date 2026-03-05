@@ -5,6 +5,24 @@ Owner: Platform
 Created: 2026-02-28
 Depends on: 001, 004, 005, 008, 009
 
+
+## Vision Alignment
+
+This roadmap defines deterministic orchestration policy for complex task graphs and concurrent execution.
+
+## Primary Tags
+
+- `MAINT`
+- `OPERATE`
+
+## Target Envelope
+
+- DAG execution, lock scope, and retry/timeout/fail-fast controls behave predictably with explicit failure modes.
+
+## Vision Target Delta
+
+- Moved from implicit sequencing and collision risk to policy-bound, diagnosable orchestration behavior.
+
 ## 1) Problem
 
 Effigy supports simple linear task sequencing and managed dev profiles, but lacks a unified baseline for:

@@ -20,19 +20,6 @@ pub(super) struct JsonTaskRows {
     managed_profile_rows: Vec<ManagedProfileRowJson>,
 }
 
-pub(super) enum JsonPayloadBody<'a> {
-    Catalog {
-        rows: JsonTaskRows,
-        builtin_tasks: Vec<BuiltinTaskRowJson>,
-    },
-    Filtered {
-        filter: &'a str,
-        rows: JsonTaskRows,
-        builtin_matches: Vec<BuiltinTaskRowJson>,
-        notes: Vec<String>,
-    },
-}
-
 #[derive(Serialize)]
 struct PayloadEnvelope<B: Serialize> {
     #[serde(flatten)]
@@ -111,70 +98,58 @@ fn encode_payload(payload: impl Serialize) -> Result<Value, RunnerError> {
     })
 }
 
-pub(super) fn encode_tasks_payload(
+pub(super) fn encode_catalog_payload(
     context: &JsonPayloadContext<'_>,
-    body: JsonPayloadBody<'_>,
+    rows: JsonTaskRows,
+    builtin_tasks: Vec<BuiltinTaskRowJson>,
 ) -> Result<Value, RunnerError> {
-    match body {
-        JsonPayloadBody::Catalog {
-            rows,
+    let (task_rows, managed_profile_rows) = rows.into_parts();
+    encode_enveloped_payload(
+        context,
+        TASKS_SCHEMA,
+        CatalogPayloadBody {
+            catalog_tasks: task_rows,
+            managed_profiles: managed_profile_rows,
             builtin_tasks,
-        } => {
-            let (task_rows, managed_profile_rows) = rows.into_parts();
-            encode_enveloped_payload(
-                context,
-                TASKS_SCHEMA,
-                CatalogPayloadBody {
-                    catalog_tasks: task_rows,
-                    managed_profiles: managed_profile_rows,
-                    builtin_tasks,
-                },
-            )
-        }
-        JsonPayloadBody::Filtered {
-            filter,
-            rows,
+        },
+    )
+}
+
+pub(super) fn encode_filtered_payload(
+    context: &JsonPayloadContext<'_>,
+    filter: &str,
+    rows: JsonTaskRows,
+    builtin_matches: Vec<BuiltinTaskRowJson>,
+    notes: Vec<String>,
+) -> Result<Value, RunnerError> {
+    let (task_rows, managed_profile_rows) = rows.into_parts();
+    encode_enveloped_payload(
+        context,
+        FILTERED_TASKS_SCHEMA,
+        FilteredPayloadBody {
+            filter: filter.to_owned(),
+            matches: task_rows,
+            managed_profile_matches: managed_profile_rows,
             builtin_matches,
             notes,
-        } => {
-            let (task_rows, managed_profile_rows) = rows.into_parts();
-            encode_enveloped_payload(
-                context,
-                FILTERED_TASKS_SCHEMA,
-                FilteredPayloadBody {
-                    filter: filter.to_owned(),
-                    matches: task_rows,
-                    managed_profile_matches: managed_profile_rows,
-                    builtin_matches,
-                    notes,
-                },
-            )
-        }
-    }
+        },
+    )
 }
 
 impl JsonPayloadContext<'_> {
-    fn payload_parts(&self, schema: &'static str) -> (PayloadHeader, SharedPayloadFooter) {
-        (
-            PayloadHeader {
+    fn envelope<B: Serialize>(&self, schema: &'static str, body: B) -> PayloadEnvelope<B> {
+        PayloadEnvelope {
+            header: PayloadHeader {
                 schema,
                 schema_version: SCHEMA_VERSION,
                 catalog_count: self.catalog_count,
             },
-            SharedPayloadFooter {
+            body,
+            footer: SharedPayloadFooter {
                 catalogs: self.catalog_diagnostics.to_vec(),
                 precedence: self.precedence.to_vec(),
                 resolve: self.resolve_probe.clone(),
             },
-        )
-    }
-
-    fn envelope<B: Serialize>(&self, schema: &'static str, body: B) -> PayloadEnvelope<B> {
-        let (header, footer) = self.payload_parts(schema);
-        PayloadEnvelope {
-            header,
-            body,
-            footer,
         }
     }
 }

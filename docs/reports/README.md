@@ -17,6 +17,25 @@ Examples:
 
 When a feature spans multiple same-day checkpoints, add a consolidation report that links those checkpoints and provides one final validation matrix.
 
+## Vision Target Delta Requirement
+
+All new reports must include a `## Vision Target Delta` section that states:
+
+- primary vision tags touched (`ROUTE`, `CONTRACT`, `OPERATE`, `MAINT`, `RELEASE`)
+- what moved in this report (baseline -> current state)
+- what remains open (or `None`)
+
+Forward-only policy cutoff:
+
+- reports dated on or after `2026-03-06` must include `## Vision Target Delta`
+- reports before `2026-03-06` are not required to be backfilled
+
+Historical workflow-reference exception:
+
+- reports may keep historical workflow paths (for example `.github/workflows/*.yml`) when they document what existed at the time
+- do not rewrite historical report evidence only to match current repo layout
+- active docs outside `docs/reports/` must use current workflow paths (`.github-bak/workflows/*.yml` in this repository layout)
+
 ## Recent Release Notes
 
 - [`../guides/036-release-notes-authoring-template-and-examples.md`](../guides/036-release-notes-authoring-template-and-examples.md) (authoring template + examples)
@@ -27,6 +46,10 @@ When a feature spans multiple same-day checkpoints, add a consolidation report t
 ## Recent Docs IA Reports
 
 - [`2026-03-01-documentation-ia-completion-report.md`](./2026-03-01-documentation-ia-completion-report.md)
+
+## Vision Program History
+
+See `docs/reports/vision-history/README.md` for archived vision rollout checklists and closeout records.
 
 ## Recent Validation Reports
 
@@ -76,6 +99,8 @@ When a feature spans multiple same-day checkpoints, add a consolidation report t
 - [`2026-03-01-release-tag-install-validation-checkpoint.md`](./2026-03-01-release-tag-install-validation-checkpoint.md)
 
 - [`2026-03-02-docs-qa-report-index-helper-validation.md`](./2026-03-02-docs-qa-report-index-helper-validation.md)
+
+- [`2026-03-10-script-surface-unification-batch-1.md`](./2026-03-10-script-surface-unification-batch-1.md)
 
 ## Archived Validation Reports
 
@@ -133,6 +158,11 @@ Related roadmap: <id/title>
 
 ## Changes
 - ...
+
+## Vision Target Delta
+- Primary tags: `...`
+- Movement: baseline `...` -> current `...`
+- Remaining gap: `...` (or `None`)
 
 ## Validation
 - command: `...`

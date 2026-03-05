@@ -11,3 +11,11 @@ Use this folder for planning threads that are important but not yet scheduled in
 ## Promotion Rule
 
 When a backlog item gets an agreed execution window and owner commitment, promote it into a numbered roadmap in `docs/roadmap/` and track progress there.
+
+## Vision Promotion Criteria
+
+Before promotion, each backlog item must include:
+
+- `Primary Tags` (from `ROUTE`, `CONTRACT`, `OPERATE`, `MAINT`, `RELEASE`)
+- one `Target Envelope` line describing the bounded success shape
+- measurable `Promotion Signals` tied to target movement evidence

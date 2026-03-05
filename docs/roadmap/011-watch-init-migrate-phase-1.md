@@ -5,6 +5,24 @@ Owner: Platform
 Created: 2026-02-28
 Depends on: 001, 002, 003, 004, 008, 010
 
+
+## Vision Alignment
+
+This roadmap reduces onboarding and loop-friction by formalizing watch/init/migrate command surfaces.
+
+## Primary Tags
+
+- `ROUTE`
+- `OPERATE`
+
+## Target Envelope
+
+- Onboarding and watch flows are safe, explicit, and repeatable across workspaces with owner-policy protections.
+
+## Vision Target Delta
+
+- Moved from manual bootstrap/migration conventions to built-in phase-1 workflows with bounded behavior.
+
 ## 1) Problem
 
 Effigy has strong task execution and diagnostics, but onboarding and iteration workflows still require manual setup:

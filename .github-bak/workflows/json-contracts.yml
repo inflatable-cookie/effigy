@@ -20,6 +20,9 @@ jobs:
       - name: Validate markdown link targets
         run: ./scripts/check-quality-gates.sh --docs-only
 
+      - name: Validate vision metadata coverage
+        run: ./docs/scripts/check-vision-metadata.sh
+
   json-contracts:
     name: Validate JSON contracts
     runs-on: ubuntu-latest

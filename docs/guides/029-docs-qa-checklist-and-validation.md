@@ -19,6 +19,12 @@ Manual checks:
 - JSON examples use current schema names and versions
 - completion-candidates examples include both hit and miss telemetry variants
 - new report artifacts are indexed in `docs/reports/README.md`
+- new report artifacts include a `Vision Target Delta` section
+- roadmap/guides vision metadata checks pass via `docs/scripts/check-vision-metadata.sh`
+- docs-referenced workflow paths resolve via `docs/scripts/check-doc-workflow-paths.sh`
+- vision artifact index is consistent via `docs/scripts/check-vision-index.sh`
+- vision artifacts have non-empty, actionable follow-on actions via `docs/scripts/check-vision-next-task.sh`
+- vision next-task lint fixtures pass via `docs/scripts/check-vision-next-task-regression.sh`
 
 Optional broader check:
 
@@ -29,14 +35,14 @@ cargo qa
 ## 2) CI Validation Path
 
 Current workflow file:
-- `.github/workflows/json-contracts.yml`
+- `.github-bak/workflows/json-contracts.yml`
 
-Docs QA gate job:
+Docs gate job:
 
 ```yaml
 jobs:
-  docs-qa:
-    name: Validate docs docs-only gates
+  docs-links:
+    name: Validate docs links
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -44,9 +50,14 @@ jobs:
 
       - name: Validate docs links, JSON examples, and report index
         run: ./scripts/check-quality-gates.sh --docs-only
+
+      - name: Validate vision metadata coverage
+        run: ./docs/scripts/check-vision-metadata.sh
 ```
 
-This ensures markdown links resolve, key JSON examples stay contract-aligned, and reports remain indexed on every pull request/push.
+This ensures markdown links resolve, key JSON examples stay contract-aligned, reports remain indexed, and vision metadata coverage is enforced on every pull request/push.
+`./scripts/check-quality-gates.sh --docs-only` now runs `./docs/scripts/check-vision-metadata.sh` directly.
+`./docs/scripts/check-vision-metadata.sh` runs `check-doc-workflow-paths`, `check-vision-index`, `check-vision-next-task`, and `check-vision-next-task-regression`.
 
 ## 3) What the Link Checker Validates
 
@@ -94,6 +105,10 @@ Behavior:
 Helper:
 - `scripts/add-report-index-entry.sh <report-file>` inserts a missing report entry ahead of archived links.
 
+Forward-only policy cutoff:
+- reports dated on or after `2026-03-06` must include a `## Vision Target Delta` section
+- reports before `2026-03-06` do not require backfill
+
 ## 6) Common Failure Modes
 
 ### Broken relative path after file move
@@ -135,17 +150,41 @@ Copy into PR description:
 ```md
 ## Docs QA
 - [ ] `cargo qa-docs`
+- [ ] `./docs/scripts/check-vision-metadata.sh`
+- [ ] `./docs/scripts/check-doc-workflow-paths.sh`
+- [ ] `./docs/scripts/check-vision-index.sh`
+- [ ] `./docs/scripts/check-vision-next-task.sh`
+- [ ] `./docs/scripts/check-vision-next-task-regression.sh`
 - [ ] New guide linked from docs entry points
 - [ ] Command and JSON examples verified against current behavior
 - [ ] Completion-candidates JSON examples include hit + miss telemetry variants
 - [ ] New report files indexed in `docs/reports/README.md`
+- [ ] New report files dated on/after `2026-03-06` include `Vision Target Delta`
 ```
+
+Allowlist-change PRs should use:
+- [`046-vision-next-task-allowlist-pr-checklist-snippet.md`](./046-vision-next-task-allowlist-pr-checklist-snippet.md)
 
 ## 8) Fast Operator Commands
 
 ```sh
 # docs links only
 cargo qa-docs
+
+# vision metadata coverage
+./docs/scripts/check-vision-metadata.sh
+
+# workflow path references in docs
+./docs/scripts/check-doc-workflow-paths.sh
+
+# vision closeout index consistency
+./docs/scripts/check-vision-index.sh
+
+# vision next-task section coverage
+./docs/scripts/check-vision-next-task.sh
+
+# vision next-task regression fixtures
+./docs/scripts/check-vision-next-task-regression.sh
 
 # index a newly added report artifact
 ./scripts/add-report-index-entry.sh docs/reports/YYYY-MM-DD-topic.md
@@ -163,3 +202,5 @@ cargo qa
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 - [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
+- [`045-vision-next-task-allowlist-maintenance.md`](./045-vision-next-task-allowlist-maintenance.md)
+- [`046-vision-next-task-allowlist-pr-checklist-snippet.md`](./046-vision-next-task-allowlist-pr-checklist-snippet.md)

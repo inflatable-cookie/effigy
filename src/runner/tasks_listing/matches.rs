@@ -1,19 +1,41 @@
-use super::super::{LoadedCatalog, ManifestTask, TaskSelector, BUILTIN_TASKS};
+use super::super::{LoadedCatalog, ManifestTask, TaskSelector};
+use super::row_projection::{builtin_task_rows, BuiltinTaskRow};
 use super::BUILTIN_TEST_FALLBACK_NOTE;
+
+pub(super) struct CatalogTaskMatch<'a> {
+    catalog: &'a LoadedCatalog,
+    task: &'a ManifestTask,
+}
+
+pub(super) struct SelectorMatches<'a> {
+    pub(super) catalog_matches: Vec<CatalogTaskMatch<'a>>,
+    pub(super) builtin_matches: Vec<BuiltinTaskRow<'static>>,
+    pub(super) notes: Vec<String>,
+}
 
 pub(super) fn collect_selector_matches<'a>(
     catalogs: &'a [LoadedCatalog],
     selector: &TaskSelector,
-) -> (
-    Vec<(&'a LoadedCatalog, &'a ManifestTask)>,
-    Vec<(&'static str, &'static str)>,
-    Vec<String>,
-) {
-    (
-        matched_catalog_tasks(catalogs, selector),
-        builtin_matches(selector),
-        selector_notes(selector),
-    )
+) -> SelectorMatches<'a> {
+    SelectorMatches {
+        catalog_matches: matched_catalog_tasks(catalogs, selector),
+        builtin_matches: builtin_matches(selector),
+        notes: selector_notes(selector),
+    }
+}
+
+impl<'a> CatalogTaskMatch<'a> {
+    fn new(catalog: &'a LoadedCatalog, task: &'a ManifestTask) -> Self {
+        Self { catalog, task }
+    }
+
+    pub(super) fn catalog(&self) -> &'a LoadedCatalog {
+        self.catalog
+    }
+
+    pub(super) fn task(&self) -> &'a ManifestTask {
+        self.task
+    }
 }
 
 fn selector_targets_catalog(selector: &TaskSelector, alias: &str) -> bool {
@@ -30,7 +52,7 @@ fn selector_targets_builtin(selector: &TaskSelector) -> bool {
 fn matched_catalog_tasks<'a>(
     catalogs: &'a [LoadedCatalog],
     selector: &TaskSelector,
-) -> Vec<(&'a LoadedCatalog, &'a ManifestTask)> {
+) -> Vec<CatalogTaskMatch<'a>> {
     catalogs
         .iter()
         .filter_map(|catalog| {
@@ -38,17 +60,15 @@ fn matched_catalog_tasks<'a>(
                 return None;
             }
             let task = catalog.manifest.tasks.get(&selector.task_name)?;
-            Some((catalog, task))
+            Some(CatalogTaskMatch::new(catalog, task))
         })
-        .collect::<Vec<(&LoadedCatalog, &ManifestTask)>>()
+        .collect::<Vec<CatalogTaskMatch<'a>>>()
 }
 
-fn builtin_matches(selector: &TaskSelector) -> Vec<(&'static str, &'static str)> {
-    BUILTIN_TASKS
-        .iter()
-        .filter(|(name, _)| selector_targets_builtin(selector) && selector.task_name == *name)
-        .copied()
-        .collect::<Vec<(&'static str, &'static str)>>()
+fn builtin_matches(selector: &TaskSelector) -> Vec<BuiltinTaskRow<'static>> {
+    builtin_task_rows()
+        .filter(|row| selector_targets_builtin(selector) && selector.task_name == row.task())
+        .collect::<Vec<BuiltinTaskRow<'static>>>()
 }
 
 fn selector_notes(selector: &TaskSelector) -> Vec<String> {

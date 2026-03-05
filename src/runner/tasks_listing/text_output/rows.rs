@@ -4,10 +4,15 @@ use crate::ui::theme::Theme;
 use crate::ui::{PlainRenderer, Renderer};
 
 use super::super::super::tasks_view::style_text;
-use super::super::super::{LoadedCatalog, ManifestTask, RunnerError};
-use super::super::catalog_iteration::catalog_tasks;
-use super::super::catalog_manifest::{manifest_display_context, CatalogManifestContext};
-use super::super::row_projection::{project_builtin_rows, project_catalog_task_display_rows};
+use super::super::super::RunnerError;
+use super::super::catalog_manifest::CatalogManifestContext;
+use super::super::matches::CatalogTaskMatch;
+use super::super::row_projection::{
+    project_builtin_rows, BuiltinTaskRow, ProjectedCatalogTaskSignatureRow,
+};
+use super::model::{
+    prepared_catalog_alias_rows, prepared_catalog_match_rows, prepared_ordered_catalog_task_rows,
+};
 
 pub(super) fn render_catalog_alias_rows(
     renderer: &mut PlainRenderer<Vec<u8>>,
@@ -15,16 +20,12 @@ pub(super) fn render_catalog_alias_rows(
     theme: &Theme,
     catalog_contexts: &[CatalogManifestContext<'_>],
 ) -> Result<bool, RunnerError> {
-    for context in catalog_contexts {
-        render_name_detail_row(
-            renderer,
-            color_enabled,
-            theme,
-            &context.catalog().alias,
-            context.manifest(),
-        )?;
+    let mut rendered_any = false;
+    for row in prepared_catalog_alias_rows(catalog_contexts) {
+        render_name_detail_row(renderer, color_enabled, theme, row.alias(), row.manifest())?;
+        rendered_any = true;
     }
-    Ok(!catalog_contexts.is_empty())
+    Ok(rendered_any)
 }
 
 pub(super) fn render_ordered_catalog_task_rows(
@@ -33,22 +34,12 @@ pub(super) fn render_ordered_catalog_task_rows(
     theme: &Theme,
     catalog_contexts: &[CatalogManifestContext<'_>],
 ) -> Result<bool, RunnerError> {
-    let mut rendered_any = false;
-    for context in catalog_contexts {
-        for (task_name, task) in catalog_tasks(context.catalog()) {
-            render_catalog_task_with_profiles(
-                renderer,
-                color_enabled,
-                theme,
-                context.catalog(),
-                task_name,
-                task,
-                context.manifest(),
-            )?;
-            rendered_any = true;
-        }
-    }
-    Ok(rendered_any)
+    render_prepared_catalog_task_rows(
+        renderer,
+        color_enabled,
+        theme,
+        prepared_ordered_catalog_task_rows(catalog_contexts),
+    )
 }
 
 pub(super) fn render_catalog_match_rows(
@@ -57,49 +48,53 @@ pub(super) fn render_catalog_match_rows(
     theme: &Theme,
     resolved_root: &Path,
     task_name: &str,
-    matches: &[(&LoadedCatalog, &ManifestTask)],
+    matches: &[CatalogTaskMatch<'_>],
 ) -> Result<bool, RunnerError> {
-    let mut rendered_any = false;
-    for (catalog, task) in matches {
-        let context = manifest_display_context(catalog, resolved_root);
-        render_catalog_task_with_profiles(
+    render_prepared_catalog_task_rows(
+        renderer,
+        color_enabled,
+        theme,
+        prepared_catalog_match_rows(matches, task_name, resolved_root),
+    )
+}
+
+pub(super) fn render_builtin_task_rows<'a>(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    color_enabled: bool,
+    theme: &Theme,
+    rows: impl IntoIterator<Item = BuiltinTaskRow<'a>>,
+) -> Result<(), RunnerError> {
+    for row in project_builtin_rows(rows) {
+        render_name_detail_row(
             renderer,
             color_enabled,
             theme,
-            catalog,
-            task_name,
-            task,
-            context.manifest(),
+            row.task(),
+            row.description(),
+        )?;
+    }
+    Ok(())
+}
+
+fn render_prepared_catalog_task_rows<'a>(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    color_enabled: bool,
+    theme: &Theme,
+    rows: impl IntoIterator<Item = super::model::PreparedCatalogTaskRow<'a>>,
+) -> Result<bool, RunnerError> {
+    let mut rendered_any = false;
+    for row in rows {
+        let (manifest, signature_rows) = row.into_render_parts();
+        render_task_signature_rows(
+            renderer,
+            color_enabled,
+            theme,
+            manifest.as_ref(),
+            signature_rows,
         )?;
         rendered_any = true;
     }
     Ok(rendered_any)
-}
-
-fn render_catalog_task_with_profiles(
-    renderer: &mut PlainRenderer<Vec<u8>>,
-    color_enabled: bool,
-    theme: &Theme,
-    catalog: &LoadedCatalog,
-    task_name: &str,
-    task: &ManifestTask,
-    manifest: &str,
-) -> Result<(), RunnerError> {
-    let signature_rows =
-        project_catalog_task_display_rows(catalog, task_name, task).into_signature_rows();
-    render_task_signature_rows(renderer, color_enabled, theme, manifest, signature_rows)
-}
-
-pub(super) fn render_builtin_task_rows(
-    renderer: &mut PlainRenderer<Vec<u8>>,
-    color_enabled: bool,
-    theme: &Theme,
-    rows: &[(&str, &str)],
-) -> Result<(), RunnerError> {
-    for (task, description) in project_builtin_rows(rows.iter().copied()) {
-        render_name_detail_row(renderer, color_enabled, theme, task, description)?;
-    }
-    Ok(())
 }
 
 fn render_name_detail_row(
@@ -138,16 +133,16 @@ fn render_task_signature_rows(
     color_enabled: bool,
     theme: &Theme,
     manifest: &str,
-    rows: impl IntoIterator<Item = (String, String)>,
+    rows: impl IntoIterator<Item = ProjectedCatalogTaskSignatureRow>,
 ) -> Result<(), RunnerError> {
-    for (task_label, signature) in rows {
+    for row in rows {
         render_task_text_row(
             renderer,
             color_enabled,
             theme,
             manifest,
-            &task_label,
-            &signature,
+            row.task(),
+            row.run(),
         )?;
     }
     Ok(())

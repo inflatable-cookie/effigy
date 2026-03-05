@@ -45,6 +45,10 @@ Update:
 - `029-docs-qa-checklist-and-validation.md`
 - ownership/trigger map (`035-guide-ownership-and-update-triggers.md`)
 
+CI layout convention:
+- active workflow docs should reference `.github-bak/workflows/*.yml` in this repository layout
+- if workflows move back to `.github/workflows`, update all docs references in the same PR
+
 ### 5) Navigation/indexing change
 
 Update:
@@ -78,6 +82,7 @@ Run in this order:
 ```sh
 ./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)
 ./scripts/check-quality-gates.sh --docs-only
+./docs/scripts/check-doc-workflow-paths.sh
 ```
 
 If behavior/JSON changed, also run relevant targeted checks:
@@ -97,6 +102,7 @@ Copy into PR description:
 - [ ] Style/terminology checked against 033/034
 - [ ] `./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)` passed
 - [ ] `./scripts/check-quality-gates.sh --docs-only` passed
+- [ ] `./docs/scripts/check-doc-workflow-paths.sh` passed
 - [ ] JSON-related changes: `./scripts/check-quality-gates.sh --json-only --ci` run
 ```
 

@@ -2,6 +2,12 @@
 
 Use explain mode to diagnose task resolution decisions without running the task itself.
 
+
+## Vision Alignment
+
+- Primary tags: `ROUTE`, `OPERATE`
+- Target movement: selector reasoning is explicit for operators and automation before task execution.
+
 ## Command Shape
 
 ```bash

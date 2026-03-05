@@ -2,6 +2,12 @@
 
 This matrix is a quick operator reference for Effigy commands, key flags, JSON payload schemas, and deep-dive guides.
 
+
+## Vision Alignment
+
+- Primary tags: `ROUTE`, `CONTRACT`, `OPERATE`
+- Target movement: command lookup stays fast while linking every surface to stable schemas and deep-dive guidance.
+
 ## 1) Primary Commands
 
 | Command | Purpose | Key Flags | JSON Schema(s) | Deep Dive |

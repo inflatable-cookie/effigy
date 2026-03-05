@@ -5,6 +5,24 @@ Owner: Platform
 Created: 2026-02-27
 Depends on: 004, 005
 
+
+## Vision Alignment
+
+This roadmap improves terminal-fidelity in TUI panes so high-churn command output remains trustworthy.
+
+## Primary Tags
+
+- `OPERATE`
+- `MAINT`
+
+## Target Envelope
+
+- TUI rendering reflects terminal control semantics accurately under rewrite-heavy and high-volume output.
+
+## Vision Target Delta
+
+- Moved from heuristic line rendering to emulator-backed pane behavior that preserves output truth.
+
 ## 1) Problem
 
 Effigy's TUI currently renders process output using line-oriented heuristics. Tools like `cargo nextest` rely on terminal control sequences (cursor movement, line clearing, rewrite frames), which causes duplicated lines, disappearing lines, and inaccurate scroll ranges.

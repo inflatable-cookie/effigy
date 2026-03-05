@@ -12,6 +12,8 @@ mod filtering;
 mod json_output;
 #[path = "tasks_listing/matches.rs"]
 mod matches;
+#[path = "tasks_listing/prepared_listing.rs"]
+mod prepared_listing;
 #[path = "tasks_listing/render_context.rs"]
 mod render_context;
 #[path = "tasks_listing/row_projection.rs"]
@@ -20,7 +22,7 @@ mod row_projection;
 mod text_output;
 
 use super::{LoadedCatalog, RunnerError};
-use render_context::{ListingOutputMode, ListingRenderRequest};
+use render_context::ListingRenderRequest;
 
 const BUILTIN_TEST_FALLBACK_NOTE: &str =
     "built-in fallback supports `<catalog>/test` when explicit `tasks.test` is not defined";
@@ -88,8 +90,9 @@ pub(super) fn render_tasks_listing(
         precedence,
         resolved_root,
     );
-    match request.output_mode() {
-        ListingOutputMode::Json => json_output::render_tasks_json(request, &snapshot),
-        ListingOutputMode::Text => text_output::render_tasks_text(request, &snapshot),
+    if request.output_json() {
+        json_output::render_tasks_json(request, &snapshot)
+    } else {
+        text_output::render_tasks_text(request, &snapshot)
     }
 }

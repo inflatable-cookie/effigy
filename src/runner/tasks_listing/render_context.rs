@@ -7,34 +7,12 @@ pub(super) enum ListingSelection<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum ListingOutputMode {
-    Json,
-    Text,
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum TextRenderDispatch<'a> {
-    ResolveOnly(&'a serde_json::Value),
-    Filtered(&'a str),
-    Catalog,
-}
-
-#[derive(Clone, Copy)]
 pub(super) struct ListingRenderRequest<'a> {
-    output_mode: ListingOutputMode,
+    output_json: bool,
     selection: ListingSelection<'a>,
     resolve_probe: &'a Option<serde_json::Value>,
     resolve_only_probe: Option<&'a serde_json::Value>,
     pretty_json: bool,
-}
-
-impl ListingOutputMode {
-    fn from_args(args: &TasksArgs) -> Self {
-        if args.output_json {
-            return Self::Json;
-        }
-        Self::Text
-    }
 }
 
 impl<'a> ListingRenderRequest<'a> {
@@ -48,7 +26,7 @@ impl<'a> ListingRenderRequest<'a> {
             None => ListingSelection::Catalog,
         };
         Self {
-            output_mode: ListingOutputMode::from_args(args),
+            output_json: args.output_json,
             selection,
             resolve_probe,
             resolve_only_probe: if filter.is_none() {
@@ -60,8 +38,8 @@ impl<'a> ListingRenderRequest<'a> {
         }
     }
 
-    pub(super) fn output_mode(self) -> ListingOutputMode {
-        self.output_mode
+    pub(super) fn output_json(self) -> bool {
+        self.output_json
     }
 
     pub(super) fn resolve_probe(&self) -> &'a Option<serde_json::Value> {
@@ -72,24 +50,11 @@ impl<'a> ListingRenderRequest<'a> {
         self.pretty_json
     }
 
-    pub(super) fn dispatch_selection<R>(
-        self,
-        on_filtered: impl FnOnce(&'a str) -> R,
-        on_catalog: impl FnOnce() -> R,
-    ) -> R {
-        match self.selection {
-            ListingSelection::Filtered(filter) => on_filtered(filter),
-            ListingSelection::Catalog => on_catalog(),
-        }
+    pub(super) fn selection(self) -> ListingSelection<'a> {
+        self.selection
     }
 
-    pub(super) fn text_dispatch(self) -> TextRenderDispatch<'a> {
-        if let Some(probe) = self.resolve_only_probe {
-            return TextRenderDispatch::ResolveOnly(probe);
-        }
-        match self.selection {
-            ListingSelection::Filtered(filter) => TextRenderDispatch::Filtered(filter),
-            ListingSelection::Catalog => TextRenderDispatch::Catalog,
-        }
+    pub(super) fn resolve_only_probe(self) -> Option<&'a serde_json::Value> {
+        self.resolve_only_probe
     }
 }

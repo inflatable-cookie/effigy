@@ -1,5 +1,11 @@
 # Package Map
 
+## Vision Alignment
+
+- Primary tags: `MAINT`, `ROUTE`, `CONTRACT`
+- Target envelope: module boundaries and command surface ownership stay explicit enough to reduce refactor risk.
+- Vision target delta: package and module inventory is now tied to explicit vision tags for maintainability and contract clarity.
+
 ## Rust crate
 
 | Package | Purpose |

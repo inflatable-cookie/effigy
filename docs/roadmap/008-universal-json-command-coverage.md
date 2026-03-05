@@ -5,6 +5,24 @@ Owner: Platform
 Created: 2026-02-28
 Depends on: 001, 002, 003, 004, 005
 
+
+## Vision Alignment
+
+This roadmap makes machine-facing command behavior uniform so automation can depend on one envelope contract.
+
+## Primary Tags
+
+- `CONTRACT`
+- `RELEASE`
+
+## Target Envelope
+
+- Every command path can emit canonical JSON envelopes while preserving exit semantics for CI gates.
+
+## Vision Target Delta
+
+- Moved from partial JSON support to universal contract coverage across built-ins and catalog execution paths.
+
 ## 1) Problem
 
 Effigy initially supported JSON output for selected command paths (`tasks`, built-in `test`) but not as a universal contract across all interactions. In CI environments, this created inconsistent parsing logic and mixed human/machine output handling.

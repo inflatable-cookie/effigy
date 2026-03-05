@@ -5,6 +5,24 @@ Owner: Platform
 Created: 2026-02-28
 Depends on: 001, 002, 003, 005, 008
 
+
+## Vision Alignment
+
+This roadmap unifies health checks and remediation under one operator entrypoint.
+
+## Primary Tags
+
+- `OPERATE`
+- `CONTRACT`
+
+## Target Envelope
+
+- `doctor` provides a single remediation-first workflow with stable machine-readable detail for automation.
+
+## Vision Target Delta
+
+- Moved from fragmented health surfaces to one canonical command with clearer recovery paths.
+
 ## 1) Problem
 
 Effigy currently splits health behavior across `repo-pulse`, a built-in `health` alias, and ad-hoc project tasks. The result is noisy output, duplicated command surface, and unclear remediation flow. We need one canonical `doctor` command that performs actionable checks, can apply safe fixes, and can invoke project-owned health checks when present.

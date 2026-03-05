@@ -67,7 +67,7 @@ If these files change, docs updates are usually required:
   - payload contract assertions changed -> `017`, `026`, `024`
 - `tests/cli_output_tests.rs`
   - envelope/wrapping expectations changed -> `017`, `025`, `026`
-- `.github/workflows/*.yml`, `scripts/check-*.sh`
+- `.github-bak/workflows/*.yml`, `scripts/check-*.sh`
   - CI/quality-gate behavior -> `024`, `029`, `035`
 
 ## 6) Minimum Acceptance Policy
