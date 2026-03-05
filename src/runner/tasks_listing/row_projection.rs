@@ -13,22 +13,6 @@ pub(super) struct BuiltinTaskRow<'a> {
     description: &'a str,
 }
 
-pub(super) struct ProjectedCatalogTaskRows {
-    task: ProjectedCatalogTaskSignatureRow,
-    managed_profiles: std::vec::IntoIter<ManagedProfileDisplayRow>,
-}
-
-impl ProjectedCatalogTaskRows {
-    pub(super) fn into_task_and_managed_rows(
-        self,
-    ) -> (
-        ProjectedCatalogTaskSignatureRow,
-        impl Iterator<Item = ManagedProfileDisplayRow>,
-    ) {
-        (self.task, self.managed_profiles)
-    }
-}
-
 impl ProjectedCatalogTaskSignatureRow {
     fn new(task: String, run: String) -> Self {
         Self { task, run }
@@ -71,14 +55,14 @@ pub(super) fn project_catalog_task_display_rows(
     catalog: &LoadedCatalog,
     task_name: &str,
     task: &ManifestTask,
-) -> ProjectedCatalogTaskRows {
+) -> (
+    ProjectedCatalogTaskSignatureRow,
+    Vec<ManagedProfileDisplayRow>,
+) {
     let task_row = ProjectedCatalogTaskSignatureRow::new(
         catalog_task_label(catalog, task_name),
         task_run_preview(task),
     );
-
-    ProjectedCatalogTaskRows {
-        task: task_row,
-        managed_profiles: managed_profile_display_rows(catalog, task_name, task).into_iter(),
-    }
+    let managed_profiles = managed_profile_display_rows(catalog, task_name, task);
+    (task_row, managed_profiles)
 }

@@ -39,12 +39,11 @@ fn project_catalog_task_rows(
     task_name: &str,
     task: &ManifestTask,
 ) -> PreparedCatalogTaskProjection {
-    let (task_row, managed_profiles) =
-        project_catalog_task_display_rows(catalog, task_name, task).into_task_and_managed_rows();
+    let (task_row, managed_profiles) = project_catalog_task_display_rows(catalog, task_name, task);
     PreparedCatalogTaskProjection {
         manifest,
         task_row,
-        managed_profiles: managed_profiles.collect(),
+        managed_profiles,
     }
 }
 
