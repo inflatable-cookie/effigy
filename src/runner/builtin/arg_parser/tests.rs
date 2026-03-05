@@ -171,6 +171,21 @@ fn parse_loop_collect_unknown_contract_is_stable() {
 }
 
 #[test]
+fn parse_loop_require_no_unknown_with_prefix_contract_is_stable() {
+    let args = vec!["--wat".to_owned()];
+    let mut parser = BuiltinArgParser::new(&args);
+    let err = parser
+        .parse_loop_require_no_unknown_with_prefix("completion", "candidates", |_parser, _arg| {
+            Ok(ParseLoopAction::Unknown)
+        })
+        .expect_err("unknown prefixed parse loop should fail");
+    assert_task_invocation(
+        err,
+        "unknown argument(s) for built-in `completion`: candidates --wat",
+    );
+}
+
+#[test]
 fn positional_task_invocation_contract_is_stable() {
     let args = vec!["target".to_owned(), "--flag".to_owned(), "value".to_owned()];
     let mut parser = BuiltinArgParser::new(&args);

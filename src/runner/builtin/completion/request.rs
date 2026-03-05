@@ -4,6 +4,8 @@ use super::super::super::RunnerError;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
 use super::scripts::CompletionShell;
 
+pub(super) const COMPLETION_CANDIDATES_SUBCOMMAND: &str = "candidates";
+
 pub(super) struct CompletionRequest {
     pub(super) output_json: bool,
     pub(super) shell: Option<CompletionShell>,
@@ -15,7 +17,7 @@ pub(super) enum CompletionParsedRequest {
 }
 
 pub(super) fn completion_candidate_mode(args: &[String]) -> bool {
-    BuiltinArgParser::first_positional_arg(args) == Some("candidates")
+    BuiltinArgParser::first_positional_arg(args) == Some(COMPLETION_CANDIDATES_SUBCOMMAND)
 }
 
 pub(super) fn parse_completion_parsed_request(

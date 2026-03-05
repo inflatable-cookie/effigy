@@ -6,9 +6,9 @@ use crate::TaskInvocation;
 
 use super::super::super::RunnerError;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
-use super::super::ensure_no_unknown_builtin_args_with_prefix;
 use super::super::response::render_optional_text_or_schema_json_lazy;
 use super::super::TaskRuntimeArgs;
+use super::request::COMPLETION_CANDIDATES_SUBCOMMAND;
 
 mod cache;
 
@@ -75,26 +75,32 @@ fn parse_completion_candidates_request(
     let mut output_json = false;
     let mut repo_override: Option<PathBuf> = None;
     let mut prefix: Option<String> = None;
-    let unknown = parser.parse_loop_collect_unknown(|parser, arg| {
-        if arg == "candidates" || parser.consume_json_flag(arg, &mut output_json) {
-            return Ok(ParseLoopAction::Handled);
-        }
-        match arg {
-            "--repo" => {
-                let value = parser.context_string_flag_value("completion candidates", "--repo")?;
-                repo_override = Some(PathBuf::from(value));
-                Ok(ParseLoopAction::Handled)
+    parser.parse_loop_require_no_unknown_with_prefix(
+        &task.name,
+        COMPLETION_CANDIDATES_SUBCOMMAND,
+        |parser, arg| {
+            if arg == COMPLETION_CANDIDATES_SUBCOMMAND
+                || parser.consume_json_flag(arg, &mut output_json)
+            {
+                return Ok(ParseLoopAction::Handled);
             }
-            "--prefix" => {
-                let value =
-                    parser.context_string_flag_value("completion candidates", "--prefix")?;
-                prefix = Some(value);
-                Ok(ParseLoopAction::Handled)
+            match arg {
+                "--repo" => {
+                    let value =
+                        parser.context_string_flag_value("completion candidates", "--repo")?;
+                    repo_override = Some(PathBuf::from(value));
+                    Ok(ParseLoopAction::Handled)
+                }
+                "--prefix" => {
+                    let value =
+                        parser.context_string_flag_value("completion candidates", "--prefix")?;
+                    prefix = Some(value);
+                    Ok(ParseLoopAction::Handled)
+                }
+                _ => Ok(ParseLoopAction::Unknown),
             }
-            _ => Ok(ParseLoopAction::Unknown),
-        }
-    })?;
-    ensure_no_unknown_builtin_args_with_prefix(&task.name, "candidates", &unknown)?;
+        },
+    )?;
 
     Ok(CompletionCandidatesRequest {
         output_json,
