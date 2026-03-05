@@ -1,80 +1,119 @@
-use std::borrow::Cow;
 use std::path::Path;
 
+use super::super::super::LoadedCatalog;
 use super::super::catalog_iteration::catalog_tasks;
-use super::super::catalog_manifest::{manifest_display_context, CatalogManifestContext};
+use super::super::catalog_manifest::{manifest_display_context, ordered_manifest_display_contexts};
 use super::super::matches::CatalogTaskMatch;
 use super::super::row_projection::{
-    project_catalog_task_display_rows, ProjectedCatalogTaskRows, ProjectedCatalogTaskSignatureRow,
+    project_catalog_task_display_rows, ProjectedCatalogTaskSignatureRow,
 };
 
-pub(super) struct PreparedCatalogAliasRow<'a> {
-    alias: &'a str,
-    manifest: &'a str,
+pub(super) struct PreparedCatalogAliasRow {
+    alias: String,
+    manifest: String,
 }
 
-pub(super) struct PreparedCatalogTaskRow<'a> {
-    manifest: Cow<'a, str>,
-    signature_rows: ProjectedCatalogTaskRows,
+pub(super) struct PreparedDefaultTextRows {
+    catalog_alias_rows: Vec<PreparedCatalogAliasRow>,
+    catalog_task_rows: Vec<PreparedCatalogTaskRow>,
 }
 
-impl<'a> PreparedCatalogAliasRow<'a> {
+pub(super) struct PreparedCatalogTaskRow {
+    manifest: String,
+    signature_rows: Vec<ProjectedCatalogTaskSignatureRow>,
+}
+
+impl PreparedCatalogAliasRow {
     pub(super) fn alias(&self) -> &str {
-        self.alias
+        self.alias.as_str()
     }
 
     pub(super) fn manifest(&self) -> &str {
-        self.manifest
+        self.manifest.as_str()
     }
 }
 
-impl<'a> PreparedCatalogTaskRow<'a> {
-    pub(super) fn into_render_parts(
-        self,
-    ) -> (
-        Cow<'a, str>,
-        impl Iterator<Item = ProjectedCatalogTaskSignatureRow>,
-    ) {
-        (self.manifest, self.signature_rows.into_signature_rows())
+impl PreparedDefaultTextRows {
+    pub(super) fn catalog_alias_rows(&self) -> &[PreparedCatalogAliasRow] {
+        self.catalog_alias_rows.as_slice()
+    }
+
+    pub(super) fn catalog_task_rows(&self) -> &[PreparedCatalogTaskRow] {
+        self.catalog_task_rows.as_slice()
     }
 }
 
-pub(super) fn prepared_catalog_alias_rows<'a>(
-    catalog_contexts: &'a [CatalogManifestContext<'a>],
-) -> impl Iterator<Item = PreparedCatalogAliasRow<'a>> + 'a {
-    catalog_contexts
+impl PreparedCatalogTaskRow {
+    fn new(
+        manifest: String,
+        signature_rows: impl IntoIterator<Item = ProjectedCatalogTaskSignatureRow>,
+    ) -> Self {
+        Self {
+            manifest,
+            signature_rows: signature_rows.into_iter().collect(),
+        }
+    }
+
+    pub(super) fn manifest(&self) -> &str {
+        self.manifest.as_str()
+    }
+
+    pub(super) fn signature_rows(&self) -> &[ProjectedCatalogTaskSignatureRow] {
+        self.signature_rows.as_slice()
+    }
+}
+
+pub(super) fn prepare_default_text_rows(
+    ordered_catalogs: &[&LoadedCatalog],
+    resolved_root: &Path,
+) -> PreparedDefaultTextRows {
+    let catalog_contexts: Vec<_> =
+        ordered_manifest_display_contexts(ordered_catalogs, resolved_root).collect();
+
+    let catalog_alias_rows = catalog_contexts
         .iter()
         .map(|context| PreparedCatalogAliasRow {
-            alias: &context.catalog().alias,
-            manifest: context.manifest(),
+            alias: context.catalog().alias.clone(),
+            manifest: context.manifest().to_owned(),
         })
+        .collect();
+
+    let catalog_task_rows = catalog_contexts
+        .iter()
+        .flat_map(|context| {
+            let catalog = context.catalog();
+            let manifest = context.manifest().to_owned();
+            catalog_tasks(catalog).map(move |(task_name, task)| {
+                PreparedCatalogTaskRow::new(
+                    manifest.clone(),
+                    project_catalog_task_display_rows(catalog, task_name, task)
+                        .into_signature_rows(),
+                )
+            })
+        })
+        .collect();
+
+    PreparedDefaultTextRows {
+        catalog_alias_rows,
+        catalog_task_rows,
+    }
 }
 
-pub(super) fn prepared_ordered_catalog_task_rows<'a>(
-    catalog_contexts: &'a [CatalogManifestContext<'a>],
-) -> impl Iterator<Item = PreparedCatalogTaskRow<'a>> + 'a {
-    catalog_contexts.iter().flat_map(|context| {
-        let catalog = context.catalog();
-        let manifest = context.manifest();
-        catalog_tasks(catalog).map(move |(task_name, task)| PreparedCatalogTaskRow {
-            manifest: Cow::Borrowed(manifest),
-            signature_rows: project_catalog_task_display_rows(catalog, task_name, task),
+pub(super) fn prepare_catalog_match_task_rows(
+    matches: &[CatalogTaskMatch<'_>],
+    task_name: &str,
+    resolved_root: &Path,
+) -> Vec<PreparedCatalogTaskRow> {
+    matches
+        .iter()
+        .map(move |matched| {
+            let catalog = matched.catalog();
+            let task = matched.task();
+            let context = manifest_display_context(catalog, resolved_root);
+            PreparedCatalogTaskRow::new(
+                context.into_manifest(),
+                project_catalog_task_display_rows(catalog, task_name, task).into_signature_rows(),
+            )
         })
-    })
-}
-
-pub(super) fn prepared_catalog_match_rows<'a>(
-    matches: &'a [CatalogTaskMatch<'a>],
-    task_name: &'a str,
-    resolved_root: &'a Path,
-) -> impl Iterator<Item = PreparedCatalogTaskRow<'a>> + 'a {
-    matches.iter().map(move |matched| {
-        let catalog = matched.catalog();
-        let task = matched.task();
-        let context = manifest_display_context(catalog, resolved_root);
-        PreparedCatalogTaskRow {
-            manifest: Cow::Owned(context.into_manifest()),
-            signature_rows: project_catalog_task_display_rows(catalog, task_name, task),
-        }
-    })
+        .collect()
 }
