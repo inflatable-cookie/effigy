@@ -136,15 +136,6 @@ mod tests {
     }
 
     #[test]
-    fn builtin_string_flag_value_missing_message_contract_is_stable() {
-        let mut parser = BuiltinArgParser::new(&[]);
-        let err = parser
-            .builtin_string_flag_value("config", "--target")
-            .expect_err("missing builtin string value should fail");
-        assert_task_invocation(err, "`--target` requires a value for built-in `config`");
-    }
-
-    #[test]
     fn quoted_choice_flag_value_message_contract_is_stable() {
         let mut parser = BuiltinArgParser::new(&[]);
         let err = parser
@@ -164,6 +155,45 @@ mod tests {
             err,
             "invalid `--owner` value `wat` (expected `effigy` or `external`)",
         );
+    }
+
+    #[test]
+    fn builtin_choice_flag_value_message_contract_is_stable() {
+        let mut parser = BuiltinArgParser::new(&[]);
+        let err =
+            parser
+                .builtin_choice_flag_value("config", "--target", "package_manager, test", |_| {
+                    None::<()>
+                })
+                .expect_err("missing builtin choice should fail");
+        assert_task_invocation(err, "`--target` requires a value for built-in `config`");
+
+        let args = vec!["wat".to_owned()];
+        let mut invalid_parser = BuiltinArgParser::new(&args);
+        let err = invalid_parser
+            .builtin_choice_flag_value("config", "--target", "package_manager, test", |value| {
+                BuiltinArgParser::choice_ignore_ascii_case(
+                    value,
+                    &[("package_manager", ()), ("test", ())],
+                )
+            })
+            .expect_err("invalid builtin choice should fail");
+        assert_task_invocation(
+            err,
+            "invalid `--target` value `wat` for built-in `config` (supported: package_manager, test)",
+        );
+    }
+
+    #[test]
+    fn choice_ignore_ascii_case_contract_is_stable() {
+        let matched = BuiltinArgParser::choice_ignore_ascii_case(
+            "CaRgO-NeXtEsT",
+            &[("vitest", 1u8), ("cargo-nextest", 2u8)],
+        );
+        assert_eq!(matched, Some(2));
+
+        let unmatched = BuiltinArgParser::choice_ignore_ascii_case("unknown", &[("vitest", 1u8)]);
+        assert_eq!(unmatched, None);
     }
 
     #[test]
@@ -266,6 +296,35 @@ mod tests {
             .unknown_if_flag_or("target", |_| Ok(ParseLoopAction::Handled))
             .expect("positional path should succeed");
         assert!(matches!(handled, ParseLoopAction::Handled));
+    }
+
+    #[test]
+    fn consume_any_bool_flag_contract_is_stable() {
+        let parser = BuiltinArgParser::new(&[]);
+        let mut output_json = false;
+        let mut fix = false;
+        let mut verbose = false;
+
+        assert!(parser.consume_any_bool_flag(
+            "--fix",
+            &mut [
+                ("--json", &mut output_json),
+                ("--fix", &mut fix),
+                ("--verbose", &mut verbose),
+            ],
+        ));
+        assert!(!output_json);
+        assert!(fix);
+        assert!(!verbose);
+
+        assert!(!parser.consume_any_bool_flag(
+            "--wat",
+            &mut [
+                ("--json", &mut output_json),
+                ("--fix", &mut fix),
+                ("--verbose", &mut verbose),
+            ],
+        ));
     }
 
     fn assert_task_invocation(error: RunnerError, expected: &str) {

@@ -18,10 +18,14 @@ pub(super) fn parse_init_request(
     let mut force = false;
     let mut dry_run = false;
     parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
-        if parser.consume_json_flag(arg, &mut output_json)
-            || parser.consume_flag(arg, "--force", &mut force)
-            || parser.consume_flag(arg, "--dry-run", &mut dry_run)
-        {
+        if parser.consume_any_bool_flag(
+            arg,
+            &mut [
+                ("--json", &mut output_json),
+                ("--force", &mut force),
+                ("--dry-run", &mut dry_run),
+            ],
+        ) {
             return Ok(ParseLoopAction::Handled);
         }
         Ok(ParseLoopAction::Unknown)

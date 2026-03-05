@@ -50,6 +50,21 @@ impl ConfigTestRunner {
     }
 }
 
+const CONFIG_TARGET_CHOICES: [(&str, ConfigSchemaTarget); 5] = [
+    ("package_manager", ConfigSchemaTarget::PackageManager),
+    ("test", ConfigSchemaTarget::Test),
+    ("tasks", ConfigSchemaTarget::Tasks),
+    ("defer", ConfigSchemaTarget::Defer),
+    ("shell", ConfigSchemaTarget::Shell),
+];
+
+const CONFIG_RUNNER_CHOICES: [(&str, ConfigTestRunner); 4] = [
+    ("vitest", ConfigTestRunner::Vitest),
+    ("nextest", ConfigTestRunner::CargoNextest),
+    ("cargo-nextest", ConfigTestRunner::CargoNextest),
+    ("cargo-test", ConfigTestRunner::CargoTest),
+];
+
 pub(super) fn parse_config_request(
     task: &TaskInvocation,
     args: &[String],
@@ -61,20 +76,32 @@ pub(super) fn parse_config_request(
     let mut target: Option<ConfigSchemaTarget> = None;
     let mut runner: Option<ConfigTestRunner> = None;
     parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
-        if parser.consume_flag(arg, "--schema", &mut schema)
-            || parser.consume_flag(arg, "--minimal", &mut minimal)
-            || parser.consume_json_flag(arg, &mut output_json)
-        {
+        if parser.consume_any_bool_flag(
+            arg,
+            &mut [
+                ("--schema", &mut schema),
+                ("--minimal", &mut minimal),
+                ("--json", &mut output_json),
+            ],
+        ) {
             return Ok(ParseLoopAction::Handled);
         }
         if arg == "--target" {
-            let value = parser.builtin_string_flag_value("config", "--target")?;
-            target = Some(parse_config_target(&value)?);
+            target = Some(parser.builtin_choice_flag_value(
+                "config",
+                "--target",
+                "package_manager, test, tasks, defer, shell",
+                |value| BuiltinArgParser::choice_ignore_ascii_case(value, &CONFIG_TARGET_CHOICES),
+            )?);
             return Ok(ParseLoopAction::Handled);
         }
         if arg == "--runner" {
-            let value = parser.builtin_string_flag_value("config", "--runner")?;
-            runner = Some(parse_config_runner(&value)?);
+            runner = Some(parser.builtin_choice_flag_value(
+                "config",
+                "--runner",
+                "vitest, cargo-nextest, cargo-test",
+                |value| BuiltinArgParser::choice_ignore_ascii_case(value, &CONFIG_RUNNER_CHOICES),
+            )?);
             return Ok(ParseLoopAction::Handled);
         }
         Ok(ParseLoopAction::Unknown)
@@ -107,44 +134,6 @@ pub(super) fn parse_config_request(
         target,
         runner,
     })
-}
-
-fn parse_config_target(value: &str) -> Result<ConfigSchemaTarget, RunnerError> {
-    if value.eq_ignore_ascii_case("package_manager") {
-        return Ok(ConfigSchemaTarget::PackageManager);
-    }
-    if value.eq_ignore_ascii_case("test") {
-        return Ok(ConfigSchemaTarget::Test);
-    }
-    if value.eq_ignore_ascii_case("tasks") {
-        return Ok(ConfigSchemaTarget::Tasks);
-    }
-    if value.eq_ignore_ascii_case("defer") {
-        return Ok(ConfigSchemaTarget::Defer);
-    }
-    if value.eq_ignore_ascii_case("shell") {
-        return Ok(ConfigSchemaTarget::Shell);
-    }
-
-    Err(RunnerError::task_invocation(format!(
-        "invalid `--target` value `{value}` for built-in `config` (supported: package_manager, test, tasks, defer, shell)"
-    )))
-}
-
-fn parse_config_runner(value: &str) -> Result<ConfigTestRunner, RunnerError> {
-    if value.eq_ignore_ascii_case("vitest") {
-        return Ok(ConfigTestRunner::Vitest);
-    }
-    if value.eq_ignore_ascii_case("nextest") || value.eq_ignore_ascii_case("cargo-nextest") {
-        return Ok(ConfigTestRunner::CargoNextest);
-    }
-    if value.eq_ignore_ascii_case("cargo-test") {
-        return Ok(ConfigTestRunner::CargoTest);
-    }
-
-    Err(RunnerError::task_invocation(format!(
-        "invalid `--runner` value `{value}` for built-in `config` (supported: vitest, cargo-nextest, cargo-test)"
-    )))
 }
 
 #[cfg(test)]

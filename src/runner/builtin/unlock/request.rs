@@ -20,9 +20,10 @@ pub(super) fn parse_unlock_request(
     let mut scopes = Vec::<LockScope>::new();
 
     parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
-        if parser.consume_json_flag(arg, &mut output_json)
-            || parser.consume_flag(arg, "--all", &mut unlock_all_flag)
-        {
+        if parser.consume_any_bool_flag(
+            arg,
+            &mut [("--json", &mut output_json), ("--all", &mut unlock_all_flag)],
+        ) {
             return Ok(ParseLoopAction::Handled);
         }
         parser.unknown_if_flag_or(arg, |value| {
