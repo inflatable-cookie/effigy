@@ -5,7 +5,7 @@ use crate::ui::{NoticeLevel, PlainRenderer, Renderer};
 
 use super::super::super::tasks_view::render_resolution_probe_block;
 use super::super::super::RunnerError;
-use super::super::filtering::FilteredTaskModel;
+use super::super::filtering::PreparedFilteredListing;
 use super::super::row_projection::BuiltinTaskRow;
 use super::model::prepare_catalog_match_task_rows;
 use super::rows::render_catalog_match_rows;
@@ -15,21 +15,20 @@ pub(super) fn render_filtered_tasks_text(
     renderer: &mut PlainRenderer<Vec<u8>>,
     color_enabled: bool,
     theme: &Theme,
-    filter: &str,
-    filtered_model: &FilteredTaskModel<'_>,
+    filtered_listing: &PreparedFilteredListing<'_>,
     resolve_probe: &Option<serde_json::Value>,
     resolved_root: &Path,
 ) -> Result<(), RunnerError> {
-    renderer.section(&format!("Task Matches: {filter}"))?;
+    renderer.section(&format!("Task Matches: {}", filtered_listing.filter()))?;
 
-    if !filtered_model.has_matches() {
+    if !filtered_listing.has_matches() {
         renderer.notice(NoticeLevel::Warning, "no matches")?;
         return Ok(());
     }
 
     let matched_rows = prepare_catalog_match_task_rows(
-        filtered_model.catalog_matches(),
-        filtered_model.task_name(),
+        filtered_listing.catalog_matches(),
+        filtered_listing.task_name(),
         resolved_root,
     );
     render_catalog_match_rows(renderer, color_enabled, theme, matched_rows.as_slice())?;
@@ -37,8 +36,8 @@ pub(super) fn render_filtered_tasks_text(
         renderer,
         color_enabled,
         theme,
-        filtered_model.builtin_matches(),
-        filtered_model.notes(),
+        filtered_listing.builtin_matches(),
+        filtered_listing.notes(),
         resolve_probe,
     )?;
     Ok(())

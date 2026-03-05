@@ -1,5 +1,3 @@
-use std::iter;
-
 use super::super::execute::{catalog_task_label, task_run_preview};
 use super::super::tasks_view::{managed_profile_display_rows, ManagedProfileDisplayRow};
 use super::super::{LoadedCatalog, ManifestTask, BUILTIN_TASKS};
@@ -7,21 +5,6 @@ use super::super::{LoadedCatalog, ManifestTask, BUILTIN_TASKS};
 pub(super) struct ProjectedCatalogTaskSignatureRow {
     task: String,
     run: String,
-}
-
-pub(super) struct ProjectedCatalogTaskManifestRow {
-    pub(super) task: String,
-    pub(super) run: String,
-    pub(super) manifest: String,
-}
-
-pub(super) struct ProjectedManagedProfileManifestRow {
-    pub(super) task: String,
-    pub(super) run: String,
-    pub(super) manifest: String,
-    pub(super) profile: String,
-    pub(super) invocation: String,
-    pub(super) parent_task: String,
 }
 
 #[derive(Clone, Copy)]
@@ -36,28 +19,13 @@ pub(super) struct ProjectedCatalogTaskRows {
 }
 
 impl ProjectedCatalogTaskRows {
-    pub(super) fn into_signature_rows(
+    pub(super) fn into_task_and_managed_rows(
         self,
-    ) -> impl Iterator<Item = ProjectedCatalogTaskSignatureRow> {
-        iter::once(self.task).chain(
-            self.managed_profiles
-                .map(ProjectedCatalogTaskSignatureRow::from_managed),
-        )
-    }
-
-    pub(super) fn into_manifest_rows<'a>(
-        self,
-        manifest: &'a str,
     ) -> (
-        ProjectedCatalogTaskManifestRow,
-        impl Iterator<Item = ProjectedManagedProfileManifestRow> + 'a,
+        ProjectedCatalogTaskSignatureRow,
+        impl Iterator<Item = ManagedProfileDisplayRow>,
     ) {
-        let task_row = ProjectedCatalogTaskManifestRow::from_signature(self.task, manifest);
-        (
-            task_row,
-            self.managed_profiles
-                .map(move |row| ProjectedManagedProfileManifestRow::from_managed(row, manifest)),
-        )
+        (self.task, self.managed_profiles)
     }
 }
 
@@ -66,7 +34,7 @@ impl ProjectedCatalogTaskSignatureRow {
         Self { task, run }
     }
 
-    fn from_managed(row: ManagedProfileDisplayRow) -> Self {
+    pub(super) fn from_managed_display(row: ManagedProfileDisplayRow) -> Self {
         Self::new(row.task, row.run)
     }
 
@@ -76,29 +44,6 @@ impl ProjectedCatalogTaskSignatureRow {
 
     pub(super) fn run(&self) -> &str {
         self.run.as_str()
-    }
-}
-
-impl ProjectedCatalogTaskManifestRow {
-    fn from_signature(row: ProjectedCatalogTaskSignatureRow, manifest: &str) -> Self {
-        Self {
-            task: row.task,
-            run: row.run,
-            manifest: manifest.to_owned(),
-        }
-    }
-}
-
-impl ProjectedManagedProfileManifestRow {
-    fn from_managed(row: ManagedProfileDisplayRow, manifest: &str) -> Self {
-        Self {
-            task: row.task,
-            run: row.run,
-            manifest: manifest.to_owned(),
-            profile: row.profile,
-            invocation: row.invocation,
-            parent_task: row.parent_task,
-        }
     }
 }
 
@@ -114,13 +59,6 @@ impl<'a> BuiltinTaskRow<'a> {
     pub(super) fn description(&self) -> &'a str {
         self.description
     }
-}
-
-pub(super) fn project_builtin_rows<'a, I>(rows: I) -> impl Iterator<Item = BuiltinTaskRow<'a>>
-where
-    I: IntoIterator<Item = BuiltinTaskRow<'a>>,
-{
-    rows.into_iter()
 }
 
 pub(super) fn builtin_task_rows() -> impl Iterator<Item = BuiltinTaskRow<'static>> {

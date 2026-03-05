@@ -2,6 +2,8 @@ use std::path::Path;
 
 use crate::TasksArgs;
 
+#[path = "tasks_listing/builtin_rows.rs"]
+mod builtin_rows;
 #[path = "tasks_listing/catalog_iteration.rs"]
 mod catalog_iteration;
 #[path = "tasks_listing/catalog_manifest.rs"]
@@ -14,6 +16,8 @@ mod json_output;
 mod matches;
 #[path = "tasks_listing/prepared_listing.rs"]
 mod prepared_listing;
+#[path = "tasks_listing/prepared_task_rows.rs"]
+mod prepared_task_rows;
 #[path = "tasks_listing/render_context.rs"]
 mod render_context;
 #[path = "tasks_listing/row_projection.rs"]

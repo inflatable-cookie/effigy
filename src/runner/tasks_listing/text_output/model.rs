@@ -1,12 +1,13 @@
 use std::path::Path;
 
 use super::super::super::LoadedCatalog;
-use super::super::catalog_iteration::catalog_tasks;
 use super::super::catalog_manifest::{manifest_display_context, ordered_manifest_display_contexts};
 use super::super::matches::CatalogTaskMatch;
-use super::super::row_projection::{
-    project_catalog_task_display_rows, ProjectedCatalogTaskSignatureRow,
+use super::super::prepared_task_rows::{
+    prepare_matched_catalog_task_rows, prepare_ordered_catalog_task_rows,
+    PreparedCatalogTaskProjection,
 };
+use super::super::row_projection::ProjectedCatalogTaskSignatureRow;
 
 pub(super) struct PreparedCatalogAliasRow {
     alias: String,
@@ -78,19 +79,13 @@ pub(super) fn prepare_default_text_rows(
         })
         .collect();
 
-    let catalog_task_rows = catalog_contexts
-        .iter()
-        .flat_map(|context| {
-            let catalog = context.catalog();
-            let manifest = context.manifest().to_owned();
-            catalog_tasks(catalog).map(move |(task_name, task)| {
-                PreparedCatalogTaskRow::new(
-                    manifest.clone(),
-                    project_catalog_task_display_rows(catalog, task_name, task)
-                        .into_signature_rows(),
-                )
-            })
-        })
+    let (_, prepared_task_rows) = prepare_ordered_catalog_task_rows(ordered_catalogs, |catalog| {
+        manifest_display_context(catalog, resolved_root).into_manifest()
+    })
+    .into_parts();
+    let catalog_task_rows = prepared_task_rows
+        .into_iter()
+        .map(prepared_text_task_row)
         .collect();
 
     PreparedDefaultTextRows {
@@ -104,16 +99,22 @@ pub(super) fn prepare_catalog_match_task_rows(
     task_name: &str,
     resolved_root: &Path,
 ) -> Vec<PreparedCatalogTaskRow> {
-    matches
-        .iter()
-        .map(move |matched| {
-            let catalog = matched.catalog();
-            let task = matched.task();
-            let context = manifest_display_context(catalog, resolved_root);
-            PreparedCatalogTaskRow::new(
-                context.into_manifest(),
-                project_catalog_task_display_rows(catalog, task_name, task).into_signature_rows(),
-            )
-        })
-        .collect()
+    prepare_matched_catalog_task_rows(matches, task_name, |catalog| {
+        manifest_display_context(catalog, resolved_root).into_manifest()
+    })
+    .into_iter()
+    .map(prepared_text_task_row)
+    .collect()
+}
+
+fn prepared_text_task_row(row: PreparedCatalogTaskProjection) -> PreparedCatalogTaskRow {
+    let (manifest, task_row, managed_profiles) = row.into_parts();
+    PreparedCatalogTaskRow::new(
+        manifest,
+        std::iter::once(task_row).chain(
+            managed_profiles
+                .into_iter()
+                .map(ProjectedCatalogTaskSignatureRow::from_managed_display),
+        ),
+    )
 }

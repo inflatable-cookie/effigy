@@ -3,9 +3,8 @@ use crate::ui::{PlainRenderer, Renderer};
 
 use super::super::super::tasks_view::style_text;
 use super::super::super::RunnerError;
-use super::super::row_projection::{
-    project_builtin_rows, BuiltinTaskRow, ProjectedCatalogTaskSignatureRow,
-};
+use super::super::builtin_rows::prepare_builtin_task_rows;
+use super::super::row_projection::{BuiltinTaskRow, ProjectedCatalogTaskSignatureRow};
 use super::model::{PreparedCatalogAliasRow, PreparedCatalogTaskRow};
 
 pub(super) fn render_catalog_alias_rows(
@@ -44,7 +43,7 @@ pub(super) fn render_builtin_task_rows<'a>(
     theme: &Theme,
     rows: impl IntoIterator<Item = BuiltinTaskRow<'a>>,
 ) -> Result<(), RunnerError> {
-    for row in project_builtin_rows(rows) {
+    for row in prepare_builtin_task_rows(rows) {
         render_name_detail_row(
             renderer,
             color_enabled,

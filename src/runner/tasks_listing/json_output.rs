@@ -1,17 +1,17 @@
+#[path = "json_output/model.rs"]
+mod model;
 #[path = "json_output/payload.rs"]
 mod payload;
-#[path = "json_output/row_collector.rs"]
-mod row_collector;
 #[path = "json_output/rows.rs"]
 mod rows;
 
 use super::super::{render, LoadedCatalog, RunnerError};
-use super::filtering::FilteredTaskModel;
+use super::filtering::PreparedFilteredListing;
 use super::prepared_listing::{prepare_listing_selection, PreparedListingSelection};
 use super::render_context::ListingRenderRequest;
 use super::ListingCatalogSnapshot;
+use model::{prepare_all_catalog_rows_json, prepare_filtered_rows_json};
 use payload::{encode_catalog_payload, encode_filtered_payload, JsonPayloadContext};
-use row_collector::{collect_all_catalog_rows, collect_filtered_rows};
 use rows::{builtin_rows_json, builtin_task_rows_json};
 
 pub(super) fn render_tasks_json(
@@ -26,10 +26,9 @@ pub(super) fn render_tasks_json(
     );
 
     let payload = match prepare_listing_selection(request, snapshot)? {
-        PreparedListingSelection::Filtered {
-            filter,
-            filtered_model,
-        } => build_filtered_payload(&json_context, filter, filtered_model),
+        PreparedListingSelection::Filtered { filtered_listing } => {
+            build_filtered_payload(&json_context, filtered_listing)
+        }
         PreparedListingSelection::Catalog { ordered_catalogs } => {
             build_catalog_payload(&json_context, ordered_catalogs)
         }
@@ -41,21 +40,20 @@ fn build_catalog_payload(
     context: &JsonPayloadContext<'_>,
     ordered_catalogs: &[&LoadedCatalog],
 ) -> Result<serde_json::Value, RunnerError> {
-    let rows = collect_all_catalog_rows(ordered_catalogs);
+    let rows = prepare_all_catalog_rows_json(ordered_catalogs);
     encode_catalog_payload(context, rows, builtin_task_rows_json())
 }
 
 fn build_filtered_payload(
     context: &JsonPayloadContext<'_>,
-    filter: &str,
-    filtered_model: FilteredTaskModel<'_>,
+    filtered_listing: PreparedFilteredListing<'_>,
 ) -> Result<serde_json::Value, RunnerError> {
-    let rows = collect_filtered_rows(filtered_model.catalog_matches(), filtered_model.task_name());
-    encode_filtered_payload(
-        context,
-        filter,
-        rows,
-        builtin_rows_json(filtered_model.builtin_matches().iter().copied()),
-        filtered_model.into_notes(),
-    )
+    let filter = filtered_listing.filter().to_owned();
+    let rows = prepare_filtered_rows_json(
+        filtered_listing.catalog_matches(),
+        filtered_listing.task_name(),
+    );
+    let builtin_matches = builtin_rows_json(filtered_listing.builtin_matches().iter().copied());
+    let notes = filtered_listing.into_notes();
+    encode_filtered_payload(context, &filter, rows, builtin_matches, notes)
 }

@@ -2,6 +2,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::super::super::RunnerError;
+use super::model::PreparedJsonTaskRows;
 use super::rows::{BuiltinTaskRowJson, ManagedProfileRowJson, TaskRowJson};
 
 const TASKS_SCHEMA: &str = "effigy.tasks.v1";
@@ -13,11 +14,6 @@ pub(super) struct JsonPayloadContext<'a> {
     catalog_diagnostics: &'a [Value],
     precedence: &'a [String],
     resolve_probe: &'a Option<Value>,
-}
-
-pub(super) struct JsonTaskRows {
-    task_rows: Vec<TaskRowJson>,
-    managed_profile_rows: Vec<ManagedProfileRowJson>,
 }
 
 #[derive(Serialize)]
@@ -76,22 +72,6 @@ impl<'a> JsonPayloadContext<'a> {
     }
 }
 
-impl JsonTaskRows {
-    pub(super) fn new(
-        task_rows: Vec<TaskRowJson>,
-        managed_profile_rows: Vec<ManagedProfileRowJson>,
-    ) -> Self {
-        Self {
-            task_rows,
-            managed_profile_rows,
-        }
-    }
-
-    fn into_parts(self) -> (Vec<TaskRowJson>, Vec<ManagedProfileRowJson>) {
-        (self.task_rows, self.managed_profile_rows)
-    }
-}
-
 fn encode_payload(payload: impl Serialize) -> Result<Value, RunnerError> {
     serde_json::to_value(payload).map_err(|error| {
         RunnerError::Ui(format!("failed to encode tasks listing payload: {error}"))
@@ -100,7 +80,7 @@ fn encode_payload(payload: impl Serialize) -> Result<Value, RunnerError> {
 
 pub(super) fn encode_catalog_payload(
     context: &JsonPayloadContext<'_>,
-    rows: JsonTaskRows,
+    rows: PreparedJsonTaskRows,
     builtin_tasks: Vec<BuiltinTaskRowJson>,
 ) -> Result<Value, RunnerError> {
     let (task_rows, managed_profile_rows) = rows.into_parts();
@@ -118,7 +98,7 @@ pub(super) fn encode_catalog_payload(
 pub(super) fn encode_filtered_payload(
     context: &JsonPayloadContext<'_>,
     filter: &str,
-    rows: JsonTaskRows,
+    rows: PreparedJsonTaskRows,
     builtin_matches: Vec<BuiltinTaskRowJson>,
     notes: Vec<String>,
 ) -> Result<Value, RunnerError> {
