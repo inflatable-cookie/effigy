@@ -14,6 +14,68 @@ fn run_tasks_json_renders_machine_readable_payload() {
 }
 
 #[test]
+fn run_tasks_json_includes_explicit_rows_for_empty_catalogs() {
+    let root = setup_root_with_catalog_tasks(
+        "tasks-json-empty-catalog-row",
+        &[
+            ("empty", &[]),
+            ("farmyard", &[("api", "printf farmyard-api")]),
+        ],
+        false,
+    );
+
+    let out = run_tasks_from_repo(&root, None, None, true);
+
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks.v1", 1);
+    let catalog_rows = parsed["catalog_tasks"]
+        .as_array()
+        .expect("catalog_tasks array");
+    assert!(
+        catalog_rows.iter().any(|row| {
+            row["task"].is_null()
+                && row["run"].is_null()
+                && row["manifest"]
+                    .as_str()
+                    .map(|manifest| manifest.ends_with("/empty/effigy.toml"))
+                    .unwrap_or(false)
+        }),
+        "expected an explicit empty catalog row for the empty catalog manifest"
+    );
+    assert!(
+        catalog_rows
+            .iter()
+            .any(|row| row["task"].as_str() == Some("farmyard/api")),
+        "expected non-empty catalog task rows to still be present"
+    );
+}
+
+#[test]
+fn run_tasks_json_preserves_catalog_row_order_with_empty_catalogs() {
+    let root = setup_root_with_catalog_tasks(
+        "tasks-json-empty-order",
+        &[("alpha", &[("api", "printf alpha-api")]), ("beta", &[])],
+        false,
+    );
+
+    let out = run_tasks_from_repo(&root, None, None, true);
+
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks.v1", 1);
+    let catalog_rows = parsed["catalog_tasks"]
+        .as_array()
+        .expect("catalog_tasks array");
+    assert_eq!(catalog_rows.len(), 2, "expected one row per catalog");
+    assert_eq!(catalog_rows[0]["task"].as_str(), Some("alpha/api"));
+    assert!(catalog_rows[1]["task"].is_null());
+    assert!(
+        catalog_rows[1]["manifest"]
+            .as_str()
+            .map(|manifest| manifest.ends_with("/beta/effigy.toml"))
+            .unwrap_or(false),
+        "expected second row to remain the empty beta catalog"
+    );
+}
+
+#[test]
 fn run_tasks_json_filter_includes_builtin_matches_and_notes() {
     let root = temp_workspace("tasks-json-filter");
     let out = run_tasks_from_repo(&root, Some("test"), None, true);
@@ -23,6 +85,37 @@ fn run_tasks_json_filter_includes_builtin_matches_and_notes() {
     assert_json_array_field(&parsed, "builtin_matches");
     assert_json_array_field(&parsed, "managed_profile_matches");
     assert_json_array_field_non_empty(&parsed, "notes");
+}
+
+#[test]
+fn run_tasks_json_prefixed_test_filter_skips_builtin_fallback_note() {
+    let root = setup_root_with_catalog_tasks(
+        "tasks-json-prefixed-test-filter",
+        &[("farmyard", &[("test", "printf farmyard-test")])],
+        false,
+    );
+
+    let out = run_tasks_from_repo(&root, Some("farmyard/test"), None, true);
+
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks.filtered.v1", 1);
+    assert_json_string_field_eq(&parsed, "filter", "farmyard/test");
+    assert_json_array_field(&parsed, "builtin_matches");
+    assert_eq!(
+        parsed["builtin_matches"]
+            .as_array()
+            .expect("builtin_matches array")
+            .len(),
+        0
+    );
+    assert_eq!(
+        parsed["notes"].as_array().expect("notes array").len(),
+        0,
+        "prefixed selectors should not report built-in fallback notes"
+    );
+    assert_string_items_contains_all(
+        &json_task_column(&parsed, "matches"),
+        &["farmyard/test".to_owned()],
+    );
 }
 
 #[test]

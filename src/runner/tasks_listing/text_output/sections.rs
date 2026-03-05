@@ -4,11 +4,12 @@ use crate::ui::theme::Theme;
 use crate::ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
 
 use super::super::super::{LoadedCatalog, RunnerError};
-use super::super::row_projection::{builtin_task_rows, BuiltinTaskRow};
-use super::model::{prepare_default_text_rows, PreparedCatalogAliasRow, PreparedCatalogTaskRow};
-use super::rows::{
-    render_builtin_task_rows, render_catalog_alias_rows, render_ordered_catalog_task_rows,
+use super::super::prepared_task_rows::{
+    prepare_default_text_rows, CatalogAliasProjection, CatalogTaskProjection,
 };
+use super::super::row_projection::builtin_task_rows;
+use super::followups::render_builtin_rows_section;
+use super::rows::{render_catalog_alias_rows, render_catalog_task_rows};
 
 pub(super) fn render_default_tasks_text(
     renderer: &mut PlainRenderer<Vec<u8>>,
@@ -46,26 +47,13 @@ pub(super) fn render_default_tasks_text(
     Ok(())
 }
 
-pub(super) fn render_builtin_rows_section<'a>(
-    renderer: &mut PlainRenderer<Vec<u8>>,
-    color_enabled: bool,
-    theme: &Theme,
-    title: &str,
-    rows: impl IntoIterator<Item = BuiltinTaskRow<'a>>,
-    notes: &[String],
-) -> Result<(), RunnerError> {
-    renderer.section(title)?;
-    render_builtin_task_rows(renderer, color_enabled, theme, rows)?;
-    render_info_notices(renderer, notes)
-}
-
 fn render_catalogs_section(
     renderer: &mut PlainRenderer<Vec<u8>>,
     color_enabled: bool,
     theme: &Theme,
     catalogs: &[LoadedCatalog],
     has_scope_rows: bool,
-    alias_rows: &[PreparedCatalogAliasRow],
+    alias_rows: &[CatalogAliasProjection],
 ) -> Result<(), RunnerError> {
     render_catalog_scoped_section(
         renderer,
@@ -85,7 +73,7 @@ fn render_tasks_section(
     color_enabled: bool,
     theme: &Theme,
     has_scope_rows: bool,
-    task_rows: &[PreparedCatalogTaskRow],
+    task_rows: &[CatalogTaskProjection],
 ) -> Result<(), RunnerError> {
     render_catalog_scoped_section(
         renderer,
@@ -93,7 +81,7 @@ fn render_tasks_section(
         has_scope_rows,
         !task_rows.is_empty(),
         |_| Ok(()),
-        |renderer| render_ordered_catalog_task_rows(renderer, color_enabled, theme, task_rows),
+        |renderer| render_catalog_task_rows(renderer, color_enabled, theme, task_rows),
     )
 }
 
@@ -113,15 +101,5 @@ fn render_catalog_scoped_section(
         renderer.notice(NoticeLevel::Info, "none")?;
     }
     renderer.text("")?;
-    Ok(())
-}
-
-fn render_info_notices(
-    renderer: &mut PlainRenderer<Vec<u8>>,
-    notices: &[String],
-) -> Result<(), RunnerError> {
-    for notice in notices {
-        renderer.notice(NoticeLevel::Info, notice)?;
-    }
     Ok(())
 }

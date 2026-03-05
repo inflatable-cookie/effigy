@@ -25,6 +25,72 @@ fn run_tasks_with_test_filter_shows_catalog_fallback_note() {
 }
 
 #[test]
+fn run_tasks_with_unmatched_filter_reports_no_matches_warning() {
+    let root = temp_workspace("task-filter-no-matches");
+
+    let out = run_tasks_from_repo(&root, Some("missing"), None, false);
+    assert_output_contains_all(&out, &["Task Matches: missing", "no matches"]);
+    assert_output_excludes_all(&out, &["Built-in Task Matches", "Resolution:"]);
+}
+
+#[test]
+fn run_tasks_with_builtin_only_filter_renders_builtin_matches_without_fallback_note() {
+    let root = temp_workspace("task-filter-builtin-only");
+
+    let out = run_tasks_from_repo(&root, Some("help"), None, false);
+    assert_output_contains_all(
+        &out,
+        &["Task Matches: help", "Built-in Task Matches", "help"],
+    );
+    assert_output_excludes_all(
+        &out,
+        &[
+            "built-in fallback supports `<catalog>/test`",
+            "Resolution:",
+            "no matches",
+        ],
+    );
+}
+
+#[test]
+fn run_tasks_with_filter_and_resolve_renders_resolution_probe_block() {
+    let root = setup_root_with_catalog_tasks(
+        "task-filter-resolve-probe",
+        &[("farmyard", &[("reset-db", "printf farmyard-reset")])],
+        false,
+    );
+
+    let out = run_tasks_from_repo(&root, Some("reset-db"), Some("farmyard/reset-db"), false);
+    assert_output_contains_all(
+        &out,
+        &[
+            "Task Matches: reset-db",
+            "farmyard/reset-db",
+            "Resolution: farmyard/reset-db",
+            "status: ok",
+            "catalog: farmyard",
+            "task: reset-db",
+        ],
+    );
+}
+
+#[test]
+fn run_tasks_with_no_matches_and_resolve_still_renders_resolution_probe_block() {
+    let root = temp_workspace("task-filter-no-matches-with-resolve");
+
+    let out = run_tasks_from_repo(&root, Some("missing"), Some("missing"), false);
+    assert_output_contains_all(
+        &out,
+        &[
+            "Task Matches: missing",
+            "no matches",
+            "Resolution: missing",
+            "status: error",
+        ],
+    );
+}
+
+#[test]
 fn run_tasks_lists_managed_profiles_with_invocation_labels() {
     let cases = [
         ManagedProfileListingCase {

@@ -1,6 +1,6 @@
 use super::super::{LoadedCatalog, ManifestTask, RunnerError, TaskSelector};
 use super::render_context::{ListingRenderRequest, ListingSelection};
-use super::row_projection::{builtin_task_rows, BuiltinTaskRow};
+use super::row_projection::{builtin_task_rows, BuiltinTaskProjection};
 use super::ListingCatalogSnapshot;
 use super::BUILTIN_TEST_FALLBACK_NOTE;
 
@@ -13,7 +13,7 @@ pub(super) struct PreparedFilteredListing<'a> {
     filter: String,
     task_name: String,
     catalog_matches: Vec<CatalogTaskMatch<'a>>,
-    builtin_matches: Vec<BuiltinTaskRow<'static>>,
+    builtin_matches: Vec<BuiltinTaskProjection<'static>>,
     notes: Vec<String>,
 }
 
@@ -67,7 +67,7 @@ impl<'a> PreparedFilteredListing<'a> {
         self.catalog_matches.as_slice()
     }
 
-    pub(super) fn builtin_matches(&self) -> &[BuiltinTaskRow<'static>] {
+    pub(super) fn builtin_matches(&self) -> &[BuiltinTaskProjection<'static>] {
         self.builtin_matches.as_slice()
     }
 
@@ -79,8 +79,8 @@ impl<'a> PreparedFilteredListing<'a> {
         !self.catalog_matches.is_empty() || !self.builtin_matches.is_empty()
     }
 
-    pub(super) fn into_notes(self) -> Vec<String> {
-        self.notes
+    pub(super) fn into_filter_and_notes(self) -> (String, Vec<String>) {
+        (self.filter, self.notes)
     }
 }
 
@@ -89,7 +89,9 @@ fn prepare_filtered_listing<'a>(
     filter: &str,
 ) -> Result<PreparedFilteredListing<'a>, RunnerError> {
     let selector = super::super::util::parse_task_selector(filter)?;
-    let (catalog_matches, builtin_matches, notes) = collect_selector_matches(catalogs, &selector);
+    let catalog_matches = matched_catalog_tasks(catalogs, &selector);
+    let builtin_matches = builtin_matches(&selector);
+    let notes = selector_notes(&selector);
     Ok(PreparedFilteredListing {
         filter: filter.to_owned(),
         task_name: selector.task_name,
@@ -97,21 +99,6 @@ fn prepare_filtered_listing<'a>(
         builtin_matches,
         notes,
     })
-}
-
-fn collect_selector_matches<'a>(
-    catalogs: &'a [LoadedCatalog],
-    selector: &TaskSelector,
-) -> (
-    Vec<CatalogTaskMatch<'a>>,
-    Vec<BuiltinTaskRow<'static>>,
-    Vec<String>,
-) {
-    (
-        matched_catalog_tasks(catalogs, selector),
-        builtin_matches(selector),
-        selector_notes(selector),
-    )
 }
 
 fn selector_targets_catalog(selector: &TaskSelector, alias: &str) -> bool {
@@ -141,18 +128,18 @@ fn matched_catalog_tasks<'a>(
         .collect::<Vec<CatalogTaskMatch<'a>>>()
 }
 
-fn builtin_matches(selector: &TaskSelector) -> Vec<BuiltinTaskRow<'static>> {
+fn builtin_matches(selector: &TaskSelector) -> Vec<BuiltinTaskProjection<'static>> {
     if !selector_targets_builtin(selector) {
         return Vec::new();
     }
 
     builtin_task_rows()
-        .filter(|row| selector.task_name == row.task())
-        .collect::<Vec<BuiltinTaskRow<'static>>>()
+        .filter(|(task, _)| selector.task_name == *task)
+        .collect::<Vec<BuiltinTaskProjection<'static>>>()
 }
 
 fn selector_notes(selector: &TaskSelector) -> Vec<String> {
-    if selector.task_name == "test" {
+    if selector_targets_builtin(selector) && selector.task_name == "test" {
         return vec![BUILTIN_TEST_FALLBACK_NOTE.to_owned()];
     }
     Vec::new()
