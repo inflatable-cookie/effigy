@@ -24,6 +24,9 @@ Effigy should be a deterministic, automation-grade, operator-first orchestration
 2. [002-refocus-matrix-v1](./002-refocus-matrix-v1.md)
 3. [003-vision-metrics-and-slos-v1](./003-vision-metrics-and-slos-v1.md)
 4. [004-vision-risk-register-v1](./004-vision-risk-register-v1.md)
+5. [005-vision-exception-and-deviation-policy-v1](./005-vision-exception-and-deviation-policy-v1.md)
+6. [006-vision-governance-and-operating-rhythm-v1](./006-vision-governance-and-operating-rhythm-v1.md)
+7. [007-vision-adoption-and-maturity-model-v1](./007-vision-adoption-and-maturity-model-v1.md)
 
 ## Vision History
 
@@ -38,4 +41,4 @@ Architecture, roadmap, guides, and reports should align with these constraints u
 
 ## Next Task
 
-Define a high-level exception/deviation policy document that explains when and how teams may temporarily diverge from vision constraints.
+Define a high-level decision-principles document that codifies how Effigy should trade off speed, reliability, and compatibility under delivery pressure.
