@@ -1,5 +1,5 @@
 use super::super::RunnerError;
-use super::ensure_no_unknown_builtin_args;
+use super::{ensure_no_unknown_builtin_args, ensure_no_unknown_builtin_args_with_prefix};
 use crate::TaskInvocation;
 
 mod flags;
@@ -82,6 +82,19 @@ impl<'a> BuiltinArgParser<'a> {
     {
         let unknown = self.parse_loop_collect_unknown(on_arg)?;
         ensure_no_unknown_builtin_args(task_name, &unknown)
+    }
+
+    pub(in super::super) fn parse_loop_require_no_unknown_with_prefix<F>(
+        &mut self,
+        task_name: &str,
+        prefix: &str,
+        on_arg: F,
+    ) -> Result<(), RunnerError>
+    where
+        F: FnMut(&mut Self, &str) -> Result<ParseLoopAction, RunnerError>,
+    {
+        let unknown = self.parse_loop_collect_unknown(on_arg)?;
+        ensure_no_unknown_builtin_args_with_prefix(task_name, prefix, &unknown)
     }
 
     pub(in super::super) fn unknown_if_flag_or<F>(
