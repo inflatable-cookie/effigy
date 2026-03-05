@@ -30,10 +30,8 @@ pub(super) fn assert_builtin_test_non_zero(
             if let Some(expected) = expected_failures {
                 assert_eq!(failures, expected);
             }
-            assert_contains_all(&rendered, expected_rendered_snippets);
-            for snippet in unexpected_rendered_snippets {
-                assert!(!rendered.contains(snippet));
-            }
+            assert_output_contains_all(&rendered, expected_rendered_snippets);
+            assert_output_excludes_all(&rendered, unexpected_rendered_snippets);
         }
         other => panic!("unexpected error: {other}"),
     }

@@ -1,31 +1,35 @@
 use super::prelude::*;
 
-#[test]
-fn run_manifest_task_managed_tui_supports_relative_task_refs() {
-    let _guard = lock_test();
-    let root = temp_workspace("managed-relative-task-ref");
-    let dairy = create_workspace_dir(&root, "dairy");
-    let froyo = root.join("froyo");
-    let _env = managed_tui_env();
-
-    write_manifest(
-        &dairy.join("effigy.toml"),
-        r#"[catalog]
-alias = "dairy"
-[tasks.dev]
+fn setup_relative_task_refs(root: &Path) {
+    write_catalog_manifest_with_alias(
+        root,
+        "dairy",
+        "dairy",
+        r#"[tasks.dev]
 mode = "tui"
 concurrent = [{ name = "validate-stack", task = "../froyo/validate" }]
 "#,
     );
-    write_froyo_validate_catalog(&root);
+    write_froyo_validate_catalog(root);
+}
 
-    let out = run_task_with_repo(&root, "dairy/dev", &[]).expect("managed plan should render");
-    assert_contains_all(
-        &out,
-        &[
-            "validate-stack",
-            "froyo-validate",
-            &froyo.display().to_string(),
-        ],
-    );
+fn expected_froyo_catalog_path(root: &Path) -> Vec<String> {
+    vec![root.join("froyo").display().to_string()]
+}
+
+#[test]
+fn run_manifest_task_managed_tui_relative_task_ref_contract_table() {
+    let _guard = lock_test();
+    let _env = managed_tui_env();
+    let cases = [ManagedOutputDerivedCase {
+        workspace: "managed-relative-task-ref",
+        invocation: ManagedInvocation::TaskWithRepo("dairy/dev"),
+        args: &[],
+        expected: &["validate-stack", "froyo-validate"],
+        expected_absent: &[],
+        expected_derived: expected_froyo_catalog_path,
+        setup: setup_relative_task_refs,
+    }];
+
+    assert_managed_output_derived_case_table(&cases);
 }

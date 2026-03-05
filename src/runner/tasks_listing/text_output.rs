@@ -1,55 +1,51 @@
-use std::path::Path;
-
 use crate::ui::theme::Theme;
 
 #[path = "text_output/filtered.rs"]
 mod filtered;
+#[path = "text_output/layout.rs"]
+mod layout;
 #[path = "text_output/rows.rs"]
 mod rows;
 #[path = "text_output/sections.rs"]
 mod sections;
 
 use super::super::tasks_view::render_resolution_probe_block;
-use super::super::{render, LoadedCatalog, RunnerError};
-use super::render_context::{ListingRenderContext, TextRenderMode};
+use super::super::{render, RunnerError};
+use super::render_context::{ListingRenderRequest, TextRenderDispatch};
+use super::ListingCatalogSnapshot;
 use filtered::render_filtered_tasks_text;
 use sections::render_default_tasks_text;
 
 pub(super) fn render_tasks_text(
-    context: &ListingRenderContext<'_>,
-    catalogs: &[LoadedCatalog],
-    ordered_catalogs: &[&LoadedCatalog],
-    resolved_root: &Path,
+    request: ListingRenderRequest<'_>,
+    snapshot: &ListingCatalogSnapshot<'_>,
 ) -> Result<String, RunnerError> {
     let color_enabled = render::text_color_enabled();
     let mut renderer = render::plain_renderer(color_enabled);
     let theme = Theme::default();
 
-    match context.text_mode() {
-        TextRenderMode::Filtered(filter) => {
-            render_filtered_tasks_text(
-                &mut renderer,
-                color_enabled,
-                &theme,
-                catalogs,
-                filter,
-                context.resolve_probe(),
-                resolved_root,
-            )?;
+    match request.text_dispatch() {
+        TextRenderDispatch::ResolveOnly(probe) => {
+            render_resolution_probe_block(&mut renderer, probe, color_enabled, true)?
         }
-        TextRenderMode::ResolveOnly(probe) => {
-            render_resolution_probe_block(&mut renderer, probe, color_enabled, true)?;
-        }
-        TextRenderMode::Catalog => {
-            render_default_tasks_text(
-                &mut renderer,
-                color_enabled,
-                &theme,
-                catalogs,
-                ordered_catalogs,
-                resolved_root,
-            )?;
-        }
+        TextRenderDispatch::Filtered(filter) => render_filtered_tasks_text(
+            &mut renderer,
+            color_enabled,
+            &theme,
+            snapshot.catalogs(),
+            filter,
+            request.resolve_probe(),
+            snapshot.resolved_root(),
+        )?,
+        TextRenderDispatch::Catalog => render_default_tasks_text(
+            &mut renderer,
+            color_enabled,
+            &theme,
+            snapshot.catalogs(),
+            snapshot.ordered_catalogs(),
+            snapshot.resolved_root(),
+        )?,
     }
+
     render::render_utf8(renderer.into_inner())
 }

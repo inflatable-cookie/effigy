@@ -11,17 +11,7 @@ run = "sleep 1"
 "#,
     );
 
-    let root_for_thread = root.to_path_buf();
-    let join = thread::spawn(move || run_dev(&root_for_thread, &[]));
-
-    std::thread::sleep(Duration::from_millis(120));
-
-    let err = run_dev(&root, &[]).expect_err("second run should conflict on lock");
-    assert_lock_conflict(err, "workspace", "effigy unlock workspace");
-
-    join.join()
-        .expect("thread join")
-        .expect("first run should complete");
+    assert_live_dev_lock_conflict(&root, 120, "workspace", "effigy unlock workspace");
 }
 
 #[test]
@@ -35,56 +25,48 @@ run = "printf ok"
 "#,
     );
 
-    let locks_dir = root.join(".effigy/locks");
-    fs::create_dir_all(&locks_dir).expect("create locks dir");
-    fs::write(
-        locks_dir.join("workspace.lock"),
-        r#"{"scope":"workspace","pid":999999,"started_at_epoch_ms":0}"#,
-    )
-    .expect("write stale lock");
+    write_lock_files(
+        &root,
+        &[(
+            "workspace.lock",
+            r#"{"scope":"workspace","pid":999999,"started_at_epoch_ms":0}"#,
+        )],
+    );
 
     let out = run_dev(&root, &[]).expect("stale lock should be reclaimed");
 
-    assert_eq!(out, "");
+    assert_output_equals(&out, "");
 }
 
 #[test]
 fn run_manifest_task_builtin_unlock_clears_explicit_scopes() {
     let _guard = lock_test();
-    let root = temp_workspace("unlock-explicit-scopes");
-    fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
-    fs::write(root.join(".effigy/locks/workspace.lock"), "{}").expect("write workspace lock");
-    fs::write(root.join(".effigy/locks/task-dev.lock"), "{}").expect("write task lock");
+    let cases = [ManagedUnlockSuccessCase {
+        workspace: "unlock-explicit-scopes",
+        args: &["workspace", "task:dev"],
+        lock_files: &[("workspace.lock", "{}"), ("task-dev.lock", "{}")],
+        removed_lock_files: &["workspace.lock", "task-dev.lock"],
+        expected: &["removed: 2"],
+    }];
 
-    let out = run_unlock_with_repo(&root, &["workspace", "task:dev"]).expect("unlock should run");
-    assert_contains_all(&out, &["removed: 2"]);
-    assert!(!root.join(".effigy/locks/workspace.lock").exists());
-    assert!(!root.join(".effigy/locks/task-dev.lock").exists());
+    assert_unlock_success_case_table(&cases);
 }
 
 #[test]
-fn run_manifest_task_builtin_unlock_requires_scope_or_all() {
+fn run_manifest_task_builtin_unlock_argument_validation_contract_table() {
     let _guard = lock_test();
-    let root = temp_workspace("unlock-requires-scope-or-all");
-    fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
+    let cases = [
+        ManagedUnlockInvocationErrorCase {
+            workspace: "unlock-requires-scope-or-all",
+            args: &[],
+            expected: &["`unlock` requires at least one scope (or `--all`)"],
+        },
+        ManagedUnlockInvocationErrorCase {
+            workspace: "unlock-rejects-all-with-scope",
+            args: &["--all", "workspace"],
+            expected: &["`unlock` accepts either `--all` or explicit scope values, not both"],
+        },
+    ];
 
-    let err = run_unlock_with_repo(&root, &[]).expect_err("unlock should require scope or --all");
-    assert_task_invocation_error_contains(
-        err,
-        &["`unlock` requires at least one scope (or `--all`)"],
-    );
-}
-
-#[test]
-fn run_manifest_task_builtin_unlock_rejects_all_with_explicit_scope() {
-    let _guard = lock_test();
-    let root = temp_workspace("unlock-rejects-all-with-scope");
-    fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
-
-    let err = run_unlock_with_repo(&root, &["--all", "workspace"])
-        .expect_err("unlock should reject --all with explicit scope");
-    assert_task_invocation_error_contains(
-        err,
-        &["`unlock` accepts either `--all` or explicit scope values, not both"],
-    );
+    assert_unlock_invocation_error_case_table(&cases);
 }

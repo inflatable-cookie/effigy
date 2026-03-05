@@ -8,8 +8,8 @@ fn run_doctor_text_output_has_blank_line_between_sections() {
     let out = run_builtin_ok(root, "doctor", &[]);
 
     assert!(out.starts_with("Doctor's Report\n"));
-    assert_contains_all(&out, &["workspace.root-resolution", "\n\nsummary  ok:"]);
-    assert!(!out.contains("\n\nRoot Resolution\n"));
+    assert_output_contains_all(&out, &["workspace.root-resolution", "\n\nsummary  ok:"]);
+    assert_output_excludes_all(&out, &["\n\nRoot Resolution\n"]);
 }
 
 #[test]
@@ -71,7 +71,7 @@ run = [{ task = "missing/task" }]
     let rendered = doctor_nonzero_rendered(err);
 
     assert!(rendered.starts_with("Doctor's Report\n"));
-    assert_contains_all(
+    assert_output_contains_all(
         &rendered,
         &[
             "\n\nFix Actions\n",

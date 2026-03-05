@@ -5,7 +5,7 @@ fn run_tasks_lists_catalogs_and_tasks() {
     let root = setup_root_and_farmyard_catalog("list-tasks");
 
     let out = run_tasks_from_repo(&root, None, None, false);
-    assert_contains_all(&out, &["root", "farmyard", "reset-db"]);
+    assert_output_contains_all(&out, &["root", "farmyard", "reset-db"]);
 }
 
 #[test]
@@ -20,7 +20,7 @@ jobs = "printf jobs"
     );
 
     let out = run_tasks_from_repo(&root, None, None, false);
-    assert_contains_all(&out, &["api", "jobs", "printf api"]);
+    assert_output_contains_all(&out, &["api", "jobs", "printf api"]);
 }
 
 #[test]
@@ -39,7 +39,7 @@ run = "printf dev"
     assert_builtin_ok_empty(root.to_path_buf(), "api", &[]);
 
     let tasks = run_tasks_from_repo(&root, None, None, false);
-    assert_contains_all(&tasks, &["api", "dev"]);
+    assert_output_contains_all(&tasks, &["api", "dev"]);
 }
 
 #[test]
@@ -57,7 +57,7 @@ reset-db = [{ task = "drop-db" }, { task = "migrate-db" }]
     assert_builtin_ok_empty(root.to_path_buf(), "reset-db", &[]);
 
     let tasks = run_tasks_from_repo(&root, Some("reset-db"), None, false);
-    assert_contains_all(&tasks, &["reset-db", "<sequence:2>"]);
+    assert_output_contains_all(&tasks, &["reset-db", "<sequence:2>"]);
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn run_tasks_without_catalogs_still_lists_builtin_tasks() {
     let root = temp_workspace("builtins-only");
 
     let out = run_tasks_from_repo(&root, None, None, false);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "Tasks",

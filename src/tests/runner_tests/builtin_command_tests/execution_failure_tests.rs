@@ -28,9 +28,8 @@ fn run_manifest_task_builtin_test_json_failure_includes_results_and_failures() {
     match err {
         RunnerError::BuiltinTestNonZero { failures, rendered } => {
             assert_eq!(failures, vec![("farmyard".to_owned(), Some(1))]);
-            let parsed = parse_json_output(&rendered);
-            assert_eq!(parsed["schema"], "effigy.test.results.v1");
-            assert_eq!(parsed["failures"][0]["target"], "farmyard");
+            let parsed = parse_json_output_with_schema(&rendered, "effigy.test.results.v1");
+            assert_json_string_field_eq(&parsed["failures"][0], "target", "farmyard");
             let target_names = parsed["targets"]
                 .as_array()
                 .expect("targets array")
@@ -58,14 +57,14 @@ fn run_manifest_task_builtin_test_json_failure_does_not_include_text_hint_footer
     let err = run_builtin_err(root, "test", &["--json", "vitest", "user-service"]);
     match err {
         RunnerError::BuiltinTestNonZero { rendered, .. } => {
-            assert!(!rendered.contains("\nHint\n────\n"));
-            let parsed = parse_json_output(&rendered);
-            assert_eq!(parsed["schema"], "effigy.test.results.v1");
-            assert!(parsed["failures"].is_array());
-            assert_eq!(parsed["hint"]["kind"], "selected-suite-filter-no-match");
-            assert_eq!(
-                parsed["hint"]["suggestion"],
-                "Try again without the filter to verify suite execution."
+            assert_output_excludes_all(&rendered, &["\nHint\n────\n"]);
+            let parsed = parse_json_output_with_schema(&rendered, "effigy.test.results.v1");
+            assert_json_array_field(&parsed, "failures");
+            assert_json_string_field_eq(&parsed["hint"], "kind", "selected-suite-filter-no-match");
+            assert_json_string_field_eq(
+                &parsed["hint"],
+                "suggestion",
+                "Try again without the filter to verify suite execution.",
             );
         }
         other => panic!("unexpected error: {other}"),

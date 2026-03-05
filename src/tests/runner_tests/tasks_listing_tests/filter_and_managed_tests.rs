@@ -5,8 +5,8 @@ fn run_tasks_with_task_filter_reports_only_matches() {
     let root = setup_root_and_farmyard_catalog("task-filter");
 
     let out = run_tasks_from_repo(&root, Some("reset-db"), None, false);
-    assert_contains_all(&out, &["Task Matches: reset-db", "farmyard", "reset-db"]);
-    assert!(!out.contains("root      │ reset-db"));
+    assert_output_contains_all(&out, &["Task Matches: reset-db", "farmyard", "reset-db"]);
+    assert_output_excludes_all(&out, &["root      │ reset-db"]);
 }
 
 #[test]
@@ -14,7 +14,7 @@ fn run_tasks_with_test_filter_shows_catalog_fallback_note() {
     let root = temp_workspace("task-filter-test-note");
 
     let out = run_tasks_from_repo(&root, Some("test"), None, false);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "Task Matches: test",
@@ -63,18 +63,23 @@ fn run_tasks_lists_managed_profiles_with_invocation_labels() {
         let out = run_tasks_from_repo(&root, case.filter, None, case.output_json);
 
         if case.output_json {
-            let parsed = parse_json_output(&out);
+            let expected_schema = if case.filter.is_some() {
+                "effigy.tasks.filtered.v1"
+            } else {
+                "effigy.tasks.v1"
+            };
+            let parsed = parse_json_output_with_schema_version(&out, expected_schema, 1);
             let tasks = json_task_column(&parsed, case.expected_field);
-            assert!(tasks.contains(&format!("dev {}", case.profile)));
-            assert!(!tasks.contains(&"dev default".to_owned()));
+            assert_string_items_contains_all(&tasks, &[format!("dev {}", case.profile)]);
+            assert_string_items_excludes_all(&tasks, &["dev default".to_owned()]);
         } else {
             if case.filter.is_some() {
-                assert_contains_all(
+                assert_output_contains_all(
                     &out,
                     &["Task Matches: dev", &format!("dev {}", case.profile)],
                 );
             } else {
-                assert_contains_all(
+                assert_output_contains_all(
                     &out,
                     &[
                         "Tasks",
@@ -83,7 +88,7 @@ fn run_tasks_lists_managed_profiles_with_invocation_labels() {
                     ],
                 );
             }
-            assert!(!out.contains("dev default"));
+            assert_output_excludes_all(&out, &["dev default"]);
         }
     });
 }

@@ -34,16 +34,5 @@ concurrent = [{ name = "tests", task = "test vitest \\" }]
         },
     ];
 
-    assert_case_table(cases, |case| {
-        let root = temp_workspace(case.workspace);
-        write_manifest(&root.join("effigy.toml"), case.manifest);
-        let err = run_dev_with_repo(&root, &[]).expect_err("invalid process task ref should fail");
-        assert_managed_task_reference_invalid(
-            err,
-            "dev",
-            "tests",
-            case.expected_reference,
-            case.expected_detail,
-        );
-    });
+    assert_managed_task_ref_invalid_case_table(&cases);
 }

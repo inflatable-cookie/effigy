@@ -5,7 +5,7 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
     let root = workspace_with_empty_manifest("builtin-config-schema");
 
     let out = run_config_ok(root, &["--schema"]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "Canonical strict-valid effigy.toml schema template",
@@ -25,7 +25,7 @@ fn run_manifest_task_builtin_config_schema_minimal_prints_starter_template() {
     let root = workspace_with_empty_manifest("builtin-config-schema-minimal");
 
     let out = run_config_ok(root, &["--schema", "--minimal"]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "Minimal strict-valid effigy.toml starter",
@@ -34,7 +34,7 @@ fn run_manifest_task_builtin_config_schema_minimal_prints_starter_template() {
             "[tasks]",
         ],
     );
-    assert!(!out.contains("concurrent = ["));
+    assert_output_excludes_all(&out, &["concurrent = ["]);
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn run_manifest_task_builtin_config_schema_target_prints_selected_section() {
     let root = workspace_with_empty_manifest("builtin-config-schema-target");
 
     let out = run_config_ok(root, &["--schema", "--target", "test"]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "(test target)",
@@ -50,7 +50,7 @@ fn run_manifest_task_builtin_config_schema_target_prints_selected_section() {
             "[test.runners]",
         ],
     );
-    assert!(!out.contains("[tasks]"));
+    assert_output_excludes_all(&out, &["[tasks]"]);
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn run_manifest_task_builtin_config_schema_target_tasks_includes_quoted_task_ref
     let root = workspace_with_empty_manifest("builtin-config-schema-target-tasks");
 
     let out = run_config_ok(root, &["--schema", "--target", "tasks"]);
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "(tasks target)",
@@ -78,13 +78,12 @@ fn run_manifest_task_builtin_config_schema_target_test_runner_prints_single_runn
         &["--schema", "--target", "test", "--runner", "nextest"],
     );
 
-    assert_contains_all(
+    assert_output_contains_all(
         &out,
         &[
             "(test target, runner: cargo-nextest)",
             "\"cargo-nextest\" = \"cargo nextest run\"",
         ],
     );
-    assert!(!out.contains("vitest = "));
-    assert!(!out.contains("\"cargo-test\" = \"cargo test\""));
+    assert_output_excludes_all(&out, &["vitest = ", "\"cargo-test\" = \"cargo test\""]);
 }

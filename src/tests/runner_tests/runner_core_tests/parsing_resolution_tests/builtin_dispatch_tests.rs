@@ -35,5 +35,5 @@ alias = "farmyard"
     );
 
     let out = run_builtin_ok(root, "farmyard/help", &[]);
-    assert_contains_all(&out, &["Commands", "effigy help"]);
+    assert_output_contains_all(&out, &["Commands", "effigy help"]);
 }

@@ -24,13 +24,7 @@ fn run_manifest_task_defers_when_task_missing_with_token_support() {
         },
     ];
 
-    assert_case_table(cases, |case| {
-        let root = temp_workspace(case.workspace);
-        write_defer_manifest(&root, case.defer_run);
-        let out = run_task_in_workspace(&root, case.request, case.args)
-            .expect("deferred run should succeed");
-        assert_eq!(out, "");
-    });
+    assert_deferred_task_case_table(&cases);
 }
 
 #[test]
@@ -94,7 +88,5 @@ fn run_manifest_task_implicit_deferral_matrix() {
         expectation: ImplicitDeferralExpectation::ExplicitDeferral,
     });
 
-    assert_case_table(cases.iter(), |case| {
-        run_implicit_deferral_case(case);
-    });
+    assert_implicit_deferral_case_table(cases.as_slice());
 }

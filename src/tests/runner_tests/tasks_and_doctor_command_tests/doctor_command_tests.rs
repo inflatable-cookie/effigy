@@ -13,9 +13,14 @@ fn run_doctor_executes_discovered_health_task() {
 
     let out = run_doctor_task(root, &[]).expect("doctor run");
 
-    assert!(out.contains("health.task.discovery"));
-    assert!(out.contains("health.task.execute"));
-    assert!(out.contains("health task executed successfully"));
+    assert_output_contains_all(
+        &out,
+        &[
+            "health.task.discovery",
+            "health.task.execute",
+            "health task executed successfully",
+        ],
+    );
 }
 
 #[test]
@@ -43,11 +48,14 @@ fn run_doctor_fix_scaffolds_health_task_when_missing() {
 
     let out = run_doctor_task(root.to_path_buf(), &["--fix"]).expect("doctor --fix");
 
-    let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read manifest");
-    assert!(manifest.contains("health = \"printf health-check-placeholder\""));
-    assert!(out.contains("Fix Actions"));
-    assert!(out.contains("manifest.health_task_scaffold"));
-    assert!(out.contains("applied"));
+    assert_file_text_contains_all(
+        &root.join("effigy.toml"),
+        &["health = \"printf health-check-placeholder\""],
+    );
+    assert_output_contains_all(
+        &out,
+        &["Fix Actions", "manifest.health_task_scaffold", "applied"],
+    );
 }
 
 #[test]

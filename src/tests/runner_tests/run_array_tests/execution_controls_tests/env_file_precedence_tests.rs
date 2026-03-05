@@ -1,166 +1,155 @@
 use super::prelude::*;
 
-#[test]
-fn run_manifest_task_run_array_supports_task_env_file_for_dotenv_fallback() {
-    let root = temp_workspace("run-array-env-value-task-env-file");
-    let marker = root.join("env-value-task-env-file.out");
-    write_manifest(
-        &root.join("effigy.toml"),
-        &format!(
-            r#"[tasks.api]
-env_file = ".env.test"
-run = [
-  {{ env = "DATABASE_URL" }},
-  {{ run = "sh -lc 'printf %s \"$DATABASE_URL\" > \"{}\"'" }}
-]
-"#,
-            marker.display()
-        ),
+fn setup_task_env_file_dotenv_fallback(root: &Path, marker: &Path) {
+    write_task_api_env_capture_manifest(
+        root,
+        marker,
+        Some(r#"".env.test""#),
+        None,
+        r#""DATABASE_URL""#,
+        "DATABASE_URL",
     );
-    fs::write(root.join(".env"), "DATABASE_URL=postgres://from-default\n").expect("write .env");
-    fs::write(
-        root.join(".env.test"),
-        "DATABASE_URL=postgres://from-test\n",
-    )
-    .expect("write .env.test");
+    write_env_files(
+        root,
+        &[
+            (".env", "DATABASE_URL=postgres://from-default\n"),
+            (".env.test", "DATABASE_URL=postgres://from-test\n"),
+        ],
+    );
+}
 
-    assert_task_output_equals(&root, "api", &marker, "postgres://from-test");
+fn setup_env_file_directive_dotenv_fallback(root: &Path, marker: &Path) {
+    write_task_api_env_capture_manifest(
+        root,
+        marker,
+        None,
+        Some(r#"".env.test""#),
+        r#""DATABASE_URL""#,
+        "DATABASE_URL",
+    );
+    write_env_files(
+        root,
+        &[
+            (".env", "DATABASE_URL=postgres://from-default\n"),
+            (".env.test", "DATABASE_URL=postgres://from-test\n"),
+        ],
+    );
+}
+
+fn setup_directive_overrides_task_env_file(root: &Path, marker: &Path) {
+    write_task_api_env_capture_manifest(
+        root,
+        marker,
+        Some(r#"".env.test""#),
+        Some(r#"".env.local""#),
+        r#""DATABASE_URL""#,
+        "DATABASE_URL",
+    );
+    write_env_files(
+        root,
+        &[
+            (".env.test", "DATABASE_URL=postgres://from-test\n"),
+            (".env.local", "DATABASE_URL=postgres://from-local\n"),
+        ],
+    );
+}
+
+fn setup_task_env_file_array_precedence(root: &Path, marker: &Path) {
+    write_task_api_env_capture_manifest(
+        root,
+        marker,
+        Some(r#"[".env.local", ".env.test"]"#),
+        None,
+        r#""DATABASE_URL""#,
+        "DATABASE_URL",
+    );
+    write_env_files(
+        root,
+        &[
+            (".env.test", "DATABASE_URL=postgres://from-test\n"),
+            (".env.local", "DATABASE_URL=postgres://from-local\n"),
+        ],
+    );
+}
+
+fn setup_env_file_directive_array_precedence(root: &Path, marker: &Path) {
+    write_task_api_env_capture_manifest(
+        root,
+        marker,
+        None,
+        Some(r#"[".env.local", ".env.test"]"#),
+        r#""DATABASE_URL""#,
+        "DATABASE_URL",
+    );
+    write_env_files(
+        root,
+        &[
+            (".env.test", "DATABASE_URL=postgres://from-test\n"),
+            (".env.local", "DATABASE_URL=postgres://from-local\n"),
+        ],
+    );
+}
+
+fn setup_task_env_file_empty_entry(root: &Path) {
+    write_task_api_env_unreachable_manifest(
+        root,
+        Some(r#"[".env.test", "   "]"#),
+        None,
+        r#""DATABASE_URL""#,
+    );
 }
 
 #[test]
-fn run_manifest_task_run_array_supports_env_file_directive_for_dotenv_fallback() {
-    let root = temp_workspace("run-array-env-value-step-env-file");
-    let marker = root.join("env-value-step-env-file.out");
-    write_manifest(
-        &root.join("effigy.toml"),
-        &format!(
-            r#"[tasks]
-api = [
-  {{ env_file = ".env.test" }},
-  {{ env = "DATABASE_URL" }},
-  {{ run = "sh -lc 'printf %s \"$DATABASE_URL\" > \"{}\"'" }}
-]
-"#,
-            marker.display()
-        ),
-    );
-    fs::write(root.join(".env"), "DATABASE_URL=postgres://from-default\n").expect("write .env");
-    fs::write(
-        root.join(".env.test"),
-        "DATABASE_URL=postgres://from-test\n",
-    )
-    .expect("write .env.test");
+fn run_manifest_task_run_array_env_file_precedence_contract_table() {
+    let cases = [
+        RunArrayTaskOutputCase {
+            workspace: "run-array-env-value-task-env-file",
+            task: "api",
+            marker_rel: "env-value-task-env-file.out",
+            expected: "postgres://from-test",
+            setup: setup_task_env_file_dotenv_fallback,
+        },
+        RunArrayTaskOutputCase {
+            workspace: "run-array-env-value-step-env-file",
+            task: "api",
+            marker_rel: "env-value-step-env-file.out",
+            expected: "postgres://from-test",
+            setup: setup_env_file_directive_dotenv_fallback,
+        },
+        RunArrayTaskOutputCase {
+            workspace: "run-array-env-value-step-env-file-overrides-task",
+            task: "api",
+            marker_rel: "env-value-step-env-file-overrides-task.out",
+            expected: "postgres://from-local",
+            setup: setup_directive_overrides_task_env_file,
+        },
+        RunArrayTaskOutputCase {
+            workspace: "run-array-env-value-task-env-file-array",
+            task: "api",
+            marker_rel: "env-value-task-env-file-array.out",
+            expected: "postgres://from-local",
+            setup: setup_task_env_file_array_precedence,
+        },
+        RunArrayTaskOutputCase {
+            workspace: "run-array-env-value-step-env-file-array",
+            task: "api",
+            marker_rel: "env-value-step-env-file-array.out",
+            expected: "postgres://from-local",
+            setup: setup_env_file_directive_array_precedence,
+        },
+    ];
 
-    assert_task_output_equals(&root, "api", &marker, "postgres://from-test");
+    assert_run_array_task_output_case_table(&cases);
 }
 
 #[test]
-fn run_manifest_task_run_array_env_file_directive_overrides_task_env_file() {
-    let root = temp_workspace("run-array-env-value-step-env-file-overrides-task");
-    let marker = root.join("env-value-step-env-file-overrides-task.out");
-    write_manifest(
-        &root.join("effigy.toml"),
-        &format!(
-            r#"[tasks.api]
-env_file = ".env.test"
-run = [
-  {{ env_file = ".env.local" }},
-  {{ env = "DATABASE_URL" }},
-  {{ run = "sh -lc 'printf %s \"$DATABASE_URL\" > \"{}\"'" }}
-]
-"#,
-            marker.display()
-        ),
-    );
-    fs::write(
-        root.join(".env.test"),
-        "DATABASE_URL=postgres://from-test\n",
-    )
-    .expect("write .env.test");
-    fs::write(
-        root.join(".env.local"),
-        "DATABASE_URL=postgres://from-local\n",
-    )
-    .expect("write .env.local");
+fn run_manifest_task_run_array_env_file_validation_errors_are_stable() {
+    let cases = [RunArrayTaskInvocationErrorCase {
+        workspace: "run-array-env-value-task-env-file-array-empty-entry",
+        task: "api",
+        expected: &["task env_file[1] is invalid"],
+        setup: setup_task_env_file_empty_entry,
+    }];
 
-    assert_task_output_equals(&root, "api", &marker, "postgres://from-local");
-}
-
-#[test]
-fn run_manifest_task_run_array_supports_task_env_file_array_precedence() {
-    let root = temp_workspace("run-array-env-value-task-env-file-array");
-    let marker = root.join("env-value-task-env-file-array.out");
-    write_manifest(
-        &root.join("effigy.toml"),
-        &format!(
-            r#"[tasks.api]
-env_file = [".env.local", ".env.test"]
-run = [
-  {{ env = "DATABASE_URL" }},
-  {{ run = "sh -lc 'printf %s \"$DATABASE_URL\" > \"{}\"'" }}
-]
-"#,
-            marker.display()
-        ),
-    );
-    fs::write(
-        root.join(".env.test"),
-        "DATABASE_URL=postgres://from-test\n",
-    )
-    .expect("write .env.test");
-    fs::write(
-        root.join(".env.local"),
-        "DATABASE_URL=postgres://from-local\n",
-    )
-    .expect("write .env.local");
-
-    assert_task_output_equals(&root, "api", &marker, "postgres://from-local");
-}
-
-#[test]
-fn run_manifest_task_run_array_supports_env_file_directive_array_precedence() {
-    let root = temp_workspace("run-array-env-value-step-env-file-array");
-    let marker = root.join("env-value-step-env-file-array.out");
-    write_manifest(
-        &root.join("effigy.toml"),
-        &format!(
-            r#"[tasks]
-api = [
-  {{ env_file = [".env.local", ".env.test"] }},
-  {{ env = "DATABASE_URL" }},
-  {{ run = "sh -lc 'printf %s \"$DATABASE_URL\" > \"{}\"'" }}
-]
-"#,
-            marker.display()
-        ),
-    );
-    fs::write(
-        root.join(".env.test"),
-        "DATABASE_URL=postgres://from-test\n",
-    )
-    .expect("write .env.test");
-    fs::write(
-        root.join(".env.local"),
-        "DATABASE_URL=postgres://from-local\n",
-    )
-    .expect("write .env.local");
-
-    assert_task_output_equals(&root, "api", &marker, "postgres://from-local");
-}
-
-#[test]
-fn run_manifest_task_run_array_errors_for_task_env_file_array_empty_entry() {
-    let root = temp_workspace("run-array-env-value-task-env-file-array-empty-entry");
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"[tasks.api]
-env_file = [".env.test", "   "]
-run = [
-  { env = "DATABASE_URL" },
-  { run = "printf unreachable" }
-]
-"#,
-    );
-    let err = run_builtin_err(root, "api", &[]);
-    assert_task_invocation_error_contains(err, &["task env_file[1] is invalid"]);
+    assert_run_array_task_invocation_error_case_table(&cases);
 }

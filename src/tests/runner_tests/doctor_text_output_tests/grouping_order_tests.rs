@@ -16,7 +16,7 @@ run = [{ task = "missing/task" }]
     let err = run_builtin_err(root, "doctor", &["--verbose"]);
     let rendered = doctor_nonzero_rendered(err);
 
-    assert_contains_all(
+    assert_output_contains_all(
         &rendered,
         &[
             "tasks.references.resolve",
