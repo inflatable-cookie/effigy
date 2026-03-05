@@ -1,9 +1,10 @@
 use serde::Serialize;
 
-use super::super::super::{LoadedCatalog, ManifestTask};
+use super::super::super::tasks_view::ManagedProfileDisplayRow;
+use super::super::builtin_rows::prepare_builtin_task_rows;
+use super::super::prepared_task_rows::PreparedCatalogTaskProjection;
 use super::super::row_projection::{
-    builtin_task_rows, project_builtin_rows, project_catalog_task_display_rows, BuiltinTaskRow,
-    ProjectedCatalogTaskManifestRow, ProjectedManagedProfileManifestRow,
+    builtin_task_rows, BuiltinTaskRow, ProjectedCatalogTaskSignatureRow,
 };
 
 #[derive(Clone, Serialize)]
@@ -47,33 +48,30 @@ pub(super) fn builtin_rows_json<'a, I>(rows: I) -> Vec<BuiltinTaskRowJson>
 where
     I: IntoIterator<Item = BuiltinTaskRow<'a>>,
 {
-    project_builtin_rows(rows)
+    prepare_builtin_task_rows(rows)
+        .into_iter()
         .map(|row| BuiltinTaskRowJson::new(row.task(), row.description()))
         .collect::<Vec<BuiltinTaskRowJson>>()
 }
 
-pub(super) fn catalog_and_managed_rows_json<'a>(
-    manifest: &'a str,
-    catalog: &LoadedCatalog,
-    task_name: &str,
-    task: &ManifestTask,
-) -> (
-    TaskRowJson,
-    impl Iterator<Item = ManagedProfileRowJson> + 'a,
-) {
-    let (task_row, managed_rows) =
-        project_catalog_task_display_rows(catalog, task_name, task).into_manifest_rows(manifest);
-    let managed_rows = managed_rows.map(ManagedProfileRowJson::from_projected);
-    let task_row = TaskRowJson::from_projected(task_row);
+pub(super) fn catalog_and_managed_rows_json(
+    prepared_rows: PreparedCatalogTaskProjection,
+) -> (TaskRowJson, Vec<ManagedProfileRowJson>) {
+    let (manifest, task_row, managed_rows) = prepared_rows.into_parts();
+    let managed_rows = managed_rows
+        .into_iter()
+        .map(|row| ManagedProfileRowJson::from_display(row, manifest.as_str()))
+        .collect::<Vec<ManagedProfileRowJson>>();
+    let task_row = TaskRowJson::from_signature(task_row, manifest.as_str());
     (task_row, managed_rows)
 }
 
 impl TaskRowJson {
-    fn from_projected(row: ProjectedCatalogTaskManifestRow) -> Self {
+    fn from_signature(row: ProjectedCatalogTaskSignatureRow, manifest: &str) -> Self {
         Self {
-            task: Some(row.task),
-            run: Some(row.run),
-            manifest: row.manifest,
+            task: Some(row.task().to_owned()),
+            run: Some(row.run().to_owned()),
+            manifest: manifest.to_owned(),
         }
     }
 }
@@ -88,11 +86,11 @@ impl BuiltinTaskRowJson {
 }
 
 impl ManagedProfileRowJson {
-    fn from_projected(row: ProjectedManagedProfileManifestRow) -> Self {
+    fn from_display(row: ManagedProfileDisplayRow, manifest: &str) -> Self {
         Self {
             task: row.task,
             run: row.run,
-            manifest: row.manifest,
+            manifest: manifest.to_owned(),
             profile: row.profile,
             invocation: row.invocation,
             parent_task: row.parent_task,

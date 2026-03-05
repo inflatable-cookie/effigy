@@ -30,15 +30,11 @@ pub(super) fn render_tasks_text(
         render_resolution_probe_block(&mut renderer, probe, color_enabled, true)?;
     } else {
         match prepare_listing_selection(request, snapshot)? {
-            PreparedListingSelection::Filtered {
-                filter,
-                filtered_model,
-            } => render_filtered_tasks_text(
+            PreparedListingSelection::Filtered { filtered_listing } => render_filtered_tasks_text(
                 &mut renderer,
                 color_enabled,
                 &theme,
-                filter,
-                &filtered_model,
+                &filtered_listing,
                 resolve_probe,
                 snapshot.resolved_root(),
             )?,

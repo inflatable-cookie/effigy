@@ -27,6 +27,18 @@ Effigy should be a deterministic, automation-grade, operator-first orchestration
 5. [005-vision-exception-and-deviation-policy-v1](./005-vision-exception-and-deviation-policy-v1.md)
 6. [006-vision-governance-and-operating-rhythm-v1](./006-vision-governance-and-operating-rhythm-v1.md)
 7. [007-vision-adoption-and-maturity-model-v1](./007-vision-adoption-and-maturity-model-v1.md)
+8. [008-vision-decision-principles-v1](./008-vision-decision-principles-v1.md)
+9. [009-vision-governance-review-template-v1](./009-vision-governance-review-template-v1.md)
+10. [010-vision-repository-maturity-scorecard-template-v1](./010-vision-repository-maturity-scorecard-template-v1.md)
+11. [011-vision-communications-playbook-v1](./011-vision-communications-playbook-v1.md)
+12. [012-vision-tag-and-terminology-canon-v1](./012-vision-tag-and-terminology-canon-v1.md)
+13. [013-cross-repo-vision-adoption-playbook-v1](./013-cross-repo-vision-adoption-playbook-v1.md)
+14. [014-vision-artifact-lifecycle-policy-v1](./014-vision-artifact-lifecycle-policy-v1.md)
+15. [015-vision-decision-record-template-v1](./015-vision-decision-record-template-v1.md)
+16. [016-cross-repo-rollout-comparison-scorecard-template-v1](./016-cross-repo-rollout-comparison-scorecard-template-v1.md)
+17. [017-vision-artifact-status-register-spec-v1](./017-vision-artifact-status-register-spec-v1.md)
+18. [018-vision-decision-record-index-spec-v1](./018-vision-decision-record-index-spec-v1.md)
+19. [019-effigy-vision-maturity-baseline-v1](./019-effigy-vision-maturity-baseline-v1.md)
 
 ## Vision History
 
@@ -41,4 +53,4 @@ Architecture, roadmap, guides, and reports should align with these constraints u
 
 ## Next Task
 
-Define a high-level decision-principles document that codifies how Effigy should trade off speed, reliability, and compatibility under delivery pressure.
+Create the first populated vision artifact status register and decision index entries so governance can run on real data instead of templates.

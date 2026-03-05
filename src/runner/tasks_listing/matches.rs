@@ -7,21 +7,19 @@ pub(super) struct CatalogTaskMatch<'a> {
     task: &'a ManifestTask,
 }
 
-pub(super) struct SelectorMatches<'a> {
-    pub(super) catalog_matches: Vec<CatalogTaskMatch<'a>>,
-    pub(super) builtin_matches: Vec<BuiltinTaskRow<'static>>,
-    pub(super) notes: Vec<String>,
-}
-
 pub(super) fn collect_selector_matches<'a>(
     catalogs: &'a [LoadedCatalog],
     selector: &TaskSelector,
-) -> SelectorMatches<'a> {
-    SelectorMatches {
-        catalog_matches: matched_catalog_tasks(catalogs, selector),
-        builtin_matches: builtin_matches(selector),
-        notes: selector_notes(selector),
-    }
+) -> (
+    Vec<CatalogTaskMatch<'a>>,
+    Vec<BuiltinTaskRow<'static>>,
+    Vec<String>,
+) {
+    (
+        matched_catalog_tasks(catalogs, selector),
+        builtin_matches(selector),
+        selector_notes(selector),
+    )
 }
 
 impl<'a> CatalogTaskMatch<'a> {
@@ -66,8 +64,12 @@ fn matched_catalog_tasks<'a>(
 }
 
 fn builtin_matches(selector: &TaskSelector) -> Vec<BuiltinTaskRow<'static>> {
+    if !selector_targets_builtin(selector) {
+        return Vec::new();
+    }
+
     builtin_task_rows()
-        .filter(|row| selector_targets_builtin(selector) && selector.task_name == row.task())
+        .filter(|row| selector.task_name == row.task())
         .collect::<Vec<BuiltinTaskRow<'static>>>()
 }
 

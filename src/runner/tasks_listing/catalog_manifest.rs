@@ -40,14 +40,6 @@ pub(super) fn manifest_display_context<'a>(
     )
 }
 
-pub(super) fn ordered_manifest_path_contexts<'a>(
-    ordered_catalogs: &'a [&'a LoadedCatalog],
-) -> impl Iterator<Item = CatalogManifestContext<'a>> + 'a {
-    ordered_catalogs
-        .iter()
-        .map(|catalog| manifest_path_context(*catalog))
-}
-
 pub(super) fn ordered_manifest_display_contexts<'a>(
     ordered_catalogs: &'a [&'a LoadedCatalog],
     resolved_root: &'a Path,
