@@ -8,22 +8,22 @@ use super::catalog_projection::{
     CatalogTaskProjection,
 };
 
-pub(in crate::runner) struct DefaultTextRowProjections {
+pub(in super::super) struct DefaultTextRowProjections {
     catalog_alias_rows: Vec<CatalogAliasProjection>,
     catalog_task_rows: Vec<CatalogTaskProjection>,
 }
 
 impl DefaultTextRowProjections {
-    pub(in crate::runner) fn catalog_alias_rows(&self) -> &[CatalogAliasProjection] {
+    pub(in super::super) fn catalog_alias_rows(&self) -> &[CatalogAliasProjection] {
         self.catalog_alias_rows.as_slice()
     }
 
-    pub(in crate::runner) fn catalog_task_rows(&self) -> &[CatalogTaskProjection] {
+    pub(in super::super) fn catalog_task_rows(&self) -> &[CatalogTaskProjection] {
         self.catalog_task_rows.as_slice()
     }
 }
 
-pub(in crate::runner) fn prepare_default_text_rows(
+pub(in super::super) fn prepare_default_text_rows(
     ordered_catalogs: &[&LoadedCatalog],
     resolved_root: &Path,
 ) -> DefaultTextRowProjections {
@@ -43,7 +43,7 @@ pub(in crate::runner) fn prepare_default_text_rows(
     }
 }
 
-pub(in crate::runner) fn prepare_catalog_match_task_rows(
+pub(in super::super) fn prepare_catalog_match_task_rows(
     matches: &[CatalogTaskMatch<'_>],
     task_name: &str,
     resolved_root: &Path,

@@ -90,6 +90,9 @@ where
 {
     for entry in entries {
         if let Some(reference) = entry.task.as_deref() {
+            if reference.trim() == "shell" {
+                continue;
+            }
             visit(reference);
         }
     }
@@ -118,6 +121,7 @@ mod tests {
             [tasks.health]
             run = "node scripts/health.js"
             concurrent = [
+              { task = "shell" },
               { task = "ops/health-extra" }
             ]
             "#,

@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use crate::TaskInvocation;
 
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
-use super::super::ensure_no_unknown_builtin_args;
 use super::{MigrateArgs, RunnerError};
 
 pub(super) fn parse_migrate_request(
@@ -15,7 +14,7 @@ pub(super) fn parse_migrate_request(
     let mut apply = false;
     let mut package_path: Option<PathBuf> = None;
     let mut script_filter = std::collections::BTreeSet::<String>::new();
-    let unknown = parser.parse_loop_collect_unknown(|parser, arg| {
+    parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
         if parser.consume_json_flag(arg, &mut output_json)
             || parser.consume_flag(arg, "--apply", &mut apply)
         {
@@ -33,7 +32,6 @@ pub(super) fn parse_migrate_request(
         }
         Ok(ParseLoopAction::Unknown)
     })?;
-    ensure_no_unknown_builtin_args(&task.name, &unknown)?;
 
     Ok(MigrateArgs {
         output_json,

@@ -5,8 +5,10 @@ fn setup_shell_enabled(root: &Path) {
         root,
         r#"[tasks.dev]
 mode = "tui"
-shell = true
-concurrent = [{ name = "api", run = "printf api" }]
+concurrent = [
+  { name = "api", run = "printf api", start = 1, tab = 2 },
+  { task = "shell", start = 2, tab = 1 }
+]
 "#,
     );
 }
@@ -19,8 +21,10 @@ run = "exec ${SHELL:-/bin/bash} -i"
 
 [tasks.dev]
 mode = "tui"
-shell = true
-concurrent = [{ name = "api", run = "printf api" }]
+concurrent = [
+  { name = "api", run = "printf api", start = 1, tab = 2 },
+  { task = "shell", start = 2, tab = 1 }
+]
 "#,
     );
 }
@@ -34,7 +38,11 @@ fn run_manifest_task_managed_tui_shell_behavior_contract_table() {
             workspace: "managed-shell-enabled",
             invocation: ManagedInvocation::Dev,
             args: &[],
-            expected: &["shell", "exec ${SHELL:-/bin/zsh} -i"],
+            expected: &[
+                "shell",
+                "exec ${SHELL:-/bin/zsh} -i",
+                "tab-order: shell, api",
+            ],
             expected_absent: &[],
             setup: setup_shell_enabled,
         },
@@ -42,7 +50,11 @@ fn run_manifest_task_managed_tui_shell_behavior_contract_table() {
             workspace: "managed-shell-global-override",
             invocation: ManagedInvocation::Dev,
             args: &[],
-            expected: &["shell", "exec ${SHELL:-/bin/bash} -i"],
+            expected: &[
+                "shell",
+                "exec ${SHELL:-/bin/bash} -i",
+                "tab-order: shell, api",
+            ],
             expected_absent: &[],
             setup: setup_shell_global_override,
         },

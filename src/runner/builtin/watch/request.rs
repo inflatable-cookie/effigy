@@ -2,7 +2,6 @@ use crate::TaskInvocation;
 
 use super::super::super::RunnerError;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
-use super::super::ensure_no_unknown_builtin_args;
 
 const DEFAULT_DEBOUNCE_MS: u64 = 400;
 
@@ -36,7 +35,7 @@ pub(super) fn parse_watch_request(
     let mut max_runs: Option<usize> = None;
     let mut target: Option<TaskInvocation> = None;
 
-    let unknown = parser.parse_loop_collect_unknown(|parser, arg| {
+    parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
         if parser.consume_json_flag(arg, &mut output_json) {
             return Ok(ParseLoopAction::Handled);
         }
@@ -84,17 +83,12 @@ pub(super) fn parse_watch_request(
             "--" => Err(RunnerError::task_invocation(
                 "watch requires `<task>` before passthrough arguments (`--`)",
             )),
-            _ if arg.starts_with('-') => Ok(ParseLoopAction::Unknown),
-            _ => {
-                target = Some(TaskInvocation {
-                    name: arg.to_owned(),
-                    args: parser.remaining().to_vec(),
-                });
+            _ => parser.unknown_if_flag_or(arg, |value| {
+                target = Some(parser.positional_task_invocation(value));
                 Ok(ParseLoopAction::Break)
-            }
+            }),
         }
     })?;
-    ensure_no_unknown_builtin_args(&task.name, &unknown)?;
 
     Ok(WatchRequest {
         output_json,

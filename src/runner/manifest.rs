@@ -67,8 +67,6 @@ pub(super) struct ManifestTask {
     #[serde(default)]
     pub(super) fail_on_non_zero: Option<bool>,
     #[serde(default)]
-    pub(super) shell: Option<bool>,
-    #[serde(default)]
     pub(super) concurrent: Vec<ManifestManagedConcurrentEntry>,
     #[serde(default)]
     pub(super) profiles: IndexMap<String, ManifestManagedProfile>,

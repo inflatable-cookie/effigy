@@ -20,28 +20,6 @@ impl BuiltinArgParser<'_> {
             .map_err(|_| RunnerError::task_invocation(invalid_message(value)))
     }
 
-    pub(in super::super) fn usize_flag_value<F>(
-        &mut self,
-        missing_message: &str,
-        invalid_message: F,
-    ) -> Result<usize, RunnerError>
-    where
-        F: FnOnce(&str) -> String,
-    {
-        self.parsed_flag_value(missing_message, invalid_message)
-    }
-
-    pub(in super::super) fn u64_flag_value<F>(
-        &mut self,
-        missing_message: &str,
-        invalid_message: F,
-    ) -> Result<u64, RunnerError>
-    where
-        F: FnOnce(&str) -> String,
-    {
-        self.parsed_flag_value(missing_message, invalid_message)
-    }
-
     pub(in super::super) fn mapped_flag_value<T, M, I>(
         &mut self,
         missing_message: &str,
@@ -107,15 +85,7 @@ impl BuiltinArgParser<'_> {
         flag: &str,
         missing_message: &str,
     ) -> Result<u64, RunnerError> {
-        let parsed = self.u64_flag_value(missing_message, |value| {
-            format!("invalid `{flag}` value `{value}` (expected a positive integer)")
-        })?;
-        if parsed == 0 {
-            return Err(RunnerError::task_invocation(format!(
-                "`{flag}` must be greater than zero"
-            )));
-        }
-        Ok(parsed)
+        self.positive_flag_value(flag, missing_message, "a positive integer")
     }
 
     pub(in super::super) fn positive_usize_flag_value(
@@ -123,10 +93,22 @@ impl BuiltinArgParser<'_> {
         flag: &str,
         missing_message: &str,
     ) -> Result<usize, RunnerError> {
-        let parsed = self.usize_flag_value(missing_message, |value| {
-            format!("invalid `{flag}` value `{value}` (expected an integer >= 1)")
+        self.positive_flag_value(flag, missing_message, "an integer >= 1")
+    }
+
+    fn positive_flag_value<T>(
+        &mut self,
+        flag: &str,
+        missing_message: &str,
+        invalid_expected: &str,
+    ) -> Result<T, RunnerError>
+    where
+        T: FromStr + PartialOrd + From<u8>,
+    {
+        let parsed = self.parsed_flag_value::<T, _>(missing_message, |value| {
+            format!("invalid `{flag}` value `{value}` (expected {invalid_expected})")
         })?;
-        if parsed == 0 {
+        if parsed <= T::from(0u8) {
             return Err(RunnerError::task_invocation(format!(
                 "`{flag}` must be greater than zero"
             )));

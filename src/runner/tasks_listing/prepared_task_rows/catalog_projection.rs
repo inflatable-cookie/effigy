@@ -7,46 +7,46 @@ use super::super::catalog_manifest::{catalog_manifest_display, catalog_manifest_
 use super::super::row_projection::{project_catalog_task_display_rows, TaskSignatureProjection};
 use super::super::selection::CatalogTaskMatch;
 
-pub(in crate::runner) struct CatalogAliasProjection {
+pub(in super::super) struct CatalogAliasProjection {
     alias: String,
     manifest: String,
 }
 
-pub(in crate::runner) enum CatalogTaskListingEntry {
+pub(in super::super) enum CatalogTaskListingEntry {
     EmptyManifest(String),
     Task(CatalogTaskProjection),
 }
 
-pub(in crate::runner) struct CatalogTaskProjection {
+pub(in super::super) struct CatalogTaskProjection {
     manifest: String,
     task_row: TaskSignatureProjection,
     managed_profiles: Vec<ManagedProfileDisplayRow>,
 }
 
 impl CatalogAliasProjection {
-    pub(in crate::runner) fn alias(&self) -> &str {
+    pub(in super::super) fn alias(&self) -> &str {
         self.alias.as_str()
     }
 
-    pub(in crate::runner) fn manifest(&self) -> &str {
+    pub(in super::super) fn manifest(&self) -> &str {
         self.manifest.as_str()
     }
 }
 
 impl CatalogTaskProjection {
-    pub(in crate::runner) fn manifest(&self) -> &str {
+    pub(in super::super) fn manifest(&self) -> &str {
         self.manifest.as_str()
     }
 
-    pub(in crate::runner) fn task_row(&self) -> &TaskSignatureProjection {
+    pub(in super::super) fn task_row(&self) -> &TaskSignatureProjection {
         &self.task_row
     }
 
-    pub(in crate::runner) fn managed_profiles(&self) -> &[ManagedProfileDisplayRow] {
+    pub(in super::super) fn managed_profiles(&self) -> &[ManagedProfileDisplayRow] {
         self.managed_profiles.as_slice()
     }
 
-    pub(in crate::runner) fn into_parts(
+    pub(in super::super) fn into_parts(
         self,
     ) -> (
         String,
@@ -57,7 +57,7 @@ impl CatalogTaskProjection {
     }
 }
 
-pub(in crate::runner) fn prepare_display_catalog_alias_rows(
+pub(in super::super) fn prepare_display_catalog_alias_rows(
     ordered_catalogs: &[&LoadedCatalog],
     resolved_root: &Path,
 ) -> Vec<CatalogAliasProjection> {
@@ -70,7 +70,7 @@ pub(in crate::runner) fn prepare_display_catalog_alias_rows(
         .collect()
 }
 
-pub(in crate::runner) fn prepare_ordered_catalog_task_rows(
+pub(in super::super) fn prepare_ordered_catalog_task_rows(
     ordered_catalogs: &[&LoadedCatalog],
     mut manifest_for_catalog: impl FnMut(&LoadedCatalog) -> String,
 ) -> Vec<CatalogTaskListingEntry> {
@@ -96,13 +96,13 @@ pub(in crate::runner) fn prepare_ordered_catalog_task_rows(
     rows
 }
 
-pub(in crate::runner) fn prepare_ordered_catalog_task_rows_for_path(
+pub(in super::super) fn prepare_ordered_catalog_task_rows_for_path(
     ordered_catalogs: &[&LoadedCatalog],
 ) -> Vec<CatalogTaskListingEntry> {
     prepare_ordered_catalog_task_rows(ordered_catalogs, catalog_manifest_path)
 }
 
-pub(in crate::runner) fn prepare_ordered_catalog_task_rows_for_display(
+pub(in super::super) fn prepare_ordered_catalog_task_rows_for_display(
     ordered_catalogs: &[&LoadedCatalog],
     resolved_root: &Path,
 ) -> Vec<CatalogTaskListingEntry> {
@@ -111,7 +111,7 @@ pub(in crate::runner) fn prepare_ordered_catalog_task_rows_for_display(
     })
 }
 
-pub(in crate::runner) fn prepare_matched_catalog_task_rows(
+pub(in super::super) fn prepare_matched_catalog_task_rows(
     matches: &[CatalogTaskMatch<'_>],
     task_name: &str,
     mut manifest_for_catalog: impl FnMut(&LoadedCatalog) -> String,
@@ -130,14 +130,14 @@ pub(in crate::runner) fn prepare_matched_catalog_task_rows(
         .collect()
 }
 
-pub(in crate::runner) fn prepare_matched_catalog_task_rows_for_path(
+pub(in super::super) fn prepare_matched_catalog_task_rows_for_path(
     matches: &[CatalogTaskMatch<'_>],
     task_name: &str,
 ) -> Vec<CatalogTaskProjection> {
     prepare_matched_catalog_task_rows(matches, task_name, catalog_manifest_path)
 }
 
-pub(in crate::runner) fn prepare_matched_catalog_task_rows_for_display(
+pub(in super::super) fn prepare_matched_catalog_task_rows_for_display(
     matches: &[CatalogTaskMatch<'_>],
     task_name: &str,
     resolved_root: &Path,

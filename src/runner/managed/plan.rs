@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::super::{
     LoadedCatalog, ManagedProcessSpec, ManagedTaskPlan, ManifestManagedConcurrentEntry,
-    ManifestTask, RunnerError, TaskSelector, DEFAULT_MANAGED_SHELL_RUN,
+    ManifestTask, RunnerError, TaskSelector,
 };
 
 #[path = "plan/entries.rs"]
@@ -49,15 +49,18 @@ pub(super) fn resolve_managed_concurrent_task_plan(
         });
     }
 
-    let mut resolved =
-        entries::resolve_concurrent_process_entries(selector, entries, catalogs, task_scope_cwd)?;
+    let mut resolved = entries::resolve_concurrent_process_entries(
+        selector,
+        entries,
+        catalog,
+        catalogs,
+        task_scope_cwd,
+    )?;
     ordering::sort_resolved_processes(&mut resolved);
-    let mut processes = resolved
+    let processes = resolved
         .iter()
         .map(|entry| entry.spec.clone())
         .collect::<Vec<ManagedProcessSpec>>();
-
-    entries::maybe_append_shell_process(selector, task, catalog, task_scope_cwd, &mut processes)?;
 
     let tab_order = ordering::build_tab_order(&resolved, &processes);
 

@@ -1,5 +1,4 @@
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
-use super::super::ensure_no_unknown_builtin_args;
 use super::super::help_text::{render_titled_help, HelpSection};
 use super::{CacheArgs, CacheCommand, RunnerError};
 
@@ -11,7 +10,7 @@ pub(super) fn parse_cache_args(args: &[String]) -> Result<CacheArgs, RunnerError
     let mut output_json = false;
     let mut invalidate_all = false;
     let mut selectors = Vec::<String>::new();
-    let unknown = parser.parse_loop_collect_unknown(|parser, arg| {
+    parser.parse_loop_require_no_unknown("cache", |parser, arg| {
         if parser.consume_json_flag(arg, &mut output_json) {
             return Ok(ParseLoopAction::Handled);
         }
@@ -41,7 +40,6 @@ pub(super) fn parse_cache_args(args: &[String]) -> Result<CacheArgs, RunnerError
             },
         }
     })?;
-    ensure_no_unknown_builtin_args("cache", &unknown)?;
 
     Ok(CacheArgs {
         command,

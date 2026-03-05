@@ -3,7 +3,6 @@ use crate::TaskInvocation;
 use super::super::super::locking::LockScope;
 use super::super::super::RunnerError;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
-use super::super::ensure_no_unknown_builtin_args;
 
 pub(super) struct UnlockRequest {
     pub(super) output_json: bool,
@@ -20,25 +19,23 @@ pub(super) fn parse_unlock_request(
     let mut unlock_all_flag = false;
     let mut scopes = Vec::<LockScope>::new();
 
-    let unknown = parser.parse_loop_collect_unknown(|parser, arg| {
+    parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
         if parser.consume_json_flag(arg, &mut output_json)
             || parser.consume_flag(arg, "--all", &mut unlock_all_flag)
         {
             return Ok(ParseLoopAction::Handled);
         }
-        if arg.starts_with('-') {
-            return Ok(ParseLoopAction::Unknown);
-        }
-        let Some(scope) = LockScope::parse(arg) else {
-            return Err(RunnerError::task_invocation(format!(
-                "`{}` unlock target `{arg}` is invalid; expected `workspace`, `task:<name>`, or `profile:<task>/<profile>`",
-                task.name
-            )));
-        };
-        scopes.push(scope);
-        Ok(ParseLoopAction::Handled)
+        parser.unknown_if_flag_or(arg, |value| {
+            let Some(scope) = LockScope::parse(value) else {
+                return Err(RunnerError::task_invocation(format!(
+                    "`{}` unlock target `{value}` is invalid; expected `workspace`, `task:<name>`, or `profile:<task>/<profile>`",
+                    task.name
+                )));
+            };
+            scopes.push(scope);
+            Ok(ParseLoopAction::Handled)
+        })
     })?;
-    ensure_no_unknown_builtin_args(&task.name, &unknown)?;
 
     if unlock_all_flag && !scopes.is_empty() {
         return Err(RunnerError::task_invocation(

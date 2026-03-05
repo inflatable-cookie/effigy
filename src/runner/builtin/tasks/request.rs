@@ -2,7 +2,6 @@ use crate::TaskInvocation;
 
 use super::super::super::RunnerError;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
-use super::super::ensure_no_unknown_builtin_args;
 
 pub(super) struct TasksRequest {
     pub(super) task_name: Option<String>,
@@ -20,7 +19,7 @@ pub(super) fn parse_tasks_request(
     let mut resolve_selector: Option<String> = None;
     let mut output_json = false;
     let mut pretty_json = true;
-    let unknown = parser.parse_loop_collect_unknown(|parser, arg| {
+    parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
         if parser.consume_json_flag(arg, &mut output_json) {
             return Ok(ParseLoopAction::Handled);
         }
@@ -38,7 +37,6 @@ pub(super) fn parse_tasks_request(
         }
         Ok(ParseLoopAction::Unknown)
     })?;
-    ensure_no_unknown_builtin_args(&task.name, &unknown)?;
 
     Ok(TasksRequest {
         task_name,

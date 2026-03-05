@@ -104,13 +104,13 @@ alias = "app"
 
 [tasks.dev]
 mode = "tui"
-shell = true
 fail_on_non_zero = true
 
 concurrent = [
   { task = "app/api", start = 1, tab = 2 },
   { task = "app/worker", start = 2, tab = 3, start_after_ms = 1200 },
-  { run = "bun run web:dev", start = 3, tab = 1 }
+  { run = "bun run web:dev", start = 3, tab = 1 },
+  { task = "shell", start = 4, tab = 4 }
 ]
 
 [tasks.dev.profiles.admin]
