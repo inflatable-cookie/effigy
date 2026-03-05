@@ -8,20 +8,16 @@ mod builtin_rows;
 mod catalog_iteration;
 #[path = "tasks_listing/catalog_manifest.rs"]
 mod catalog_manifest;
-#[path = "tasks_listing/filtering.rs"]
-mod filtering;
 #[path = "tasks_listing/json_output.rs"]
 mod json_output;
-#[path = "tasks_listing/matches.rs"]
-mod matches;
-#[path = "tasks_listing/prepared_listing.rs"]
-mod prepared_listing;
 #[path = "tasks_listing/prepared_task_rows.rs"]
 mod prepared_task_rows;
 #[path = "tasks_listing/render_context.rs"]
 mod render_context;
 #[path = "tasks_listing/row_projection.rs"]
 mod row_projection;
+#[path = "tasks_listing/selection.rs"]
+mod selection;
 #[path = "tasks_listing/text_output.rs"]
 mod text_output;
 

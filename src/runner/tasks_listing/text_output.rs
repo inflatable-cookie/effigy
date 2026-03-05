@@ -11,8 +11,8 @@ mod sections;
 
 use super::super::tasks_view::render_resolution_probe_block;
 use super::super::{render, RunnerError};
-use super::prepared_listing::{prepare_listing_selection, PreparedListingSelection};
 use super::render_context::ListingRenderRequest;
+use super::selection::{prepare_listing_selection, PreparedListingSelection};
 use super::ListingCatalogSnapshot;
 use filtered::render_filtered_tasks_text;
 use sections::render_default_tasks_text;

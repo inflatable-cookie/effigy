@@ -6,9 +6,10 @@ mod payload;
 mod rows;
 
 use super::super::{render, LoadedCatalog, RunnerError};
-use super::filtering::PreparedFilteredListing;
-use super::prepared_listing::{prepare_listing_selection, PreparedListingSelection};
 use super::render_context::ListingRenderRequest;
+use super::selection::{
+    prepare_listing_selection, PreparedFilteredListing, PreparedListingSelection,
+};
 use super::ListingCatalogSnapshot;
 use model::{prepare_all_catalog_rows_json, prepare_filtered_rows_json};
 use payload::{encode_catalog_payload, encode_filtered_payload, JsonPayloadContext};

@@ -1,8 +1,8 @@
 use super::super::tasks_view::ManagedProfileDisplayRow;
 use super::super::{LoadedCatalog, ManifestTask};
 use super::catalog_iteration::catalog_tasks;
-use super::matches::CatalogTaskMatch;
 use super::row_projection::{project_catalog_task_display_rows, ProjectedCatalogTaskSignatureRow};
+use super::selection::CatalogTaskMatch;
 
 pub(super) struct PreparedCatalogTaskRows {
     empty_manifests: Vec<String>,

@@ -5,8 +5,8 @@ use crate::ui::{NoticeLevel, PlainRenderer, Renderer};
 
 use super::super::super::tasks_view::render_resolution_probe_block;
 use super::super::super::RunnerError;
-use super::super::filtering::PreparedFilteredListing;
 use super::super::row_projection::BuiltinTaskRow;
+use super::super::selection::PreparedFilteredListing;
 use super::model::prepare_catalog_match_task_rows;
 use super::rows::render_catalog_match_rows;
 use super::sections::render_builtin_rows_section;
