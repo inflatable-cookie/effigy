@@ -3,8 +3,10 @@ use crate::TaskInvocation;
 use super::super::super::RunnerError;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
 use super::scripts::CompletionShell;
-
-pub(super) const COMPLETION_CANDIDATES_SUBCOMMAND: &str = "candidates";
+use super::surface::{
+    COMPLETION_CANDIDATES_SUBCOMMAND, COMPLETION_SHELL_TARGETS_QUOTED,
+    COMPLETION_TARGETS_WITH_CANDIDATES_QUOTED,
+};
 
 pub(super) struct CompletionRequest {
     pub(super) output_json: bool,
@@ -44,14 +46,14 @@ pub(super) fn parse_completion_request(
         }
         if shell.is_some() {
             return Err(RunnerError::task_invocation(format!(
-                "`{}` accepts exactly one shell target (`bash`, `zsh`, or `fish`)",
-                task.name
+                "`{}` accepts exactly one shell target ({COMPLETION_SHELL_TARGETS_QUOTED})",
+                task.name,
             )));
         }
         shell = CompletionShell::parse(arg);
         if shell.is_none() {
             return Err(RunnerError::task_invocation(format!(
-                "invalid shell `{arg}` for `completion` (expected `bash`, `zsh`, `fish`, or `candidates`)"
+                "invalid shell `{arg}` for `completion` (expected {COMPLETION_TARGETS_WITH_CANDIDATES_QUOTED})"
             )));
         }
         Ok(ParseLoopAction::Handled)

@@ -1,4 +1,8 @@
 use super::super::help_text::{render_titled_help, HelpSection};
+use super::surface::{
+    COMPLETION_CANDIDATES_EXAMPLE_LINE, COMPLETION_CANDIDATES_USAGE_LINE,
+    COMPLETION_HELP_USAGE_LINE,
+};
 
 pub(super) fn render_completion_help() -> String {
     render_titled_help(
@@ -6,10 +10,7 @@ pub(super) fn render_completion_help() -> String {
         &[
             HelpSection::Plain {
                 heading: "Usage",
-                lines: &[
-                    "effigy completion <bash|zsh|fish> [--json]",
-                    "effigy completion candidates [--repo <path>] [--prefix <value>] [--json]",
-                ],
+                lines: &[COMPLETION_HELP_USAGE_LINE, COMPLETION_CANDIDATES_USAGE_LINE],
             },
             HelpSection::Bulleted {
                 heading: "Notes",
@@ -27,7 +28,7 @@ pub(super) fn render_completion_help() -> String {
                     "effigy completion zsh > ~/.zfunc/_effigy",
                     "effigy completion fish > ~/.config/fish/completions/effigy.fish",
                     "effigy completion zsh --json",
-                    "effigy completion candidates --prefix farm",
+                    COMPLETION_CANDIDATES_EXAMPLE_LINE,
                 ],
             },
         ],
@@ -40,9 +41,7 @@ pub(super) fn render_completion_candidates_help() -> String {
         &[
             HelpSection::Plain {
                 heading: "Usage",
-                lines: &[
-                    "effigy completion candidates [--repo <path>] [--prefix <value>] [--json]",
-                ],
+                lines: &[COMPLETION_CANDIDATES_USAGE_LINE],
             },
             HelpSection::Bulleted {
                 heading: "Notes",

@@ -1,4 +1,4 @@
-use super::super::RunnerError;
+use super::RunnerError;
 
 pub(super) fn runner_error_rendered_output(error: &RunnerError) -> Option<&str> {
     match error {

@@ -1,4 +1,5 @@
 use super::super::super::super::BUILTIN_TASKS;
+use super::super::surface::COMPLETION_COMMAND_OPTIONS;
 
 pub(super) fn command_names() -> Vec<&'static str> {
     let mut names = Vec::with_capacity(BUILTIN_TASKS.len() + 1);
@@ -60,17 +61,7 @@ pub(super) fn command_options(command: &str) -> &'static [&'static str] {
         ],
         "unlock" => &["--all", "--json", "--help", "-h"],
         "cache" => &["inspect", "invalidate", "--all", "--json", "--help", "-h"],
-        "completion" => &[
-            "bash",
-            "zsh",
-            "fish",
-            "candidates",
-            "--repo",
-            "--prefix",
-            "--json",
-            "--help",
-            "-h",
-        ],
+        "completion" => COMPLETION_COMMAND_OPTIONS,
         _ => &[],
     }
 }
