@@ -72,19 +72,13 @@ impl<'a> JsonPayloadContext<'a> {
     }
 }
 
-fn encode_payload(payload: impl Serialize) -> Result<Value, RunnerError> {
-    serde_json::to_value(payload).map_err(|error| {
-        RunnerError::Ui(format!("failed to encode tasks listing payload: {error}"))
-    })
-}
-
 pub(super) fn encode_catalog_payload(
     context: &JsonPayloadContext<'_>,
     rows: PreparedJsonTaskRows,
     builtin_tasks: Vec<BuiltinTaskRowJson>,
 ) -> Result<Value, RunnerError> {
     let (task_rows, managed_profile_rows) = rows.into_parts();
-    encode_enveloped_payload(
+    encode_payload_with_schema(
         context,
         TASKS_SCHEMA,
         CatalogPayloadBody {
@@ -103,7 +97,7 @@ pub(super) fn encode_filtered_payload(
     notes: Vec<String>,
 ) -> Result<Value, RunnerError> {
     let (task_rows, managed_profile_rows) = rows.into_parts();
-    encode_enveloped_payload(
+    encode_payload_with_schema(
         context,
         FILTERED_TASKS_SCHEMA,
         FilteredPayloadBody {
@@ -116,28 +110,23 @@ pub(super) fn encode_filtered_payload(
     )
 }
 
-impl JsonPayloadContext<'_> {
-    fn envelope<B: Serialize>(&self, schema: &'static str, body: B) -> PayloadEnvelope<B> {
-        PayloadEnvelope {
-            header: PayloadHeader {
-                schema,
-                schema_version: SCHEMA_VERSION,
-                catalog_count: self.catalog_count,
-            },
-            body,
-            footer: SharedPayloadFooter {
-                catalogs: self.catalog_diagnostics.to_vec(),
-                precedence: self.precedence.to_vec(),
-                resolve: self.resolve_probe.clone(),
-            },
-        }
-    }
-}
-
-fn encode_enveloped_payload<B: Serialize>(
+fn encode_payload_with_schema<B: Serialize>(
     context: &JsonPayloadContext<'_>,
     schema: &'static str,
     body: B,
 ) -> Result<Value, RunnerError> {
-    encode_payload(context.envelope(schema, body))
+    serde_json::to_value(PayloadEnvelope {
+        header: PayloadHeader {
+            schema,
+            schema_version: SCHEMA_VERSION,
+            catalog_count: context.catalog_count,
+        },
+        body,
+        footer: SharedPayloadFooter {
+            catalogs: context.catalog_diagnostics.to_vec(),
+            precedence: context.precedence.to_vec(),
+            resolve: context.resolve_probe.clone(),
+        },
+    })
+    .map_err(|error| RunnerError::Ui(format!("failed to encode tasks listing payload: {error}")))
 }
