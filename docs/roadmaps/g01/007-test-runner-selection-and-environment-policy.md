@@ -99,3 +99,5 @@ Examples:
 - [x] Runner updates for positional suite selection and ambiguity handling.
 - [x] Updated test coverage for multi-suite targeting behavior.
 - [x] Updated help and README guidance.
+
+Generation: `g01`

@@ -2,7 +2,7 @@
 
 Status: Draft
 Owner: Docs Owners + Platform Maintainers
-Purpose: establish canonical tag and language definitions used across vision, roadmap, guides, and reports.
+Purpose: establish canonical tag and language definitions used across vision, roadmap, guides, and logs.
 
 ## 1. Canonical Vision Tags
 

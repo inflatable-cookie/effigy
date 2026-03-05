@@ -5,7 +5,7 @@ Owner: Effigy
 Related roadmap: shell completion and command discovery polish
 
 ## Scope
-- Reduce report-index maintenance friction by adding a helper command for `docs/reports/README.md` updates.
+- Reduce report-index maintenance friction by adding a helper command for `docs/logs/README.md` updates.
 
 ## Changes
 - Added `scripts/add-report-index-entry.sh`:
@@ -16,7 +16,7 @@ Related roadmap: shell completion and command discovery polish
 - Updated docs QA guide `029-docs-qa-checklist-and-validation.md` with helper usage.
 
 ## Validation
-- command: `./scripts/add-report-index-entry.sh docs/reports/2026-03-02-docs-qa-report-index-helper-validation.md`
+- command: `./scripts/add-report-index-entry.sh docs/logs/2026-03/02-092600-docs-qa-report-index-helper-validation.md`
   - result: pass (entry inserted)
 - command: `./scripts/check-doc-reports-index.sh`
   - result: pass

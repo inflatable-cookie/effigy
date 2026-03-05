@@ -144,3 +144,5 @@ Error envelope:
 - [x] Command-level JSON envelope + error contract.
 - [x] JSON support across built-in and catalog task execution paths.
 - [x] Updated contract tests and documentation.
+
+Generation: `g01`

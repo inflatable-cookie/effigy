@@ -114,4 +114,6 @@ Implementation notes:
 - [x] Emulator-backed process output pipeline for TUI tabs.
 - [x] Updated TUI rendering logic with accurate viewport/scrollback behavior.
 - [x] Regression tests for rewrite-heavy output scenarios.
-- [x] Updated TUI/testing guides and checkpoint report.
+- [x] Updated TUI/testing guides and checkpoint log.
+
+Generation: `g01`

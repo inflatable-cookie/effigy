@@ -165,4 +165,6 @@ Group: Project Health Delegation
 ## 10) Closeout Note (2026-02-28)
 
 - [x] Explain-mode follow-up is complete under `doctor` (`effigy doctor [--repo <PATH>] <task> -- <args>`), including text/JSON parity and reasoning fields.
-- [x] Release-note traceability: `docs/reports/2026-02-28-doctor-explain-mode-release-note.md`.
+- [x] Release-note traceability: `docs/logs/2026-02/28-090100-doctor-explain-mode-release-note.md`.
+
+Generation: `g01`

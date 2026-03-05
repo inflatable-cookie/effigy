@@ -31,7 +31,7 @@ Compatibility wrapper scripts (retained for CI/release tooling integration):
 - `./scripts/check-distribution-preflight.sh`
 - `./scripts/check-distribution-first-publish.sh`
 - `./scripts/validate-distribution-artifacts.sh`
-- `./scripts/generate-distribution-closeout-report.sh`
+- `./scripts/generate-distribution-closeout-log.sh`
 - `./scripts/check-distribution-artifact-pipeline-smoke.sh`
 - `./scripts/update-homebrew-formula-from-metadata.sh`
 
@@ -55,7 +55,7 @@ cargo qa-release
 ./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 # writes ./artifacts/distribution-v0.__.__/distribution-summary.env
 ./scripts/validate-distribution-artifacts.sh --artifacts-dir ./artifacts/distribution-v0.__.__
-./scripts/generate-distribution-closeout-report.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
+./scripts/generate-distribution-closeout-log.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 ./scripts/check-distribution-artifact-pipeline-smoke.sh
 cargo qa-docs
 ```

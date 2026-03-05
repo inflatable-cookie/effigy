@@ -2,7 +2,7 @@
 
 Date: 2026-03-02
 Owner: Effigy
-Related roadmap: `docs/roadmap/backlog/release-contract-v0.md`
+Related roadmap: `docs/roadmaps/backlog/release-contract-v0.md`
 
 ## Scope
 
@@ -17,7 +17,7 @@ Related roadmap: `docs/roadmap/backlog/release-contract-v0.md`
 - Updated release gates:
   - `scripts/check-release-gates.sh` (now runs metadata validation)
 - Updated docs:
-  - `docs/roadmap/backlog/release-contract-v0.md`
+  - `docs/roadmaps/backlog/release-contract-v0.md`
   - `docs/guides/014-release-checklist-template.md`
   - `docs/guides/024-ci-and-automation-recipes.md`
 

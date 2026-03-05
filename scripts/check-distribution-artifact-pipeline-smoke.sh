@@ -13,7 +13,7 @@ cleanup() {
 trap cleanup EXIT
 
 ARTIFACTS_DIR="$TMP_DIR/artifacts"
-REPORT_PATH="$TMP_DIR/closeout-report.md"
+LOG_PATH="$TMP_DIR/closeout-log.md"
 mkdir -p "$ARTIFACTS_DIR"
 
 for name in \
@@ -41,15 +41,15 @@ SUMMARY
 echo "[check] validate artifact bundle"
 "$ROOT_DIR/scripts/validate-distribution-artifacts.sh" --artifacts-dir "$ARTIFACTS_DIR" --expect-homebrew
 
-echo "[check] generate closeout report"
-"$ROOT_DIR/scripts/generate-distribution-closeout-report.sh" \
+echo "[check] generate closeout log"
+"$ROOT_DIR/scripts/generate-distribution-closeout-log.sh" \
   --tag v0.1.0 \
   --artifacts-dir "$ARTIFACTS_DIR" \
-  --output "$REPORT_PATH"
+  --output "$LOG_PATH"
 
-echo "[check] assert report content"
-grep -q '^# Distribution Acceptance Closeout (v0.1.0)$' "$REPORT_PATH"
-grep -q '^- Homebrew evidence included: true\.$' "$REPORT_PATH"
-grep -q '^- 08-homebrew-upgrade.log$' "$REPORT_PATH"
+echo "[check] assert log content"
+grep -q '^# Distribution Acceptance Closeout (v0.1.0)$' "$LOG_PATH"
+grep -q '^- Homebrew evidence included: true\.$' "$LOG_PATH"
+grep -q '^- 08-homebrew-upgrade.log$' "$LOG_PATH"
 
 echo "[ok] distribution artifact pipeline smoke passed"

@@ -112,8 +112,8 @@ Effigy is still evolving, so distribution planning should be staged and reversib
 Before marking this backlog item complete, execute:
 - [`../../guides/044-distribution-first-publish-execution-runbook.md`](../../guides/044-distribution-first-publish-execution-runbook.md)
 - `./scripts/check-distribution-first-publish.sh --tag <tag> --artifacts-dir <dir>`
-- `./scripts/generate-distribution-closeout-report.sh --tag <tag> --artifacts-dir <dir> [--expect-homebrew]`
-- one dated acceptance-closeout report with channel matrix evidence
+- `./scripts/generate-distribution-closeout-log.sh --tag <tag> --artifacts-dir <dir> [--expect-homebrew]`
+- one dated acceptance-closeout log with channel matrix evidence
 
 ## 10) Vision Target Movement Criteria
 
@@ -126,5 +126,5 @@ Target envelope:
 
 Promotion signals:
 - one completed publish cycle includes validated install evidence for tag install, crates install, and Homebrew flow
-- rollback path is executed or dry-run validated and documented in a dated report
+- rollback path is executed or dry-run validated and documented in a dated log
 - release contract checklist is fully linked to channel artifacts with no open blockers

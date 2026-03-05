@@ -71,7 +71,7 @@ A deprecated guide may be deleted only when:
 
 Before deletion:
 - verify with repo-wide search for file path references
-- include deletion note in a docs changelog report
+- include deletion note in a docs changelog log
 
 ## 7) Archive Index Recommendation
 
@@ -106,4 +106,4 @@ Maintain a lightweight archive list in one place (recommended: `docs/guides/READ
 
 ## Next Step
 
-When deprecating a guide, record the decision and replacement path in the next dated report under `docs/reports/` and cross-link it from index updates.
+When deprecating a guide, record the decision and replacement path in the next dated log under `docs/logs/YYYY-MM/` and cross-link it from index updates.

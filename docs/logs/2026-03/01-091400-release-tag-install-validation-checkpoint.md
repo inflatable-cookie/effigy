@@ -17,8 +17,8 @@ Related roadmap: backlog/distribution-channels (Phase B)
   - `docs/guides/010-path-installation-and-release.md`
   - `docs/guides/014-release-checklist-template.md`
   - `docs/guides/024-ci-and-automation-recipes.md`
-  - `docs/roadmap/backlog/release-contract-v0.md`
-  - `docs/roadmap/backlog/distribution-channels.md`
+  - `docs/roadmaps/backlog/release-contract-v0.md`
+  - `docs/roadmaps/backlog/distribution-channels.md`
 
 ## Validation
 - command: `./scripts/check-release-gates.sh`

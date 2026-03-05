@@ -16,7 +16,7 @@ Every release note should include these sections in this order:
 
 ## 2) Template
 
-Copy this into `docs/reports/YYYY-MM-DD-<topic>-release-note.md`:
+Copy this into `docs/logs/YYYY-MM/DD-HHMMSS-<topic>-release-note.md`:
 
 ```md
 # <Release Note Title>
@@ -165,15 +165,15 @@ Release: milestone m1
 ## 6) Where to Link Release Notes
 
 For each new release note:
-1. add file under `docs/reports/` with date-first naming
-2. add link to `docs/reports/README.md` under recent release notes
+1. add file under `docs/logs/YYYY-MM/` with `DD-HHMMSS-<topic>.md` naming
+2. add link to `docs/logs/README.md` under recent release notes
 3. reference from relevant guide(s) when behavior is user-impacting
 
 ## 7) Historical Workflow Reference Rule
 
-- If a release note/report documents a workflow path that was correct at that time, keep that historical path as-is.
-- For current operational guidance (outside historical reports), use active workflow paths (`.github-bak/workflows/*.yml` in this repository layout).
-- Validation check `docs/scripts/check-doc-workflow-paths.sh` intentionally excludes `docs/reports/` to preserve historical evidence fidelity.
+- If a release note/log documents a workflow path that was correct at that time, keep that historical path as-is.
+- For current operational guidance (outside historical logs), use active workflow paths (`.github-bak/workflows/*.yml` in this repository layout).
+- Validation check `docs/scripts/check-doc-workflow-paths.sh` intentionally excludes `docs/logs/` to preserve historical evidence fidelity.
 
 ## Expected Outcome
 

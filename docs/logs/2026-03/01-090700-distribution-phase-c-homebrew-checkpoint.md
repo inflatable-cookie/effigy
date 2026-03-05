@@ -2,7 +2,7 @@
 
 Date: 2026-03-01
 Owner: Effigy
-Related roadmap: `docs/roadmap/backlog/distribution-channels.md`
+Related roadmap: `docs/roadmaps/backlog/distribution-channels.md`
 
 ## Scope
 
@@ -21,7 +21,7 @@ Related roadmap: `docs/roadmap/backlog/distribution-channels.md`
 - Updated guides navigation:
   - `docs/guides/README.md`
 - Marked Distribution backlog Phase C and Homebrew deliverable complete:
-  - `docs/roadmap/backlog/distribution-channels.md`
+  - `docs/roadmaps/backlog/distribution-channels.md`
 
 ## Validation
 

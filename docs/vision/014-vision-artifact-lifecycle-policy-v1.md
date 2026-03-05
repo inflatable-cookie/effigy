@@ -13,7 +13,7 @@ Purpose: define when strategy-level vision documents should be created, revised,
 ## 2. Lifecycle States
 
 1. `Draft`: proposed strategy intent under active shaping.
-2. `Active`: approved and expected to guide roadmap/guides/reports.
+2. `Active`: approved and expected to guide roadmap/guides/logs.
 3. `Superseded`: replaced by a newer artifact with explicit successor reference.
 4. `Archived`: moved out of active vision set into history references.
 

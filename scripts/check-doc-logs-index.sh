@@ -2,45 +2,45 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPORTS_DIR="$ROOT_DIR/docs/reports"
-REPORTS_INDEX="$REPORTS_DIR/README.md"
+LOGS_DIR="$ROOT_DIR/docs/logs"
+LOGS_INDEX="$LOGS_DIR/README.md"
 
-if [[ ! -d "$REPORTS_DIR" ]]; then
-  echo "[error] reports directory not found: $REPORTS_DIR" >&2
+if [[ ! -d "$LOGS_DIR" ]]; then
+  echo "[error] logs directory not found: $LOGS_DIR" >&2
   exit 1
 fi
 
-if [[ ! -f "$REPORTS_INDEX" ]]; then
-  echo "[error] reports index not found: $REPORTS_INDEX" >&2
+if [[ ! -f "$LOGS_INDEX" ]]; then
+  echo "[error] logs index not found: $LOGS_INDEX" >&2
   exit 1
 fi
 
-all_reports_file="$(mktemp)"
-indexed_reports_file="$(mktemp)"
-trap 'rm -f "$all_reports_file" "$indexed_reports_file"' EXIT
+all_logs_file="$(mktemp)"
+indexed_logs_file="$(mktemp)"
+trap 'rm -f "$all_logs_file" "$indexed_logs_file"' EXIT
 
-find "$REPORTS_DIR" -maxdepth 1 -type f -name '*.md' -print \
-  | xargs -n1 basename \
+find "$LOGS_DIR" -mindepth 2 -maxdepth 2 -type f -name '*.md' -print \
+  | sed "s#^$LOGS_DIR/##" \
   | rg -v '^README\.md$' \
-  | sort > "$all_reports_file"
+  | sort > "$all_logs_file"
 
-rg -o '\(\./[^)]+\.md\)' "$REPORTS_INDEX" \
+rg -o '\(\./[^)]+\.md\)' "$LOGS_INDEX" \
   | sed -E 's/^\(\.\///; s/\)$//' \
-  | sort -u > "$indexed_reports_file"
+  | sort -u > "$indexed_logs_file"
 
-missing="$(comm -23 "$all_reports_file" "$indexed_reports_file")"
-extra="$(comm -13 "$all_reports_file" "$indexed_reports_file")"
+missing="$(comm -23 "$all_logs_file" "$indexed_logs_file")"
+extra="$(comm -13 "$all_logs_file" "$indexed_logs_file")"
 
 if [[ -n "$missing" ]]; then
-  echo "[error] reports index is missing entries:" >&2
+  echo "[error] logs index is missing entries:" >&2
   printf '%s\n' "$missing" | sed 's/^/  - /' >&2
   exit 1
 fi
 
 if [[ -n "$extra" ]]; then
-  echo "[error] reports index references non-existent report files:" >&2
+  echo "[error] logs index references non-existent log files:" >&2
   printf '%s\n' "$extra" | sed 's/^/  - /' >&2
   exit 1
 fi
 
-echo "reports index check passed"
+echo "logs index check passed"

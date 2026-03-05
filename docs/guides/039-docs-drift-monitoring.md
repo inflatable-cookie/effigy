@@ -8,11 +8,11 @@ Run from repository root.
 
 | Cadence | Owner | Required Checks | Deliverable |
 | --- | --- | --- | --- |
-| Weekly (every Friday) | Docs maintainer on rotation | Link integrity, entrypoint index coherence, terminology spot check (`JSON mode`, `selector`, `routing`, `deferral`) | short checkpoint note in `docs/reports/` if issues are found |
-| Monthly (first business day) | Docs maintainer + CI owner | Full monthly drift checklist in this guide | dated drift report in `docs/reports/` |
-| Quarterly (first week of quarter) | Docs maintainer + maintainer lead | Quarterly deep drift sweep in this guide | consolidated IA health report with follow-up actions |
+| Weekly (every Friday) | Docs maintainer on rotation | Link integrity, entrypoint index coherence, terminology spot check (`JSON mode`, `selector`, `routing`, `deferral`) | short checkpoint log in `docs/logs/` if issues are found |
+| Monthly (first business day) | Docs maintainer + CI owner | Full monthly drift checklist in this guide | dated drift log in `docs/logs/` |
+| Quarterly (first week of quarter) | Docs maintainer + maintainer lead | Quarterly deep drift sweep in this guide | consolidated IA health log with follow-up actions |
 
-If ownership rotates, update the current owner in your team runbook and reference that owner in the dated report.
+If ownership rotates, update the current owner in your team runbook and reference that owner in the dated log.
 
 ## 2) Monthly Drift Checklist
 
@@ -93,12 +93,12 @@ In addition to monthly checks:
 - ensure `029` commands still reflect actual scripts/workflows
 - review `036` release-note template against recent release-note quality
 
-## 4) Recurring Report Snippet
+## 4) Recurring Log Snippet
 
-Use this in a dated report under `docs/reports/`:
+Use this in a dated log under `docs/logs/YYYY-MM/`:
 
 ```md
-# YYYY-MM-DD Docs Drift Monitoring Checkpoint
+# Docs Drift Monitoring Checkpoint
 
 Date: YYYY-MM-DD
 Owner: <team/person>
@@ -147,4 +147,4 @@ Escalate to docs cleanup work when any of these occur:
 
 ## Next Step
 
-After each monthly run, update the latest findings in [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md) and link the dated report.
+After each monthly run, update the latest findings in [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md) and link the dated log.

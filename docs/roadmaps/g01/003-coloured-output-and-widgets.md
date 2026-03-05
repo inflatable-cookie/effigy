@@ -220,3 +220,5 @@ Phase 003 migration scope:
 - [x] Table and spinner integrations.
 - [x] Migrated built-ins using widget API.
 - [x] Documentation for output authoring conventions and mode flags.
+
+Generation: `g01`

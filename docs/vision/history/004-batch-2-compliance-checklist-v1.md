@@ -27,10 +27,10 @@ Batch 2 scope:
 
 | Artifact Group | Required additions | Pass condition |
 | --- | --- | --- |
-| `docs/roadmap/*.md` | Vision metadata sections | All numbered roadmap files include all four sections |
+| `docs/roadmaps/*.md` | Vision metadata sections | All numbered roadmap files include all four sections |
 | `docs/guides/016-026*.md` | Vision alignment notes | All targeted guides include tags + target movement intent |
-| `docs/reports/README.md` and report authoring guidance | Vision target delta requirement | New report guidance explicitly enforces target-delta section |
-| `docs/roadmap/backlog/*.md` | Target-linked promotion criteria | Each backlog item includes measurable promotion signals |
+| `docs/logs/README.md` and report authoring guidance | Vision target delta requirement | New report guidance explicitly enforces target-delta section |
+| `docs/roadmaps/backlog/*.md` | Target-linked promotion criteria | Each backlog item includes measurable promotion signals |
 
 ## 3. Validation Plan
 

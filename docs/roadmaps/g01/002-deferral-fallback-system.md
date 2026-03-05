@@ -77,3 +77,5 @@ Some repos still depend on a legacy task runner implementation. Effigy needs an 
 - [x] Deferral schema and runtime behavior in runner.
 - [x] Test coverage for key deferral paths.
 - [x] Cookbook docs for legacy PHP migration bridge.
+
+Generation: `g01`

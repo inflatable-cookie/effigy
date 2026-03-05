@@ -111,7 +111,7 @@ Notes:
 ### Phase 5.5 - Hardening and Adoption
 - [x] Add integration tests for detection + fallback chains.
 - [x] Add docs and examples for explicit override vs auto mode.
-- [x] Validate on active repos (Acowtancy first) and publish checkpoint report.
+- [x] Validate on active repos (Acowtancy first) and publish checkpoint log.
 - [x] Fix active-repo manifest parse blockers and rerun root fanout validation.
 
 ## 7) Acceptance Criteria
@@ -136,4 +136,6 @@ Notes:
 - [x] Built-in `effigy test` auto-detection and execution path.
 - [x] `--plan` explainability output for test selection.
 - [x] Workspace fanout test orchestration and summary.
-- [x] Documentation and adoption report.
+- [x] Documentation and adoption log.
+
+Generation: `g01`

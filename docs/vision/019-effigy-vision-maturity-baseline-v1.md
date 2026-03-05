@@ -14,9 +14,9 @@ Method: qualitative baseline from active vision artifacts (`001` to `018`) plus 
 
 | Tag | Stage (0-4) | Baseline Evidence | Primary Gap |
 | --- | --- | --- | --- |
-| `ROUTE` | 2 | deterministic routing and explainability direction established in blueprint and risk model | quantitative routing SLO instrumentation not yet attached to recurring reports |
+| `ROUTE` | 2 | deterministic routing and explainability direction established in blueprint and risk model | quantitative routing SLO instrumentation not yet attached to recurring logs |
 | `CONTRACT` | 2 | envelope/version governance and contract checks are explicitly central and repeatedly validated | formalized decision index and exception impact tracking still emerging |
-| `OPERATE` | 2 | operator-first diagnostics and actionability are codified across vision docs | measured operator actionability scoring not yet standardized in reports |
+| `OPERATE` | 2 | operator-first diagnostics and actionability are codified across vision docs | measured operator actionability scoring not yet standardized in logs |
 | `MAINT` | 2 | modularity and refactor-safety principles are clearly articulated | maturity scoring not yet integrated into roadmap promotion logic |
 | `RELEASE` | 2 | release gate repeatability and rollback posture are strategy-level priorities | cross-repo rollout and exception burden tracking still at template stage |
 
@@ -33,7 +33,7 @@ Overall Stage: 2 (Operationally Reliable trajectory, not yet Strategically Gover
 1. Populate artifact status register and decision index with live entries.
 2. Run first governance review using the one-page template.
 3. Publish first populated cross-repo comparison scorecard draft.
-4. Add explicit vision target deltas to release/report artifacts on next cycle.
+4. Add explicit vision target deltas to release/log artifacts on next cycle.
 
 ## 5. Advancement Trigger
 

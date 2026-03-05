@@ -16,13 +16,13 @@ EXPECT_HOMEBREW_EXPLICIT=0
 usage() {
   cat <<'USAGE'
 Usage:
-  ./scripts/generate-distribution-closeout-report.sh --tag <vX.Y.Z> --artifacts-dir <dir> [options]
+  ./scripts/generate-distribution-closeout-log.sh --tag <vX.Y.Z> --artifacts-dir <dir> [options]
 
 Options:
   --tag <tag>              Release tag used for first-publish execution (required)
   --artifacts-dir <dir>    Directory containing step logs from check-distribution-first-publish.sh (required)
-  --output <path>          Output report path (default: docs/reports/<date>-distribution-acceptance-closeout-<tag>.md)
-  --owner <name>           Report owner label (default: Effigy)
+  --output <path>          Output log path (default: docs/logs/YYYY-MM/DD-HHMMSS-distribution-acceptance-closeout-<tag>.md)
+  --owner <name>           Log owner label (default: Effigy)
   --expect-homebrew        Require Homebrew channel logs in artifact validation
   --help                   Show this help
 USAGE
@@ -115,10 +115,13 @@ if compgen -G "$ARTIFACTS_DIR/*homebrew*.log" > /dev/null; then
 fi
 
 today="$(date +%F)"
+month_segment="$(date +%Y-%m)"
+day_prefix="$(date +%d)"
+time_prefix="$(date +%H%M%S)"
 if [[ -z "$OUTPUT_PATH" ]]; then
   sanitized_tag="${TAG#v}"
   sanitized_tag="${sanitized_tag//./-}"
-  OUTPUT_PATH="$ROOT_DIR/docs/reports/${today}-distribution-acceptance-closeout-${sanitized_tag}.md"
+  OUTPUT_PATH="$ROOT_DIR/docs/logs/${month_segment}/${day_prefix}-${time_prefix}-distribution-acceptance-closeout-${sanitized_tag}.md"
 fi
 
 mkdir -p "$(dirname "$OUTPUT_PATH")"
@@ -128,7 +131,7 @@ cat > "$OUTPUT_PATH" <<EOF2
 
 Date: ${today}
 Owner: ${OWNER}
-Related roadmap: docs/roadmap/backlog/distribution-channels.md
+Related roadmap: g01.backlog.distribution-channels
 
 ## Scope
 
@@ -148,7 +151,7 @@ $(printf '%s\n' "${log_summary_lines[@]}")
 ## Outcomes
 
 - First-publish script artifacts were captured and linked for closeout evidence.
-- Rust-native install path and CI-style install validation evidence are included in this report via logs.
+- Rust-native install path and CI-style install validation evidence are included in this log via artifact outputs.
 - Homebrew evidence included: ${has_homebrew_logs}.
 
 ## Risks / Follow-ups
@@ -158,7 +161,7 @@ $(printf '%s\n' "${log_summary_lines[@]}")
 
 ## Next Batch Recommendation
 
-- Reconcile acceptance checkboxes in docs/roadmap/backlog/distribution-channels.md against this evidence and publish release sign-off notes.
+- Reconcile acceptance checkboxes in docs/roadmaps/backlog/distribution-channels.md against this evidence and publish release sign-off notes.
 EOF2
 
-echo "[ok] wrote report: $OUTPUT_PATH"
+echo "[ok] wrote log: $OUTPUT_PATH"

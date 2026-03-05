@@ -28,4 +28,4 @@ Related roadmap: shell completion and command discovery polish
 - Checker is section-label and block-order aware; intentional docs structure changes will require updating script expectations.
 
 ## Next
-- Extend docs QA automation with a lightweight check that every `docs/reports/*.md` file is indexed in `docs/reports/README.md`.
+- Extend docs QA automation with a lightweight check that every `docs/logs/*.md` file is indexed in `docs/logs/README.md`.

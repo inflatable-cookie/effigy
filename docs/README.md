@@ -5,8 +5,8 @@ Effigy docs are organized by intent:
 - `architecture/`: stable design and module boundaries.
 - `contracts/`: machine-readable schema contracts and indexes.
 - `guides/`: operator and contributor runbooks.
-- `roadmap/`: numbered implementation plans and checkpoints.
-- `reports/`: dated validation artifacts and release notes.
+- `roadmaps/`: generation-sharded implementation plans and backlog.
+- `logs/`: dated validation artifacts and release notes, segmented by month.
 - `vision/`: long-horizon direction and target envelopes.
 
 ## Recommended Reading Paths
@@ -106,7 +106,7 @@ Supplemental legacy navigation:
 ## Vision Notes
 
 - Vision index: [`vision/README.md`](./vision/README.md)
-- Vision rollout history: [`reports/vision-history/README.md`](./reports/vision-history/README.md)
+- Vision rollout history: [`vision/history/README.md`](./vision/history/README.md)
 
 ## Terminology Canon
 
@@ -119,6 +119,6 @@ Reference: [`guides/034-task-and-command-glossary.md`](./guides/034-task-and-com
 
 ## Recent Release Notes
 
-- [`reports/2026-02-28-dag-watch-onboarding-release-note.md`](./reports/2026-02-28-dag-watch-onboarding-release-note.md)
-- [`reports/2026-02-28-json-envelope-removal-release-note.md`](./reports/2026-02-28-json-envelope-removal-release-note.md)
-- [`reports/2026-02-28-doctor-explain-mode-release-note.md`](./reports/2026-02-28-doctor-explain-mode-release-note.md)
+- [`logs/2026-02/28-090000-dag-watch-onboarding-release-note.md`](./logs/2026-02/28-090000-dag-watch-onboarding-release-note.md)
+- [`logs/2026-02/28-090800-json-envelope-removal-release-note.md`](./logs/2026-02/28-090800-json-envelope-removal-release-note.md)
+- [`logs/2026-02/28-090100-doctor-explain-mode-release-note.md`](./logs/2026-02/28-090100-doctor-explain-mode-release-note.md)

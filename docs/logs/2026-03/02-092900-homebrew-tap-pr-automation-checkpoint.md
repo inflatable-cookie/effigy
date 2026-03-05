@@ -2,7 +2,7 @@
 
 Date: 2026-03-02
 Owner: Effigy
-Related roadmap: `docs/roadmap/backlog/distribution-channels.md`
+Related roadmap: `docs/roadmaps/backlog/distribution-channels.md`
 
 ## Scope
 
@@ -21,7 +21,7 @@ Related roadmap: `docs/roadmap/backlog/distribution-channels.md`
   - `docs/guides/044-distribution-first-publish-execution-runbook.md`
   - `docs/guides/024-ci-and-automation-recipes.md`
 - Updated backlog roadmap reference:
-  - `docs/roadmap/backlog/distribution-channels.md`
+  - `docs/roadmaps/backlog/distribution-channels.md`
 
 ## Validation
 

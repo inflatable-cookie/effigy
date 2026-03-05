@@ -13,7 +13,7 @@ Effigy should be a deterministic, automation-grade, operator-first orchestration
 4. Make operational safety explicit with lock scopes, policy controls, and predictable failure semantics.
 5. Keep onboarding and migration built-in (`init`, `migrate`) so adoption does not require bespoke scripts first.
 6. Design text, JSON, and TUI outputs as parallel surfaces with the same underlying facts.
-7. Enforce release quality through contract checks, validation reports, and repeatable gates.
+7. Enforce release quality through contract checks, validation logs, and repeatable gates.
 8. Favor modular boundaries over feature-local shortcuts to keep iteration speed sustainable.
 9. Keep docs and contracts synchronized so operator guidance matches runtime behavior.
 10. Compete on reliability and clarity, not just command count.
@@ -44,12 +44,12 @@ Effigy should be a deterministic, automation-grade, operator-first orchestration
 
 Operational rollout checklists and closeouts live in:
 
-- [`../reports/vision-history/README.md`](../reports/vision-history/README.md)
+- [`./history/README.md`](./history/README.md)
 
 ## Working Rule
 
 Vision docs define directional constraints and target envelopes only.
-Architecture, roadmap, guides, and reports should align with these constraints unless a deliberate exception is recorded.
+Architecture, roadmap, guides, and logs should align with these constraints unless a deliberate exception is recorded.
 
 ## Next Task
 

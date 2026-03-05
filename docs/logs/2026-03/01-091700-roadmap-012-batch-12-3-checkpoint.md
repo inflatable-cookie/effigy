@@ -1,7 +1,7 @@
 # Roadmap 012 Batch 12.3 Checkpoint (Managed Runtime Separation)
 
 Date: 2026-03-01
-Roadmap: [012 - Codebase Consolidation and Health](../roadmap/012-codebase-consolidation-and-health.md)
+Roadmap: [g01.012 - Codebase Consolidation and Health](../../roadmaps/g01/012-codebase-consolidation-and-health.md)
 
 ## Scope
 

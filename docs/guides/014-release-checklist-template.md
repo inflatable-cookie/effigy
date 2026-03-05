@@ -83,8 +83,8 @@ Owner: `name/team`
 - [ ] Validate install on at least one clean machine/session.
 - [ ] Validate prefixed built-ins still route correctly.
 - [ ] Validate `test` summary output in compact mode.
-- [ ] Open dated checkpoint report in `docs/reports/`.
-  - [ ] `./scripts/generate-distribution-closeout-report.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
+- [ ] Open dated checkpoint log in `docs/logs/YYYY-MM/`.
+  - [ ] `./scripts/generate-distribution-closeout-log.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
 
 ## 7) Sign-off
 
@@ -97,10 +97,10 @@ Owner: `name/team`
 ## Related Guides
 
 - [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
-- [`../roadmap/backlog/release-contract-v0.md`](../roadmap/backlog/release-contract-v0.md)
-- [`../roadmap/backlog/distribution-channels.md`](../roadmap/backlog/distribution-channels.md)
+- [`../roadmaps/backlog/release-contract-v0.md`](../roadmaps/backlog/release-contract-v0.md)
+- [`../roadmaps/backlog/distribution-channels.md`](../roadmaps/backlog/distribution-channels.md)
 - [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
 
 ## Next Step
 
-After running this checklist for a release, publish a dated report under `docs/reports/` and link it from your release PR.
+After running this checklist for a release, publish a dated log under `docs/logs/YYYY-MM/` and link it from your release PR.

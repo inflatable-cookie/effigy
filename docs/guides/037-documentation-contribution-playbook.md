@@ -62,7 +62,7 @@ Update:
 Update:
 - `014-release-checklist-template.md`
 - `036-release-notes-authoring-template-and-examples.md`
-- `docs/reports/README.md`
+- `docs/logs/README.md`
 
 ## 3) Authoring Rules (Quick)
 

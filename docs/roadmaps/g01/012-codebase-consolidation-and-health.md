@@ -111,3 +111,5 @@ Structural issues identified:
 - [x] Doctor decomposition with preserved command contracts.
 - [x] Managed runtime decomposition with stable behavior.
 - [x] Runner core cleanup with reduced repetition and clearer ownership.
+
+Generation: `g01`

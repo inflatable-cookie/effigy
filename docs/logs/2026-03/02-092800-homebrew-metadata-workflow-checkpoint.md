@@ -2,7 +2,7 @@
 
 Date: 2026-03-02
 Owner: Effigy
-Related roadmap: `docs/roadmap/backlog/distribution-channels.md`
+Related roadmap: `docs/roadmaps/backlog/distribution-channels.md`
 
 ## Scope
 
@@ -16,7 +16,7 @@ Related roadmap: `docs/roadmap/backlog/distribution-channels.md`
 - Updated Homebrew automation guide:
   - `docs/guides/042-homebrew-tap-and-release-automation.md`
 - Updated distribution backlog note:
-  - `docs/roadmap/backlog/distribution-channels.md`
+  - `docs/roadmaps/backlog/distribution-channels.md`
 
 ## Validation
 
