@@ -671,8 +671,11 @@ fn run_doctor_reports_stale_suppressions_across_child_catalogs() {
         &farmyard.join("effigy.toml"),
         "[catalog]\nalias = \"farmyard\"\n",
     );
-    fs::write(farmyard.join("src/lib.rs"), "#[allow(warnings)]\npub fn lib() {}\n")
-        .expect("write source");
+    fs::write(
+        farmyard.join("src/lib.rs"),
+        "#[allow(warnings)]\npub fn lib() {}\n",
+    )
+    .expect("write source");
 
     let err = run_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on child-catalog stale suppression");

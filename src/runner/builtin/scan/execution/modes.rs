@@ -4,28 +4,27 @@ use super::super::super::super::model::catalog::LoadedCatalog;
 use super::super::super::super::scan::execution::{
     run_attention_marker_scan_workspace, run_comment_ratio_scan_workspace,
     run_duplicate_block_scan_workspace, run_generated_asset_scan_workspace,
-    run_generated_in_src_scan_workspace, run_stale_suppression_scan_workspace,
-    run_god_file_scan_workspace,
+    run_generated_in_src_scan_workspace, run_god_file_scan_workspace,
+    run_stale_suppression_scan_workspace,
 };
 use super::super::super::super::scan::options::{
     catalog_scan_roots, load_root_attention_marker_options, load_root_comment_ratio_options,
     load_root_duplicate_block_options, load_root_generated_asset_options,
-    load_root_generated_in_src_options, load_root_stale_suppression_options,
-    load_root_god_file_options,
+    load_root_generated_in_src_options, load_root_god_file_options,
+    load_root_stale_suppression_options,
 };
 use super::super::super::super::scan::render::{
     render_attention_marker_markdown, render_attention_marker_text, render_comment_ratio_markdown,
     render_comment_ratio_text, render_duplicate_block_markdown, render_duplicate_block_text,
-    render_generated_asset_markdown, render_generated_asset_text,
-    render_generated_in_src_markdown, render_generated_in_src_text, render_god_file_markdown,
-    render_god_file_text, render_stale_suppression_markdown, render_stale_suppression_text,
+    render_generated_asset_markdown, render_generated_asset_text, render_generated_in_src_markdown,
+    render_generated_in_src_text, render_god_file_markdown, render_god_file_text,
+    render_stale_suppression_markdown, render_stale_suppression_text,
 };
 use super::super::request::ScanRequest;
 use super::core::{
     apply_comment_ratio_request_overrides, apply_common_request_overrides,
-    apply_stale_suppression_request_overrides,
-    apply_generated_in_src_request_overrides, apply_threshold_request_overrides,
-    reject_threshold_overrides, run_scan_mode, ScanModeConfig,
+    apply_generated_in_src_request_overrides, apply_stale_suppression_request_overrides,
+    apply_threshold_request_overrides, reject_threshold_overrides, run_scan_mode, ScanModeConfig,
 };
 use crate::runner::error::RunnerError;
 

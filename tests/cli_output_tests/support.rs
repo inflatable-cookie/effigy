@@ -30,8 +30,11 @@ pub(super) fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) 
 
 pub(super) fn run_json_task_success(name: &str, task: &str, run: &str) -> Value {
     let root = temp_workspace(name);
-    fs::write(root.join("effigy.toml"), format!("[tasks.{task}]\nrun = \"{run}\"\n"))
-        .expect("write manifest");
+    fs::write(
+        root.join("effigy.toml"),
+        format!("[tasks.{task}]\nrun = \"{run}\"\n"),
+    )
+    .expect("write manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")

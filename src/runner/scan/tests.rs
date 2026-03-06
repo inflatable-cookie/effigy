@@ -135,7 +135,10 @@ fn attention_marker_matching_ignores_markers_inside_strings() {
         r#"let value = "@deprecated";"#,
         "@deprecated"
     ));
-    assert!(!attention_marker_matches_line(r#"let value = "TODO";"#, "todo"));
+    assert!(!attention_marker_matches_line(
+        r#"let value = "TODO";"#,
+        "todo"
+    ));
     assert!(attention_marker_matches_line(
         r#"let value = "@deprecated"; // TODO: revisit"#,
         "todo"

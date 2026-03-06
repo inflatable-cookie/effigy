@@ -350,10 +350,7 @@ fn mask_string_literals(raw_line: &str) -> String {
                 index += 1;
                 continue;
             }
-            if (in_single && ch == '\'')
-                || (in_double && ch == '"')
-                || (in_backtick && ch == '`')
-            {
+            if (in_single && ch == '\'') || (in_double && ch == '"') || (in_backtick && ch == '`') {
                 in_single = false;
                 in_double = false;
                 in_backtick = false;

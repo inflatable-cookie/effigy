@@ -1177,7 +1177,10 @@ fn run_manifest_task_builtin_scan_stale_suppressions_json_emits_machine_payload(
     let root = temp_workspace("builtin-scan-stale-suppressions-json");
     write_root_manifest(&root, "");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
-    write_attention_file(&root.join("src/app.ts"), &["// eslint-disable-next-line no-console"]);
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &["// eslint-disable-next-line no-console"],
+    );
 
     let out = run_builtin_ok(root, "scan", &["stale-suppressions", "--json"]);
 
@@ -1190,11 +1193,7 @@ fn run_manifest_task_builtin_scan_stale_suppressions_json_emits_machine_payload(
     assert_json_string_field_eq(&parsed["findings"][0], "path", "src/app.ts");
     assert_json_string_field_eq(&parsed["findings"][0], "severity", "warning");
     assert_json_string_field_eq(&parsed["findings"][0], "category", "lint-disable");
-    assert_json_string_field_eq(
-        &parsed["findings"][0],
-        "marker",
-        "eslint-disable-next-line",
-    );
+    assert_json_string_field_eq(&parsed["findings"][0], "marker", "eslint-disable-next-line");
 }
 
 #[test]
@@ -1247,10 +1246,7 @@ format = "markdown"
 out = "reports/stale-suppressions.md"
 "#,
     );
-    write_attention_file(
-        &root.join("src/app.ts"),
-        &["// STOPSHIP: keep this local"],
-    );
+    write_attention_file(&root.join("src/app.ts"), &["// STOPSHIP: keep this local"]);
     let report_path = root.join("reports/stale-suppressions.md");
 
     let out = run_builtin_ok(root, "scan", &["stale-suppressions"]);
@@ -1292,7 +1288,11 @@ fn run_manifest_task_builtin_scan_stale_suppressions_root_fans_out_across_child_
 
     assert_output_contains_all(
         &out,
-        &["findings: 1", "farmyard/src/lib.rs:1", "[#[allow(warnings)]]"],
+        &[
+            "findings: 1",
+            "farmyard/src/lib.rs:1",
+            "[#[allow(warnings)]]",
+        ],
     );
 }
 
