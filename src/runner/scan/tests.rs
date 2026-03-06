@@ -1,8 +1,8 @@
 use super::{
-    count_code_lines, is_generated_artifact, support::normalize_rel_path, GodFileScanOptions,
-    GodFileSeverity, GodFileThresholds, Path,
+    support::{count_code_lines, is_generated_artifact, normalize_rel_path},
+    GodFileScanOptions, GodFileSeverity, GodFileThresholds,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[test]
 fn god_file_thresholds_validate_ordering() {
