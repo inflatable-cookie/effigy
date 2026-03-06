@@ -1,9 +1,10 @@
 use std::io::IsTerminal;
 use std::path::Path;
 
-use crate::ui::{KeyValue, NoticeLevel, Renderer, SummaryCounts, TableSpec};
+use crate::ui::{KeyValue, Renderer, SummaryCounts, TableSpec};
 
 use super::super::render::{render_utf8, text_renderer};
+use super::render_support::write_managed_overview;
 use super::runtime;
 use super::{ManagedTaskPlan, RunnerError};
 
@@ -14,34 +15,21 @@ fn render_managed_task_plan(
     plan: ManagedTaskPlan,
 ) -> Result<String, RunnerError> {
     let mut renderer = text_renderer();
-    renderer.section("Managed Task Plan")?;
-    renderer.key_values(&[
-        KeyValue::new("task", task_name.to_owned()),
-        KeyValue::new("mode", plan.mode),
-        KeyValue::new("profile", plan.profile),
-        KeyValue::new("repo-root", repo_root.display().to_string()),
-        KeyValue::new("manifest", manifest_path.display().to_string()),
-        KeyValue::new("processes", plan.processes.len().to_string()),
-        KeyValue::new("tab-order", plan.tab_order.join(", ")),
-        KeyValue::new(
-            "fail-on-non-zero",
-            if plan.fail_on_non_zero {
-                "enabled"
-            } else {
-                "disabled"
-            },
-        ),
-    ])?;
-    renderer.text("")?;
-    renderer.notice(
-        NoticeLevel::Info,
-        "Interactive TUI runtime is available for this task.",
+    write_managed_overview(
+        &mut renderer,
+        "Managed Task Plan",
+        task_name,
+        &plan,
+        vec![
+            KeyValue::new("repo-root", repo_root.display().to_string()),
+            KeyValue::new("manifest", manifest_path.display().to_string()),
+        ],
+        vec![KeyValue::new("tab-order", plan.tab_order.join(", "))],
+        &[
+            "Interactive TUI runtime is available for this task.",
+            "Set EFFIGY_MANAGED_STREAM=1 to run selected profile processes in stream mode.",
+        ],
     )?;
-    renderer.notice(
-        NoticeLevel::Info,
-        "Set EFFIGY_MANAGED_STREAM=1 to run selected profile processes in stream mode.",
-    )?;
-    renderer.text("")?;
     let rows = plan
         .processes
         .into_iter()

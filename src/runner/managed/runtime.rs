@@ -1,12 +1,13 @@
 use std::path::Path;
 use std::time::Duration;
 
-use crate::process_manager::{ProcessEventKind, ProcessSpec, ProcessSupervisor};
+use crate::process_manager::{ProcessEventKind, ProcessSupervisor};
 use crate::tui::{run_multiprocess_tui, MultiProcessTuiOptions};
-use crate::ui::{KeyValue, NoticeLevel, Renderer, SummaryCounts};
+use crate::ui::{NoticeLevel, Renderer, SummaryCounts};
 
 use super::super::render::{render_utf8, text_renderer};
 use super::super::{ManagedTaskPlan, RunnerError};
+use super::render_support::{managed_process_specs, write_managed_overview};
 
 pub(super) fn run_managed_task_tui(
     task_name: &str,
@@ -20,16 +21,7 @@ pub(super) fn run_managed_task_tui(
         profile,
         ..
     } = plan;
-    let specs = processes
-        .into_iter()
-        .map(|process| ProcessSpec {
-            name: process.name,
-            run: process.run,
-            cwd: process.cwd,
-            start_after_ms: process.start_after_ms,
-            pty: true,
-        })
-        .collect::<Vec<ProcessSpec>>();
+    let specs = managed_process_specs(processes);
     let outcome = run_multiprocess_tui(
         repo_root.to_path_buf(),
         specs,
@@ -56,42 +48,20 @@ pub(super) fn run_managed_task_runtime(
     repo_root: &Path,
     plan: ManagedTaskPlan,
 ) -> Result<String, RunnerError> {
-    let specs = plan
-        .processes
-        .iter()
-        .map(|process| ProcessSpec {
-            name: process.name.clone(),
-            run: process.run.clone(),
-            cwd: process.cwd.clone(),
-            start_after_ms: process.start_after_ms,
-            pty: true,
-        })
-        .collect::<Vec<ProcessSpec>>();
+    let specs = managed_process_specs(plan.processes.iter().cloned());
     let expected = specs.len();
     let supervisor = ProcessSupervisor::spawn(repo_root.to_path_buf(), specs)?;
 
     let mut renderer = text_renderer();
-    renderer.section("Managed Task Runtime")?;
-    renderer.key_values(&[
-        KeyValue::new("task", task_name.to_owned()),
-        KeyValue::new("mode", plan.mode),
-        KeyValue::new("profile", plan.profile.clone()),
-        KeyValue::new("processes", expected.to_string()),
-        KeyValue::new(
-            "fail-on-non-zero",
-            if plan.fail_on_non_zero {
-                "enabled"
-            } else {
-                "disabled"
-            },
-        ),
-    ])?;
-    renderer.text("")?;
-    renderer.notice(
-        NoticeLevel::Info,
-        "Running managed profile in temporary stream mode.",
+    write_managed_overview(
+        &mut renderer,
+        "Managed Task Runtime",
+        task_name,
+        &plan,
+        Vec::new(),
+        Vec::new(),
+        &["Running managed profile in temporary stream mode."],
     )?;
-    renderer.text("")?;
 
     let mut exit_count = 0usize;
     let mut drained_after_exit = 0usize;
