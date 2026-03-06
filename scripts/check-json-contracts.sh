@@ -180,7 +180,7 @@ TOML
     command="${command//<fixture_task_failure>/$fixture_failure}"
   fi
 
-  # Replace index placeholders with deterministic fixture args.
+  # Replace index tokens with deterministic fixture args.
   command="${command//<name>/test}"
 
   if [[ "$command" != effigy* ]]; then

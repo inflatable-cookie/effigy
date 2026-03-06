@@ -852,6 +852,31 @@ fn run_manifest_task_builtin_scan_generated_in_src_root_fans_out_across_child_ca
 }
 
 #[test]
+fn run_manifest_task_builtin_scan_generated_in_src_ignores_marker_literals_in_code() {
+    let root = temp_workspace("builtin-scan-generated-in-src-ignore-marker-literals");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_attention_file(
+        &root.join("src/app.rs"),
+        &[
+            "const GENERATED: &str = \"@generated\";",
+            "const DO_NOT_EDIT: &str = \"do not edit\";",
+        ],
+    );
+
+    let out = run_builtin_ok(root, "scan", &["generated-in-src", "--show-warnings"]);
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "Generated In Src",
+            "candidate-files: 0  findings: 0",
+            "No generated files found inside source trees.",
+        ],
+    );
+}
+
+#[test]
 fn run_manifest_task_builtin_scan_attention_markers_hides_warning_rows_by_default() {
     let root = temp_workspace("builtin-scan-attention-markers-hide-warnings");
     write_root_manifest(&root, "");
@@ -1053,6 +1078,31 @@ fn run_manifest_task_builtin_scan_attention_markers_rejects_threshold_flags() {
         }
         other => panic!("unexpected error: {other}"),
     }
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_attention_markers_ignores_markers_inside_strings() {
+    let root = temp_workspace("builtin-scan-attention-markers-ignore-strings");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &[
+            "const message = \"TODO\";",
+            "const deprecation = \"@deprecated\";",
+        ],
+    );
+
+    let out = run_builtin_ok(root, "scan", &["attention-markers", "--show-warnings"]);
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "Attention Markers",
+            "matched-lines: 0  findings: 0",
+            "No attention markers found.",
+        ],
+    );
 }
 
 #[test]

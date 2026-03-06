@@ -97,8 +97,10 @@ fn spawn_with_pty_wrapper(spec: &ProcessSpec) -> ProcessCommand {
         return process;
     }
 
-    #[allow(unreachable_code)]
-    spawn_plain_shell(spec)
+    #[cfg(not(target_os = "macos"))]
+    {
+        spawn_plain_shell(spec)
+    }
 }
 
 fn with_local_node_bin_path(process: &mut ProcessCommand, cwd: &Path) {

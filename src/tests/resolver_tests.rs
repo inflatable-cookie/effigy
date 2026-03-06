@@ -1,7 +1,7 @@
 use super::{canonicalize_best_effort, resolve_target_root};
 use crate::tasks::ResolutionMode;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -60,10 +60,4 @@ fn temp_dir(name: &str) -> PathBuf {
         .expect("time")
         .as_nanos();
     std::env::temp_dir().join(format!("effigy-cli-{name}-{ts}"))
-}
-
-#[allow(dead_code)]
-fn touch(path: &Path) {
-    fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
-    fs::write(path, "").expect("write");
 }
