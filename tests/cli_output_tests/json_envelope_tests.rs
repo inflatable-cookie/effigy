@@ -3,7 +3,7 @@ use std::fs;
 use std::process::Command;
 use std::time::Duration;
 
-use super::support::{temp_workspace, wait_for_path_exists};
+use super::support::{run_json_task_success, temp_workspace, wait_for_path_exists};
 
 #[test]
 fn cli_json_mode_tasks_wraps_tasks_payload() {
@@ -478,25 +478,7 @@ fn cli_json_mode_scan_attention_markers_non_zero_wraps_rendered_scan_payload_in_
 
 #[test]
 fn cli_json_mode_task_wraps_task_run_payload() {
-    let root = temp_workspace("cli-json-task-success");
-    fs::write(
-        root.join("effigy.toml"),
-        "[tasks.build]\nrun = \"printf build-ok\"\n",
-    )
-    .expect("write manifest");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .arg("build")
-        .arg("--repo")
-        .arg(&root)
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("run effigy");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    let parsed = run_json_task_success("cli-json-task-success", "build", "printf build-ok");
     assert_eq!(parsed["schema"], "effigy.command.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["command"]["kind"], "task");

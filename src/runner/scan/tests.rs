@@ -5,7 +5,8 @@ use super::model::{
 };
 use super::render::render_stale_suppression_text;
 use super::support::{
-    count_code_lines, is_generated_artifact, normalize_rel_path, stale_suppression_matches_line,
+    attention_marker_matches_line, count_code_lines, is_generated_artifact, normalize_rel_path,
+    stale_suppression_matches_line,
 };
 use std::path::{Path, PathBuf};
 
@@ -44,6 +45,10 @@ fn generated_artifact_detection_uses_markers_and_minified_names() {
         "/* @generated */\nexport const ok = true;\n"
     ));
     assert!(is_generated_artifact(Path::new("app.min.js"), "const a=1;"));
+    assert!(!is_generated_artifact(
+        Path::new("src/markers.rs"),
+        "const marker = \"@generated\";\n"
+    ));
     assert!(!is_generated_artifact(
         Path::new("src/app.rs"),
         "fn main() {\n    println!(\"ok\");\n}\n"
@@ -121,5 +126,22 @@ fn stale_suppression_matching_ignores_markers_inside_strings() {
     assert!(stale_suppression_matches_line(
         r#"const marker = "eslint-disable"; // eslint-disable-next-line no-console"#,
         "eslint-disable-next-line"
+    ));
+}
+
+#[test]
+fn attention_marker_matching_ignores_markers_inside_strings() {
+    assert!(!attention_marker_matches_line(
+        r#"let value = "@deprecated";"#,
+        "@deprecated"
+    ));
+    assert!(!attention_marker_matches_line(r#"let value = "TODO";"#, "todo"));
+    assert!(attention_marker_matches_line(
+        r#"let value = "@deprecated"; // TODO: revisit"#,
+        "todo"
+    ));
+    assert!(attention_marker_matches_line(
+        r#"#[deprecated(note = "use new_api")]"#,
+        "deprecated"
     ));
 }

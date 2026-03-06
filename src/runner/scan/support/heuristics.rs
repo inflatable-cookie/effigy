@@ -40,9 +40,7 @@ pub(in crate::runner) fn is_generated_artifact(rel: &Path, contents: &str) -> bo
         .collect::<Vec<&str>>()
         .join("\n")
         .to_ascii_lowercase();
-    GENERATED_MARKERS
-        .iter()
-        .any(|marker| sample.contains(marker))
+    has_generated_marker_header(&sample)
 }
 
 pub(in crate::runner) fn classify_severity(
@@ -251,7 +249,7 @@ pub(in crate::runner) fn compile_stale_suppression_patterns(
 }
 
 pub(in crate::runner) fn attention_marker_matches_line(raw_line: &str, marker_lower: &str) -> bool {
-    let lower_line = raw_line.to_ascii_lowercase();
+    let lower_line = mask_string_literals(raw_line).to_ascii_lowercase();
     if !lower_line.contains(marker_lower) {
         return false;
     }
@@ -432,6 +430,25 @@ fn raw_string_prefix(bytes: &[u8], index: usize) -> Option<(usize, usize)> {
     Some((cursor - start + 1, hashes))
 }
 
+fn has_generated_marker_header(sample: &str) -> bool {
+    sample.lines().take(24).any(generated_marker_header_line)
+}
+
+fn generated_marker_header_line(raw_line: &str) -> bool {
+    let lower_line = mask_string_literals(raw_line).to_ascii_lowercase();
+    let trimmed = lower_line.trim_start();
+    let comment_prefixes = ["//", "/*", "*", "<!--", "--", ";"];
+    let is_comment_like = comment_prefixes
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
+        || (trimmed.starts_with('#') && !trimmed.starts_with("#["));
+
+    is_comment_like
+        && GENERATED_MARKERS
+            .iter()
+            .any(|marker| lower_line.contains(marker))
+}
+
 pub(in crate::runner) fn attention_marker_category(marker_lower: &str) -> AttentionMarkerCategory {
     if marker_lower.contains("deprecat") {
         return AttentionMarkerCategory::Deprecation;
@@ -475,10 +492,7 @@ pub(in crate::runner) fn generated_asset_reason(rel: &Path, sample: &str) -> Opt
     if let Some(reason) = generated_asset_name_reason(rel) {
         return Some(reason);
     }
-    if GENERATED_MARKERS
-        .iter()
-        .any(|marker| sample.contains(marker))
-    {
+    if has_generated_marker_header(sample) {
         return Some("generated-marker".to_owned());
     }
     None
@@ -488,10 +502,7 @@ pub(in crate::runner) fn generated_in_src_reason(
     rel: &Path,
     sample: &str,
 ) -> Option<(GeneratedInSrcCategory, String)> {
-    if GENERATED_MARKERS
-        .iter()
-        .any(|marker| sample.contains(marker))
-    {
+    if has_generated_marker_header(sample) {
         return Some((
             GeneratedInSrcCategory::ContentMarker,
             "generated-marker".to_owned(),
