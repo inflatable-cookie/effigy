@@ -20,6 +20,11 @@ enum ReferenceTarget<'a> {
     Catalog(TaskSelection<'a>),
 }
 
+struct ResolvedReferenceRun {
+    command: String,
+    cwd: PathBuf,
+}
+
 pub(super) fn resolve_task_reference_run(
     managed_task_name: &str,
     process_name: &str,
@@ -33,35 +38,22 @@ pub(super) fn resolve_task_reference_run(
         task_ref: task_ref.to_owned(),
     };
     let parsed = parse_task_ref(task_ref).map_err(|error| context.invalid(error))?;
-    match resolve_reference_target(&parsed, catalogs, task_scope_cwd) {
-        Ok(ReferenceTarget::Builtin) => {
-            let command = render_builtin_task_reference_invocation(
-                &parsed.selector_rendered,
-                &parsed.args_rendered,
-            )?;
-            Ok((command, task_scope_cwd.to_path_buf()))
-        }
-        Ok(ReferenceTarget::Catalog(selection)) => {
-            let run_spec = selection.task.run.as_ref().ok_or_else(|| {
-                context.invalid(format!(
-                    "referenced task `{}` in {} has no `run` command",
-                    parsed.selector.task_name,
-                    selection.catalog.manifest_path.display()
-                ))
-            })?;
-            let run_rendered = render_selected_task_run(
-                &selection,
-                run_spec,
-                &parsed.selector.task_name,
-                &parsed.args_rendered,
-                catalogs,
-                0,
-            )
-            .map_err(|error| context.invalid(error))?;
-            Ok((run_rendered, selection.catalog.catalog_root.clone()))
-        }
-        Err(error) => Err(context.invalid(error)),
-    }
+    let resolved = resolve_reference_run(
+        &parsed,
+        &parsed.args_rendered,
+        catalogs,
+        task_scope_cwd,
+        0,
+        |selection| {
+            context.invalid(format!(
+                "referenced task `{}` in {} has no `run` command",
+                parsed.selector.task_name,
+                selection.catalog.manifest_path.display()
+            ))
+        },
+    )
+    .map_err(|error| context.invalid(error))?;
+    Ok((resolved.command, resolved.cwd))
 }
 
 pub(super) fn resolve_task_reference_step(
@@ -78,36 +70,61 @@ pub(super) fn resolve_task_reference_step(
     };
     let parsed = parse_task_ref(task_ref).map_err(|error| context.invalid(error))?;
     let merged_args_rendered = merge_args_rendered(&parsed.args_rendered, args_rendered);
-    match resolve_reference_target(&parsed, catalogs, task_scope_cwd) {
-        Ok(ReferenceTarget::Builtin) => {
-            let command = render_builtin_task_reference_invocation(
-                &parsed.selector_rendered,
-                &merged_args_rendered,
-            )
-            .map_err(|detail| context.failure(detail))?;
-            Ok(render_cwd_wrapped_command(task_scope_cwd, &command))
-        }
-        Ok(ReferenceTarget::Catalog(selection)) => {
-            let run_spec = selection.task.run.as_ref().ok_or_else(|| {
-                context.failure(format!(
-                    "task `{task_name}` run step task ref `{task_ref}` has no `run` command in {}",
-                    selection.catalog.manifest_path.display()
-                ))
-            })?;
-            let nested = render_selected_task_run(
-                &selection,
-                run_spec,
-                &parsed.selector.task_name,
-                &merged_args_rendered,
-                catalogs,
-                depth,
-            )?;
-            Ok(render_cwd_wrapped_command(
-                &selection.catalog.catalog_root,
-                &nested,
+    let resolved = resolve_reference_run(
+        &parsed,
+        &merged_args_rendered,
+        catalogs,
+        task_scope_cwd,
+        depth,
+        |selection| {
+            context.failure(format!(
+                "task `{task_name}` run step task ref `{task_ref}` has no `run` command in {}",
+                selection.catalog.manifest_path.display()
             ))
+        },
+    )
+    .map_err(|error| context.failure(error))?;
+    Ok(render_cwd_wrapped_command(&resolved.cwd, &resolved.command))
+}
+
+fn resolve_reference_run<'a, F>(
+    parsed: &ParsedTaskRef,
+    args_rendered: &str,
+    catalogs: &'a [LoadedCatalog],
+    task_scope_cwd: &Path,
+    depth: usize,
+    missing_run_error: F,
+) -> Result<ResolvedReferenceRun, RunnerError>
+where
+    F: Fn(&TaskSelection<'a>) -> RunnerError,
+{
+    match resolve_reference_target(parsed, catalogs, task_scope_cwd) {
+        Ok(ReferenceTarget::Builtin) => Ok(ResolvedReferenceRun {
+            command: render_builtin_task_reference_invocation(
+                &parsed.selector_rendered,
+                args_rendered,
+            )?,
+            cwd: task_scope_cwd.to_path_buf(),
+        }),
+        Ok(ReferenceTarget::Catalog(selection)) => {
+            let run_spec = selection
+                .task
+                .run
+                .as_ref()
+                .ok_or_else(|| missing_run_error(&selection))?;
+            Ok(ResolvedReferenceRun {
+                command: render_selected_task_run(
+                    &selection,
+                    run_spec,
+                    &parsed.selector.task_name,
+                    args_rendered,
+                    catalogs,
+                    depth,
+                )?,
+                cwd: selection.catalog.catalog_root.clone(),
+            })
         }
-        Err(error) => Err(context.failure(error)),
+        Err(error) => Err(error),
     }
 }
 
