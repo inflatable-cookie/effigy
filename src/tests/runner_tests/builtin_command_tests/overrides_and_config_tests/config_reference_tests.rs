@@ -1,4 +1,4 @@
-use super::prelude::*;
+use super::prelude::{assert_output_contains_all, run_builtin_ok, temp_workspace, write_root_manifest};
 
 #[test]
 fn run_manifest_task_builtin_config_prints_reference() {

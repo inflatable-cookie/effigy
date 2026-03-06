@@ -1,4 +1,4 @@
-use super::prelude::*;
+use super::prelude::{render_cli_header_text, render_help_text, HelpTopic};
 
 #[test]
 fn render_help_writes_structured_sections() {
@@ -7,6 +7,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy help"));
     assert!(rendered.contains("effigy config"));
     assert!(rendered.contains("effigy doctor"));
+    assert!(rendered.contains("effigy scan"));
     assert!(rendered.contains("effigy test"));
     assert!(rendered.contains("effigy watch"));
     assert!(rendered.contains("effigy init"));

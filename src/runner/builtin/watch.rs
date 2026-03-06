@@ -3,8 +3,9 @@ use std::path::Path;
 use crate::HelpTopic;
 use crate::TaskInvocation;
 
+use super::super::execute::run_manifest_task_with_cwd;
 use super::super::locking::{acquire_scopes, LockScope};
-use super::super::{run_manifest_task_with_cwd, RunnerError, TaskRuntimeArgs};
+use super::super::{RunnerError, TaskRuntimeArgs};
 use super::command_spec::run_builtin_command;
 use super::{reject_verbose_root_for_builtin, render_builtin_help_topic};
 
@@ -12,6 +13,9 @@ mod output;
 #[path = "watch/request.rs"]
 mod request;
 mod scan;
+#[cfg(test)]
+#[path = "watch/test_support.rs"]
+pub(in crate::runner) mod test_support;
 
 use output::render_watch_result_json;
 use request::{parse_watch_request, WatchOwner};
@@ -97,6 +101,3 @@ fn run_watch_target(
     let _ = run_manifest_task_with_cwd(&invocation, target_root.to_path_buf())?;
     Ok(())
 }
-
-#[cfg(test)]
-pub(in crate::runner) use request::parse_watch_contract_request;

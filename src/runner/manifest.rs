@@ -11,6 +11,13 @@ use task_defs::deserialize_tasks;
 pub(super) use test_config::ManifestCargoEnvMatchMode;
 use test_config::ManifestTestConfig;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum ManifestScanOutputFormat {
+    Text,
+    Markdown,
+}
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct TaskManifest {
@@ -24,6 +31,8 @@ pub(super) struct TaskManifest {
     pub(super) test: Option<ManifestTestConfig>,
     #[serde(default)]
     pub(super) package_manager: Option<ManifestPackageManagerConfig>,
+    #[serde(default)]
+    pub(super) scan: Option<ManifestScanConfig>,
     #[serde(default)]
     pub(super) shell: Option<ManifestShellConfig>,
     #[serde(default, deserialize_with = "deserialize_tasks")]
@@ -42,6 +51,65 @@ pub(super) struct ManifestShellConfig {
 pub(super) struct ManifestPackageManagerConfig {
     #[serde(default, alias = "js_ts", alias = "typescript")]
     pub(super) js: Option<ManifestJsPackageManager>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ManifestScanConfig {
+    #[serde(default)]
+    pub(super) god_files: Option<ManifestGodFilesConfig>,
+    #[serde(default)]
+    pub(super) generated_assets: Option<ManifestGeneratedAssetsConfig>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ManifestGodFilesConfig {
+    #[serde(default, alias = "threshold")]
+    pub(super) warn: Option<usize>,
+    #[serde(default)]
+    pub(super) high: Option<usize>,
+    #[serde(default)]
+    pub(super) critical: Option<usize>,
+    #[serde(default)]
+    pub(super) fail_on_findings: Option<bool>,
+    #[serde(default)]
+    pub(super) respect_gitignore: Option<bool>,
+    #[serde(default)]
+    pub(super) doctor: Option<bool>,
+    #[serde(default)]
+    pub(super) include: Vec<String>,
+    #[serde(default)]
+    pub(super) exclude: Vec<String>,
+    #[serde(default)]
+    pub(super) format: Option<ManifestScanOutputFormat>,
+    #[serde(default)]
+    pub(super) out: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ManifestGeneratedAssetsConfig {
+    #[serde(default, alias = "threshold")]
+    pub(super) warn: Option<usize>,
+    #[serde(default)]
+    pub(super) high: Option<usize>,
+    #[serde(default)]
+    pub(super) critical: Option<usize>,
+    #[serde(default)]
+    pub(super) fail_on_findings: Option<bool>,
+    #[serde(default)]
+    pub(super) respect_gitignore: Option<bool>,
+    #[serde(default)]
+    pub(super) doctor: Option<bool>,
+    #[serde(default)]
+    pub(super) include: Vec<String>,
+    #[serde(default)]
+    pub(super) exclude: Vec<String>,
+    #[serde(default)]
+    pub(super) format: Option<ManifestScanOutputFormat>,
+    #[serde(default)]
+    pub(super) out: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]

@@ -1,4 +1,6 @@
-use super::prelude::*;
+use super::prelude::{
+    apply_global_json_flag, command_requests_json, Command, DoctorArgs, TaskInvocation, TasksArgs,
+};
 
 #[test]
 fn apply_global_json_flag_injects_task_arg_when_missing() {

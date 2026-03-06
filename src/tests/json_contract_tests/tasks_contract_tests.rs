@@ -1,4 +1,4 @@
-use super::prelude::*;
+use super::prelude::{harness::*, json::*, runtime::*};
 
 #[test]
 fn tasks_json_contract_has_versioned_top_level_shape() {

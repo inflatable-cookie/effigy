@@ -1,4 +1,10 @@
-use super::*;
+use super::harness_builtin::run_builtin_ok;
+use super::execution::run_manifest_task_with_cwd;
+use super::harness_env::{temp_workspace, with_cwd};
+use super::harness_workspace::{
+    create_workspace_dir, write_catalog_tasks, write_manifest, write_root_manifest,
+};
+use super::runtime::{fs, DoctorArgs, Path, PathBuf, RunnerError, TaskInvocation, run_doctor};
 
 pub(in crate::runner::tests) fn write_root_dev_task_manifest(root: &Path) {
     write_root_manifest(root, "[tasks.dev]\nrun = \"printf root\"\n");

@@ -54,6 +54,10 @@ pub(crate) fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()>
                 "Generate shell completion scripts and selector candidates".to_owned(),
             ],
             vec![
+                "effigy scan".to_owned(),
+                "Run built-in repository scanners such as `god-files`".to_owned(),
+            ],
+            vec![
                 "effigy <task>".to_owned(),
                 "Resolve task across discovered catalogs".to_owned(),
             ],

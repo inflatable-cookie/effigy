@@ -1,4 +1,8 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_live_dev_lock_conflict, assert_output_equals, assert_unlock_invocation_error_case_table,
+    assert_unlock_success_case_table, lock_test, run_dev, temp_workspace, write_lock_files,
+    write_root_manifest, ManagedUnlockInvocationErrorCase, ManagedUnlockSuccessCase,
+};
 
 #[test]
 fn run_manifest_task_rejects_live_lock_conflict() {

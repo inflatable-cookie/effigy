@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_builtin_error_for_empty_manifest, assert_builtin_help_case_table,
+    assert_builtin_ok_for_empty_manifest, BuiltinHelpCase, BuiltinInvocationCase,
+};
 
 #[test]
 fn run_manifest_task_builtin_help_topics_render_expected_content() {

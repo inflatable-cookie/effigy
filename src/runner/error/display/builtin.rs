@@ -19,3 +19,10 @@ pub(super) fn write_builtin_test_non_zero(
         .join(", ");
     write!(f, "one or more built-in test targets failed: {rendered}")
 }
+
+pub(super) fn write_builtin_scan_non_zero(
+    f: &mut std::fmt::Formatter<'_>,
+    finding_count: usize,
+) -> std::fmt::Result {
+    write!(f, "scan found {finding_count} matching file(s)")
+}

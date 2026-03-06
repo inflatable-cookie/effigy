@@ -12,6 +12,9 @@ mod reference;
 #[path = "config/request.rs"]
 mod request;
 mod schema;
+#[cfg(test)]
+#[path = "config/test_support.rs"]
+pub(in crate::runner) mod test_support;
 
 use reference::{render_config_reference, style_schema_comments};
 use request::parse_config_request;
@@ -116,9 +119,3 @@ fn render_config_payload(
         },
     )
 }
-
-#[cfg(test)]
-pub(in crate::runner) use request::ConfigParseContract;
-
-#[cfg(test)]
-pub(in crate::runner) use request::parse_config_contract_request;

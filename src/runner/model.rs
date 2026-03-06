@@ -71,7 +71,7 @@ pub(super) const IMPLICIT_ROOT_DEFER_TEMPLATE: &str =
     "composer global exec effigy -- {request} {args}";
 pub(super) const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize = 3;
 pub(super) const DEFAULT_MANAGED_SHELL_RUN: &str = "exec ${SHELL:-/bin/zsh} -i";
-pub(super) const BUILTIN_TASKS: [(&str, &str); 11] = [
+pub(super) const BUILTIN_TASKS: [(&str, &str); 12] = [
     ("help", "Show general help (same as --help)"),
     (
         "config",
@@ -109,5 +109,9 @@ pub(super) const BUILTIN_TASKS: [(&str, &str); 11] = [
     (
         "completion",
         "Generate shell completion scripts (`bash`, `zsh`, `fish`)",
+    ),
+    (
+        "scan",
+        "Run built-in repository scanners such as `god-files`",
     ),
 ];

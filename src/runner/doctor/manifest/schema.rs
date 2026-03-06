@@ -7,6 +7,7 @@ use super::super::DoctorState;
 mod diagnostics;
 mod env_section;
 mod package_manager;
+mod scan_section;
 mod tables;
 mod tasks;
 mod test_section;
@@ -16,6 +17,7 @@ mod values;
 use diagnostics::SchemaContext;
 use env_section::validate_env_section;
 use package_manager::validate_package_manager_section;
+use scan_section::validate_scan_section;
 use tables::validate_known_table;
 use tasks::validate_tasks_table;
 use test_section::validate_test_section;
@@ -45,6 +47,9 @@ pub(super) fn validate_manifest_schema(
     }
     if let Some(shell) = table.get("shell") {
         validate_known_table(&mut context, "shell", shell, &["run"]);
+    }
+    if let Some(scan) = table.get("scan") {
+        validate_scan_section(&mut context, scan);
     }
 
     if let Some(package_manager) = table.get("package_manager") {

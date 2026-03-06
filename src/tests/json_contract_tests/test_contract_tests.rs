@@ -1,4 +1,4 @@
-use super::prelude::*;
+use super::prelude::{execution::*, harness::*, json::*, runtime::*};
 
 #[test]
 fn builtin_test_plan_json_contract_has_versioned_shape_and_suite_source_fields() {

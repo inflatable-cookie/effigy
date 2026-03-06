@@ -1,4 +1,8 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_file_text_contains_all, assert_file_text_excludes_all, assert_output_contains_all,
+    assert_path_exists, assert_path_missing, assert_task_invocation_error_contains,
+    run_builtin_err, run_builtin_ok, run_tasks, temp_workspace, write_root_manifest, TasksArgs,
+};
 
 #[test]
 fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {

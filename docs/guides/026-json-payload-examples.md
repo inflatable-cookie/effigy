@@ -104,13 +104,39 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
 {
   "schema": "effigy.doctor.v1",
   "schema_version": 1,
-  "ok": true,
+  "ok": false,
   "summary": {
-    "errors": 0,
+    "errors": 1,
     "warnings": 1,
     "fixes_applied": 0
   },
+  "sections": [
+    {
+      "check_id": "scan.god-files",
+      "severity": "error",
+      "findings": [
+        {
+          "severity": "warning",
+          "evidence": "274 code lines (340 total) [warning] src/ui/dashboard.tsx"
+        },
+        {
+          "severity": "error",
+          "evidence": "512 code lines (588 total) [high] src/server/router.ts"
+        }
+      ]
+    }
+  ],
   "findings": [
+    {
+      "id": "scan.god-files",
+      "level": "warning",
+      "message": "274 code lines (340 total) [warning] src/ui/dashboard.tsx"
+    },
+    {
+      "id": "scan.god-files",
+      "level": "error",
+      "message": "512 code lines (588 total) [high] src/server/router.ts"
+    },
     {
       "id": "catalogs.discovered",
       "level": "warning",
@@ -125,6 +151,8 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
   }
 }
 ```
+
+`effigy doctor` preserves scanner-backed warning/high/critical findings in its own report model even when plain `effigy scan god-files` text output hides warning rows by default.
 
 ## 4) Doctor Explain (`effigy.doctor.explain.v1`)
 
@@ -260,7 +288,82 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
 }
 ```
 
-## 8) Init (`effigy.init.v1`)
+## 8) Scan God Files (`effigy.scan.god-files.v1`)
+
+```json
+{
+  "schema": "effigy.scan.god-files.v1",
+  "schema_version": 1,
+  "scan": "god-files",
+  "format": "text",
+  "root": "/workspace/app",
+  "thresholds": {
+    "warn": 250,
+    "high": 400,
+    "critical": 700
+  },
+  "scanned_files": 38,
+  "skipped_generated": 4,
+  "finding_count": 2,
+  "fail_on_findings": false,
+  "respect_gitignore": true,
+  "output_path": null,
+  "findings": [
+    {
+      "path": "src/server/router.ts",
+      "code_lines": 512,
+      "total_lines": 588,
+      "severity": "high"
+    },
+    {
+      "path": "src/ui/dashboard.tsx",
+      "code_lines": 274,
+      "total_lines": 340,
+      "severity": "warning"
+    }
+  ],
+  "text": "God Files\n\nroot: /workspace/app\nthresholds: warn=250 high=400 critical=700\nscanned-files: 38  skipped-generated: 4  findings: 2\nseverity-counts: critical=0 high=1 warning=1\nwarning-rows-hidden: 1  use --show-warnings to list them\n\nFindings\nhigh  512 code lines (588 total)  src/server/router.ts"
+}
+```
+
+## 9) Scan Generated Assets (`effigy.scan.generated-assets.v1`)
+
+```json
+{
+  "schema": "effigy.scan.generated-assets.v1",
+  "schema_version": 1,
+  "scan": "generated-assets",
+  "format": "text",
+  "root": "/workspace/app",
+  "thresholds": {
+    "warn": 1000000,
+    "high": 5000000,
+    "critical": 20000000
+  },
+  "scanned_files": 6,
+  "finding_count": 2,
+  "fail_on_findings": false,
+  "respect_gitignore": true,
+  "output_path": null,
+  "findings": [
+    {
+      "path": "dist/app.min.js",
+      "bytes": 1840000,
+      "severity": "warning",
+      "reason": "vendor-or-build-path"
+    },
+    {
+      "path": "vendor/runtime.wasm",
+      "bytes": 6200000,
+      "severity": "high",
+      "reason": "vendor-or-build-path"
+    }
+  ],
+  "text": "Generated Assets\n\nroot: /workspace/app\nthresholds-bytes: warn=1000000 high=5000000 critical=20000000\nscanned-files: 6  findings: 2\nseverity-counts: critical=0 high=1 warning=1\nwarning-rows-hidden: 1  use --show-warnings to list them\n\nFindings\nhigh  6.2 MB  vendor/runtime.wasm  [vendor-or-build-path]"
+}
+```
+
+## 10) Init (`effigy.init.v1`)
 
 ```json
 {
@@ -275,7 +378,7 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
 }
 ```
 
-## 9) Migrate (`effigy.migrate.v1`)
+## 11) Migrate (`effigy.migrate.v1`)
 
 ```json
 {

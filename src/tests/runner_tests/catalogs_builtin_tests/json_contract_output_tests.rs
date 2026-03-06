@@ -1,4 +1,9 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_json_array_field, assert_json_string_field_eq, assert_output_excludes_all,
+    parse_json_output_with_schema, parse_json_output_with_schema_version, run_catalogs_ok,
+    temp_workspace, write_managed_dev_profile_manifest, write_root_and_farmyard_api_catalog,
+    write_root_manifest,
+};
 
 #[test]
 fn run_manifest_task_builtin_catalogs_json_renders_probe_payload() {

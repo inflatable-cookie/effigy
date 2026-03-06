@@ -1,4 +1,9 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_run_array_validate_invocation_error_case_table,
+    assert_run_array_validate_invocation_message_case_table,
+    assert_run_array_validate_output_case_table, RunArrayInvocationErrorCase,
+    RunArrayInvocationMessageCase, RunArrayValidateOutputCase,
+};
 
 #[test]
 fn run_manifest_task_run_array_validate_success_contract_table() {

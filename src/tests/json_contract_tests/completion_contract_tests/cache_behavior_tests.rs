@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_candidates_cache_policy, run_completion_candidates_json, temp_workspace, test_lock,
+    with_completion_cache_default, write_manifest, Duration, EnvGuard, fs, thread,
+};
 
 #[test]
 fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_rerun() {

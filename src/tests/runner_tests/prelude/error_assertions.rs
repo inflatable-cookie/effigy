@@ -1,4 +1,7 @@
-use super::*;
+use super::harness_assertions::{
+    assert_task_invocation_error_contains, assert_task_manifest_parse_runner_error_contains_any,
+};
+use super::runtime::RunnerError;
 
 pub(in crate::runner::tests) fn assert_invocation_error_contains(
     err: RunnerError,

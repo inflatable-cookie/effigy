@@ -1,4 +1,6 @@
-use super::super::super::prelude::*;
+use super::super::super::prelude::cases::*;
+use super::super::super::prelude::harness::*;
+use super::super::super::prelude::json::*;
 
 #[test]
 fn run_manifest_task_builtin_test_plan_multi_suite_recovery_outputs_hints() {

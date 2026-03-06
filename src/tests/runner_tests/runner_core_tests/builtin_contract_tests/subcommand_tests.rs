@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_builtin_error_contract_case_table, assert_builtin_help_case_table,
+    BuiltinContractErrorCase, BuiltinHelpCase,
+};
 
 #[test]
 fn run_manifest_task_builtin_subcommand_error_contracts_are_stable() {
@@ -29,6 +32,18 @@ fn run_manifest_task_builtin_subcommand_error_contracts_are_stable() {
             args: &["candidates", "--wat"],
             expected: &["unknown argument(s) for built-in `completion`: candidates --wat"],
         },
+        BuiltinContractErrorCase {
+            workspace: "builtin-subcommand-scan-missing-subcommand",
+            command: "scan",
+            args: &[],
+            expected: &["scan requires a subcommand (currently supported: `god-files`, `generated-assets`)"],
+        },
+        BuiltinContractErrorCase {
+            workspace: "builtin-subcommand-scan-unknown-subcommand",
+            command: "scan",
+            args: &["wat"],
+            expected: &["unknown argument(s) for built-in `scan`: wat"],
+        },
     ];
 
     assert_builtin_error_contract_case_table(&cases);
@@ -56,6 +71,17 @@ fn run_manifest_task_builtin_subcommand_help_precedence_contracts_are_stable() {
             expected: &[
                 "completion candidates Help",
                 "effigy completion candidates [--repo <path>] [--prefix <value>] [--json]",
+            ],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-subcommand-help-scan-god-files",
+            command: "scan",
+            args: &["god-files", "--help", "--wat"],
+            expected: &[
+                "scan god-files Help",
+                "effigy scan god-files [--markdown] [--out reports/god-files.md]",
+                "--show-warnings : include warning rows in terminal text output",
+                "common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts are skipped by default",
             ],
         },
     ];

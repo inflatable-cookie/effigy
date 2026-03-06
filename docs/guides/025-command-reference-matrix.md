@@ -15,6 +15,7 @@ This matrix is a quick operator reference for Effigy commands, key flags, JSON p
 | `effigy help` / `effigy --help` | Show CLI help and topic guidance | `--json` | `effigy.help.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
 | `effigy tasks` | List discovered catalogs/tasks and probe routing | `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1` | `016-task-routing-precedence.md` |
 | `effigy doctor` | Run health checks and optional explain-mode selection diagnostics | `--repo`, `--fix`, `--verbose`, `--json` | `effigy.doctor.v1`, `effigy.doctor.explain.v1` | `018-doctor-explain-mode.md` |
+| `effigy scan` | Run built-in repo scanners such as oversized code-file detection and bulky generated-asset detection | `god-files`, `generated-assets`, `--json`, `--markdown`, `--out`, `--fail-on-findings`, `--show-warnings` | `effigy.scan.god-files.v1`, `effigy.scan.generated-assets.v1` | `022-manifest-cookbook.md` |
 | `effigy test` | Run built-in or explicit `tasks.test` test orchestration | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-phase-1.md` |
 | `effigy init` | Scaffold baseline `effigy.toml` | `--dry-run`, `--force`, `--json` | `effigy.init.v1` | `019-watch-init-migrate-phase-1.md` |
@@ -48,6 +49,8 @@ See [`017-json-output-contracts.md`](./017-json-output-contracts.md) for envelop
 effigy tasks [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json] [--pretty true|false]
 effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]
 effigy doctor [--repo <PATH>] <task> -- <args> [--json]
+effigy scan god-files [--threshold <N>] [--high <N>] [--critical <N>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
+effigy scan generated-assets [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
 effigy test [--plan] [--verbose-results] [--tui] [suite] [runner args]
 effigy watch --owner <effigy|external> [--debounce-ms <MS>] [--include <GLOB>] [--exclude <GLOB>] <task> [task args]
 effigy watch --owner effigy --once <task> [task args]
@@ -66,6 +69,14 @@ effigy completion candidates [--repo <PATH>] [--prefix <value>] [--json]
 - `tasks --pretty false` is valid only with `--json`.
 - `watch --json` requires bounded mode (`--once` or `--max-runs`).
 - `watch --owner` is required; `external` owner blocks nested watch loops.
+- `scan god-files` accepts either `--json` or `--markdown`, not both.
+- `scan god-files --out <PATH>` resolves relative paths from the scanned repo root.
+- `scan god-files` hides warning rows in terminal text output unless `--show-warnings` is set.
+- `scan.god_files` config can set defaults for thresholds, output format/path, traversal globs, and doctor participation.
+- `scan generated-assets` accepts either `--json` or `--markdown`, not both.
+- `scan generated-assets --out <PATH>` resolves relative paths from the scanned repo root.
+- `scan generated-assets` hides warning rows in terminal text output unless `--show-warnings` is set.
+- `scan.generated_assets` config can set defaults for byte thresholds, output format/path, and traversal globs.
 - `config --minimal` requires `--schema`.
 - `config --runner` requires `--schema --target test`.
 - `unlock` accepts either explicit scopes or `--all` (not both).
@@ -116,6 +127,7 @@ CI/JSON mode:
 ```sh
 effigy --json tasks
 effigy --json doctor
+effigy --json scan god-files
 effigy --json test --plan
 ```
 

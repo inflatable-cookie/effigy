@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_file_text_equals, assert_run_task_ok_empty, fs, temp_workspace, write_root_manifest,
+    EnvGuard,
+};
 
 #[test]
 fn run_manifest_task_applies_task_env_with_project_substitution() {

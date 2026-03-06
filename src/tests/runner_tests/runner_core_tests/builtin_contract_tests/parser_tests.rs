@@ -1,4 +1,9 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_case_table, assert_parser_task_invocation_error, parse_completion_contract_request,
+    parse_config_contract_request,
+    parse_unlock_contract_request, parse_watch_contract_request, string_args,
+    CompletionParseContract, ConfigParseContract, TaskInvocation,
+};
 
 #[test]
 fn builtin_parser_contract_table_is_stable() {

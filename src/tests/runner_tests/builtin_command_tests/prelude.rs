@@ -1,4 +1,32 @@
-pub(super) use super::super::prelude::*;
+pub(super) mod cases {
+    pub(in crate::runner::tests) use super::super::super::prelude::cases::*;
+}
+
+pub(super) mod harness {
+    pub(in crate::runner::tests) use super::super::super::prelude::harness_assertions::*;
+    pub(in crate::runner::tests) use super::super::super::prelude::harness_builtin::*;
+    pub(in crate::runner::tests) use super::super::super::prelude::harness_env::*;
+    pub(in crate::runner::tests) use super::super::super::prelude::harness_workspace::*;
+}
+
+pub(super) mod json {
+    pub(in crate::runner::tests) use super::super::super::prelude::json::*;
+}
+
+pub(super) mod output {
+    pub(in crate::runner::tests) use super::super::super::prelude::output::*;
+}
+
+pub(super) mod runtime {
+    pub(in crate::runner::tests) use super::super::super::prelude::runtime::*;
+}
+
+pub(super) use super::super::prelude::harness_builtin::*;
+pub(super) use super::super::prelude::harness_env::*;
+pub(super) use super::super::prelude::harness_workspace::*;
+pub(super) use super::super::prelude::json::*;
+pub(super) use super::super::prelude::output::*;
+pub(super) use super::super::prelude::runtime::*;
 
 pub(super) fn setup_fanout_catalog_repo(root: &Path) -> (PathBuf, PathBuf) {
     let farmyard = root.join("farmyard");

@@ -1,4 +1,4 @@
-use super::*;
+use super::harness::parse_json_output;
 
 pub(in crate::runner::tests) fn parse_json_output_with_schema(
     rendered: &str,

@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_builtin_ok_empty, assert_output_contains_all, run_tasks_from_repo,
+    setup_root_and_farmyard_catalog, temp_workspace, write_root_manifest,
+};
 
 #[test]
 fn run_tasks_lists_catalogs_and_tasks() {

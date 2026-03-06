@@ -27,6 +27,7 @@ pub(super) fn render_builtin_config_schema() -> String {
     );
     append_lines(&mut doc, docs::defer_lines().iter().copied());
     append_lines(&mut doc, docs::shell_lines().iter().copied());
+    append_lines(&mut doc, docs::scan_lines().iter().copied());
     append_lines(
         &mut doc,
         docs::tasks_canonical_lines(ConfigDocProfile::Schema),
@@ -77,6 +78,10 @@ pub(super) fn render_builtin_config_schema_target(
         (ConfigSchemaTarget::Defer, true) | (ConfigSchemaTarget::Defer, false) => prefixed_section(
             &format!("{header_prefix} (defer target)"),
             docs::defer_lines().iter().copied(),
+        ),
+        (ConfigSchemaTarget::Scan, true) | (ConfigSchemaTarget::Scan, false) => prefixed_section(
+            &format!("{header_prefix} (scan target)"),
+            docs::scan_lines().iter().copied(),
         ),
         (ConfigSchemaTarget::Shell, true) | (ConfigSchemaTarget::Shell, false) => prefixed_section(
             &format!("{header_prefix} (shell target)"),

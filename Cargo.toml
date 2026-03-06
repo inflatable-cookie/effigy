@@ -20,3 +20,4 @@ vt100 = "0.15.2"
 indexmap = { version = "2", features = ["serde"] }
 globset = "0.4"
 walkdir = "2"
+ignore = "0.4"

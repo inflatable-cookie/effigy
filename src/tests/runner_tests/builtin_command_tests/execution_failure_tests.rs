@@ -1,4 +1,9 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_builtin_test_non_zero, assert_json_array_field, assert_json_string_field_eq,
+    assert_output_excludes_all, install_local_vitest, parse_json_output_with_schema,
+    run_builtin_err, setup_fanout_catalog_repo, temp_workspace, write_package_json_with_test_script,
+    RunnerError,
+};
 
 #[test]
 fn run_manifest_task_builtin_test_failure_keeps_rendered_results_summary() {

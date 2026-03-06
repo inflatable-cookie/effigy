@@ -12,6 +12,7 @@ pub(super) fn validate_top_level_keys(
         "env",
         "test",
         "package_manager",
+        "scan",
         "shell",
         "tasks",
     ];

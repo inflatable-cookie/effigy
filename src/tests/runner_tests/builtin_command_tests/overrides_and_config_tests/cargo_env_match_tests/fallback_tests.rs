@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_cargo_env_matches, assert_output_contains_all, fs, lock_test, run_builtin_ok,
+    setup_path_with_probes, temp_workspace, write_root_manifest, CARGO_ENV_PROBE_SCRIPT, EnvGuard,
+};
 
 #[test]
 fn run_manifest_task_builtin_test_applies_process_env_fallback_for_missing_cargo_env() {

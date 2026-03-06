@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_watch_lock_conflict_case_table, assert_watch_output_case_table,
+    write_build_task_manifest, write_root_manifest, Path, WatchLockConflictCase, WatchOutputCase,
+};
 
 fn setup_watch_once_target(root: &Path, marker: &Path) {
     write_root_manifest(

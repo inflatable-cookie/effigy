@@ -21,7 +21,7 @@ mod support;
 mod tasks;
 mod test;
 #[cfg(test)]
-mod test_support;
+pub(in crate::runner) mod test_support;
 mod text_doc;
 mod unlock;
 mod watch;
@@ -44,16 +44,6 @@ fn resolve_builtin_task_target_root(
     }
     Some(resolved_root.to_path_buf())
 }
-
-#[cfg(test)]
-pub(in crate::runner) use test_support::CompletionParseContract;
-#[cfg(test)]
-pub(in crate::runner) use test_support::ConfigParseContract;
-#[cfg(test)]
-pub(in crate::runner) use test_support::{
-    builtin_test_max_parallel, parse_completion_contract_request, parse_config_contract_request,
-    parse_unlock_contract_request, parse_watch_contract_request,
-};
 
 pub(super) fn try_run_builtin_task(
     selector: &TaskSelector,

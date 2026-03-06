@@ -14,6 +14,9 @@ use super::text_doc::TextDoc;
 
 #[path = "unlock/request.rs"]
 mod request;
+#[cfg(test)]
+#[path = "unlock/test_support.rs"]
+pub(in crate::runner) mod test_support;
 use request::{parse_unlock_request, UnlockRequest};
 
 pub(super) fn run_builtin_unlock(
@@ -55,9 +58,6 @@ fn run_unlock_request(
         },
     )
 }
-
-#[cfg(test)]
-pub(in crate::runner) use request::parse_unlock_contract_request;
 
 fn render_unlock_help() -> String {
     render_titled_help(

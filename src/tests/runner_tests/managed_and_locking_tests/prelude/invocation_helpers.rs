@@ -1,4 +1,13 @@
-use super::*;
+use super::{
+    assert_case_table, assert_invocation_error_contains, assert_managed_non_zero_exit,
+    assert_managed_profile_not_found, assert_output_contains_all, assert_output_contains_derived,
+    assert_output_excludes_all, assert_path_exists, assert_path_missing, assert_lock_conflict,
+    temp_workspace, write_managed_stream_builtin_test_manifest, Path, PathBuf, RunnerError,
+    TaskInvocation, Duration, ManagedInvocation, ManagedNonZeroExitCase, ManagedOutputCase,
+    ManagedOutputDerivedCase, ManagedProfileNotFoundCase, ManagedStreamBuiltinTestCase,
+    ManagedUnlockInvocationErrorCase, ManagedUnlockSuccessCase, fs, run_manifest_task_with_cwd,
+    thread,
+};
 
 fn task_args(args: &[&str]) -> Vec<String> {
     args.iter().map(|arg| (*arg).to_owned()).collect()

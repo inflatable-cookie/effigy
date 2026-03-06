@@ -1,4 +1,4 @@
-use super::prelude::*;
+use super::prelude::{execution::*, harness::*, json::*, runtime::*};
 
 #[test]
 fn doctor_json_contract_has_versioned_top_level_shape() {
@@ -88,6 +88,195 @@ fn doctor_json_sections_order_matches_text_group_render_order() {
         }
         last_index = found;
     }
+}
+
+#[test]
+fn doctor_json_contract_includes_scan_god_files_sections_and_findings() {
+    let root = temp_workspace("doctor-json-scan-god-files");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.god_files]
+warn = 10
+high = 14
+critical = 20
+"#,
+    );
+    let warning_file = (0..12)
+        .map(|idx| format!("const warning_{idx} = {idx};"))
+        .collect::<Vec<String>>()
+        .join("\n");
+    let high_file = (0..15)
+        .map(|idx| format!("const high_{idx} = {idx};"))
+        .collect::<Vec<String>>()
+        .join("\n");
+    fs::write(root.join("src/warning.ts"), format!("{warning_file}\n")).expect("write warning");
+    fs::write(root.join("src/high.ts"), format!("{high_file}\n")).expect("write high");
+
+    let rendered = run_doctor_rendered(root, true);
+    let parsed = parse_json(&rendered);
+    assert_schema_v1(&parsed, "effigy.doctor.v1");
+    assert_eq!(parsed["ok"], false);
+
+    let scan_section = parsed["sections"]
+        .as_array()
+        .expect("sections array")
+        .iter()
+        .find(|section| section["check_id"] == "scan.god-files")
+        .expect("scan.god-files section");
+    assert_eq!(scan_section["severity"], "error");
+    assert_eq!(scan_section["findings"].as_array().map(Vec::len), Some(2),);
+    assert!(scan_section["findings"]
+        .as_array()
+        .expect("section findings")
+        .iter()
+        .any(|finding| finding["severity"] == "warning"
+            && finding["evidence"]
+                .as_str()
+                .is_some_and(|evidence| evidence.contains("[warning] src/warning.ts"))));
+    assert!(scan_section["findings"]
+        .as_array()
+        .expect("section findings")
+        .iter()
+        .any(|finding| finding["severity"] == "error"
+            && finding["evidence"]
+                .as_str()
+                .is_some_and(|evidence| evidence.contains("[high] src/high.ts"))));
+
+    let flattened_scan_findings = parsed["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .filter(|finding| finding["check_id"] == "scan.god-files")
+        .collect::<Vec<&serde_json::Value>>();
+    assert_eq!(flattened_scan_findings.len(), 2);
+}
+
+#[test]
+fn doctor_json_contract_omits_scan_god_files_when_doctor_flag_is_disabled() {
+    let root = temp_workspace("doctor-json-scan-god-files-disabled");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.god_files]
+warn = 10
+high = 14
+critical = 20
+doctor = false
+"#,
+    );
+    let body = (0..15)
+        .map(|idx| format!("const high_{idx} = {idx};"))
+        .collect::<Vec<String>>()
+        .join("\n");
+    fs::write(root.join("src/high.ts"), format!("{body}\n")).expect("write high");
+
+    let out = run_doctor(DoctorArgs {
+        repo_override: Some(root),
+        output_json: true,
+        fix: false,
+        verbose: false,
+        explain: None,
+    })
+    .expect("run doctor json");
+
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.doctor.v1");
+    assert_eq!(parsed["ok"], true);
+    assert!(parsed["sections"]
+        .as_array()
+        .expect("sections array")
+        .iter()
+        .all(|section| section["check_id"] != "scan.god-files"));
+    assert!(parsed["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .all(|finding| finding["check_id"] != "scan.god-files"));
+}
+
+#[test]
+fn doctor_json_contract_includes_scan_generated_assets_sections_and_findings() {
+    let root = temp_workspace("doctor-json-scan-generated-assets");
+    fs::create_dir_all(root.join("dist")).expect("mkdir dist");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.generated_assets]
+warn = 100
+high = 150
+critical = 300
+"#,
+    );
+    fs::write(root.join("dist/app.min.js"), vec![b'a'; 180]).expect("write asset");
+
+    let rendered = run_doctor_rendered(root, true);
+    let parsed = parse_json(&rendered);
+    assert_schema_v1(&parsed, "effigy.doctor.v1");
+    assert_eq!(parsed["ok"], false);
+
+    let scan_section = parsed["sections"]
+        .as_array()
+        .expect("sections array")
+        .iter()
+        .find(|section| section["check_id"] == "scan.generated-assets")
+        .expect("scan.generated-assets section");
+    assert_eq!(scan_section["severity"], "error");
+    assert_eq!(scan_section["findings"].as_array().map(Vec::len), Some(1));
+    assert!(scan_section["findings"]
+        .as_array()
+        .expect("section findings")
+        .iter()
+        .any(|finding| finding["severity"] == "error"
+            && finding["evidence"]
+                .as_str()
+                .is_some_and(|evidence| evidence.contains("[high] dist/app.min.js"))));
+
+    let flattened_scan_findings = parsed["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .filter(|finding| finding["check_id"] == "scan.generated-assets")
+        .collect::<Vec<&serde_json::Value>>();
+    assert_eq!(flattened_scan_findings.len(), 1);
+}
+
+#[test]
+fn doctor_json_contract_omits_scan_generated_assets_when_doctor_flag_is_disabled() {
+    let root = temp_workspace("doctor-json-scan-generated-assets-disabled");
+    fs::create_dir_all(root.join("dist")).expect("mkdir dist");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.generated_assets]
+warn = 100
+high = 150
+critical = 300
+doctor = false
+"#,
+    );
+    fs::write(root.join("dist/app.min.js"), vec![b'a'; 180]).expect("write asset");
+
+    let out = run_doctor(DoctorArgs {
+        repo_override: Some(root),
+        output_json: true,
+        fix: false,
+        verbose: false,
+        explain: None,
+    })
+    .expect("run doctor json");
+
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.doctor.v1");
+    assert_eq!(parsed["ok"], true);
+    assert!(parsed["sections"]
+        .as_array()
+        .expect("sections array")
+        .iter()
+        .all(|section| section["check_id"] != "scan.generated-assets"));
+    assert!(parsed["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .all(|finding| finding["check_id"] != "scan.generated-assets"));
 }
 
 #[test]

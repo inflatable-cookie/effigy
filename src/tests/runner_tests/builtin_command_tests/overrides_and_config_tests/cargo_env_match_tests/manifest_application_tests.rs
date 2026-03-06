@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_cargo_env_applied, lock_test, setup_path_with_probes, temp_workspace,
+    write_multi_suite_cargo_manifest, write_root_manifest, CARGO_ENV_PROBE_SCRIPT,
+};
 
 #[test]
 fn run_manifest_task_builtin_test_applies_grouped_manifest_cargo_env() {

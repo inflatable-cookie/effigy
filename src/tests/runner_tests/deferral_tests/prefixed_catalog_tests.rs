@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    fs, lock_test, run_task_expect_empty_output, workspace_with_optional_defer_manifest,
+    write_manifest,
+};
 
 #[test]
 fn run_manifest_task_defers_to_prefixed_catalog_handler() {

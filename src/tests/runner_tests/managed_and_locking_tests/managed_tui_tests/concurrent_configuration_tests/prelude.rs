@@ -1,4 +1,8 @@
-pub(super) use super::super::super::prelude::*;
+pub(super) use super::super::super::prelude::{
+    assert_managed_invalid_definition_case_table, assert_managed_output_case_table, lock_test,
+    managed_tui_env, write_catalogs_with_tasks, write_root_manifest, ManagedInvalidDefinitionCase,
+    ManagedInvocation, ManagedOutputCase, Path,
+};
 
 pub(super) fn write_ranked_task_ref_manifest(root: &Path, jobs_start_after_ms: Option<u32>) {
     let jobs_delay = jobs_start_after_ms
@@ -45,10 +49,10 @@ pub(super) fn write_ranked_catalog_tasks(root: &Path) {
                 &[
                     ("api", "printf farmyard-api"),
                     ("jobs", "printf farmyard-jobs"),
-                ],
+                ] as &[(&str, &str)],
             ),
-            ("cream", &[("dev", "printf cream-dev")]),
-            ("dairy", &[("dev", "printf dairy-dev")]),
+            ("cream", &[("dev", "printf cream-dev")] as &[(&str, &str)]),
+            ("dairy", &[("dev", "printf dairy-dev")] as &[(&str, &str)]),
         ],
     );
 }

@@ -1,4 +1,4 @@
-use super::prelude::*;
+use super::prelude::{assert_builtin_error_contract_case_table, BuiltinContractErrorCase};
 
 #[test]
 fn run_manifest_task_builtin_argument_contract_matrix_is_stable() {
@@ -86,6 +86,18 @@ fn run_manifest_task_builtin_argument_contract_matrix_is_stable() {
             command: "cache",
             args: &["inspect", "--wat"],
             expected: &["unknown argument(s) for built-in `cache`: --wat"],
+        },
+        BuiltinContractErrorCase {
+            workspace: "builtin-arg-contract-scan-missing-subcommand",
+            command: "scan",
+            args: &[],
+            expected: &["scan requires a subcommand (currently supported: `god-files`, `generated-assets`)"],
+        },
+        BuiltinContractErrorCase {
+            workspace: "builtin-arg-contract-scan-unknown-flag",
+            command: "scan",
+            args: &["god-files", "--wat"],
+            expected: &["unknown argument(s) for built-in `scan`: --wat"],
         },
     ];
 

@@ -1,4 +1,5 @@
-use super::super::prelude::*;
+use super::super::prelude::harness::*;
+use super::super::prelude::output::*;
 
 #[test]
 fn run_manifest_task_explicit_test_task_overrides_builtin_auto_detection() {

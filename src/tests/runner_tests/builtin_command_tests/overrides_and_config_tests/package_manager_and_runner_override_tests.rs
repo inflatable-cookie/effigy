@@ -1,4 +1,8 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_file_text_equals, assert_output_contains_all, fs, lock_test, run_builtin_ok,
+    temp_workspace, write_executable, write_js_package_manager_manifest,
+    write_package_json_with_vitest_dev_dependency, write_root_manifest, EnvGuard,
+};
 
 #[test]
 fn run_manifest_task_builtin_test_plan_respects_configured_package_manager() {
