@@ -11,7 +11,9 @@ pub(super) enum ScanCommand {
     DuplicateBlocks,
     CommentRatio,
     GeneratedAssets,
+    GeneratedInSrc,
     AttentionMarkers,
+    StaleSuppressions,
 }
 
 #[derive(Debug)]
@@ -32,6 +34,10 @@ pub(super) struct ScanRequest {
     pub(super) show_warnings: bool,
     pub(super) include: Vec<String>,
     pub(super) exclude: Vec<String>,
+    pub(super) source_roots: Vec<String>,
+    pub(super) warning_markers: Vec<String>,
+    pub(super) high_markers: Vec<String>,
+    pub(super) critical_markers: Vec<String>,
 }
 
 pub(super) fn scan_candidate_mode(args: &[String]) -> Option<ScanCommand> {
@@ -44,7 +50,9 @@ pub(super) fn scan_candidate_mode(args: &[String]) -> Option<ScanCommand> {
         Some("duplicate-blocks") => Some(ScanCommand::DuplicateBlocks),
         Some("comment-ratio") => Some(ScanCommand::CommentRatio),
         Some("generated-assets") => Some(ScanCommand::GeneratedAssets),
+        Some("generated-in-src") => Some(ScanCommand::GeneratedInSrc),
         Some("attention-markers") => Some(ScanCommand::AttentionMarkers),
+        Some("stale-suppressions") => Some(ScanCommand::StaleSuppressions),
         _ => None,
     }
 }
@@ -67,6 +75,10 @@ pub(super) fn parse_scan_request(
     let mut show_warnings = false;
     let mut include = Vec::<String>::new();
     let mut exclude = Vec::<String>::new();
+    let mut source_roots = Vec::<String>::new();
+    let mut warning_markers = Vec::<String>::new();
+    let mut high_markers = Vec::<String>::new();
+    let mut critical_markers = Vec::<String>::new();
 
     parser.parse_loop_require_no_unknown(&task.name, |parser, arg| match arg {
         "--json" => {
@@ -131,6 +143,26 @@ pub(super) fn parse_scan_request(
             exclude.push(value.to_owned());
             Ok(super::super::arg_parser::ParseLoopAction::Handled)
         }
+        "--source-root" => {
+            let value = parser.next_value("`--source-root` requires a glob pattern")?;
+            source_roots.push(value.to_owned());
+            Ok(super::super::arg_parser::ParseLoopAction::Handled)
+        }
+        "--warning-marker" => {
+            let value = parser.next_value("`--warning-marker` requires a value")?;
+            warning_markers.push(value.to_owned());
+            Ok(super::super::arg_parser::ParseLoopAction::Handled)
+        }
+        "--high-marker" => {
+            let value = parser.next_value("`--high-marker` requires a value")?;
+            high_markers.push(value.to_owned());
+            Ok(super::super::arg_parser::ParseLoopAction::Handled)
+        }
+        "--critical-marker" => {
+            let value = parser.next_value("`--critical-marker` requires a value")?;
+            critical_markers.push(value.to_owned());
+            Ok(super::super::arg_parser::ParseLoopAction::Handled)
+        }
         other if command.is_none() && other == "god-files" => {
             command = Some(ScanCommand::GodFiles);
             Ok(super::super::arg_parser::ParseLoopAction::Handled)
@@ -147,8 +179,16 @@ pub(super) fn parse_scan_request(
             command = Some(ScanCommand::GeneratedAssets);
             Ok(super::super::arg_parser::ParseLoopAction::Handled)
         }
+        other if command.is_none() && other == "generated-in-src" => {
+            command = Some(ScanCommand::GeneratedInSrc);
+            Ok(super::super::arg_parser::ParseLoopAction::Handled)
+        }
         other if command.is_none() && other == "attention-markers" => {
             command = Some(ScanCommand::AttentionMarkers);
+            Ok(super::super::arg_parser::ParseLoopAction::Handled)
+        }
+        other if command.is_none() && other == "stale-suppressions" => {
+            command = Some(ScanCommand::StaleSuppressions);
             Ok(super::super::arg_parser::ParseLoopAction::Handled)
         }
         _ => Ok(super::super::arg_parser::ParseLoopAction::Unknown),
@@ -161,7 +201,7 @@ pub(super) fn parse_scan_request(
     }
     let command = command.ok_or_else(|| {
         RunnerError::task_invocation(
-            "scan requires a subcommand (currently supported: `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `attention-markers`)",
+            "scan requires a subcommand (currently supported: `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`)",
         )
     })?;
 
@@ -201,6 +241,10 @@ pub(super) fn parse_scan_request(
         show_warnings,
         include,
         exclude,
+        source_roots,
+        warning_markers,
+        high_markers,
+        critical_markers,
     })
 }
 

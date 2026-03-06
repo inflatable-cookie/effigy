@@ -88,14 +88,6 @@ fn run_manifest_task_builtin_argument_contract_matrix_is_stable() {
             expected: &["unknown argument(s) for built-in `cache`: --wat"],
         },
         BuiltinContractErrorCase {
-            workspace: "builtin-arg-contract-scan-missing-subcommand",
-            command: "scan",
-            args: &[],
-            expected: &[
-                "scan requires a subcommand (currently supported: `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `attention-markers`)",
-            ],
-        },
-        BuiltinContractErrorCase {
             workspace: "builtin-arg-contract-scan-unknown-flag",
             command: "scan",
             args: &["god-files", "--wat"],

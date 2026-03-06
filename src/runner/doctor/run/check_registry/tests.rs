@@ -20,7 +20,9 @@ fn doctor_check_registry_order_is_stable() {
             "duplicate_blocks",
             "comment_ratio",
             "generated_assets",
+            "generated_in_src",
             "attention_markers",
+            "stale_suppressions",
             "health_task",
         ]
     );
@@ -70,7 +72,9 @@ fn doctor_check_registry_is_executor_composable_without_control_flow_changes() {
             "duplicate_blocks",
             "comment_ratio",
             "generated_assets",
+            "generated_in_src",
             "attention_markers",
+            "stale_suppressions",
             "health_task",
         ]
     );
@@ -89,7 +93,9 @@ fn doctor_check_registry_scan_progress_labels_are_stable() {
             "Doctor scan: duplicate-blocks",
             "Doctor scan: comment-ratio",
             "Doctor scan: generated-assets",
+            "Doctor scan: generated-in-src",
             "Doctor scan: attention-markers",
+            "Doctor scan: stale-suppressions",
         ]
     );
 }

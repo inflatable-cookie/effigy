@@ -76,12 +76,36 @@ fn run_manifest_task_builtin_help_precedence_contract_table() {
             ],
         },
         BuiltinHelpCase {
+            workspace: "builtin-scan-generated-in-src-help-precedence",
+            command: "scan",
+            args: &["generated-in-src", "--help", "--wat"],
+            expected: &[
+                "scan generated-in-src Help",
+                "effigy scan generated-in-src [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>]",
+                "effigy scan generated-in-src [--source-root <GLOB>] [--show-warnings] [--no-gitignore]",
+                "--show-warnings : include warning rows in terminal text output",
+                "terminal text hides warning rows and prints a warning count summary",
+            ],
+        },
+        BuiltinHelpCase {
             workspace: "builtin-scan-attention-help-precedence",
             command: "scan",
             args: &["attention-markers", "--help", "--wat"],
             expected: &[
                 "scan attention-markers Help",
                 "effigy scan attention-markers [--show-warnings] [--no-gitignore]",
+                "--show-warnings : include warning rows in terminal text output",
+                "terminal text hides warning rows and prints a warning count summary",
+            ],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-scan-stale-suppressions-help-precedence",
+            command: "scan",
+            args: &["stale-suppressions", "--help", "--wat"],
+            expected: &[
+                "scan stale-suppressions Help",
+                "effigy scan stale-suppressions [--show-warnings] [--no-gitignore]",
+                "effigy scan stale-suppressions [--warning-marker <VALUE>] [--high-marker <VALUE>] [--critical-marker <VALUE>]",
                 "--show-warnings : include warning rows in terminal text output",
                 "terminal text hides warning rows and prints a warning count summary",
             ],

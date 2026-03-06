@@ -1,9 +1,11 @@
 use super::model::{
     format_bytes, format_ratio, AttentionMarkerScanResult, AttentionMarkerSeverity,
     CommentRatioScanResult, CommentRatioSeverity, DuplicateBlockScanResult, DuplicateBlockSeverity,
-    GeneratedAssetScanResult, GeneratedAssetSeverity, GodFileScanResult, GodFileSeverity,
-    TextRenderOptions,
+    GeneratedAssetScanResult, GeneratedAssetSeverity, GeneratedInSrcScanResult,
+    GeneratedInSrcSeverity, GodFileScanResult, GodFileSeverity, StaleSuppressionScanResult,
+    StaleSuppressionSeverity, TextRenderOptions,
 };
+use anstyle::{Ansi256Color, Color, Style};
 
 pub(in crate::runner) fn render_god_file_text(
     result: &GodFileScanResult,
@@ -257,6 +259,92 @@ pub(in crate::runner) fn render_generated_asset_markdown(
     )
 }
 
+pub(in crate::runner) fn render_generated_in_src_text(
+    result: &GeneratedInSrcScanResult,
+    render_options: TextRenderOptions,
+) -> String {
+    render_text_report(
+        TextReportSpec {
+            title: "Generated In Src",
+            metadata_lines: vec![
+                format!("root: {}", result.root),
+                format!(
+                    "thresholds-bytes: warn={} high={} critical={}",
+                    result.thresholds.warn, result.thresholds.high, result.thresholds.critical
+                ),
+                format!("source-roots: {}", result.source_roots.join(", ")),
+                format!(
+                    "scanned-files: {}  candidate-files: {}  findings: {}",
+                    result.scanned_files,
+                    result.candidate_files,
+                    result.findings.len()
+                ),
+            ],
+            empty_message: "No generated files found inside source trees.",
+            filtered_message: "No high or critical generated-in-src files found.",
+        },
+        &result.findings,
+        render_options,
+        |finding| finding.severity,
+        GeneratedInSrcSeverity::Warning,
+        GeneratedInSrcSeverity::High,
+        GeneratedInSrcSeverity::Critical,
+        |finding| {
+            format!(
+                "{}  {}  {}  [{}] [{}]",
+                finding.severity.as_str(),
+                format_bytes(finding.size_bytes),
+                finding.path,
+                finding.category.as_str(),
+                finding.reason
+            )
+        },
+    )
+}
+
+pub(in crate::runner) fn render_generated_in_src_markdown(
+    result: &GeneratedInSrcScanResult,
+) -> String {
+    render_markdown_report(
+        MarkdownReportSpec {
+            title: "Generated In Src",
+            metadata_lines: vec![
+                format!("- Root: `{}`", result.root),
+                format!(
+                    "- Thresholds (bytes): warn=`{}` high=`{}` critical=`{}`",
+                    result.thresholds.warn, result.thresholds.high, result.thresholds.critical
+                ),
+                format!(
+                    "- Source roots: {}",
+                    result
+                        .source_roots
+                        .iter()
+                        .map(|value| format!("`{value}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                format!("- Scanned files: `{}`", result.scanned_files),
+                format!("- Candidate files: `{}`", result.candidate_files),
+                format!("- Findings: `{}`", result.findings.len()),
+            ],
+            empty_message: "No generated files found inside source trees.",
+            table_header: "| Severity | Size | Category | Reason | Path |",
+            table_divider: "| --- | ---: | --- | --- | --- |",
+        },
+        &result.findings,
+        |finding| {
+            format!(
+                "| {} | {} | {} | `{}` | `{}` |",
+                finding.severity.as_str(),
+                format_bytes(finding.size_bytes),
+                finding.category.as_str(),
+                finding.reason,
+                finding.path
+            )
+        },
+    )
+}
+
 pub(in crate::runner) fn render_comment_ratio_text(
     result: &CommentRatioScanResult,
     render_options: TextRenderOptions,
@@ -401,6 +489,92 @@ pub(in crate::runner) fn render_attention_marker_markdown(
                 format!("- Findings: `{}`", result.findings.len()),
             ],
             empty_message: "No attention markers found.",
+            table_header: "| Severity | Category | Marker | Path | Line | Snippet |",
+            table_divider: "| --- | --- | --- | --- | ---: | --- |",
+        },
+        &result.findings,
+        |finding| {
+            format!(
+                "| {} | {} | `{}` | `{}` | {} | `{}` |",
+                finding.severity.as_str(),
+                finding.category.as_str(),
+                finding.marker,
+                finding.path,
+                finding.line,
+                finding.snippet.replace('`', "'"),
+            )
+        },
+    )
+}
+
+pub(in crate::runner) fn render_stale_suppression_text(
+    result: &StaleSuppressionScanResult,
+    render_options: TextRenderOptions,
+) -> String {
+    render_text_report(
+        TextReportSpec {
+            title: "Stale Suppressions",
+            metadata_lines: vec![
+                format!("root: {}", result.root),
+                format!(
+                    "markers: warning={} high={} critical={}",
+                    result.patterns.warning.len(),
+                    result.patterns.high.len(),
+                    result.patterns.critical.len()
+                ),
+                format!(
+                    "scanned-files: {}  matched-lines: {}  findings: {}",
+                    result.scanned_files,
+                    result.matched_lines,
+                    result.findings.len()
+                ),
+            ],
+            empty_message: "No stale suppressions found.",
+            filtered_message: "No high or critical stale suppressions found.",
+        },
+        &result.findings,
+        render_options,
+        |finding| finding.severity,
+        StaleSuppressionSeverity::Warning,
+        StaleSuppressionSeverity::High,
+        StaleSuppressionSeverity::Critical,
+        |finding| {
+            let header = format!(
+                "{}  {}:{}  {}  [{}]",
+                finding.severity.as_str(),
+                finding.path,
+                finding.line,
+                finding.category.as_str(),
+                finding.marker
+            );
+            let snippet = style_snippet_line(
+                render_options.color_enabled,
+                &format!("    {}", finding.snippet),
+            );
+            format!("{header}\n{snippet}")
+        },
+    )
+}
+
+pub(in crate::runner) fn render_stale_suppression_markdown(
+    result: &StaleSuppressionScanResult,
+) -> String {
+    render_markdown_report(
+        MarkdownReportSpec {
+            title: "Stale Suppressions",
+            metadata_lines: vec![
+                format!("- Root: `{}`", result.root),
+                format!(
+                    "- Markers: warning=`{}` high=`{}` critical=`{}`",
+                    result.patterns.warning.len(),
+                    result.patterns.high.len(),
+                    result.patterns.critical.len()
+                ),
+                format!("- Scanned files: `{}`", result.scanned_files),
+                format!("- Matched lines: `{}`", result.matched_lines),
+                format!("- Findings: `{}`", result.findings.len()),
+            ],
+            empty_message: "No stale suppressions found.",
             table_header: "| Severity | Category | Marker | Path | Line | Snippet |",
             table_divider: "| --- | --- | --- | --- | ---: | --- |",
         },
@@ -564,4 +738,12 @@ struct SeverityCounts {
     critical: usize,
     high: usize,
     warning: usize,
+}
+
+fn style_snippet_line(color_enabled: bool, text: &str) -> String {
+    if !color_enabled {
+        return text.to_owned();
+    }
+    let muted = Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(244))));
+    format!("{}{}{}", muted.render(), text, muted.render_reset())
 }

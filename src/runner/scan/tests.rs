@@ -1,5 +1,12 @@
-use super::model::{GodFileScanOptions, GodFileSeverity, GodFileThresholds};
-use super::support::{count_code_lines, is_generated_artifact, normalize_rel_path};
+use super::model::{
+    GodFileScanOptions, GodFileSeverity, GodFileThresholds, StaleSuppressionCategory,
+    StaleSuppressionFinding, StaleSuppressionPatterns, StaleSuppressionScanResult,
+    StaleSuppressionSeverity, TextRenderOptions,
+};
+use super::render::render_stale_suppression_text;
+use super::support::{
+    count_code_lines, is_generated_artifact, normalize_rel_path, stale_suppression_matches_line,
+};
 use std::path::{Path, PathBuf};
 
 #[test]
@@ -53,4 +60,66 @@ fn normalize_rel_path_uses_forward_slashes() {
 fn severity_serialization_contract_is_stable() {
     let rendered = serde_json::to_string(&GodFileSeverity::Critical).expect("serialize");
     assert_eq!(rendered, "\"critical\"");
+}
+
+#[test]
+fn stale_suppression_text_render_moves_snippet_to_indented_next_line() {
+    let result = StaleSuppressionScanResult {
+        root: ".".to_owned(),
+        scanned_files: 1,
+        matched_lines: 1,
+        patterns: StaleSuppressionPatterns {
+            warning: vec!["eslint-disable-next-line".to_owned()],
+            high: vec!["#[allow(".to_owned()],
+            critical: vec!["eslint-disable".to_owned()],
+        },
+        findings: vec![StaleSuppressionFinding {
+            path: "src/app.ts".to_owned(),
+            line: 1,
+            category: StaleSuppressionCategory::LintDisable,
+            severity: StaleSuppressionSeverity::Warning,
+            marker: "eslint-disable-next-line".to_owned(),
+            snippet: "// eslint-disable-next-line no-console".to_owned(),
+        }],
+    };
+
+    let rendered = render_stale_suppression_text(
+        &result,
+        TextRenderOptions {
+            show_warnings: true,
+            color_enabled: true,
+        },
+    );
+
+    assert!(rendered.contains("[eslint-disable-next-line]\n"));
+    assert!(rendered.contains("    // eslint-disable-next-line no-console"));
+    assert!(rendered.contains("\u{1b}["));
+}
+
+#[test]
+fn stale_suppression_matching_ignores_markers_inside_strings() {
+    assert!(!stale_suppression_matches_line(
+        r#"let message = "eslint-disable";"#,
+        "eslint-disable"
+    ));
+    assert!(!stale_suppression_matches_line(
+        r##"let message = r#"eslint-disable"#;"##,
+        "eslint-disable"
+    ));
+    assert!(!stale_suppression_matches_line(
+        r#"const marker = "type: ignore[assignment]";"#,
+        "type: ignore"
+    ));
+    assert!(!stale_suppression_matches_line(
+        r##"let marker = br#"shellcheck disable=SC2086"#;"##,
+        "shellcheck disable="
+    ));
+    assert!(!stale_suppression_matches_line(
+        r#"const marker = `shellcheck disable=SC2086`;"#,
+        "shellcheck disable="
+    ));
+    assert!(stale_suppression_matches_line(
+        r#"const marker = "eslint-disable"; // eslint-disable-next-line no-console"#,
+        "eslint-disable-next-line"
+    ));
 }

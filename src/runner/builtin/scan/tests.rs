@@ -69,3 +69,53 @@ fn parse_scan_request_accepts_comment_ratio_thresholds() {
     assert_eq!(parsed.ratio_critical, Some(3.5));
     assert_eq!(parsed.min_code_lines, Some(30));
 }
+
+#[test]
+fn parse_scan_request_accepts_generated_in_src_source_roots() {
+    let task = TaskInvocation {
+        name: "scan".to_owned(),
+        args: Vec::new(),
+    };
+    let parsed = parse_scan_request(
+        &task,
+        &[
+            "generated-in-src".to_owned(),
+            "--threshold".to_owned(),
+            "10".to_owned(),
+            "--source-root".to_owned(),
+            "src/**".to_owned(),
+            "--source-root".to_owned(),
+            "packages/*/src/**".to_owned(),
+        ],
+    )
+    .expect("scan request should parse");
+    assert_eq!(parsed.warn, Some(10));
+    assert_eq!(
+        parsed.source_roots,
+        vec!["src/**".to_owned(), "packages/*/src/**".to_owned()]
+    );
+}
+
+#[test]
+fn parse_scan_request_accepts_stale_suppression_marker_overrides() {
+    let task = TaskInvocation {
+        name: "scan".to_owned(),
+        args: Vec::new(),
+    };
+    let parsed = parse_scan_request(
+        &task,
+        &[
+            "stale-suppressions".to_owned(),
+            "--warning-marker".to_owned(),
+            "@ts-ignore".to_owned(),
+            "--high-marker".to_owned(),
+            "#[allow(".to_owned(),
+            "--critical-marker".to_owned(),
+            "nolint".to_owned(),
+        ],
+    )
+    .expect("scan request should parse");
+    assert_eq!(parsed.warning_markers, vec!["@ts-ignore".to_owned()]);
+    assert_eq!(parsed.high_markers, vec!["#[allow(".to_owned()]);
+    assert_eq!(parsed.critical_markers, vec!["nolint".to_owned()]);
+}

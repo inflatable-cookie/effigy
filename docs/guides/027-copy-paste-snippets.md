@@ -241,12 +241,19 @@ effigy scan comment-ratio --markdown --out reports/comment-ratio.md
 effigy scan generated-assets
 effigy scan generated-assets --show-warnings
 effigy scan generated-assets --markdown --out reports/generated-assets.md
+effigy scan generated-in-src
+effigy scan generated-in-src --show-warnings
+effigy scan generated-in-src --markdown --out reports/generated-in-src.md
 effigy scan attention-markers
 effigy scan attention-markers --show-warnings
 effigy scan attention-markers --markdown --out reports/attention-markers.md
+effigy scan stale-suppressions
+effigy scan stale-suppressions --show-warnings
+effigy scan stale-suppressions --markdown --out reports/stale-suppressions.md
 ```
 
 Default text mode hides warning rows and prints a warning count summary. Use `--show-warnings` when you need the full terminal list.
+Keep `[scan.stale_suppressions].doctor = false` unless you want suppression findings folded into `effigy doctor`.
 
 ## Related Guides
 

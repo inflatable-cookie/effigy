@@ -1,11 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use crate::runner::error::RunnerError;
+use crate::runner::manifest::config_sections::ManifestGeneratedInSrcConfig;
 use crate::runner::manifest::config_sections::ManifestDuplicateBlocksConfig;
 use crate::runner::manifest::{
     config_sections::{
         ManifestAttentionMarkersConfig, ManifestCommentRatioConfig, ManifestGeneratedAssetsConfig,
-        ManifestGodFilesConfig, ManifestScanOutputFormat,
+        ManifestGodFilesConfig, ManifestScanOutputFormat, ManifestStaleSuppressionsConfig,
     },
     TaskManifest,
 };
@@ -13,7 +14,8 @@ use crate::runner::model::{catalog::LoadedCatalog, constants::TASK_MANIFEST_FILE
 
 use super::super::model::{
     AttentionMarkerScanOptions, CommentRatioScanOptions, DuplicateBlockScanOptions,
-    GeneratedAssetScanOptions, GodFileScanOptions, ScanRenderFormat,
+    GeneratedAssetScanOptions, GeneratedInSrcScanOptions, GodFileScanOptions, ScanRenderFormat,
+    StaleSuppressionScanOptions,
 };
 
 pub(in crate::runner) fn load_root_god_file_options(
@@ -35,6 +37,17 @@ pub(in crate::runner) fn load_root_generated_asset_options(
             .scan
             .as_ref()
             .and_then(|scan| scan.generated_assets.as_ref())
+    })
+}
+
+pub(in crate::runner) fn load_root_generated_in_src_options(
+    target_root: &Path,
+) -> Result<GeneratedInSrcScanOptions, RunnerError> {
+    load_root_manifest_options(target_root, |manifest| {
+        manifest
+            .scan
+            .as_ref()
+            .and_then(|scan| scan.generated_in_src.as_ref())
     })
 }
 
@@ -71,6 +84,17 @@ pub(in crate::runner) fn load_root_attention_marker_options(
     })
 }
 
+pub(in crate::runner) fn load_root_stale_suppression_options(
+    target_root: &Path,
+) -> Result<StaleSuppressionScanOptions, RunnerError> {
+    load_root_manifest_options(target_root, |manifest| {
+        manifest
+            .scan
+            .as_ref()
+            .and_then(|scan| scan.stale_suppressions.as_ref())
+    })
+}
+
 pub(in crate::runner) fn doctor_attention_marker_options(
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
@@ -83,6 +107,18 @@ pub(in crate::runner) fn doctor_attention_marker_options(
     })
 }
 
+pub(in crate::runner) fn doctor_stale_suppression_options(
+    resolved_root: &Path,
+    catalogs: &[LoadedCatalog],
+) -> Result<StaleSuppressionScanOptions, RunnerError> {
+    doctor_manifest_options(resolved_root, catalogs, |manifest| {
+        manifest
+            .scan
+            .as_ref()
+            .and_then(|scan| scan.stale_suppressions.as_ref())
+    })
+}
+
 pub(in crate::runner) fn doctor_generated_asset_options(
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
@@ -92,6 +128,18 @@ pub(in crate::runner) fn doctor_generated_asset_options(
             .scan
             .as_ref()
             .and_then(|scan| scan.generated_assets.as_ref())
+    })
+}
+
+pub(in crate::runner) fn doctor_generated_in_src_options(
+    resolved_root: &Path,
+    catalogs: &[LoadedCatalog],
+) -> Result<GeneratedInSrcScanOptions, RunnerError> {
+    doctor_manifest_options(resolved_root, catalogs, |manifest| {
+        manifest
+            .scan
+            .as_ref()
+            .and_then(|scan| scan.generated_in_src.as_ref())
     })
 }
 
@@ -317,7 +365,9 @@ impl_common_scan_options_mut!(GodFileScanOptions);
 impl_common_scan_options_mut!(DuplicateBlockScanOptions);
 impl_common_scan_options_mut!(CommentRatioScanOptions);
 impl_common_scan_options_mut!(GeneratedAssetScanOptions);
+impl_common_scan_options_mut!(GeneratedInSrcScanOptions);
 impl_common_scan_options_mut!(AttentionMarkerScanOptions);
+impl_common_scan_options_mut!(StaleSuppressionScanOptions);
 
 impl ManifestBackedScanOptions for GodFileScanOptions {
     type ManifestConfig = ManifestGodFilesConfig;
@@ -453,8 +503,72 @@ impl ManifestBackedScanOptions for GeneratedAssetScanOptions {
     }
 }
 
+impl ManifestBackedScanOptions for GeneratedInSrcScanOptions {
+    type ManifestConfig = ManifestGeneratedInSrcConfig;
+
+    fn common_manifest_options(config: &Self::ManifestConfig) -> CommonManifestOptions<'_> {
+        CommonManifestOptions {
+            fail_on_findings: config.fail_on_findings,
+            respect_gitignore: config.respect_gitignore,
+            doctor_enabled: config.doctor,
+            format: config.format,
+            include: &config.include,
+            exclude: &config.exclude,
+            out: config.out.as_ref(),
+        }
+    }
+
+    fn apply_manifest_specific(&mut self, config: &Self::ManifestConfig) {
+        if let Some(value) = config.warn.or(config.warn_bytes) {
+            self.thresholds.warn = value;
+        }
+        if let Some(value) = config.high.or(config.high_bytes) {
+            self.thresholds.high = value;
+        }
+        if let Some(value) = config.critical.or(config.critical_bytes) {
+            self.thresholds.critical = value;
+        }
+        if let Some(value) = config.source_root.as_ref() {
+            self.source_roots = vec![value.clone()];
+        }
+        if !config.source_roots.is_empty() {
+            self.source_roots = config.source_roots.clone();
+        }
+    }
+
+    fn validate_manifest_options(&self) -> Result<(), RunnerError> {
+        self.validate()
+    }
+}
+
 impl ManifestBackedScanOptions for AttentionMarkerScanOptions {
     type ManifestConfig = ManifestAttentionMarkersConfig;
+
+    fn common_manifest_options(config: &Self::ManifestConfig) -> CommonManifestOptions<'_> {
+        CommonManifestOptions {
+            fail_on_findings: config.fail_on_findings,
+            respect_gitignore: config.respect_gitignore,
+            doctor_enabled: config.doctor,
+            format: config.format,
+            include: &config.include,
+            exclude: &config.exclude,
+            out: config.out.as_ref(),
+        }
+    }
+
+    fn apply_manifest_specific(&mut self, config: &Self::ManifestConfig) {
+        apply_marker_patterns(&mut self.patterns.warning, &config.warning);
+        apply_marker_patterns(&mut self.patterns.high, &config.high);
+        apply_marker_patterns(&mut self.patterns.critical, &config.critical);
+    }
+
+    fn validate_manifest_options(&self) -> Result<(), RunnerError> {
+        self.validate()
+    }
+}
+
+impl ManifestBackedScanOptions for StaleSuppressionScanOptions {
+    type ManifestConfig = ManifestStaleSuppressionsConfig;
 
     fn common_manifest_options(config: &Self::ManifestConfig) -> CommonManifestOptions<'_> {
         CommonManifestOptions {

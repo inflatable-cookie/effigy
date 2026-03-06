@@ -665,6 +665,193 @@ fn run_manifest_task_builtin_scan_generated_assets_root_fans_out_across_child_ca
 }
 
 #[test]
+fn run_manifest_task_builtin_scan_generated_in_src_text_reports_generated_files_in_source_roots() {
+    let root = temp_workspace("builtin-scan-generated-in-src-text");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::create_dir_all(root.join("dist")).expect("mkdir dist");
+    write_large_code_file(&root.join("src/app.ts"), 20);
+    write_asset_file(&root.join("src/client.generated.ts"), 180);
+    write_asset_file(&root.join("dist/client.generated.ts"), 220);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "generated-in-src",
+            "--warn",
+            "100",
+            "--high",
+            "250",
+            "--critical",
+            "500",
+            "--show-warnings",
+        ],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "Generated In Src",
+            "scanned-files: 2  candidate-files: 1  findings: 1",
+            "severity-counts: critical=0 high=0 warning=1",
+            "src/client.generated.ts",
+            "[generated-filename] [filename-marker]",
+        ],
+    );
+    assert_output_excludes_all(&out, &["dist/client.generated.ts", "src/app.ts"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_generated_in_src_json_emits_machine_payload() {
+    let root = temp_workspace("builtin-scan-generated-in-src-json");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_asset_file(&root.join("src/client.generated.ts"), 180);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "generated-in-src",
+            "--warn",
+            "100",
+            "--high",
+            "250",
+            "--critical",
+            "500",
+            "--json",
+        ],
+    );
+
+    let parsed = parse_json_output_with_schema(&out, "effigy.scan.generated-in-src.v1");
+    assert_json_string_field_eq(&parsed, "scan", "generated-in-src");
+    assert_json_string_field_eq(&parsed, "format", "text");
+    assert_eq!(parsed["candidate_files"].as_u64(), Some(1));
+    assert_eq!(parsed["finding_count"].as_u64(), Some(1));
+    assert_json_array_field_non_empty(&parsed, "findings");
+    assert_json_string_field_eq(&parsed["findings"][0], "path", "src/client.generated.ts");
+    assert_json_string_field_eq(&parsed["findings"][0], "severity", "warning");
+    assert_json_string_field_eq(&parsed["findings"][0], "category", "generated-filename");
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_generated_in_src_markdown_out_writes_report() {
+    let root = temp_workspace("builtin-scan-generated-in-src-markdown-out");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_asset_file(&root.join("src/client.generated.ts"), 180);
+    let report_path = root.join("reports/generated-in-src.md");
+
+    let out = run_builtin_ok(
+        root.clone(),
+        "scan",
+        &[
+            "generated-in-src",
+            "--warn",
+            "100",
+            "--markdown",
+            "--out",
+            "reports/generated-in-src.md",
+        ],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &["Wrote markdown generated-in-src report to reports/generated-in-src.md (findings: 1)."],
+    );
+    assert_file_text_contains_all(
+        &report_path,
+        &[
+            "# Generated In Src",
+            "| Severity | Size | Category | Reason | Path |",
+            "| warning | 180 B | generated-filename | `filename-marker` | `src/client.generated.ts` |",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_generated_in_src_uses_manifest_defaults() {
+    let root = temp_workspace("builtin-scan-generated-in-src-manifest-defaults");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.generated_in_src]
+warn = 100
+high = 250
+critical = 500
+source_roots = ["src/**"]
+format = "markdown"
+out = "reports/generated-in-src.md"
+"#,
+    );
+    write_asset_file(&root.join("src/client.generated.ts"), 180);
+    let report_path = root.join("reports/generated-in-src.md");
+
+    let out = run_builtin_ok(root, "scan", &["generated-in-src"]);
+
+    assert_output_contains_all(
+        &out,
+        &["Wrote markdown generated-in-src report to reports/generated-in-src.md (findings: 1)."],
+    );
+    assert_file_text_contains_all(
+        &report_path,
+        &[
+            "# Generated In Src",
+            "- Thresholds (bytes): warn=`100` high=`250` critical=`500`",
+            "- Source roots: `src/**`",
+            "| warning | 180 B | generated-filename | `filename-marker` | `src/client.generated.ts` |",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_generated_in_src_ignores_parent_gitignore_above_scan_root() {
+    let root = temp_workspace("builtin-scan-generated-in-src-parent-ignore");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
+        .expect("write root gitignore");
+    write_manifest(&root.join("effigy.toml"), "");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
+    write_asset_file(&farmyard.join("src/client.generated.ts"), 180);
+
+    let out = run_builtin_ok(
+        farmyard,
+        "scan",
+        &["generated-in-src", "--warn", "100", "--show-warnings"],
+    );
+
+    assert_output_contains_all(&out, &["findings: 1", "src/client.generated.ts"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_generated_in_src_root_fans_out_across_child_catalogs() {
+    let root = temp_workspace("builtin-scan-generated-in-src-root-fanout");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
+        .expect("write root gitignore");
+    write_manifest(&root.join("effigy.toml"), "[catalog]\nalias = \"root\"\n");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
+    write_asset_file(&farmyard.join("src/client.generated.ts"), 180);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &["generated-in-src", "--warn", "100", "--show-warnings"],
+    );
+
+    assert_output_contains_all(&out, &["findings: 1", "farmyard/src/client.generated.ts"]);
+}
+
+#[test]
 fn run_manifest_task_builtin_scan_attention_markers_hides_warning_rows_by_default() {
     let root = temp_workspace("builtin-scan-attention-markers-hide-warnings");
     write_root_manifest(&root, "");
@@ -866,6 +1053,246 @@ fn run_manifest_task_builtin_scan_attention_markers_rejects_threshold_flags() {
         }
         other => panic!("unexpected error: {other}"),
     }
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_stale_suppressions_hides_warning_rows_by_default() {
+    let root = temp_workspace("builtin-scan-stale-suppressions-hide-warnings");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &[
+            "// eslint-disable-next-line no-console",
+            "console.log('x');",
+            "// eslint-disable",
+        ],
+    );
+    write_attention_file(
+        &root.join("src/lib.rs"),
+        &["#[allow(warnings)]", "pub fn old_api() {}"],
+    );
+
+    let out = run_builtin_ok(root, "scan", &["stale-suppressions"]);
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "Stale Suppressions",
+            "matched-lines: 3  findings: 3",
+            "severity-counts: critical=2 high=0 warning=1",
+            "warning-rows-hidden: 1  use --show-warnings to list them",
+            "src/app.ts:3",
+            "lint-disable",
+            "[eslint-disable]",
+            "src/lib.rs:1",
+            "type-ignore",
+            "[#[allow(warnings)]]",
+        ],
+    );
+    assert_output_excludes_all(&out, &["eslint-disable-next-line"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_stale_suppressions_show_warnings_lists_rows() {
+    let root = temp_workspace("builtin-scan-stale-suppressions-show-warnings");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &[
+            "// eslint-disable-next-line no-console",
+            "const value = 1; // type: ignore[assignment]",
+        ],
+    );
+
+    let out = run_builtin_ok(root, "scan", &["stale-suppressions", "--show-warnings"]);
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "matched-lines: 2  findings: 2",
+            "severity-counts: critical=0 high=0 warning=2",
+            "[eslint-disable-next-line]",
+            "[type: ignore]",
+            "[eslint-disable-next-line]\n    // eslint-disable-next-line no-console",
+            "[type: ignore]\n    const value = 1; // type: ignore[assignment]",
+        ],
+    );
+    assert_output_excludes_all(&out, &["warning-rows-hidden:"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_stale_suppressions_json_emits_machine_payload() {
+    let root = temp_workspace("builtin-scan-stale-suppressions-json");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_attention_file(&root.join("src/app.ts"), &["// eslint-disable-next-line no-console"]);
+
+    let out = run_builtin_ok(root, "scan", &["stale-suppressions", "--json"]);
+
+    let parsed = parse_json_output_with_schema(&out, "effigy.scan.stale-suppressions.v1");
+    assert_json_string_field_eq(&parsed, "scan", "stale-suppressions");
+    assert_json_string_field_eq(&parsed, "format", "text");
+    assert_eq!(parsed["matched_lines"].as_u64(), Some(1));
+    assert_eq!(parsed["finding_count"].as_u64(), Some(1));
+    assert_json_array_field_non_empty(&parsed, "findings");
+    assert_json_string_field_eq(&parsed["findings"][0], "path", "src/app.ts");
+    assert_json_string_field_eq(&parsed["findings"][0], "severity", "warning");
+    assert_json_string_field_eq(&parsed["findings"][0], "category", "lint-disable");
+    assert_json_string_field_eq(
+        &parsed["findings"][0],
+        "marker",
+        "eslint-disable-next-line",
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_stale_suppressions_markdown_out_writes_report() {
+    let root = temp_workspace("builtin-scan-stale-suppressions-markdown-out");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &["// eslint-disable", "const live = 1;"],
+    );
+    let report_path = root.join("reports/stale-suppressions.md");
+
+    let out = run_builtin_ok(
+        root.clone(),
+        "scan",
+        &[
+            "stale-suppressions",
+            "--markdown",
+            "--out",
+            "reports/stale-suppressions.md",
+        ],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &["Wrote markdown stale-suppressions report to reports/stale-suppressions.md (findings: 1)."],
+    );
+    assert_file_text_contains_all(
+        &report_path,
+        &[
+            "# Stale Suppressions",
+            "| Severity | Category | Marker | Path | Line | Snippet |",
+            "| critical | lint-disable | `eslint-disable` | `src/app.ts` | 1 | `// eslint-disable` |",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_stale_suppressions_uses_manifest_defaults() {
+    let root = temp_workspace("builtin-scan-stale-suppressions-manifest-defaults");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.stale_suppressions]
+warning = ["SILENCE"]
+high = ["BYPASS"]
+critical = ["STOPSHIP"]
+format = "markdown"
+out = "reports/stale-suppressions.md"
+"#,
+    );
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &["// STOPSHIP: keep this local"],
+    );
+    let report_path = root.join("reports/stale-suppressions.md");
+
+    let out = run_builtin_ok(root, "scan", &["stale-suppressions"]);
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "Wrote markdown stale-suppressions report to reports/stale-suppressions.md (findings: 1).",
+        ],
+    );
+    assert_file_text_contains_all(
+        &report_path,
+        &[
+            "# Stale Suppressions",
+            "- Markers: warning=`1` high=`1` critical=`1`",
+            "| critical | lint-disable | `STOPSHIP` | `src/app.ts` | 1 | `// STOPSHIP: keep this local` |",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_stale_suppressions_root_fans_out_across_child_catalogs() {
+    let root = temp_workspace("builtin-scan-stale-suppressions-root-fanout");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
+        .expect("write root gitignore");
+    write_manifest(&root.join("effigy.toml"), "[catalog]\nalias = \"root\"\n");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
+    write_attention_file(
+        &farmyard.join("src/lib.rs"),
+        &["#[allow(warnings)]", "pub fn lib() {}"],
+    );
+
+    let out = run_builtin_ok(root, "scan", &["stale-suppressions", "--show-warnings"]);
+
+    assert_output_contains_all(
+        &out,
+        &["findings: 1", "farmyard/src/lib.rs:1", "[#[allow(warnings)]]"],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_stale_suppressions_rejects_threshold_flags() {
+    let root = temp_workspace("builtin-scan-stale-suppressions-threshold-reject");
+    write_root_manifest(&root, "");
+
+    let err = run_builtin_err(root, "scan", &["stale-suppressions", "--warn", "10"]);
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert_eq!(
+                message,
+                "`scan stale-suppressions` does not accept threshold options"
+            );
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_stale_suppressions_ignores_markers_inside_strings() {
+    let root = temp_workspace("builtin-scan-stale-suppressions-ignore-strings");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &[
+            "const marker = \"eslint-disable\";",
+            "const typed = \"type: ignore[assignment]\";",
+            "const shell = `shellcheck disable=SC2086`;",
+            "const rustRaw = r#\"eslint-disable\"#;",
+        ],
+    );
+
+    let out = run_builtin_ok(root, "scan", &["stale-suppressions", "--show-warnings"]);
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "Stale Suppressions",
+            "matched-lines: 0  findings: 0",
+            "No stale suppressions found.",
+        ],
+    );
+    assert_output_excludes_all(
+        &out,
+        &["eslint-disable", "type: ignore", "shellcheck disable="],
+    );
 }
 
 #[test]

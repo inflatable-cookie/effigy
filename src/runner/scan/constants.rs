@@ -12,6 +12,17 @@ pub(super) const DEFAULT_COMMENT_RATIO_MIN_CODE_LINES: usize = 20;
 pub(super) const DEFAULT_GENERATED_ASSETS_WARN_BYTES: usize = 1_000_000;
 pub(super) const DEFAULT_GENERATED_ASSETS_HIGH_BYTES: usize = 5_000_000;
 pub(super) const DEFAULT_GENERATED_ASSETS_CRITICAL_BYTES: usize = 20_000_000;
+pub(super) const DEFAULT_GENERATED_IN_SRC_WARN_BYTES: usize = 1;
+pub(super) const DEFAULT_GENERATED_IN_SRC_HIGH_BYTES: usize = 20_000;
+pub(super) const DEFAULT_GENERATED_IN_SRC_CRITICAL_BYTES: usize = 200_000;
+pub(super) const DEFAULT_GENERATED_IN_SRC_SOURCE_ROOTS: &[&str] = &[
+    "src/**",
+    "app/**",
+    "lib/**",
+    "crates/**",
+    "packages/*/src/**",
+    "services/*/src/**",
+];
 pub(super) const DEFAULT_ATTENTION_MARKER_WARNING: &[&str] = &[
     "TODO",
     "@TODO",
@@ -32,6 +43,27 @@ pub(super) const DEFAULT_ATTENTION_MARKER_HIGH: &[&str] = &[
 ];
 pub(super) const DEFAULT_ATTENTION_MARKER_CRITICAL: &[&str] =
     &["BUG", "SECURITY", "remove before release"];
+pub(super) const DEFAULT_STALE_SUPPRESSION_WARNING: &[&str] = &[
+    "@ts-ignore",
+    "@ts-expect-error",
+    "type: ignore",
+    "eslint-disable-next-line",
+];
+pub(super) const DEFAULT_STALE_SUPPRESSION_HIGH: &[&str] = &[
+    "#[allow(",
+    "#[expect(",
+    "rubocop:disable",
+    "swiftlint:disable",
+    "prettier-ignore",
+    "stylelint-disable",
+];
+pub(super) const DEFAULT_STALE_SUPPRESSION_CRITICAL: &[&str] = &[
+    "nolint",
+    "#[allow(warnings)]",
+    "shellcheck disable=",
+    "eslint-disable",
+    "fmt: off",
+];
 
 pub(super) const DEFAULT_EXCLUDED_DIRS: &[&str] = &[
     ".git",

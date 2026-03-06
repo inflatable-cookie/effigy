@@ -294,7 +294,42 @@ Behavior:
 - `effigy doctor` can include the same scanner when `doctor = true`, with file-level details written to `.effigy/reports/doctor/scan-duplicate-blocks.md`
 - keep `doctor = false` as the default; the current `acowtancy` benchmark takes about `16.9s` and yields enough findings that this is better as an opt-in health check
 
-## 14) Built-in Attention-Markers Scanner
+## 14) Built-in Generated-In-Src Scanner
+
+```toml
+[scan.generated_in_src]
+warn = 1
+high = 20000
+critical = 200000
+source_roots = ["src/**", "app/**", "lib/**", "crates/**", "packages/*/src/**"]
+doctor = true
+fail_on_findings = false
+respect_gitignore = true
+include = ["src/**", "app/**", "lib/**"]
+exclude = ["vendor/**"]
+format = "markdown"
+out = "reports/generated-in-src.md"
+```
+
+Use this when you want a repo-level scan for generated files that have landed inside maintained source trees.
+
+Typical commands:
+- `effigy scan generated-in-src`
+- `effigy scan generated-in-src --show-warnings`
+- `effigy scan generated-in-src --source-root src/** --source-root packages/*/src/**`
+- `effigy --json scan generated-in-src`
+
+Behavior:
+- thresholds are measured in bytes
+- target scope is bounded to configured `source_roots`, then generated-file heuristics run within those paths
+- terminal text output hides warning rows by default and prints a warning count summary; `--show-warnings` restores the full list
+- matches generated markers, generated-style filenames, and minified/source-map artifacts inside source trees
+- respects `.gitignore`/`.ignore` during traversal unless disabled
+- `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
+- doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-generated-in-src.md`
+- keep `doctor = true` as the default; the current `acowtancy` benchmark takes about `2.1s` and yields `4` warning-level findings, which is acceptable for default health runs
+
+## 15) Built-in Attention-Markers Scanner
 
 ```toml
 [scan.attention_markers]
@@ -326,7 +361,7 @@ Behavior:
 - `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
 - doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-attention-markers.md`
 
-## 15) Built-in Comment-Ratio Scanner
+## 16) Built-in Comment-Ratio Scanner
 
 ```toml
 [scan.comment_ratio]
@@ -361,7 +396,40 @@ Behavior:
 - doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-comment-ratio.md`
 - keep `doctor = true` as the default; the current `acowtancy` benchmark takes about `2.4s` and yields `15` findings, which is acceptable for default health runs
 
-## 16) Task-Local Runtime Env (Cargo Isolation)
+## 17) Built-in Stale-Suppressions Scanner
+
+```toml
+[scan.stale_suppressions]
+warning = ["@ts-ignore", "@ts-expect-error", "type: ignore", "eslint-disable-next-line"]
+high = ["#[allow(", "#[expect(", "rubocop:disable", "swiftlint:disable"]
+critical = ["nolint", "#[allow(warnings)]", "shellcheck disable=", "eslint-disable"]
+doctor = false
+fail_on_findings = false
+respect_gitignore = true
+include = ["src/**", "crates/**", "tests/**"]
+exclude = ["vendor/**"]
+format = "markdown"
+out = "reports/stale-suppressions.md"
+```
+
+Use this when you want a repo-level scan for inline suppressions that hide warnings, lint failures, or type errors.
+
+Typical commands:
+- `effigy scan stale-suppressions`
+- `effigy scan stale-suppressions --show-warnings`
+- `effigy scan stale-suppressions --critical-marker "eslint-disable"`
+- `effigy --json scan stale-suppressions`
+
+Behavior:
+- matches explicit suppression markers rather than trying to prove a suppression is definitely stale
+- terminal text output hides warning rows by default and prints a warning count summary; `--show-warnings` restores the full list
+- includes source and test files by default while skipping common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts
+- respects `.gitignore`/`.ignore` during traversal unless disabled
+- `effigy doctor` uses the same scanner core and can include findings when `doctor = true`
+- doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-stale-suppressions.md`
+- keep `doctor = false` as the default; the current `acowtancy` benchmark takes about `3.9s` and yields `69` findings, which is useful but too noisy for routine doctor runs
+
+## 18) Task-Local Runtime Env (Cargo Isolation)
 
 Compact inline-table shape:
 

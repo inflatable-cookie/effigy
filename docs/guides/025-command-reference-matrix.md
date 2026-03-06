@@ -15,7 +15,7 @@ This matrix is a quick operator reference for Effigy commands, key flags, JSON p
 | `effigy help` / `effigy --help` | Show CLI help and topic guidance | `--json` | `effigy.help.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
 | `effigy tasks` | List discovered catalogs/tasks and probe routing | `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1` | `016-task-routing-precedence.md` |
 | `effigy doctor` | Run health checks and optional explain-mode selection diagnostics | `--repo`, `--fix`, `--verbose`, `--json` | `effigy.doctor.v1`, `effigy.doctor.explain.v1` | `018-doctor-explain-mode.md` |
-| `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, and attention-marker detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `attention-markers`, `--json`, `--markdown`, `--out`, `--fail-on-findings`, `--show-warnings` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.attention-markers.v1` | `022-manifest-cookbook.md` |
+| `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--json`, `--markdown`, `--out`, `--fail-on-findings`, `--show-warnings` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
 | `effigy test` | Run built-in or explicit `tasks.test` test orchestration | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-foundation.md` |
 | `effigy init` | Scaffold baseline `effigy.toml` | `--dry-run`, `--force`, `--json` | `effigy.init.v1` | `019-watch-init-migrate-foundation.md` |
@@ -53,7 +53,9 @@ effigy scan god-files [--threshold <N>] [--high <N>] [--critical <N>] [--show-wa
 effigy scan duplicate-blocks [--threshold <N>] [--high <N>] [--critical <N>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
 effigy scan comment-ratio [--threshold <RATIO>] [--high <RATIO>] [--critical <RATIO>] [--min-code-lines <N>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
 effigy scan generated-assets [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
+effigy scan generated-in-src [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>] [--source-root <GLOB>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
 effigy scan attention-markers [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
+effigy scan stale-suppressions [--show-warnings] [--warning-marker <VALUE>] [--high-marker <VALUE>] [--critical-marker <VALUE>] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
 effigy test [--plan] [--verbose-results] [--tui] [suite] [runner args]
 effigy watch --owner <effigy|external> [--debounce-ms <MS>] [--include <GLOB>] [--exclude <GLOB>] <task> [task args]
 effigy watch --owner effigy --once <task> [task args]
@@ -90,11 +92,21 @@ effigy completion candidates [--repo <PATH>] [--prefix <value>] [--json]
 - `scan generated-assets --out <PATH>` resolves relative paths from the scanned repo root.
 - `scan generated-assets` hides warning rows in terminal text output unless `--show-warnings` is set.
 - `scan.generated_assets` config can set defaults for byte thresholds, output format/path, and traversal globs.
+- `scan generated-in-src` accepts either `--json` or `--markdown`, not both.
+- `scan generated-in-src --out <PATH>` resolves relative paths from the scanned repo root.
+- `scan generated-in-src` hides warning rows in terminal text output unless `--show-warnings` is set.
+- `scan.generated_in_src` config can set defaults for byte thresholds, source-root globs, output format/path, and doctor participation.
+- `scan.generated_in_src` now defaults to doctor participation; the current `acowtancy` benchmark took about `2.1s` and produced `4` warning-level findings, which is acceptable for default health runs.
 - `scan attention-markers` accepts either `--json` or `--markdown`, not both.
 - `scan attention-markers --out <PATH>` resolves relative paths from the scanned repo root.
 - `scan attention-markers` hides warning rows in terminal text output unless `--show-warnings` is set.
 - `scan attention-markers` does not accept threshold flags; marker families come from defaults or `[scan.attention_markers]`.
 - `scan.attention_markers` config can set defaults for marker families, output format/path, traversal globs, and doctor participation.
+- `scan stale-suppressions` accepts either `--json` or `--markdown`, not both.
+- `scan stale-suppressions --out <PATH>` resolves relative paths from the scanned repo root.
+- `scan stale-suppressions` hides warning rows in terminal text output unless `--show-warnings` is set.
+- `scan stale-suppressions` does not accept threshold flags; suppression families come from defaults or `[scan.stale_suppressions]`.
+- `scan.stale_suppressions` config can set defaults for marker families, output format/path, traversal globs, and doctor participation.
 - `config --minimal` requires `--schema`.
 - `config --runner` requires `--schema --target test`.
 - `unlock` accepts either explicit scopes or `--all` (not both).
@@ -148,7 +160,9 @@ effigy --json doctor
 effigy --json scan god-files
 effigy --json scan duplicate-blocks
 effigy --json scan comment-ratio
+effigy --json scan generated-in-src
 effigy --json scan attention-markers
+effigy --json scan stale-suppressions
 effigy --json test --plan
 ```
 

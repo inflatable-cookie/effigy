@@ -31,7 +31,11 @@ pub(in crate::runner) struct ManifestScanConfig {
     #[serde(default)]
     pub(in crate::runner) generated_assets: Option<ManifestGeneratedAssetsConfig>,
     #[serde(default)]
+    pub(in crate::runner) generated_in_src: Option<ManifestGeneratedInSrcConfig>,
+    #[serde(default)]
     pub(in crate::runner) attention_markers: Option<ManifestAttentionMarkersConfig>,
+    #[serde(default)]
+    pub(in crate::runner) stale_suppressions: Option<ManifestStaleSuppressionsConfig>,
 }
 
 #[derive(Debug, serde::Deserialize, Default)]
@@ -140,7 +144,67 @@ pub(in crate::runner) struct ManifestGeneratedAssetsConfig {
 
 #[derive(Debug, serde::Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestGeneratedInSrcConfig {
+    #[serde(default, alias = "threshold")]
+    pub(in crate::runner) warn: Option<usize>,
+    #[serde(default)]
+    pub(in crate::runner) warn_bytes: Option<usize>,
+    #[serde(default)]
+    pub(in crate::runner) high: Option<usize>,
+    #[serde(default)]
+    pub(in crate::runner) high_bytes: Option<usize>,
+    #[serde(default)]
+    pub(in crate::runner) critical: Option<usize>,
+    #[serde(default)]
+    pub(in crate::runner) critical_bytes: Option<usize>,
+    #[serde(default)]
+    pub(in crate::runner) source_root: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) source_roots: Vec<String>,
+    #[serde(default)]
+    pub(in crate::runner) fail_on_findings: Option<bool>,
+    #[serde(default)]
+    pub(in crate::runner) respect_gitignore: Option<bool>,
+    #[serde(default)]
+    pub(in crate::runner) doctor: Option<bool>,
+    #[serde(default)]
+    pub(in crate::runner) include: Vec<String>,
+    #[serde(default)]
+    pub(in crate::runner) exclude: Vec<String>,
+    #[serde(default)]
+    pub(in crate::runner) format: Option<ManifestScanOutputFormat>,
+    #[serde(default)]
+    pub(in crate::runner) out: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub(in crate::runner) struct ManifestAttentionMarkersConfig {
+    #[serde(default)]
+    pub(in crate::runner) warning: Vec<String>,
+    #[serde(default)]
+    pub(in crate::runner) high: Vec<String>,
+    #[serde(default)]
+    pub(in crate::runner) critical: Vec<String>,
+    #[serde(default)]
+    pub(in crate::runner) fail_on_findings: Option<bool>,
+    #[serde(default)]
+    pub(in crate::runner) respect_gitignore: Option<bool>,
+    #[serde(default)]
+    pub(in crate::runner) doctor: Option<bool>,
+    #[serde(default)]
+    pub(in crate::runner) include: Vec<String>,
+    #[serde(default)]
+    pub(in crate::runner) exclude: Vec<String>,
+    #[serde(default)]
+    pub(in crate::runner) format: Option<ManifestScanOutputFormat>,
+    #[serde(default)]
+    pub(in crate::runner) out: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestStaleSuppressionsConfig {
     #[serde(default)]
     pub(in crate::runner) warning: Vec<String>,
     #[serde(default)]

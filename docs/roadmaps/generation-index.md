@@ -12,6 +12,8 @@ Updated: 2026-03-06
   - `015` captures the completed self-hosting and agent-first adoption milestone.
   - `016` captures the completed duplicate-blocks scan and doctor integration milestone.
   - `017` captures the completed comment-ratio scan and doctor integration milestone.
+  - `018` captures the completed generated-in-src scan and doctor integration milestone.
+  - `019` captures the completed stale-suppressions scan and doctor integration milestone.
 
 ## Rollover rule
 

@@ -174,9 +174,17 @@ Store JSON output for failed command triage:
   if: failure()
   run: effigy --json scan comment-ratio > comment-ratio-failure.json || true
 
+- name: Capture raw generated-in-src JSON
+  if: failure()
+  run: effigy --json scan generated-in-src > generated-in-src-failure.json || true
+
 - name: Capture raw attention-markers JSON
   if: failure()
   run: effigy --json scan attention-markers > attention-markers-failure.json || true
+
+- name: Capture raw stale-suppressions JSON
+  if: failure()
+  run: effigy --json scan stale-suppressions > stale-suppressions-failure.json || true
 
 - name: Upload triage payloads
   if: always()
@@ -188,12 +196,14 @@ Store JSON output for failed command triage:
       god-files-failure.json
       duplicate-blocks-failure.json
       comment-ratio-failure.json
+      generated-in-src-failure.json
       attention-markers-failure.json
+      stale-suppressions-failure.json
       json-contracts.log
       json-contracts-selected.json
 ```
 
-Use the doctor payload when you want the integrated health view. Capture `effigy --json scan god-files`, `effigy --json scan duplicate-blocks`, `effigy --json scan comment-ratio`, or `effigy --json scan attention-markers` alongside it when you need raw scanner findings and text rendering snapshots.
+Use the doctor payload when you want the integrated health view. Capture `effigy --json scan god-files`, `effigy --json scan duplicate-blocks`, `effigy --json scan comment-ratio`, `effigy --json scan generated-in-src`, `effigy --json scan attention-markers`, or `effigy --json scan stale-suppressions` alongside it when you need raw scanner findings and text rendering snapshots.
 
 ## 6) Recipe: Contract Selection Artifact Gate
 

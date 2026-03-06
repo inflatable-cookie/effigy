@@ -33,12 +33,6 @@ fn run_manifest_task_builtin_subcommand_error_contracts_are_stable() {
             expected: &["unknown argument(s) for built-in `completion`: candidates --wat"],
         },
         BuiltinContractErrorCase {
-            workspace: "builtin-subcommand-scan-missing-subcommand",
-            command: "scan",
-            args: &[],
-            expected: &["scan requires a subcommand (currently supported: `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `attention-markers`)"],
-        },
-        BuiltinContractErrorCase {
             workspace: "builtin-subcommand-scan-unknown-subcommand",
             command: "scan",
             args: &["wat"],
@@ -71,6 +65,16 @@ fn run_manifest_task_builtin_subcommand_help_precedence_contracts_are_stable() {
             expected: &[
                 "completion candidates Help",
                 "effigy completion candidates [--repo <path>] [--prefix <value>] [--json]",
+            ],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-subcommand-help-scan-bare",
+            command: "scan",
+            args: &[],
+            expected: &[
+                "scan Help",
+                "effigy scan <subcommand> [options]",
+                "stale-suppressions : detect lint/type/tool suppression markers that hide warnings and failures",
             ],
         },
         BuiltinHelpCase {
@@ -107,6 +111,17 @@ fn run_manifest_task_builtin_subcommand_help_precedence_contracts_are_stable() {
             ],
         },
         BuiltinHelpCase {
+            workspace: "builtin-subcommand-help-scan-generated-in-src",
+            command: "scan",
+            args: &["generated-in-src", "--help", "--wat"],
+            expected: &[
+                "scan generated-in-src Help",
+                "effigy scan generated-in-src [--markdown] [--out reports/generated-in-src.md]",
+                "--show-warnings : include warning rows in terminal text output",
+                "targets source roots such as src, app, lib, crates, and packages/*/src",
+            ],
+        },
+        BuiltinHelpCase {
             workspace: "builtin-subcommand-help-scan-attention-markers",
             command: "scan",
             args: &["attention-markers", "--help", "--wat"],
@@ -115,6 +130,17 @@ fn run_manifest_task_builtin_subcommand_help_precedence_contracts_are_stable() {
                 "effigy scan attention-markers [--markdown] [--out reports/attention-markers.md]",
                 "--show-warnings : include warning rows in terminal text output",
                 "detects TODO/FIXME/HACK/deprecation/workaround-style markers in source and test files",
+            ],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-subcommand-help-scan-stale-suppressions",
+            command: "scan",
+            args: &["stale-suppressions", "--help", "--wat"],
+            expected: &[
+                "scan stale-suppressions Help",
+                "effigy scan stale-suppressions [--markdown] [--out reports/stale-suppressions.md]",
+                "--show-warnings : include warning rows in terminal text output",
+                "matches common TS, Python, Rust, shell, and linter suppression markers in source and test files",
             ],
         },
     ];

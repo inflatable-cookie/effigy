@@ -157,6 +157,8 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-03-06-scan-attention-markers-envelope-and-doctor-validation.md`](./2026-03/06-091500-scan-attention-markers-envelope-and-doctor-validation.md)
 - [`2026-03-06-duplicate-blocks-docs-and-benchmark-validation.md`](./2026-03/06-151500-duplicate-blocks-docs-and-benchmark-validation.md)
 - [`2026-03-06-comment-ratio-docs-and-benchmark-validation.md`](./2026-03/06-163500-comment-ratio-docs-and-benchmark-validation.md)
+- [`2026-03-06-generated-in-src-doctor-docs-and-benchmark-validation.md`](./2026-03/06-181500-generated-in-src-doctor-docs-and-benchmark-validation.md)
+- [`2026-03-06-stale-suppressions-doctor-docs-and-benchmark-validation.md`](./2026-03/06-193000-stale-suppressions-doctor-docs-and-benchmark-validation.md)
 - [`2026-03-07-post-m1-release-readiness-checkpoint.md`](./2026-03/07-090000-post-m1-release-readiness-checkpoint.md)
 
 ## Log template

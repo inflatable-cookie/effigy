@@ -23,6 +23,25 @@ const THRESHOLD_SCAN_KEYS: &[&str] = &[
     "out",
 ];
 
+const GENERATED_IN_SRC_KEYS: &[&str] = &[
+    "threshold",
+    "warn",
+    "warn_bytes",
+    "high",
+    "high_bytes",
+    "critical",
+    "critical_bytes",
+    "source_root",
+    "source_roots",
+    "fail_on_findings",
+    "respect_gitignore",
+    "doctor",
+    "include",
+    "exclude",
+    "format",
+    "out",
+];
+
 const COMMENT_RATIO_KEYS: &[&str] = &[
     "threshold",
     "warn",
@@ -51,6 +70,19 @@ const ATTENTION_MARKER_KEYS: &[&str] = &[
     "out",
 ];
 
+const STALE_SUPPRESSION_KEYS: &[&str] = &[
+    "warning",
+    "high",
+    "critical",
+    "fail_on_findings",
+    "respect_gitignore",
+    "doctor",
+    "include",
+    "exclude",
+    "format",
+    "out",
+];
+
 pub(super) fn validate_scan_section(context: &mut SchemaContext<'_, '_>, scan: &Value) {
     let Some(scan_table) = scan.as_table() else {
         context.unsupported_value("scan", SchemaContext::value_type(scan), "expected table");
@@ -65,7 +97,9 @@ pub(super) fn validate_scan_section(context: &mut SchemaContext<'_, '_>, scan: &
             "duplicate_blocks",
             "comment_ratio",
             "generated_assets",
-            "attention_markers",
+        "generated_in_src",
+        "attention_markers",
+        "stale_suppressions",
         ],
     );
     validate_threshold_scan_section(context, scan_table.get("god_files"), "scan.god_files");
@@ -84,10 +118,20 @@ pub(super) fn validate_scan_section(context: &mut SchemaContext<'_, '_>, scan: &
         scan_table.get("generated_assets"),
         "scan.generated_assets",
     );
+    validate_generated_in_src_section(
+        context,
+        scan_table.get("generated_in_src"),
+        "scan.generated_in_src",
+    );
     validate_attention_markers_section(
         context,
         scan_table.get("attention_markers"),
         "scan.attention_markers",
+    );
+    validate_stale_suppressions_section(
+        context,
+        scan_table.get("stale_suppressions"),
+        "scan.stale_suppressions",
     );
 }
 
@@ -141,6 +185,53 @@ fn validate_attention_markers_section(
     };
 
     for field in ["warning", "high", "critical"] {
+        validate_string_or_array_field(context, table.get(field), &field_path(section_path, field));
+    }
+
+    validate_common_scan_fields(context, table, section_path);
+}
+
+fn validate_stale_suppressions_section(
+    context: &mut SchemaContext<'_, '_>,
+    value: Option<&Value>,
+    section_path: &str,
+) {
+    let Some(table) = section_table(context, value, section_path, STALE_SUPPRESSION_KEYS) else {
+        return;
+    };
+
+    for field in ["warning", "high", "critical"] {
+        validate_string_or_array_field(context, table.get(field), &field_path(section_path, field));
+    }
+
+    validate_common_scan_fields(context, table, section_path);
+}
+
+fn validate_generated_in_src_section(
+    context: &mut SchemaContext<'_, '_>,
+    value: Option<&Value>,
+    section_path: &str,
+) {
+    let Some(table) = section_table(context, value, section_path, GENERATED_IN_SRC_KEYS) else {
+        return;
+    };
+
+    for field in [
+        "threshold",
+        "warn",
+        "warn_bytes",
+        "high",
+        "high_bytes",
+        "critical",
+        "critical_bytes",
+    ] {
+        validate_optional_integer_field(
+            context,
+            table.get(field),
+            &field_path(section_path, field),
+        );
+    }
+    for field in ["source_root", "source_roots"] {
         validate_string_or_array_field(context, table.get(field), &field_path(section_path, field));
     }
 

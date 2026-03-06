@@ -8,6 +8,7 @@ mod environment;
 mod explain;
 mod finding_templates;
 mod generated_assets;
+mod generated_in_src;
 mod god_files;
 mod health;
 mod manifest;
@@ -18,6 +19,7 @@ mod render_support;
 mod report;
 mod run;
 mod scan_checks;
+mod stale_suppressions;
 mod task_graph;
 mod text_blocks;
 

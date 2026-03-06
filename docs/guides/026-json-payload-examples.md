@@ -154,7 +154,7 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
 
 `effigy doctor` preserves scanner-backed warning/high/critical findings in its own report model even when plain `effigy scan god-files` text output hides warning rows by default.
 
-The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`, `scan.generated-assets`, and `scan.attention-markers` when those scanners are enabled for doctor.
+The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`, `scan.generated-assets`, `scan.generated-in-src`, and `scan.attention-markers` when those scanners are enabled for doctor.
 
 ## 4) Doctor Explain (`effigy.doctor.explain.v1`)
 
@@ -471,7 +471,54 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 10) Init (`effigy.init.v1`)
+## 11) Scan Generated In Src (`effigy.scan.generated-in-src.v1`)
+
+```json
+{
+  "schema": "effigy.scan.generated-in-src.v1",
+  "schema_version": 1,
+  "scan": "generated-in-src",
+  "format": "text",
+  "root": "/workspace/app",
+  "thresholds": {
+    "warn": 1,
+    "high": 20000,
+    "critical": 200000
+  },
+  "source_roots": [
+    "src/**",
+    "app/**",
+    "lib/**",
+    "crates/**",
+    "packages/*/src/**"
+  ],
+  "scanned_files": 18,
+  "candidate_files": 2,
+  "finding_count": 2,
+  "fail_on_findings": false,
+  "respect_gitignore": true,
+  "output_path": null,
+  "findings": [
+    {
+      "path": "src/generated/client.generated.ts",
+      "category": "generated-path",
+      "severity": "warning",
+      "reason": "generated-path-component",
+      "size_bytes": 6400
+    },
+    {
+      "path": "src/graphql/schema.generated.ts",
+      "category": "generated-filename",
+      "severity": "high",
+      "reason": "filename-marker",
+      "size_bytes": 52000
+    }
+  ],
+  "text": "Generated In Src\n\nroot: /workspace/app\nthresholds-bytes: warn=1 high=20000 critical=200000\nsource-roots: src/**, app/**, lib/**, crates/**, packages/*/src/**\nscanned-files: 18  candidate-files: 2  findings: 2\nseverity-counts: critical=0 high=1 warning=1\nwarning-rows-hidden: 1  use --show-warnings to list them\n\nFindings\nhigh  52.0 KB  src/graphql/schema.generated.ts  [generated-filename] [filename-marker]"
+}
+```
+
+## 12) Init (`effigy.init.v1`)
 
 ```json
 {
@@ -668,7 +715,50 @@ Miss example (invalid env policy fallback):
 }
 ```
 
-## 15) Task Run (`effigy.task.run.v1`)
+## 16) Scan Stale Suppressions (`effigy.scan.stale-suppressions.v1`)
+
+```json
+{
+  "schema": "effigy.scan.stale-suppressions.v1",
+  "schema_version": 1,
+  "ok": true,
+  "scan": "stale-suppressions",
+  "format": "text",
+  "root": "/workspace/app",
+  "patterns": {
+    "warning": ["@ts-ignore", "@ts-expect-error", "type: ignore", "eslint-disable-next-line"],
+    "high": ["#[allow(", "#[expect(", "rubocop:disable", "swiftlint:disable"],
+    "critical": ["nolint", "#[allow(warnings)]", "shellcheck disable=", "eslint-disable"]
+  },
+  "scanned_files": 142,
+  "matched_lines": 2,
+  "finding_count": 2,
+  "fail_on_findings": false,
+  "respect_gitignore": true,
+  "output_path": null,
+  "findings": [
+    {
+      "path": "src/app.ts",
+      "line": 18,
+      "category": "lint-disable",
+      "severity": "warning",
+      "marker": "eslint-disable-next-line",
+      "snippet": "// eslint-disable-next-line no-console"
+    },
+    {
+      "path": "src/legacy.rs",
+      "line": 12,
+      "category": "type-ignore",
+      "severity": "high",
+      "marker": "#[allow(",
+      "snippet": "#[allow(dead_code)]"
+    }
+  ],
+  "text": "Stale Suppressions\n\nroot: /workspace/app\nmarkers: warning=4 high=4 critical=4\nscanned-files: 142  matched-lines: 2  findings: 2\nseverity-counts: critical=0 high=1 warning=1\nwarning-rows-hidden: 1  use --show-warnings to list them\n\nFindings\nhigh  src/legacy.rs:12  type-ignore  [#[allow(]  #[allow(dead_code)]"
+}
+```
+
+## 17) Task Run (`effigy.task.run.v1`)
 
 ```json
 {

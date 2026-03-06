@@ -241,6 +241,91 @@ fn run_doctor_reports_generated_assets_across_child_catalogs() {
 }
 
 #[test]
+fn run_doctor_reports_generated_in_src_when_scan_is_enabled() {
+    let root = temp_workspace("doctor-generated-in-src-enabled");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.generated_in_src]
+warn = 100
+high = 150
+critical = 300
+"#,
+    );
+    fs::write(root.join("src/client.generated.ts"), vec![b'a'; 180]).expect("write asset");
+
+    let err = run_doctor_task(root.clone(), &[])
+        .expect_err("doctor should fail on high-severity generated-in-src file");
+
+    assert_doctor_non_zero_contains(
+        err,
+        &[
+            "scan.generated-in-src",
+            "findings",
+            "error-findings",
+            ".effigy/reports/doctor/scan-generated-in-src.md",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join(".effigy/reports/doctor/scan-generated-in-src.md"),
+        &["src/client.generated.ts", "180 B", "generated-filename"],
+    );
+}
+
+#[test]
+fn run_doctor_skips_generated_in_src_when_doctor_flag_is_disabled() {
+    let root = temp_workspace("doctor-generated-in-src-disabled");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.generated_in_src]
+warn = 100
+high = 150
+critical = 300
+doctor = false
+"#,
+    );
+    fs::write(root.join("src/client.generated.ts"), vec![b'a'; 180]).expect("write asset");
+
+    let out = run_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
+
+    assert_output_excludes_all(&out, &["scan.generated-in-src", "src/client.generated.ts"]);
+}
+
+#[test]
+fn run_doctor_reports_generated_in_src_across_child_catalogs() {
+    let root = temp_workspace("doctor-generated-in-src-root-fanout");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
+        .expect("write root gitignore");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n[scan.generated_in_src]\nwarn = 100\nhigh = 150\ncritical = 300\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
+    fs::write(farmyard.join("src/client.generated.ts"), vec![b'a'; 180]).expect("write asset");
+
+    let err = run_doctor_task(root.clone(), &[])
+        .expect_err("doctor should fail on child-catalog generated-in-src file");
+
+    assert_doctor_non_zero_contains(
+        err,
+        &[
+            "scan.generated-in-src",
+            ".effigy/reports/doctor/scan-generated-in-src.md",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join(".effigy/reports/doctor/scan-generated-in-src.md"),
+        &["farmyard/src/client.generated.ts", "180 B"],
+    );
+}
+
+#[test]
 fn run_doctor_reports_duplicate_blocks_when_scan_is_enabled() {
     let root = temp_workspace("doctor-duplicate-blocks-enabled");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
@@ -515,6 +600,93 @@ fn run_doctor_reports_attention_markers_across_child_catalogs() {
     assert_file_text_contains_all(
         &root.join(".effigy/reports/doctor/scan-attention-markers.md"),
         &["farmyard/src/lib.rs:1", "[FIXME]"],
+    );
+}
+
+#[test]
+fn run_doctor_reports_stale_suppressions_when_scan_is_enabled() {
+    let root = temp_workspace("doctor-stale-suppressions-enabled");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r##"[scan.stale_suppressions]
+warning = ["eslint-disable-next-line"]
+high = ["#[allow("]
+critical = ["eslint-disable"]
+doctor = true
+"##,
+    );
+    fs::write(root.join("src/app.ts"), "// eslint-disable\n").expect("write source");
+
+    let err = run_doctor_task(root.clone(), &[])
+        .expect_err("doctor should fail on critical stale suppression");
+
+    assert_doctor_non_zero_contains(
+        err,
+        &[
+            "scan.stale-suppressions",
+            "findings",
+            "error-findings",
+            ".effigy/reports/doctor/scan-stale-suppressions.md",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join(".effigy/reports/doctor/scan-stale-suppressions.md"),
+        &["src/app.ts:1", "[eslint-disable]"],
+    );
+}
+
+#[test]
+fn run_doctor_skips_stale_suppressions_when_doctor_flag_is_disabled() {
+    let root = temp_workspace("doctor-stale-suppressions-disabled");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r##"[scan.stale_suppressions]
+warning = ["eslint-disable-next-line"]
+high = ["#[allow("]
+critical = ["eslint-disable"]
+doctor = false
+"##,
+    );
+    fs::write(root.join("src/app.ts"), "// eslint-disable\n").expect("write source");
+
+    let out = run_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
+
+    assert_output_excludes_all(&out, &["scan.stale-suppressions", "src/app.ts:1"]);
+}
+
+#[test]
+fn run_doctor_reports_stale_suppressions_across_child_catalogs() {
+    let root = temp_workspace("doctor-stale-suppressions-root-fanout");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
+        .expect("write root gitignore");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n[scan.stale_suppressions]\nwarning = [\"eslint-disable-next-line\"]\nhigh = [\"#[allow(\"]\ncritical = [\"eslint-disable\"]\ndoctor = true\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
+    fs::write(farmyard.join("src/lib.rs"), "#[allow(warnings)]\npub fn lib() {}\n")
+        .expect("write source");
+
+    let err = run_doctor_task(root.clone(), &[])
+        .expect_err("doctor should fail on child-catalog stale suppression");
+
+    assert_doctor_non_zero_contains(
+        err,
+        &[
+            "scan.stale-suppressions",
+            ".effigy/reports/doctor/scan-stale-suppressions.md",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join(".effigy/reports/doctor/scan-stale-suppressions.md"),
+        &["farmyard/src/lib.rs:1", "[#[allow(]"],
     );
 }
 

@@ -45,6 +45,6 @@ pub(in crate::runner) const BUILTIN_TASKS: [(&str, &str); 12] = [
     ),
     (
         "scan",
-        "Run built-in repository scanners such as `god-files`, `duplicate-blocks`, `comment-ratio`, and `attention-markers`",
+        "Run built-in repository scanners such as `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-in-src`, `attention-markers`, and `stale-suppressions`",
     ),
 ];

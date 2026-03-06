@@ -2,7 +2,8 @@ use crate::runner::error::RunnerError;
 
 use super::super::model::{
     AttentionMarkerScanOptions, CommentRatioScanOptions, DuplicateBlockScanOptions,
-    GeneratedAssetScanOptions, GodFileScanOptions,
+    GeneratedAssetScanOptions, GeneratedInSrcScanOptions, GodFileScanOptions,
+    StaleSuppressionScanOptions,
 };
 
 impl GodFileScanOptions {
@@ -24,6 +25,28 @@ impl GeneratedAssetScanOptions {
             self.thresholds.high,
             self.thresholds.critical,
         )
+    }
+}
+
+impl GeneratedInSrcScanOptions {
+    pub(in crate::runner) fn validate(&self) -> Result<(), RunnerError> {
+        validate_thresholds(
+            "scan.generated_in_src",
+            self.thresholds.warn,
+            self.thresholds.high,
+            self.thresholds.critical,
+        )?;
+        if self.source_roots.is_empty() {
+            return Err(RunnerError::task_invocation(
+                "`scan.generated_in_src.source_roots` requires at least one configured glob",
+            ));
+        }
+        if self.source_roots.iter().any(|value| value.trim().is_empty()) {
+            return Err(RunnerError::task_invocation(
+                "`scan.generated_in_src.source_roots` must contain non-empty glob strings",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -80,6 +103,31 @@ impl CommentRatioScanOptions {
         if self.thresholds.min_code_lines == 0 {
             return Err(RunnerError::task_invocation(
                 "`scan.comment_ratio.min_code_lines` must be greater than zero",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl StaleSuppressionScanOptions {
+    pub(in crate::runner) fn validate(&self) -> Result<(), RunnerError> {
+        let total_patterns =
+            self.patterns.warning.len() + self.patterns.high.len() + self.patterns.critical.len();
+        if total_patterns == 0 {
+            return Err(RunnerError::task_invocation(
+                "`scan.stale_suppressions` requires at least one configured marker",
+            ));
+        }
+        if self
+            .patterns
+            .warning
+            .iter()
+            .chain(self.patterns.high.iter())
+            .chain(self.patterns.critical.iter())
+            .any(|value| value.trim().is_empty())
+        {
+            return Err(RunnerError::task_invocation(
+                "`scan.stale_suppressions` markers must be non-empty strings",
             ));
         }
         Ok(())

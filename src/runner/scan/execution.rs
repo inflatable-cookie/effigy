@@ -4,16 +4,24 @@ use std::path::{Path, PathBuf};
 use super::model::{
     AttentionMarkerFinding, AttentionMarkerScanOptions, AttentionMarkerScanResult,
     CommentRatioFinding, CommentRatioScanOptions, CommentRatioScanResult, GeneratedAssetFinding,
-    GeneratedAssetScanOptions, GeneratedAssetScanResult, GodFileFinding, GodFileScanOptions,
-    GodFileScanResult,
+    GeneratedAssetScanOptions, GeneratedAssetScanResult, GeneratedInSrcFinding,
+    GeneratedInSrcScanOptions, GeneratedInSrcScanResult, GodFileFinding, GodFileScanOptions,
+    GodFileScanResult, StaleSuppressionFinding, StaleSuppressionScanOptions,
+    StaleSuppressionScanResult,
 };
 use super::support::{
     attention_marker_category, attention_marker_matches_line, attention_marker_severity_rank,
-    classify_comment_ratio_severity, classify_generated_asset_severity, classify_severity,
-    comment_ratio_counts, comment_ratio_severity_rank, compile_attention_marker_patterns,
-    count_code_lines, generated_asset_reason, generated_asset_severity_rank, is_generated_artifact,
-    read_asset_sample, rebase_finding_path, severity_rank, should_skip_generated_asset_path,
-    should_skip_path, trim_snippet, walk_scan_files, workspace_scan_roots,
+    classify_comment_ratio_severity, classify_generated_asset_severity,
+    classify_generated_in_src_severity, classify_severity, comment_ratio_counts,
+    comment_ratio_severity_rank, compile_attention_marker_patterns, compile_glob_set,
+    compile_stale_suppression_patterns, count_code_lines, generated_asset_reason,
+    generated_asset_severity_rank,
+    generated_in_src_category_rank, generated_in_src_reason, generated_in_src_severity_rank,
+    is_generated_artifact, read_asset_sample, rebase_finding_path, severity_rank,
+    stale_suppression_category, stale_suppression_matches_line,
+    stale_suppression_severity_rank,
+    should_skip_generated_asset_path, should_skip_path, trim_snippet, walk_scan_files,
+    workspace_scan_roots,
 };
 use crate::runner::error::RunnerError;
 
@@ -128,6 +136,36 @@ pub(in crate::runner) fn run_generated_asset_scan_workspace(
     )
 }
 
+pub(in crate::runner) fn run_generated_in_src_scan_workspace(
+    target_root: &Path,
+    scan_roots: &[PathBuf],
+    options: &GeneratedInSrcScanOptions,
+) -> Result<GeneratedInSrcScanResult, RunnerError> {
+    run_workspace_scan(
+        target_root,
+        scan_roots,
+        ScanWorkspaceCounts::default(),
+        |root, skipped_roots| run_generated_in_src_scan_single(root, skipped_roots, options),
+        |counts, result| {
+            counts.scanned_files += result.scanned_files;
+            counts.secondary += result.candidate_files;
+        },
+        |result| result.findings,
+        |root, finding| {
+            finding.path = rebase_finding_path(target_root, root, &finding.path);
+        },
+        sort_generated_in_src_findings,
+        |root, counts, findings| GeneratedInSrcScanResult {
+            root,
+            scanned_files: counts.scanned_files,
+            candidate_files: counts.secondary,
+            findings,
+            thresholds: options.thresholds.clone(),
+            source_roots: options.source_roots.clone(),
+        },
+    )
+}
+
 fn run_generated_asset_scan_single(
     root: &Path,
     skipped_roots: &[PathBuf],
@@ -182,6 +220,72 @@ fn run_generated_asset_scan_single(
         candidate_files,
         findings,
         thresholds: options.thresholds.clone(),
+    })
+}
+
+fn run_generated_in_src_scan_single(
+    root: &Path,
+    skipped_roots: &[PathBuf],
+    options: &GeneratedInSrcScanOptions,
+) -> Result<GeneratedInSrcScanResult, RunnerError> {
+    options.validate()?;
+    let source_roots = compile_glob_set(&options.source_roots, "source_root")?;
+    let mut findings = Vec::<GeneratedInSrcFinding>::new();
+    let mut scanned_files = 0usize;
+    let mut candidate_files = 0usize;
+
+    walk_scan_files(
+        root,
+        skipped_roots,
+        options.respect_gitignore,
+        &options.include,
+        &options.exclude,
+        should_skip_generated_asset_path,
+        |path, rel, rel_str| {
+            if !source_roots
+                .as_ref()
+                .is_some_and(|set| set.is_match(rel_str))
+            {
+                return Ok(());
+            }
+
+            let bytes = std::fs::metadata(path)
+                .map_err(|error| {
+                    RunnerError::task_invocation(format!(
+                        "scan metadata failed for {}: {error}",
+                        path.display()
+                    ))
+                })?
+                .len() as usize;
+            let sample = read_asset_sample(path)?;
+            scanned_files += 1;
+            let Some((category, reason)) = generated_in_src_reason(rel, &sample) else {
+                return Ok(());
+            };
+            candidate_files += 1;
+
+            if let Some(severity) = classify_generated_in_src_severity(bytes, &options.thresholds) {
+                findings.push(GeneratedInSrcFinding {
+                    path: rel_str.to_owned(),
+                    category,
+                    severity,
+                    reason,
+                    size_bytes: bytes,
+                });
+            }
+            Ok(())
+        },
+    )?;
+
+    sort_generated_in_src_findings(&mut findings);
+
+    Ok(GeneratedInSrcScanResult {
+        root: root.display().to_string(),
+        scanned_files,
+        candidate_files,
+        findings,
+        thresholds: options.thresholds.clone(),
+        source_roots: options.source_roots.clone(),
     })
 }
 
@@ -364,6 +468,103 @@ fn run_attention_marker_scan_single(
     })
 }
 
+pub(in crate::runner) fn run_stale_suppression_scan_workspace(
+    target_root: &Path,
+    scan_roots: &[PathBuf],
+    options: &StaleSuppressionScanOptions,
+) -> Result<StaleSuppressionScanResult, RunnerError> {
+    run_workspace_scan(
+        target_root,
+        scan_roots,
+        ScanWorkspaceCounts::default(),
+        |root, skipped_roots| run_stale_suppression_scan_single(root, skipped_roots, options),
+        |counts, result| {
+            counts.scanned_files += result.scanned_files;
+            counts.secondary += result.matched_lines;
+        },
+        |result| result.findings,
+        |root, finding| {
+            finding.path = rebase_finding_path(target_root, root, &finding.path);
+        },
+        sort_stale_suppression_findings,
+        |root, counts, findings| StaleSuppressionScanResult {
+            root,
+            scanned_files: counts.scanned_files,
+            matched_lines: counts.secondary,
+            findings,
+            patterns: options.patterns.clone(),
+        },
+    )
+}
+
+fn run_stale_suppression_scan_single(
+    root: &Path,
+    skipped_roots: &[PathBuf],
+    options: &StaleSuppressionScanOptions,
+) -> Result<StaleSuppressionScanResult, RunnerError> {
+    options.validate()?;
+    let patterns = compile_stale_suppression_patterns(&options.patterns);
+    let mut findings = Vec::<StaleSuppressionFinding>::new();
+    let mut scanned_files = 0usize;
+    let mut matched_lines = 0usize;
+
+    walk_text_scan_files(
+        root,
+        skipped_roots,
+        options.respect_gitignore,
+        &options.include,
+        &options.exclude,
+        should_skip_path,
+        |_path, rel, rel_str, contents| {
+            if is_generated_artifact(rel, &contents) {
+                return Ok(());
+            }
+
+            scanned_files += 1;
+            for (line_number, raw_line) in contents.lines().enumerate() {
+                let line = raw_line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let mut line_has_match = false;
+                let mut matched_keys = BTreeSet::<String>::new();
+                for (severity, marker, marker_lower) in &patterns {
+                    if !stale_suppression_matches_line(raw_line, marker_lower) {
+                        continue;
+                    }
+                    let dedupe_key = stale_suppression_dedupe_key(marker_lower);
+                    if !matched_keys.insert(dedupe_key) {
+                        continue;
+                    }
+                    line_has_match = true;
+                    findings.push(StaleSuppressionFinding {
+                        path: rel_str.to_owned(),
+                        line: line_number + 1,
+                        category: stale_suppression_category(marker_lower),
+                        severity: *severity,
+                        marker: marker.clone(),
+                        snippet: trim_snippet(line, 120),
+                    });
+                }
+                if line_has_match {
+                    matched_lines += 1;
+                }
+            }
+            Ok(())
+        },
+    )?;
+
+    sort_stale_suppression_findings(&mut findings);
+
+    Ok(StaleSuppressionScanResult {
+        root: root.display().to_string(),
+        scanned_files,
+        matched_lines,
+        findings,
+        patterns: options.patterns.clone(),
+    })
+}
+
 pub(super) fn run_workspace_scan<
     TStats,
     TLocalResult,
@@ -463,6 +664,19 @@ fn sort_generated_asset_findings(findings: &mut [GeneratedAssetFinding]) {
     });
 }
 
+fn sort_generated_in_src_findings(findings: &mut [GeneratedInSrcFinding]) {
+    findings.sort_by(|left, right| {
+        generated_in_src_severity_rank(right.severity)
+            .cmp(&generated_in_src_severity_rank(left.severity))
+            .then_with(|| {
+                generated_in_src_category_rank(right.category)
+                    .cmp(&generated_in_src_category_rank(left.category))
+            })
+            .then_with(|| right.size_bytes.cmp(&left.size_bytes))
+            .then_with(|| left.path.cmp(&right.path))
+    });
+}
+
 fn sort_comment_ratio_findings(findings: &mut [CommentRatioFinding]) {
     findings.sort_by(|left, right| {
         comment_ratio_severity_rank(right.severity)
@@ -481,6 +695,23 @@ fn sort_attention_marker_findings(findings: &mut [AttentionMarkerFinding]) {
             .then_with(|| left.line.cmp(&right.line))
             .then_with(|| left.marker.cmp(&right.marker))
     });
+}
+
+fn sort_stale_suppression_findings(findings: &mut [StaleSuppressionFinding]) {
+    findings.sort_by(|left, right| {
+        stale_suppression_severity_rank(right.severity)
+            .cmp(&stale_suppression_severity_rank(left.severity))
+            .then_with(|| left.path.cmp(&right.path))
+            .then_with(|| left.line.cmp(&right.line))
+            .then_with(|| left.marker.cmp(&right.marker))
+    });
+}
+
+fn stale_suppression_dedupe_key(marker_lower: &str) -> String {
+    if marker_lower.starts_with("#[allow(") {
+        return "#[allow(".to_owned();
+    }
+    marker_lower.to_owned()
 }
 
 #[derive(Default)]

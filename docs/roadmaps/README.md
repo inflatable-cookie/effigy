@@ -23,6 +23,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01/015-effigy-self-hosting-and-agent-first-adoption.md` is complete.
 - `g01/016-duplicate-blocks-scan-and-doctor-integration.md` is complete.
 - `g01/017-comment-ratio-scan-and-doctor-integration.md` is complete.
+- `g01/018-generated-in-src-scan-and-doctor-integration.md` is complete.
+- `g01/019-stale-suppressions-scan-and-doctor-integration.md` is complete.
 
 ## Backlog
 
@@ -35,7 +37,7 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Select the next roadmap milestone before opening new implementation work.
+Roadmap `g01.019` is complete. Open the next planned milestone in `g01/` and land it in meaningful batches with a benchmark-backed doctor default decision.
 
 
 ## Historical language boundary
