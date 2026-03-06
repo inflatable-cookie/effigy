@@ -10,11 +10,12 @@ pub(in crate::runner) mod check_id {
     pub(in crate::runner) const TASK_REFERENCES_RESOLVE: &str = "tasks.references.resolve";
     pub(in crate::runner) const SCAN_GOD_FILES: &str = "scan.god-files";
     pub(in crate::runner) const SCAN_GENERATED_ASSETS: &str = "scan.generated-assets";
+    pub(in crate::runner) const SCAN_ATTENTION_MARKERS: &str = "scan.attention-markers";
     pub(in crate::runner) const HEALTH_TASK_DISCOVERY: &str = "health.task.discovery";
     pub(in crate::runner) const HEALTH_TASK_EXECUTE: &str = "health.task.execute";
 }
 
-pub(in crate::runner) const ALL_CHECK_IDS: [&str; 11] = [
+pub(in crate::runner) const ALL_CHECK_IDS: [&str; 12] = [
     check_id::WORKSPACE_ROOT_RESOLUTION,
     check_id::ENVIRONMENT_TOOLS_REQUIRED,
     check_id::MANIFEST_PARSE,
@@ -24,6 +25,7 @@ pub(in crate::runner) const ALL_CHECK_IDS: [&str; 11] = [
     check_id::TASK_REFERENCES_RESOLVE,
     check_id::SCAN_GOD_FILES,
     check_id::SCAN_GENERATED_ASSETS,
+    check_id::SCAN_ATTENTION_MARKERS,
     check_id::HEALTH_TASK_DISCOVERY,
     check_id::HEALTH_TASK_EXECUTE,
 ];
@@ -52,6 +54,8 @@ pub(in crate::runner) mod remediation {
         "Split oversized files into smaller modules/components or raise thresholds intentionally.";
     pub(in crate::runner) const REMOVE_OR_IGNORE_GENERATED_ASSETS: &str =
         "Remove bulky generated/vendor artifacts from versioned paths, tighten ignore rules, or raise thresholds intentionally.";
+    pub(in crate::runner) const RESOLVE_ATTENTION_MARKERS: &str =
+        "Resolve deferred-work/deprecation markers, remove stale placeholders, or disable doctor integration intentionally.";
     pub(in crate::runner) const SCHEMA_REMOVE_UNSUPPORTED_KEYS: &str =
         "Remove/rename unsupported keys to match `effigy config --schema`.";
     pub(in crate::runner) const SCHEMA_TABLE_ROOT_REQUIRED: &str =

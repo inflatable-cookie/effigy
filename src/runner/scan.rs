@@ -1,16 +1,38 @@
-use std::collections::BTreeSet;
-use std::ffi::OsStr;
-use std::fs::File;
-use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::collections::BTreeSet;
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
-use ignore::WalkBuilder;
 use serde::Serialize;
 
 use super::{
-    manifest::ManifestGeneratedAssetsConfig, LoadedCatalog, ManifestGodFilesConfig,
-    ManifestScanOutputFormat, RunnerError, TaskManifest, TASK_MANIFEST_FILE,
+    manifest::{ManifestAttentionMarkersConfig, ManifestGeneratedAssetsConfig},
+    LoadedCatalog, ManifestGodFilesConfig, ManifestScanOutputFormat, RunnerError, TaskManifest,
+    TASK_MANIFEST_FILE,
+};
+
+#[path = "scan/options.rs"]
+mod options;
+#[path = "scan/render.rs"]
+mod render;
+#[path = "scan/support.rs"]
+mod support;
+
+pub(in crate::runner) use options::{
+    catalog_scan_roots, doctor_attention_marker_options, doctor_generated_asset_options,
+    doctor_god_file_options, load_root_attention_marker_options,
+    load_root_generated_asset_options, load_root_god_file_options,
+};
+pub(in crate::runner) use render::{
+    render_attention_marker_markdown, render_attention_marker_text,
+    render_generated_asset_markdown, render_generated_asset_text, render_god_file_markdown,
+    render_god_file_text,
+};
+use support::{
+    attention_marker_category, attention_marker_matches_line, attention_marker_severity_rank,
+    build_scan_walk, classify_generated_asset_severity, classify_severity,
+    compile_attention_marker_patterns, compile_glob_set, count_code_lines,
+    generated_asset_reason, generated_asset_severity_rank, is_generated_artifact,
+    normalize_rel_path, normalized_scan_roots, read_asset_sample, rebase_finding_path,
+    severity_rank, should_skip_generated_asset_path, should_skip_path, trim_snippet,
 };
 
 pub(super) const DEFAULT_GOD_FILES_WARN: usize = 250;
@@ -19,6 +41,19 @@ pub(super) const DEFAULT_GOD_FILES_CRITICAL: usize = 700;
 pub(super) const DEFAULT_GENERATED_ASSETS_WARN_BYTES: usize = 1_000_000;
 pub(super) const DEFAULT_GENERATED_ASSETS_HIGH_BYTES: usize = 5_000_000;
 pub(super) const DEFAULT_GENERATED_ASSETS_CRITICAL_BYTES: usize = 20_000_000;
+pub(super) const DEFAULT_ATTENTION_MARKER_WARNING: &[&str] = &[
+    "TODO",
+    "@TODO",
+    "REVIEW",
+    "NOTE",
+    "placeholder",
+    "later",
+    "stub",
+];
+pub(super) const DEFAULT_ATTENTION_MARKER_HIGH: &[&str] =
+    &["FIXME", "XXX", "HACK", "@deprecated", "deprecated", "workaround", "tech debt"];
+pub(super) const DEFAULT_ATTENTION_MARKER_CRITICAL: &[&str] =
+    &["BUG", "SECURITY", "remove before release"];
 
 const DEFAULT_EXCLUDED_DIRS: &[&str] = &[
     ".git",
@@ -198,6 +233,68 @@ pub(super) struct GeneratedAssetScanResult {
     pub(super) thresholds: GeneratedAssetThresholds,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum AttentionMarkerCategory {
+    DeferredWork,
+    Deprecation,
+    TemporaryArtifact,
+}
+
+impl AttentionMarkerCategory {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::DeferredWork => "deferred-work",
+            Self::Deprecation => "deprecation",
+            Self::TemporaryArtifact => "temporary-artifact",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum AttentionMarkerSeverity {
+    Warning,
+    High,
+    Critical,
+}
+
+impl AttentionMarkerSeverity {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Warning => "warning",
+            Self::High => "high",
+            Self::Critical => "critical",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct AttentionMarkerFinding {
+    pub(super) path: String,
+    pub(super) line: usize,
+    pub(super) category: AttentionMarkerCategory,
+    pub(super) severity: AttentionMarkerSeverity,
+    pub(super) marker: String,
+    pub(super) snippet: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct AttentionMarkerPatterns {
+    pub(super) warning: Vec<String>,
+    pub(super) high: Vec<String>,
+    pub(super) critical: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct AttentionMarkerScanResult {
+    pub(super) root: String,
+    pub(super) scanned_files: usize,
+    pub(super) matched_lines: usize,
+    pub(super) findings: Vec<AttentionMarkerFinding>,
+    pub(super) patterns: AttentionMarkerPatterns,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct TextRenderOptions {
     pub(super) show_warnings: bool,
@@ -227,238 +324,16 @@ pub(super) struct GeneratedAssetScanOptions {
     pub(super) out: Option<String>,
 }
 
-impl Default for GodFileScanOptions {
-    fn default() -> Self {
-        Self {
-            thresholds: GodFileThresholds {
-                warn: DEFAULT_GOD_FILES_WARN,
-                high: DEFAULT_GOD_FILES_HIGH,
-                critical: DEFAULT_GOD_FILES_CRITICAL,
-            },
-            fail_on_findings: false,
-            respect_gitignore: true,
-            doctor_enabled: true,
-            include: Vec::new(),
-            exclude: Vec::new(),
-            format: ScanRenderFormat::Text,
-            out: None,
-        }
-    }
-}
-
-impl Default for GeneratedAssetScanOptions {
-    fn default() -> Self {
-        Self {
-            thresholds: GeneratedAssetThresholds {
-                warn: DEFAULT_GENERATED_ASSETS_WARN_BYTES,
-                high: DEFAULT_GENERATED_ASSETS_HIGH_BYTES,
-                critical: DEFAULT_GENERATED_ASSETS_CRITICAL_BYTES,
-            },
-            fail_on_findings: false,
-            respect_gitignore: true,
-            doctor_enabled: true,
-            include: Vec::new(),
-            exclude: Vec::new(),
-            format: ScanRenderFormat::Text,
-            out: None,
-        }
-    }
-}
-
-impl GodFileScanOptions {
-    pub(super) fn from_manifest(
-        config: Option<&ManifestGodFilesConfig>,
-    ) -> Result<Self, RunnerError> {
-        let mut options = Self::default();
-        if let Some(config) = config {
-            if let Some(value) = config.warn {
-                options.thresholds.warn = value;
-            }
-            if let Some(value) = config.high {
-                options.thresholds.high = value;
-            }
-            if let Some(value) = config.critical {
-                options.thresholds.critical = value;
-            }
-            if let Some(value) = config.fail_on_findings {
-                options.fail_on_findings = value;
-            }
-            if let Some(value) = config.respect_gitignore {
-                options.respect_gitignore = value;
-            }
-            if let Some(value) = config.doctor {
-                options.doctor_enabled = value;
-            }
-            if let Some(value) = config.format {
-                options.format = value.into();
-            }
-            options.include = config.include.clone();
-            options.exclude = config.exclude.clone();
-            options.out = config.out.clone();
-        }
-        options.validate()?;
-        Ok(options)
-    }
-
-    pub(super) fn validate(&self) -> Result<(), RunnerError> {
-        if self.thresholds.warn == 0 || self.thresholds.high == 0 || self.thresholds.critical == 0 {
-            return Err(RunnerError::task_invocation(
-                "`scan.god_files` thresholds must be greater than zero",
-            ));
-        }
-        if self.thresholds.warn > self.thresholds.high
-            || self.thresholds.high > self.thresholds.critical
-        {
-            return Err(RunnerError::task_invocation(
-                "`scan.god_files` thresholds must be ordered `warn <= high <= critical`",
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl GeneratedAssetScanOptions {
-    pub(super) fn from_manifest(
-        config: Option<&ManifestGeneratedAssetsConfig>,
-    ) -> Result<Self, RunnerError> {
-        let mut options = Self::default();
-        if let Some(config) = config {
-            if let Some(value) = config.warn {
-                options.thresholds.warn = value;
-            }
-            if let Some(value) = config.high {
-                options.thresholds.high = value;
-            }
-            if let Some(value) = config.critical {
-                options.thresholds.critical = value;
-            }
-            if let Some(value) = config.fail_on_findings {
-                options.fail_on_findings = value;
-            }
-            if let Some(value) = config.respect_gitignore {
-                options.respect_gitignore = value;
-            }
-            if let Some(value) = config.doctor {
-                options.doctor_enabled = value;
-            }
-            if let Some(value) = config.format {
-                options.format = value.into();
-            }
-            options.include = config.include.clone();
-            options.exclude = config.exclude.clone();
-            options.out = config.out.clone();
-        }
-        options.validate()?;
-        Ok(options)
-    }
-
-    pub(super) fn validate(&self) -> Result<(), RunnerError> {
-        if self.thresholds.warn == 0 || self.thresholds.high == 0 || self.thresholds.critical == 0 {
-            return Err(RunnerError::task_invocation(
-                "`scan.generated_assets` thresholds must be greater than zero",
-            ));
-        }
-        if self.thresholds.warn > self.thresholds.high
-            || self.thresholds.high > self.thresholds.critical
-        {
-            return Err(RunnerError::task_invocation(
-                "`scan.generated_assets` thresholds must be ordered `warn <= high <= critical`",
-            ));
-        }
-        Ok(())
-    }
-}
-
-pub(super) fn load_root_god_file_options(
-    target_root: &Path,
-) -> Result<GodFileScanOptions, RunnerError> {
-    let manifest_path = target_root.join(TASK_MANIFEST_FILE);
-    if !manifest_path.exists() {
-        return Ok(GodFileScanOptions::default());
-    }
-    let manifest_text =
-        std::fs::read_to_string(&manifest_path).map_err(|error| RunnerError::TaskManifestRead {
-            path: manifest_path.clone(),
-            error,
-        })?;
-    let manifest = toml::from_str::<TaskManifest>(&manifest_text).map_err(|error| {
-        RunnerError::TaskManifestParse {
-            path: manifest_path.clone(),
-            error,
-        }
-    })?;
-    GodFileScanOptions::from_manifest(
-        manifest
-            .scan
-            .as_ref()
-            .and_then(|scan| scan.god_files.as_ref()),
-    )
-}
-
-pub(super) fn load_root_generated_asset_options(
-    target_root: &Path,
-) -> Result<GeneratedAssetScanOptions, RunnerError> {
-    let manifest_path = target_root.join(TASK_MANIFEST_FILE);
-    if !manifest_path.exists() {
-        return Ok(GeneratedAssetScanOptions::default());
-    }
-    let manifest_text =
-        std::fs::read_to_string(&manifest_path).map_err(|error| RunnerError::TaskManifestRead {
-            path: manifest_path.clone(),
-            error,
-        })?;
-    let manifest = toml::from_str::<TaskManifest>(&manifest_text).map_err(|error| {
-        RunnerError::TaskManifestParse {
-            path: manifest_path.clone(),
-            error,
-        }
-    })?;
-    GeneratedAssetScanOptions::from_manifest(
-        manifest
-            .scan
-            .as_ref()
-            .and_then(|scan| scan.generated_assets.as_ref()),
-    )
-}
-
-pub(super) fn doctor_generated_asset_options(
-    resolved_root: &Path,
-    catalogs: &[LoadedCatalog],
-) -> Result<GeneratedAssetScanOptions, RunnerError> {
-    let config = catalogs
-        .iter()
-        .find(|catalog| catalog.catalog_root == resolved_root)
-        .and_then(|catalog| catalog.manifest.scan.as_ref())
-        .and_then(|scan| scan.generated_assets.as_ref());
-    GeneratedAssetScanOptions::from_manifest(config)
-}
-
-pub(super) fn doctor_god_file_options(
-    resolved_root: &Path,
-    catalogs: &[LoadedCatalog],
-) -> Result<GodFileScanOptions, RunnerError> {
-    let config = catalogs
-        .iter()
-        .find(|catalog| catalog.catalog_root == resolved_root)
-        .and_then(|catalog| catalog.manifest.scan.as_ref())
-        .and_then(|scan| scan.god_files.as_ref());
-    GodFileScanOptions::from_manifest(config)
-}
-
-pub(super) fn catalog_scan_roots(target_root: &Path, catalogs: &[LoadedCatalog]) -> Vec<PathBuf> {
-    let mut roots = catalogs
-        .iter()
-        .filter(|catalog| {
-            catalog.catalog_root == target_root || catalog.catalog_root.starts_with(target_root)
-        })
-        .map(|catalog| catalog.catalog_root.clone())
-        .collect::<Vec<PathBuf>>();
-    roots.sort();
-    roots.dedup();
-    if roots.is_empty() {
-        roots.push(target_root.to_path_buf());
-    }
-    roots
+#[derive(Debug, Clone)]
+pub(super) struct AttentionMarkerScanOptions {
+    pub(super) patterns: AttentionMarkerPatterns,
+    pub(super) fail_on_findings: bool,
+    pub(super) respect_gitignore: bool,
+    pub(super) doctor_enabled: bool,
+    pub(super) include: Vec<String>,
+    pub(super) exclude: Vec<String>,
+    pub(super) format: ScanRenderFormat,
+    pub(super) out: Option<String>,
 }
 
 pub(super) fn run_god_file_scan_workspace(
@@ -711,464 +586,149 @@ fn run_generated_asset_scan_single(
     })
 }
 
-pub(super) fn render_god_file_text(
-    result: &GodFileScanResult,
-    render_options: TextRenderOptions,
-) -> String {
-    let critical_count = result
-        .findings
-        .iter()
-        .filter(|finding| finding.severity == GodFileSeverity::Critical)
-        .count();
-    let high_count = result
-        .findings
-        .iter()
-        .filter(|finding| finding.severity == GodFileSeverity::High)
-        .count();
-    let warning_count = result
-        .findings
-        .iter()
-        .filter(|finding| finding.severity == GodFileSeverity::Warning)
-        .count();
-    let visible_findings = result
-        .findings
-        .iter()
-        .filter(|finding| {
-            render_options.show_warnings || finding.severity != GodFileSeverity::Warning
-        })
-        .collect::<Vec<&GodFileFinding>>();
-    let mut lines = vec![
-        "God Files".to_owned(),
-        String::new(),
-        format!("root: {}", result.root),
-        format!(
-            "thresholds: warn={} high={} critical={}",
-            result.thresholds.warn, result.thresholds.high, result.thresholds.critical
-        ),
-        format!(
-            "scanned-files: {}  skipped-generated: {}  findings: {}",
-            result.scanned_files,
-            result.skipped_generated,
-            result.findings.len()
-        ),
-        format!(
-            "severity-counts: critical={} high={} warning={}",
-            critical_count, high_count, warning_count
-        ),
-    ];
-    if !render_options.show_warnings && warning_count > 0 {
-        lines.push(format!(
-            "warning-rows-hidden: {}  use --show-warnings to list them",
-            warning_count
-        ));
-    }
-    if result.findings.is_empty() {
-        lines.push(String::new());
-        lines.push("No oversized code files found.".to_owned());
-        return lines.join("\n");
-    }
-    if visible_findings.is_empty() {
-        lines.push(String::new());
-        lines.push("No high or critical files found.".to_owned());
-        return lines.join("\n");
-    }
-    lines.push(String::new());
-    lines.push("Findings".to_owned());
-    for finding in visible_findings {
-        lines.push(format!(
-            "{}  {} code lines ({} total)  {}",
-            finding.severity.as_str(),
-            finding.code_lines,
-            finding.total_lines,
-            finding.path
-        ));
-    }
-    lines.join("\n")
-}
+pub(super) fn run_attention_marker_scan_workspace(
+    target_root: &Path,
+    scan_roots: &[PathBuf],
+    options: &AttentionMarkerScanOptions,
+) -> Result<AttentionMarkerScanResult, RunnerError> {
+    let unique_roots = normalized_scan_roots(target_root, scan_roots);
+    let mut findings = Vec::<AttentionMarkerFinding>::new();
+    let mut scanned_files = 0usize;
+    let mut matched_lines = 0usize;
 
-pub(super) fn render_god_file_markdown(result: &GodFileScanResult) -> String {
-    let mut lines = vec![
-        "# God Files".to_owned(),
-        String::new(),
-        format!("- Root: `{}`", result.root),
-        format!(
-            "- Thresholds: warn=`{}` high=`{}` critical=`{}`",
-            result.thresholds.warn, result.thresholds.high, result.thresholds.critical
-        ),
-        format!("- Scanned files: `{}`", result.scanned_files),
-        format!("- Skipped generated: `{}`", result.skipped_generated),
-        format!("- Findings: `{}`", result.findings.len()),
-    ];
-    if result.findings.is_empty() {
-        lines.push(String::new());
-        lines.push("No oversized code files found.".to_owned());
-        return lines.join("\n");
+    for root in &unique_roots {
+        let skipped_roots = unique_roots
+            .iter()
+            .filter(|candidate| *candidate != root && candidate.starts_with(root))
+            .cloned()
+            .collect::<Vec<PathBuf>>();
+        let result = run_attention_marker_scan_single(root, &skipped_roots, options)?;
+        scanned_files += result.scanned_files;
+        matched_lines += result.matched_lines;
+        findings.extend(result.findings.into_iter().map(|mut finding| {
+            finding.path = rebase_finding_path(target_root, root, &finding.path);
+            finding
+        }));
     }
-    lines.push(String::new());
-    lines.push("| Severity | Code Lines | Total Lines | Path |".to_owned());
-    lines.push("| --- | ---: | ---: | --- |".to_owned());
-    for finding in &result.findings {
-        lines.push(format!(
-            "| {} | {} | {} | `{}` |",
-            finding.severity.as_str(),
-            finding.code_lines,
-            finding.total_lines,
-            finding.path
-        ));
-    }
-    lines.join("\n")
-}
 
-pub(super) fn render_generated_asset_text(
-    result: &GeneratedAssetScanResult,
-    render_options: TextRenderOptions,
-) -> String {
-    let critical_count = result
-        .findings
-        .iter()
-        .filter(|finding| finding.severity == GeneratedAssetSeverity::Critical)
-        .count();
-    let high_count = result
-        .findings
-        .iter()
-        .filter(|finding| finding.severity == GeneratedAssetSeverity::High)
-        .count();
-    let warning_count = result
-        .findings
-        .iter()
-        .filter(|finding| finding.severity == GeneratedAssetSeverity::Warning)
-        .count();
-    let visible_findings = result
-        .findings
-        .iter()
-        .filter(|finding| {
-            render_options.show_warnings || finding.severity != GeneratedAssetSeverity::Warning
-        })
-        .collect::<Vec<&GeneratedAssetFinding>>();
-    let mut lines = vec![
-        "Generated Assets".to_owned(),
-        String::new(),
-        format!("root: {}", result.root),
-        format!(
-            "thresholds-bytes: warn={} high={} critical={}",
-            result.thresholds.warn, result.thresholds.high, result.thresholds.critical
-        ),
-        format!(
-            "scanned-files: {}  candidate-files: {}  findings: {}",
-            result.scanned_files,
-            result.candidate_files,
-            result.findings.len()
-        ),
-        format!(
-            "severity-counts: critical={} high={} warning={}",
-            critical_count, high_count, warning_count
-        ),
-    ];
-    if !render_options.show_warnings && warning_count > 0 {
-        lines.push(format!(
-            "warning-rows-hidden: {}  use --show-warnings to list them",
-            warning_count
-        ));
-    }
-    if result.findings.is_empty() {
-        lines.push(String::new());
-        lines.push("No bulky generated or vendored assets found.".to_owned());
-        return lines.join("\n");
-    }
-    if visible_findings.is_empty() {
-        lines.push(String::new());
-        lines.push("No high or critical generated assets found.".to_owned());
-        return lines.join("\n");
-    }
-    lines.push(String::new());
-    lines.push("Findings".to_owned());
-    for finding in visible_findings {
-        lines.push(format!(
-            "{}  {}  {}  [{}]",
-            finding.severity.as_str(),
-            format_bytes(finding.bytes),
-            finding.path,
-            finding.reason
-        ));
-    }
-    lines.join("\n")
-}
+    findings.sort_by(|left, right| {
+        attention_marker_severity_rank(right.severity)
+            .cmp(&attention_marker_severity_rank(left.severity))
+            .then_with(|| left.path.cmp(&right.path))
+            .then_with(|| left.line.cmp(&right.line))
+            .then_with(|| left.marker.cmp(&right.marker))
+    });
 
-pub(super) fn render_generated_asset_markdown(result: &GeneratedAssetScanResult) -> String {
-    let mut lines = vec![
-        "# Generated Assets".to_owned(),
-        String::new(),
-        format!("- Root: `{}`", result.root),
-        format!(
-            "- Thresholds (bytes): warn=`{}` high=`{}` critical=`{}`",
-            result.thresholds.warn, result.thresholds.high, result.thresholds.critical
-        ),
-        format!("- Scanned files: `{}`", result.scanned_files),
-        format!("- Candidate files: `{}`", result.candidate_files),
-        format!("- Findings: `{}`", result.findings.len()),
-    ];
-    if result.findings.is_empty() {
-        lines.push(String::new());
-        lines.push("No bulky generated or vendored assets found.".to_owned());
-        return lines.join("\n");
-    }
-    lines.push(String::new());
-    lines.push("| Severity | Size | Path | Reason |".to_owned());
-    lines.push("| --- | ---: | --- | --- |".to_owned());
-    for finding in &result.findings {
-        lines.push(format!(
-            "| {} | {} | `{}` | `{}` |",
-            finding.severity.as_str(),
-            format_bytes(finding.bytes),
-            finding.path,
-            finding.reason
-        ));
-    }
-    lines.join("\n")
-}
-
-fn compile_glob_set(patterns: &[String], label: &str) -> Result<Option<GlobSet>, RunnerError> {
-    if patterns.is_empty() {
-        return Ok(None);
-    }
-    let mut builder = GlobSetBuilder::new();
-    for pattern in patterns {
-        let glob = Glob::new(pattern).map_err(|error| {
-            RunnerError::task_invocation(format!("invalid `{label}` glob `{pattern}`: {error}"))
-        })?;
-        builder.add(glob);
-    }
-    let set = builder.build().map_err(|error| {
-        RunnerError::task_invocation(format!("failed to compile `{label}` glob set: {error}"))
-    })?;
-    Ok(Some(set))
-}
-
-fn build_scan_walk(root: &Path, respect_gitignore: bool) -> WalkBuilder {
-    let mut walk = WalkBuilder::new(root);
-    let has_git_dir = root.join(".git").exists();
-    walk.hidden(false)
-        .ignore(respect_gitignore)
-        .git_ignore(respect_gitignore)
-        .git_exclude(respect_gitignore && has_git_dir)
-        .git_global(respect_gitignore)
-        .require_git(has_git_dir)
-        .parents(respect_gitignore && has_git_dir)
-        .follow_links(false);
-    if respect_gitignore && !has_git_dir {
-        for ignore_name in [".ignore", ".gitignore"] {
-            let ignore_path = root.join(ignore_name);
-            if ignore_path.is_file() {
-                let _ = walk.add_ignore(ignore_path);
-            }
-        }
-    }
-    walk
-}
-
-fn should_skip_path(
-    rel: &Path,
-    rel_str: &str,
-    include: Option<&GlobSet>,
-    exclude: Option<&GlobSet>,
-) -> bool {
-    if exclude.is_some_and(|set| set.is_match(rel_str)) {
-        return true;
-    }
-    if rel.components().any(|component| {
-        DEFAULT_EXCLUDED_DIRS.contains(&component.as_os_str().to_string_lossy().as_ref())
-    }) {
-        return true;
-    }
-    if let Some(set) = include {
-        return !set.is_match(rel_str);
-    }
-    if is_probable_documentation_path(rel)
-        || is_probable_data_path(rel)
-        || is_probable_lockfile(rel)
-    {
-        return true;
-    }
-    if !is_probable_code_file(rel) {
-        return true;
-    }
-    false
-}
-
-fn should_skip_generated_asset_path(
-    rel: &Path,
-    rel_str: &str,
-    include: Option<&GlobSet>,
-    exclude: Option<&GlobSet>,
-) -> bool {
-    if exclude.is_some_and(|set| set.is_match(rel_str)) {
-        return true;
-    }
-    if rel
-        .components()
-        .any(|component| component.as_os_str() == OsStr::new(".git"))
-    {
-        return true;
-    }
-    if let Some(set) = include {
-        return !set.is_match(rel_str);
-    }
-    false
-}
-
-fn is_generated_artifact(rel: &Path, contents: &str) -> bool {
-    let lower_name = rel
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if lower_name.contains(".min.") || lower_name.ends_with(".generated.rs") {
-        return true;
-    }
-    let sample = contents
-        .lines()
-        .take(24)
-        .collect::<Vec<&str>>()
-        .join("\n")
-        .to_ascii_lowercase();
-    GENERATED_MARKERS
-        .iter()
-        .any(|marker| sample.contains(marker))
-}
-
-fn classify_severity(code_lines: usize, thresholds: &GodFileThresholds) -> Option<GodFileSeverity> {
-    if code_lines >= thresholds.critical {
-        return Some(GodFileSeverity::Critical);
-    }
-    if code_lines >= thresholds.high {
-        return Some(GodFileSeverity::High);
-    }
-    if code_lines >= thresholds.warn {
-        return Some(GodFileSeverity::Warning);
-    }
-    None
-}
-
-fn classify_generated_asset_severity(
-    bytes: usize,
-    thresholds: &GeneratedAssetThresholds,
-) -> Option<GeneratedAssetSeverity> {
-    if bytes >= thresholds.critical {
-        return Some(GeneratedAssetSeverity::Critical);
-    }
-    if bytes >= thresholds.high {
-        return Some(GeneratedAssetSeverity::High);
-    }
-    if bytes >= thresholds.warn {
-        return Some(GeneratedAssetSeverity::Warning);
-    }
-    None
-}
-
-fn severity_rank(severity: GodFileSeverity) -> usize {
-    match severity {
-        GodFileSeverity::Warning => 1,
-        GodFileSeverity::High => 2,
-        GodFileSeverity::Critical => 3,
-    }
-}
-
-fn generated_asset_severity_rank(severity: GeneratedAssetSeverity) -> usize {
-    match severity {
-        GeneratedAssetSeverity::Warning => 1,
-        GeneratedAssetSeverity::High => 2,
-        GeneratedAssetSeverity::Critical => 3,
-    }
-}
-
-fn normalize_rel_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
-}
-
-fn normalized_scan_roots(target_root: &Path, scan_roots: &[PathBuf]) -> Vec<PathBuf> {
-    let mut unique = BTreeSet::<PathBuf>::new();
-    for root in scan_roots {
-        if root == target_root || root.starts_with(target_root) {
-            unique.insert(root.clone());
-        }
-    }
-    if unique.is_empty() {
-        unique.insert(target_root.to_path_buf());
-    }
-    unique.into_iter().collect()
-}
-
-fn rebase_finding_path(target_root: &Path, root: &Path, finding_path: &str) -> String {
-    let root_rel = root
-        .strip_prefix(target_root)
-        .ok()
-        .map(normalize_rel_path)
-        .unwrap_or_default();
-    if root_rel.is_empty() || root_rel == "." {
-        return finding_path.to_owned();
-    }
-    format!("{root_rel}/{finding_path}")
-}
-
-fn read_asset_sample(path: &Path) -> Result<String, RunnerError> {
-    let mut file = File::open(path).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "scan sample read failed for {}: {error}",
-            path.display()
-        ))
-    })?;
-    let mut sample = vec![0u8; 16 * 1024];
-    let read = file.read(&mut sample).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "scan sample read failed for {}: {error}",
-            path.display()
-        ))
-    })?;
-    sample.truncate(read);
-    Ok(String::from_utf8_lossy(&sample).to_ascii_lowercase())
-}
-
-fn generated_asset_reason(rel: &Path, sample: &str) -> Option<String> {
-    if is_generated_asset_vendor_path(rel) {
-        return Some("vendor-or-build-path".to_owned());
-    }
-    if let Some(reason) = generated_asset_name_reason(rel) {
-        return Some(reason);
-    }
-    if GENERATED_MARKERS
-        .iter()
-        .any(|marker| sample.contains(marker))
-    {
-        return Some("generated-marker".to_owned());
-    }
-    None
-}
-
-fn is_generated_asset_vendor_path(path: &Path) -> bool {
-    path.components().any(|component| {
-        GENERATED_ASSET_DIRS.contains(&component.as_os_str().to_string_lossy().as_ref())
+    Ok(AttentionMarkerScanResult {
+        root: target_root.display().to_string(),
+        scanned_files,
+        matched_lines,
+        findings,
+        patterns: options.patterns.clone(),
     })
 }
 
-fn generated_asset_name_reason(path: &Path) -> Option<String> {
-    let lower_name = path
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if lower_name.ends_with(".map") {
-        return Some("source-map".to_owned());
+fn run_attention_marker_scan_single(
+    root: &Path,
+    skipped_roots: &[PathBuf],
+    options: &AttentionMarkerScanOptions,
+) -> Result<AttentionMarkerScanResult, RunnerError> {
+    options.validate()?;
+    let include = compile_glob_set(&options.include, "include")?;
+    let exclude = compile_glob_set(&options.exclude, "exclude")?;
+    let walk = build_scan_walk(root, options.respect_gitignore);
+    let patterns = compile_attention_marker_patterns(&options.patterns);
+    let mut findings = Vec::<AttentionMarkerFinding>::new();
+    let mut scanned_files = 0usize;
+    let mut matched_lines = 0usize;
+
+    for entry in walk.build() {
+        let entry = entry.map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "scan walk failed under {}: {error}",
+                root.display()
+            ))
+        })?;
+        if !entry
+            .file_type()
+            .map(|kind| kind.is_file())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let path = entry.path();
+        if skipped_roots
+            .iter()
+            .any(|skip_root| path.starts_with(skip_root))
+        {
+            continue;
+        }
+        let rel = path.strip_prefix(root).unwrap_or(path);
+        let rel_str = normalize_rel_path(rel);
+        if rel_str.is_empty() {
+            continue;
+        }
+        if should_skip_path(rel, &rel_str, include.as_ref(), exclude.as_ref()) {
+            continue;
+        }
+
+        let contents = std::fs::read_to_string(path).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "scan read failed for {}: {error}",
+                path.display()
+            ))
+        })?;
+        if is_generated_artifact(rel, &contents) {
+            continue;
+        }
+
+        scanned_files += 1;
+        for (line_number, raw_line) in contents.lines().enumerate() {
+            let line = raw_line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let mut line_has_match = false;
+            let mut matched_keys = BTreeSet::<String>::new();
+            for (severity, marker, marker_lower) in &patterns {
+                if !attention_marker_matches_line(raw_line, marker_lower) {
+                    continue;
+                }
+                let dedupe_key = marker_lower.trim_start_matches('@').to_owned();
+                if !matched_keys.insert(dedupe_key) {
+                    continue;
+                }
+                line_has_match = true;
+                findings.push(AttentionMarkerFinding {
+                    path: rel_str.clone(),
+                    line: line_number + 1,
+                    category: attention_marker_category(marker_lower),
+                    severity: *severity,
+                    marker: marker.clone(),
+                    snippet: trim_snippet(line, 120),
+                });
+            }
+            if line_has_match {
+                matched_lines += 1;
+            }
+        }
     }
-    if lower_name.contains(".min.") {
-        return Some("minified-asset".to_owned());
-    }
-    if GENERATED_ASSET_NAME_MARKERS
-        .iter()
-        .any(|marker| lower_name.contains(marker))
-    {
-        return Some("bundled-asset".to_owned());
-    }
-    None
+
+    findings.sort_by(|left, right| {
+        attention_marker_severity_rank(right.severity)
+            .cmp(&attention_marker_severity_rank(left.severity))
+            .then_with(|| left.path.cmp(&right.path))
+            .then_with(|| left.line.cmp(&right.line))
+            .then_with(|| left.marker.cmp(&right.marker))
+    });
+
+    Ok(AttentionMarkerScanResult {
+        root: root.display().to_string(),
+        scanned_files,
+        matched_lines,
+        findings,
+        patterns: options.patterns.clone(),
+    })
 }
 
 pub(super) fn format_bytes(bytes: usize) -> String {
@@ -1184,194 +744,6 @@ pub(super) fn format_bytes(bytes: usize) -> String {
     format!("{bytes} B")
 }
 
-fn is_probable_code_file(path: &Path) -> bool {
-    let ext = path.extension().and_then(OsStr::to_str).unwrap_or_default();
-    matches!(
-        ext,
-        "c" | "cc"
-            | "cpp"
-            | "cs"
-            | "css"
-            | "go"
-            | "h"
-            | "hpp"
-            | "java"
-            | "js"
-            | "jsx"
-            | "kt"
-            | "kts"
-            | "lua"
-            | "m"
-            | "mm"
-            | "php"
-            | "py"
-            | "rb"
-            | "rs"
-            | "scala"
-            | "sc"
-            | "sh"
-            | "sql"
-            | "swift"
-            | "ts"
-            | "tsx"
-            | "vue"
-            | "zsh"
-    )
-}
-
-fn is_probable_documentation_path(path: &Path) -> bool {
-    path.components().any(|component| {
-        DEFAULT_DOC_DIRS.contains(&component.as_os_str().to_string_lossy().as_ref())
-    })
-}
-
-fn is_probable_data_path(path: &Path) -> bool {
-    path.components().any(|component| {
-        DEFAULT_DATA_DIRS.contains(&component.as_os_str().to_string_lossy().as_ref())
-    })
-}
-
-fn is_probable_lockfile(path: &Path) -> bool {
-    path.file_name()
-        .and_then(OsStr::to_str)
-        .map(|name| DEFAULT_LOCK_FILE_NAMES.contains(&name.to_ascii_lowercase().as_str()))
-        .unwrap_or(false)
-}
-
-fn count_code_lines(path: &Path, contents: &str) -> usize {
-    let ext = path.extension().and_then(OsStr::to_str).unwrap_or_default();
-    match ext {
-        "py" | "rb" | "sh" | "toml" | "yaml" | "yml" | "zsh" => {
-            count_comment_filtered_lines(contents, Some("#"), None)
-        }
-        "sql" => count_comment_filtered_lines(contents, Some("--"), Some(("/*", "*/"))),
-        "html" | "xml" | "vue" => {
-            count_comment_filtered_lines(contents, None, Some(("<!--", "-->")))
-        }
-        "c" | "cc" | "cpp" | "cs" | "css" | "go" | "h" | "hpp" | "java" | "js" | "jsx" | "kt"
-        | "kts" | "m" | "mm" | "php" | "rs" | "scala" | "sc" | "swift" | "ts" | "tsx" => {
-            count_comment_filtered_lines(contents, Some("//"), Some(("/*", "*/")))
-        }
-        _ => contents
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .count(),
-    }
-}
-
-fn count_comment_filtered_lines(
-    contents: &str,
-    line_comment: Option<&str>,
-    block_comment: Option<(&str, &str)>,
-) -> usize {
-    let mut in_block_comment = false;
-    let mut count = 0usize;
-    for raw_line in contents.lines() {
-        let mut i = 0usize;
-        let mut has_code = false;
-        while i < raw_line.len() {
-            if in_block_comment {
-                if let Some((_, block_end)) = block_comment {
-                    if raw_line[i..].starts_with(block_end) {
-                        in_block_comment = false;
-                        i += block_end.len();
-                        continue;
-                    }
-                }
-                let ch = raw_line[i..]
-                    .chars()
-                    .next()
-                    .expect("unicode-safe block comment advance");
-                i += ch.len_utf8();
-                continue;
-            }
-            if let Some((block_start, _)) = block_comment {
-                if raw_line[i..].starts_with(block_start) {
-                    in_block_comment = true;
-                    i += block_start.len();
-                    continue;
-                }
-            }
-            if let Some(line_prefix) = line_comment {
-                if raw_line[i..].starts_with(line_prefix) {
-                    break;
-                }
-            }
-            let ch = raw_line[i..]
-                .chars()
-                .next()
-                .expect("unicode-safe line advance");
-            if !ch.is_whitespace() {
-                has_code = true;
-            }
-            i += ch.len_utf8();
-        }
-        if has_code {
-            count += 1;
-        }
-    }
-    count
-}
-
 #[cfg(test)]
-mod tests {
-    use super::{
-        count_code_lines, is_generated_artifact, normalize_rel_path, GodFileScanOptions,
-        GodFileSeverity, GodFileThresholds, Path,
-    };
-    use std::path::PathBuf;
-
-    #[test]
-    fn god_file_thresholds_validate_ordering() {
-        let mut options = GodFileScanOptions::default();
-        options.thresholds = GodFileThresholds {
-            warn: 300,
-            high: 250,
-            critical: 700,
-        };
-        let err = options
-            .validate()
-            .expect_err("unordered thresholds should fail");
-        assert!(err.to_string().contains("warn <= high <= critical"));
-    }
-
-    #[test]
-    fn count_code_lines_skips_comment_only_lines_for_slash_style_languages() {
-        let path = Path::new("src/app.ts");
-        let content =
-            "// comment\nconst ok = true;\n/* block */\nfunction run() {\n  return ok;\n}\n";
-        assert_eq!(count_code_lines(path, content), 4);
-    }
-
-    #[test]
-    fn count_code_lines_skips_comment_only_lines_for_hash_style_languages() {
-        let path = Path::new("script.py");
-        let content = "# comment\n\nvalue = 1\n# more\nprint(value)\n";
-        assert_eq!(count_code_lines(path, content), 2);
-    }
-
-    #[test]
-    fn generated_artifact_detection_uses_markers_and_minified_names() {
-        assert!(is_generated_artifact(
-            Path::new("src/generated.ts"),
-            "/* @generated */\nexport const ok = true;\n"
-        ));
-        assert!(is_generated_artifact(Path::new("app.min.js"), "const a=1;"));
-        assert!(!is_generated_artifact(
-            Path::new("src/app.rs"),
-            "fn main() {\n    println!(\"ok\");\n}\n"
-        ));
-    }
-
-    #[test]
-    fn normalize_rel_path_uses_forward_slashes() {
-        let path = PathBuf::from("src/demo.rs");
-        assert_eq!(normalize_rel_path(&path), "src/demo.rs");
-    }
-
-    #[test]
-    fn severity_serialization_contract_is_stable() {
-        let rendered = serde_json::to_string(&GodFileSeverity::Critical).expect("serialize");
-        assert_eq!(rendered, "\"critical\"");
-    }
-}
+#[path = "scan/tests.rs"]
+mod tests;

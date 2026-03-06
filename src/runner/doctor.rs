@@ -4,6 +4,7 @@ use super::{CatalogSelectionMode, LoadedCatalog, ManifestJsPackageManager, Runne
 
 mod conflicts;
 mod contracts;
+mod attention_markers;
 mod environment;
 mod explain;
 mod finding_templates;

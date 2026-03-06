@@ -154,6 +154,8 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
 
 `effigy doctor` preserves scanner-backed warning/high/critical findings in its own report model even when plain `effigy scan god-files` text output hides warning rows by default.
 
+The same normalization applies to `scan.generated-assets` and `scan.attention-markers` when those scanners are enabled for doctor.
+
 ## 4) Doctor Explain (`effigy.doctor.explain.v1`)
 
 ```json
@@ -509,7 +511,58 @@ Miss example (invalid env policy fallback):
 }
 ```
 
-## 14) Task Run (`effigy.task.run.v1`)
+## 14) Scan Attention Markers (`effigy.scan.attention-markers.v1`)
+
+```json
+{
+  "schema": "effigy.scan.attention-markers.v1",
+  "schema_version": 1,
+  "ok": true,
+  "scan": "attention-markers",
+  "format": "text",
+  "root": "/workspace/app",
+  "patterns": {
+    "warning": ["TODO", "REVIEW", "NOTE", "placeholder"],
+    "high": ["FIXME", "HACK", "@deprecated", "workaround"],
+    "critical": ["BUG", "SECURITY", "remove before release"]
+  },
+  "scanned_files": 142,
+  "matched_lines": 3,
+  "finding_count": 3,
+  "fail_on_findings": false,
+  "respect_gitignore": true,
+  "output_path": null,
+  "findings": [
+    {
+      "path": "src/app.ts",
+      "line": 18,
+      "category": "deferred-work",
+      "severity": "warning",
+      "marker": "TODO",
+      "snippet": "// TODO: split render path"
+    },
+    {
+      "path": "src/api/router.ts",
+      "line": 91,
+      "category": "deferred-work",
+      "severity": "high",
+      "marker": "FIXME",
+      "snippet": "// FIXME: remove fallback before merge"
+    },
+    {
+      "path": "src/legacy.rs",
+      "line": 12,
+      "category": "deprecation",
+      "severity": "high",
+      "marker": "@deprecated",
+      "snippet": "#[deprecated(note = \"use new_api\")]"
+    }
+  ],
+  "text": "Attention Markers\n\nroot: /workspace/app\nmarkers: warning=4 high=4 critical=3\nscanned-files: 142  matched-lines: 3  findings: 3\nseverity-counts: critical=0 high=2 warning=1\nwarning-rows-hidden: 1  use --show-warnings to list them\n\nFindings\nhigh  src/api/router.ts:91  deferred-work  [FIXME]  // FIXME: remove fallback before merge\nhigh  src/legacy.rs:12  deprecation  [@deprecated]  #[deprecated(note = \"use new_api\")]"
+}
+```
+
+## 15) Task Run (`effigy.task.run.v1`)
 
 ```json
 {

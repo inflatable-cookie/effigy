@@ -3,9 +3,11 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 
 use super::super::super::scan::{
-    catalog_scan_roots, load_root_generated_asset_options, load_root_god_file_options,
+    catalog_scan_roots, load_root_attention_marker_options, load_root_generated_asset_options,
+    load_root_god_file_options, render_attention_marker_markdown, render_attention_marker_text,
     render_generated_asset_markdown, render_generated_asset_text, render_god_file_markdown,
-    render_god_file_text, run_generated_asset_scan_workspace, run_god_file_scan_workspace,
+    render_god_file_text, run_attention_marker_scan_workspace,
+    run_generated_asset_scan_workspace, run_god_file_scan_workspace, AttentionMarkerScanOptions,
     GeneratedAssetScanOptions, GeneratedAssetThresholds, GodFileScanOptions, GodFileThresholds,
     ScanRenderFormat, TextRenderOptions,
 };
@@ -22,6 +24,9 @@ pub(super) fn run_scan_request(
         ScanCommand::GodFiles => run_god_files_request(request, target_root, catalogs),
         ScanCommand::GeneratedAssets => {
             run_generated_assets_request(request, target_root, catalogs)
+        }
+        ScanCommand::AttentionMarkers => {
+            run_attention_markers_request(request, target_root, catalogs)
         }
     }
 }
@@ -140,6 +145,64 @@ fn run_generated_assets_request(
     Ok(Some(rendered))
 }
 
+fn run_attention_markers_request(
+    request: ScanRequest,
+    target_root: &Path,
+    catalogs: &[LoadedCatalog],
+) -> Result<Option<String>, RunnerError> {
+    reject_threshold_overrides("attention-markers", &request)?;
+    let mut options = load_root_attention_marker_options(target_root)?;
+    apply_request_overrides_to_attention_markers(&mut options, &request);
+    options.validate()?;
+
+    let scan_roots = catalog_scan_roots(target_root, catalogs);
+    let result = run_attention_marker_scan_workspace(target_root, &scan_roots, &options)?;
+    let text_render_options = TextRenderOptions {
+        show_warnings: request.show_warnings,
+    };
+    let rendered_text = match options.format {
+        ScanRenderFormat::Text => render_attention_marker_text(&result, text_render_options),
+        ScanRenderFormat::Markdown => render_attention_marker_markdown(&result),
+    };
+    let display_output_path = selected_output_path(request.out.as_ref(), options.out.as_ref());
+    let resolved_output_path =
+        resolve_output_path(target_root, request.out.as_ref(), options.out.as_ref());
+    write_report(&resolved_output_path, &rendered_text)?;
+
+    let payload = schema_payload(
+        "effigy.scan.attention-markers.v1",
+        json!({
+            "scan": "attention-markers",
+            "format": options.format.as_str(),
+            "root": result.root,
+            "patterns": {
+                "warning": result.patterns.warning.clone(),
+                "high": result.patterns.high.clone(),
+                "critical": result.patterns.critical.clone(),
+            },
+            "scanned_files": result.scanned_files,
+            "matched_lines": result.matched_lines,
+            "finding_count": result.findings.len(),
+            "fail_on_findings": options.fail_on_findings,
+            "respect_gitignore": options.respect_gitignore,
+            "output_path": resolved_output_path.as_ref().map(|path| path.display().to_string()),
+            "findings": result.findings,
+            "text": rendered_text,
+        }),
+    );
+    let rendered = render_scan_response(
+        request.output_json,
+        display_output_path.as_ref(),
+        "attention-markers",
+        options.format,
+        result.findings.len(),
+        &payload,
+        payload["text"].as_str().expect("scan text payload"),
+    )?;
+    fail_on_findings_error(options.fail_on_findings, result.findings.len(), &rendered)?;
+    Ok(Some(rendered))
+}
+
 fn apply_request_overrides_to_god_files(options: &mut GodFileScanOptions, request: &ScanRequest) {
     apply_request_overrides(options, request);
 }
@@ -149,6 +212,27 @@ fn apply_request_overrides_to_generated_assets(
     request: &ScanRequest,
 ) {
     apply_request_overrides(options, request);
+}
+
+fn apply_request_overrides_to_attention_markers(
+    options: &mut AttentionMarkerScanOptions,
+    request: &ScanRequest,
+) {
+    if let Some(value) = request.format {
+        options.format = value;
+    }
+    if request.fail_on_findings {
+        options.fail_on_findings = true;
+    }
+    if request.no_gitignore {
+        options.respect_gitignore = false;
+    }
+    if !request.include.is_empty() {
+        options.include = request.include.clone();
+    }
+    if !request.exclude.is_empty() {
+        options.exclude = request.exclude.clone();
+    }
 }
 
 fn apply_request_overrides<T>(options: &mut T, request: &ScanRequest)
@@ -191,6 +275,15 @@ fn fail_on_findings_error(
             finding_count,
             rendered: rendered.to_owned(),
         });
+    }
+    Ok(())
+}
+
+fn reject_threshold_overrides(label: &str, request: &ScanRequest) -> Result<(), RunnerError> {
+    if request.warn.is_some() || request.high.is_some() || request.critical.is_some() {
+        return Err(RunnerError::task_invocation(format!(
+            "`scan {label}` does not accept threshold options"
+        )));
     }
     Ok(())
 }

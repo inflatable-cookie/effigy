@@ -186,3 +186,84 @@ fn run_doctor_reports_generated_assets_across_child_catalogs() {
         &["scan.generated-assets", "farmyard/dist/app.min.js", "180 B"],
     );
 }
+
+#[test]
+fn run_doctor_reports_attention_markers_when_scan_is_enabled() {
+    let root = temp_workspace("doctor-attention-markers-enabled");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.attention_markers]
+warning = ["TODO"]
+high = ["FIXME"]
+critical = ["BLOCKER"]
+"#,
+    );
+    fs::write(
+        root.join("src/app.ts"),
+        "// FIXME: remove workaround before release\n",
+    )
+    .expect("write source");
+
+    let err = run_doctor_task(root, &[])
+        .expect_err("doctor should fail on high-severity attention marker");
+
+    assert_doctor_non_zero_contains(
+        err,
+        &["scan.attention-markers", "src/app.ts:1", "[FIXME]"],
+    );
+}
+
+#[test]
+fn run_doctor_skips_attention_markers_when_doctor_flag_is_disabled() {
+    let root = temp_workspace("doctor-attention-markers-disabled");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.attention_markers]
+warning = ["TODO"]
+high = ["FIXME"]
+critical = ["BLOCKER"]
+doctor = false
+"#,
+    );
+    fs::write(
+        root.join("src/app.ts"),
+        "// FIXME: remove workaround before release\n",
+    )
+    .expect("write source");
+
+    let out = run_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
+
+    assert_output_excludes_all(&out, &["scan.attention-markers", "src/app.ts:1"]);
+}
+
+#[test]
+fn run_doctor_reports_attention_markers_across_child_catalogs() {
+    let root = temp_workspace("doctor-attention-markers-root-fanout");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
+        .expect("write root gitignore");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n[scan.attention_markers]\nwarning = [\"TODO\"]\nhigh = [\"FIXME\"]\ncritical = [\"BLOCKER\"]\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
+    fs::write(
+        farmyard.join("src/lib.rs"),
+        "// FIXME: split bootstrap path\n",
+    )
+    .expect("write source");
+
+    let err = run_doctor_task(root, &[])
+        .expect_err("doctor should fail on child-catalog attention marker");
+
+    assert_doctor_non_zero_contains(
+        err,
+        &["scan.attention-markers", "farmyard/src/lib.rs:1", "[FIXME]"],
+    );
+}

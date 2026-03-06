@@ -112,6 +112,6 @@ pub(super) const BUILTIN_TASKS: [(&str, &str); 12] = [
     ),
     (
         "scan",
-        "Run built-in repository scanners such as `god-files`",
+        "Run built-in repository scanners such as `god-files` and `attention-markers`",
     ),
 ];

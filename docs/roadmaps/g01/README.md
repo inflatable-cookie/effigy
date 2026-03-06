@@ -16,10 +16,11 @@ Historical delivered milestones:
 - `010-dag-lock-policy-baseline.md`
 - `011-watch-init-migrate-foundation.md`
 - `012-codebase-consolidation-and-health.md`
+- `013-effigy-northstar-doctrine-alignment.md`
 
-Current Northstar migration milestone:
+Current planned milestone:
 
-- `013-effigy-northstar-doctrine-alignment.md` (complete)
+- `014-attention-marker-scan-and-doctor-integration.md` (planned)
 
 Rules:
 

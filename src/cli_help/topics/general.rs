@@ -55,7 +55,8 @@ pub(crate) fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()>
             ],
             vec![
                 "effigy scan".to_owned(),
-                "Run built-in repository scanners such as `god-files`".to_owned(),
+                "Run built-in repository scanners such as `god-files` and `attention-markers`"
+                    .to_owned(),
             ],
             vec![
                 "effigy <task>".to_owned(),

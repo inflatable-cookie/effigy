@@ -122,6 +122,18 @@ effigy scan generated-assets --markdown --out reports/generated-assets.md
 Use this when you want to surface checked-in build/vendor outputs and other generated assets that are inflating the repo.
 `effigy doctor` also includes `scan.generated-assets` findings when `[scan.generated_assets].doctor = true`.
 
+Repository scan for TODO/FIXME/deprecation and deferred-work markers:
+
+```sh
+effigy scan attention-markers
+effigy scan attention-markers --show-warnings
+effigy scan attention-markers --markdown --out reports/attention-markers.md
+effigy --json scan attention-markers
+```
+
+Use this when you want explicit attention markers surfaced without relying on manual grep.
+`effigy doctor` also includes `scan.attention-markers` findings when `[scan.attention_markers].doctor = true`.
+
 Built-in test orchestration:
 
 ```sh
@@ -180,6 +192,7 @@ Examples:
 effigy --json tasks
 effigy --json doctor
 effigy --json scan god-files
+effigy --json scan attention-markers
 effigy --json test --plan
 ```
 

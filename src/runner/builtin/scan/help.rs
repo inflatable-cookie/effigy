@@ -10,6 +10,7 @@ pub(super) fn render_scan_help() -> String {
                     "effigy scan <subcommand> [options]",
                     "effigy scan god-files [--threshold <N>] [--markdown] [--out <PATH>]",
                     "effigy scan generated-assets [--threshold <BYTES>] [--markdown] [--out <PATH>]",
+                    "effigy scan attention-markers [--markdown] [--out <PATH>]",
                 ],
             },
             HelpSection::Bulleted {
@@ -17,6 +18,7 @@ pub(super) fn render_scan_help() -> String {
                 items: &[
                     "god-files : detect oversized code files using code-only line counts",
                     "generated-assets : report bulky vendored/generated artifacts that slipped into the repo",
+                    "attention-markers : detect TODO/FIXME/deprecation and deferred-work markers in code",
                 ],
             },
         ],
@@ -99,6 +101,44 @@ pub(super) fn render_generated_assets_help() -> String {
                     "terminal text hides warning rows and prints a warning count summary",
                     "markdown and json still include the full findings list",
                     "matches vendored/build paths, bundle/minified/source-map names, and generated markers",
+                ],
+            },
+        ],
+    )
+}
+
+pub(super) fn render_attention_markers_help() -> String {
+    render_titled_help(
+        "scan attention-markers",
+        &[
+            HelpSection::Plain {
+                heading: "Usage",
+                lines: &[
+                    "effigy scan attention-markers [--show-warnings] [--no-gitignore]",
+                    "effigy scan attention-markers [--markdown] [--out reports/attention-markers.md]",
+                    "effigy scan attention-markers [--json] [--fail-on-findings]",
+                ],
+            },
+            HelpSection::Bulleted {
+                heading: "Options",
+                items: &[
+                    "--include <GLOB> : include glob, repeatable",
+                    "--exclude <GLOB> : exclude glob, repeatable",
+                    "--markdown : render markdown instead of terminal text",
+                    "--out <PATH> : write rendered report to a file",
+                    "--fail-on-findings : return non-zero when findings exist",
+                    "--no-gitignore : ignore .gitignore/.ignore rules during traversal",
+                    "--show-warnings : include warning rows in terminal text output",
+                    "--json : render machine-readable scan payload",
+                ],
+            },
+            HelpSection::Bulleted {
+                heading: "Defaults",
+                items: &[
+                    "terminal text hides warning rows and prints a warning count summary",
+                    "markdown and json still include the full findings list",
+                    "detects TODO/FIXME/HACK/deprecation/workaround-style markers in source and test files",
+                    "common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts are skipped by default",
                 ],
             },
         ],

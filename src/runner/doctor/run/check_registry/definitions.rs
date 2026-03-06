@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use super::super::super::{
-    conflicts, environment, generated_assets, god_files, health, references, DoctorState,
-    ManifestSnapshot,
+    attention_markers, conflicts, environment, generated_assets, god_files, health, references,
+    DoctorState, ManifestSnapshot,
 };
 
 pub(super) struct DoctorCheckContext<'a> {
@@ -27,7 +27,7 @@ pub(super) struct DoctorCheckDefinition {
     pub(super) run: DoctorCheckFn,
 }
 
-const DOCTOR_CHECKS: [DoctorCheckDefinition; 6] = [
+const DOCTOR_CHECKS: [DoctorCheckDefinition; 7] = [
     DoctorCheckDefinition {
         name: "manifest_conflicts",
         run: run_manifest_conflicts_check,
@@ -47,6 +47,10 @@ const DOCTOR_CHECKS: [DoctorCheckDefinition; 6] = [
     DoctorCheckDefinition {
         name: "generated_assets",
         run: run_generated_assets_check,
+    },
+    DoctorCheckDefinition {
+        name: "attention_markers",
+        run: run_attention_markers_check,
     },
     DoctorCheckDefinition {
         name: "health_task",
@@ -93,6 +97,14 @@ fn run_god_files_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState
 
 fn run_generated_assets_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
     generated_assets::check_generated_assets(
+        context.resolved_root,
+        &context.manifest.parsed_catalogs,
+        state,
+    );
+}
+
+fn run_attention_markers_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
+    attention_markers::check_attention_markers(
         context.resolved_root,
         &context.manifest.parsed_catalogs,
         state,

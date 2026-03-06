@@ -9,6 +9,7 @@ use super::super::RunnerError;
 pub(super) enum ScanCommand {
     GodFiles,
     GeneratedAssets,
+    AttentionMarkers,
 }
 
 #[derive(Debug)]
@@ -35,6 +36,7 @@ pub(super) fn scan_candidate_mode(args: &[String]) -> Option<ScanCommand> {
     {
         Some("god-files") => Some(ScanCommand::GodFiles),
         Some("generated-assets") => Some(ScanCommand::GeneratedAssets),
+        Some("attention-markers") => Some(ScanCommand::AttentionMarkers),
         _ => None,
     }
 }
@@ -116,17 +118,21 @@ pub(super) fn parse_scan_request(
             command = Some(ScanCommand::GeneratedAssets);
             Ok(super::super::arg_parser::ParseLoopAction::Handled)
         }
+        other if command.is_none() && other == "attention-markers" => {
+            command = Some(ScanCommand::AttentionMarkers);
+            Ok(super::super::arg_parser::ParseLoopAction::Handled)
+        }
         _ => Ok(super::super::arg_parser::ParseLoopAction::Unknown),
     })?;
 
     if output_json && format == Some(ScanRenderFormat::Markdown) {
         return Err(RunnerError::task_invocation(
-            "`scan god-files` accepts either `--json` or `--markdown`, not both",
+            "`scan` accepts either `--json` or `--markdown`, not both",
         ));
     }
     let command = command.ok_or_else(|| {
         RunnerError::task_invocation(
-            "scan requires a subcommand (currently supported: `god-files`, `generated-assets`)",
+            "scan requires a subcommand (currently supported: `god-files`, `generated-assets`, `attention-markers`)",
         )
     })?;
 
