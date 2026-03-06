@@ -56,13 +56,12 @@ pub(super) fn check_attention_markers(
                 evidence,
                 remediation::RESOLVE_ATTENTION_MARKERS,
             ),
-            AttentionMarkerSeverity::High | AttentionMarkerSeverity::Critical => {
-                state.add_check_error(
+            AttentionMarkerSeverity::High | AttentionMarkerSeverity::Critical => state
+                .add_check_error(
                     check_id::SCAN_ATTENTION_MARKERS,
                     evidence,
                     remediation::RESOLVE_ATTENTION_MARKERS,
-                )
-            }
+                ),
         }
     }
 }
