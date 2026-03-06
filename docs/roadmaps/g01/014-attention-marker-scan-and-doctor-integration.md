@@ -2,7 +2,7 @@
 
 Generation: `g01`
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-03-06
 Depends on: 009, 012, 013
@@ -37,12 +37,12 @@ Without a dedicated scanner, this information remains scattered across repos and
 
 ## 2) Goals
 
-- [ ] Add `effigy scan attention-markers` as a first-class built-in scanner.
-- [ ] Detect explicit marker categories for deferred work, deprecations, and developer-attention comments.
-- [ ] Reuse the current scan traversal model, including child-catalog fanout and `.gitignore` handling.
-- [ ] Support text, markdown, and JSON output with stable schema versioning.
-- [ ] Integrate attention-marker findings into `effigy doctor`.
-- [ ] Make marker sets and severity bands configurable via `effigy.toml`.
+- [x] Add `effigy scan attention-markers` as a first-class built-in scanner.
+- [x] Detect explicit marker categories for deferred work, deprecations, and developer-attention comments.
+- [x] Reuse the current scan traversal model, including child-catalog fanout and `.gitignore` handling.
+- [x] Support text, markdown, and JSON output with stable schema versioning.
+- [x] Integrate attention-marker findings into `effigy doctor`.
+- [x] Make marker sets and severity bands configurable via `effigy.toml`.
 
 ## 3) Non-Goals
 
@@ -115,34 +115,34 @@ The command should allow CLI overrides for:
 ## 6) Execution Plan
 
 ### Batch 14.1 - Scanner Core
-- [ ] Add the `attention-markers` scan command and argument parsing.
-- [ ] Implement marker detection over the existing scan traversal pipeline.
-- [ ] Count `scanned-files`, `matched-lines`, and `findings`.
-- [ ] Reuse child-catalog workspace fanout and bounded ignore handling.
+- [x] Add the `attention-markers` scan command and argument parsing.
+- [x] Implement marker detection over the existing scan traversal pipeline.
+- [x] Count `scanned-files`, `matched-lines`, and `findings`.
+- [x] Reuse child-catalog workspace fanout and bounded ignore handling.
 
 ### Batch 14.2 - Output and Contracts
-- [ ] Add text rendering with warning-row suppression and `--show-warnings`.
-- [ ] Add markdown rendering and file output support.
-- [ ] Add schema-versioned JSON payloads and CLI envelope coverage.
-- [ ] Add manifest config support and schema docs for `[scan.attention_markers]`.
+- [x] Add text rendering with warning-row suppression and `--show-warnings`.
+- [x] Add markdown rendering and file output support.
+- [x] Add schema-versioned JSON payloads and CLI envelope coverage.
+- [x] Add manifest config support and schema docs for `[scan.attention_markers]`.
 
 ### Batch 14.3 - Doctor Integration
-- [ ] Add `scan.attention-markers` as a doctor-backed check.
-- [ ] Support doctor opt-out through `[scan.attention_markers].doctor = false`.
-- [ ] Preserve category/severity evidence in both doctor text and JSON output.
+- [x] Add `scan.attention-markers` as a doctor-backed check.
+- [x] Support doctor opt-out through `[scan.attention_markers].doctor = false`.
+- [x] Preserve category/severity evidence in both doctor text and JSON output.
 
 ### Batch 14.4 - Documentation and Validation
-- [ ] Update command docs, manifest cookbook, JSON examples, and snippets.
-- [ ] Add regression coverage for nested repos, `.gitignore` behavior, and default exclusions.
-- [ ] Add validation logs for the scan payload and doctor bridge if the feature lands in multiple batches.
+- [x] Update command docs, manifest cookbook, JSON examples, and snippets.
+- [x] Add regression coverage for nested repos, `.gitignore` behavior, and default exclusions.
+- [x] Add validation logs for the scan payload and doctor bridge if the feature lands in multiple batches.
 
 ## 7) Acceptance Criteria
 
-- [ ] `effigy scan attention-markers` finds explicit attention markers in source/test files across nested catalogs.
-- [ ] Default output is concise in terminal text and complete in markdown/JSON.
-- [ ] `effigy doctor` includes attention-marker findings when enabled.
-- [ ] Manifest config can tune marker families, severity bands, and output defaults.
-- [ ] Help/docs/contracts clearly describe default exclusions and warning-row behavior.
+- [x] `effigy scan attention-markers` finds explicit attention markers in source/test files across nested catalogs.
+- [x] Default output is concise in terminal text and complete in markdown/JSON.
+- [x] `effigy doctor` includes attention-marker findings when enabled.
+- [x] Manifest config can tune marker families, severity bands, and output defaults.
+- [x] Help/docs/contracts clearly describe default exclusions and warning-row behavior.
 
 ## 8) Risks and Mitigations
 
@@ -157,19 +157,22 @@ The command should allow CLI overrides for:
 
 ## 9) Deliverables
 
-- [ ] `effigy scan attention-markers`
-- [ ] `[scan.attention_markers]` manifest contract
-- [ ] `doctor` integration for `scan.attention-markers`
-- [ ] text/markdown/JSON contract coverage
-- [ ] updated command/config/docs coverage
+- [x] `effigy scan attention-markers`
+- [x] `[scan.attention_markers]` manifest contract
+- [x] `doctor` integration for `scan.attention-markers`
+- [x] text/markdown/JSON contract coverage
+- [x] updated command/config/docs coverage
 
 ## 10) Validation
 
-- [ ] `cargo test run_manifest_task_builtin_scan_attention_markers_ --lib`
-- [ ] `cargo test scan_contract_tests --lib`
-- [ ] `cargo test doctor_json_contract_ --lib`
-- [ ] targeted real-repo smoke run against at least one nested-catalog workspace
+- [x] `cargo test run_manifest_task_builtin_scan_ --lib`
+- [x] `cargo test scan_contract_tests --lib`
+- [x] `cargo test doctor_json_contract_ --lib`
+- [x] `cargo test cli_json_mode_scan_attention_markers_ --test cli_output_tests`
+- [x] `bash docs/scripts/check-vision-metadata.sh`
+- [x] Validation logs:
+  - `docs/logs/2026-03/06-091500-scan-attention-markers-envelope-and-doctor-validation.md`
 
 ## 11) Next Task
 
-Implement Batch 14.1 and 14.2 together so the first delivery includes a usable scanner, stable payload shape, and manifest/config wiring before doctor integration lands.
+Open `g01.015` for the next scan-family milestone or adjacent health-scanner follow-up.

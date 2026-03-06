@@ -20,7 +20,7 @@ Historical delivered milestones:
 
 Current planned milestone:
 
-- `014-attention-marker-scan-and-doctor-integration.md` (planned)
+- `014-attention-marker-scan-and-doctor-integration.md` (complete)
 
 Rules:
 
