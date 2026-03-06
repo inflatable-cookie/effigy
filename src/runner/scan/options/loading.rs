@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::runner::error::RunnerError;
-use crate::runner::manifest::config_sections::ManifestGeneratedInSrcConfig;
 use crate::runner::manifest::config_sections::ManifestDuplicateBlocksConfig;
+use crate::runner::manifest::config_sections::ManifestGeneratedInSrcConfig;
 use crate::runner::manifest::{
     config_sections::{
         ManifestAttentionMarkersConfig, ManifestCommentRatioConfig, ManifestGeneratedAssetsConfig,

@@ -15,12 +15,10 @@ use super::support::{
     classify_generated_in_src_severity, classify_severity, comment_ratio_counts,
     comment_ratio_severity_rank, compile_attention_marker_patterns, compile_glob_set,
     compile_stale_suppression_patterns, count_code_lines, generated_asset_reason,
-    generated_asset_severity_rank,
-    generated_in_src_category_rank, generated_in_src_reason, generated_in_src_severity_rank,
-    is_generated_artifact, read_asset_sample, rebase_finding_path, severity_rank,
-    stale_suppression_category, stale_suppression_matches_line,
-    stale_suppression_severity_rank,
-    should_skip_generated_asset_path, should_skip_path, trim_snippet, walk_scan_files,
+    generated_asset_severity_rank, generated_in_src_category_rank, generated_in_src_reason,
+    generated_in_src_severity_rank, is_generated_artifact, read_asset_sample, rebase_finding_path,
+    severity_rank, should_skip_generated_asset_path, should_skip_path, stale_suppression_category,
+    stale_suppression_matches_line, stale_suppression_severity_rank, trim_snippet, walk_scan_files,
     workspace_scan_roots,
 };
 use crate::runner::error::RunnerError;

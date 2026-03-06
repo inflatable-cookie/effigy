@@ -353,8 +353,11 @@ fn cli_json_mode_scan_generated_in_src_wraps_scan_payload() {
     let root = temp_workspace("cli-json-scan-generated-in-src-success");
     fs::write(root.join("effigy.toml"), "").expect("write manifest");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
-    fs::write(root.join("src/client.generated.ts"), "export const generated = true;\n")
-        .expect("write source");
+    fs::write(
+        root.join("src/client.generated.ts"),
+        "export const generated = true;\n",
+    )
+    .expect("write source");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")
@@ -373,7 +376,10 @@ fn cli_json_mode_scan_generated_in_src_wraps_scan_payload() {
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["command"]["kind"], "task");
     assert_eq!(parsed["command"]["name"], "scan");
-    assert_eq!(parsed["result"]["schema"], "effigy.scan.generated-in-src.v1");
+    assert_eq!(
+        parsed["result"]["schema"],
+        "effigy.scan.generated-in-src.v1"
+    );
     assert_eq!(parsed["result"]["scan"], "generated-in-src");
     assert_eq!(parsed["result"]["finding_count"], 1);
 }
@@ -383,8 +389,11 @@ fn cli_json_mode_scan_generated_in_src_non_zero_wraps_rendered_scan_payload_in_e
     let root = temp_workspace("cli-json-scan-generated-in-src-failure");
     fs::write(root.join("effigy.toml"), "").expect("write manifest");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
-    fs::write(root.join("src/client.generated.ts"), "export const generated = true;\n")
-        .expect("write source");
+    fs::write(
+        root.join("src/client.generated.ts"),
+        "export const generated = true;\n",
+    )
+    .expect("write source");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")

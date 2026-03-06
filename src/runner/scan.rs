@@ -6,7 +6,7 @@ pub(in crate::runner) mod execution;
 pub(in crate::runner) mod model;
 #[path = "scan/options.rs"]
 pub(in crate::runner) mod options;
-#[path = "scan/render.rs"]
+#[path = "scan/render/mod.rs"]
 pub(in crate::runner) mod render;
 #[path = "scan/support.rs"]
 mod support;

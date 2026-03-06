@@ -97,9 +97,9 @@ pub(super) fn validate_scan_section(context: &mut SchemaContext<'_, '_>, scan: &
             "duplicate_blocks",
             "comment_ratio",
             "generated_assets",
-        "generated_in_src",
-        "attention_markers",
-        "stale_suppressions",
+            "generated_in_src",
+            "attention_markers",
+            "stale_suppressions",
         ],
     );
     validate_threshold_scan_section(context, scan_table.get("god_files"), "scan.god_files");

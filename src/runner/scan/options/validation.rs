@@ -41,7 +41,11 @@ impl GeneratedInSrcScanOptions {
                 "`scan.generated_in_src.source_roots` requires at least one configured glob",
             ));
         }
-        if self.source_roots.iter().any(|value| value.trim().is_empty()) {
+        if self
+            .source_roots
+            .iter()
+            .any(|value| value.trim().is_empty())
+        {
             return Err(RunnerError::task_invocation(
                 "`scan.generated_in_src.source_roots` must contain non-empty glob strings",
             ));

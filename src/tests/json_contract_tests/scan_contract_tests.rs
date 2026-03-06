@@ -455,7 +455,10 @@ fn builtin_scan_stale_suppressions_json_contract_has_versioned_shape() {
     let root = temp_workspace("scan-stale-suppressions-json-contract");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
     write_manifest(&root.join("effigy.toml"), "");
-    write_attention_file(&root.join("src/app.ts"), &["// eslint-disable-next-line no-console"]);
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &["// eslint-disable-next-line no-console"],
+    );
 
     let parsed = run_invocation_json(root, "scan", &["stale-suppressions", "--json"]);
     assert_schema_v1(&parsed, "effigy.scan.stale-suppressions.v1");

@@ -9,8 +9,8 @@ use super::super::scan::model::{
     GeneratedAssetFinding, GeneratedAssetScanOptions, GeneratedAssetScanResult,
     GeneratedAssetSeverity, GeneratedInSrcFinding, GeneratedInSrcScanOptions,
     GeneratedInSrcScanResult, GeneratedInSrcSeverity, GodFileFinding, GodFileScanOptions,
-    GodFileScanResult, GodFileSeverity, StaleSuppressionFinding,
-    StaleSuppressionScanOptions, StaleSuppressionScanResult, StaleSuppressionSeverity,
+    GodFileScanResult, GodFileSeverity, StaleSuppressionFinding, StaleSuppressionScanOptions,
+    StaleSuppressionScanResult, StaleSuppressionSeverity,
 };
 use super::super::scan::options::catalog_scan_roots;
 use super::report::{DoctorSeverity, DoctorState};

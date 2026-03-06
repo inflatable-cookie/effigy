@@ -694,15 +694,16 @@ doctor = true
         .any(|finding| finding["severity"] == "warning"
             && finding["evidence"]
                 .as_str()
-                .is_some_and(|evidence| evidence.contains("[warning] lint-disable [eslint-disable-next-line]"))));
+                .is_some_and(|evidence| evidence
+                    .contains("[warning] lint-disable [eslint-disable-next-line]"))));
     assert!(scan_section["findings"]
         .as_array()
         .expect("section findings")
         .iter()
         .any(|finding| finding["severity"] == "error"
-            && finding["evidence"]
-                .as_str()
-                .is_some_and(|evidence| evidence.contains("[critical] lint-disable [eslint-disable]"))));
+            && finding["evidence"].as_str().is_some_and(
+                |evidence| evidence.contains("[critical] lint-disable [eslint-disable]")
+            )));
 
     let flattened_scan_findings = parsed["findings"]
         .as_array()
