@@ -17,6 +17,7 @@ fn doctor_check_registry_order_is_stable() {
             "environment_tools",
             "task_references",
             "god_files",
+            "generated_assets",
             "health_task",
         ]
     );
@@ -60,6 +61,7 @@ fn doctor_check_registry_is_executor_composable_without_control_flow_changes() {
             "environment_tools",
             "task_references",
             "god_files",
+            "generated_assets",
             "health_task",
         ]
     );
