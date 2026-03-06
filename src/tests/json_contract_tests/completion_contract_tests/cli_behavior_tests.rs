@@ -1,6 +1,6 @@
 use super::prelude::{
-    run_completion_task, temp_workspace, test_lock, with_completion_cache_default, write_manifest,
-    fs, RunnerError,
+    fs, run_completion_task, temp_workspace, test_lock, with_completion_cache_default,
+    write_manifest, RunnerError,
 };
 
 #[test]

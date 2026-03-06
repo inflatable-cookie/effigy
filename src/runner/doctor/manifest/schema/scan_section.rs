@@ -12,7 +12,12 @@ pub(super) fn validate_scan_section(context: &mut SchemaContext<'_, '_>, scan: &
         context.unsupported_value("scan", SchemaContext::value_type(scan), "expected table");
         return;
     };
-    validate_allowed_keys(context, "scan", scan_table, &["god_files", "generated_assets"]);
+    validate_allowed_keys(
+        context,
+        "scan",
+        scan_table,
+        &["god_files", "generated_assets"],
+    );
     if let Some(god_files) = scan_table.get("god_files") {
         validate_god_files_section(context, god_files);
     }
@@ -136,11 +141,7 @@ fn validate_generated_assets_section(context: &mut SchemaContext<'_, '_>, value:
         table.get("respect_gitignore"),
         "scan.generated_assets.respect_gitignore",
     );
-    validate_optional_boolean_field(
-        context,
-        table.get("doctor"),
-        "scan.generated_assets.doctor",
-    );
+    validate_optional_boolean_field(context, table.get("doctor"), "scan.generated_assets.doctor");
     if let Some(include) = table.get("include") {
         validate_non_empty_string_or_array_of_non_empty_strings(
             context,

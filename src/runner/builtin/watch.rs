@@ -6,8 +6,8 @@ use crate::TaskInvocation;
 use super::super::execute::run_manifest_task_with_cwd;
 use super::super::locking::{acquire_scopes, LockScope};
 use super::super::{RunnerError, TaskRuntimeArgs};
-use super::command_spec::run_builtin_command;
-use super::{reject_verbose_root_for_builtin, render_builtin_help_topic};
+use super::command_spec::run_passthrough_builtin_command;
+use super::render_builtin_help_topic;
 
 mod output;
 #[path = "watch/request.rs"]
@@ -26,11 +26,11 @@ pub(super) fn run_builtin_watch(
     runtime_args: &TaskRuntimeArgs,
     target_root: &Path,
 ) -> Result<Option<String>, RunnerError> {
-    reject_verbose_root_for_builtin(&task.name, runtime_args)?;
-    run_builtin_command(
-        &runtime_args.passthrough,
+    run_passthrough_builtin_command(
+        &task.name,
+        runtime_args,
         |output_json| render_builtin_help_topic(HelpTopic::Watch, "watch", output_json),
-        || parse_watch_request(task, &runtime_args.passthrough),
+        |args| parse_watch_request(task, args),
         |request| run_watch_request(request, target_root),
     )
 }

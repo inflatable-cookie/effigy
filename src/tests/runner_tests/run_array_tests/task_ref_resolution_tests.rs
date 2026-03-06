@@ -1,12 +1,10 @@
 use super::prelude::{
-    assert_run_array_builtin_test_task_ref_case_table,
-    assert_run_array_task_output_case_table, assert_run_array_task_output_derived_case_table,
-    assert_run_array_validate_marker_case_table,
-    assert_run_array_validate_task_ref_parse_error_case_table,
+    assert_run_array_builtin_test_task_ref_case_table, assert_run_array_task_output_case_table,
+    assert_run_array_task_output_derived_case_table, assert_run_array_validate_marker_case_table,
+    assert_run_array_validate_task_ref_parse_error_case_table, fs,
     write_capture_task_ref_validate_manifest, write_catalog_builtin_test_suite_manifest,
-    write_manifest, write_validate_manifest, BuiltinTestTaskRefCase, Path,
-    RunArrayTaskOutputCase, RunArrayTaskOutputDerivedCase, RunArrayTaskRefParseErrorCase,
-    RunArrayValidateMarkerCase, fs,
+    write_manifest, write_validate_manifest, BuiltinTestTaskRefCase, Path, RunArrayTaskOutputCase,
+    RunArrayTaskOutputDerivedCase, RunArrayTaskRefParseErrorCase, RunArrayValidateMarkerCase,
 };
 
 fn setup_task_ref_inline_args(root: &Path, marker: &Path) {

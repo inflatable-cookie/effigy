@@ -54,11 +54,12 @@ pub(super) fn check_generated_assets(
                 evidence,
                 remediation::REMOVE_OR_IGNORE_GENERATED_ASSETS,
             ),
-            GeneratedAssetSeverity::High | GeneratedAssetSeverity::Critical => state.add_check_error(
-                check_id::SCAN_GENERATED_ASSETS,
-                evidence,
-                remediation::REMOVE_OR_IGNORE_GENERATED_ASSETS,
-            ),
+            GeneratedAssetSeverity::High | GeneratedAssetSeverity::Critical => state
+                .add_check_error(
+                    check_id::SCAN_GENERATED_ASSETS,
+                    evidence,
+                    remediation::REMOVE_OR_IGNORE_GENERATED_ASSETS,
+                ),
         }
     }
 }

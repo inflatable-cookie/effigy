@@ -3,8 +3,8 @@ use std::path::Path;
 use crate::{HelpTopic, TaskInvocation, TasksArgs};
 
 use super::super::{run_tasks, RunnerError, TaskRuntimeArgs};
-use super::command_spec::run_builtin_command;
-use super::{reject_verbose_root_for_builtin, render_builtin_help_topic};
+use super::command_spec::run_passthrough_builtin_command;
+use super::render_builtin_help_topic;
 #[path = "tasks/request.rs"]
 mod request;
 
@@ -14,11 +14,11 @@ pub(super) fn run_builtin_tasks(
     target_root: &Path,
     catalogs_compat_alias: bool,
 ) -> Result<Option<String>, RunnerError> {
-    reject_verbose_root_for_builtin(&task.name, runtime_args)?;
-    run_builtin_command(
-        &runtime_args.passthrough,
+    run_passthrough_builtin_command(
+        &task.name,
+        runtime_args,
         |output_json| render_builtin_help_topic(HelpTopic::Tasks, "tasks", output_json),
-        || request::parse_tasks_request(task, &runtime_args.passthrough),
+        |args| request::parse_tasks_request(task, args),
         |request: request::TasksRequest| {
             if !request.output_json && !request.pretty_json {
                 return Err(RunnerError::task_invocation(format!(
