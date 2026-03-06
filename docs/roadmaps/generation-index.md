@@ -8,7 +8,7 @@ Updated: 2026-03-06
 - `g01`
   - Holds the imported Effigy implementation roadmap corpus `001` through `012`.
   - `013` captures the Northstar doctrine alignment batch.
-  - `014` opens the planned attention-marker scan and doctor integration milestone.
+  - `014` captures the completed attention-marker scan and doctor integration milestone.
 
 ## Rollover rule
 
