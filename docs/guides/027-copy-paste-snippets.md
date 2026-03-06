@@ -210,6 +210,33 @@ run = "composer global exec effigy -- {request} {args}"
 
 Use only when unresolved selectors must forward to legacy tooling.
 
+## 8) Oversized File Scanner Config
+
+```toml
+[scan.god_files]
+warn = 250
+high = 400
+critical = 700
+doctor = true
+respect_gitignore = true
+include = ["src/**", "app/**"]
+exclude = ["docs/**", "dist/**", "coverage/**"]
+```
+
+Run:
+
+```sh
+effigy scan god-files
+effigy scan god-files --show-warnings
+effigy scan god-files --fail-on-findings
+effigy scan god-files --markdown --out reports/god-files.md
+effigy scan generated-assets
+effigy scan generated-assets --show-warnings
+effigy scan generated-assets --markdown --out reports/generated-assets.md
+```
+
+Default text mode hides warning rows and prints a warning count summary. Use `--show-warnings` when you need the full terminal list.
+
 ## Related Guides
 
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)

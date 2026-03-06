@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    builtin_test_max_parallel, discover_catalogs, parse_task_runtime_args, temp_workspace,
+    write_root_manifest, PathBuf, TaskRuntimeArgs,
+};
 
 #[test]
 fn parse_task_runtime_args_extracts_repo_verbose_and_passthrough() {

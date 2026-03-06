@@ -8,11 +8,13 @@ pub(in crate::runner) mod check_id {
         "manifest.schema.unsupported_value";
     pub(in crate::runner) const MANIFEST_CONFLICTS: &str = "manifest.conflicts";
     pub(in crate::runner) const TASK_REFERENCES_RESOLVE: &str = "tasks.references.resolve";
+    pub(in crate::runner) const SCAN_GOD_FILES: &str = "scan.god-files";
+    pub(in crate::runner) const SCAN_GENERATED_ASSETS: &str = "scan.generated-assets";
     pub(in crate::runner) const HEALTH_TASK_DISCOVERY: &str = "health.task.discovery";
     pub(in crate::runner) const HEALTH_TASK_EXECUTE: &str = "health.task.execute";
 }
 
-pub(in crate::runner) const ALL_CHECK_IDS: [&str; 9] = [
+pub(in crate::runner) const ALL_CHECK_IDS: [&str; 11] = [
     check_id::WORKSPACE_ROOT_RESOLUTION,
     check_id::ENVIRONMENT_TOOLS_REQUIRED,
     check_id::MANIFEST_PARSE,
@@ -20,6 +22,8 @@ pub(in crate::runner) const ALL_CHECK_IDS: [&str; 9] = [
     check_id::MANIFEST_SCHEMA_UNSUPPORTED_VALUE,
     check_id::MANIFEST_CONFLICTS,
     check_id::TASK_REFERENCES_RESOLVE,
+    check_id::SCAN_GOD_FILES,
+    check_id::SCAN_GENERATED_ASSETS,
     check_id::HEALTH_TASK_DISCOVERY,
     check_id::HEALTH_TASK_EXECUTE,
 ];
@@ -44,6 +48,10 @@ pub(in crate::runner) mod remediation {
         "Update task reference to an existing task selector.";
     pub(in crate::runner) const REFERENCE_RUNNABLE_TASK: &str =
         "Add a `run` command to the referenced task or reference a runnable task.";
+    pub(in crate::runner) const SPLIT_GOD_FILES: &str =
+        "Split oversized files into smaller modules/components or raise thresholds intentionally.";
+    pub(in crate::runner) const REMOVE_OR_IGNORE_GENERATED_ASSETS: &str =
+        "Remove bulky generated/vendor artifacts from versioned paths, tighten ignore rules, or raise thresholds intentionally.";
     pub(in crate::runner) const SCHEMA_REMOVE_UNSUPPORTED_KEYS: &str =
         "Remove/rename unsupported keys to match `effigy config --schema`.";
     pub(in crate::runner) const SCHEMA_TABLE_ROOT_REQUIRED: &str =

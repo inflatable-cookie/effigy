@@ -1,4 +1,3 @@
-mod bridges;
 mod builtin;
 mod cache;
 mod catalog;
@@ -39,18 +38,8 @@ use model::{
 pub(super) const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize =
     model::DEFAULT_BUILTIN_TEST_MAX_PARALLEL;
 
-use bridges::run_manifest_task_with_cwd;
 pub use entrypoints::{resolve_command_root, run_command, run_doctor, run_tasks};
 pub use error::RunnerError;
-#[cfg(test)]
-pub(in crate::runner) use test_support::{
-    builtin_test_max_parallel, discover_catalogs, parse_completion_contract_request,
-    parse_config_contract_request, parse_task_reference_invocation, parse_task_runtime_args,
-    parse_task_selector, parse_unlock_contract_request, parse_watch_contract_request,
-    CompletionParseContract, ConfigParseContract,
-};
-#[cfg(test)]
-pub(crate) use test_support::{DoctorArgs, TaskInvocation, TasksArgs};
 
 #[cfg(test)]
 #[path = "../tests/runner_tests.rs"]

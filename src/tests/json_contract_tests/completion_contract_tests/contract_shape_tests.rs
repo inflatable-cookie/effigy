@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_candidates_cache_policy, assert_schema_v1, run_completion_task, run_invocation_json,
+    temp_workspace, test_lock, with_completion_cache_default, write_manifest, fs,
+};
 
 #[test]
 fn builtin_completion_json_contract_has_versioned_shape() {

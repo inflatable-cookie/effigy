@@ -96,6 +96,32 @@ effigy doctor --verbose
 effigy doctor --repo /path/to/workspace app/build -- --watch
 ```
 
+`effigy doctor` still includes `scan.god-files` findings when `[scan.god_files].doctor = true`, including warning-level findings. The warning-row hiding change only affects plain `effigy scan god-files` terminal output.
+
+Repository scan for oversized code files:
+
+```sh
+effigy scan god-files
+effigy scan god-files --show-warnings
+effigy scan god-files --threshold 300 --fail-on-findings
+effigy scan god-files --markdown --out reports/god-files.md
+```
+
+Default terminal output summarizes warning-level files without listing every warning row. Use `--show-warnings` when you want the full terminal list.
+If you want the curated health view instead, use `effigy doctor`; if you want the raw scanner payload for CI or reports, use `effigy --json scan god-files`.
+
+Repository scan for bulky vendored/generated artifacts:
+
+```sh
+effigy scan generated-assets
+effigy scan generated-assets --show-warnings
+effigy scan generated-assets --threshold 1000000 --fail-on-findings
+effigy scan generated-assets --markdown --out reports/generated-assets.md
+```
+
+Use this when you want to surface checked-in build/vendor outputs and other generated assets that are inflating the repo.
+`effigy doctor` also includes `scan.generated-assets` findings when `[scan.generated_assets].doctor = true`.
+
 Built-in test orchestration:
 
 ```sh
@@ -153,6 +179,7 @@ Examples:
 ```sh
 effigy --json tasks
 effigy --json doctor
+effigy --json scan god-files
 effigy --json test --plan
 ```
 

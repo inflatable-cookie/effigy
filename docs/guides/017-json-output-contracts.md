@@ -69,6 +69,8 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.tasks.filtered.v1`
 - `effigy.doctor.v1`
 - `effigy.doctor.explain.v1`
+- `effigy.scan.god-files.v1`
+- `effigy.scan.generated-assets.v1`
 - `effigy.config.v1`
 - `effigy.test.plan.v1`
 - `effigy.test.results.v1`
@@ -88,6 +90,8 @@ effigy --json tasks --task test
 effigy --json tasks --resolve catalog-a/api
 effigy --json doctor
 effigy --json doctor --repo /path/to/workspace catalog-a/build -- --watch
+effigy --json scan god-files
+effigy --json scan generated-assets
 effigy --json config
 effigy --json config --schema --target test
 effigy --json test --plan
@@ -119,6 +123,12 @@ See `026-json-payload-examples.md` for realistic sample responses for each schem
   - `env` when `EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS` is valid
   - `env_invalid` when that env var is set but malformed (falls back to default TTL)
 - `manifest_count` (number): number of manifest sources included in candidate discovery.
+
+### Doctor vs Scan Payloads
+
+- `effigy --json doctor` is the integrated health report. Scanner-backed findings like `scan.god-files` are normalized into doctor `sections` and flattened `findings`.
+- `effigy --json scan god-files` is the raw scanner payload. Use it when you need the full findings list, scan-local text snapshot, or report-output metadata.
+- `effigy --json scan generated-assets` is the raw bulky-artifact payload. Use it when you need the vendored/generated asset list without doctor normalization.
 
 ## Contract Validation
 

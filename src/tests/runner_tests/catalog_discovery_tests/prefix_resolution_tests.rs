@@ -1,4 +1,8 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_builtin_ok_empty, assert_output_contains_all, create_workspace_dir,
+    create_workspace_path, run_builtin_ok, setup_root_and_farmyard_ping, temp_workspace,
+    write_catalog_tasks,
+};
 
 #[test]
 fn run_manifest_task_prefixed_uses_named_catalog() {

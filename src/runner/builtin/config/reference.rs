@@ -26,6 +26,11 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Run
         color_enabled,
         docs::shell_lines().iter().copied(),
     )?;
+    emit_reference_lines(
+        &mut renderer,
+        color_enabled,
+        docs::scan_lines().iter().copied(),
+    )?;
 
     renderer.section("Built-in Test")?;
     emit_reference_lines(

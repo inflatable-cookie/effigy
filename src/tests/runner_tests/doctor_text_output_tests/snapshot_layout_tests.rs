@@ -1,4 +1,8 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_output_contains_all, assert_output_excludes_all, create_workspace_dir,
+    doctor_nonzero_rendered, run_builtin_ok, run_doctor_err_from_cwd,
+    setup_doctor_explain_catalog_workspace, temp_workspace, write_manifest, write_root_manifest,
+};
 
 #[test]
 fn run_doctor_text_output_has_blank_line_between_sections() {

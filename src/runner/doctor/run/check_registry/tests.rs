@@ -16,6 +16,7 @@ fn doctor_check_registry_order_is_stable() {
             "manifest_conflicts",
             "environment_tools",
             "task_references",
+            "god_files",
             "health_task",
         ]
     );
@@ -58,6 +59,7 @@ fn doctor_check_registry_is_executor_composable_without_control_flow_changes() {
             "manifest_conflicts",
             "environment_tools",
             "task_references",
+            "god_files",
             "health_task",
         ]
     );

@@ -1,4 +1,4 @@
-pub(super) use super::super::prelude::*;
+pub(super) use super::super::prelude::{execution::*, harness::*, json::*, runtime::*};
 
 pub(super) fn with_completion_cache_default() -> EnvGuard {
     EnvGuard::set_many(&[("EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS", None)])

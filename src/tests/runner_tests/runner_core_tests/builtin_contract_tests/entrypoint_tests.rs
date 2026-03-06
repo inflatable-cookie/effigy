@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_builtin_error_contract_case_table, assert_builtin_help_case_table,
+    BuiltinContractErrorCase, BuiltinHelpCase,
+};
 
 #[test]
 fn run_manifest_task_builtin_entrypoint_help_json_contract_table() {
@@ -34,6 +37,12 @@ fn run_manifest_task_builtin_entrypoint_help_json_contract_table() {
             expected: &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"watch\""],
         },
         BuiltinHelpCase {
+            workspace: "builtin-entrypoint-scan-help-json",
+            command: "scan",
+            args: &["god-files", "--help", "--json", "--wat"],
+            expected: &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"scan\""],
+        },
+        BuiltinHelpCase {
             workspace: "builtin-entrypoint-unlock-help-json",
             command: "unlock",
             args: &["--help", "--json", "--wat"],
@@ -64,6 +73,12 @@ fn run_manifest_task_builtin_entrypoint_unknown_argument_contract_table() {
             command: "watch",
             args: &["--wat"],
             expected: &["unknown argument(s) for built-in `watch`: --wat"],
+        },
+        BuiltinContractErrorCase {
+            workspace: "builtin-entrypoint-scan-unknown-arg",
+            command: "scan",
+            args: &["god-files", "--wat"],
+            expected: &["unknown argument(s) for built-in `scan`: --wat"],
         },
         BuiltinContractErrorCase {
             workspace: "builtin-entrypoint-unlock-unknown-arg",

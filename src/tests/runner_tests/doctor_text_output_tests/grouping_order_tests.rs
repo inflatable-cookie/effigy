@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_output_contains_all, create_workspace_dir, doctor_nonzero_rendered, fs, run_builtin_err,
+    run_doctor_err_from_cwd, temp_workspace, write_root_manifest,
+};
 
 #[test]
 fn run_doctor_verbose_text_output_includes_per_finding_entries() {

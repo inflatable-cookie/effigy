@@ -18,6 +18,7 @@ pub(super) enum ConfigSchemaTarget {
     Test,
     Tasks,
     Defer,
+    Scan,
     Shell,
 }
 
@@ -28,6 +29,7 @@ impl ConfigSchemaTarget {
             Self::Test => "test",
             Self::Tasks => "tasks",
             Self::Defer => "defer",
+            Self::Scan => "scan",
             Self::Shell => "shell",
         }
     }
@@ -50,11 +52,12 @@ impl ConfigTestRunner {
     }
 }
 
-const CONFIG_TARGET_CHOICES: [(&str, ConfigSchemaTarget); 5] = [
+const CONFIG_TARGET_CHOICES: [(&str, ConfigSchemaTarget); 6] = [
     ("package_manager", ConfigSchemaTarget::PackageManager),
     ("test", ConfigSchemaTarget::Test),
     ("tasks", ConfigSchemaTarget::Tasks),
     ("defer", ConfigSchemaTarget::Defer),
+    ("scan", ConfigSchemaTarget::Scan),
     ("shell", ConfigSchemaTarget::Shell),
 ];
 
@@ -90,7 +93,7 @@ pub(super) fn parse_config_request(
             target = Some(parser.builtin_choice_flag_value(
                 "config",
                 "--target",
-                "package_manager, test, tasks, defer, shell",
+                "package_manager, test, tasks, defer, scan, shell",
                 |value| BuiltinArgParser::choice_ignore_ascii_case(value, &CONFIG_TARGET_CHOICES),
             )?);
             return Ok(ParseLoopAction::Handled);

@@ -16,6 +16,9 @@ mod help;
 mod request;
 mod scripts;
 mod surface;
+#[cfg(test)]
+#[path = "completion/test_support.rs"]
+pub(in crate::runner) mod test_support;
 
 use candidates::run_completion_candidates;
 use help::{render_completion_candidates_help, render_completion_help};
@@ -69,9 +72,3 @@ pub(super) fn run_builtin_completion(
         },
     )
 }
-
-#[cfg(test)]
-pub(in crate::runner) use request::CompletionParseContract;
-
-#[cfg(test)]
-pub(in crate::runner) use request::parse_completion_contract_request;

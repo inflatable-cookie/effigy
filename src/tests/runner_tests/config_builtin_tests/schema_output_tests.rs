@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_output_contains_all, assert_output_excludes_all, run_config_ok,
+    workspace_with_empty_manifest,
+};
 
 #[test]
 fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
@@ -67,6 +70,31 @@ fn run_manifest_task_builtin_config_schema_target_tasks_includes_quoted_task_ref
             "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
         ],
     );
+}
+
+#[test]
+fn run_manifest_task_builtin_config_schema_target_scan_prints_god_files_section() {
+    let root = workspace_with_empty_manifest("builtin-config-schema-target-scan");
+
+    let out = run_config_ok(root, &["--schema", "--target", "scan"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "(scan target)",
+            "[scan.god_files]",
+            "warn = 250",
+            "high = 400",
+            "critical = 700",
+            "doctor = true",
+            "respect_gitignore = true",
+            "[scan.generated_assets]",
+            "warn = 1000000",
+            "high = 5000000",
+            "critical = 20000000",
+            "doctor = true",
+        ],
+    );
+    assert_output_excludes_all(&out, &["[tasks]"]);
 }
 
 #[test]

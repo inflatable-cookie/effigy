@@ -6,13 +6,13 @@ pub(super) use crate::{
 };
 pub(super) use std::path::PathBuf;
 
-pub(super) fn render_help_text(topic: HelpTopic) -> String {
+pub(crate) fn render_help_text(topic: HelpTopic) -> String {
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
     render_help(&mut renderer, topic).expect("help render");
     String::from_utf8(renderer.into_inner()).expect("utf8")
 }
 
-pub(super) fn render_cli_header_text(root: &str) -> String {
+pub(crate) fn render_cli_header_text(root: &str) -> String {
     let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
     render_cli_header(&mut renderer, PathBuf::from(root).as_path()).expect("header");
     String::from_utf8(renderer.into_inner()).expect("utf8")

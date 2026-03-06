@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_builtin_error_case_table_with_case_setup, write_root_manifest,
+    BuiltinInvocationSetupCase, Path,
+};
 
 fn setup_root_catalog_manifest(root: &Path) {
     write_root_manifest(root, "[tasks.root]\nrun = \"printf root\"\n");

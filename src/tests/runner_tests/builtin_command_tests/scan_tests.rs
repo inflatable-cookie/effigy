@@ -1,0 +1,643 @@
+use super::prelude::{
+    assert_file_text_contains_all, assert_json_array_field_non_empty, assert_json_string_field_eq,
+    assert_output_contains_all, assert_output_excludes_all, fs, parse_json_output_with_schema,
+    run_builtin_err, run_builtin_ok, temp_workspace, write_manifest, write_root_manifest, Path,
+    RunnerError,
+};
+
+fn write_large_code_file(path: &Path, line_count: usize) {
+    let body = (0..line_count)
+        .map(|idx| format!("const line_{idx} = {idx};"))
+        .collect::<Vec<String>>()
+        .join("\n");
+    fs::write(path, format!("{body}\n")).expect("write large code file");
+}
+
+fn write_large_rust_file(path: &Path, line_count: usize) {
+    let body = (0..line_count)
+        .map(|idx| format!("pub fn line_{idx}() -> usize {{ {idx} }}"))
+        .collect::<Vec<String>>()
+        .join("\n");
+    fs::write(path, format!("{body}\n")).expect("write large rust file");
+}
+
+fn write_asset_file(path: &Path, size: usize) {
+    fs::write(path, vec![b'a'; size]).expect("write asset file");
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_text_ignores_docs_generated_and_gitignored_paths() {
+    let root = temp_workspace("builtin-scan-god-files-text");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::create_dir_all(root.join("ignored")).expect("mkdir ignored");
+    fs::write(root.join(".gitignore"), "ignored/\n").expect("write gitignore");
+    fs::write(
+        root.join("README.md"),
+        (0..40)
+            .map(|_| "documentation line")
+            .collect::<Vec<&str>>()
+            .join("\n"),
+    )
+    .expect("write docs");
+    fs::write(
+        root.join("src/generated.ts"),
+        format!(
+            "/* @generated */\n{}\n",
+            (0..40)
+                .map(|idx| format!("const generated_{idx} = {idx};"))
+                .collect::<Vec<String>>()
+                .join("\n")
+        ),
+    )
+    .expect("write generated");
+    write_large_code_file(&root.join("ignored/hidden.ts"), 18);
+    write_large_code_file(&root.join("src/app.ts"), 12);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &["god-files", "--threshold", "10", "--show-warnings"],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &["God Files", "findings: 1", "src/app.ts", "12 code lines"],
+    );
+    assert_output_excludes_all(
+        &out,
+        &["README.md", "src/generated.ts", "ignored/hidden.ts"],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_text_hides_warning_rows_by_default() {
+    let root = temp_workspace("builtin-scan-god-files-text-hide-warnings");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_large_code_file(&root.join("src/warn.ts"), 12);
+    write_large_code_file(&root.join("src/high.ts"), 22);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "god-files",
+            "--warn",
+            "10",
+            "--high",
+            "20",
+            "--critical",
+            "30",
+        ],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "findings: 2",
+            "severity-counts: critical=0 high=1 warning=1",
+            "warning-rows-hidden: 1  use --show-warnings to list them",
+            "src/high.ts",
+        ],
+    );
+    assert_output_excludes_all(&out, &["src/warn.ts"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_show_warnings_lists_warning_rows() {
+    let root = temp_workspace("builtin-scan-god-files-text-show-warnings");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_large_code_file(&root.join("src/warn.ts"), 12);
+    write_large_code_file(&root.join("src/high.ts"), 22);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "god-files",
+            "--warn",
+            "10",
+            "--high",
+            "20",
+            "--critical",
+            "30",
+            "--show-warnings",
+        ],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "findings: 2",
+            "severity-counts: critical=0 high=1 warning=1",
+            "src/high.ts",
+            "src/warn.ts",
+        ],
+    );
+    assert_output_excludes_all(&out, &["warning-rows-hidden:"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_skips_docs_examples_and_lockfiles_by_default() {
+    let root = temp_workspace("builtin-scan-god-files-docs-and-lockfiles");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::create_dir_all(root.join("docs/guides/code")).expect("mkdir docs code");
+    write_large_code_file(&root.join("src/app.ts"), 12);
+    write_large_rust_file(&root.join("docs/guides/code/example.rs"), 30);
+    fs::write(
+        root.join("pnpm-lock.yaml"),
+        (0..40)
+            .map(|idx| format!("lock_{idx}: value_{idx}"))
+            .collect::<Vec<String>>()
+            .join("\n"),
+    )
+    .expect("write lockfile");
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &["god-files", "--threshold", "10", "--show-warnings"],
+    );
+
+    assert_output_contains_all(&out, &["findings: 1", "src/app.ts"]);
+    assert_output_excludes_all(&out, &["docs/guides/code/example.rs", "pnpm-lock.yaml"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_keeps_tests_but_skips_migrations_by_default() {
+    let root = temp_workspace("builtin-scan-god-files-tests-not-migrations");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("tests")).expect("mkdir tests");
+    fs::create_dir_all(root.join("migrations")).expect("mkdir migrations");
+    write_large_rust_file(&root.join("tests/large_spec.rs"), 30);
+    fs::write(
+        root.join("migrations/202603051200__baseline.sql"),
+        (0..40)
+            .map(|idx| format!("insert into demo values ({idx});"))
+            .collect::<Vec<String>>()
+            .join("\n"),
+    )
+    .expect("write migration");
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &["god-files", "--threshold", "10", "--show-warnings"],
+    );
+
+    assert_output_contains_all(&out, &["findings: 1", "tests/large_spec.rs"]);
+    assert_output_excludes_all(&out, &["migrations/202603051200__baseline.sql"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_skips_examples_fixtures_and_benchmarks_by_default() {
+    let root = temp_workspace("builtin-scan-god-files-non-prod-paths");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::create_dir_all(root.join("examples")).expect("mkdir examples");
+    fs::create_dir_all(root.join("fixtures")).expect("mkdir fixtures");
+    fs::create_dir_all(root.join("benchmarks")).expect("mkdir benchmarks");
+    write_large_code_file(&root.join("src/app.ts"), 12);
+    write_large_rust_file(&root.join("examples/demo.rs"), 30);
+    write_large_rust_file(&root.join("fixtures/payload.rs"), 30);
+    write_large_rust_file(&root.join("benchmarks/parser.rs"), 30);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &["god-files", "--threshold", "10", "--show-warnings"],
+    );
+
+    assert_output_contains_all(&out, &["findings: 1", "src/app.ts"]);
+    assert_output_excludes_all(
+        &out,
+        &[
+            "examples/demo.rs",
+            "fixtures/payload.rs",
+            "benchmarks/parser.rs",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_json_emits_machine_payload() {
+    let root = temp_workspace("builtin-scan-god-files-json");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_large_code_file(&root.join("src/app.ts"), 12);
+
+    let out = run_builtin_ok(root, "scan", &["god-files", "--threshold", "10", "--json"]);
+
+    let parsed = parse_json_output_with_schema(&out, "effigy.scan.god-files.v1");
+    assert_json_string_field_eq(&parsed, "scan", "god-files");
+    assert_json_string_field_eq(&parsed, "format", "text");
+    assert_eq!(parsed["finding_count"].as_u64(), Some(1));
+    assert_json_array_field_non_empty(&parsed, "findings");
+    assert_json_string_field_eq(&parsed["findings"][0], "path", "src/app.ts");
+    assert_json_string_field_eq(&parsed["findings"][0], "severity", "warning");
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_markdown_out_writes_report() {
+    let root = temp_workspace("builtin-scan-god-files-markdown-out");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_large_code_file(&root.join("src/app.ts"), 12);
+    let report_path = root.join("reports/god-files.md");
+
+    let out = run_builtin_ok(
+        root.clone(),
+        "scan",
+        &[
+            "god-files",
+            "--threshold",
+            "10",
+            "--markdown",
+            "--out",
+            "reports/god-files.md",
+        ],
+    );
+
+    let expected = "Wrote markdown god-files report to reports/god-files.md (findings: 1).";
+    assert_output_contains_all(&out, &[expected]);
+    assert_file_text_contains_all(
+        &report_path,
+        &[
+            "# God Files",
+            "| Severity | Code Lines | Total Lines | Path |",
+            "| warning | 12 | 12 | `src/app.ts` |",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_fail_on_findings_returns_non_zero() {
+    let root = temp_workspace("builtin-scan-god-files-fail");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_large_code_file(&root.join("src/app.ts"), 12);
+
+    let err = run_builtin_err(
+        root,
+        "scan",
+        &[
+            "god-files",
+            "--threshold",
+            "10",
+            "--fail-on-findings",
+            "--show-warnings",
+        ],
+    );
+
+    match err {
+        RunnerError::BuiltinScanNonZero {
+            finding_count,
+            rendered,
+        } => {
+            assert_eq!(finding_count, 1);
+            assert_output_contains_all(&rendered, &["God Files", "src/app.ts"]);
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_uses_manifest_defaults_for_threshold_format_and_out() {
+    let root = temp_workspace("builtin-scan-god-files-manifest-defaults");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.god_files]
+warn = 10
+high = 20
+critical = 30
+format = "markdown"
+out = "reports/god-files.md"
+"#,
+    );
+    write_large_code_file(&root.join("src/app.ts"), 12);
+    let report_path = root.join("reports/god-files.md");
+
+    let out = run_builtin_ok(root, "scan", &["god-files"]);
+
+    assert_output_contains_all(
+        &out,
+        &["Wrote markdown god-files report to reports/god-files.md (findings: 1)."],
+    );
+    assert_file_text_contains_all(
+        &report_path,
+        &[
+            "# God Files",
+            "- Thresholds: warn=`10` high=`20` critical=`30`",
+            "| warning | 12 | 12 | `src/app.ts` |",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_no_gitignore_flag_includes_ignored_paths() {
+    let root = temp_workspace("builtin-scan-god-files-no-gitignore");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("ignored")).expect("mkdir ignored");
+    fs::write(root.join(".gitignore"), "ignored/\n").expect("write gitignore");
+    write_large_code_file(&root.join("ignored/hidden.ts"), 12);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "god-files",
+            "--threshold",
+            "10",
+            "--no-gitignore",
+            "--show-warnings",
+        ],
+    );
+
+    assert_output_contains_all(&out, &["findings: 1", "ignored/hidden.ts"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_include_and_exclude_flags_override_traversal_scope() {
+    let root = temp_workspace("builtin-scan-god-files-include-exclude");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
+    write_large_code_file(&root.join("src/app.ts"), 12);
+    write_large_code_file(&root.join("scripts/dev.ts"), 14);
+
+    let include_only = run_builtin_ok(
+        root.clone(),
+        "scan",
+        &[
+            "god-files",
+            "--threshold",
+            "10",
+            "--include",
+            "scripts/**",
+            "--show-warnings",
+        ],
+    );
+    assert_output_contains_all(&include_only, &["findings: 1", "scripts/dev.ts"]);
+    assert_output_excludes_all(&include_only, &["src/app.ts"]);
+
+    let exclude_scripts = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "god-files",
+            "--threshold",
+            "10",
+            "--include",
+            "scripts/**",
+            "--include",
+            "src/**",
+            "--exclude",
+            "scripts/**",
+            "--show-warnings",
+        ],
+    );
+    assert_output_contains_all(&exclude_scripts, &["findings: 1", "src/app.ts"]);
+    assert_output_excludes_all(&exclude_scripts, &["scripts/dev.ts"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_ignores_parent_gitignore_above_scan_root() {
+    let root = temp_workspace("builtin-scan-god-files-parent-ignore");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
+        .expect("write root gitignore");
+    write_manifest(&root.join("effigy.toml"), "");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
+    write_large_rust_file(&farmyard.join("src/lib.rs"), 12);
+
+    let out = run_builtin_ok(
+        farmyard,
+        "scan",
+        &["god-files", "--threshold", "10", "--show-warnings"],
+    );
+
+    assert_output_contains_all(&out, &["findings: 1", "src/lib.rs", "12 code lines"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_root_fans_out_across_child_catalogs() {
+    let root = temp_workspace("builtin-scan-god-files-root-fanout");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
+        .expect("write root gitignore");
+    write_manifest(&root.join("effigy.toml"), "[catalog]\nalias = \"root\"\n");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
+    write_large_rust_file(&farmyard.join("src/lib.rs"), 12);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &["god-files", "--threshold", "10", "--show-warnings"],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &["findings: 1", "farmyard/src/lib.rs", "12 code lines"],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_generated_assets_text_reports_bulky_generated_paths() {
+    let root = temp_workspace("builtin-scan-generated-assets-text");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::create_dir_all(root.join("dist")).expect("mkdir dist");
+    fs::create_dir_all(root.join("vendor")).expect("mkdir vendor");
+    write_large_code_file(&root.join("src/app.ts"), 40);
+    write_asset_file(&root.join("dist/app.min.js"), 180);
+    write_asset_file(&root.join("vendor/runtime.wasm"), 320);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "generated-assets",
+            "--warn",
+            "100",
+            "--high",
+            "250",
+            "--critical",
+            "500",
+            "--show-warnings",
+        ],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "Generated Assets",
+            "scanned-files: 5  candidate-files: 2  findings: 2",
+            "findings: 2",
+            "severity-counts: critical=0 high=1 warning=1",
+            "dist/app.min.js",
+            "vendor/runtime.wasm",
+            "[vendor-or-build-path]",
+        ],
+    );
+    assert_output_excludes_all(&out, &["src/app.ts"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_generated_assets_json_emits_machine_payload() {
+    let root = temp_workspace("builtin-scan-generated-assets-json");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("dist")).expect("mkdir dist");
+    write_asset_file(&root.join("dist/app.min.js"), 180);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "generated-assets",
+            "--warn",
+            "100",
+            "--high",
+            "250",
+            "--critical",
+            "500",
+            "--json",
+        ],
+    );
+
+    let parsed = parse_json_output_with_schema(&out, "effigy.scan.generated-assets.v1");
+    assert_json_string_field_eq(&parsed, "scan", "generated-assets");
+    assert_json_string_field_eq(&parsed, "format", "text");
+    assert_eq!(parsed["candidate_files"].as_u64(), Some(1));
+    assert_eq!(parsed["finding_count"].as_u64(), Some(1));
+    assert_json_array_field_non_empty(&parsed, "findings");
+    assert_json_string_field_eq(&parsed["findings"][0], "path", "dist/app.min.js");
+    assert_json_string_field_eq(&parsed["findings"][0], "severity", "warning");
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_generated_assets_markdown_out_writes_report() {
+    let root = temp_workspace("builtin-scan-generated-assets-markdown-out");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("dist")).expect("mkdir dist");
+    write_asset_file(&root.join("dist/app.min.js"), 180);
+    let report_path = root.join("reports/generated-assets.md");
+
+    let out = run_builtin_ok(
+        root.clone(),
+        "scan",
+        &[
+            "generated-assets",
+            "--warn",
+            "100",
+            "--markdown",
+            "--out",
+            "reports/generated-assets.md",
+        ],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &["Wrote markdown generated-assets report to reports/generated-assets.md (findings: 1)."],
+    );
+    assert_file_text_contains_all(
+        &report_path,
+        &[
+            "# Generated Assets",
+            "| Severity | Size | Path | Reason |",
+            "| warning | 180 B | `dist/app.min.js` | `vendor-or-build-path` |",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_generated_assets_uses_manifest_defaults() {
+    let root = temp_workspace("builtin-scan-generated-assets-manifest-defaults");
+    fs::create_dir_all(root.join("dist")).expect("mkdir dist");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.generated_assets]
+warn = 100
+high = 250
+critical = 500
+format = "markdown"
+out = "reports/generated-assets.md"
+"#,
+    );
+    write_asset_file(&root.join("dist/app.min.js"), 180);
+    let report_path = root.join("reports/generated-assets.md");
+
+    let out = run_builtin_ok(root, "scan", &["generated-assets"]);
+
+    assert_output_contains_all(
+        &out,
+        &["Wrote markdown generated-assets report to reports/generated-assets.md (findings: 1)."],
+    );
+    assert_file_text_contains_all(
+        &report_path,
+        &[
+            "# Generated Assets",
+            "- Thresholds (bytes): warn=`100` high=`250` critical=`500`",
+            "| warning | 180 B | `dist/app.min.js` | `vendor-or-build-path` |",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_generated_assets_ignores_parent_gitignore_above_scan_root() {
+    let root = temp_workspace("builtin-scan-generated-assets-parent-ignore");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("dist")).expect("mkdir farmyard dist");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n").expect("write root gitignore");
+    write_manifest(&root.join("effigy.toml"), "");
+    write_manifest(&farmyard.join("effigy.toml"), "[catalog]\nalias = \"farmyard\"\n");
+    write_asset_file(&farmyard.join("dist/app.min.js"), 180);
+
+    let out = run_builtin_ok(
+        farmyard,
+        "scan",
+        &[
+            "generated-assets",
+            "--warn",
+            "100",
+            "--show-warnings",
+        ],
+    );
+
+    assert_output_contains_all(&out, &["findings: 1", "dist/app.min.js"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_generated_assets_root_fans_out_across_child_catalogs() {
+    let root = temp_workspace("builtin-scan-generated-assets-root-fanout");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("dist")).expect("mkdir farmyard dist");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n").expect("write root gitignore");
+    write_manifest(&root.join("effigy.toml"), "[catalog]\nalias = \"root\"\n");
+    write_manifest(&farmyard.join("effigy.toml"), "[catalog]\nalias = \"farmyard\"\n");
+    write_asset_file(&farmyard.join("dist/app.min.js"), 180);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "generated-assets",
+            "--warn",
+            "100",
+            "--show-warnings",
+        ],
+    );
+
+    assert_output_contains_all(&out, &["findings: 1", "farmyard/dist/app.min.js"]);
+}

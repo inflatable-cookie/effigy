@@ -1,4 +1,8 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_builtin_argument_contract_case_table, assert_file_text_contains_all,
+    assert_file_text_equals, assert_output_contains_all, assert_path_missing, fs, run_builtin_ok,
+    temp_workspace, write_package_json_scripts, write_root_manifest, BuiltinArgumentContractCase,
+};
 
 #[test]
 fn run_manifest_task_builtin_migrate_preview_reports_candidates_without_writing() {

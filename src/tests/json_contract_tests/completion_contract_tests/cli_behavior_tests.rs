@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    run_completion_task, temp_workspace, test_lock, with_completion_cache_default, write_manifest,
+    fs, RunnerError,
+};
 
 #[test]
 fn builtin_completion_candidates_text_includes_builtin_and_task_selectors() {

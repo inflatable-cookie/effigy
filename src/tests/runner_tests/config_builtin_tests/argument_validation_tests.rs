@@ -1,4 +1,6 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_builtin_error_case_table_with_setup, write_root_manifest, BuiltinInvocationCase,
+};
 
 #[test]
 fn run_manifest_task_builtin_config_rejects_invalid_flag_combinations() {

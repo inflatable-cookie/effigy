@@ -1,4 +1,11 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_json_array_field, assert_json_array_field_non_empty, assert_json_string_field_eq,
+    assert_output_contains_all, assert_output_excludes_all, assert_string_items_contains_all,
+    create_workspace_dir, json_task_column,
+    parse_json_output_with_schema_version, run_builtin_ok, run_tasks_from_repo,
+    setup_root_and_farmyard_catalog, setup_root_with_catalog_tasks, temp_workspace,
+    write_root_manifest,
+};
 
 #[test]
 fn run_tasks_json_renders_machine_readable_payload() {

@@ -1,4 +1,8 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_deferred_task_case_table, assert_implicit_deferral_case_table, lock_test,
+    DeferredTaskCase, ImplicitDeferralCase, ImplicitDeferralExpectation,
+    ImplicitFallbackDisabledCase,
+};
 
 #[test]
 fn run_manifest_task_defers_when_task_missing_with_token_support() {

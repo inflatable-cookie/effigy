@@ -3,7 +3,9 @@ use std::path::Path;
 use crate::TaskInvocation;
 
 use super::super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector};
-use super::{cache, completion, config, doctor, help, init, migrate, tasks, test, unlock, watch};
+use super::{
+    cache, completion, config, doctor, help, init, migrate, scan, tasks, test, unlock, watch,
+};
 
 pub(super) struct BuiltinRegistryEntry {
     pub(super) name: &'static str,
@@ -23,10 +25,11 @@ enum BuiltinDispatch {
     Unlock,
     Cache,
     Completion,
+    Scan,
     Test,
 }
 
-const BUILTIN_REGISTRY: [BuiltinRegistryEntry; 12] = [
+const BUILTIN_REGISTRY: [BuiltinRegistryEntry; 13] = [
     BuiltinRegistryEntry {
         name: "doctor",
         dispatch: BuiltinDispatch::Doctor,
@@ -70,6 +73,10 @@ const BUILTIN_REGISTRY: [BuiltinRegistryEntry; 12] = [
     BuiltinRegistryEntry {
         name: "completion",
         dispatch: BuiltinDispatch::Completion,
+    },
+    BuiltinRegistryEntry {
+        name: "scan",
+        dispatch: BuiltinDispatch::Scan,
     },
     BuiltinRegistryEntry {
         name: "test",
@@ -132,6 +139,7 @@ impl BuiltinDispatch {
                 cache::run_builtin_cache(task, runtime_args, target_root, catalogs, invocation_cwd)
             }
             Self::Completion => completion::run_builtin_completion(task, runtime_args, target_root),
+            Self::Scan => scan::run_builtin_scan(task, runtime_args, target_root, catalogs),
             Self::Test => {
                 test::try_run_builtin_test(selector, task, runtime_args, target_root, catalogs)
             }
@@ -140,30 +148,5 @@ impl BuiltinDispatch {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::builtin_registry_entry;
-
-    #[test]
-    fn builtin_registry_contract_is_stable() {
-        let names = [
-            "doctor",
-            "catalogs",
-            "tasks",
-            "config",
-            "help",
-            "watch",
-            "init",
-            "migrate",
-            "unlock",
-            "cache",
-            "completion",
-            "test",
-        ];
-
-        for name in names {
-            let entry = builtin_registry_entry(name).expect("registry entry should exist");
-            assert_eq!(entry.name, name);
-        }
-        assert!(builtin_registry_entry("not-a-builtin").is_none());
-    }
-}
+#[path = "registry/tests.rs"]
+mod tests;

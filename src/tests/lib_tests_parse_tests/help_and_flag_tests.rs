@@ -1,4 +1,6 @@
-use super::prelude::*;
+use super::prelude::{
+    parse_command, strip_global_json_flag, strip_global_json_flags, Command, HelpTopic,
+};
 
 #[test]
 fn strip_global_json_flag_removes_root_json_before_passthrough_delimiter() {

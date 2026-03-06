@@ -195,7 +195,70 @@ Inspection and invalidation:
 - `effigy cache invalidate build`
 - `effigy cache invalidate --all`
 
-## 11) Task-Local Runtime Env (Cargo Isolation)
+## 11) Built-in God-File Scanner
+
+```toml
+[scan.god_files]
+warn = 250
+high = 400
+critical = 700
+doctor = true
+fail_on_findings = false
+respect_gitignore = true
+include = ["src/**", "app/**"]
+exclude = ["docs/**", "dist/**", "coverage/**"]
+format = "markdown"
+out = "reports/god-files.md"
+```
+
+Use this when you want a repo-level oversized-file check that can also feed `effigy doctor`.
+
+Typical commands:
+- `effigy scan god-files`
+- `effigy scan god-files --show-warnings`
+- `effigy scan god-files --fail-on-findings`
+- `effigy --json scan god-files`
+
+Behavior:
+- counts code-only lines for common source-file types and falls back to non-blank lines for unknown extensions
+- terminal text output hides warning rows by default and prints a warning count summary; `--show-warnings` restores the full list
+- skips common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts by default
+- respects `.gitignore`/`.ignore` during traversal unless disabled
+- `effigy doctor` uses the same scanner core but keeps its own report semantics; warning-level god-file findings still appear there when `doctor = true`
+- `doctor = false` keeps the config available for `scan` without surfacing it in `effigy doctor`
+
+## 12) Built-in Generated-Assets Scanner
+
+```toml
+[scan.generated_assets]
+warn = 1000000
+high = 5000000
+critical = 20000000
+doctor = true
+fail_on_findings = false
+respect_gitignore = true
+include = ["dist/**", "vendor/**", "third_party/**"]
+exclude = ["docs/**"]
+format = "markdown"
+out = "reports/generated-assets.md"
+```
+
+Use this when you want a repo-level check for bulky vendored/generated artifacts that slipped into versioned paths.
+
+Typical commands:
+- `effigy scan generated-assets`
+- `effigy scan generated-assets --show-warnings`
+- `effigy scan generated-assets --fail-on-findings`
+- `effigy --json scan generated-assets`
+
+Behavior:
+- thresholds are measured in bytes
+- terminal text output hides warning rows by default and prints a warning count summary; `--show-warnings` restores the full list
+- matches vendored/build paths, bundle/minified/source-map names, and generated markers
+- respects `.gitignore`/`.ignore` during traversal unless disabled
+- `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
+
+## 13) Task-Local Runtime Env (Cargo Isolation)
 
 Compact inline-table shape:
 
@@ -230,7 +293,7 @@ Behavior:
 - set `[test].cargo_env_match = "prefix-aware"` (default) to include wrapper/prefix forms like `env KEY=value cargo ...`
 - set `[test].cargo_env_match = "shell-aware"` to include shell-wrapped forms like `sh -lc 'cargo test --workspace'`
 
-## 12) Multi-Catalog Monorepo Baseline
+## 14) Multi-Catalog Monorepo Baseline
 
 Root `effigy.toml`:
 

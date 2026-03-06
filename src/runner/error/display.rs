@@ -9,7 +9,7 @@ mod managed;
 #[path = "display/task_failures.rs"]
 mod task_failures;
 
-use builtin::{write_builtin_test_non_zero, write_doctor_non_zero};
+use builtin::{write_builtin_scan_non_zero, write_builtin_test_non_zero, write_doctor_non_zero};
 use managed::{
     write_managed_non_zero_exit, write_task_managed_process_invalid_definition,
     write_task_managed_process_not_found, write_task_managed_profile_empty,
@@ -141,6 +141,9 @@ pub(super) fn fmt_runner_error(
         ),
         RunnerError::BuiltinTestNonZero { failures, .. } => {
             write_builtin_test_non_zero(f, failures)
+        }
+        RunnerError::BuiltinScanNonZero { finding_count, .. } => {
+            write_builtin_scan_non_zero(f, *finding_count)
         }
         RunnerError::DoctorNonZero { error_count, .. } => write_doctor_non_zero(f, *error_count),
         RunnerError::DeferLoopDetected { depth } => write_defer_loop_detected(f, *depth),

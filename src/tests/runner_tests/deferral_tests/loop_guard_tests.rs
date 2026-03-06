@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_defer_loop_detected, lock_test, run_task_in_workspace,
+    workspace_with_optional_defer_manifest, EnvGuard,
+};
 
 #[test]
 fn run_manifest_task_deferral_loop_guard_fails() {

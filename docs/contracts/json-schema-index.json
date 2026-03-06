@@ -47,6 +47,20 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
+      "command": "effigy --json scan god-files",
+      "surface": "built-in task",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
+      "command": "effigy --json scan generated-assets",
+      "surface": "built-in task",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
       "command": "effigy --json completion bash",
       "surface": "built-in task",
       "status": "active"

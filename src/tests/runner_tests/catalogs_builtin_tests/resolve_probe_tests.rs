@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_builtin_ok_case_table_with_case_setup, write_managed_dev_profile_manifest,
+    write_root_and_farmyard_api_catalog, BuiltinInvocationSetupCase, Path,
+};
 
 fn setup_root_and_farmyard_api(root: &Path) {
     write_root_and_farmyard_api_catalog(root);

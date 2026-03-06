@@ -1,4 +1,4 @@
-use super::prelude::*;
+use super::prelude::{assert_builtin_help_json_contract_case_table, BuiltinHelpJsonCase};
 
 #[test]
 fn run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_and_precedence() {
@@ -51,6 +51,14 @@ fn run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_an
             args: &["--help", "--json", "--wat"],
             expected_topic: "doctor",
             expected_usage_fragment: "effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]",
+        },
+        BuiltinHelpJsonCase {
+            workspace: "builtin-scan-help-json-contract",
+            command: "scan",
+            args: &["--help", "--json", "--wat"],
+            expected_topic: "scan",
+            expected_usage_fragment:
+                "effigy scan god-files [--threshold <N>] [--markdown] [--out <PATH>]",
         },
         BuiltinHelpJsonCase {
             workspace: "builtin-tasks-help-json-contract",

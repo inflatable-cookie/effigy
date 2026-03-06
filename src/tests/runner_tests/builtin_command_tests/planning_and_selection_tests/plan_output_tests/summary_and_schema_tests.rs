@@ -1,4 +1,7 @@
-use super::super::super::prelude::*;
+use super::super::super::prelude::harness::*;
+use super::super::super::prelude::json::*;
+use super::super::super::prelude::output::*;
+use super::super::super::prelude::runtime::*;
 
 #[test]
 fn run_manifest_task_builtin_test_plan_renders_detection_summary() {

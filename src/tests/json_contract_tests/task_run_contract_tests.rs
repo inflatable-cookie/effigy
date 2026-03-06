@@ -1,4 +1,4 @@
-use super::prelude::*;
+use super::prelude::{execution::*, harness::*, json::*, runtime::*};
 
 #[test]
 fn task_run_json_contract_reclaims_stale_lock_and_remains_valid_payload() {

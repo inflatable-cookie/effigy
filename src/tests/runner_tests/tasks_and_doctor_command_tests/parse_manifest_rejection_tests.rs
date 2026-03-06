@@ -1,4 +1,6 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_tasks_manifest_parse_rejection_case_table, ManifestParseRejectionCase,
+};
 
 #[test]
 fn run_tasks_rejects_invalid_manifest_shapes() {

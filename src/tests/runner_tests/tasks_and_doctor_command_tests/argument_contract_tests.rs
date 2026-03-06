@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_builtin_argument_contract_command_case_table, BuiltinArgumentContractCase,
+    BuiltinArgumentContractCommandCase,
+};
 
 #[test]
 fn run_tasks_and_doctor_argument_contract_matrix() {

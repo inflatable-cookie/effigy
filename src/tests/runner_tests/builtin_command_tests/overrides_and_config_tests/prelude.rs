@@ -1,4 +1,18 @@
-pub(super) use super::super::prelude::*;
+pub(super) mod harness {
+    pub(in crate::runner::tests) use super::super::super::prelude::harness::*;
+}
+
+pub(super) mod output {
+    pub(in crate::runner::tests) use super::super::super::prelude::output::*;
+}
+
+pub(super) mod runtime {
+    pub(in crate::runner::tests) use super::super::super::prelude::runtime::*;
+}
+
+pub(super) use super::super::prelude::harness::*;
+pub(super) use super::super::prelude::output::*;
+pub(super) use super::super::prelude::runtime::*;
 
 pub(super) fn setup_path_with_probes(
     root: &Path,

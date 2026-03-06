@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_builtin_ok_empty, assert_catalog_alias_conflict, create_workspace_dir,
+    discover_catalogs, symlink, temp_workspace, write_catalog_tasks, write_manifest,
+};
 
 #[test]
 fn discover_catalogs_includes_symlinked_catalog_directories() {

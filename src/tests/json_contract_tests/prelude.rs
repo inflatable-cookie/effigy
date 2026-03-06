@@ -1,23 +1,47 @@
-pub(super) use super::super::{
-    run_doctor, run_manifest_task_with_cwd, run_tasks, DoctorArgs, RunnerError, TasksArgs,
-};
-pub(super) use crate::contract_test_support::{
-    parse_json, temp_workspace, test_lock, with_cwd, write_manifest, EnvGuard,
-};
-pub(super) use crate::TaskInvocation;
-pub(super) use std::fs;
-#[cfg(unix)]
-pub(super) use std::os::unix::fs::PermissionsExt;
-pub(super) use std::path::PathBuf;
-pub(super) use std::thread;
-pub(super) use std::time::Duration;
+pub(super) mod runtime {
+    pub(crate) use super::super::super::{run_doctor, run_tasks, RunnerError};
+    pub(crate) use crate::{DoctorArgs, TaskInvocation, TasksArgs};
+    pub(crate) use std::fs;
+    #[cfg(unix)]
+    pub(crate) use std::os::unix::fs::PermissionsExt;
+    pub(crate) use std::path::PathBuf;
+    pub(crate) use std::thread;
+    pub(crate) use std::time::Duration;
+}
 
-pub(super) fn assert_schema_v1(parsed: &serde_json::Value, schema: &str) {
+pub(super) mod harness {
+    pub(crate) use crate::contract_test_support::{
+        parse_json, temp_workspace, test_lock, with_cwd, write_manifest, EnvGuard,
+    };
+}
+
+pub(super) mod execution {
+    pub(crate) use super::{run_completion_candidates_json, run_invocation_json};
+
+    use super::runtime::{PathBuf, RunnerError, TaskInvocation};
+
+    pub(crate) fn run_manifest_task_with_cwd(
+        invocation: &TaskInvocation,
+        root: PathBuf,
+    ) -> Result<String, RunnerError> {
+        super::super::super::test_support::execution::run_manifest_task_with_cwd(invocation, root)
+    }
+}
+
+pub(super) mod json {
+    pub(crate) use super::{assert_candidates_cache_policy, assert_schema_v1};
+}
+
+use execution::run_manifest_task_with_cwd;
+use harness::parse_json;
+use runtime::{PathBuf, TaskInvocation};
+
+pub(crate) fn assert_schema_v1(parsed: &serde_json::Value, schema: &str) {
     assert_eq!(parsed["schema"], schema);
     assert_eq!(parsed["schema_version"], 1);
 }
 
-pub(super) fn run_invocation_json(root: PathBuf, name: &str, args: &[&str]) -> serde_json::Value {
+pub(crate) fn run_invocation_json(root: PathBuf, name: &str, args: &[&str]) -> serde_json::Value {
     let out = run_manifest_task_with_cwd(
         &TaskInvocation {
             name: name.to_owned(),
@@ -29,11 +53,11 @@ pub(super) fn run_invocation_json(root: PathBuf, name: &str, args: &[&str]) -> s
     parse_json(&out)
 }
 
-pub(super) fn run_completion_candidates_json(root: PathBuf) -> serde_json::Value {
+pub(crate) fn run_completion_candidates_json(root: PathBuf) -> serde_json::Value {
     run_invocation_json(root, "completion", &["candidates", "--json"])
 }
 
-pub(super) fn assert_candidates_cache_policy(
+pub(crate) fn assert_candidates_cache_policy(
     parsed: &serde_json::Value,
     hit: bool,
     state: &str,

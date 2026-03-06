@@ -1,4 +1,8 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_cargo_env_absent, assert_cargo_env_applied, assert_output_contains_all, lock_test,
+    run_builtin_ok, setup_path_with_probes, temp_workspace, write_root_manifest,
+    CARGO_ENV_PROBE_SCRIPT,
+};
 
 #[test]
 fn run_manifest_task_builtin_test_applies_manifest_cargo_env_for_shell_wrapped_command_when_configured(

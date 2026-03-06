@@ -7,6 +7,8 @@ mod contracts;
 mod environment;
 mod explain;
 mod finding_templates;
+mod generated_assets;
+mod god_files;
 mod health;
 mod manifest;
 mod references;

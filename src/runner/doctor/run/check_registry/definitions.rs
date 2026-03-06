@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use super::super::super::{
-    conflicts, environment, health, references, DoctorState, ManifestSnapshot,
+    conflicts, environment, generated_assets, god_files, health, references, DoctorState,
+    ManifestSnapshot,
 };
 
 pub(super) struct DoctorCheckContext<'a> {
@@ -26,7 +27,7 @@ pub(super) struct DoctorCheckDefinition {
     pub(super) run: DoctorCheckFn,
 }
 
-const DOCTOR_CHECKS: [DoctorCheckDefinition; 4] = [
+const DOCTOR_CHECKS: [DoctorCheckDefinition; 6] = [
     DoctorCheckDefinition {
         name: "manifest_conflicts",
         run: run_manifest_conflicts_check,
@@ -38,6 +39,14 @@ const DOCTOR_CHECKS: [DoctorCheckDefinition; 4] = [
     DoctorCheckDefinition {
         name: "task_references",
         run: run_task_references_check,
+    },
+    DoctorCheckDefinition {
+        name: "god_files",
+        run: run_god_files_check,
+    },
+    DoctorCheckDefinition {
+        name: "generated_assets",
+        run: run_generated_assets_check,
     },
     DoctorCheckDefinition {
         name: "health_task",
@@ -68,6 +77,22 @@ fn run_task_references_check(context: &DoctorCheckContext<'_>, state: &mut Docto
 
 fn run_health_task_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
     health::check_health_task(
+        context.resolved_root,
+        &context.manifest.parsed_catalogs,
+        state,
+    );
+}
+
+fn run_god_files_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
+    god_files::check_god_files(
+        context.resolved_root,
+        &context.manifest.parsed_catalogs,
+        state,
+    );
+}
+
+fn run_generated_assets_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
+    generated_assets::check_generated_assets(
         context.resolved_root,
         &context.manifest.parsed_catalogs,
         state,

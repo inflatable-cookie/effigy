@@ -1,4 +1,7 @@
-use super::prelude::*;
+use super::prelude::{
+    assert_builtin_error_case_table, assert_output_contains_all, run_builtin_ok, temp_workspace,
+    write_empty_manifest, BuiltinErrorCase,
+};
 
 #[test]
 fn run_manifest_task_builtin_watch_help_renders_topic() {

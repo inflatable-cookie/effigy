@@ -1,4 +1,4 @@
-use super::prelude::*;
+use super::prelude::{assert_builtin_help_case_table, BuiltinHelpCase};
 
 #[test]
 fn run_manifest_task_builtin_help_precedence_contract_table() {
@@ -38,6 +38,18 @@ fn run_manifest_task_builtin_help_precedence_contract_table() {
             command: "config",
             args: &["--help", "--wat"],
             expected: &["effigy.toml Reference", "[tasks]"],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-scan-help-precedence",
+            command: "scan",
+            args: &["god-files", "--help", "--wat"],
+            expected: &[
+                "scan god-files Help",
+                "effigy scan god-files [--threshold <N>] [--high <N>] [--critical <N>]",
+                "effigy scan god-files [--show-warnings] [--no-gitignore]",
+                "--show-warnings : include warning rows in terminal text output",
+                "terminal text hides warning rows and prints a warning count summary",
+            ],
         },
         BuiltinHelpCase {
             workspace: "builtin-unlock-help-precedence",
