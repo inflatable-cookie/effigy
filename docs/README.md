@@ -21,7 +21,7 @@ New to Effigy:
 Operating and debugging day-to-day:
 1. [`guides/025-command-reference-matrix.md`](./guides/025-command-reference-matrix.md)
 2. [`guides/023-troubleshooting-and-failure-recipes.md`](./guides/023-troubleshooting-and-failure-recipes.md)
-3. [`guides/019-watch-init-migrate-phase-1.md`](./guides/019-watch-init-migrate-phase-1.md)
+3. [`guides/019-watch-init-migrate-foundation.md`](./guides/019-watch-init-migrate-foundation.md)
 4. [`guides/README.md#env-resolution-cheatsheet`](./guides/README.md#env-resolution-cheatsheet)
 
 Automating and validating CI:
@@ -58,7 +58,7 @@ Core runtime guides (`010`-`020`):
 - [`guides/016-task-routing-precedence.md`](./guides/016-task-routing-precedence.md)
 - [`guides/017-json-output-contracts.md`](./guides/017-json-output-contracts.md)
 - [`guides/018-doctor-explain-mode.md`](./guides/018-doctor-explain-mode.md)
-- [`guides/019-watch-init-migrate-phase-1.md`](./guides/019-watch-init-migrate-phase-1.md)
+- [`guides/019-watch-init-migrate-foundation.md`](./guides/019-watch-init-migrate-foundation.md)
 - [`guides/020-dag-lock-policy-baseline.md`](./guides/020-dag-lock-policy-baseline.md)
 
 Workflow and examples (`021`-`028`):

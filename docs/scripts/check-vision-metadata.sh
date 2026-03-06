@@ -25,7 +25,7 @@ roadmap_files=(
   "$ROOT_DIR/docs/roadmaps/g01/008-universal-json-command-coverage.md"
   "$ROOT_DIR/docs/roadmaps/g01/009-doctor-health-consolidation.md"
   "$ROOT_DIR/docs/roadmaps/g01/010-dag-lock-policy-baseline.md"
-  "$ROOT_DIR/docs/roadmaps/g01/011-watch-init-migrate-phase-1.md"
+  "$ROOT_DIR/docs/roadmaps/g01/011-watch-init-migrate-foundation.md"
   "$ROOT_DIR/docs/roadmaps/g01/012-codebase-consolidation-and-health.md"
 )
 
@@ -40,7 +40,7 @@ guides=(
   "$ROOT_DIR/docs/guides/016-task-routing-precedence.md"
   "$ROOT_DIR/docs/guides/017-json-output-contracts.md"
   "$ROOT_DIR/docs/guides/018-doctor-explain-mode.md"
-  "$ROOT_DIR/docs/guides/019-watch-init-migrate-phase-1.md"
+  "$ROOT_DIR/docs/guides/019-watch-init-migrate-foundation.md"
   "$ROOT_DIR/docs/guides/020-dag-lock-policy-baseline.md"
   "$ROOT_DIR/docs/guides/021-quick-start-and-command-cookbook.md"
   "$ROOT_DIR/docs/guides/022-manifest-cookbook.md"

@@ -118,7 +118,7 @@ In this example, `../shared/validate` resolves relative to `dairy` catalog root.
 
 ## Related Guides
 
-- [`019-watch-init-migrate-phase-1.md`](./019-watch-init-migrate-phase-1.md)
+- [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 

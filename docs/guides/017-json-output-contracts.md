@@ -167,7 +167,7 @@ Rule of thumb:
 
 ## Related Guides
 
-- Watch/init/migrate command contracts: [`019-watch-init-migrate-phase-1.md`](./019-watch-init-migrate-phase-1.md)
+- Watch/init/migrate command contracts: [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
 - DAG/policy/locking behavior: [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
 - CI automation patterns: [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 

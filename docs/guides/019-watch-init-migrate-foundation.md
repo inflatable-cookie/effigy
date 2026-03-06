@@ -1,6 +1,6 @@
-# 019 - Watch, Init, and Migrate (Phase 1)
+# 019 - Watch, Init, and Migrate Foundation
 
-This guide covers the phase-1 contract for:
+This guide covers the foundational contract for:
 - `effigy watch`
 - `effigy init`
 - `effigy migrate`
@@ -13,7 +13,7 @@ This guide covers the phase-1 contract for:
 
 ## `effigy watch`
 
-Phase-1 watch mode is policy-first:
+Foundational watch mode is policy-first:
 - owner policy is mandatory (`--owner <effigy|external>`)
 - `external` owner fails fast to avoid nested watcher loops
 - `effigy` owner enables file-triggered reruns with debounce and glob controls
