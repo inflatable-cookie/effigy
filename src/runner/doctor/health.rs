@@ -1,8 +1,9 @@
 use std::path::Path;
 
-use super::super::{LoadedCatalog, RunnerError};
+use super::super::model::catalog::LoadedCatalog;
 use super::finding_templates::HealthFinding;
-use super::DoctorState;
+use super::report::DoctorState;
+use crate::runner::error::RunnerError;
 #[path = "health/invocation.rs"]
 mod invocation;
 #[path = "health/json_output.rs"]

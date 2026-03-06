@@ -1,7 +1,8 @@
 use std::path::Path;
 
+use super::super::super::manifest::task_runtime::ManifestTask;
+use super::super::super::model::catalog::LoadedCatalog;
 use super::super::super::tasks_view::ManagedProfileDisplayRow;
-use super::super::super::{LoadedCatalog, ManifestTask};
 use super::super::catalog_iteration::catalog_tasks;
 use super::super::catalog_manifest::{catalog_manifest_display, catalog_manifest_path};
 use super::super::row_projection::{project_catalog_task_display_rows, TaskSignatureProjection};

@@ -156,6 +156,199 @@ fn cli_json_mode_scan_non_zero_wraps_rendered_scan_payload_in_error_details() {
 }
 
 #[test]
+fn cli_json_mode_scan_duplicate_blocks_wraps_scan_payload() {
+    let root = temp_workspace("cli-json-scan-duplicate-blocks-success");
+    fs::write(root.join("effigy.toml"), "").expect("write manifest");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    let block = [
+        "pub fn shared_alpha() -> usize {",
+        "    let seed = 1;",
+        "    let acc_0 = seed + 0;",
+        "    let acc_1 = seed + 1;",
+        "    let acc_2 = seed + 2;",
+        "    let acc_3 = seed + 3;",
+        "    let acc_4 = seed + 4;",
+        "    let acc_5 = seed + 5;",
+        "    let acc_6 = seed + 6;",
+        "    let acc_7 = seed + 7;",
+        "    let acc_8 = seed + 8;",
+        "    let acc_9 = seed + 9;",
+        "    let acc_10 = seed + 10;",
+        "    let acc_11 = seed + 11;",
+        "    let acc_12 = seed + 12;",
+        "    let acc_13 = seed + 13;",
+        "    let acc_14 = seed + 14;",
+        "    let acc_15 = seed + 15;",
+        "    let acc_16 = seed + 16;",
+        "    let acc_17 = seed + 17;",
+        "    acc_17",
+        "}",
+    ]
+    .join("\n");
+    fs::write(root.join("src/alpha.rs"), format!("{block}\n")).expect("write alpha");
+    fs::write(root.join("src/beta.rs"), format!("{block}\n")).expect("write beta");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("scan")
+        .arg("duplicate-blocks")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["command"]["kind"], "task");
+    assert_eq!(parsed["command"]["name"], "scan");
+    assert_eq!(
+        parsed["result"]["schema"],
+        "effigy.scan.duplicate-blocks.v1"
+    );
+    assert_eq!(parsed["result"]["scan"], "duplicate-blocks");
+    assert_eq!(parsed["result"]["finding_count"], 1);
+}
+
+#[test]
+fn cli_json_mode_scan_duplicate_blocks_non_zero_wraps_rendered_scan_payload_in_error_details() {
+    let root = temp_workspace("cli-json-scan-duplicate-blocks-failure");
+    fs::write(root.join("effigy.toml"), "").expect("write manifest");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    let block = [
+        "pub fn shared_alpha() -> usize {",
+        "    let seed = 1;",
+        "    let acc_0 = seed + 0;",
+        "    let acc_1 = seed + 1;",
+        "    let acc_2 = seed + 2;",
+        "    let acc_3 = seed + 3;",
+        "    let acc_4 = seed + 4;",
+        "    let acc_5 = seed + 5;",
+        "    let acc_6 = seed + 6;",
+        "    let acc_7 = seed + 7;",
+        "    let acc_8 = seed + 8;",
+        "    let acc_9 = seed + 9;",
+        "    let acc_10 = seed + 10;",
+        "    let acc_11 = seed + 11;",
+        "    let acc_12 = seed + 12;",
+        "    let acc_13 = seed + 13;",
+        "    let acc_14 = seed + 14;",
+        "    let acc_15 = seed + 15;",
+        "    let acc_16 = seed + 16;",
+        "    let acc_17 = seed + 17;",
+        "    acc_17",
+        "}",
+    ]
+    .join("\n");
+    fs::write(root.join("src/alpha.rs"), format!("{block}\n")).expect("write alpha");
+    fs::write(root.join("src/beta.rs"), format!("{block}\n")).expect("write beta");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("scan")
+        .arg("duplicate-blocks")
+        .arg("--fail-on-findings")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["command"]["kind"], "task");
+    assert_eq!(parsed["command"]["name"], "scan");
+    assert_eq!(
+        parsed["error"]["details"]["schema"],
+        "effigy.scan.duplicate-blocks.v1"
+    );
+    assert_eq!(parsed["error"]["details"]["finding_count"], 1);
+}
+
+#[test]
+fn cli_json_mode_scan_comment_ratio_wraps_scan_payload() {
+    let root = temp_workspace("cli-json-scan-comment-ratio-success");
+    fs::write(root.join("effigy.toml"), "").expect("write manifest");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    let mut lines = (0..30)
+        .map(|idx| format!("// commentary line {idx}"))
+        .collect::<Vec<String>>();
+    lines.extend((0..20).map(|idx| format!("const line_{idx} = {idx};")));
+    fs::write(root.join("src/app.ts"), format!("{}\n", lines.join("\n"))).expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("scan")
+        .arg("comment-ratio")
+        .arg("--warn")
+        .arg("1.0")
+        .arg("--min-code-lines")
+        .arg("20")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["command"]["kind"], "task");
+    assert_eq!(parsed["command"]["name"], "scan");
+    assert_eq!(parsed["result"]["schema"], "effigy.scan.comment-ratio.v1");
+    assert_eq!(parsed["result"]["scan"], "comment-ratio");
+    assert_eq!(parsed["result"]["finding_count"], 1);
+}
+
+#[test]
+fn cli_json_mode_scan_comment_ratio_non_zero_wraps_rendered_scan_payload_in_error_details() {
+    let root = temp_workspace("cli-json-scan-comment-ratio-failure");
+    fs::write(root.join("effigy.toml"), "").expect("write manifest");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    let mut lines = (0..30)
+        .map(|idx| format!("// commentary line {idx}"))
+        .collect::<Vec<String>>();
+    lines.extend((0..20).map(|idx| format!("const line_{idx} = {idx};")));
+    fs::write(root.join("src/app.ts"), format!("{}\n", lines.join("\n"))).expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("scan")
+        .arg("comment-ratio")
+        .arg("--warn")
+        .arg("1.0")
+        .arg("--min-code-lines")
+        .arg("20")
+        .arg("--fail-on-findings")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["command"]["kind"], "task");
+    assert_eq!(parsed["command"]["name"], "scan");
+    assert_eq!(
+        parsed["error"]["details"]["schema"],
+        "effigy.scan.comment-ratio.v1"
+    );
+    assert_eq!(parsed["error"]["details"]["finding_count"], 1);
+}
+
+#[test]
 fn cli_json_mode_scan_attention_markers_wraps_scan_payload() {
     let root = temp_workspace("cli-json-scan-attention-markers-success");
     fs::write(root.join("effigy.toml"), "").expect("write manifest");

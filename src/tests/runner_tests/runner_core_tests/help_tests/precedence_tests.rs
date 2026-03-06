@@ -52,6 +52,30 @@ fn run_manifest_task_builtin_help_precedence_contract_table() {
             ],
         },
         BuiltinHelpCase {
+            workspace: "builtin-scan-duplicate-help-precedence",
+            command: "scan",
+            args: &["duplicate-blocks", "--help", "--wat"],
+            expected: &[
+                "scan duplicate-blocks Help",
+                "effigy scan duplicate-blocks [--threshold <N>] [--high <N>] [--critical <N>]",
+                "effigy scan duplicate-blocks [--show-warnings] [--no-gitignore]",
+                "--show-warnings : include warning rows in terminal text output",
+                "terminal text hides warning rows and prints a warning count summary",
+            ],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-scan-comment-ratio-help-precedence",
+            command: "scan",
+            args: &["comment-ratio", "--help", "--wat"],
+            expected: &[
+                "scan comment-ratio Help",
+                "effigy scan comment-ratio [--threshold <RATIO>] [--high <RATIO>] [--critical <RATIO>]",
+                "effigy scan comment-ratio [--min-code-lines <N>] [--show-warnings] [--no-gitignore]",
+                "--show-warnings : include warning rows in terminal text output",
+                "terminal text hides warning rows and prints a warning count summary",
+            ],
+        },
+        BuiltinHelpCase {
             workspace: "builtin-scan-attention-help-precedence",
             command: "scan",
             args: &["attention-markers", "--help", "--wat"],

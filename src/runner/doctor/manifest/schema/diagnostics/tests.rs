@@ -1,8 +1,9 @@
 use std::path::Path;
 
-use crate::runner::doctor::DoctorSeverity;
+use crate::runner::doctor::report::DoctorSeverity;
 
-use super::{check_id, remediation, DoctorState, SchemaContext};
+use super::{check_id, remediation, SchemaContext};
+use crate::runner::doctor::report::DoctorState;
 
 #[test]
 fn unsupported_manifest_root_finding_message_is_stable() {

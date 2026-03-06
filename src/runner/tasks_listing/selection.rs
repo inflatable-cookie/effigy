@@ -1,8 +1,10 @@
-use super::super::{LoadedCatalog, ManifestTask, RunnerError, TaskSelector};
+use super::super::manifest::task_runtime::ManifestTask;
+use super::super::model::catalog::{LoadedCatalog, TaskSelector};
 use super::render_context::{ListingRenderRequest, ListingSelection};
 use super::row_projection::{builtin_task_rows, BuiltinTaskProjection};
 use super::ListingCatalogSnapshot;
 use super::BUILTIN_TEST_FALLBACK_NOTE;
+use crate::runner::error::RunnerError;
 
 pub(super) struct CatalogTaskMatch<'a> {
     catalog: &'a LoadedCatalog,

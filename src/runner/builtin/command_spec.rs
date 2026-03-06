@@ -1,6 +1,7 @@
-use super::super::{RunnerError, TaskRuntimeArgs};
+use super::super::model::catalog::TaskRuntimeArgs;
 use super::response::run_help_then;
 use super::support::reject_verbose_root_for_builtin;
+use crate::runner::error::RunnerError;
 
 pub(super) fn run_builtin_command<P, H, A, E>(
     args: &[String],

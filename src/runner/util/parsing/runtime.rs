@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use super::super::super::{RunnerError, TaskRuntimeArgs};
+use super::super::super::model::catalog::TaskRuntimeArgs;
+use crate::runner::error::RunnerError;
 
 pub(super) fn normalize_builtin_test_suite(raw: &str) -> Option<&'static str> {
     match raw {

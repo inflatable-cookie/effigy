@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use walkdir::WalkDir;
 
-use super::super::super::RunnerError;
+use crate::runner::error::RunnerError;
 
 #[derive(Debug)]
 pub(super) struct WatchMatcher {

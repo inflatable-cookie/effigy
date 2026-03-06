@@ -3,7 +3,7 @@ use std::path::Path;
 
 use walkdir::WalkDir;
 
-use crate::runner::RunnerError;
+use crate::runner::error::RunnerError;
 
 pub(super) fn fnv1a_hex(bytes: &[u8]) -> String {
     let mut hasher = Fnv1a64::new();

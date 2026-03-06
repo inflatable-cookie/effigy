@@ -115,7 +115,12 @@ impl WorkflowPhaseHandler for MockWorkflowPhaseHandler {
         self.record(WorkflowPhase::SummaryAndReport);
         let summary = state.summarize();
         let error_count = summary.error;
-        let report = state.into_report(summary, resolved.evidence, resolved.warnings);
+        let report = state.into_report(
+            resolved.resolved_root.display().to_string(),
+            summary,
+            resolved.evidence,
+            resolved.warnings,
+        );
         DoctorRunOutput {
             report,
             error_count,

@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 
 use crate::resolver::ResolvedTarget;
 
-use super::super::super::super::RunnerError;
-use super::super::super::{DoctorState, ManifestSnapshot};
+use super::super::super::report::{DoctorState, ManifestSnapshot};
 use super::DoctorRunOutput;
+use crate::runner::error::RunnerError;
 
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

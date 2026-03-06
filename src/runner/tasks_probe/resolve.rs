@@ -1,12 +1,16 @@
 use super::super::catalog::select_catalog_and_task;
-use super::super::managed::{
-    managed_available_profiles, task_has_concurrent_profile, DEFAULT_MANAGED_PROFILE,
+use super::super::command_context::current_working_dir;
+use super::super::managed::profiles::{
+    available_concurrent_profiles, has_concurrent_profile, DEFAULT_MANAGED_PROFILE,
 };
+use super::super::manifest::task_runtime::ManifestTask;
+use super::super::model::catalog::{LoadedCatalog, TaskSelection};
+use super::super::model::constants::BUILTIN_TASKS;
 use super::super::util::parse_task_reference_invocation;
-use super::super::{LoadedCatalog, ManifestTask, RunnerError, TaskSelection, BUILTIN_TASKS};
 use super::model::ResolveProbe;
+use crate::runner::error::RunnerError;
 
-pub(super) fn build_resolve_probe(
+pub(in crate::runner) fn build_resolve_probe(
     raw_selector: Option<String>,
     catalogs: &[LoadedCatalog],
 ) -> Result<Option<serde_json::Value>, RunnerError> {
@@ -15,7 +19,7 @@ pub(super) fn build_resolve_probe(
     };
     let (selector, selector_args) = parse_task_reference_invocation(&raw_selector)?;
     let selector_task_name = selector.task_name.clone();
-    let cwd = std::env::current_dir().map_err(RunnerError::Cwd)?;
+    let cwd = current_working_dir()?;
 
     let probe = match select_catalog_and_task(&selector, catalogs, &cwd) {
         Ok(selection) => build_selected_probe(
@@ -68,7 +72,7 @@ fn build_selected_probe(
         .cloned()
         .unwrap_or_else(|| DEFAULT_MANAGED_PROFILE.to_owned());
     let lock_scopes = lock_scopes_for_task(selector_task_name, selection.task, Some(&profile_name));
-    if !task_has_concurrent_profile(selection.task, &profile_name) {
+    if !has_concurrent_profile(selection.task, &profile_name) {
         let available_display = render_available_profiles(selection.task);
         return ResolveProbe::error(
             raw_selector,
@@ -98,7 +102,7 @@ fn build_selected_probe(
 }
 
 fn render_available_profiles(task: &ManifestTask) -> String {
-    let available = managed_available_profiles(task);
+    let available = available_concurrent_profiles(task);
     if available.is_empty() {
         "<none>".to_owned()
     } else {

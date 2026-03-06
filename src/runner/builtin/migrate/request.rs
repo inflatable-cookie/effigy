@@ -3,12 +3,13 @@ use std::path::PathBuf;
 use crate::TaskInvocation;
 
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
-use super::{MigrateArgs, RunnerError};
+use super::model::MigrateRequest;
+use crate::runner::error::RunnerError;
 
 pub(super) fn parse_migrate_request(
     task: &TaskInvocation,
     args: &[String],
-) -> Result<MigrateArgs, RunnerError> {
+) -> Result<MigrateRequest, RunnerError> {
     let mut parser = BuiltinArgParser::new(args);
     let mut output_json = false;
     let mut apply = false;
@@ -34,7 +35,7 @@ pub(super) fn parse_migrate_request(
         Ok(ParseLoopAction::Unknown)
     })?;
 
-    Ok(MigrateArgs {
+    Ok(MigrateRequest {
         output_json,
         apply,
         package_path,

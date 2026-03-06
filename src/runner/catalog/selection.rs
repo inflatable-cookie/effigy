@@ -9,9 +9,12 @@ mod strategy;
 
 use std::path::Path;
 
-use super::super::{CatalogSelectionMode, LoadedCatalog, RunnerError, TaskSelection, TaskSelector};
+use super::super::model::catalog::{
+    CatalogSelectionMode, LoadedCatalog, TaskSelection, TaskSelector,
+};
+use crate::runner::error::RunnerError;
 
-pub(super) fn select_catalog_and_task<'a>(
+pub(in crate::runner) fn select_catalog_and_task<'a>(
     selector: &TaskSelector,
     catalogs: &'a [LoadedCatalog],
     cwd: &Path,
@@ -45,7 +48,7 @@ pub(super) fn select_catalog_and_task<'a>(
     build_task_selection(selector, selected, mode, vec![evidence])
 }
 
-pub(super) fn resolve_catalog_by_prefix<'a>(
+pub(in crate::runner) fn resolve_catalog_by_prefix<'a>(
     prefix_value: &str,
     catalogs: &'a [LoadedCatalog],
     cwd: &Path,

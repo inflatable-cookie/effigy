@@ -1,8 +1,9 @@
 use std::path::Path;
 
-use super::super::{DeferredCommand, LoadedCatalog, TaskSelector, IMPLICIT_ROOT_DEFER_TEMPLATE};
+use super::super::model::catalog::{DeferredCommand, LoadedCatalog, TaskSelector};
+use super::super::model::constants::IMPLICIT_ROOT_DEFER_TEMPLATE;
 
-pub(super) fn select_deferral(
+pub(in crate::runner) fn select_deferral(
     selector: &TaskSelector,
     catalogs: &[LoadedCatalog],
     cwd: &Path,

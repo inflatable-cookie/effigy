@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use super::super::super::LoadedCatalog;
+use super::super::super::model::catalog::LoadedCatalog;
 
 pub(super) fn resolve_catalog_by_prefix<'a>(
     prefix_value: &str,

@@ -4,9 +4,10 @@ use crate::process_manager::ProcessSupervisor;
 use crate::tui::{run_multiprocess_tui, MultiProcessTuiOptions};
 use crate::ui::{Renderer, SummaryCounts};
 
+use super::super::model::managed::ManagedTaskPlan;
 use super::super::render::{render_utf8, text_renderer};
-use super::super::{ManagedTaskPlan, RunnerError};
 use super::render_support::{managed_process_specs, write_managed_overview};
+use crate::runner::error::RunnerError;
 
 #[path = "runtime/policy.rs"]
 mod policy;

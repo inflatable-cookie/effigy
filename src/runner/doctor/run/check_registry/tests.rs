@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::super::super::{DoctorState, ManifestSnapshot};
+use super::super::super::report::{DoctorState, ManifestSnapshot};
 use super::definitions::{doctor_check_definitions, DoctorCheckContext, DoctorCheckDefinition};
 use super::executor::for_each_check;
 
@@ -17,6 +17,8 @@ fn doctor_check_registry_order_is_stable() {
             "environment_tools",
             "task_references",
             "god_files",
+            "duplicate_blocks",
+            "comment_ratio",
             "generated_assets",
             "attention_markers",
             "health_task",
@@ -31,14 +33,17 @@ fn doctor_check_executor_visits_definitions_in_declaration_order() {
     let checks = [
         DoctorCheckDefinition {
             name: "first",
+            progress_label: None,
             run: noop,
         },
         DoctorCheckDefinition {
             name: "second",
+            progress_label: None,
             run: noop,
         },
         DoctorCheckDefinition {
             name: "third",
+            progress_label: None,
             run: noop,
         },
     ];
@@ -62,9 +67,29 @@ fn doctor_check_registry_is_executor_composable_without_control_flow_changes() {
             "environment_tools",
             "task_references",
             "god_files",
+            "duplicate_blocks",
+            "comment_ratio",
             "generated_assets",
             "attention_markers",
             "health_task",
+        ]
+    );
+}
+
+#[test]
+fn doctor_check_registry_scan_progress_labels_are_stable() {
+    let labels = doctor_check_definitions()
+        .iter()
+        .filter_map(|check| check.progress_label)
+        .collect::<Vec<&str>>();
+    assert_eq!(
+        labels,
+        vec![
+            "Doctor scan: god-files",
+            "Doctor scan: duplicate-blocks",
+            "Doctor scan: comment-ratio",
+            "Doctor scan: generated-assets",
+            "Doctor scan: attention-markers",
         ]
     );
 }

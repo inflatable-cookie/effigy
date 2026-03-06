@@ -3,8 +3,9 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use crate::runner::error::RunnerError;
+use crate::runner::model::catalog::LoadedCatalog;
 use crate::runner::util::parse_dotenv_entries;
-use crate::runner::{LoadedCatalog, RunnerError};
 
 use super::env_files::resolve_env_file_paths;
 use super::pathing::{

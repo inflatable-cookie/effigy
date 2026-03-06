@@ -3,11 +3,11 @@ use std::path::Path;
 use crate::ui::theme::Theme;
 use crate::ui::{NoticeLevel, PlainRenderer, Renderer};
 
-use super::super::super::RunnerError;
 use super::super::prepared_task_rows::prepare_catalog_match_task_rows;
 use super::super::selection::PreparedFilteredListing;
 use super::followups::render_builtin_and_probe_followup_sections;
 use super::rows::render_catalog_task_rows;
+use crate::runner::error::RunnerError;
 
 pub(super) fn render_filtered_tasks_text(
     renderer: &mut PlainRenderer<Vec<u8>>,

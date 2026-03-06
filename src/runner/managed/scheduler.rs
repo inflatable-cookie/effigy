@@ -3,7 +3,7 @@ mod graph;
 #[path = "scheduler/script.rs"]
 mod script;
 
-use super::super::ManifestManagedRunStep;
+use super::super::manifest::task_runtime::ManifestManagedRunStep;
 
 const DEFAULT_DAG_MAX_PARALLEL: usize = 4;
 
@@ -35,7 +35,7 @@ impl RunStepPolicy {
 pub(super) fn build_run_sequence_schedule(
     task_name: &str,
     steps: &[ManifestManagedRunStep],
-) -> Result<Option<Vec<Vec<usize>>>, super::super::RunnerError> {
+) -> Result<Option<Vec<Vec<usize>>>, crate::runner::error::RunnerError> {
     graph::build_run_sequence_schedule(task_name, steps)
 }
 

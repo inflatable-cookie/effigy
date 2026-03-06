@@ -2,9 +2,9 @@ use std::path::Path;
 
 use crate::tasks::ResolutionMode;
 
-use super::super::super::TASK_MANIFEST_FILE;
+use super::super::super::model::constants::TASK_MANIFEST_FILE;
 use super::super::contracts::{check_id, remediation};
-use super::super::DoctorState;
+use super::super::report::DoctorState;
 
 pub(in crate::runner::doctor) enum WorkflowFinding<'a> {
     RootResolution {

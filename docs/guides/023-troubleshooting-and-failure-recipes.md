@@ -65,6 +65,25 @@ Fix:
 - run with explicit prefix (`<catalog>/<task>`), or
 - run from a deeper directory to trigger nearest in-scope resolution.
 
+### Symptom: workspace root defines duplicate shim tasks for child-owned commands
+
+Example:
+- root `effigy.toml` defines `db:reset`
+- one child catalog already uniquely owns `db:reset`
+
+Diagnosis:
+
+```sh
+effigy tasks --task db:reset
+effigy tasks --resolve db:reset
+```
+
+Fix:
+- remove the duplicate root shim when a single child catalog already owns the task
+- keep the task in the owning child catalog and let unprefixed routing resolve it
+- add a root task only if the root is introducing distinct orchestration behavior
+  rather than mirroring a child task
+
 ## 3) Catalog Discovery and Manifest Issues
 
 ### Symptom: `no task catalogs found under ...`

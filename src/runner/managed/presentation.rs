@@ -1,12 +1,16 @@
 use std::io::IsTerminal;
 use std::path::Path;
 
-use crate::ui::{KeyValue, Renderer, SummaryCounts, TableSpec};
+use crate::ui::Renderer;
 
+use super::super::model::managed::ManagedTaskPlan;
 use super::super::render::{render_utf8, text_renderer};
-use super::render_support::write_managed_overview;
+use super::render_support::{
+    managed_plan_overview_fields, managed_plan_summary_counts, write_managed_overview,
+    write_managed_plan_passthrough, write_managed_plan_process_table,
+};
 use super::runtime;
-use super::{ManagedTaskPlan, RunnerError};
+use crate::runner::error::RunnerError;
 
 fn render_managed_task_plan(
     task_name: &str,
@@ -20,51 +24,21 @@ fn render_managed_task_plan(
         "Managed Task Plan",
         task_name,
         &plan,
-        vec![
-            KeyValue::new("repo-root", repo_root.display().to_string()),
-            KeyValue::new("manifest", manifest_path.display().to_string()),
-        ],
-        vec![KeyValue::new("tab-order", plan.tab_order.join(", "))],
+        managed_plan_overview_fields(repo_root, manifest_path, &plan),
+        Vec::new(),
         &[
             "Interactive TUI runtime is available for this task.",
             "Set EFFIGY_MANAGED_STREAM=1 to run selected profile processes in stream mode.",
         ],
     )?;
-    let rows = plan
-        .processes
-        .into_iter()
-        .map(|process| {
-            vec![
-                process.name,
-                process.cwd.display().to_string(),
-                process.run,
-                process.start_after_ms.to_string(),
-            ]
-        })
-        .collect::<Vec<Vec<String>>>();
-    renderer.table(&TableSpec::new(
-        vec![
-            "process".to_owned(),
-            "cwd".to_owned(),
-            "run".to_owned(),
-            "start-after-ms".to_owned(),
-        ],
-        rows,
-    ))?;
-    if !plan.passthrough.is_empty() {
-        renderer.text("")?;
-        renderer.bullet_list("profile-args", &plan.passthrough)?;
-    }
+    write_managed_plan_process_table(&mut renderer, &plan)?;
+    write_managed_plan_passthrough(&mut renderer, &plan)?;
     renderer.text("")?;
-    renderer.summary(SummaryCounts {
-        ok: 1,
-        warn: 1,
-        err: 0,
-    })?;
+    renderer.summary(managed_plan_summary_counts())?;
     render_utf8(renderer.into_inner())
 }
 
-pub(super) fn run_or_render_managed_task(
+pub(in crate::runner) fn run_or_render_managed_task(
     task_name: &str,
     repo_root: &Path,
     manifest_path: &Path,

@@ -18,60 +18,18 @@ mod row_projection;
 mod selection;
 #[path = "tasks_listing/selection_dispatch.rs"]
 mod selection_dispatch;
+#[path = "tasks_listing/snapshot.rs"]
+mod snapshot;
 #[path = "tasks_listing/text_output.rs"]
 mod text_output;
 
-use super::{LoadedCatalog, RunnerError};
+use super::model::catalog::LoadedCatalog;
+use crate::runner::error::RunnerError;
 use render_context::ListingRenderRequest;
+pub(super) use snapshot::{build_catalog_diagnostics, ListingCatalogSnapshot};
 
 const BUILTIN_TEST_FALLBACK_NOTE: &str =
     "built-in fallback supports `<catalog>/test` when explicit `tasks.test` is not defined";
-
-pub(super) struct ListingCatalogSnapshot<'a> {
-    catalogs: &'a [LoadedCatalog],
-    ordered_catalogs: &'a [&'a LoadedCatalog],
-    catalog_diagnostics: &'a [serde_json::Value],
-    precedence: &'a [String],
-    resolved_root: &'a Path,
-}
-
-impl<'a> ListingCatalogSnapshot<'a> {
-    fn new(
-        catalogs: &'a [LoadedCatalog],
-        ordered_catalogs: &'a [&'a LoadedCatalog],
-        catalog_diagnostics: &'a [serde_json::Value],
-        precedence: &'a [String],
-        resolved_root: &'a Path,
-    ) -> Self {
-        Self {
-            catalogs,
-            ordered_catalogs,
-            catalog_diagnostics,
-            precedence,
-            resolved_root,
-        }
-    }
-
-    pub(super) fn catalogs(&self) -> &'a [LoadedCatalog] {
-        self.catalogs
-    }
-
-    pub(super) fn ordered_catalogs(&self) -> &'a [&'a LoadedCatalog] {
-        self.ordered_catalogs
-    }
-
-    pub(super) fn catalog_diagnostics(&self) -> &'a [serde_json::Value] {
-        self.catalog_diagnostics
-    }
-
-    pub(super) fn precedence(&self) -> &'a [String] {
-        self.precedence
-    }
-
-    pub(super) fn resolved_root(&self) -> &'a Path {
-        self.resolved_root
-    }
-}
 
 pub(super) fn render_tasks_listing(
     args: &TasksArgs,

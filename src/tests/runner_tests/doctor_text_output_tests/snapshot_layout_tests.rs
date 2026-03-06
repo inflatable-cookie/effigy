@@ -12,7 +12,8 @@ fn run_doctor_text_output_has_blank_line_between_sections() {
     let out = run_builtin_ok(root, "doctor", &[]);
 
     assert!(out.starts_with("Doctor's Report\n"));
-    assert_output_contains_all(&out, &["workspace.root-resolution", "\n\nsummary  ok:"]);
+    assert_output_contains_all(&out, &["No findings.", "\nsummary  ok:"]);
+    assert_output_excludes_all(&out, &["workspace.root-resolution"]);
     assert_output_excludes_all(&out, &["\n\nRoot Resolution\n"]);
 }
 
@@ -86,15 +87,7 @@ run = [{ task = "missing/task" }]
         ],
     );
 
-    let error_idx = rendered
-        .find("tasks.references.resolve")
-        .expect("expected error check");
-    let discovery_idx = rendered
-        .find("health.task.discovery")
-        .expect("expected health discovery check");
-    let info_idx = rendered
-        .find("workspace.root-resolution")
-        .expect("expected info check");
-    assert!(error_idx < discovery_idx);
-    assert!(discovery_idx < info_idx);
+    assert!(rendered.contains("tasks.references.resolve"));
+    assert!(!rendered.contains("workspace.root-resolution"));
+    assert!(!rendered.contains("health.task.discovery"));
 }

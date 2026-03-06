@@ -1,4 +1,4 @@
-use super::super::super::RunnerError;
+use crate::runner::error::RunnerError;
 
 pub(super) struct ManagedRefContext {
     pub(super) managed_task_name: String,

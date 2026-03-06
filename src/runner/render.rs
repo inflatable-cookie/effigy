@@ -4,7 +4,8 @@ use std::path::Path;
 use crate::resolver::ResolvedTarget;
 use crate::ui::{KeyValue, OutputMode, PlainRenderer, Renderer};
 
-use super::{RunnerError, TaskSelection, TaskSelector};
+use super::model::catalog::{TaskSelection, TaskSelector};
+use crate::runner::error::RunnerError;
 
 pub(super) fn render_task_resolution_trace(
     resolved: &ResolvedTarget,

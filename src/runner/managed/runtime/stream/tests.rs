@@ -18,6 +18,7 @@ impl SpinnerHandle for TestSpinner {
     fn set_message(&self, _message: &str) {}
     fn finish_success(&self, _message: &str) {}
     fn finish_error(&self, _message: &str) {}
+    fn finish_clear(&self) {}
 }
 
 impl Renderer for RecordingRenderer {

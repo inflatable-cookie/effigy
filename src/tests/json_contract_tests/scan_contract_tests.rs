@@ -16,6 +16,26 @@ fn write_attention_file(path: &std::path::Path, lines: &[&str]) {
     fs::write(path, format!("{}\n", lines.join("\n"))).expect("write attention file");
 }
 
+fn write_duplicate_block_file(path: &std::path::Path, block_prefix: &str) {
+    let mut lines = vec![format!("pub fn {block_prefix}_alpha() -> usize {{")];
+    lines.push("    let seed = 1;".to_owned());
+    for idx in 0..18 {
+        lines.push(format!("    let acc_{idx} = seed + {idx};"));
+    }
+    lines.push("    acc_17".to_owned());
+    lines.push("}".to_owned());
+    let body = lines.join("\n");
+    fs::write(path, format!("{body}\n")).expect("write duplicate block file");
+}
+
+fn write_comment_ratio_file(path: &std::path::Path, comment_lines: usize, code_lines: usize) {
+    let mut lines = (0..comment_lines)
+        .map(|idx| format!("// commentary line {idx}"))
+        .collect::<Vec<String>>();
+    lines.extend((0..code_lines).map(|idx| format!("const line_{idx} = {idx};")));
+    fs::write(path, format!("{}\n", lines.join("\n"))).expect("write comment ratio file");
+}
+
 #[test]
 fn builtin_scan_god_files_json_contract_has_versioned_shape() {
     let root = temp_workspace("scan-json-contract");
@@ -173,6 +193,132 @@ fn builtin_scan_generated_assets_non_zero_json_rendering_remains_valid() {
     assert_eq!(parsed["finding_count"], 1);
     assert_eq!(parsed["fail_on_findings"], true);
     assert_eq!(parsed["findings"][0]["path"], "dist/app.min.js");
+}
+
+#[test]
+fn builtin_scan_duplicate_blocks_json_contract_has_versioned_shape() {
+    let root = temp_workspace("scan-duplicate-blocks-json-contract");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(&root.join("effigy.toml"), "");
+    write_duplicate_block_file(&root.join("src/alpha.rs"), "shared");
+    write_duplicate_block_file(&root.join("src/beta.rs"), "shared");
+
+    let parsed = run_invocation_json(root, "scan", &["duplicate-blocks", "--json"]);
+    assert_schema_v1(&parsed, "effigy.scan.duplicate-blocks.v1");
+    assert_eq!(parsed["scan"], "duplicate-blocks");
+    assert_eq!(parsed["format"], "text");
+    assert_eq!(parsed["candidate_blocks"], 6);
+    assert_eq!(parsed["finding_count"], 1);
+    assert_eq!(parsed["fail_on_findings"], false);
+    assert_eq!(parsed["respect_gitignore"], true);
+    assert!(parsed["thresholds"].is_object());
+    assert!(parsed["findings"].is_array());
+    assert!(parsed["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("Duplicate Blocks")));
+}
+
+#[test]
+fn builtin_scan_duplicate_blocks_non_zero_json_rendering_remains_valid() {
+    let root = temp_workspace("scan-duplicate-blocks-json-contract-non-zero");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(&root.join("effigy.toml"), "");
+    write_duplicate_block_file(&root.join("src/alpha.rs"), "shared");
+    write_duplicate_block_file(&root.join("src/beta.rs"), "shared");
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "scan".to_owned(),
+            args: vec![
+                "duplicate-blocks".to_owned(),
+                "--fail-on-findings".to_owned(),
+                "--json".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect_err("expected non-zero scan result");
+
+    let rendered = match err {
+        RunnerError::BuiltinScanNonZero { rendered, .. } => rendered,
+        other => panic!("unexpected error: {other}"),
+    };
+    let parsed = parse_json(&rendered);
+    assert_schema_v1(&parsed, "effigy.scan.duplicate-blocks.v1");
+    assert_eq!(parsed["finding_count"], 1);
+    assert_eq!(parsed["fail_on_findings"], true);
+    assert_eq!(
+        parsed["findings"][0]["locations"][0]["path"],
+        "src/alpha.rs"
+    );
+}
+
+#[test]
+fn builtin_scan_comment_ratio_json_contract_has_versioned_shape() {
+    let root = temp_workspace("scan-comment-ratio-json-contract");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(&root.join("effigy.toml"), "");
+    write_comment_ratio_file(&root.join("src/app.ts"), 30, 20);
+
+    let parsed = run_invocation_json(
+        root,
+        "scan",
+        &[
+            "comment-ratio",
+            "--warn",
+            "1.0",
+            "--min-code-lines",
+            "20",
+            "--json",
+        ],
+    );
+    assert_schema_v1(&parsed, "effigy.scan.comment-ratio.v1");
+    assert_eq!(parsed["scan"], "comment-ratio");
+    assert_eq!(parsed["format"], "text");
+    assert_eq!(parsed["candidate_files"], 1);
+    assert_eq!(parsed["finding_count"], 1);
+    assert_eq!(parsed["fail_on_findings"], false);
+    assert_eq!(parsed["respect_gitignore"], true);
+    assert!(parsed["thresholds"].is_object());
+    assert!(parsed["findings"].is_array());
+    assert!(parsed["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("Comment Ratio")));
+}
+
+#[test]
+fn builtin_scan_comment_ratio_non_zero_json_rendering_remains_valid() {
+    let root = temp_workspace("scan-comment-ratio-json-contract-non-zero");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(&root.join("effigy.toml"), "");
+    write_comment_ratio_file(&root.join("src/app.ts"), 30, 20);
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "scan".to_owned(),
+            args: vec![
+                "comment-ratio".to_owned(),
+                "--warn".to_owned(),
+                "1.0".to_owned(),
+                "--min-code-lines".to_owned(),
+                "20".to_owned(),
+                "--fail-on-findings".to_owned(),
+                "--json".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect_err("expected non-zero scan result");
+
+    let rendered = match err {
+        RunnerError::BuiltinScanNonZero { rendered, .. } => rendered,
+        other => panic!("unexpected error: {other}"),
+    };
+    let parsed = parse_json(&rendered);
+    assert_schema_v1(&parsed, "effigy.scan.comment-ratio.v1");
+    assert_eq!(parsed["finding_count"], 1);
+    assert_eq!(parsed["fail_on_findings"], true);
+    assert_eq!(parsed["findings"][0]["path"], "src/app.ts");
 }
 
 #[test]

@@ -1,7 +1,52 @@
 use std::path::Path;
 
-use super::super::super::cache::TaskCacheEntry;
+use serde_json::json;
+
+use super::super::super::cache::model::TaskCacheEntry;
+use super::super::response::render_optional_text_with_schema_text_fields_lazy;
 use super::super::text_doc::TextDoc;
+
+pub(super) fn render_inspect_response(
+    output_json: bool,
+    target_root: &Path,
+    selector_raw: &str,
+    entry: Option<&TaskCacheEntry>,
+) -> Result<Option<String>, crate::runner::error::RunnerError> {
+    render_optional_text_with_schema_text_fields_lazy(
+        output_json,
+        "effigy.cache.v1",
+        || render_inspect_text(target_root, selector_raw, entry),
+        || render_inspect_payload(target_root, selector_raw, entry),
+    )
+}
+
+pub(super) fn render_inspect_all_response(
+    output_json: bool,
+    target_root: &Path,
+    entries: &[TaskCacheEntry],
+) -> Result<Option<String>, crate::runner::error::RunnerError> {
+    render_optional_text_with_schema_text_fields_lazy(
+        output_json,
+        "effigy.cache.v1",
+        || render_inspect_all_text(target_root, entries),
+        || render_inspect_all_payload(target_root, entries),
+    )
+}
+
+pub(super) fn render_invalidate_response(
+    output_json: bool,
+    target_root: &Path,
+    invalidate_all: bool,
+    selectors: &[String],
+    removed: &[String],
+) -> Result<Option<String>, crate::runner::error::RunnerError> {
+    render_optional_text_with_schema_text_fields_lazy(
+        output_json,
+        "effigy.cache.v1",
+        || render_invalidate_text(target_root, invalidate_all, removed),
+        || render_invalidate_payload(target_root, invalidate_all, selectors, removed),
+    )
+}
 
 pub(super) fn render_inspect_text(
     target_root: &Path,
@@ -56,4 +101,43 @@ pub(super) fn render_invalidate_text(
         doc.bullet(key);
     }
     doc.finish()
+}
+
+pub(super) fn render_inspect_payload(
+    target_root: &Path,
+    selector_raw: &str,
+    entry: Option<&TaskCacheEntry>,
+) -> serde_json::Value {
+    json!({
+        "action": "inspect",
+        "root": target_root.display().to_string(),
+        "selector": selector_raw,
+        "entry": entry,
+    })
+}
+
+pub(super) fn render_inspect_all_payload(
+    target_root: &Path,
+    entries: &[TaskCacheEntry],
+) -> serde_json::Value {
+    json!({
+        "action": "inspect",
+        "root": target_root.display().to_string(),
+        "entries": entries,
+    })
+}
+
+pub(super) fn render_invalidate_payload(
+    target_root: &Path,
+    invalidate_all: bool,
+    selectors: &[String],
+    removed: &[String],
+) -> serde_json::Value {
+    json!({
+        "action": "invalidate",
+        "root": target_root.display().to_string(),
+        "all": invalidate_all,
+        "requested": selectors,
+        "removed": removed,
+    })
 }

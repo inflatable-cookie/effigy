@@ -65,6 +65,42 @@ effigy completion candidates --prefix app
 ## Contributor Commands
 
 ```bash
+effigy tasks --repo .
+effigy test --plan --repo .
+effigy qa --repo .
+effigy qa:docs --repo .
+effigy qa:json --repo .
+effigy qa:json:ci --repo .
+effigy qa:release --repo .
+effigy build:release --repo .
+effigy install:local --repo .
+effigy link:local --repo .
+effigy bootstrap:local --repo .
+```
+
+This repo now self-hosts a root `effigy.toml`. Keep built-in `effigy test` as
+the canonical Rust test entrypoint; the aggregate QA tasks call it via task
+references so `effigy test --plan` stays available.
+If `effigy` is not yet on `PATH`, bootstrap with `cargo run --bin effigy -- ...`.
+
+Durable local command channels:
+
+```bash
+cargo run --bin effigy -- bootstrap:local --repo .
+type -a effigy effigy-dev
+```
+
+This installs the stable binary to `./.local-install/bin/effigy`, then links:
+- `~/.local/bin/effigy` -> stable installed binary
+- `~/.local/bin/effigy-dev` -> repo-managed dev wrapper
+
+If you still have `alias effigy=...` in your shell rc, remove it after the
+symlink install so the shell resolves the real command from `~/.local/bin`.
+
+Compatibility fallbacks (use when Effigy is not yet the active entrypoint for a
+caller):
+
+```bash
 cargo qa
 cargo qa-docs
 cargo qa-json
@@ -179,8 +215,8 @@ See [`docs/guides/034-task-and-command-glossary.md`](./docs/guides/034-task-and-
 ## Development
 
 ```bash
-cargo test
-cargo qa
+effigy test --plan --repo .
+effigy qa --repo .
 ```
 
 ## Repository Layout

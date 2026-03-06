@@ -1,7 +1,7 @@
 use crate::TaskInvocation;
 
-use super::super::super::RunnerError;
 use super::request::{parse_completion_parsed_request, CompletionParsedRequest};
+use crate::runner::error::RunnerError;
 
 pub(in crate::runner) enum CompletionParseContract {
     Candidates,

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::runner::error::RunnerError;
 use crate::runner::manifest::ManifestEnvFileDirective;
-use crate::runner::RunnerError;
 
 use super::pathing::normalize_path;
 

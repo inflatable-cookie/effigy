@@ -1,7 +1,7 @@
 use crate::ui::theme::Theme;
 use crate::ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
 
-use super::super::RunnerError;
+use crate::runner::error::RunnerError;
 
 fn render_probe_evidence_block(
     renderer: &mut PlainRenderer<Vec<u8>>,
@@ -22,7 +22,7 @@ fn render_probe_evidence_block(
     Ok(())
 }
 
-pub(super) fn render_resolution_probe_block(
+pub(in crate::runner) fn render_resolution_probe_block(
     renderer: &mut PlainRenderer<Vec<u8>>,
     probe: &serde_json::Value,
     color_enabled: bool,

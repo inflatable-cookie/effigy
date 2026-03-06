@@ -70,6 +70,8 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.doctor.v1`
 - `effigy.doctor.explain.v1`
 - `effigy.scan.god-files.v1`
+- `effigy.scan.duplicate-blocks.v1`
+- `effigy.scan.comment-ratio.v1`
 - `effigy.scan.generated-assets.v1`
 - `effigy.scan.attention-markers.v1`
 - `effigy.config.v1`
@@ -92,6 +94,8 @@ effigy --json tasks --resolve catalog-a/api
 effigy --json doctor
 effigy --json doctor --repo /path/to/workspace catalog-a/build -- --watch
 effigy --json scan god-files
+effigy --json scan duplicate-blocks
+effigy --json scan comment-ratio
 effigy --json scan generated-assets
 effigy --json scan attention-markers
 effigy --json config
@@ -128,8 +132,10 @@ See `026-json-payload-examples.md` for realistic sample responses for each schem
 
 ### Doctor vs Scan Payloads
 
-- `effigy --json doctor` is the integrated health report. Scanner-backed findings like `scan.god-files` are normalized into doctor `sections` and flattened `findings`.
+- `effigy --json doctor` is the integrated health report. Scanner-backed findings like `scan.god-files` are normalized into doctor `sections` and flattened `findings`. Plain-text `effigy doctor` summarizes those sections and writes file-level scan detail reports under `.effigy/reports/doctor/`.
 - `effigy --json scan god-files` is the raw scanner payload. Use it when you need the full findings list, scan-local text snapshot, or report-output metadata.
+- `effigy --json scan duplicate-blocks` is the raw duplication payload. Use it when you need normalized block spans, occurrence locations, and snippet fingerprints without doctor normalization.
+- `effigy --json scan comment-ratio` is the raw comment-heaviness payload. Use it when you need per-file comment/code counts and ratio classifications without doctor normalization.
 - `effigy --json scan generated-assets` is the raw bulky-artifact payload. Use it when you need the vendored/generated asset list without doctor normalization.
 - `effigy --json scan attention-markers` is the raw attention-marker payload. Use it when you need the full marker list, line numbers, and text snapshot without doctor normalization.
 

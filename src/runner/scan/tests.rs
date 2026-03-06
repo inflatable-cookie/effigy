@@ -1,7 +1,5 @@
-use super::{
-    support::{count_code_lines, is_generated_artifact, normalize_rel_path},
-    GodFileScanOptions, GodFileSeverity, GodFileThresholds,
-};
+use super::model::{GodFileScanOptions, GodFileSeverity, GodFileThresholds};
+use super::support::{count_code_lines, is_generated_artifact, normalize_rel_path};
 use std::path::{Path, PathBuf};
 
 #[test]

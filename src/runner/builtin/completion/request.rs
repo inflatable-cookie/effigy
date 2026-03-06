@@ -1,16 +1,24 @@
+use std::path::PathBuf;
+
 use crate::TaskInvocation;
 
-use super::super::super::RunnerError;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
 use super::scripts::CompletionShell;
 use super::surface::{
     COMPLETION_CANDIDATES_SUBCOMMAND, COMPLETION_SHELL_TARGETS_QUOTED,
     COMPLETION_TARGETS_WITH_CANDIDATES_QUOTED,
 };
+use crate::runner::error::RunnerError;
 
 pub(super) struct CompletionRequest {
     pub(super) output_json: bool,
     pub(super) shell: Option<CompletionShell>,
+}
+
+pub(super) struct CompletionCandidatesRequest {
+    pub(super) output_json: bool,
+    pub(super) repo_override: Option<PathBuf>,
+    pub(super) prefix: Option<String>,
 }
 
 pub(super) enum CompletionParsedRequest {
@@ -60,4 +68,46 @@ pub(super) fn parse_completion_request(
     })?;
 
     Ok(CompletionRequest { output_json, shell })
+}
+
+pub(super) fn parse_completion_candidates_request(
+    task: &TaskInvocation,
+    args: &[String],
+) -> Result<CompletionCandidatesRequest, RunnerError> {
+    let mut parser = BuiltinArgParser::new(args);
+    let mut output_json = false;
+    let mut repo_override: Option<PathBuf> = None;
+    let mut prefix: Option<String> = None;
+    parser.parse_loop_require_no_unknown_with_prefix(
+        &task.name,
+        COMPLETION_CANDIDATES_SUBCOMMAND,
+        |parser, arg| {
+            if arg == COMPLETION_CANDIDATES_SUBCOMMAND
+                || parser.consume_json_flag(arg, &mut output_json)
+            {
+                return Ok(ParseLoopAction::Handled);
+            }
+            match arg {
+                "--repo" => {
+                    let value =
+                        parser.context_string_flag_value("completion candidates", "--repo")?;
+                    repo_override = Some(PathBuf::from(value));
+                    Ok(ParseLoopAction::Handled)
+                }
+                "--prefix" => {
+                    let value =
+                        parser.context_string_flag_value("completion candidates", "--prefix")?;
+                    prefix = Some(value);
+                    Ok(ParseLoopAction::Handled)
+                }
+                _ => Ok(ParseLoopAction::Unknown),
+            }
+        },
+    )?;
+
+    Ok(CompletionCandidatesRequest {
+        output_json,
+        repo_override,
+        prefix,
+    })
 }

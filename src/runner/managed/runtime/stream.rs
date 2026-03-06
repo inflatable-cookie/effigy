@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::process_manager::{ProcessEvent, ProcessEventKind, ProcessSupervisor};
 use crate::ui::{NoticeLevel, Renderer};
 
-use super::super::super::RunnerError;
+use crate::runner::error::RunnerError;
 
 const STREAM_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const STREAM_DRAIN_POLLS_AFTER_EXIT: usize = 3;

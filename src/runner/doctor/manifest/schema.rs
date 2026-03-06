@@ -2,7 +2,7 @@ use std::path::Path;
 
 use toml::Value;
 
-use super::super::DoctorState;
+use super::super::report::DoctorState;
 
 mod diagnostics;
 mod env_section;

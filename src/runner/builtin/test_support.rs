@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::super::LoadedCatalog;
+use super::super::model::catalog::LoadedCatalog;
 
 pub(in crate::runner) use super::completion::test_support::{
     parse_completion_contract_request, CompletionParseContract,

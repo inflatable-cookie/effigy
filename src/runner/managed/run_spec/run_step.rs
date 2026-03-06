@@ -1,9 +1,10 @@
-use crate::runner::manifest::ManifestManagedRunStepTable;
+use crate::runner::manifest::task_runtime::ManifestManagedRunStepTable;
 
-use super::super::super::{ManifestManagedRunStep, RunnerError};
+use super::super::super::manifest::task_runtime::ManifestManagedRunStep;
 use super::super::references;
-use super::command::render_command_template;
+use super::command::render_step_command;
 use super::RunSpecContext;
+use crate::runner::error::RunnerError;
 
 pub(super) fn resolve_task_run_step(
     step: &ManifestManagedRunStep,
@@ -60,11 +61,7 @@ fn resolve_selected_run_or_task(
     context: RunSpecContext<'_>,
 ) -> Result<String, RunnerError> {
     match selection {
-        RunOrTaskRef::Run(run) => Ok(render_command_template(
-            run,
-            context.repo_root,
-            context.args_rendered,
-        )),
+        RunOrTaskRef::Run(run) => Ok(render_step_command(run, context)),
         RunOrTaskRef::Task(task_ref) => references::resolve_task_reference_step(
             context.task_name,
             task_ref,

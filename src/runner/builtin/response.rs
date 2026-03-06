@@ -1,8 +1,8 @@
 use super::super::render::{
     color_enabled_for_text_output, encode_json, encode_pretty_json_optional,
 };
-use super::super::RunnerError;
 use super::{has_builtin_help_flag, has_builtin_json_flag};
+use crate::runner::error::RunnerError;
 
 pub(super) fn builtin_output_color_enabled(output_json: bool) -> bool {
     color_enabled_for_text_output(output_json)
@@ -65,22 +65,24 @@ pub(super) fn render_optional_text_or_schema_json(
     render_optional_text_or_json(output_json, text, schema_payload(schema, fields))
 }
 
-pub(super) fn render_optional_text_or_json_lazy<T, P>(
+pub(super) fn render_optional_text_with_schema_fields_lazy<T, P>(
     output_json: bool,
+    schema: &str,
     render_text: T,
-    render_payload: P,
+    render_fields: P,
 ) -> Result<Option<String>, RunnerError>
 where
     T: FnOnce() -> String,
-    P: FnOnce() -> serde_json::Value,
+    P: FnOnce(&str) -> serde_json::Value,
 {
+    let text = render_text();
     if output_json {
-        return encode_pretty_json_optional(&render_payload());
+        return encode_pretty_json_optional(&schema_payload(schema, render_fields(&text)));
     }
-    Ok(Some(render_text()))
+    Ok(Some(text))
 }
 
-pub(super) fn render_optional_text_or_schema_json_lazy<T, P>(
+pub(super) fn render_optional_text_with_schema_text_fields_lazy<T, P>(
     output_json: bool,
     schema: &str,
     render_text: T,
@@ -90,9 +92,12 @@ where
     T: FnOnce() -> String,
     P: FnOnce() -> serde_json::Value,
 {
-    render_optional_text_or_json_lazy(output_json, render_text, || {
-        schema_payload(schema, render_fields())
-    })
+    let text = render_text();
+    if output_json {
+        let fields = append_text_field(render_fields(), &text);
+        return encode_pretty_json_optional(&schema_payload(schema, fields));
+    }
+    Ok(Some(text))
 }
 
 pub(super) fn render_text_or_json_lazy<T, P>(
@@ -123,4 +128,20 @@ where
         return render_help(has_builtin_json_flag(args)).map(Some);
     }
     run()
+}
+
+fn append_text_field(fields: serde_json::Value, text: &str) -> serde_json::Value {
+    match fields {
+        serde_json::Value::Object(mut map) => {
+            map.insert(
+                "text".to_owned(),
+                serde_json::Value::String(text.to_owned()),
+            );
+            serde_json::Value::Object(map)
+        }
+        other => serde_json::json!({
+            "data": other,
+            "text": text,
+        }),
+    }
 }

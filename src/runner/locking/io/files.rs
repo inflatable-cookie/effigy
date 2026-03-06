@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::super::super::RunnerError;
+use crate::runner::error::RunnerError;
 
 pub(super) fn read_lock_record(path: &Path) -> Result<super::LockRecord, RunnerError> {
     let body = fs::read(path).map_err(|error| RunnerError::TaskLockIo {

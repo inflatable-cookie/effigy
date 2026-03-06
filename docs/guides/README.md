@@ -12,6 +12,7 @@ This is the navigation hub for practical runbooks.
 6. [`026-json-payload-examples.md`](./026-json-payload-examples.md) - payload examples for machine consumers.
 7. [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md) - quick manifest scaffolds.
 8. [`028-migration-quick-paths.md`](./028-migration-quick-paths.md) - scenario-based adoption paths.
+9. [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md) - agent-first repo adoption contract and rollout waves.
 
 ## Standards Used In These Guides
 
@@ -81,6 +82,14 @@ Read:
 2. [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 3. [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 
+### AI Agent / Repo Integrator
+
+Read:
+1. [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
+2. [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
+3. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+4. [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+
 ### Maintainer
 
 Read:
@@ -103,6 +112,7 @@ Read:
 - Distribution first-publish execution runbook: [`044-distribution-first-publish-execution-runbook.md`](./044-distribution-first-publish-execution-runbook.md)
 - Vision next-task allowlist maintenance: [`045-vision-next-task-allowlist-maintenance.md`](./045-vision-next-task-allowlist-maintenance.md)
 - Vision next-task allowlist PR checklist snippet: [`046-vision-next-task-allowlist-pr-checklist-snippet.md`](./046-vision-next-task-allowlist-pr-checklist-snippet.md)
+- Agent and cross-repo adoption: [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
 
 ## Supplemental
 

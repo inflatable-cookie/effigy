@@ -1,14 +1,16 @@
 use serde_json::json;
 
-use super::super::response::render_optional_text_or_schema_json_lazy;
+use super::super::response::render_optional_text_with_schema_text_fields_lazy;
 use super::super::text_doc::TextDoc;
-use super::{MigratePlan, MigrateScript, RunnerError, CONFLICT_REASON_TASK_EXISTS};
+use super::model::{MigratePlan, MigrateScript};
+use super::{BUILTIN_MIGRATE_NAME, CONFLICT_REASON_TASK_EXISTS};
+use crate::runner::error::RunnerError;
 
 pub(super) fn render_migrate_output(
     plan: &MigratePlan,
     output_json: bool,
 ) -> Result<Option<String>, RunnerError> {
-    render_optional_text_or_schema_json_lazy(
+    render_optional_text_with_schema_text_fields_lazy(
         output_json,
         "effigy.migrate.v1",
         || render_migrate_text(plan),
@@ -107,6 +109,6 @@ fn push_outcome_section(doc: &mut TextDoc, plan: &MigratePlan) {
     doc.line("No files were modified.");
     doc.line(format!(
         "Run `effigy {} --apply` to write ready imports.",
-        super::BUILTIN_MIGRATE_NAME
+        BUILTIN_MIGRATE_NAME
     ));
 }

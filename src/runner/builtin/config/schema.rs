@@ -1,3 +1,4 @@
+use super::super::doc_render::{append_doc_lines, render_prefixed_doc};
 use super::super::text_doc::TextDoc;
 use super::docs::{self, ConfigDocProfile};
 use super::request::{ConfigSchemaTarget, ConfigTestRunner};
@@ -5,30 +6,22 @@ use super::request::{ConfigSchemaTarget, ConfigTestRunner};
 const HEADER_CANONICAL: &str = "# Canonical strict-valid effigy.toml schema template";
 const HEADER_MINIMAL: &str = "# Minimal strict-valid effigy.toml starter";
 
-fn prefixed_section(header: &str, lines: impl IntoIterator<Item = &'static str>) -> String {
-    let mut doc = TextDoc::new();
-    doc.line(header);
-    doc.blank();
-    append_lines(&mut doc, lines);
-    doc.finish()
-}
-
 pub(super) fn render_builtin_config_schema() -> String {
     let mut doc = TextDoc::new();
     doc.line(HEADER_CANONICAL);
     doc.blank();
-    append_lines(
+    append_doc_lines(
         &mut doc,
         docs::package_manager_lines(ConfigDocProfile::Schema),
     );
-    append_lines(
+    append_doc_lines(
         &mut doc,
         docs::test_section_lines(true, ConfigDocProfile::Schema, None),
     );
-    append_lines(&mut doc, docs::defer_lines().iter().copied());
-    append_lines(&mut doc, docs::shell_lines().iter().copied());
-    append_lines(&mut doc, docs::scan_lines().iter().copied());
-    append_lines(
+    append_doc_lines(&mut doc, docs::defer_lines().iter().copied());
+    append_doc_lines(&mut doc, docs::shell_lines().iter().copied());
+    append_doc_lines(&mut doc, docs::scan_lines().iter().copied());
+    append_doc_lines(
         &mut doc,
         docs::tasks_canonical_lines(ConfigDocProfile::Schema),
     );
@@ -39,15 +32,15 @@ pub(super) fn render_builtin_config_schema_minimal() -> String {
     let mut doc = TextDoc::new();
     doc.line(HEADER_MINIMAL);
     doc.blank();
-    append_lines(
+    append_doc_lines(
         &mut doc,
         docs::package_manager_lines(ConfigDocProfile::Schema),
     );
-    append_lines(
+    append_doc_lines(
         &mut doc,
         docs::test_section_lines(false, ConfigDocProfile::Schema, Some("vitest")),
     );
-    append_lines(&mut doc, docs::tasks_minimal_lines().iter().copied());
+    append_doc_lines(&mut doc, docs::tasks_minimal_lines().iter().copied());
     doc.finish()
 }
 
@@ -55,43 +48,14 @@ pub(super) fn render_builtin_config_schema_target(
     target: ConfigSchemaTarget,
     minimal: bool,
 ) -> String {
-    let header_prefix = if minimal {
-        "# Minimal strict-valid effigy.toml starter"
-    } else {
-        "# Canonical strict-valid effigy.toml schema template"
-    };
-
-    match (target, minimal) {
-        (ConfigSchemaTarget::PackageManager, true)
-        | (ConfigSchemaTarget::PackageManager, false) => prefixed_section(
-            &format!("{header_prefix} (package_manager target)"),
-            docs::package_manager_lines(ConfigDocProfile::Schema),
+    render_prefixed_doc(
+        &format!(
+            "{} ({} target)",
+            schema_header_prefix(minimal),
+            target.as_str()
         ),
-        (ConfigSchemaTarget::Tasks, true) => prefixed_section(
-            &format!("{header_prefix} (tasks target)"),
-            docs::tasks_minimal_lines().iter().copied(),
-        ),
-        (ConfigSchemaTarget::Tasks, false) => prefixed_section(
-            &format!("{header_prefix} (tasks target)"),
-            docs::tasks_canonical_lines(ConfigDocProfile::Schema),
-        ),
-        (ConfigSchemaTarget::Defer, true) | (ConfigSchemaTarget::Defer, false) => prefixed_section(
-            &format!("{header_prefix} (defer target)"),
-            docs::defer_lines().iter().copied(),
-        ),
-        (ConfigSchemaTarget::Scan, true) | (ConfigSchemaTarget::Scan, false) => prefixed_section(
-            &format!("{header_prefix} (scan target)"),
-            docs::scan_lines().iter().copied(),
-        ),
-        (ConfigSchemaTarget::Shell, true) | (ConfigSchemaTarget::Shell, false) => prefixed_section(
-            &format!("{header_prefix} (shell target)"),
-            docs::shell_lines().iter().copied(),
-        ),
-        (ConfigSchemaTarget::Test, true) | (ConfigSchemaTarget::Test, false) => prefixed_section(
-            &format!("{header_prefix} (test target)"),
-            docs::test_section_lines(!minimal, ConfigDocProfile::Schema, None),
-        ),
-    }
+        target_schema_lines(target, minimal),
+    )
 }
 
 pub(super) fn render_builtin_config_schema_test_target(
@@ -120,7 +84,7 @@ pub(super) fn render_builtin_config_schema_test_target(
     let mut doc = TextDoc::new();
     doc.line(header);
     doc.blank();
-    append_lines(
+    append_doc_lines(
         &mut doc,
         docs::test_section_lines(
             !minimal,
@@ -131,8 +95,33 @@ pub(super) fn render_builtin_config_schema_test_target(
     doc.finish()
 }
 
-fn append_lines(doc: &mut TextDoc, lines: impl IntoIterator<Item = &'static str>) {
-    for line in lines {
-        doc.line(line);
+fn schema_header_prefix(minimal: bool) -> &'static str {
+    if minimal {
+        HEADER_MINIMAL
+    } else {
+        HEADER_CANONICAL
+    }
+}
+
+fn target_schema_lines(
+    target: ConfigSchemaTarget,
+    minimal: bool,
+) -> Box<dyn Iterator<Item = &'static str>> {
+    match target {
+        ConfigSchemaTarget::PackageManager => {
+            Box::new(docs::package_manager_lines(ConfigDocProfile::Schema).into_iter())
+        }
+        ConfigSchemaTarget::Test => {
+            Box::new(docs::test_section_lines(!minimal, ConfigDocProfile::Schema, None).into_iter())
+        }
+        ConfigSchemaTarget::Tasks if minimal => {
+            Box::new(docs::tasks_minimal_lines().iter().copied())
+        }
+        ConfigSchemaTarget::Tasks => {
+            Box::new(docs::tasks_canonical_lines(ConfigDocProfile::Schema).into_iter())
+        }
+        ConfigSchemaTarget::Defer => Box::new(docs::defer_lines().iter().copied()),
+        ConfigSchemaTarget::Scan => Box::new(docs::scan_lines().iter().copied()),
+        ConfigSchemaTarget::Shell => Box::new(docs::shell_lines().iter().copied()),
     }
 }

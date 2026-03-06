@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use globset::Glob;
 use walkdir::WalkDir;
 
-use crate::runner::RunnerError;
+use crate::runner::error::RunnerError;
 
 pub(super) fn resolve_declared_matches(
     catalog_root: &Path,

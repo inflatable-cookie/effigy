@@ -1,7 +1,7 @@
 use crate::TaskInvocation;
 
-use super::super::super::RunnerError;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
+use crate::runner::error::RunnerError;
 
 pub(super) struct HelpRequest {
     pub(super) output_json: bool,

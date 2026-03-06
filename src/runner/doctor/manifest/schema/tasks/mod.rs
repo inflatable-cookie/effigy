@@ -1,9 +1,10 @@
 use toml::Value;
 
 use super::diagnostics::SchemaContext;
-use super::tables::{validate_allowed_keys, validate_concurrent_array};
+use super::tables::{require_table, validate_allowed_keys, validate_concurrent_array};
 use super::values::{
-    validate_non_empty_string_or_array_of_non_empty_strings, validate_table_string_values,
+    validate_optional_enum_string_field, validate_optional_non_empty_string_or_array_field,
+    validate_optional_table_string_values_field,
 };
 
 mod profiles;
@@ -13,12 +14,12 @@ use profiles::validate_task_profiles;
 use run_steps::validate_run_step_table;
 
 pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &Value) {
-    let Some(tasks_table) = tasks.as_table() else {
-        context.unsupported_value(
-            "tasks",
-            SchemaContext::value_type(tasks),
-            "expected a table of task definitions",
-        );
+    let Some(tasks_table) = require_table(
+        context,
+        "tasks",
+        tasks,
+        "expected a table of task definitions",
+    ) else {
         return;
     };
 
@@ -28,12 +29,13 @@ pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &
             continue;
         }
 
-        let Some(task_table) = task_value.as_table() else {
-            context.unsupported_value(
-                &format!("tasks.{task_name}"),
-                SchemaContext::value_type(task_value),
-                "expected string command, run sequence array, or task table",
-            );
+        let task_path = format!("tasks.{task_name}");
+        let Some(task_table) = require_table(
+            context,
+            &task_path,
+            task_value,
+            "expected string command, run sequence array, or task table",
+        ) else {
             continue;
         };
 
@@ -100,20 +102,13 @@ fn validate_task_table_keys(
 }
 
 fn validate_task_mode(context: &mut SchemaContext<'_, '_>, task_name: &str, mode: Option<&Value>) {
-    let Some(mode) = mode else {
-        return;
-    };
-    if let Some(raw) = mode.as_str() {
-        if raw != "tui" {
-            context.unsupported_value(&format!("tasks.{task_name}.mode"), raw, "expected `tui`");
-        }
-    } else {
-        context.unsupported_value(
-            &format!("tasks.{task_name}.mode"),
-            SchemaContext::value_type(mode),
-            "expected string `tui`",
-        );
-    }
+    validate_optional_enum_string_field(
+        context,
+        mode,
+        &format!("tasks.{task_name}.mode"),
+        &["tui"],
+        "expected `tui`",
+    );
 }
 
 fn validate_task_run_field(
@@ -138,18 +133,12 @@ fn validate_task_env_field(
     task_name: &str,
     env: Option<&Value>,
 ) {
-    let Some(env) = env else {
-        return;
-    };
-    let Some(env_table) = env.as_table() else {
-        context.unsupported_value(
-            &format!("tasks.{task_name}.env"),
-            SchemaContext::value_type(env),
-            "expected table of string values",
-        );
-        return;
-    };
-    validate_table_string_values(context, &format!("tasks.{task_name}.env"), env_table);
+    validate_optional_table_string_values_field(
+        context,
+        env,
+        &format!("tasks.{task_name}.env"),
+        "expected table of string values",
+    );
 }
 
 fn validate_task_env_file_field(
@@ -157,13 +146,10 @@ fn validate_task_env_file_field(
     task_name: &str,
     env_file: Option<&Value>,
 ) {
-    let Some(env_file) = env_file else {
-        return;
-    };
-    validate_non_empty_string_or_array_of_non_empty_strings(
+    validate_optional_non_empty_string_or_array_field(
         context,
-        &format!("tasks.{task_name}.env_file"),
         env_file,
+        &format!("tasks.{task_name}.env_file"),
         "expected string or array of strings",
     );
 }

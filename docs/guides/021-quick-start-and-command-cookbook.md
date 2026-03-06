@@ -12,18 +12,20 @@ Use this page for first-run workflows. Use [`025-command-reference-matrix.md`](.
 
 ## 1) Quick Start (5 Minutes)
 
-Run from source:
+Preferred daily-use path:
 
 ```sh
-cargo run --bin effigy -- --help
-cargo run --bin effigy -- tasks
+cargo install --path . --root ./.local-install --force
+./scripts/install-local-bin-links.sh
+effigy --help
+effigy tasks
 ```
 
-Install on PATH:
+Dev-channel fallback when working on the Effigy repo itself:
 
 ```sh
-cargo install --path .
-effigy --help
+effigy-dev --help
+effigy-dev tasks --repo .
 ```
 
 Create starter manifest if needed:
@@ -96,7 +98,7 @@ effigy doctor --verbose
 effigy doctor --repo /path/to/workspace app/build -- --watch
 ```
 
-`effigy doctor` still includes `scan.god-files` findings when `[scan.god_files].doctor = true`, including warning-level findings. The warning-row hiding change only affects plain `effigy scan god-files` terminal output.
+`effigy doctor` still includes `scan.god-files` findings when `[scan.god_files].doctor = true`, including warning-level findings. Doctor text output now summarizes scan-backed sections and writes the full file-level rows to `.effigy/reports/doctor/scan-*.md`.
 
 Repository scan for oversized code files:
 
@@ -120,7 +122,35 @@ effigy scan generated-assets --markdown --out reports/generated-assets.md
 ```
 
 Use this when you want to surface checked-in build/vendor outputs and other generated assets that are inflating the repo.
-`effigy doctor` also includes `scan.generated-assets` findings when `[scan.generated_assets].doctor = true`.
+`effigy doctor` also includes `scan.generated-assets` findings when `[scan.generated_assets].doctor = true`, with full detail written to `.effigy/reports/doctor/scan-generated-assets.md` when findings exist.
+
+Repository scan for repeated normalized code blocks across files:
+
+```sh
+effigy scan duplicate-blocks
+effigy scan duplicate-blocks --show-warnings
+effigy scan duplicate-blocks --threshold 30 --fail-on-findings
+effigy scan duplicate-blocks --markdown --out reports/duplicate-blocks.md
+effigy --json scan duplicate-blocks
+```
+
+Use this when you want to surface large structural duplication, especially from AI-generated copy/paste across modules.
+`effigy doctor` can include `scan.duplicate-blocks` findings when `[scan.duplicate_blocks].doctor = true`, with full detail written to `.effigy/reports/doctor/scan-duplicate-blocks.md` when findings exist.
+Keep it opt-in for doctor for now; the current `acowtancy` benchmark took about `16.9s` and produced `95` findings, which is useful but too expensive and noisy for default health runs.
+
+Repository scan for comment-heavy source files:
+
+```sh
+effigy scan comment-ratio
+effigy scan comment-ratio --show-warnings
+effigy scan comment-ratio --threshold 1.5 --min-code-lines 20 --fail-on-findings
+effigy scan comment-ratio --markdown --out reports/comment-ratio.md
+effigy --json scan comment-ratio
+```
+
+Use this when you want to separate “too much commentary” from “too much code” and find files where comment-only lines dominate executable lines.
+`effigy doctor` includes `scan.comment-ratio` findings by default, with full detail written to `.effigy/reports/doctor/scan-comment-ratio.md` when findings exist. Use `[scan.comment_ratio]` to tune thresholds or set `doctor = false` to opt out.
+The current `acowtancy` benchmark took about `2.4s` and produced `15` findings, which is cheap and quiet enough to keep doctor participation enabled by default.
 
 Repository scan for TODO/FIXME/deprecation and deferred-work markers:
 
@@ -132,7 +162,7 @@ effigy --json scan attention-markers
 ```
 
 Use this when you want explicit attention markers surfaced without relying on manual grep.
-`effigy doctor` also includes `scan.attention-markers` findings when `[scan.attention_markers].doctor = true`.
+`effigy doctor` also includes `scan.attention-markers` findings when `[scan.attention_markers].doctor = true`, with full detail written to `.effigy/reports/doctor/scan-attention-markers.md` when findings exist.
 
 Built-in test orchestration:
 
@@ -192,6 +222,8 @@ Examples:
 effigy --json tasks
 effigy --json doctor
 effigy --json scan god-files
+effigy --json scan duplicate-blocks
+effigy --json scan comment-ratio
 effigy --json scan attention-markers
 effigy --json test --plan
 ```
@@ -209,4 +241,4 @@ Payload examples: [`026-json-payload-examples.md`](./026-json-payload-examples.m
 
 ## 6) Next Step
 
-After completing this quick start, run the docs QA checklist in [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md) before shipping automation or contract-related changes.
+After completing this quick start, use [`010-path-installation-and-release.md`](./010-path-installation-and-release.md) for stable/dev channel setup details and run the docs QA checklist in [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md) before shipping automation or contract-related changes.

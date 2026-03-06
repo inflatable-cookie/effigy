@@ -1,5 +1,5 @@
 pub(super) mod runtime {
-    pub(crate) use super::super::super::{run_doctor, run_tasks, RunnerError};
+    pub(crate) use super::super::super::error::RunnerError;
     pub(crate) use crate::{DoctorArgs, TaskInvocation, TasksArgs};
     pub(crate) use std::fs;
     #[cfg(unix)]
@@ -7,6 +7,14 @@ pub(super) mod runtime {
     pub(crate) use std::path::PathBuf;
     pub(crate) use std::thread;
     pub(crate) use std::time::Duration;
+
+    pub(crate) fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
+        super::super::super::doctor::run_doctor(args)
+    }
+
+    pub(crate) fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
+        super::super::super::tasks_command::run_tasks(args)
+    }
 }
 
 pub(super) mod harness {

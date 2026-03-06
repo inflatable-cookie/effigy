@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use crate::runner::error::RunnerError;
 use crate::runner::manifest::ManifestEnvEntry;
-use crate::runner::{LoadedCatalog, RunnerError};
+use crate::runner::model::catalog::LoadedCatalog;
 
 use super::super::pathing::{
     find_catalog_by_normalized_root, resolve_catalog_reference_root, split_catalog_env_reference,

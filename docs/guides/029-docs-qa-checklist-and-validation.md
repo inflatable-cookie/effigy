@@ -7,9 +7,11 @@ Use this checklist before merging documentation changes.
 Run in order:
 
 ```sh
-cargo qa-docs
-# fallback:
-# ./scripts/check-quality-gates.sh --docs-only
+effigy qa:docs --repo .
+# dev-checkout fallback:
+# effigy-dev qa:docs --repo .
+# compatibility fallback:
+# cargo qa-docs
 ```
 
 Manual checks:
@@ -29,7 +31,7 @@ Manual checks:
 Optional broader check:
 
 ```sh
-cargo qa
+effigy qa --repo .
 ```
 
 ## 2) CI Validation Path
@@ -149,7 +151,7 @@ Copy into PR description:
 
 ```md
 ## Docs QA
-- [ ] `cargo qa-docs`
+- [ ] `effigy qa:docs --repo .`
 - [ ] `./docs/scripts/check-vision-metadata.sh`
 - [ ] `./docs/scripts/check-doc-workflow-paths.sh`
 - [ ] `./docs/scripts/check-vision-index.sh`
@@ -169,7 +171,7 @@ Allowlist-change PRs should use:
 
 ```sh
 # docs links only
-cargo qa-docs
+effigy qa:docs --repo .
 
 # vision metadata coverage
 ./docs/scripts/check-vision-metadata.sh
@@ -190,10 +192,10 @@ cargo qa-docs
 ./scripts/add-log-index-entry.sh docs/logs/YYYY-MM/DD-HHMMSS-topic.md
 
 # json contracts only
-cargo qa-json-ci
+effigy qa:json:ci --repo .
 
 # all gates
-cargo qa
+effigy qa --repo .
 ```
 
 ## Related Guides

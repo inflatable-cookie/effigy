@@ -3,13 +3,14 @@ use std::path::Path;
 use crate::ui::theme::Theme;
 use crate::ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
 
-use super::super::super::{LoadedCatalog, RunnerError};
+use super::super::super::model::catalog::LoadedCatalog;
 use super::super::prepared_task_rows::{
     prepare_default_text_rows, CatalogAliasProjection, CatalogTaskProjection,
 };
 use super::super::row_projection::builtin_task_rows;
 use super::followups::render_builtin_rows_section;
 use super::rows::{render_catalog_alias_rows, render_catalog_task_rows};
+use crate::runner::error::RunnerError;
 
 pub(super) fn render_default_tasks_text(
     renderer: &mut PlainRenderer<Vec<u8>>,

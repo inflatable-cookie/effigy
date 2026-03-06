@@ -1,9 +1,10 @@
-use super::super::{LoadedCatalog, RunnerError};
+use super::super::model::catalog::LoadedCatalog;
 use super::render_context::ListingRenderRequest;
 use super::selection::{
     prepare_listing_selection, PreparedFilteredListing, PreparedListingSelection,
 };
 use super::ListingCatalogSnapshot;
+use crate::runner::error::RunnerError;
 
 pub(super) fn dispatch_listing_selection<'snap, Ctx, T>(
     request: ListingRenderRequest<'_>,

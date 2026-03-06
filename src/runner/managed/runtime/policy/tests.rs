@@ -1,5 +1,5 @@
 use super::{enforce_non_zero_exit_policy, normalize_non_zero_exits};
-use crate::runner::RunnerError;
+use crate::runner::error::RunnerError;
 
 #[test]
 fn normalize_non_zero_exits_sorts_and_deduplicates() {

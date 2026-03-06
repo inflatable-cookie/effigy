@@ -36,7 +36,7 @@ fn run_manifest_task_builtin_subcommand_error_contracts_are_stable() {
             workspace: "builtin-subcommand-scan-missing-subcommand",
             command: "scan",
             args: &[],
-            expected: &["scan requires a subcommand (currently supported: `god-files`, `generated-assets`, `attention-markers`)"],
+            expected: &["scan requires a subcommand (currently supported: `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `attention-markers`)"],
         },
         BuiltinContractErrorCase {
             workspace: "builtin-subcommand-scan-unknown-subcommand",
@@ -82,6 +82,28 @@ fn run_manifest_task_builtin_subcommand_help_precedence_contracts_are_stable() {
                 "effigy scan god-files [--markdown] [--out reports/god-files.md]",
                 "--show-warnings : include warning rows in terminal text output",
                 "common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts are skipped by default",
+            ],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-subcommand-help-scan-duplicate-blocks",
+            command: "scan",
+            args: &["duplicate-blocks", "--help", "--wat"],
+            expected: &[
+                "scan duplicate-blocks Help",
+                "effigy scan duplicate-blocks [--markdown] [--out reports/duplicate-blocks.md]",
+                "--show-warnings : include warning rows in terminal text output",
+                "detects repeated normalized code blocks across files, excluding common docs/data/generated paths by default",
+            ],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-subcommand-help-scan-comment-ratio",
+            command: "scan",
+            args: &["comment-ratio", "--help", "--wat"],
+            expected: &[
+                "scan comment-ratio Help",
+                "effigy scan comment-ratio [--markdown] [--out reports/comment-ratio.md]",
+                "--show-warnings : include warning rows in terminal text output",
+                "counts comment-only lines against code-only lines in source and test files",
             ],
         },
         BuiltinHelpCase {

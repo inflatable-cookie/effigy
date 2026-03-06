@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::super::tasks_view::relative_display_path;
-use super::super::LoadedCatalog;
+use crate::runner::model::catalog::LoadedCatalog;
 
 pub(super) fn catalog_manifest_path(catalog: &LoadedCatalog) -> String {
     catalog.manifest_path.display().to_string()

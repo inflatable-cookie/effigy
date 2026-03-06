@@ -1,11 +1,12 @@
 use crate::ui::{NoticeLevel, Renderer};
 use crate::TaskInvocation;
 
+use super::super::super::model::catalog::LoadedCatalog;
 use super::super::super::render::encode_json;
-use super::super::super::{LoadedCatalog, RunnerError};
 use super::super::render_support;
 use super::super::text_blocks;
 use super::contracts::{self, DeferralOutcome, SelectionOutcome};
+use crate::runner::error::RunnerError;
 
 pub(super) fn render_explain_json(
     request: &TaskInvocation,

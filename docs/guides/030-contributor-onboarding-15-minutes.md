@@ -18,28 +18,31 @@ jq --version
 ## Minute 0-2: Build + General Help
 
 ```sh
-cargo run --bin effigy -- --help
+cargo run --bin effigy -- bootstrap:local --repo .
+type -a effigy effigy-dev
+effigy-dev --help
 ```
 
 Expected outcome:
-- help output renders with command list (`tasks`, `doctor`, `test`, `watch`, etc.)
+- stable `effigy` and dev `effigy-dev` commands are available from `~/.local/bin`
+- dev help output renders with command list (`tasks`, `doctor`, `test`, `watch`, etc.)
 
 ## Minute 2-5: Task Discovery + Routing Probe
 
 ```sh
-cargo run --bin effigy -- tasks
-cargo run --bin effigy -- tasks --resolve test
+effigy-dev tasks --repo .
+effigy-dev tasks --repo . --task qa
 ```
 
 Expected outcome:
 - discovered catalogs/tasks are listed
-- routing probe returns selection evidence (or explicit not-found/ambiguity diagnostics)
+- self-hosted contributor tasks (`qa`, `qa:docs`, `bootstrap:local`, etc.) are visible
 
 ## Minute 5-8: Health + Explain
 
 ```sh
-cargo run --bin effigy -- doctor --verbose
-cargo run --bin effigy -- doctor test -- --help
+effigy-dev doctor --repo . --verbose
+effigy-dev doctor --repo . test -- --help
 ```
 
 Expected outcome:
@@ -49,26 +52,27 @@ Expected outcome:
 ## Minute 8-11: Test Planning (Non-Destructive)
 
 ```sh
-cargo run --bin effigy -- test --plan
+effigy-dev test --plan --repo .
 ```
 
 Expected outcome:
 - suite detection and fallback chain rendered
+- `cargo-nextest` is selected when available
 - no test execution side-effects (plan-only)
 
 ## Minute 11-13: JSON Mode Sanity
 
 ```sh
-cargo run --bin effigy -- --json tasks
-cargo run --bin effigy -- --json doctor
-cargo run --bin effigy -- --json test --plan
+effigy-dev --json tasks --repo .
+effigy-dev --json doctor --repo .
+effigy-dev --json test --plan --repo .
 ```
 
 Optional parse checks:
 
 ```sh
-cargo run --bin effigy -- --json tasks | jq .schema
-cargo run --bin effigy -- --json doctor | jq .schema
+effigy-dev --json tasks --repo . | jq .schema
+effigy-dev --json doctor --repo . | jq .schema
 ```
 
 Expected outcome:
@@ -77,7 +81,7 @@ Expected outcome:
 ## Minute 13-15: Docs QA Gate
 
 ```sh
-cargo qa-docs
+effigy-dev qa:docs --repo .
 ```
 
 Expected outcome:
@@ -97,10 +101,10 @@ Expected outcome:
 When returning later, this minimal bundle is usually enough:
 
 ```sh
-cargo run --bin effigy -- tasks
-cargo run --bin effigy -- doctor --verbose
-cargo run --bin effigy -- test --plan
-cargo qa-docs
+effigy-dev tasks --repo .
+effigy-dev doctor --repo . --verbose
+effigy-dev test --plan --repo .
+effigy-dev qa:docs --repo .
 ```
 
 ## Expected Outcome

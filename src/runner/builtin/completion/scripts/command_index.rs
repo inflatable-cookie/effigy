@@ -1,5 +1,5 @@
-use super::super::super::super::BUILTIN_TASKS;
 use super::super::surface::COMPLETION_COMMAND_OPTIONS;
+use crate::runner::model::constants::BUILTIN_TASKS;
 
 pub(super) fn command_names() -> Vec<&'static str> {
     let mut names = Vec::with_capacity(BUILTIN_TASKS.len() + 1);

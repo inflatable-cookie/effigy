@@ -1,6 +1,14 @@
 pub(super) const DEFAULT_GOD_FILES_WARN: usize = 250;
 pub(super) const DEFAULT_GOD_FILES_HIGH: usize = 400;
 pub(super) const DEFAULT_GOD_FILES_CRITICAL: usize = 700;
+pub(super) const DEFAULT_DUPLICATE_BLOCKS_WARN: usize = 20;
+pub(super) const DEFAULT_DUPLICATE_BLOCKS_HIGH: usize = 40;
+pub(super) const DEFAULT_DUPLICATE_BLOCKS_CRITICAL: usize = 80;
+pub(super) const DEFAULT_DUPLICATE_BLOCKS_MIN_OCCURRENCES: usize = 2;
+pub(super) const DEFAULT_COMMENT_RATIO_WARN: f64 = 1.5;
+pub(super) const DEFAULT_COMMENT_RATIO_HIGH: f64 = 2.0;
+pub(super) const DEFAULT_COMMENT_RATIO_CRITICAL: f64 = 3.0;
+pub(super) const DEFAULT_COMMENT_RATIO_MIN_CODE_LINES: usize = 20;
 pub(super) const DEFAULT_GENERATED_ASSETS_WARN_BYTES: usize = 1_000_000;
 pub(super) const DEFAULT_GENERATED_ASSETS_HIGH_BYTES: usize = 5_000_000;
 pub(super) const DEFAULT_GENERATED_ASSETS_CRITICAL_BYTES: usize = 20_000_000;

@@ -1,4 +1,4 @@
-use super::super::super::LoadedCatalog;
+use super::super::super::model::catalog::LoadedCatalog;
 
 pub(super) fn catalogs_matching_task<'a>(
     catalogs: &'a [LoadedCatalog],

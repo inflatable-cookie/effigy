@@ -1,4 +1,4 @@
-use super::super::{DoctorFinding, DoctorSeverity};
+use super::super::report::{DoctorFinding, DoctorSeverity};
 
 pub(super) fn grouped_findings(findings: &[DoctorFinding]) -> Vec<(String, Vec<&DoctorFinding>)> {
     let mut grouped = Vec::<(String, Vec<&DoctorFinding>)>::new();

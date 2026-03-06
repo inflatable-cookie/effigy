@@ -1,6 +1,6 @@
 use super::test_support::execution::run_manifest_task_with_cwd;
-use super::RunnerError;
 use crate::contract_test_support::{lock_test, temp_workspace, write_manifest, EnvGuard};
+use crate::runner::error::RunnerError;
 use crate::TaskInvocation;
 use std::fs;
 use std::path::Path;

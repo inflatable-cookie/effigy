@@ -6,7 +6,8 @@ use toml::Value;
 use crate::data_loading::{parse_json, parse_toml, read_utf8};
 use crate::fs_probe::PathPresenceCache;
 
-use super::{MigrateScript, RunnerError};
+use super::model::MigrateScript;
+use crate::runner::error::RunnerError;
 
 pub(super) fn resolve_package_path(target_root: &Path, package_path: Option<PathBuf>) -> PathBuf {
     let package = package_path.unwrap_or_else(|| target_root.join("package.json"));

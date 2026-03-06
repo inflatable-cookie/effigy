@@ -1,4 +1,5 @@
-use crate::runner::{ManifestManagedRunStep, RunnerError};
+use crate::runner::error::RunnerError;
+use crate::runner::manifest::task_runtime::ManifestManagedRunStep;
 
 use super::RunSpecContext;
 use projection::project_run_sequence;

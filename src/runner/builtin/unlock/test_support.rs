@@ -1,7 +1,7 @@
 use crate::TaskInvocation;
 
-use super::super::super::RunnerError;
 use super::request::parse_unlock_request;
+use crate::runner::error::RunnerError;
 
 pub(in crate::runner) struct UnlockParseContract {
     pub(in crate::runner) output_json: bool,

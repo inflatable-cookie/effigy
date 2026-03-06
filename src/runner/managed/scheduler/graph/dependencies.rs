@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
-use super::{ManifestManagedRunStep, RunnerError};
+use super::super::super::super::manifest::task_runtime::ManifestManagedRunStep;
+use crate::runner::error::RunnerError;
 
 pub(super) fn build_step_dependencies(
     task_name: &str,

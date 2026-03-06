@@ -2,9 +2,13 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, FileType};
 use std::path::{Path, PathBuf};
 
-use super::super::{LoadedCatalog, RunnerError, TaskManifest, TASK_MANIFEST_FILE};
+use super::super::model::catalog::LoadedCatalog;
+use super::super::model::constants::TASK_MANIFEST_FILE;
+use super::super::{RunnerError, TaskManifest};
 
-pub(super) fn discover_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatalog>, RunnerError> {
+pub(in crate::runner) fn discover_catalogs(
+    workspace_root: &Path,
+) -> Result<Vec<LoadedCatalog>, RunnerError> {
     let manifest_paths = discover_manifest_paths(workspace_root)?;
     if manifest_paths.is_empty() {
         return Err(RunnerError::TaskCatalogsMissing {
@@ -49,7 +53,7 @@ pub(super) fn discover_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatal
     Ok(catalogs)
 }
 
-pub(super) fn discover_catalogs_allow_missing(
+pub(in crate::runner) fn discover_catalogs_allow_missing(
     workspace_root: &Path,
 ) -> Result<Vec<LoadedCatalog>, RunnerError> {
     match discover_catalogs(workspace_root) {
@@ -59,7 +63,9 @@ pub(super) fn discover_catalogs_allow_missing(
     }
 }
 
-pub(super) fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, RunnerError> {
+pub(in crate::runner) fn discover_manifest_paths(
+    workspace_root: &Path,
+) -> Result<Vec<PathBuf>, RunnerError> {
     let mut pending: Vec<PathBuf> = vec![workspace_root.to_path_buf()];
     let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
     let mut manifests_by_catalog: HashMap<PathBuf, PathBuf> = HashMap::new();
@@ -107,7 +113,7 @@ pub(super) fn should_skip_dir(path: &Path) -> bool {
     )
 }
 
-pub(super) fn default_alias(catalog_root: &Path, workspace_root: &Path) -> String {
+pub(in crate::runner) fn default_alias(catalog_root: &Path, workspace_root: &Path) -> String {
     if catalog_root == workspace_root {
         return "root".to_owned();
     }

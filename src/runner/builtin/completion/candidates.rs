@@ -1,14 +1,11 @@
-use std::path::{Path, PathBuf};
-
-use serde_json::json;
+use std::path::Path;
 
 use crate::TaskInvocation;
 
-use super::super::super::RunnerError;
-use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
-use super::super::response::render_optional_text_or_schema_json_lazy;
-use super::super::TaskRuntimeArgs;
-use super::surface::COMPLETION_CANDIDATES_SUBCOMMAND;
+use super::output::render_completion_candidates_response;
+use super::request::parse_completion_candidates_request;
+use crate::runner::error::RunnerError;
+use crate::runner::model::catalog::TaskRuntimeArgs;
 
 mod cache;
 
@@ -17,21 +14,15 @@ use cache::{
     load_completion_candidates_with_cache, CompletionCandidatesCacheState,
 };
 
-struct CompletionCandidatesResult {
-    candidates: Vec<String>,
-    cache_hit: bool,
-    cache_state: &'static str,
-    manifest_count: usize,
-    cache_age_ms: Option<u128>,
-    cache_ttl_ms: Option<u64>,
-    effective_cache_ttl_ms: u64,
-    cache_ttl_source: &'static str,
-}
-
-struct CompletionCandidatesRequest {
-    output_json: bool,
-    repo_override: Option<PathBuf>,
-    prefix: Option<String>,
+pub(super) struct CompletionCandidatesResult {
+    pub(super) candidates: Vec<String>,
+    pub(super) cache_hit: bool,
+    pub(super) cache_state: &'static str,
+    pub(super) manifest_count: usize,
+    pub(super) cache_age_ms: Option<u128>,
+    pub(super) cache_ttl_ms: Option<u64>,
+    pub(super) effective_cache_ttl_ms: u64,
+    pub(super) cache_ttl_source: &'static str,
 }
 
 pub(super) fn run_completion_candidates(
@@ -46,67 +37,12 @@ pub(super) fn run_completion_candidates(
         .unwrap_or_else(|| target_root.to_path_buf());
     let completion_candidates =
         collect_completion_candidates(&repo_root, request.prefix.as_deref())?;
-    render_optional_text_or_schema_json_lazy(
+    render_completion_candidates_response(
         request.output_json,
-        "effigy.completion.candidates.v1",
-        || completion_candidates.candidates.join("\n"),
-        || {
-            json!({
-                "repo": repo_root.display().to_string(),
-                "prefix": request.prefix.as_deref(),
-                "candidates": &completion_candidates.candidates,
-                "cache_hit": completion_candidates.cache_hit,
-                "cache_state": completion_candidates.cache_state,
-                "manifest_count": completion_candidates.manifest_count,
-                "cache_age_ms": completion_candidates.cache_age_ms,
-                "cache_ttl_ms": completion_candidates.cache_ttl_ms,
-                "effective_cache_ttl_ms": completion_candidates.effective_cache_ttl_ms,
-                "cache_ttl_source": completion_candidates.cache_ttl_source,
-            })
-        },
+        &repo_root,
+        request.prefix.as_deref(),
+        &completion_candidates,
     )
-}
-
-fn parse_completion_candidates_request(
-    task: &TaskInvocation,
-    args: &[String],
-) -> Result<CompletionCandidatesRequest, RunnerError> {
-    let mut parser = BuiltinArgParser::new(args);
-    let mut output_json = false;
-    let mut repo_override: Option<PathBuf> = None;
-    let mut prefix: Option<String> = None;
-    parser.parse_loop_require_no_unknown_with_prefix(
-        &task.name,
-        COMPLETION_CANDIDATES_SUBCOMMAND,
-        |parser, arg| {
-            if arg == COMPLETION_CANDIDATES_SUBCOMMAND
-                || parser.consume_json_flag(arg, &mut output_json)
-            {
-                return Ok(ParseLoopAction::Handled);
-            }
-            match arg {
-                "--repo" => {
-                    let value =
-                        parser.context_string_flag_value("completion candidates", "--repo")?;
-                    repo_override = Some(PathBuf::from(value));
-                    Ok(ParseLoopAction::Handled)
-                }
-                "--prefix" => {
-                    let value =
-                        parser.context_string_flag_value("completion candidates", "--prefix")?;
-                    prefix = Some(value);
-                    Ok(ParseLoopAction::Handled)
-                }
-                _ => Ok(ParseLoopAction::Unknown),
-            }
-        },
-    )?;
-
-    Ok(CompletionCandidatesRequest {
-        output_json,
-        repo_override,
-        prefix,
-    })
 }
 
 fn collect_completion_candidates(

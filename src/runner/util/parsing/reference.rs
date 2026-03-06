@@ -1,5 +1,6 @@
-use super::super::super::{RunnerError, TaskSelector};
+use super::super::super::model::catalog::TaskSelector;
 use super::super::shell_quote;
+use crate::runner::error::RunnerError;
 
 pub(super) fn parse_task_reference_invocation(
     raw: &str,

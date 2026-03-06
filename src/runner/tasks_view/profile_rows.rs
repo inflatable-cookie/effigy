@@ -1,8 +1,9 @@
 use std::path::Path;
 
 use super::super::execute::catalog_task_label;
-use super::super::managed::DEFAULT_MANAGED_PROFILE;
-use super::super::{LoadedCatalog, ManifestTask};
+use super::super::managed::profiles::DEFAULT_MANAGED_PROFILE;
+use super::super::manifest::task_runtime::ManifestTask;
+use super::super::model::catalog::LoadedCatalog;
 
 #[derive(Debug)]
 pub(in crate::runner) struct ManagedProfileDisplayRow {
@@ -13,13 +14,13 @@ pub(in crate::runner) struct ManagedProfileDisplayRow {
     pub(in crate::runner) parent_task: String,
 }
 
-pub(super) fn relative_display_path(root: &Path, path: &Path) -> String {
+pub(in crate::runner) fn relative_display_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .map(|relative| relative.display().to_string())
         .unwrap_or_else(|_| path.display().to_string())
 }
 
-pub(super) fn managed_profile_display_rows(
+pub(in crate::runner) fn managed_profile_display_rows(
     catalog: &LoadedCatalog,
     task_name: &str,
     task: &ManifestTask,

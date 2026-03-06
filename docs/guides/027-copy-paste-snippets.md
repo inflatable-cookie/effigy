@@ -210,7 +210,7 @@ run = "composer global exec effigy -- {request} {args}"
 
 Use only when unresolved selectors must forward to legacy tooling.
 
-## 8) Oversized File Scanner Config
+## 8) Repository Scanner Config
 
 ```toml
 [scan.god_files]
@@ -230,6 +230,14 @@ effigy scan god-files
 effigy scan god-files --show-warnings
 effigy scan god-files --fail-on-findings
 effigy scan god-files --markdown --out reports/god-files.md
+effigy scan duplicate-blocks
+effigy scan duplicate-blocks --show-warnings
+effigy scan duplicate-blocks --fail-on-findings
+effigy scan duplicate-blocks --markdown --out reports/duplicate-blocks.md
+effigy scan comment-ratio
+effigy scan comment-ratio --show-warnings
+effigy scan comment-ratio --fail-on-findings
+effigy scan comment-ratio --markdown --out reports/comment-ratio.md
 effigy scan generated-assets
 effigy scan generated-assets --show-warnings
 effigy scan generated-assets --markdown --out reports/generated-assets.md

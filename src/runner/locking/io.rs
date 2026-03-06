@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::super::RunnerError;
 use super::model::LockScope;
+use crate::runner::error::RunnerError;
 
 #[path = "io/files.rs"]
 mod files;

@@ -9,6 +9,8 @@ pub(super) fn render_scan_help() -> String {
                 lines: &[
                     "effigy scan <subcommand> [options]",
                     "effigy scan god-files [--threshold <N>] [--markdown] [--out <PATH>]",
+                    "effigy scan duplicate-blocks [--threshold <N>] [--markdown] [--out <PATH>]",
+                    "effigy scan comment-ratio [--threshold <RATIO>] [--markdown] [--out <PATH>]",
                     "effigy scan generated-assets [--threshold <BYTES>] [--markdown] [--out <PATH>]",
                     "effigy scan attention-markers [--markdown] [--out <PATH>]",
                 ],
@@ -17,8 +19,94 @@ pub(super) fn render_scan_help() -> String {
                 heading: "Subcommands",
                 items: &[
                     "god-files : detect oversized code files using code-only line counts",
+                    "duplicate-blocks : detect repeated normalized code blocks across source files",
+                    "comment-ratio : detect files where comment-only lines outweigh executable code",
                     "generated-assets : report bulky vendored/generated artifacts that slipped into the repo",
                     "attention-markers : detect TODO/FIXME/deprecation and deferred-work markers in code",
+                ],
+            },
+        ],
+    )
+}
+
+pub(super) fn render_comment_ratio_help() -> String {
+    render_titled_help(
+        "scan comment-ratio",
+        &[
+            HelpSection::Plain {
+                heading: "Usage",
+                lines: &[
+                    "effigy scan comment-ratio [--threshold <RATIO>] [--high <RATIO>] [--critical <RATIO>]",
+                    "effigy scan comment-ratio [--min-code-lines <N>] [--show-warnings] [--no-gitignore]",
+                    "effigy scan comment-ratio [--markdown] [--out reports/comment-ratio.md]",
+                    "effigy scan comment-ratio [--json] [--fail-on-findings]",
+                ],
+            },
+            HelpSection::Bulleted {
+                heading: "Options",
+                items: &[
+                    "--threshold, --warn <RATIO> : warning threshold in comment/code ratio (default 1.5)",
+                    "--high <RATIO> : high severity threshold (default 2.0)",
+                    "--critical <RATIO> : critical threshold (default 3.0)",
+                    "--min-code-lines <N> : minimum code-only lines before a file is evaluated (default 20)",
+                    "--include <GLOB> : include glob, repeatable",
+                    "--exclude <GLOB> : exclude glob, repeatable",
+                    "--markdown : render markdown instead of terminal text",
+                    "--out <PATH> : write rendered report to a file",
+                    "--fail-on-findings : return non-zero when findings exist",
+                    "--no-gitignore : ignore .gitignore/.ignore rules during traversal",
+                    "--show-warnings : include warning rows in terminal text output",
+                    "--json : render machine-readable scan payload",
+                ],
+            },
+            HelpSection::Bulleted {
+                heading: "Defaults",
+                items: &[
+                    "terminal text hides warning rows and prints a warning count summary",
+                    "markdown and json still include the full findings list",
+                    "counts comment-only lines against code-only lines in source and test files",
+                    "common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts are skipped by default",
+                ],
+            },
+        ],
+    )
+}
+
+pub(super) fn render_duplicate_blocks_help() -> String {
+    render_titled_help(
+        "scan duplicate-blocks",
+        &[
+            HelpSection::Plain {
+                heading: "Usage",
+                lines: &[
+                    "effigy scan duplicate-blocks [--threshold <N>] [--high <N>] [--critical <N>]",
+                    "effigy scan duplicate-blocks [--show-warnings] [--no-gitignore]",
+                    "effigy scan duplicate-blocks [--markdown] [--out reports/duplicate-blocks.md]",
+                    "effigy scan duplicate-blocks [--json] [--fail-on-findings]",
+                ],
+            },
+            HelpSection::Bulleted {
+                heading: "Options",
+                items: &[
+                    "--threshold, --warn <N> : warning threshold in normalized code lines (default 20)",
+                    "--high <N> : high severity threshold (default 40)",
+                    "--critical <N> : critical threshold (default 80)",
+                    "--include <GLOB> : include glob, repeatable",
+                    "--exclude <GLOB> : exclude glob, repeatable",
+                    "--markdown : render markdown instead of terminal text",
+                    "--out <PATH> : write rendered report to a file",
+                    "--fail-on-findings : return non-zero when findings exist",
+                    "--no-gitignore : ignore .gitignore/.ignore rules during traversal",
+                    "--show-warnings : include warning rows in terminal text output",
+                    "--json : render machine-readable scan payload",
+                ],
+            },
+            HelpSection::Bulleted {
+                heading: "Defaults",
+                items: &[
+                    "terminal text hides warning rows and prints a warning count summary",
+                    "markdown and json still include the full findings list",
+                    "detects repeated normalized code blocks across files, excluding common docs/data/generated paths by default",
                 ],
             },
         ],

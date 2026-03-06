@@ -1,6 +1,7 @@
-use super::super::super::super::manifest::ManifestManagedRunStepTable;
+use super::super::super::super::manifest::task_runtime::ManifestManagedRunStepTable;
 use super::build_run_sequence_schedule;
-use crate::runner::{ManifestManagedRunStep, RunnerError};
+use crate::runner::error::RunnerError;
+use crate::runner::manifest::task_runtime::ManifestManagedRunStep;
 
 fn command_step(run: &str) -> ManifestManagedRunStep {
     ManifestManagedRunStep::Command(run.to_owned())

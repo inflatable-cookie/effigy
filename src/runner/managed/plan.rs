@@ -1,9 +1,10 @@
 use std::path::Path;
 
-use super::super::{
-    LoadedCatalog, ManagedProcessSpec, ManagedTaskPlan, ManifestManagedConcurrentEntry,
-    ManifestTask, RunnerError, TaskSelector,
-};
+use super::super::manifest::task_runtime::ManifestTask;
+use super::super::model::catalog::{LoadedCatalog, TaskSelector};
+use super::super::model::managed::{ManagedProcessSpec, ManagedTaskPlan};
+use super::profiles::ResolvedConcurrentProfile;
+use crate::runner::error::RunnerError;
 
 #[path = "plan/entries.rs"]
 mod entries;
@@ -14,8 +15,7 @@ pub(super) struct ManagedConcurrentPlanInput<'a> {
     pub(super) selector: &'a TaskSelector,
     pub(super) catalog: &'a LoadedCatalog,
     pub(super) task: &'a ManifestTask,
-    pub(super) profile_name: &'a str,
-    pub(super) entries: &'a [ManifestManagedConcurrentEntry],
+    pub(super) profile: ResolvedConcurrentProfile<'a>,
     pub(super) passthrough: &'a [String],
     pub(super) catalogs: &'a [LoadedCatalog],
     pub(super) task_scope_cwd: &'a Path,
@@ -36,42 +36,51 @@ pub(super) fn resolve_managed_concurrent_task_plan(
         selector,
         catalog,
         task,
-        profile_name,
-        entries,
+        profile,
         passthrough,
         catalogs,
         task_scope_cwd,
     } = input;
-    if entries.is_empty() {
+    if profile.entries.is_empty() {
         return Err(RunnerError::TaskManagedProfileEmpty {
             task: selector.task_name.clone(),
-            profile: profile_name.to_owned(),
+            profile: profile.profile_name.clone(),
         });
     }
 
     let mut resolved = entries::resolve_concurrent_process_entries(
         selector,
-        entries,
+        profile.entries,
         catalog,
         catalogs,
         task_scope_cwd,
     )?;
-    ordering::sort_resolved_processes(&mut resolved);
-    let processes = resolved
-        .iter()
-        .map(|entry| entry.spec.clone())
-        .collect::<Vec<ManagedProcessSpec>>();
+    Ok(build_managed_task_plan(
+        task,
+        &profile.profile_name,
+        passthrough,
+        &mut resolved,
+    ))
+}
 
-    let tab_order = ordering::build_tab_order(&resolved, &processes);
+fn build_managed_task_plan(
+    task: &ManifestTask,
+    profile_name: &str,
+    passthrough: &[String],
+    resolved: &mut [ConcurrentResolvedProcess],
+) -> ManagedTaskPlan {
+    ordering::sort_resolved_processes(resolved);
+    let tab_order = ordering::build_tab_order(resolved);
+    let processes = resolved.iter().map(|entry| entry.spec.clone()).collect();
 
-    Ok(ManagedTaskPlan {
+    ManagedTaskPlan {
         mode: "tui".to_owned(),
         profile: profile_name.to_owned(),
         processes,
         tab_order,
         fail_on_non_zero: task.fail_on_non_zero.unwrap_or(true),
         passthrough: passthrough.iter().skip(1).cloned().collect(),
-    })
+    }
 }
 
 enum RunOrTaskRef<'a> {

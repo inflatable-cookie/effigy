@@ -65,11 +65,11 @@ pub(super) fn explain_json_payload(contract: &ExplainRenderContract) -> serde_js
             "task": &contract.request_task,
             "args": &contract.request_args,
         },
-        "root_resolution": {
-            "resolved_root": &contract.resolved_root,
-            "evidence": &contract.root_evidence,
-            "warnings": &contract.root_warnings,
-        },
+        "root_resolution": super::super::render::shared_contracts::root_resolution_payload(
+            Some(&contract.resolved_root),
+            &contract.root_evidence,
+            &contract.root_warnings,
+        ),
         "selection": {
             "status": &contract.selection.status,
             "catalog": &contract.selection.catalog,
@@ -94,45 +94,16 @@ pub(super) fn explain_json_payload(contract: &ExplainRenderContract) -> serde_js
 }
 
 pub(super) fn explain_text_summary_rows(contract: &ExplainRenderContract) -> Vec<(String, String)> {
-    vec![
-        ("request".to_owned(), contract.request_task.clone()),
-        ("args".to_owned(), contract.request_args.join(" ")),
-        ("resolved-root".to_owned(), contract.resolved_root.clone()),
-        (
-            "selection-status".to_owned(),
-            contract.selection.status.clone(),
-        ),
-        (
-            "selected-catalog".to_owned(),
-            contract
-                .selection
-                .catalog
-                .clone()
-                .unwrap_or_else(|| "<none>".to_owned()),
-        ),
-        (
-            "selected-mode".to_owned(),
-            contract
-                .selection
-                .mode
-                .clone()
-                .unwrap_or_else(|| "<none>".to_owned()),
-        ),
-        (
-            "selection-reasoning".to_owned(),
-            contract.selection.reasoning.clone(),
-        ),
-        (
-            "deferral-considered".to_owned(),
-            contract.deferral.considered.to_string(),
-        ),
-        (
-            "deferral-selected".to_owned(),
-            contract.deferral.selected.to_string(),
-        ),
-        (
-            "deferral-reasoning".to_owned(),
-            contract.deferral.reasoning.clone(),
-        ),
-    ]
+    super::super::render::shared_contracts::explain_summary_rows(
+        &contract.request_task,
+        &contract.request_args,
+        &contract.resolved_root,
+        &contract.selection.status,
+        contract.selection.catalog.as_deref(),
+        contract.selection.mode.as_deref(),
+        &contract.selection.reasoning,
+        contract.deferral.considered,
+        contract.deferral.selected,
+        &contract.deferral.reasoning,
+    )
 }

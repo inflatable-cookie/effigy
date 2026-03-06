@@ -1,5 +1,6 @@
+use super::super::error::RunnerError;
+use super::super::tasks_command::run_tasks;
 use super::super::test_support::execution::run_manifest_task_with_cwd;
-use super::super::{run_tasks, RunnerError};
 use crate::{TaskInvocation, TasksArgs};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -152,7 +153,7 @@ pub(crate) mod builtin {
 }
 
 pub(crate) mod assertions {
-    use super::RunnerError;
+    use crate::runner::error::RunnerError;
 
     fn strip_ansi_escapes(rendered: &str) -> String {
         let mut out = String::with_capacity(rendered.len());

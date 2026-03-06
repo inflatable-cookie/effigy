@@ -3,7 +3,7 @@ use std::path::Path;
 use toml::Value;
 
 use super::super::super::contracts::{check_id, remediation, schema_supported_value};
-use super::super::super::DoctorState;
+use super::super::super::report::DoctorState;
 
 pub(super) struct SchemaContext<'a, 'b> {
     manifest_path: &'a Path,

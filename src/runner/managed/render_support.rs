@@ -1,7 +1,10 @@
-use crate::process_manager::ProcessSpec;
-use crate::ui::{KeyValue, NoticeLevel, Renderer};
+use std::path::Path;
 
-use super::super::{ManagedProcessSpec, ManagedTaskPlan, RunnerError};
+use crate::process_manager::ProcessSpec;
+use crate::ui::{KeyValue, NoticeLevel, Renderer, SummaryCounts, TableSpec};
+
+use super::super::model::managed::{ManagedProcessSpec, ManagedTaskPlan};
+use crate::runner::error::RunnerError;
 
 pub(super) fn managed_process_specs<I>(processes: I) -> Vec<ProcessSpec>
 where
@@ -49,6 +52,67 @@ pub(super) fn write_managed_overview(
     }
     renderer.text("")?;
     Ok(())
+}
+
+pub(super) fn managed_plan_overview_fields(
+    repo_root: &Path,
+    manifest_path: &Path,
+    plan: &ManagedTaskPlan,
+) -> Vec<KeyValue> {
+    vec![
+        KeyValue::new("repo-root", repo_root.display().to_string()),
+        KeyValue::new("manifest", manifest_path.display().to_string()),
+        KeyValue::new("tab-order", plan.tab_order.join(", ")),
+    ]
+}
+
+pub(super) fn write_managed_plan_process_table(
+    renderer: &mut impl Renderer,
+    plan: &ManagedTaskPlan,
+) -> Result<(), RunnerError> {
+    renderer.table(&TableSpec::new(
+        vec![
+            "process".to_owned(),
+            "cwd".to_owned(),
+            "run".to_owned(),
+            "start-after-ms".to_owned(),
+        ],
+        managed_plan_process_rows(plan),
+    ))?;
+    Ok(())
+}
+
+pub(super) fn write_managed_plan_passthrough(
+    renderer: &mut impl Renderer,
+    plan: &ManagedTaskPlan,
+) -> Result<(), RunnerError> {
+    if !plan.passthrough.is_empty() {
+        renderer.text("")?;
+        renderer.bullet_list("profile-args", &plan.passthrough)?;
+    }
+    Ok(())
+}
+
+pub(super) fn managed_plan_summary_counts() -> SummaryCounts {
+    SummaryCounts {
+        ok: 1,
+        warn: 1,
+        err: 0,
+    }
+}
+
+fn managed_plan_process_rows(plan: &ManagedTaskPlan) -> Vec<Vec<String>> {
+    plan.processes
+        .iter()
+        .map(|process| {
+            vec![
+                process.name.clone(),
+                process.cwd.display().to_string(),
+                process.run.clone(),
+                process.start_after_ms.to_string(),
+            ]
+        })
+        .collect::<Vec<Vec<String>>>()
 }
 
 fn managed_fail_on_non_zero_label(enabled: bool) -> &'static str {

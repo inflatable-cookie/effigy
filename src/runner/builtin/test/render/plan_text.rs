@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::runner::builtin::test::planning::BuiltinTestTarget;
 use crate::runner::builtin::test::suite_selection::render_available_suites;
-use crate::runner::RunnerError;
+use crate::runner::error::RunnerError;
 use crate::ui::{KeyValue, NoticeLevel, Renderer};
 use crate::TaskInvocation;
 

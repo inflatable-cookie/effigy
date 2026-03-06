@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::runner::RunnerError;
+use crate::runner::error::RunnerError;
 
 use super::BuiltinArgParser;
 

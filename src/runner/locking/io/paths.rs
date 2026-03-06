@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::super::super::RunnerError;
+use crate::runner::error::RunnerError;
 
 pub(super) fn ensure_locks_root(workspace_root: &Path) -> Result<PathBuf, RunnerError> {
     let locks_root = workspace_root.join(super::LOCKS_DIR);
