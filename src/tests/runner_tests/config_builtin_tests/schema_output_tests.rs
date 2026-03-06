@@ -92,6 +92,11 @@ fn run_manifest_task_builtin_config_schema_target_scan_prints_god_files_section(
             "high = 5000000",
             "critical = 20000000",
             "doctor = true",
+            "[scan.attention_markers]",
+            "warning = [\"TODO\", \"REVIEW\", \"NOTE\", \"placeholder\"]",
+            "high = [\"FIXME\", \"HACK\", \"@deprecated\", \"workaround\"]",
+            "critical = [\"BUG\", \"SECURITY\", \"remove before release\"]",
+            "doctor = true",
         ],
     );
     assert_output_excludes_all(&out, &["[tasks]"]);

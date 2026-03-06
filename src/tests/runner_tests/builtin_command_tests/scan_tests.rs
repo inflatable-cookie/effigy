@@ -25,6 +25,10 @@ fn write_asset_file(path: &Path, size: usize) {
     fs::write(path, vec![b'a'; size]).expect("write asset file");
 }
 
+fn write_attention_file(path: &Path, lines: &[&str]) {
+    fs::write(path, format!("{}\n", lines.join("\n"))).expect("write attention file");
+}
+
 #[test]
 fn run_manifest_task_builtin_scan_god_files_text_ignores_docs_generated_and_gitignored_paths() {
     let root = temp_workspace("builtin-scan-god-files-text");
@@ -638,4 +642,199 @@ fn run_manifest_task_builtin_scan_generated_assets_root_fans_out_across_child_ca
     );
 
     assert_output_contains_all(&out, &["findings: 1", "farmyard/dist/app.min.js"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_attention_markers_hides_warning_rows_by_default() {
+    let root = temp_workspace("builtin-scan-attention-markers-hide-warnings");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &[
+            "// TODO: tidy before refactor",
+            "const live = 1;",
+            "// FIXME: handle retries cleanly",
+        ],
+    );
+    write_attention_file(
+        &root.join("src/lib.rs"),
+        &["#[deprecated(note = \"use new_api\")]", "pub fn old_api() {}"],
+    );
+
+    let out = run_builtin_ok(root, "scan", &["attention-markers"]);
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "Attention Markers",
+            "matched-lines: 3  findings: 3",
+            "severity-counts: critical=0 high=2 warning=1",
+            "warning-rows-hidden: 1  use --show-warnings to list them",
+            "src/app.ts:3",
+            "[FIXME]",
+            "src/lib.rs:1",
+            "deprecation",
+        ],
+    );
+    assert_output_excludes_all(&out, &["[TODO]"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_attention_markers_show_warnings_lists_warning_rows() {
+    let root = temp_workspace("builtin-scan-attention-markers-show-warnings");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &["// TODO: tidy before refactor", "// FIXME: handle retries cleanly"],
+    );
+
+    let out = run_builtin_ok(root, "scan", &["attention-markers", "--show-warnings"]);
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "matched-lines: 2  findings: 2",
+            "severity-counts: critical=0 high=1 warning=1",
+            "[TODO]",
+            "[FIXME]",
+        ],
+    );
+    assert_output_excludes_all(&out, &["warning-rows-hidden:"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_attention_markers_json_emits_machine_payload() {
+    let root = temp_workspace("builtin-scan-attention-markers-json");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &["// TODO: tidy before refactor", "const live = 1;"],
+    );
+
+    let out = run_builtin_ok(root, "scan", &["attention-markers", "--json"]);
+
+    let parsed = parse_json_output_with_schema(&out, "effigy.scan.attention-markers.v1");
+    assert_json_string_field_eq(&parsed, "scan", "attention-markers");
+    assert_json_string_field_eq(&parsed, "format", "text");
+    assert_eq!(parsed["matched_lines"].as_u64(), Some(1));
+    assert_eq!(parsed["finding_count"].as_u64(), Some(1));
+    assert_json_array_field_non_empty(&parsed, "findings");
+    assert_json_string_field_eq(&parsed["findings"][0], "path", "src/app.ts");
+    assert_json_string_field_eq(&parsed["findings"][0], "severity", "warning");
+    assert_json_string_field_eq(&parsed["findings"][0], "category", "deferred-work");
+    assert_json_string_field_eq(&parsed["findings"][0], "marker", "TODO");
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_attention_markers_markdown_out_writes_report() {
+    let root = temp_workspace("builtin-scan-attention-markers-markdown-out");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &["// FIXME: handle retries cleanly", "const live = 1;"],
+    );
+    let report_path = root.join("reports/attention-markers.md");
+
+    let out = run_builtin_ok(
+        root.clone(),
+        "scan",
+        &[
+            "attention-markers",
+            "--markdown",
+            "--out",
+            "reports/attention-markers.md",
+        ],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &["Wrote markdown attention-markers report to reports/attention-markers.md (findings: 1)."],
+    );
+    assert_file_text_contains_all(
+        &report_path,
+        &[
+            "# Attention Markers",
+            "| Severity | Category | Marker | Path | Line | Snippet |",
+            "| high | deferred-work | `FIXME` | `src/app.ts` | 1 | `// FIXME: handle retries cleanly` |",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_attention_markers_uses_manifest_defaults() {
+    let root = temp_workspace("builtin-scan-attention-markers-manifest-defaults");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.attention_markers]
+warning = ["LATER"]
+high = ["SHIPME"]
+critical = ["BLOCKER"]
+format = "markdown"
+out = "reports/attention-markers.md"
+"#,
+    );
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &["// SHIPME: split this module before release"],
+    );
+    let report_path = root.join("reports/attention-markers.md");
+
+    let out = run_builtin_ok(root, "scan", &["attention-markers"]);
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "Wrote markdown attention-markers report to reports/attention-markers.md (findings: 1).",
+        ],
+    );
+    assert_file_text_contains_all(
+        &report_path,
+        &[
+            "# Attention Markers",
+            "- Markers: warning=`1` high=`1` critical=`1`",
+            "| high | deferred-work | `SHIPME` | `src/app.ts` | 1 | `// SHIPME: split this module before release` |",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_attention_markers_root_fans_out_across_child_catalogs() {
+    let root = temp_workspace("builtin-scan-attention-markers-root-fanout");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
+        .expect("write root gitignore");
+    write_manifest(&root.join("effigy.toml"), "[catalog]\nalias = \"root\"\n");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
+    write_attention_file(
+        &farmyard.join("src/lib.rs"),
+        &["// TODO: revisit bootstrap ordering"],
+    );
+
+    let out = run_builtin_ok(root, "scan", &["attention-markers", "--show-warnings"]);
+
+    assert_output_contains_all(&out, &["findings: 1", "farmyard/src/lib.rs:1", "[TODO]"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_attention_markers_rejects_threshold_flags() {
+    let root = temp_workspace("builtin-scan-attention-markers-threshold-reject");
+    write_root_manifest(&root, "");
+
+    let err = run_builtin_err(root, "scan", &["attention-markers", "--warn", "10"]);
+
+    match err {
+        RunnerError::TaskInvocation(message) => {
+            assert_eq!(message, "`scan attention-markers` does not accept threshold options");
+        }
+        other => panic!("unexpected error: {other}"),
+    }
 }

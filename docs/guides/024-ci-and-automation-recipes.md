@@ -158,6 +158,10 @@ Store JSON output for failed command triage:
   if: failure()
   run: effigy --json scan god-files > god-files-failure.json || true
 
+- name: Capture raw attention-markers JSON
+  if: failure()
+  run: effigy --json scan attention-markers > attention-markers-failure.json || true
+
 - name: Upload triage payloads
   if: always()
   uses: actions/upload-artifact@v4
@@ -166,11 +170,12 @@ Store JSON output for failed command triage:
     path: |
       doctor-failure.json
       god-files-failure.json
+      attention-markers-failure.json
       json-contracts.log
       json-contracts-selected.json
 ```
 
-Use the doctor payload when you want the integrated health view. Capture `effigy --json scan god-files` alongside it when you need the raw scanner findings list and text rendering snapshot.
+Use the doctor payload when you want the integrated health view. Capture `effigy --json scan god-files` or `effigy --json scan attention-markers` alongside it when you need raw scanner findings and text rendering snapshots.
 
 ## 6) Recipe: Contract Selection Artifact Gate
 

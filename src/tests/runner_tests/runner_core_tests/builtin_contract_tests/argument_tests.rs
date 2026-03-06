@@ -92,7 +92,7 @@ fn run_manifest_task_builtin_argument_contract_matrix_is_stable() {
             command: "scan",
             args: &[],
             expected: &[
-                "scan requires a subcommand (currently supported: `god-files`, `generated-assets`)",
+                "scan requires a subcommand (currently supported: `god-files`, `generated-assets`, `attention-markers`)",
             ],
         },
         BuiltinContractErrorCase {

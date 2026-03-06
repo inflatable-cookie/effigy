@@ -36,7 +36,7 @@ fn run_manifest_task_builtin_subcommand_error_contracts_are_stable() {
             workspace: "builtin-subcommand-scan-missing-subcommand",
             command: "scan",
             args: &[],
-            expected: &["scan requires a subcommand (currently supported: `god-files`, `generated-assets`)"],
+            expected: &["scan requires a subcommand (currently supported: `god-files`, `generated-assets`, `attention-markers`)"],
         },
         BuiltinContractErrorCase {
             workspace: "builtin-subcommand-scan-unknown-subcommand",
@@ -82,6 +82,17 @@ fn run_manifest_task_builtin_subcommand_help_precedence_contracts_are_stable() {
                 "effigy scan god-files [--markdown] [--out reports/god-files.md]",
                 "--show-warnings : include warning rows in terminal text output",
                 "common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts are skipped by default",
+            ],
+        },
+        BuiltinHelpCase {
+            workspace: "builtin-subcommand-help-scan-attention-markers",
+            command: "scan",
+            args: &["attention-markers", "--help", "--wat"],
+            expected: &[
+                "scan attention-markers Help",
+                "effigy scan attention-markers [--markdown] [--out reports/attention-markers.md]",
+                "--show-warnings : include warning rows in terminal text output",
+                "detects TODO/FIXME/HACK/deprecation/workaround-style markers in source and test files",
             ],
         },
     ];

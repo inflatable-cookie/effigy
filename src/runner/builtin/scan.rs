@@ -11,7 +11,10 @@ mod help;
 mod request;
 
 use execution::run_scan_request;
-use help::{render_generated_assets_help, render_god_files_help, render_scan_help};
+use help::{
+    render_attention_markers_help, render_generated_assets_help, render_god_files_help,
+    render_scan_help,
+};
 use request::{parse_scan_request, scan_candidate_mode, ScanCommand};
 
 pub(super) fn run_builtin_scan(
@@ -27,6 +30,7 @@ pub(super) fn run_builtin_scan(
             let help = match scan_candidate_mode(&runtime_args.passthrough) {
                 Some(ScanCommand::GodFiles) => render_god_files_help(),
                 Some(ScanCommand::GeneratedAssets) => render_generated_assets_help(),
+                Some(ScanCommand::AttentionMarkers) => render_attention_markers_help(),
                 None => render_scan_help(),
             };
             render_builtin_help_text("scan", help, output_json)

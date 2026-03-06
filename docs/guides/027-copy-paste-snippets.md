@@ -233,6 +233,9 @@ effigy scan god-files --markdown --out reports/god-files.md
 effigy scan generated-assets
 effigy scan generated-assets --show-warnings
 effigy scan generated-assets --markdown --out reports/generated-assets.md
+effigy scan attention-markers
+effigy scan attention-markers --show-warnings
+effigy scan attention-markers --markdown --out reports/attention-markers.md
 ```
 
 Default text mode hides warning rows and prints a warning count summary. Use `--show-warnings` when you need the full terminal list.

@@ -45,6 +45,19 @@ const SECTION_SCAN: &[&str] = &[
     "include = [\"dist/**\", \"vendor/**\"]",
     "exclude = [\"docs/**\"]",
     "",
+    "[scan.attention_markers]",
+    "# Attention-marker scanner matches deferred-work and deprecation markers.",
+    "warning = [\"TODO\", \"REVIEW\", \"NOTE\", \"placeholder\"]",
+    "high = [\"FIXME\", \"HACK\", \"@deprecated\", \"workaround\"]",
+    "critical = [\"BUG\", \"SECURITY\", \"remove before release\"]",
+    "# Include this scanner in `effigy doctor` by default.",
+    "doctor = true",
+    "fail_on_findings = false",
+    "respect_gitignore = true",
+    "# Optional glob overrides.",
+    "include = [\"src/**\", \"crates/**\", \"tests/**\"]",
+    "exclude = [\"vendor/**\"]",
+    "",
 ];
 
 const SECTION_TASKS_MINIMAL: &[&str] = &[

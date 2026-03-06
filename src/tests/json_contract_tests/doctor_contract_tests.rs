@@ -280,6 +280,106 @@ doctor = false
 }
 
 #[test]
+fn doctor_json_contract_includes_scan_attention_markers_sections_and_findings() {
+    let root = temp_workspace("doctor-json-scan-attention-markers");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.attention_markers]
+warning = ["TODO"]
+high = ["FIXME"]
+critical = ["BLOCKER"]
+"#,
+    );
+    fs::write(
+        root.join("src/app.ts"),
+        "// TODO: revisit\n// FIXME: remove workaround before merge\n",
+    )
+    .expect("write source");
+
+    let rendered = run_doctor_rendered(root, true);
+    let parsed = parse_json(&rendered);
+    assert_schema_v1(&parsed, "effigy.doctor.v1");
+    assert_eq!(parsed["ok"], false);
+
+    let scan_section = parsed["sections"]
+        .as_array()
+        .expect("sections array")
+        .iter()
+        .find(|section| section["check_id"] == "scan.attention-markers")
+        .expect("scan.attention-markers section");
+    assert_eq!(scan_section["severity"], "error");
+    assert_eq!(scan_section["findings"].as_array().map(Vec::len), Some(2));
+    assert!(scan_section["findings"]
+        .as_array()
+        .expect("section findings")
+        .iter()
+        .any(|finding| finding["severity"] == "warning"
+            && finding["evidence"]
+                .as_str()
+                .is_some_and(|evidence| evidence.contains("[warning] deferred-work [TODO]"))));
+    assert!(scan_section["findings"]
+        .as_array()
+        .expect("section findings")
+        .iter()
+        .any(|finding| finding["severity"] == "error"
+            && finding["evidence"]
+                .as_str()
+                .is_some_and(|evidence| evidence.contains("[high] deferred-work [FIXME]"))));
+
+    let flattened_scan_findings = parsed["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .filter(|finding| finding["check_id"] == "scan.attention-markers")
+        .collect::<Vec<&serde_json::Value>>();
+    assert_eq!(flattened_scan_findings.len(), 2);
+}
+
+#[test]
+fn doctor_json_contract_omits_scan_attention_markers_when_doctor_flag_is_disabled() {
+    let root = temp_workspace("doctor-json-scan-attention-markers-disabled");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.attention_markers]
+warning = ["TODO"]
+high = ["FIXME"]
+critical = ["BLOCKER"]
+doctor = false
+"#,
+    );
+    fs::write(
+        root.join("src/app.ts"),
+        "// FIXME: remove workaround before merge\n",
+    )
+    .expect("write source");
+
+    let out = run_doctor(DoctorArgs {
+        repo_override: Some(root),
+        output_json: true,
+        fix: false,
+        verbose: false,
+        explain: None,
+    })
+    .expect("run doctor json");
+
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.doctor.v1");
+    assert_eq!(parsed["ok"], true);
+    assert!(parsed["sections"]
+        .as_array()
+        .expect("sections array")
+        .iter()
+        .all(|section| section["check_id"] != "scan.attention-markers"));
+    assert!(parsed["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .all(|finding| finding["check_id"] != "scan.attention-markers"));
+}
+
+#[test]
 fn doctor_explain_json_contract_has_selection_and_deferral_fields() {
     let root = temp_workspace("doctor-explain-json-contract");
     let farmyard = root.join("farmyard");

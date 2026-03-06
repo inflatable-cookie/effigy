@@ -258,7 +258,38 @@ Behavior:
 - respects `.gitignore`/`.ignore` during traversal unless disabled
 - `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
 
-## 13) Task-Local Runtime Env (Cargo Isolation)
+## 13) Built-in Attention-Markers Scanner
+
+```toml
+[scan.attention_markers]
+warning = ["TODO", "REVIEW", "NOTE", "placeholder"]
+high = ["FIXME", "HACK", "@deprecated", "workaround"]
+critical = ["BUG", "SECURITY", "remove before release"]
+doctor = true
+fail_on_findings = false
+respect_gitignore = true
+include = ["src/**", "crates/**", "tests/**"]
+exclude = ["vendor/**"]
+format = "markdown"
+out = "reports/attention-markers.md"
+```
+
+Use this when you want a repo-level scan for deferred-work, deprecation, and placeholder markers that can also feed `effigy doctor`.
+
+Typical commands:
+- `effigy scan attention-markers`
+- `effigy scan attention-markers --show-warnings`
+- `effigy scan attention-markers --fail-on-findings`
+- `effigy --json scan attention-markers`
+
+Behavior:
+- matches explicit marker strings rather than fuzzy prose inference
+- terminal text output hides warning rows by default and prints a warning count summary; `--show-warnings` restores the full list
+- includes source and test files by default while skipping common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts
+- respects `.gitignore`/`.ignore` during traversal unless disabled
+- `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
+
+## 14) Task-Local Runtime Env (Cargo Isolation)
 
 Compact inline-table shape:
 
@@ -293,7 +324,7 @@ Behavior:
 - set `[test].cargo_env_match = "prefix-aware"` (default) to include wrapper/prefix forms like `env KEY=value cargo ...`
 - set `[test].cargo_env_match = "shell-aware"` to include shell-wrapped forms like `sh -lc 'cargo test --workspace'`
 
-## 14) Multi-Catalog Monorepo Baseline
+## 15) Multi-Catalog Monorepo Baseline
 
 Root `effigy.toml`:
 

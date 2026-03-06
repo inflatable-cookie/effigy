@@ -18,8 +18,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Current queue
 
 - `g01/001` through `g01/012` capture the delivered Effigy implementation baseline.
-- `g01/013-effigy-northstar-doctrine-alignment.md` records this Northstar migration and is complete.
-- The next active Effigy milestone should start at `g01.014`.
+- `g01/013-effigy-northstar-doctrine-alignment.md` records the docs structure migration and is complete.
+- `g01/014-attention-marker-scan-and-doctor-integration.md` is the next planned implementation milestone.
 
 ## Backlog
 
@@ -32,7 +32,7 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Open the next Effigy milestone in `g01/` when a net-new roadmap batch is ready.
+Execute `g01.014` in meaningful batches, starting with the scanner core and output contract work.
 
 
 ## Historical language boundary

@@ -60,6 +60,8 @@ pub(super) struct ManifestScanConfig {
     pub(super) god_files: Option<ManifestGodFilesConfig>,
     #[serde(default)]
     pub(super) generated_assets: Option<ManifestGeneratedAssetsConfig>,
+    #[serde(default)]
+    pub(super) attention_markers: Option<ManifestAttentionMarkersConfig>,
 }
 
 #[derive(Debug, serde::Deserialize, Default)]
@@ -96,6 +98,31 @@ pub(super) struct ManifestGeneratedAssetsConfig {
     pub(super) high: Option<usize>,
     #[serde(default)]
     pub(super) critical: Option<usize>,
+    #[serde(default)]
+    pub(super) fail_on_findings: Option<bool>,
+    #[serde(default)]
+    pub(super) respect_gitignore: Option<bool>,
+    #[serde(default)]
+    pub(super) doctor: Option<bool>,
+    #[serde(default)]
+    pub(super) include: Vec<String>,
+    #[serde(default)]
+    pub(super) exclude: Vec<String>,
+    #[serde(default)]
+    pub(super) format: Option<ManifestScanOutputFormat>,
+    #[serde(default)]
+    pub(super) out: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ManifestAttentionMarkersConfig {
+    #[serde(default)]
+    pub(super) warning: Vec<String>,
+    #[serde(default)]
+    pub(super) high: Vec<String>,
+    #[serde(default)]
+    pub(super) critical: Vec<String>,
     #[serde(default)]
     pub(super) fail_on_findings: Option<bool>,
     #[serde(default)]
