@@ -10,8 +10,8 @@ mod dispatch;
 mod output;
 
 use super::super::{LoadedCatalog, RunnerError, TaskRuntimeArgs};
-use super::command_spec::run_builtin_command;
-use super::{reject_verbose_root_for_builtin, render_builtin_help_text};
+use super::command_spec::run_passthrough_builtin_command;
+use super::render_builtin_help_text;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CacheCommand {
@@ -33,11 +33,11 @@ pub(super) fn run_builtin_cache(
     catalogs: &[LoadedCatalog],
     invocation_cwd: &Path,
 ) -> Result<Option<String>, RunnerError> {
-    reject_verbose_root_for_builtin(&task.name, runtime_args)?;
-    run_builtin_command(
-        &runtime_args.passthrough,
+    run_passthrough_builtin_command(
+        &task.name,
+        runtime_args,
         |output_json| render_builtin_help_text("cache", args::render_cache_help(), output_json),
-        || args::parse_cache_args(&runtime_args.passthrough),
+        args::parse_cache_args,
         |parsed: CacheArgs| match parsed.command {
             CacheCommand::Inspect => dispatch::run_inspect(
                 target_root,

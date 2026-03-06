@@ -5,8 +5,7 @@ use serde_json::json;
 use crate::TaskInvocation;
 
 use super::super::{RunnerError, TaskRuntimeArgs};
-use super::command_spec::run_builtin_command;
-use super::reject_verbose_root_for_builtin;
+use super::command_spec::run_passthrough_builtin_command;
 use super::render_builtin_help_text;
 use super::response::render_optional_text_or_schema_json;
 
@@ -32,9 +31,9 @@ pub(super) fn run_builtin_completion(
     runtime_args: &TaskRuntimeArgs,
     target_root: &Path,
 ) -> Result<Option<String>, RunnerError> {
-    reject_verbose_root_for_builtin(&task.name, runtime_args)?;
-    run_builtin_command(
-        &runtime_args.passthrough,
+    run_passthrough_builtin_command(
+        &task.name,
+        runtime_args,
         |output_json| {
             let (topic, text) = if completion_candidate_mode(&runtime_args.passthrough) {
                 ("completion-candidates", render_completion_candidates_help())
@@ -43,7 +42,7 @@ pub(super) fn run_builtin_completion(
             };
             render_builtin_help_text(topic, text, output_json)
         },
-        || parse_completion_parsed_request(task, &runtime_args.passthrough),
+        |args| parse_completion_parsed_request(task, args),
         |parsed: CompletionParsedRequest| match parsed {
             CompletionParsedRequest::Candidates => {
                 run_completion_candidates(task, runtime_args, target_root)

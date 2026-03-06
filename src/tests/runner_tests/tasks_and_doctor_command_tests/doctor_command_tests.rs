@@ -135,13 +135,10 @@ critical = 300
     );
     fs::write(root.join("dist/app.min.js"), vec![b'a'; 180]).expect("write asset");
 
-    let err =
-        run_doctor_task(root, &[]).expect_err("doctor should fail on high-severity generated asset");
+    let err = run_doctor_task(root, &[])
+        .expect_err("doctor should fail on high-severity generated asset");
 
-    assert_doctor_non_zero_contains(
-        err,
-        &["scan.generated-assets", "dist/app.min.js", "180 B"],
-    );
+    assert_doctor_non_zero_contains(err, &["scan.generated-assets", "dist/app.min.js", "180 B"]);
 }
 
 #[test]
@@ -169,7 +166,8 @@ fn run_doctor_reports_generated_assets_across_child_catalogs() {
     let root = temp_workspace("doctor-generated-assets-root-fanout");
     let farmyard = root.join("farmyard");
     fs::create_dir_all(farmyard.join("dist")).expect("mkdir farmyard dist");
-    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n").expect("write root gitignore");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
+        .expect("write root gitignore");
     write_manifest(
         &root.join("effigy.toml"),
         "[catalog]\nalias = \"root\"\n[scan.generated_assets]\nwarn = 100\nhigh = 150\ncritical = 300\n",
@@ -180,7 +178,8 @@ fn run_doctor_reports_generated_assets_across_child_catalogs() {
     );
     fs::write(farmyard.join("dist/app.min.js"), vec![b'a'; 180]).expect("write asset");
 
-    let err = run_doctor_task(root, &[]).expect_err("doctor should fail on child-catalog generated asset");
+    let err = run_doctor_task(root, &[])
+        .expect_err("doctor should fail on child-catalog generated asset");
 
     assert_doctor_non_zero_contains(
         err,

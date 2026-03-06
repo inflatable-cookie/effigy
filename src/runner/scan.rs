@@ -87,13 +87,8 @@ const GENERATED_ASSET_DIRS: &[&str] = &[
     "vendors",
 ];
 
-const GENERATED_ASSET_NAME_MARKERS: &[&str] = &[
-    ".bundle.",
-    ".chunk.",
-    ".generated.",
-    ".map",
-    ".min.",
-];
+const GENERATED_ASSET_NAME_MARKERS: &[&str] =
+    &[".bundle.", ".chunk.", ".generated.", ".map", ".min."];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ScanRenderFormat {

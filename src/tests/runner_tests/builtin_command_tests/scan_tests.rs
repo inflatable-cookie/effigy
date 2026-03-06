@@ -599,20 +599,19 @@ fn run_manifest_task_builtin_scan_generated_assets_ignores_parent_gitignore_abov
     let root = temp_workspace("builtin-scan-generated-assets-parent-ignore");
     let farmyard = root.join("farmyard");
     fs::create_dir_all(farmyard.join("dist")).expect("mkdir farmyard dist");
-    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n").expect("write root gitignore");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
+        .expect("write root gitignore");
     write_manifest(&root.join("effigy.toml"), "");
-    write_manifest(&farmyard.join("effigy.toml"), "[catalog]\nalias = \"farmyard\"\n");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
     write_asset_file(&farmyard.join("dist/app.min.js"), 180);
 
     let out = run_builtin_ok(
         farmyard,
         "scan",
-        &[
-            "generated-assets",
-            "--warn",
-            "100",
-            "--show-warnings",
-        ],
+        &["generated-assets", "--warn", "100", "--show-warnings"],
     );
 
     assert_output_contains_all(&out, &["findings: 1", "dist/app.min.js"]);
@@ -623,20 +622,19 @@ fn run_manifest_task_builtin_scan_generated_assets_root_fans_out_across_child_ca
     let root = temp_workspace("builtin-scan-generated-assets-root-fanout");
     let farmyard = root.join("farmyard");
     fs::create_dir_all(farmyard.join("dist")).expect("mkdir farmyard dist");
-    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n").expect("write root gitignore");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
+        .expect("write root gitignore");
     write_manifest(&root.join("effigy.toml"), "[catalog]\nalias = \"root\"\n");
-    write_manifest(&farmyard.join("effigy.toml"), "[catalog]\nalias = \"farmyard\"\n");
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
     write_asset_file(&farmyard.join("dist/app.min.js"), 180);
 
     let out = run_builtin_ok(
         root,
         "scan",
-        &[
-            "generated-assets",
-            "--warn",
-            "100",
-            "--show-warnings",
-        ],
+        &["generated-assets", "--warn", "100", "--show-warnings"],
     );
 
     assert_output_contains_all(&out, &["findings: 1", "farmyard/dist/app.min.js"]);

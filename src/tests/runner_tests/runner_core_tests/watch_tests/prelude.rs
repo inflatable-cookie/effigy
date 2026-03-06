@@ -1,7 +1,7 @@
 pub(super) use super::super::prelude::{
     assert_builtin_error_case_table, assert_case_table, assert_output_contains_all,
     assert_path_exists, assert_task_lock_conflict, lock_test, run_builtin_ok, run_task,
-    temp_workspace, wait_for_path_exists, write_empty_manifest, write_root_manifest, thread,
+    temp_workspace, thread, wait_for_path_exists, write_empty_manifest, write_root_manifest,
     BuiltinErrorCase, Duration, Path, PathBuf, RunnerError,
 };
 
