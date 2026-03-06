@@ -1,5 +1,5 @@
 use super::{
-    count_code_lines, is_generated_artifact, normalize_rel_path, GodFileScanOptions,
+    count_code_lines, is_generated_artifact, support::normalize_rel_path, GodFileScanOptions,
     GodFileSeverity, GodFileThresholds, Path,
 };
 use std::path::PathBuf;

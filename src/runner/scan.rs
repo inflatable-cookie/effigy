@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -18,8 +18,8 @@ mod support;
 
 pub(in crate::runner) use options::{
     catalog_scan_roots, doctor_attention_marker_options, doctor_generated_asset_options,
-    doctor_god_file_options, load_root_attention_marker_options,
-    load_root_generated_asset_options, load_root_god_file_options,
+    doctor_god_file_options, load_root_attention_marker_options, load_root_generated_asset_options,
+    load_root_god_file_options,
 };
 pub(in crate::runner) use render::{
     render_attention_marker_markdown, render_attention_marker_text,
@@ -28,11 +28,10 @@ pub(in crate::runner) use render::{
 };
 use support::{
     attention_marker_category, attention_marker_matches_line, attention_marker_severity_rank,
-    build_scan_walk, classify_generated_asset_severity, classify_severity,
-    compile_attention_marker_patterns, compile_glob_set, count_code_lines,
-    generated_asset_reason, generated_asset_severity_rank, is_generated_artifact,
-    normalize_rel_path, normalized_scan_roots, read_asset_sample, rebase_finding_path,
-    severity_rank, should_skip_generated_asset_path, should_skip_path, trim_snippet,
+    classify_generated_asset_severity, classify_severity, compile_attention_marker_patterns,
+    count_code_lines, generated_asset_reason, generated_asset_severity_rank, is_generated_artifact,
+    read_asset_sample, rebase_finding_path, severity_rank, should_skip_generated_asset_path,
+    should_skip_path, trim_snippet, walk_scan_files, workspace_scan_roots,
 };
 
 pub(super) const DEFAULT_GOD_FILES_WARN: usize = 250;
@@ -50,8 +49,15 @@ pub(super) const DEFAULT_ATTENTION_MARKER_WARNING: &[&str] = &[
     "later",
     "stub",
 ];
-pub(super) const DEFAULT_ATTENTION_MARKER_HIGH: &[&str] =
-    &["FIXME", "XXX", "HACK", "@deprecated", "deprecated", "workaround", "tech debt"];
+pub(super) const DEFAULT_ATTENTION_MARKER_HIGH: &[&str] = &[
+    "FIXME",
+    "XXX",
+    "HACK",
+    "@deprecated",
+    "deprecated",
+    "workaround",
+    "tech debt",
+];
 pub(super) const DEFAULT_ATTENTION_MARKER_CRITICAL: &[&str] =
     &["BUG", "SECURITY", "remove before release"];
 
@@ -341,22 +347,16 @@ pub(super) fn run_god_file_scan_workspace(
     scan_roots: &[PathBuf],
     options: &GodFileScanOptions,
 ) -> Result<GodFileScanResult, RunnerError> {
-    let unique_roots = normalized_scan_roots(target_root, scan_roots);
     let mut findings = Vec::<GodFileFinding>::new();
     let mut scanned_files = 0usize;
     let mut skipped_generated = 0usize;
 
-    for root in &unique_roots {
-        let skipped_roots = unique_roots
-            .iter()
-            .filter(|candidate| *candidate != root && candidate.starts_with(root))
-            .cloned()
-            .collect::<Vec<PathBuf>>();
-        let result = run_god_file_scan_single(root, &skipped_roots, options)?;
+    for (root, skipped_roots) in workspace_scan_roots(target_root, scan_roots) {
+        let result = run_god_file_scan_single(&root, &skipped_roots, options)?;
         scanned_files += result.scanned_files;
         skipped_generated += result.skipped_generated;
         findings.extend(result.findings.into_iter().map(|mut finding| {
-            finding.path = rebase_finding_path(target_root, root, &finding.path);
+            finding.path = rebase_finding_path(target_root, &root, &finding.path);
             finding
         }));
     }
@@ -383,66 +383,42 @@ fn run_god_file_scan_single(
     options: &GodFileScanOptions,
 ) -> Result<GodFileScanResult, RunnerError> {
     options.validate()?;
-    let include = compile_glob_set(&options.include, "include")?;
-    let exclude = compile_glob_set(&options.exclude, "exclude")?;
-    let walk = build_scan_walk(root, options.respect_gitignore);
-
     let mut findings = Vec::<GodFileFinding>::new();
     let mut scanned_files = 0usize;
     let mut skipped_generated = 0usize;
-    for entry in walk.build() {
-        let entry = entry.map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "scan walk failed under {}: {error}",
-                root.display()
-            ))
-        })?;
-        if !entry
-            .file_type()
-            .map(|kind| kind.is_file())
-            .unwrap_or(false)
-        {
-            continue;
-        }
-        let path = entry.path();
-        if skipped_roots
-            .iter()
-            .any(|skip_root| path.starts_with(skip_root))
-        {
-            continue;
-        }
-        let rel = path.strip_prefix(root).unwrap_or(path);
-        let rel_str = normalize_rel_path(rel);
-        if rel_str.is_empty() {
-            continue;
-        }
-        if should_skip_path(rel, &rel_str, include.as_ref(), exclude.as_ref()) {
-            continue;
-        }
+    walk_scan_files(
+        root,
+        skipped_roots,
+        options.respect_gitignore,
+        &options.include,
+        &options.exclude,
+        should_skip_path,
+        |path, rel, rel_str| {
+            let contents = std::fs::read_to_string(path).map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "scan read failed for {}: {error}",
+                    path.display()
+                ))
+            })?;
+            if is_generated_artifact(rel, &contents) {
+                skipped_generated += 1;
+                return Ok(());
+            }
 
-        let contents = std::fs::read_to_string(path).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "scan read failed for {}: {error}",
-                path.display()
-            ))
-        })?;
-        if is_generated_artifact(rel, &contents) {
-            skipped_generated += 1;
-            continue;
-        }
-
-        let code_lines = count_code_lines(rel, &contents);
-        scanned_files += 1;
-        let severity = classify_severity(code_lines, &options.thresholds);
-        if let Some(severity) = severity {
-            findings.push(GodFileFinding {
-                path: rel_str,
-                code_lines,
-                total_lines: contents.lines().count(),
-                severity,
-            });
-        }
-    }
+            let code_lines = count_code_lines(rel, &contents);
+            scanned_files += 1;
+            let severity = classify_severity(code_lines, &options.thresholds);
+            if let Some(severity) = severity {
+                findings.push(GodFileFinding {
+                    path: rel_str.to_owned(),
+                    code_lines,
+                    total_lines: contents.lines().count(),
+                    severity,
+                });
+            }
+            Ok(())
+        },
+    )?;
 
     findings.sort_by(|left, right| {
         severity_rank(right.severity)
@@ -465,22 +441,16 @@ pub(super) fn run_generated_asset_scan_workspace(
     scan_roots: &[PathBuf],
     options: &GeneratedAssetScanOptions,
 ) -> Result<GeneratedAssetScanResult, RunnerError> {
-    let unique_roots = normalized_scan_roots(target_root, scan_roots);
     let mut findings = Vec::<GeneratedAssetFinding>::new();
     let mut scanned_files = 0usize;
     let mut candidate_files = 0usize;
 
-    for root in &unique_roots {
-        let skipped_roots = unique_roots
-            .iter()
-            .filter(|candidate| *candidate != root && candidate.starts_with(root))
-            .cloned()
-            .collect::<Vec<PathBuf>>();
-        let result = run_generated_asset_scan_single(root, &skipped_roots, options)?;
+    for (root, skipped_roots) in workspace_scan_roots(target_root, scan_roots) {
+        let result = run_generated_asset_scan_single(&root, &skipped_roots, options)?;
         scanned_files += result.scanned_files;
         candidate_files += result.candidate_files;
         findings.extend(result.findings.into_iter().map(|mut finding| {
-            finding.path = rebase_finding_path(target_root, root, &finding.path);
+            finding.path = rebase_finding_path(target_root, &root, &finding.path);
             finding
         }));
     }
@@ -507,68 +477,45 @@ fn run_generated_asset_scan_single(
     options: &GeneratedAssetScanOptions,
 ) -> Result<GeneratedAssetScanResult, RunnerError> {
     options.validate()?;
-    let include = compile_glob_set(&options.include, "include")?;
-    let exclude = compile_glob_set(&options.exclude, "exclude")?;
-    let walk = build_scan_walk(root, options.respect_gitignore);
     let mut findings = Vec::<GeneratedAssetFinding>::new();
     let mut scanned_files = 0usize;
     let mut candidate_files = 0usize;
-    for entry in walk.build() {
-        let entry = entry.map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "scan walk failed under {}: {error}",
-                root.display()
-            ))
-        })?;
-        if !entry
-            .file_type()
-            .map(|kind| kind.is_file())
-            .unwrap_or(false)
-        {
-            continue;
-        }
-        let path = entry.path();
-        if skipped_roots
-            .iter()
-            .any(|skip_root| path.starts_with(skip_root))
-        {
-            continue;
-        }
-        let rel = path.strip_prefix(root).unwrap_or(path);
-        let rel_str = normalize_rel_path(rel);
-        if rel_str.is_empty() {
-            continue;
-        }
-        if should_skip_generated_asset_path(rel, &rel_str, include.as_ref(), exclude.as_ref()) {
-            continue;
-        }
+    walk_scan_files(
+        root,
+        skipped_roots,
+        options.respect_gitignore,
+        &options.include,
+        &options.exclude,
+        should_skip_generated_asset_path,
+        |path, rel, rel_str| {
+            let bytes = std::fs::metadata(path)
+                .map_err(|error| {
+                    RunnerError::task_invocation(format!(
+                        "scan metadata failed for {}: {error}",
+                        path.display()
+                    ))
+                })?
+                .len() as usize;
+            let sample = read_asset_sample(path)?;
+            scanned_files += 1;
+            let reason = match generated_asset_reason(rel, &sample) {
+                Some(reason) => reason,
+                None => return Ok(()),
+            };
+            candidate_files += 1;
 
-        let bytes = std::fs::metadata(path)
-            .map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "scan metadata failed for {}: {error}",
-                    path.display()
-                ))
-            })?
-            .len() as usize;
-        let sample = read_asset_sample(path)?;
-        scanned_files += 1;
-        let reason = match generated_asset_reason(rel, &sample) {
-            Some(reason) => reason,
-            None => continue,
-        };
-        candidate_files += 1;
-
-        let severity = classify_generated_asset_severity(bytes, &options.thresholds);
-        if let Some(severity) = severity {
-            findings.push(GeneratedAssetFinding {
-                path: rel_str,
-                bytes,
-                severity,
-                reason,
-            });
-        }
-    }
+            let severity = classify_generated_asset_severity(bytes, &options.thresholds);
+            if let Some(severity) = severity {
+                findings.push(GeneratedAssetFinding {
+                    path: rel_str.to_owned(),
+                    bytes,
+                    severity,
+                    reason,
+                });
+            }
+            Ok(())
+        },
+    )?;
 
     findings.sort_by(|left, right| {
         generated_asset_severity_rank(right.severity)
@@ -591,22 +538,16 @@ pub(super) fn run_attention_marker_scan_workspace(
     scan_roots: &[PathBuf],
     options: &AttentionMarkerScanOptions,
 ) -> Result<AttentionMarkerScanResult, RunnerError> {
-    let unique_roots = normalized_scan_roots(target_root, scan_roots);
     let mut findings = Vec::<AttentionMarkerFinding>::new();
     let mut scanned_files = 0usize;
     let mut matched_lines = 0usize;
 
-    for root in &unique_roots {
-        let skipped_roots = unique_roots
-            .iter()
-            .filter(|candidate| *candidate != root && candidate.starts_with(root))
-            .cloned()
-            .collect::<Vec<PathBuf>>();
-        let result = run_attention_marker_scan_single(root, &skipped_roots, options)?;
+    for (root, skipped_roots) in workspace_scan_roots(target_root, scan_roots) {
+        let result = run_attention_marker_scan_single(&root, &skipped_roots, options)?;
         scanned_files += result.scanned_files;
         matched_lines += result.matched_lines;
         findings.extend(result.findings.into_iter().map(|mut finding| {
-            finding.path = rebase_finding_path(target_root, root, &finding.path);
+            finding.path = rebase_finding_path(target_root, &root, &finding.path);
             finding
         }));
     }
@@ -634,85 +575,62 @@ fn run_attention_marker_scan_single(
     options: &AttentionMarkerScanOptions,
 ) -> Result<AttentionMarkerScanResult, RunnerError> {
     options.validate()?;
-    let include = compile_glob_set(&options.include, "include")?;
-    let exclude = compile_glob_set(&options.exclude, "exclude")?;
-    let walk = build_scan_walk(root, options.respect_gitignore);
     let patterns = compile_attention_marker_patterns(&options.patterns);
     let mut findings = Vec::<AttentionMarkerFinding>::new();
     let mut scanned_files = 0usize;
     let mut matched_lines = 0usize;
 
-    for entry in walk.build() {
-        let entry = entry.map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "scan walk failed under {}: {error}",
-                root.display()
-            ))
-        })?;
-        if !entry
-            .file_type()
-            .map(|kind| kind.is_file())
-            .unwrap_or(false)
-        {
-            continue;
-        }
-        let path = entry.path();
-        if skipped_roots
-            .iter()
-            .any(|skip_root| path.starts_with(skip_root))
-        {
-            continue;
-        }
-        let rel = path.strip_prefix(root).unwrap_or(path);
-        let rel_str = normalize_rel_path(rel);
-        if rel_str.is_empty() {
-            continue;
-        }
-        if should_skip_path(rel, &rel_str, include.as_ref(), exclude.as_ref()) {
-            continue;
-        }
-
-        let contents = std::fs::read_to_string(path).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "scan read failed for {}: {error}",
-                path.display()
-            ))
-        })?;
-        if is_generated_artifact(rel, &contents) {
-            continue;
-        }
-
-        scanned_files += 1;
-        for (line_number, raw_line) in contents.lines().enumerate() {
-            let line = raw_line.trim();
-            if line.is_empty() {
-                continue;
+    walk_scan_files(
+        root,
+        skipped_roots,
+        options.respect_gitignore,
+        &options.include,
+        &options.exclude,
+        should_skip_path,
+        |path, rel, rel_str| {
+            let contents = std::fs::read_to_string(path).map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "scan read failed for {}: {error}",
+                    path.display()
+                ))
+            })?;
+            if is_generated_artifact(rel, &contents) {
+                return Ok(());
             }
-            let mut line_has_match = false;
-            let mut matched_keys = BTreeSet::<String>::new();
-            for (severity, marker, marker_lower) in &patterns {
-                if !attention_marker_matches_line(raw_line, marker_lower) {
+
+            scanned_files += 1;
+            for (line_number, raw_line) in contents.lines().enumerate() {
+                let line = raw_line.trim();
+                if line.is_empty() {
                     continue;
                 }
-                let dedupe_key = marker_lower.trim_start_matches('@').to_owned();
-                if !matched_keys.insert(dedupe_key) {
-                    continue;
+                let mut line_has_match = false;
+                let mut matched_keys = BTreeSet::<String>::new();
+                for (severity, marker, marker_lower) in &patterns {
+                    if !attention_marker_matches_line(raw_line, marker_lower) {
+                        continue;
+                    }
+                    let dedupe_key = marker_lower.trim_start_matches('@').to_owned();
+                    if !matched_keys.insert(dedupe_key) {
+                        continue;
+                    }
+                    line_has_match = true;
+                    findings.push(AttentionMarkerFinding {
+                        path: rel_str.to_owned(),
+                        line: line_number + 1,
+                        category: attention_marker_category(marker_lower),
+                        severity: *severity,
+                        marker: marker.clone(),
+                        snippet: trim_snippet(line, 120),
+                    });
                 }
-                line_has_match = true;
-                findings.push(AttentionMarkerFinding {
-                    path: rel_str.clone(),
-                    line: line_number + 1,
-                    category: attention_marker_category(marker_lower),
-                    severity: *severity,
-                    marker: marker.clone(),
-                    snippet: trim_snippet(line, 120),
-                });
+                if line_has_match {
+                    matched_lines += 1;
+                }
             }
-            if line_has_match {
-                matched_lines += 1;
-            }
-        }
-    }
+            Ok(())
+        },
+    )?;
 
     findings.sort_by(|left, right| {
         attention_marker_severity_rank(right.severity)

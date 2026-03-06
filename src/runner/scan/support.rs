@@ -196,6 +196,76 @@ pub(super) fn normalized_scan_roots(target_root: &Path, scan_roots: &[PathBuf]) 
     unique.into_iter().collect()
 }
 
+pub(super) fn workspace_scan_roots(
+    target_root: &Path,
+    scan_roots: &[PathBuf],
+) -> Vec<(PathBuf, Vec<PathBuf>)> {
+    let unique_roots = normalized_scan_roots(target_root, scan_roots);
+    unique_roots
+        .iter()
+        .map(|root| {
+            let skipped_roots = unique_roots
+                .iter()
+                .filter(|candidate| *candidate != root && candidate.starts_with(root))
+                .cloned()
+                .collect::<Vec<PathBuf>>();
+            (root.clone(), skipped_roots)
+        })
+        .collect()
+}
+
+pub(super) fn walk_scan_files<ShouldSkip, Visit>(
+    root: &Path,
+    skipped_roots: &[PathBuf],
+    respect_gitignore: bool,
+    include_patterns: &[String],
+    exclude_patterns: &[String],
+    should_skip: ShouldSkip,
+    mut visit: Visit,
+) -> Result<(), RunnerError>
+where
+    ShouldSkip: Fn(&Path, &str, Option<&GlobSet>, Option<&GlobSet>) -> bool,
+    Visit: FnMut(&Path, &Path, &str) -> Result<(), RunnerError>,
+{
+    let include = compile_glob_set(include_patterns, "include")?;
+    let exclude = compile_glob_set(exclude_patterns, "exclude")?;
+    let walk = build_scan_walk(root, respect_gitignore);
+
+    for entry in walk.build() {
+        let entry = entry.map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "scan walk failed under {}: {error}",
+                root.display()
+            ))
+        })?;
+        if !entry
+            .file_type()
+            .map(|kind| kind.is_file())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        let path = entry.path();
+        if skipped_roots
+            .iter()
+            .any(|skip_root| path.starts_with(skip_root))
+        {
+            continue;
+        }
+
+        let rel = path.strip_prefix(root).unwrap_or(path);
+        let rel_str = normalize_rel_path(rel);
+        if rel_str.is_empty() || should_skip(rel, &rel_str, include.as_ref(), exclude.as_ref()) {
+            continue;
+        }
+
+        visit(path, rel, &rel_str)?;
+    }
+
+    Ok(())
+}
+
 pub(super) fn rebase_finding_path(target_root: &Path, root: &Path, finding_path: &str) -> String {
     let root_rel = root
         .strip_prefix(target_root)
@@ -264,7 +334,9 @@ pub(super) fn attention_marker_matches_line(raw_line: &str, marker_lower: &str) 
     }
     let trimmed = lower_line.trim_start();
     let comment_prefixes = ["//", "/*", "*", "<!--", "--"];
-    if comment_prefixes.iter().any(|prefix| trimmed.starts_with(prefix))
+    if comment_prefixes
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
         || (trimmed.starts_with('#') && !trimmed.starts_with("#["))
     {
         return true;
@@ -279,11 +351,7 @@ pub(super) fn attention_marker_matches_line(raw_line: &str, marker_lower: &str) 
         }
         if let Some(comment_index) = lower_line.find('#') {
             return comment_index < marker_index
-                && lower_line
-                    .as_bytes()
-                    .get(comment_index + 1)
-                    .copied()
-                    != Some(b'[');
+                && lower_line.as_bytes().get(comment_index + 1).copied() != Some(b'[');
         }
     }
     false
@@ -483,6 +551,9 @@ pub(super) fn trim_snippet(line: &str, max_chars: usize) -> String {
     if trimmed.chars().count() <= max_chars {
         return trimmed.to_owned();
     }
-    let prefix = trimmed.chars().take(max_chars.saturating_sub(3)).collect::<String>();
+    let prefix = trimmed
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>();
     format!("{prefix}...")
 }

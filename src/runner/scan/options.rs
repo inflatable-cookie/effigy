@@ -217,9 +217,8 @@ impl AttentionMarkerScanOptions {
     }
 
     pub(in crate::runner) fn validate(&self) -> Result<(), RunnerError> {
-        let total_patterns = self.patterns.warning.len()
-            + self.patterns.high.len()
-            + self.patterns.critical.len();
+        let total_patterns =
+            self.patterns.warning.len() + self.patterns.high.len() + self.patterns.critical.len();
         if total_patterns == 0 {
             return Err(RunnerError::task_invocation(
                 "`scan.attention_markers` requires at least one configured marker",

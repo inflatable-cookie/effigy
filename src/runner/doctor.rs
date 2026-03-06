@@ -2,9 +2,9 @@ use crate::DoctorArgs;
 
 use super::{CatalogSelectionMode, LoadedCatalog, ManifestJsPackageManager, RunnerError};
 
+mod attention_markers;
 mod conflicts;
 mod contracts;
-mod attention_markers;
 mod environment;
 mod explain;
 mod finding_templates;

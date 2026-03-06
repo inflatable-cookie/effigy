@@ -659,7 +659,10 @@ fn run_manifest_task_builtin_scan_attention_markers_hides_warning_rows_by_defaul
     );
     write_attention_file(
         &root.join("src/lib.rs"),
-        &["#[deprecated(note = \"use new_api\")]", "pub fn old_api() {}"],
+        &[
+            "#[deprecated(note = \"use new_api\")]",
+            "pub fn old_api() {}",
+        ],
     );
 
     let out = run_builtin_ok(root, "scan", &["attention-markers"]);
@@ -687,7 +690,10 @@ fn run_manifest_task_builtin_scan_attention_markers_show_warnings_lists_warning_
     fs::create_dir_all(root.join("src")).expect("mkdir src");
     write_attention_file(
         &root.join("src/app.ts"),
-        &["// TODO: tidy before refactor", "// FIXME: handle retries cleanly"],
+        &[
+            "// TODO: tidy before refactor",
+            "// FIXME: handle retries cleanly",
+        ],
     );
 
     let out = run_builtin_ok(root, "scan", &["attention-markers", "--show-warnings"]);
@@ -833,7 +839,10 @@ fn run_manifest_task_builtin_scan_attention_markers_rejects_threshold_flags() {
 
     match err {
         RunnerError::TaskInvocation(message) => {
-            assert_eq!(message, "`scan attention-markers` does not accept threshold options");
+            assert_eq!(
+                message,
+                "`scan attention-markers` does not accept threshold options"
+            );
         }
         other => panic!("unexpected error: {other}"),
     }

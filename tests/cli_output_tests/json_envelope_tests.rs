@@ -179,7 +179,10 @@ fn cli_json_mode_scan_attention_markers_wraps_scan_payload() {
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["command"]["kind"], "task");
     assert_eq!(parsed["command"]["name"], "scan");
-    assert_eq!(parsed["result"]["schema"], "effigy.scan.attention-markers.v1");
+    assert_eq!(
+        parsed["result"]["schema"],
+        "effigy.scan.attention-markers.v1"
+    );
     assert_eq!(parsed["result"]["scan"], "attention-markers");
     assert_eq!(parsed["result"]["finding_count"], 1);
 }

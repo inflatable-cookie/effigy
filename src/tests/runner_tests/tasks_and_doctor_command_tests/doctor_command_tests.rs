@@ -208,10 +208,7 @@ critical = ["BLOCKER"]
     let err = run_doctor_task(root, &[])
         .expect_err("doctor should fail on high-severity attention marker");
 
-    assert_doctor_non_zero_contains(
-        err,
-        &["scan.attention-markers", "src/app.ts:1", "[FIXME]"],
-    );
+    assert_doctor_non_zero_contains(err, &["scan.attention-markers", "src/app.ts:1", "[FIXME]"]);
 }
 
 #[test]
