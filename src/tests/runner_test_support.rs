@@ -154,10 +154,61 @@ pub(crate) mod builtin {
 pub(crate) mod assertions {
     use super::RunnerError;
 
+    fn strip_ansi_escapes(rendered: &str) -> String {
+        let mut out = String::with_capacity(rendered.len());
+        let bytes = rendered.as_bytes();
+        let mut index = 0usize;
+
+        while index < bytes.len() {
+            if bytes[index] != 0x1b {
+                out.push(bytes[index] as char);
+                index += 1;
+                continue;
+            }
+
+            index += 1;
+            match bytes.get(index).copied() {
+                Some(b'[') => {
+                    index += 1;
+                    while index < bytes.len() {
+                        let byte = bytes[index];
+                        index += 1;
+                        if (0x40..=0x7e).contains(&byte) {
+                            break;
+                        }
+                    }
+                }
+                Some(b']') => {
+                    index += 1;
+                    while index < bytes.len() {
+                        match bytes[index] {
+                            0x07 => {
+                                index += 1;
+                                break;
+                            }
+                            0x1b if bytes.get(index + 1) == Some(&b'\\') => {
+                                index += 2;
+                                break;
+                            }
+                            _ => index += 1,
+                        }
+                    }
+                }
+                Some(_) => {
+                    index += 1;
+                }
+                None => break,
+            }
+        }
+
+        out
+    }
+
     pub(crate) fn assert_contains_all(rendered: &str, expected: &[&str]) {
+        let normalized = strip_ansi_escapes(rendered);
         for snippet in expected {
             assert!(
-                rendered.contains(snippet),
+                normalized.contains(snippet),
                 "expected output to contain {:?}\noutput:\n{}",
                 snippet,
                 rendered
