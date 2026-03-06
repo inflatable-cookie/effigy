@@ -9,6 +9,7 @@ mod plan;
 mod presentation;
 mod profiles;
 mod references;
+mod render_support;
 mod run_spec;
 mod runtime;
 mod scheduler;
