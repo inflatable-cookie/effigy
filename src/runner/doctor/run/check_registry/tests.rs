@@ -18,6 +18,7 @@ fn doctor_check_registry_order_is_stable() {
             "task_references",
             "god_files",
             "generated_assets",
+            "attention_markers",
             "health_task",
         ]
     );
@@ -62,6 +63,7 @@ fn doctor_check_registry_is_executor_composable_without_control_flow_changes() {
             "task_references",
             "god_files",
             "generated_assets",
+            "attention_markers",
             "health_task",
         ]
     );
