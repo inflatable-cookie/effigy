@@ -148,6 +148,8 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-03-03-watch-friction-sweep.md`](./2026-03/03-090000-watch-friction-sweep.md)
 - [`2026-03-04-init-migrate-onboarding-validation.md`](./2026-03/04-090000-init-migrate-onboarding-validation.md)
 - [`2026-03-05-doctor-reporting-validation.md`](./2026-03/05-090000-doctor-reporting-validation.md)
+- [`2026-03-05-scan-god-files-json-contract-validation.md`](./2026-03/05-202500-scan-god-files-json-contract-validation.md)
+- [`2026-03-05-scan-god-files-doctor-json-bridge-validation.md`](./2026-03/05-203000-scan-god-files-doctor-json-bridge-validation.md)
 - [`2026-03-06-post-m1-regression-pass.md`](./2026-03/06-090000-post-m1-regression-pass.md)
 - [`2026-03-07-post-m1-release-readiness-checkpoint.md`](./2026-03/07-090000-post-m1-release-readiness-checkpoint.md)
 
