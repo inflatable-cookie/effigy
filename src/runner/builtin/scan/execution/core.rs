@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
@@ -6,12 +7,15 @@ use super::super::super::super::scan::model::{
     AttentionMarkerScanOptions, AttentionMarkerScanResult, CommentRatioScanOptions,
     CommentRatioScanResult, DuplicateBlockScanOptions, DuplicateBlockScanResult,
     DuplicateBlockThresholds, GeneratedAssetScanOptions, GeneratedAssetScanResult,
-    GeneratedAssetThresholds, GodFileScanOptions, GodFileScanResult, GodFileThresholds,
-    ScanRenderFormat, TextRenderOptions,
+    GeneratedAssetThresholds, GeneratedInSrcScanOptions, GeneratedInSrcScanResult,
+    GeneratedInSrcThresholds, GodFileScanOptions, GodFileScanResult, GodFileThresholds,
+    ScanRenderFormat, StaleSuppressionScanOptions, StaleSuppressionScanResult, TextRenderOptions,
 };
 use super::super::super::response::schema_payload;
 use super::super::request::ScanRequest;
 use crate::runner::error::RunnerError;
+use crate::ui::theme::resolve_color_enabled;
+use crate::ui::OutputMode;
 
 pub(super) fn run_scan_mode<TOptions, TResult, FLoad, FPrepare, FRun, FText, FMarkdown>(
     request: ScanRequest,
@@ -138,6 +142,41 @@ pub(super) fn apply_comment_ratio_request_overrides(
     }
 }
 
+pub(super) fn apply_generated_in_src_request_overrides(
+    options: &mut GeneratedInSrcScanOptions,
+    request: &ScanRequest,
+) {
+    apply_common_request_overrides(options, request);
+    if let Some(value) = request.warn {
+        options.thresholds.warn = value;
+    }
+    if let Some(value) = request.high {
+        options.thresholds.high = value;
+    }
+    if let Some(value) = request.critical {
+        options.thresholds.critical = value;
+    }
+    if !request.source_roots.is_empty() {
+        options.source_roots = request.source_roots.clone();
+    }
+}
+
+pub(super) fn apply_stale_suppression_request_overrides(
+    options: &mut StaleSuppressionScanOptions,
+    request: &ScanRequest,
+) {
+    apply_common_request_overrides(options, request);
+    if !request.warning_markers.is_empty() {
+        options.patterns.warning = request.warning_markers.clone();
+    }
+    if !request.high_markers.is_empty() {
+        options.patterns.high = request.high_markers.clone();
+    }
+    if !request.critical_markers.is_empty() {
+        options.patterns.critical = request.critical_markers.clone();
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct ScanModeConfig {
     pub(super) label: &'static str,
@@ -196,6 +235,8 @@ where
 {
     let text_render_options = TextRenderOptions {
         show_warnings: request.show_warnings,
+        color_enabled: !request.output_json
+            && resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal()),
     };
     let rendered_text = match options.format() {
         ScanRenderFormat::Text => render_text(result, text_render_options),
@@ -378,6 +419,31 @@ impl ScanPayloadResult for GeneratedAssetScanResult {
     }
 }
 
+impl ScanPayloadResult for GeneratedInSrcScanResult {
+    fn root(&self) -> &str {
+        &self.root
+    }
+
+    fn finding_count(&self) -> usize {
+        self.findings.len()
+    }
+
+    fn insert_payload_fields(&self, payload: &mut Map<String, Value>) {
+        payload.insert(
+            "thresholds".into(),
+            json!({
+                "warn": self.thresholds.warn,
+                "high": self.thresholds.high,
+                "critical": self.thresholds.critical,
+            }),
+        );
+        payload.insert("source_roots".into(), json!(&self.source_roots));
+        payload.insert("scanned_files".into(), Value::from(self.scanned_files));
+        payload.insert("candidate_files".into(), Value::from(self.candidate_files));
+        payload.insert("findings".into(), json!(&self.findings));
+    }
+}
+
 impl ScanPayloadResult for DuplicateBlockScanResult {
     fn root(&self) -> &str {
         &self.root
@@ -455,6 +521,30 @@ impl ScanPayloadResult for AttentionMarkerScanResult {
     }
 }
 
+impl ScanPayloadResult for StaleSuppressionScanResult {
+    fn root(&self) -> &str {
+        &self.root
+    }
+
+    fn finding_count(&self) -> usize {
+        self.findings.len()
+    }
+
+    fn insert_payload_fields(&self, payload: &mut Map<String, Value>) {
+        payload.insert(
+            "patterns".into(),
+            json!({
+                "warning": &self.patterns.warning,
+                "high": &self.patterns.high,
+                "critical": &self.patterns.critical,
+            }),
+        );
+        payload.insert("scanned_files".into(), Value::from(self.scanned_files));
+        payload.insert("matched_lines".into(), Value::from(self.matched_lines));
+        payload.insert("findings".into(), json!(&self.findings));
+    }
+}
+
 impl ScanCommonOptions for GodFileScanOptions {
     fn format(&self) -> ScanRenderFormat {
         self.format
@@ -503,6 +593,39 @@ impl ScanCommonOptions for GeneratedAssetScanOptions {
     }
     fn validate(&self) -> Result<(), RunnerError> {
         GeneratedAssetScanOptions::validate(self)
+    }
+    fn format_mut(&mut self) -> &mut ScanRenderFormat {
+        &mut self.format
+    }
+    fn fail_on_findings_mut(&mut self) -> &mut bool {
+        &mut self.fail_on_findings
+    }
+    fn respect_gitignore_mut(&mut self) -> &mut bool {
+        &mut self.respect_gitignore
+    }
+    fn include_mut(&mut self) -> &mut Vec<String> {
+        &mut self.include
+    }
+    fn exclude_mut(&mut self) -> &mut Vec<String> {
+        &mut self.exclude
+    }
+}
+
+impl ScanCommonOptions for GeneratedInSrcScanOptions {
+    fn format(&self) -> ScanRenderFormat {
+        self.format
+    }
+    fn output_path(&self) -> Option<&String> {
+        self.out.as_ref()
+    }
+    fn fail_on_findings(&self) -> bool {
+        self.fail_on_findings
+    }
+    fn respect_gitignore(&self) -> bool {
+        self.respect_gitignore
+    }
+    fn validate(&self) -> Result<(), RunnerError> {
+        GeneratedInSrcScanOptions::validate(self)
     }
     fn format_mut(&mut self) -> &mut ScanRenderFormat {
         &mut self.format
@@ -620,6 +743,39 @@ impl ScanCommonOptions for AttentionMarkerScanOptions {
     }
 }
 
+impl ScanCommonOptions for StaleSuppressionScanOptions {
+    fn format(&self) -> ScanRenderFormat {
+        self.format
+    }
+    fn output_path(&self) -> Option<&String> {
+        self.out.as_ref()
+    }
+    fn fail_on_findings(&self) -> bool {
+        self.fail_on_findings
+    }
+    fn respect_gitignore(&self) -> bool {
+        self.respect_gitignore
+    }
+    fn validate(&self) -> Result<(), RunnerError> {
+        StaleSuppressionScanOptions::validate(self)
+    }
+    fn format_mut(&mut self) -> &mut ScanRenderFormat {
+        &mut self.format
+    }
+    fn fail_on_findings_mut(&mut self) -> &mut bool {
+        &mut self.fail_on_findings
+    }
+    fn respect_gitignore_mut(&mut self) -> &mut bool {
+        &mut self.respect_gitignore
+    }
+    fn include_mut(&mut self) -> &mut Vec<String> {
+        &mut self.include
+    }
+    fn exclude_mut(&mut self) -> &mut Vec<String> {
+        &mut self.exclude
+    }
+}
+
 impl ScanThresholdOverrideOptions for GodFileScanOptions {
     type Thresholds = GodFileThresholds;
     fn thresholds_mut(&mut self) -> &mut Self::Thresholds {
@@ -629,6 +785,14 @@ impl ScanThresholdOverrideOptions for GodFileScanOptions {
 
 impl ScanThresholdOverrideOptions for GeneratedAssetScanOptions {
     type Thresholds = GeneratedAssetThresholds;
+    fn thresholds_mut(&mut self) -> &mut Self::Thresholds {
+        &mut self.thresholds
+    }
+}
+
+impl ScanThresholdOverrideOptions for GeneratedInSrcScanOptions {
+    type Thresholds = GeneratedInSrcThresholds;
+
     fn thresholds_mut(&mut self) -> &mut Self::Thresholds {
         &mut self.thresholds
     }
@@ -654,6 +818,18 @@ impl ScanThresholds for GodFileThresholds {
 }
 
 impl ScanThresholds for GeneratedAssetThresholds {
+    fn warn_mut(&mut self) -> &mut usize {
+        &mut self.warn
+    }
+    fn high_mut(&mut self) -> &mut usize {
+        &mut self.high
+    }
+    fn critical_mut(&mut self) -> &mut usize {
+        &mut self.critical
+    }
+}
+
+impl ScanThresholds for GeneratedInSrcThresholds {
     fn warn_mut(&mut self) -> &mut usize {
         &mut self.warn
     }

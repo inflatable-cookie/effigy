@@ -1,6 +1,11 @@
 use std::ffi::OsStr;
 use std::path::Path;
 
+use crate::runner::scan::model::{
+    GeneratedInSrcCategory, GeneratedInSrcSeverity, GeneratedInSrcThresholds,
+    StaleSuppressionCategory, StaleSuppressionPatterns, StaleSuppressionSeverity,
+};
+
 use super::{
     AttentionMarkerCategory, AttentionMarkerPatterns, AttentionMarkerSeverity,
     CommentRatioSeverity, CommentRatioThresholds, DuplicateBlockSeverity, DuplicateBlockThresholds,
@@ -72,6 +77,22 @@ pub(in crate::runner) fn classify_generated_asset_severity(
     None
 }
 
+pub(in crate::runner) fn classify_generated_in_src_severity(
+    bytes: usize,
+    thresholds: &GeneratedInSrcThresholds,
+) -> Option<GeneratedInSrcSeverity> {
+    if bytes >= thresholds.critical {
+        return Some(GeneratedInSrcSeverity::Critical);
+    }
+    if bytes >= thresholds.high {
+        return Some(GeneratedInSrcSeverity::High);
+    }
+    if bytes >= thresholds.warn {
+        return Some(GeneratedInSrcSeverity::Warning);
+    }
+    None
+}
+
 pub(in crate::runner) fn classify_duplicate_block_severity(
     block_lines: usize,
     thresholds: &DuplicateBlockThresholds,
@@ -120,6 +141,23 @@ pub(in crate::runner) fn generated_asset_severity_rank(severity: GeneratedAssetS
     }
 }
 
+pub(in crate::runner) fn generated_in_src_severity_rank(severity: GeneratedInSrcSeverity) -> usize {
+    match severity {
+        GeneratedInSrcSeverity::Warning => 1,
+        GeneratedInSrcSeverity::High => 2,
+        GeneratedInSrcSeverity::Critical => 3,
+    }
+}
+
+pub(in crate::runner) fn generated_in_src_category_rank(category: GeneratedInSrcCategory) -> usize {
+    match category {
+        GeneratedInSrcCategory::ContentMarker => 4,
+        GeneratedInSrcCategory::BundledArtifact => 3,
+        GeneratedInSrcCategory::GeneratedFilename => 2,
+        GeneratedInSrcCategory::GeneratedPath => 1,
+    }
+}
+
 pub(in crate::runner) fn attention_marker_severity_rank(
     severity: AttentionMarkerSeverity,
 ) -> usize {
@@ -146,6 +184,16 @@ pub(in crate::runner) fn comment_ratio_severity_rank(severity: CommentRatioSever
     }
 }
 
+pub(in crate::runner) fn stale_suppression_severity_rank(
+    severity: StaleSuppressionSeverity,
+) -> usize {
+    match severity {
+        StaleSuppressionSeverity::Warning => 1,
+        StaleSuppressionSeverity::High => 2,
+        StaleSuppressionSeverity::Critical => 3,
+    }
+}
+
 pub(in crate::runner) fn compile_attention_marker_patterns(
     patterns: &AttentionMarkerPatterns,
 ) -> Vec<(AttentionMarkerSeverity, String, String)> {
@@ -167,6 +215,34 @@ pub(in crate::runner) fn compile_attention_marker_patterns(
     for marker in &patterns.warning {
         compiled.push((
             AttentionMarkerSeverity::Warning,
+            marker.clone(),
+            marker.to_ascii_lowercase(),
+        ));
+    }
+    compiled
+}
+
+pub(in crate::runner) fn compile_stale_suppression_patterns(
+    patterns: &StaleSuppressionPatterns,
+) -> Vec<(StaleSuppressionSeverity, String, String)> {
+    let mut compiled = Vec::<(StaleSuppressionSeverity, String, String)>::new();
+    for marker in &patterns.critical {
+        compiled.push((
+            StaleSuppressionSeverity::Critical,
+            marker.clone(),
+            marker.to_ascii_lowercase(),
+        ));
+    }
+    for marker in &patterns.high {
+        compiled.push((
+            StaleSuppressionSeverity::High,
+            marker.clone(),
+            marker.to_ascii_lowercase(),
+        ));
+    }
+    for marker in &patterns.warning {
+        compiled.push((
+            StaleSuppressionSeverity::Warning,
             marker.clone(),
             marker.to_ascii_lowercase(),
         ));
@@ -207,6 +283,155 @@ pub(in crate::runner) fn attention_marker_matches_line(raw_line: &str, marker_lo
     false
 }
 
+pub(in crate::runner) fn stale_suppression_matches_line(
+    raw_line: &str,
+    marker_lower: &str,
+) -> bool {
+    let lower_line = mask_string_literals(raw_line).to_ascii_lowercase();
+    match marker_lower {
+        "eslint-disable" => {
+            lower_line.contains("eslint-disable")
+                && !lower_line.contains("eslint-disable-next-line")
+                && !lower_line.contains("eslint-disable-line")
+        }
+        "#[allow(" => lower_line.contains("#[allow("),
+        "#[expect(" => lower_line.contains("#[expect("),
+        "#[allow(warnings)]" => lower_line.contains("#[allow(warnings)]"),
+        "shellcheck disable=" => lower_line.contains("shellcheck disable="),
+        "fmt: off" => lower_line.contains("fmt: off"),
+        other => lower_line.contains(other),
+    }
+}
+
+fn mask_string_literals(raw_line: &str) -> String {
+    let bytes = raw_line.as_bytes();
+    let mut out = String::with_capacity(raw_line.len());
+    let mut index = 0usize;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_backtick = false;
+    let mut raw_hashes = None::<usize>;
+    let mut escaped = false;
+
+    while index < bytes.len() {
+        if let Some(hash_count) = raw_hashes {
+            if bytes[index] == b'"'
+                && index + 1 + hash_count <= bytes.len()
+                && bytes[index + 1..index + 1 + hash_count]
+                    .iter()
+                    .all(|byte| *byte == b'#')
+            {
+                out.push(' ');
+                for _ in 0..hash_count {
+                    out.push(' ');
+                }
+                index += 1 + hash_count;
+                raw_hashes = None;
+                continue;
+            }
+            out.push(' ');
+            index += 1;
+            continue;
+        }
+
+        let ch = raw_line[index..].chars().next().expect("valid utf-8 char");
+        let ch_len = ch.len_utf8();
+
+        if in_single || in_double || in_backtick {
+            if escaped {
+                escaped = false;
+                for _ in 0..ch_len {
+                    out.push(' ');
+                }
+                index += ch_len;
+                continue;
+            }
+            if ch == '\\' && (in_single || in_double || in_backtick) {
+                escaped = true;
+                out.push(' ');
+                index += 1;
+                continue;
+            }
+            if (in_single && ch == '\'')
+                || (in_double && ch == '"')
+                || (in_backtick && ch == '`')
+            {
+                in_single = false;
+                in_double = false;
+                in_backtick = false;
+                for _ in 0..ch_len {
+                    out.push(' ');
+                }
+                index += ch_len;
+                continue;
+            }
+            for _ in 0..ch_len {
+                out.push(' ');
+            }
+            index += ch_len;
+            continue;
+        }
+
+        if let Some((consumed, hashes)) = raw_string_prefix(bytes, index) {
+            for _ in 0..consumed {
+                out.push(' ');
+            }
+            index += consumed;
+            raw_hashes = Some(hashes);
+            continue;
+        }
+
+        match ch {
+            '\'' => {
+                in_single = true;
+                out.push(' ');
+                index += 1;
+            }
+            '"' => {
+                in_double = true;
+                out.push(' ');
+                index += 1;
+            }
+            '`' => {
+                in_backtick = true;
+                out.push(' ');
+                index += 1;
+            }
+            _ => {
+                out.push(ch);
+                index += ch_len;
+            }
+        }
+    }
+
+    out
+}
+
+fn raw_string_prefix(bytes: &[u8], index: usize) -> Option<(usize, usize)> {
+    let start = index;
+    let mut cursor = index;
+
+    if bytes.get(cursor) == Some(&b'b') && bytes.get(cursor + 1) == Some(&b'r') {
+        cursor += 2;
+    } else if bytes.get(cursor) == Some(&b'r') {
+        cursor += 1;
+    } else {
+        return None;
+    }
+
+    let mut hashes = 0usize;
+    while bytes.get(cursor) == Some(&b'#') {
+        hashes += 1;
+        cursor += 1;
+    }
+
+    if bytes.get(cursor) != Some(&b'"') {
+        return None;
+    }
+
+    Some((cursor - start + 1, hashes))
+}
+
 pub(in crate::runner) fn attention_marker_category(marker_lower: &str) -> AttentionMarkerCategory {
     if marker_lower.contains("deprecat") {
         return AttentionMarkerCategory::Deprecation;
@@ -224,6 +449,25 @@ pub(in crate::runner) fn attention_marker_category(marker_lower: &str) -> Attent
     AttentionMarkerCategory::DeferredWork
 }
 
+pub(in crate::runner) fn stale_suppression_category(
+    marker_lower: &str,
+) -> StaleSuppressionCategory {
+    if marker_lower.contains("ts-")
+        || marker_lower.contains("type: ignore")
+        || marker_lower.starts_with("#[allow")
+        || marker_lower.starts_with("#[expect")
+    {
+        return StaleSuppressionCategory::TypeIgnore;
+    }
+    if marker_lower.contains("prettier-ignore")
+        || marker_lower.contains("fmt: off")
+        || marker_lower.contains("shellcheck disable=")
+    {
+        return StaleSuppressionCategory::ToolBypass;
+    }
+    StaleSuppressionCategory::LintDisable
+}
+
 pub(in crate::runner) fn generated_asset_reason(rel: &Path, sample: &str) -> Option<String> {
     if is_generated_asset_vendor_path(rel) {
         return Some("vendor-or-build-path".to_owned());
@@ -236,6 +480,63 @@ pub(in crate::runner) fn generated_asset_reason(rel: &Path, sample: &str) -> Opt
         .any(|marker| sample.contains(marker))
     {
         return Some("generated-marker".to_owned());
+    }
+    None
+}
+
+pub(in crate::runner) fn generated_in_src_reason(
+    rel: &Path,
+    sample: &str,
+) -> Option<(GeneratedInSrcCategory, String)> {
+    if GENERATED_MARKERS
+        .iter()
+        .any(|marker| sample.contains(marker))
+    {
+        return Some((
+            GeneratedInSrcCategory::ContentMarker,
+            "generated-marker".to_owned(),
+        ));
+    }
+    let lower_name = rel
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if lower_name.ends_with(".map") {
+        return Some((
+            GeneratedInSrcCategory::BundledArtifact,
+            "source-map".to_owned(),
+        ));
+    }
+    if lower_name.contains(".min.") {
+        return Some((
+            GeneratedInSrcCategory::BundledArtifact,
+            "minified-asset".to_owned(),
+        ));
+    }
+    if GENERATED_ASSET_NAME_MARKERS
+        .iter()
+        .any(|marker| lower_name.contains(marker))
+        || lower_name.ends_with(".generated.rs")
+        || lower_name.contains(".pb.")
+        || lower_name.contains(".designer.")
+        || lower_name.contains(".g.")
+    {
+        return Some((
+            GeneratedInSrcCategory::GeneratedFilename,
+            "filename-marker".to_owned(),
+        ));
+    }
+    if rel.components().any(|component| {
+        matches!(
+            component.as_os_str().to_string_lossy().as_ref(),
+            "generated" | "gen"
+        )
+    }) {
+        return Some((
+            GeneratedInSrcCategory::GeneratedPath,
+            "generated-path-component".to_owned(),
+        ));
     }
     None
 }

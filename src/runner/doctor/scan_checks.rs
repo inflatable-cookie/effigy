@@ -7,7 +7,10 @@ use super::super::scan::model::{
     CommentRatioScanOptions, CommentRatioScanResult, CommentRatioSeverity, DuplicateBlockFinding,
     DuplicateBlockScanOptions, DuplicateBlockScanResult, DuplicateBlockSeverity,
     GeneratedAssetFinding, GeneratedAssetScanOptions, GeneratedAssetScanResult,
-    GeneratedAssetSeverity, GodFileFinding, GodFileScanOptions, GodFileScanResult, GodFileSeverity,
+    GeneratedAssetSeverity, GeneratedInSrcFinding, GeneratedInSrcScanOptions,
+    GeneratedInSrcScanResult, GeneratedInSrcSeverity, GodFileFinding, GodFileScanOptions,
+    GodFileScanResult, GodFileSeverity, StaleSuppressionFinding,
+    StaleSuppressionScanOptions, StaleSuppressionScanResult, StaleSuppressionSeverity,
 };
 use super::super::scan::options::catalog_scan_roots;
 use super::report::{DoctorSeverity, DoctorState};
@@ -98,6 +101,12 @@ impl DoctorIntegratedScanOptions for GeneratedAssetScanOptions {
     }
 }
 
+impl DoctorIntegratedScanOptions for GeneratedInSrcScanOptions {
+    fn doctor_enabled(&self) -> bool {
+        self.doctor_enabled
+    }
+}
+
 impl DoctorIntegratedScanOptions for DuplicateBlockScanOptions {
     fn doctor_enabled(&self) -> bool {
         self.doctor_enabled
@@ -116,6 +125,12 @@ impl DoctorIntegratedScanOptions for AttentionMarkerScanOptions {
     }
 }
 
+impl DoctorIntegratedScanOptions for StaleSuppressionScanOptions {
+    fn doctor_enabled(&self) -> bool {
+        self.doctor_enabled
+    }
+}
+
 impl DoctorIntegratedScanResult for GodFileScanResult {
     type Finding = GodFileFinding;
 
@@ -126,6 +141,14 @@ impl DoctorIntegratedScanResult for GodFileScanResult {
 
 impl DoctorIntegratedScanResult for GeneratedAssetScanResult {
     type Finding = GeneratedAssetFinding;
+
+    fn into_findings(self) -> Vec<Self::Finding> {
+        self.findings
+    }
+}
+
+impl DoctorIntegratedScanResult for GeneratedInSrcScanResult {
+    type Finding = GeneratedInSrcFinding;
 
     fn into_findings(self) -> Vec<Self::Finding> {
         self.findings
@@ -150,6 +173,14 @@ impl DoctorIntegratedScanResult for CommentRatioScanResult {
 
 impl DoctorIntegratedScanResult for AttentionMarkerScanResult {
     type Finding = AttentionMarkerFinding;
+
+    fn into_findings(self) -> Vec<Self::Finding> {
+        self.findings
+    }
+}
+
+impl DoctorIntegratedScanResult for StaleSuppressionScanResult {
+    type Finding = StaleSuppressionFinding;
 
     fn into_findings(self) -> Vec<Self::Finding> {
         self.findings
@@ -191,6 +222,28 @@ impl DoctorIntegratedScanFinding for GeneratedAssetFinding {
             format_bytes(self.bytes),
             self.severity.as_str(),
             self.path,
+            self.reason
+        )
+    }
+}
+
+impl DoctorIntegratedScanFinding for GeneratedInSrcFinding {
+    fn doctor_severity(&self) -> DoctorSeverity {
+        match self.severity {
+            GeneratedInSrcSeverity::Warning => DoctorSeverity::Warning,
+            GeneratedInSrcSeverity::High | GeneratedInSrcSeverity::Critical => {
+                DoctorSeverity::Error
+            }
+        }
+    }
+
+    fn doctor_evidence(&self) -> String {
+        format!(
+            "{} [{}] {} ({}/{})",
+            format_bytes(self.size_bytes),
+            self.severity.as_str(),
+            self.path,
+            self.category.as_str(),
             self.reason
         )
     }
@@ -253,6 +306,29 @@ impl DoctorIntegratedScanFinding for AttentionMarkerFinding {
         match self.severity {
             AttentionMarkerSeverity::Warning => DoctorSeverity::Warning,
             AttentionMarkerSeverity::High | AttentionMarkerSeverity::Critical => {
+                DoctorSeverity::Error
+            }
+        }
+    }
+
+    fn doctor_evidence(&self) -> String {
+        format!(
+            "{}:{} [{}] {} [{}] {}",
+            self.path,
+            self.line,
+            self.severity.as_str(),
+            self.category.as_str(),
+            self.marker,
+            self.snippet
+        )
+    }
+}
+
+impl DoctorIntegratedScanFinding for StaleSuppressionFinding {
+    fn doctor_severity(&self) -> DoctorSeverity {
+        match self.severity {
+            StaleSuppressionSeverity::Warning => DoctorSeverity::Warning,
+            StaleSuppressionSeverity::High | StaleSuppressionSeverity::Critical => {
                 DoctorSeverity::Error
             }
         }

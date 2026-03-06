@@ -73,7 +73,9 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.scan.duplicate-blocks.v1`
 - `effigy.scan.comment-ratio.v1`
 - `effigy.scan.generated-assets.v1`
+- `effigy.scan.generated-in-src.v1`
 - `effigy.scan.attention-markers.v1`
+- `effigy.scan.stale-suppressions.v1`
 - `effigy.config.v1`
 - `effigy.test.plan.v1`
 - `effigy.test.results.v1`
@@ -97,7 +99,9 @@ effigy --json scan god-files
 effigy --json scan duplicate-blocks
 effigy --json scan comment-ratio
 effigy --json scan generated-assets
+effigy --json scan generated-in-src
 effigy --json scan attention-markers
+effigy --json scan stale-suppressions
 effigy --json config
 effigy --json config --schema --target test
 effigy --json test --plan
@@ -137,7 +141,9 @@ See `026-json-payload-examples.md` for realistic sample responses for each schem
 - `effigy --json scan duplicate-blocks` is the raw duplication payload. Use it when you need normalized block spans, occurrence locations, and snippet fingerprints without doctor normalization.
 - `effigy --json scan comment-ratio` is the raw comment-heaviness payload. Use it when you need per-file comment/code counts and ratio classifications without doctor normalization.
 - `effigy --json scan generated-assets` is the raw bulky-artifact payload. Use it when you need the vendored/generated asset list without doctor normalization.
+- `effigy --json scan generated-in-src` is the raw source-tree boundary payload. Use it when you need generated-file findings scoped to maintained source paths without doctor normalization.
 - `effigy --json scan attention-markers` is the raw attention-marker payload. Use it when you need the full marker list, line numbers, and text snapshot without doctor normalization.
+- `effigy --json scan stale-suppressions` is the raw suppression-marker payload. Use it when you need the full list of inline lint/type/tool bypasses without doctor normalization.
 
 ## Contract Validation
 

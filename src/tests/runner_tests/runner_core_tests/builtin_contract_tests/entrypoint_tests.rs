@@ -43,6 +43,12 @@ fn run_manifest_task_builtin_entrypoint_help_json_contract_table() {
             expected: &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"scan\""],
         },
         BuiltinHelpCase {
+            workspace: "builtin-entrypoint-scan-bare-help-json",
+            command: "scan",
+            args: &["--json"],
+            expected: &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"scan\""],
+        },
+        BuiltinHelpCase {
             workspace: "builtin-entrypoint-unlock-help-json",
             command: "unlock",
             args: &["--help", "--json", "--wat"],

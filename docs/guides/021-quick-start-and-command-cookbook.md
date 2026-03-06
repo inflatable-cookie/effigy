@@ -124,6 +124,20 @@ effigy scan generated-assets --markdown --out reports/generated-assets.md
 Use this when you want to surface checked-in build/vendor outputs and other generated assets that are inflating the repo.
 `effigy doctor` also includes `scan.generated-assets` findings when `[scan.generated_assets].doctor = true`, with full detail written to `.effigy/reports/doctor/scan-generated-assets.md` when findings exist.
 
+Repository scan for generated files committed inside source trees:
+
+```sh
+effigy scan generated-in-src
+effigy scan generated-in-src --show-warnings
+effigy scan generated-in-src --source-root src/** --source-root packages/*/src/**
+effigy scan generated-in-src --markdown --out reports/generated-in-src.md
+effigy --json scan generated-in-src
+```
+
+Use this when you want to catch generated clients, minified bundles, or source maps that have landed in maintained source directories.
+`effigy doctor` includes `scan.generated-in-src` findings by default, with full detail written to `.effigy/reports/doctor/scan-generated-in-src.md` when findings exist. Use `[scan.generated_in_src]` to tune source roots or set `doctor = false` to opt out.
+The current `acowtancy` benchmark took about `2.1s` and produced `4` warning-level findings, which is cheap and quiet enough to keep doctor participation enabled by default.
+
 Repository scan for repeated normalized code blocks across files:
 
 ```sh
@@ -163,6 +177,19 @@ effigy --json scan attention-markers
 
 Use this when you want explicit attention markers surfaced without relying on manual grep.
 `effigy doctor` also includes `scan.attention-markers` findings when `[scan.attention_markers].doctor = true`, with full detail written to `.effigy/reports/doctor/scan-attention-markers.md` when findings exist.
+
+Repository scan for lint/type/tool suppression markers:
+
+```sh
+effigy scan stale-suppressions
+effigy scan stale-suppressions --show-warnings
+effigy scan stale-suppressions --critical-marker "eslint-disable" --high-marker "#[allow("
+effigy scan stale-suppressions --markdown --out reports/stale-suppressions.md
+effigy --json scan stale-suppressions
+```
+
+Use this when you want repo-level visibility into places where warnings, lint rules, or type failures have been muted inline.
+`effigy doctor` can include `scan.stale-suppressions` findings when `[scan.stale_suppressions].doctor = true`, with full detail written to `.effigy/reports/doctor/scan-stale-suppressions.md` when findings exist. Keep it opt-in unless you want suppression visibility folded into routine health runs.
 
 Built-in test orchestration:
 
@@ -224,6 +251,7 @@ effigy --json doctor
 effigy --json scan god-files
 effigy --json scan duplicate-blocks
 effigy --json scan comment-ratio
+effigy --json scan generated-in-src
 effigy --json scan attention-markers
 effigy --json test --plan
 ```

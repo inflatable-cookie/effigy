@@ -196,6 +196,75 @@ fn builtin_scan_generated_assets_non_zero_json_rendering_remains_valid() {
 }
 
 #[test]
+fn builtin_scan_generated_in_src_json_contract_has_versioned_shape() {
+    let root = temp_workspace("scan-generated-in-src-json-contract");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(&root.join("effigy.toml"), "");
+    write_asset_file(&root.join("src/client.generated.ts"), 180);
+
+    let parsed = run_invocation_json(
+        root,
+        "scan",
+        &[
+            "generated-in-src",
+            "--warn",
+            "100",
+            "--high",
+            "250",
+            "--critical",
+            "500",
+            "--json",
+        ],
+    );
+    assert_schema_v1(&parsed, "effigy.scan.generated-in-src.v1");
+    assert_eq!(parsed["scan"], "generated-in-src");
+    assert_eq!(parsed["format"], "text");
+    assert_eq!(parsed["candidate_files"], 1);
+    assert_eq!(parsed["finding_count"], 1);
+    assert_eq!(parsed["fail_on_findings"], false);
+    assert_eq!(parsed["respect_gitignore"], true);
+    assert!(parsed["thresholds"].is_object());
+    assert!(parsed["source_roots"].is_array());
+    assert!(parsed["findings"].is_array());
+    assert!(parsed["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("Generated In Src")));
+}
+
+#[test]
+fn builtin_scan_generated_in_src_non_zero_json_rendering_remains_valid() {
+    let root = temp_workspace("scan-generated-in-src-json-contract-non-zero");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(&root.join("effigy.toml"), "");
+    write_asset_file(&root.join("src/client.generated.ts"), 180);
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "scan".to_owned(),
+            args: vec![
+                "generated-in-src".to_owned(),
+                "--warn".to_owned(),
+                "100".to_owned(),
+                "--fail-on-findings".to_owned(),
+                "--json".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect_err("expected non-zero scan result");
+
+    let rendered = match err {
+        RunnerError::BuiltinScanNonZero { rendered, .. } => rendered,
+        other => panic!("unexpected error: {other}"),
+    };
+    let parsed = parse_json(&rendered);
+    assert_schema_v1(&parsed, "effigy.scan.generated-in-src.v1");
+    assert_eq!(parsed["finding_count"], 1);
+    assert_eq!(parsed["fail_on_findings"], true);
+    assert_eq!(parsed["findings"][0]["path"], "src/client.generated.ts");
+}
+
+#[test]
 fn builtin_scan_duplicate_blocks_json_contract_has_versioned_shape() {
     let root = temp_workspace("scan-duplicate-blocks-json-contract");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
@@ -379,4 +448,57 @@ fn builtin_scan_attention_markers_non_zero_json_rendering_remains_valid() {
     assert_eq!(parsed["fail_on_findings"], true);
     assert_eq!(parsed["findings"][0]["path"], "src/app.ts");
     assert_eq!(parsed["findings"][0]["marker"], "FIXME");
+}
+
+#[test]
+fn builtin_scan_stale_suppressions_json_contract_has_versioned_shape() {
+    let root = temp_workspace("scan-stale-suppressions-json-contract");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(&root.join("effigy.toml"), "");
+    write_attention_file(&root.join("src/app.ts"), &["// eslint-disable-next-line no-console"]);
+
+    let parsed = run_invocation_json(root, "scan", &["stale-suppressions", "--json"]);
+    assert_schema_v1(&parsed, "effigy.scan.stale-suppressions.v1");
+    assert_eq!(parsed["scan"], "stale-suppressions");
+    assert_eq!(parsed["format"], "text");
+    assert_eq!(parsed["matched_lines"], 1);
+    assert_eq!(parsed["finding_count"], 1);
+    assert_eq!(parsed["fail_on_findings"], false);
+    assert_eq!(parsed["respect_gitignore"], true);
+    assert!(parsed["patterns"].is_object());
+    assert!(parsed["findings"].is_array());
+    assert!(parsed["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("Stale Suppressions")));
+}
+
+#[test]
+fn builtin_scan_stale_suppressions_non_zero_json_rendering_remains_valid() {
+    let root = temp_workspace("scan-stale-suppressions-json-contract-non-zero");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(&root.join("effigy.toml"), "");
+    write_attention_file(&root.join("src/app.ts"), &["// eslint-disable"]);
+
+    let err = run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "scan".to_owned(),
+            args: vec![
+                "stale-suppressions".to_owned(),
+                "--fail-on-findings".to_owned(),
+                "--json".to_owned(),
+            ],
+        },
+        root,
+    )
+    .expect_err("expected non-zero scan result");
+
+    let rendered = match err {
+        RunnerError::BuiltinScanNonZero { rendered, .. } => rendered,
+        other => panic!("unexpected error: {other}"),
+    };
+    let parsed = parse_json(&rendered);
+    assert_schema_v1(&parsed, "effigy.scan.stale-suppressions.v1");
+    assert_eq!(parsed["finding_count"], 1);
+    assert_eq!(parsed["fail_on_findings"], true);
+    assert_eq!(parsed["findings"][0]["path"], "src/app.ts");
 }

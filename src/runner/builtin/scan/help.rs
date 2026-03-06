@@ -12,7 +12,9 @@ pub(super) fn render_scan_help() -> String {
                     "effigy scan duplicate-blocks [--threshold <N>] [--markdown] [--out <PATH>]",
                     "effigy scan comment-ratio [--threshold <RATIO>] [--markdown] [--out <PATH>]",
                     "effigy scan generated-assets [--threshold <BYTES>] [--markdown] [--out <PATH>]",
+                    "effigy scan generated-in-src [--threshold <BYTES>] [--source-root <GLOB>] [--markdown] [--out <PATH>]",
                     "effigy scan attention-markers [--markdown] [--out <PATH>]",
+                    "effigy scan stale-suppressions [--markdown] [--out <PATH>]",
                 ],
             },
             HelpSection::Bulleted {
@@ -22,7 +24,52 @@ pub(super) fn render_scan_help() -> String {
                     "duplicate-blocks : detect repeated normalized code blocks across source files",
                     "comment-ratio : detect files where comment-only lines outweigh executable code",
                     "generated-assets : report bulky vendored/generated artifacts that slipped into the repo",
+                    "generated-in-src : detect generated files committed inside source-oriented directories",
                     "attention-markers : detect TODO/FIXME/deprecation and deferred-work markers in code",
+                    "stale-suppressions : detect lint/type/tool suppression markers that hide warnings and failures",
+                ],
+            },
+        ],
+    )
+}
+
+pub(super) fn render_generated_in_src_help() -> String {
+    render_titled_help(
+        "scan generated-in-src",
+        &[
+            HelpSection::Plain {
+                heading: "Usage",
+                lines: &[
+                    "effigy scan generated-in-src [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>]",
+                    "effigy scan generated-in-src [--source-root <GLOB>] [--show-warnings] [--no-gitignore]",
+                    "effigy scan generated-in-src [--markdown] [--out reports/generated-in-src.md]",
+                    "effigy scan generated-in-src [--json] [--fail-on-findings]",
+                ],
+            },
+            HelpSection::Bulleted {
+                heading: "Options",
+                items: &[
+                    "--threshold, --warn <BYTES> : warning threshold in bytes (default 1)",
+                    "--high <BYTES> : high severity threshold in bytes (default 20000)",
+                    "--critical <BYTES> : critical threshold in bytes (default 200000)",
+                    "--source-root <GLOB> : source-tree glob to scan for generated files, repeatable",
+                    "--include <GLOB> : include glob, repeatable",
+                    "--exclude <GLOB> : exclude glob, repeatable",
+                    "--markdown : render markdown instead of terminal text",
+                    "--out <PATH> : write rendered report to a file",
+                    "--fail-on-findings : return non-zero when findings exist",
+                    "--no-gitignore : ignore .gitignore/.ignore rules during traversal",
+                    "--show-warnings : include warning rows in terminal text output",
+                    "--json : render machine-readable scan payload",
+                ],
+            },
+            HelpSection::Bulleted {
+                heading: "Defaults",
+                items: &[
+                    "terminal text hides warning rows and prints a warning count summary",
+                    "markdown and json still include the full findings list",
+                    "targets source roots such as src, app, lib, crates, and packages/*/src",
+                    "matches generated markers, generated-style filenames, and minified/source-map artifacts inside source trees",
                 ],
             },
         ],
@@ -226,6 +273,48 @@ pub(super) fn render_attention_markers_help() -> String {
                     "terminal text hides warning rows and prints a warning count summary",
                     "markdown and json still include the full findings list",
                     "detects TODO/FIXME/HACK/deprecation/workaround-style markers in source and test files",
+                    "common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts are skipped by default",
+                ],
+            },
+        ],
+    )
+}
+
+pub(super) fn render_stale_suppressions_help() -> String {
+    render_titled_help(
+        "scan stale-suppressions",
+        &[
+            HelpSection::Plain {
+                heading: "Usage",
+                lines: &[
+                    "effigy scan stale-suppressions [--show-warnings] [--no-gitignore]",
+                    "effigy scan stale-suppressions [--warning-marker <VALUE>] [--high-marker <VALUE>] [--critical-marker <VALUE>]",
+                    "effigy scan stale-suppressions [--markdown] [--out reports/stale-suppressions.md]",
+                    "effigy scan stale-suppressions [--json] [--fail-on-findings]",
+                ],
+            },
+            HelpSection::Bulleted {
+                heading: "Options",
+                items: &[
+                    "--warning-marker <VALUE> : override warning markers, repeatable",
+                    "--high-marker <VALUE> : override high markers, repeatable",
+                    "--critical-marker <VALUE> : override critical markers, repeatable",
+                    "--include <GLOB> : include glob, repeatable",
+                    "--exclude <GLOB> : exclude glob, repeatable",
+                    "--markdown : render markdown instead of terminal text",
+                    "--out <PATH> : write rendered report to a file",
+                    "--fail-on-findings : return non-zero when findings exist",
+                    "--no-gitignore : ignore .gitignore/.ignore rules during traversal",
+                    "--show-warnings : include warning rows in terminal text output",
+                    "--json : render machine-readable scan payload",
+                ],
+            },
+            HelpSection::Bulleted {
+                heading: "Defaults",
+                items: &[
+                    "terminal text hides warning rows and prints a warning count summary",
+                    "markdown and json still include the full findings list",
+                    "matches common TS, Python, Rust, shell, and linter suppression markers in source and test files",
                     "common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts are skipped by default",
                 ],
             },

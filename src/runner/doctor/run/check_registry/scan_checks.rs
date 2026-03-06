@@ -1,6 +1,7 @@
 use super::super::super::report::DoctorState;
 use super::super::super::{
-    attention_markers, comment_ratio, duplicate_blocks, generated_assets, god_files,
+    attention_markers, comment_ratio, duplicate_blocks, generated_assets, generated_in_src,
+    god_files, stale_suppressions,
 };
 use super::definitions::DoctorCheckContext;
 
@@ -42,11 +43,33 @@ pub(super) fn run_comment_ratio_check(context: &DoctorCheckContext<'_>, state: &
     );
 }
 
+pub(super) fn run_generated_in_src_check(
+    context: &DoctorCheckContext<'_>,
+    state: &mut DoctorState,
+) {
+    generated_in_src::check_generated_in_src(
+        context.resolved_root,
+        &context.manifest.parsed_catalogs,
+        state,
+    );
+}
+
 pub(super) fn run_attention_markers_check(
     context: &DoctorCheckContext<'_>,
     state: &mut DoctorState,
 ) {
     attention_markers::check_attention_markers(
+        context.resolved_root,
+        &context.manifest.parsed_catalogs,
+        state,
+    );
+}
+
+pub(super) fn run_stale_suppressions_check(
+    context: &DoctorCheckContext<'_>,
+    state: &mut DoctorState,
+) {
+    stale_suppressions::check_stale_suppressions(
         context.resolved_root,
         &context.manifest.parsed_catalogs,
         state,

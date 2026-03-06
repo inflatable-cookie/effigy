@@ -24,6 +24,8 @@ Current planned milestone:
 
 - `016-duplicate-blocks-scan-and-doctor-integration.md` (complete)
 - `017-comment-ratio-scan-and-doctor-integration.md` (complete)
+- `018-generated-in-src-scan-and-doctor-integration.md` (complete)
+- `019-stale-suppressions-scan-and-doctor-integration.md` (complete)
 
 Rules:
 

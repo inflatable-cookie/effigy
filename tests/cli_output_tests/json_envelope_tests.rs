@@ -349,6 +349,69 @@ fn cli_json_mode_scan_comment_ratio_non_zero_wraps_rendered_scan_payload_in_erro
 }
 
 #[test]
+fn cli_json_mode_scan_generated_in_src_wraps_scan_payload() {
+    let root = temp_workspace("cli-json-scan-generated-in-src-success");
+    fs::write(root.join("effigy.toml"), "").expect("write manifest");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::write(root.join("src/client.generated.ts"), "export const generated = true;\n")
+        .expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("scan")
+        .arg("generated-in-src")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["command"]["kind"], "task");
+    assert_eq!(parsed["command"]["name"], "scan");
+    assert_eq!(parsed["result"]["schema"], "effigy.scan.generated-in-src.v1");
+    assert_eq!(parsed["result"]["scan"], "generated-in-src");
+    assert_eq!(parsed["result"]["finding_count"], 1);
+}
+
+#[test]
+fn cli_json_mode_scan_generated_in_src_non_zero_wraps_rendered_scan_payload_in_error_details() {
+    let root = temp_workspace("cli-json-scan-generated-in-src-failure");
+    fs::write(root.join("effigy.toml"), "").expect("write manifest");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::write(root.join("src/client.generated.ts"), "export const generated = true;\n")
+        .expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("scan")
+        .arg("generated-in-src")
+        .arg("--fail-on-findings")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["command"]["kind"], "task");
+    assert_eq!(parsed["command"]["name"], "scan");
+    assert_eq!(
+        parsed["error"]["details"]["schema"],
+        "effigy.scan.generated-in-src.v1"
+    );
+    assert_eq!(parsed["error"]["details"]["finding_count"], 1);
+}
+
+#[test]
 fn cli_json_mode_scan_attention_markers_wraps_scan_payload() {
     let root = temp_workspace("cli-json-scan-attention-markers-success");
     fs::write(root.join("effigy.toml"), "").expect("write manifest");
@@ -696,4 +759,73 @@ fn cli_json_mode_missing_task_wraps_runner_failure() {
     assert_eq!(parsed["command"]["kind"], "task");
     assert_eq!(parsed["command"]["name"], "does-not-exist");
     assert_eq!(parsed["error"]["kind"], "RunnerError");
+}
+
+#[test]
+fn cli_json_mode_scan_stale_suppressions_wraps_scan_payload() {
+    let root = temp_workspace("cli-json-scan-stale-suppressions-success");
+    fs::write(root.join("effigy.toml"), "").expect("write manifest");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::write(
+        root.join("src/app.ts"),
+        "// eslint-disable-next-line no-console\nconsole.log('x')\n",
+    )
+    .expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("scan")
+        .arg("stale-suppressions")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["command"]["kind"], "task");
+    assert_eq!(parsed["command"]["name"], "scan");
+    assert_eq!(
+        parsed["result"]["schema"],
+        "effigy.scan.stale-suppressions.v1"
+    );
+    assert_eq!(parsed["result"]["scan"], "stale-suppressions");
+    assert_eq!(parsed["result"]["finding_count"], 1);
+}
+
+#[test]
+fn cli_json_mode_scan_stale_suppressions_non_zero_wraps_rendered_scan_payload_in_error_details() {
+    let root = temp_workspace("cli-json-scan-stale-suppressions-failure");
+    fs::write(root.join("effigy.toml"), "").expect("write manifest");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::write(root.join("src/app.ts"), "// eslint-disable\n").expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("scan")
+        .arg("stale-suppressions")
+        .arg("--fail-on-findings")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["command"]["kind"], "task");
+    assert_eq!(parsed["command"]["name"], "scan");
+    assert_eq!(parsed["error"]["kind"], "RunnerError");
+    assert_eq!(
+        parsed["error"]["details"]["schema"],
+        "effigy.scan.stale-suppressions.v1"
+    );
+    assert_eq!(parsed["error"]["details"]["finding_count"], 1);
 }

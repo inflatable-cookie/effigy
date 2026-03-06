@@ -63,7 +63,9 @@ fn is_scan_check_id(check_id: &str) -> bool {
             | doctor_check_id::SCAN_DUPLICATE_BLOCKS
             | doctor_check_id::SCAN_COMMENT_RATIO
             | doctor_check_id::SCAN_GENERATED_ASSETS
+            | doctor_check_id::SCAN_GENERATED_IN_SRC
             | doctor_check_id::SCAN_ATTENTION_MARKERS
+            | doctor_check_id::SCAN_STALE_SUPPRESSIONS
     )
 }
 

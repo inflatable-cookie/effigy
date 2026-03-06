@@ -4,7 +4,7 @@ use crate::TaskInvocation;
 
 use super::super::model::catalog::{LoadedCatalog, TaskRuntimeArgs};
 use super::command_spec::run_passthrough_builtin_command;
-use super::render_builtin_help_text;
+use super::{has_builtin_json_flag, render_builtin_help_text};
 use crate::runner::error::RunnerError;
 
 mod execution;
@@ -14,7 +14,8 @@ mod request;
 use execution::run_scan_request;
 use help::{
     render_attention_markers_help, render_comment_ratio_help, render_duplicate_blocks_help,
-    render_generated_assets_help, render_god_files_help, render_scan_help,
+    render_generated_assets_help, render_generated_in_src_help, render_god_files_help,
+    render_scan_help, render_stale_suppressions_help,
 };
 use request::{parse_scan_request, scan_candidate_mode, ScanCommand};
 
@@ -24,6 +25,12 @@ pub(super) fn run_builtin_scan(
     target_root: &Path,
     catalogs: &[LoadedCatalog],
 ) -> Result<Option<String>, RunnerError> {
+    if runtime_args.passthrough.is_empty() {
+        return render_builtin_help_text("scan", render_scan_help(), false).map(Some);
+    }
+    if runtime_args.passthrough.len() == 1 && has_builtin_json_flag(&runtime_args.passthrough) {
+        return render_builtin_help_text("scan", render_scan_help(), true).map(Some);
+    }
     run_passthrough_builtin_command(
         &task.name,
         runtime_args,
@@ -33,7 +40,9 @@ pub(super) fn run_builtin_scan(
                 Some(ScanCommand::DuplicateBlocks) => render_duplicate_blocks_help(),
                 Some(ScanCommand::CommentRatio) => render_comment_ratio_help(),
                 Some(ScanCommand::GeneratedAssets) => render_generated_assets_help(),
+                Some(ScanCommand::GeneratedInSrc) => render_generated_in_src_help(),
                 Some(ScanCommand::AttentionMarkers) => render_attention_markers_help(),
+                Some(ScanCommand::StaleSuppressions) => render_stale_suppressions_help(),
                 None => render_scan_help(),
             };
             render_builtin_help_text("scan", help, output_json)
