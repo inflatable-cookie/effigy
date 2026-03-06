@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::TaskInvocation;
 
 use super::super::super::execute::run_manifest_task_with_cwd;
-use super::super::super::RunnerError;
+use crate::runner::error::RunnerError;
 
 pub(super) fn run_health_task_json(resolved_root: &Path) -> Result<String, RunnerError> {
     let invocation = TaskInvocation {

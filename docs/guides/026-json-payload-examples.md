@@ -154,7 +154,7 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
 
 `effigy doctor` preserves scanner-backed warning/high/critical findings in its own report model even when plain `effigy scan god-files` text output hides warning rows by default.
 
-The same normalization applies to `scan.generated-assets` and `scan.attention-markers` when those scanners are enabled for doctor.
+The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`, `scan.generated-assets`, and `scan.attention-markers` when those scanners are enabled for doctor.
 
 ## 4) Doctor Explain (`effigy.doctor.explain.v1`)
 
@@ -328,7 +328,113 @@ The same normalization applies to `scan.generated-assets` and `scan.attention-ma
 }
 ```
 
-## 9) Scan Generated Assets (`effigy.scan.generated-assets.v1`)
+## 9) Scan Duplicate Blocks (`effigy.scan.duplicate-blocks.v1`)
+
+```json
+{
+  "schema": "effigy.scan.duplicate-blocks.v1",
+  "schema_version": 1,
+  "scan": "duplicate-blocks",
+  "format": "text",
+  "root": "/workspace/app",
+  "thresholds": {
+    "warn": 20,
+    "high": 40,
+    "critical": 80,
+    "min_occurrences": 2
+  },
+  "scanned_files": 41,
+  "candidate_blocks": 182,
+  "finding_count": 2,
+  "fail_on_findings": false,
+  "respect_gitignore": true,
+  "output_path": null,
+  "findings": [
+    {
+      "severity": "high",
+      "block_lines": 46,
+      "occurrences": 2,
+      "fingerprint": "9d17d7041dd1d8b2",
+      "snippet": "pub fn build_input(payload: Value) -> Result<Input, AppError> { let title = payload.title(); let slug = payload.slug();",
+      "locations": [
+        {
+          "path": "src/admin/build_input.rs",
+          "start_line": 7,
+          "end_line": 52
+        },
+        {
+          "path": "src/user/build_input.rs",
+          "start_line": 9,
+          "end_line": 54
+        }
+      ]
+    },
+    {
+      "severity": "warning",
+      "block_lines": 24,
+      "occurrences": 2,
+      "fingerprint": "2a35fc8ea8211136",
+      "snippet": "import type { PageLoad } from \"./$types\"; import { error } from \"@sveltejs/kit\";",
+      "locations": [
+        {
+          "path": "src/routes/learn/+page.ts",
+          "start_line": 1,
+          "end_line": 24
+        },
+        {
+          "path": "src/routes/revise/+page.ts",
+          "start_line": 1,
+          "end_line": 24
+        }
+      ]
+    }
+  ],
+  "text": "Duplicate Blocks\n\nroot: /workspace/app\nthresholds: warn=20 high=40 critical=80 min-occurrences=2\nscanned-files: 41  candidate-blocks: 182  findings: 2\nseverity-counts: critical=0 high=1 warning=1\nwarning-rows-hidden: 1  use --show-warnings to list them\n\nFindings\nhigh  46 lines  2 occurrences  pub fn build_input(payload: Value) -> Result<Input, AppError> { let title = payload.title(); let slug = payload.slug();  [src/admin/build_input.rs:7-52, src/user/build_input.rs:9-54]"
+}
+```
+
+## 10) Scan Comment Ratio (`effigy.scan.comment-ratio.v1`)
+
+```json
+{
+  "schema": "effigy.scan.comment-ratio.v1",
+  "schema_version": 1,
+  "scan": "comment-ratio",
+  "format": "text",
+  "root": "/workspace/app",
+  "thresholds": {
+    "warn": 1.5,
+    "high": 2.0,
+    "critical": 3.0,
+    "min_code_lines": 20
+  },
+  "scanned_files": 41,
+  "candidate_files": 28,
+  "finding_count": 2,
+  "fail_on_findings": false,
+  "respect_gitignore": true,
+  "output_path": null,
+  "findings": [
+    {
+      "path": "src/dev_server.rs",
+      "code_lines": 60,
+      "comment_lines": 144,
+      "ratio": 2.4,
+      "severity": "high"
+    },
+    {
+      "path": "src/lib.rs",
+      "code_lines": 38,
+      "comment_lines": 57,
+      "ratio": 1.5,
+      "severity": "warning"
+    }
+  ],
+  "text": "Comment Ratio\n\nroot: /workspace/app\nthresholds: warn=1.50 high=2.00 critical=3.00 min-code-lines=20\nscanned-files: 41  candidate-files: 28  findings: 2\nseverity-counts: critical=0 high=1 warning=1\nwarning-rows-hidden: 1  use --show-warnings to list them\n\nFindings\nhigh  ratio=2.40  144 comment / 60 code  src/dev_server.rs"
+}
+```
+
+## 10) Scan Generated Assets (`effigy.scan.generated-assets.v1`)
 
 ```json
 {
@@ -511,7 +617,7 @@ Miss example (invalid env policy fallback):
 }
 ```
 
-## 14) Scan Attention Markers (`effigy.scan.attention-markers.v1`)
+## 15) Scan Attention Markers (`effigy.scan.attention-markers.v1`)
 
 ```json
 {

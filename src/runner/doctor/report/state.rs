@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
-use super::super::contracts::ALL_CHECK_IDS;
-use super::types::{
-    DoctorFinding, DoctorFixAction, DoctorFixStatus, DoctorReport, DoctorSeverity, DoctorSummary,
-};
+use super::finalize::{build_report, finalize_fix_actions};
+use super::summary::{initialize_statuses, record_finding_status, summarize_statuses};
+use super::types::{DoctorFinding, DoctorFixAction, DoctorReport, DoctorSeverity, DoctorSummary};
 
 pub(in crate::runner) struct DoctorState {
     pub(in crate::runner) findings: Vec<DoctorFinding>,
@@ -100,28 +99,24 @@ impl DoctorState {
     }
 
     pub(in crate::runner) fn finalize_fix_actions(&mut self, should_fix: bool) {
-        if should_fix && self.fixes.is_empty() {
-            self.fixes.push(DoctorFixAction {
-                fix_id: "manifest.health_task_scaffold".to_owned(),
-                status: DoctorFixStatus::Skipped,
-                detail: "No safe automatic fixes were applicable.".to_owned(),
-            });
-        }
+        finalize_fix_actions(&mut self.fixes, should_fix);
     }
 
     pub(in crate::runner) fn into_report(
         self,
+        resolved_root: String,
         summary: DoctorSummary,
         root_evidence: Vec<String>,
         root_warnings: Vec<String>,
     ) -> DoctorReport {
-        DoctorReport {
+        build_report(
+            resolved_root,
             summary,
-            findings: self.findings,
-            fixes: self.fixes,
+            self.findings,
+            self.fixes,
             root_evidence,
             root_warnings,
-        }
+        )
     }
 }
 
@@ -130,37 +125,6 @@ fn add_state_finding(
     statuses: &mut HashMap<String, DoctorSeverity>,
     finding: DoctorFinding,
 ) {
-    let status = statuses
-        .entry(finding.check_id.clone())
-        .or_insert(DoctorSeverity::Info);
-    if finding.severity > *status {
-        *status = finding.severity;
-    }
+    record_finding_status(statuses, &finding);
     findings.push(finding);
-}
-
-fn initialize_statuses() -> HashMap<String, DoctorSeverity> {
-    ALL_CHECK_IDS
-        .into_iter()
-        .map(|id| (id.to_owned(), DoctorSeverity::Info))
-        .collect::<HashMap<String, DoctorSeverity>>()
-}
-
-fn summarize_statuses(statuses: &HashMap<String, DoctorSeverity>) -> DoctorSummary {
-    let mut pass = 0usize;
-    let mut warning = 0usize;
-    let mut error = 0usize;
-    for check in ALL_CHECK_IDS {
-        match statuses.get(check).copied().unwrap_or(DoctorSeverity::Info) {
-            DoctorSeverity::Info => pass += 1,
-            DoctorSeverity::Warning => warning += 1,
-            DoctorSeverity::Error => error += 1,
-        }
-    }
-    DoctorSummary {
-        checks: ALL_CHECK_IDS.len(),
-        pass,
-        warning,
-        error,
-    }
 }

@@ -14,7 +14,6 @@ mod model;
 mod render;
 mod scan;
 mod tasks_command;
-mod tasks_diagnostics;
 mod tasks_listing;
 mod tasks_probe;
 mod tasks_view;
@@ -23,22 +22,14 @@ mod test_support;
 mod tooling;
 mod util;
 
-use builtin::try_run_builtin_task;
-use manifest::{
-    ManifestGodFilesConfig, ManifestJsPackageManager, ManifestManagedConcurrentEntry,
-    ManifestManagedRun, ManifestManagedRunStep, ManifestScanOutputFormat, ManifestTask,
-    ManifestTaskCache, TaskManifest,
-};
+use manifest::TaskManifest;
 use model::{
-    CatalogSelectionMode, DeferredCommand, LoadedCatalog, ManagedProcessSpec, ManagedTaskPlan,
-    TaskRuntimeArgs, TaskSelection, TaskSelector, BUILTIN_TASKS, DEFAULT_MANAGED_SHELL_RUN,
-    DEFER_DEPTH_ENV, IMPLICIT_ROOT_DEFER_TEMPLATE, TASK_MANIFEST_FILE,
+    catalog::{LoadedCatalog, TaskSelector},
+    constants::DEFAULT_MANAGED_SHELL_RUN,
+    managed::ManagedProcessSpec,
 };
 
-pub(super) const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize =
-    model::DEFAULT_BUILTIN_TEST_MAX_PARALLEL;
-
-pub use entrypoints::{resolve_command_root, run_command, run_doctor, run_tasks};
+pub use entrypoints::{resolve_command_root, run_command};
 pub use error::RunnerError;
 
 #[cfg(test)]

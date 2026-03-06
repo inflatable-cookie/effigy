@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use crate::process_manager::ProcessSpec;
 use crate::tui::{run_multiprocess_tui, MultiProcessTuiOptions};
 
+use super::super::super::command_context::current_working_dir;
 use super::super::super::util::with_local_node_bin_path;
 use super::planning::BuiltinTestRunnable;
 use super::{BuiltinTestExecResult, RunnerError};
@@ -39,7 +40,7 @@ pub(super) fn run_builtin_test_targets_tui(
         })
         .collect::<Vec<ProcessSpec>>();
     let outcome = run_multiprocess_tui(
-        std::env::current_dir().map_err(RunnerError::Cwd)?,
+        current_working_dir()?,
         specs,
         tab_order,
         MultiProcessTuiOptions {

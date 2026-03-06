@@ -7,7 +7,8 @@ mod index;
 #[path = "graph/topological.rs"]
 mod topological;
 
-use super::super::super::{ManifestManagedRunStep, RunnerError};
+use super::super::super::manifest::task_runtime::ManifestManagedRunStep;
+use crate::runner::error::RunnerError;
 
 use cycle::detect_dependency_cycle;
 use dependencies::{build_step_dependencies, build_step_dependents};

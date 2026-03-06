@@ -11,6 +11,14 @@ This guide provides copy-paste CI patterns for Effigy JSON contract and command-
 ## 1) What To Automate
 
 Canonical operator entrypoints:
+- `effigy qa --repo .`
+- `effigy qa:docs --repo .`
+- `effigy qa:json --repo .`
+- `effigy qa:json:ci --repo .`
+- `effigy qa:release --repo .`
+- `effigy-dev <command> --repo .` when validating the current checkout before refreshing the installed binary
+
+Compatibility fallbacks:
 - `cargo qa`
 - `cargo qa-docs`
 - `cargo qa-json`
@@ -47,9 +55,9 @@ Primary JSON mode entrypoint:
 Before debugging CI, run locally:
 
 ```sh
-cargo qa
-cargo qa-json-ci
-cargo qa-release
+effigy qa --repo .
+effigy qa:json:ci --repo .
+effigy qa:release --repo .
 ./scripts/check-distribution-preflight.sh --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
 ./scripts/check-release-install-from-tag.sh --tag v0.__.__
 ./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
@@ -57,7 +65,7 @@ cargo qa-release
 ./scripts/validate-distribution-artifacts.sh --artifacts-dir ./artifacts/distribution-v0.__.__
 ./scripts/generate-distribution-closeout-log.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 ./scripts/check-distribution-artifact-pipeline-smoke.sh
-cargo qa-docs
+effigy qa:docs --repo .
 ```
 
 Install pinning and team migration policy:
@@ -158,6 +166,14 @@ Store JSON output for failed command triage:
   if: failure()
   run: effigy --json scan god-files > god-files-failure.json || true
 
+- name: Capture raw duplicate-blocks JSON
+  if: failure()
+  run: effigy --json scan duplicate-blocks > duplicate-blocks-failure.json || true
+
+- name: Capture raw comment-ratio JSON
+  if: failure()
+  run: effigy --json scan comment-ratio > comment-ratio-failure.json || true
+
 - name: Capture raw attention-markers JSON
   if: failure()
   run: effigy --json scan attention-markers > attention-markers-failure.json || true
@@ -170,12 +186,14 @@ Store JSON output for failed command triage:
     path: |
       doctor-failure.json
       god-files-failure.json
+      duplicate-blocks-failure.json
+      comment-ratio-failure.json
       attention-markers-failure.json
       json-contracts.log
       json-contracts-selected.json
 ```
 
-Use the doctor payload when you want the integrated health view. Capture `effigy --json scan god-files` or `effigy --json scan attention-markers` alongside it when you need raw scanner findings and text rendering snapshots.
+Use the doctor payload when you want the integrated health view. Capture `effigy --json scan god-files`, `effigy --json scan duplicate-blocks`, `effigy --json scan comment-ratio`, or `effigy --json scan attention-markers` alongside it when you need raw scanner findings and text rendering snapshots.
 
 ## 6) Recipe: Contract Selection Artifact Gate
 

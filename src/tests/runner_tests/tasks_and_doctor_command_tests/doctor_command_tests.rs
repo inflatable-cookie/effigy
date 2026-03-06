@@ -4,6 +4,25 @@ use super::prelude::{
     write_manifest,
 };
 
+fn write_duplicate_block_file(path: &std::path::Path, block_prefix: &str, body_lines: usize) {
+    let mut lines = vec![format!("pub fn {block_prefix}_alpha() -> usize {{")];
+    lines.push("    let seed = 1;".to_owned());
+    for idx in 0..body_lines {
+        lines.push(format!("    let acc_{idx} = seed + {idx};"));
+    }
+    lines.push(format!("    acc_{}", body_lines.saturating_sub(1)));
+    lines.push("}".to_owned());
+    fs::write(path, format!("{}\n", lines.join("\n"))).expect("write duplicate block file");
+}
+
+fn write_comment_ratio_file(path: &std::path::Path, comment_lines: usize, code_lines: usize) {
+    let mut lines = (0..comment_lines)
+        .map(|idx| format!("// commentary line {idx}"))
+        .collect::<Vec<String>>();
+    lines.extend((0..code_lines).map(|idx| format!("const line_{idx} = {idx};")));
+    fs::write(path, format!("{}\n", lines.join("\n"))).expect("write comment ratio file");
+}
+
 #[test]
 fn run_doctor_executes_discovered_health_task() {
     let root = temp_workspace("doctor-health-delegation");
@@ -17,12 +36,14 @@ fn run_doctor_executes_discovered_health_task() {
 
     let out = run_doctor_task(root, &[]).expect("doctor run");
 
-    assert_output_contains_all(
+    assert_output_contains_all(&out, &["No findings."]);
+    assert_output_excludes_all(
         &out,
         &[
             "health.task.discovery",
             "health.task.execute",
             "health task executed successfully",
+            "workspace.root-resolution",
         ],
     );
 }
@@ -92,9 +113,22 @@ critical = 20
         .join("\n");
     fs::write(root.join("src/app.ts"), format!("{large_file}\n")).expect("write source");
 
-    let err = run_doctor_task(root, &[]).expect_err("doctor should fail on high-severity god file");
+    let err = run_doctor_task(root.clone(), &[])
+        .expect_err("doctor should fail on high-severity god file");
 
-    assert_doctor_non_zero_contains(err, &["scan.god-files", "src/app.ts", "14 code lines"]);
+    assert_doctor_non_zero_contains(
+        err,
+        &[
+            "scan.god-files",
+            "findings",
+            "error-findings",
+            ".effigy/reports/doctor/scan-god-files.md",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join(".effigy/reports/doctor/scan-god-files.md"),
+        &["src/app.ts", "14 code lines", "[high]"],
+    );
 }
 
 #[test]
@@ -135,10 +169,22 @@ critical = 300
     );
     fs::write(root.join("dist/app.min.js"), vec![b'a'; 180]).expect("write asset");
 
-    let err = run_doctor_task(root, &[])
+    let err = run_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on high-severity generated asset");
 
-    assert_doctor_non_zero_contains(err, &["scan.generated-assets", "dist/app.min.js", "180 B"]);
+    assert_doctor_non_zero_contains(
+        err,
+        &[
+            "scan.generated-assets",
+            "findings",
+            "error-findings",
+            ".effigy/reports/doctor/scan-generated-assets.md",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join(".effigy/reports/doctor/scan-generated-assets.md"),
+        &["dist/app.min.js", "180 B"],
+    );
 }
 
 #[test]
@@ -178,12 +224,200 @@ fn run_doctor_reports_generated_assets_across_child_catalogs() {
     );
     fs::write(farmyard.join("dist/app.min.js"), vec![b'a'; 180]).expect("write asset");
 
-    let err = run_doctor_task(root, &[])
+    let err = run_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on child-catalog generated asset");
 
     assert_doctor_non_zero_contains(
         err,
-        &["scan.generated-assets", "farmyard/dist/app.min.js", "180 B"],
+        &[
+            "scan.generated-assets",
+            ".effigy/reports/doctor/scan-generated-assets.md",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join(".effigy/reports/doctor/scan-generated-assets.md"),
+        &["farmyard/dist/app.min.js", "180 B"],
+    );
+}
+
+#[test]
+fn run_doctor_reports_duplicate_blocks_when_scan_is_enabled() {
+    let root = temp_workspace("doctor-duplicate-blocks-enabled");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.duplicate_blocks]
+warn = 20
+high = 40
+critical = 80
+doctor = true
+"#,
+    );
+    write_duplicate_block_file(&root.join("src/alpha.rs"), "shared", 38);
+    write_duplicate_block_file(&root.join("src/beta.rs"), "shared", 38);
+
+    let err = run_doctor_task(root.clone(), &[])
+        .expect_err("doctor should fail on high-severity duplicate block");
+
+    assert_doctor_non_zero_contains(
+        err,
+        &[
+            "scan.duplicate-blocks",
+            "findings",
+            "error-findings",
+            ".effigy/reports/doctor/scan-duplicate-blocks.md",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join(".effigy/reports/doctor/scan-duplicate-blocks.md"),
+        &[
+            "42 lines",
+            "[high]",
+            "src/alpha.rs:1-42",
+            "src/beta.rs:1-42",
+        ],
+    );
+}
+
+#[test]
+fn run_doctor_skips_duplicate_blocks_when_doctor_flag_is_disabled() {
+    let root = temp_workspace("doctor-duplicate-blocks-disabled");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.duplicate_blocks]
+warn = 20
+high = 40
+critical = 80
+doctor = false
+"#,
+    );
+    write_duplicate_block_file(&root.join("src/alpha.rs"), "shared", 38);
+    write_duplicate_block_file(&root.join("src/beta.rs"), "shared", 38);
+
+    let out = run_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
+
+    assert_output_excludes_all(&out, &["scan.duplicate-blocks", "src/alpha.rs"]);
+}
+
+#[test]
+fn run_doctor_reports_duplicate_blocks_across_child_catalogs() {
+    let root = temp_workspace("doctor-duplicate-blocks-root-fanout");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
+        .expect("write root gitignore");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n[scan.duplicate_blocks]\nwarn = 20\nhigh = 40\ncritical = 80\ndoctor = true\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
+    write_duplicate_block_file(&farmyard.join("src/alpha.rs"), "shared", 38);
+    write_duplicate_block_file(&farmyard.join("src/beta.rs"), "shared", 38);
+
+    let err = run_doctor_task(root.clone(), &[])
+        .expect_err("doctor should fail on child-catalog duplicate block");
+
+    assert_doctor_non_zero_contains(
+        err,
+        &[
+            "scan.duplicate-blocks",
+            ".effigy/reports/doctor/scan-duplicate-blocks.md",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join(".effigy/reports/doctor/scan-duplicate-blocks.md"),
+        &["farmyard/src/alpha.rs:1-42", "farmyard/src/beta.rs:1-42"],
+    );
+}
+
+#[test]
+fn run_doctor_reports_comment_ratio_when_scan_is_enabled() {
+    let root = temp_workspace("doctor-comment-ratio-enabled");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.comment_ratio]
+warn = 1.0
+high = 2.0
+critical = 3.0
+min_code_lines = 20
+"#,
+    );
+    write_comment_ratio_file(&root.join("src/app.ts"), 50, 20);
+
+    let err = run_doctor_task(root.clone(), &[])
+        .expect_err("doctor should fail on high-severity comment ratio finding");
+
+    assert_doctor_non_zero_contains(
+        err,
+        &[
+            "scan.comment-ratio",
+            "findings",
+            "error-findings",
+            ".effigy/reports/doctor/scan-comment-ratio.md",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join(".effigy/reports/doctor/scan-comment-ratio.md"),
+        &["ratio=2.50", "[high]", "50 comment / 20 code", "src/app.ts"],
+    );
+}
+
+#[test]
+fn run_doctor_skips_comment_ratio_when_doctor_flag_is_disabled() {
+    let root = temp_workspace("doctor-comment-ratio-disabled");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.comment_ratio]
+warn = 1.0
+high = 2.0
+critical = 3.0
+min_code_lines = 20
+doctor = false
+"#,
+    );
+    write_comment_ratio_file(&root.join("src/app.ts"), 50, 20);
+
+    let out = run_doctor_task(root, &[]).expect("doctor should succeed when scan is disabled");
+
+    assert_output_excludes_all(&out, &["scan.comment-ratio", "src/app.ts"]);
+}
+
+#[test]
+fn run_doctor_reports_comment_ratio_across_child_catalogs() {
+    let root = temp_workspace("doctor-comment-ratio-root-fanout");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
+        .expect("write root gitignore");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n[scan.comment_ratio]\nwarn = 1.0\nhigh = 2.0\ncritical = 3.0\nmin_code_lines = 20\n",
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
+    write_comment_ratio_file(&farmyard.join("src/lib.ts"), 50, 20);
+
+    let err = run_doctor_task(root.clone(), &[])
+        .expect_err("doctor should fail on child-catalog comment ratio finding");
+
+    assert_doctor_non_zero_contains(
+        err,
+        &[
+            "scan.comment-ratio",
+            ".effigy/reports/doctor/scan-comment-ratio.md",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join(".effigy/reports/doctor/scan-comment-ratio.md"),
+        &["farmyard/src/lib.ts", "ratio=2.50"],
     );
 }
 
@@ -205,10 +439,22 @@ critical = ["BLOCKER"]
     )
     .expect("write source");
 
-    let err = run_doctor_task(root, &[])
+    let err = run_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on high-severity attention marker");
 
-    assert_doctor_non_zero_contains(err, &["scan.attention-markers", "src/app.ts:1", "[FIXME]"]);
+    assert_doctor_non_zero_contains(
+        err,
+        &[
+            "scan.attention-markers",
+            "findings",
+            "error-findings",
+            ".effigy/reports/doctor/scan-attention-markers.md",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join(".effigy/reports/doctor/scan-attention-markers.md"),
+        &["src/app.ts:1", "[FIXME]"],
+    );
 }
 
 #[test]
@@ -256,11 +502,46 @@ fn run_doctor_reports_attention_markers_across_child_catalogs() {
     )
     .expect("write source");
 
-    let err = run_doctor_task(root, &[])
+    let err = run_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on child-catalog attention marker");
 
     assert_doctor_non_zero_contains(
         err,
-        &["scan.attention-markers", "farmyard/src/lib.rs:1", "[FIXME]"],
+        &[
+            "scan.attention-markers",
+            ".effigy/reports/doctor/scan-attention-markers.md",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join(".effigy/reports/doctor/scan-attention-markers.md"),
+        &["farmyard/src/lib.rs:1", "[FIXME]"],
+    );
+}
+
+#[test]
+fn run_doctor_removes_stale_scan_detail_report_when_scan_findings_clear() {
+    let root = temp_workspace("doctor-removes-stale-scan-detail-report");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.god_files]
+warn = 10
+high = 12
+critical = 20
+"#,
+    );
+    fs::write(root.join("src/app.ts"), "const a = 1;\n".repeat(14)).expect("write source");
+
+    let _ = run_doctor_task(root.clone(), &[]).expect_err("doctor should fail");
+    let report_path = root.join(".effigy/reports/doctor/scan-god-files.md");
+    assert!(report_path.exists(), "expected initial scan detail report");
+
+    fs::write(root.join("src/app.ts"), "const a = 1;\n").expect("rewrite source");
+    let out = run_doctor_task(root, &[]).expect("doctor should succeed");
+
+    assert_output_excludes_all(&out, &["scan.god-files"]);
+    assert!(
+        !report_path.exists(),
+        "expected stale scan detail report to be removed"
     );
 }

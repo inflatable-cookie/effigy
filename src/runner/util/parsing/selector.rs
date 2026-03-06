@@ -1,4 +1,5 @@
-use super::super::super::{RunnerError, TaskSelector};
+use super::super::super::model::catalog::TaskSelector;
+use crate::runner::error::RunnerError;
 
 pub(super) fn parse_task_selector(raw: &str) -> Result<TaskSelector, RunnerError> {
     if let Some((prefix, task_name)) = raw.rsplit_once('/') {

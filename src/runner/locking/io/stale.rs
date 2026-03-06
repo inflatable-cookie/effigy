@@ -5,7 +5,7 @@ use nix::errno::Errno;
 use nix::sys::signal;
 use nix::unistd::Pid;
 
-use super::super::super::RunnerError;
+use crate::runner::error::RunnerError;
 
 pub(super) fn pid_is_alive(pid: u32) -> bool {
     if pid == 0 {

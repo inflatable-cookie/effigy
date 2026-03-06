@@ -11,7 +11,7 @@ mod output_assertions;
 
 pub(super) mod runtime {
     pub(in crate::runner::tests) use super::super::super::{
-        run_doctor, run_tasks, RunnerError, TaskRuntimeArgs,
+        error::RunnerError, model::catalog::TaskRuntimeArgs,
     };
     pub(in crate::runner::tests) use crate::{DoctorArgs, TaskInvocation, TasksArgs};
     pub(in crate::runner::tests) use std::fs;
@@ -20,6 +20,14 @@ pub(super) mod runtime {
     pub(in crate::runner::tests) use std::path::{Path, PathBuf};
     pub(in crate::runner::tests) use std::thread;
     pub(in crate::runner::tests) use std::time::{Duration, Instant};
+
+    pub(in crate::runner::tests) fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
+        super::super::super::doctor::run_doctor(args)
+    }
+
+    pub(in crate::runner::tests) fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
+        super::super::super::tasks_command::run_tasks(args)
+    }
 }
 
 pub(super) mod catalog {

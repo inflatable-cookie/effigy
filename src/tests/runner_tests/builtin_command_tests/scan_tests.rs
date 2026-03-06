@@ -29,6 +29,26 @@ fn write_attention_file(path: &Path, lines: &[&str]) {
     fs::write(path, format!("{}\n", lines.join("\n"))).expect("write attention file");
 }
 
+fn write_duplicate_block_file(path: &Path, block_prefix: &str) {
+    let mut lines = vec![format!("pub fn {block_prefix}_alpha() -> usize {{")];
+    lines.push("    let seed = 1;".to_owned());
+    for idx in 0..18 {
+        lines.push(format!("    let acc_{idx} = seed + {idx};"));
+    }
+    lines.push("    acc_17".to_owned());
+    lines.push("}".to_owned());
+    let block = format!("{}\n", lines.join("\n"));
+    fs::write(path, format!("// header comment\n{block}\n")).expect("write duplicate block file");
+}
+
+fn write_comment_ratio_file(path: &Path, comment_lines: usize, code_lines: usize) {
+    let mut lines = (0..comment_lines)
+        .map(|idx| format!("// commentary line {idx}"))
+        .collect::<Vec<String>>();
+    lines.extend((0..code_lines).map(|idx| format!("const line_{idx} = {idx};")));
+    fs::write(path, format!("{}\n", lines.join("\n"))).expect("write comment ratio file");
+}
+
 #[test]
 fn run_manifest_task_builtin_scan_god_files_text_ignores_docs_generated_and_gitignored_paths() {
     let root = temp_workspace("builtin-scan-god-files-text");
@@ -846,4 +866,292 @@ fn run_manifest_task_builtin_scan_attention_markers_rejects_threshold_flags() {
         }
         other => panic!("unexpected error: {other}"),
     }
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_comment_ratio_hides_warning_rows_by_default() {
+    let root = temp_workspace("builtin-scan-comment-ratio-hide-warnings");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_comment_ratio_file(&root.join("src/warn.ts"), 30, 20);
+    write_comment_ratio_file(&root.join("src/high.ts"), 50, 20);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "comment-ratio",
+            "--warn",
+            "1.0",
+            "--high",
+            "2.0",
+            "--critical",
+            "3.0",
+            "--min-code-lines",
+            "20",
+        ],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "Comment Ratio",
+            "candidate-files: 2",
+            "findings: 2",
+            "severity-counts: critical=0 high=1 warning=1",
+            "warning-rows-hidden: 1  use --show-warnings to list them",
+            "src/high.ts",
+        ],
+    );
+    assert_output_excludes_all(&out, &["src/warn.ts"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_comment_ratio_show_warnings_lists_rows() {
+    let root = temp_workspace("builtin-scan-comment-ratio-show-warnings");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_comment_ratio_file(&root.join("src/warn.ts"), 30, 20);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "comment-ratio",
+            "--warn",
+            "1.0",
+            "--high",
+            "2.0",
+            "--critical",
+            "3.0",
+            "--min-code-lines",
+            "20",
+            "--show-warnings",
+        ],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "findings: 1",
+            "severity-counts: critical=0 high=0 warning=1",
+            "warning  ratio=1.50  30 comment / 20 code  src/warn.ts",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_comment_ratio_json_emits_machine_payload() {
+    let root = temp_workspace("builtin-scan-comment-ratio-json");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_comment_ratio_file(&root.join("src/warn.ts"), 30, 20);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "comment-ratio",
+            "--warn",
+            "1.0",
+            "--min-code-lines",
+            "20",
+            "--json",
+        ],
+    );
+
+    let parsed = parse_json_output_with_schema(&out, "effigy.scan.comment-ratio.v1");
+    assert_json_string_field_eq(&parsed, "scan", "comment-ratio");
+    assert_json_string_field_eq(&parsed, "format", "text");
+    assert_eq!(parsed["candidate_files"].as_u64(), Some(1));
+    assert_eq!(parsed["finding_count"].as_u64(), Some(1));
+    assert_json_array_field_non_empty(&parsed, "findings");
+    assert_json_string_field_eq(&parsed["findings"][0], "severity", "warning");
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_comment_ratio_uses_manifest_defaults_and_root_fans_out() {
+    let root = temp_workspace("builtin-scan-comment-ratio-manifest-fanout");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n").expect("write gitignore");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[catalog]
+alias = "root"
+
+[scan.comment_ratio]
+warn = 1.0
+high = 2.0
+critical = 3.0
+min_code_lines = 20
+format = "markdown"
+out = "reports/comment-ratio.md"
+"#,
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
+    write_comment_ratio_file(&farmyard.join("src/lib.ts"), 30, 20);
+    let report_path = root.join("reports/comment-ratio.md");
+
+    let out = run_builtin_ok(root, "scan", &["comment-ratio"]);
+
+    assert_output_contains_all(
+        &out,
+        &["Wrote markdown comment-ratio report to reports/comment-ratio.md (findings: 1)."],
+    );
+    assert_file_text_contains_all(
+        &report_path,
+        &[
+            "# Comment Ratio",
+            "- Findings: `1`",
+            "| warning | 1.50 | 30 | 20 | `farmyard/src/lib.ts` |",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_duplicate_blocks_hides_warning_rows_by_default() {
+    let root = temp_workspace("builtin-scan-duplicate-blocks-hide-warnings");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_duplicate_block_file(&root.join("src/alpha.rs"), "shared");
+    write_duplicate_block_file(&root.join("src/beta.rs"), "shared");
+
+    let out = run_builtin_ok(root, "scan", &["duplicate-blocks"]);
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "Duplicate Blocks",
+            "candidate-blocks:",
+            "findings: 1",
+            "severity-counts: critical=0 high=0 warning=1",
+            "warning-rows-hidden: 1  use --show-warnings to list them",
+            "No high or critical duplicate blocks found.",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_duplicate_blocks_show_warnings_lists_locations() {
+    let root = temp_workspace("builtin-scan-duplicate-blocks-show-warnings");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_duplicate_block_file(&root.join("src/alpha.rs"), "shared");
+    write_duplicate_block_file(&root.join("src/beta.rs"), "shared");
+
+    let out = run_builtin_ok(root, "scan", &["duplicate-blocks", "--show-warnings"]);
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "findings: 1",
+            "severity-counts: critical=0 high=0 warning=1",
+            "warning  22 lines  2 occurrences",
+            "[src/alpha.rs:2-23, src/beta.rs:2-23]",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_duplicate_blocks_json_emits_machine_payload() {
+    let root = temp_workspace("builtin-scan-duplicate-blocks-json");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_duplicate_block_file(&root.join("src/alpha.rs"), "shared");
+    write_duplicate_block_file(&root.join("src/beta.rs"), "shared");
+
+    let out = run_builtin_ok(root, "scan", &["duplicate-blocks", "--json"]);
+
+    let parsed = parse_json_output_with_schema(&out, "effigy.scan.duplicate-blocks.v1");
+    assert_json_string_field_eq(&parsed, "scan", "duplicate-blocks");
+    assert_json_string_field_eq(&parsed, "format", "text");
+    assert_eq!(parsed["candidate_blocks"].as_u64(), Some(6));
+    assert_eq!(parsed["finding_count"].as_u64(), Some(1));
+    assert_json_array_field_non_empty(&parsed, "findings");
+    assert_json_string_field_eq(&parsed["findings"][0], "severity", "warning");
+    assert_eq!(
+        parsed["findings"][0]["locations"]
+            .as_array()
+            .map(|v| v.len()),
+        Some(2)
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_duplicate_blocks_markdown_out_writes_report() {
+    let root = temp_workspace("builtin-scan-duplicate-blocks-markdown-out");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_duplicate_block_file(&root.join("src/alpha.rs"), "shared");
+    write_duplicate_block_file(&root.join("src/beta.rs"), "shared");
+    let report_path = root.join("reports/duplicate-blocks.md");
+
+    let out = run_builtin_ok(
+        root.clone(),
+        "scan",
+        &[
+            "duplicate-blocks",
+            "--markdown",
+            "--out",
+            "reports/duplicate-blocks.md",
+        ],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &["Wrote markdown duplicate-blocks report to reports/duplicate-blocks.md (findings: 1)."],
+    );
+    assert_file_text_contains_all(
+        &report_path,
+        &[
+            "# Duplicate Blocks",
+            "| Severity | Lines | Occurrences | Fingerprint | Snippet | Locations |",
+            "| warning | 22 | 2 | `",
+            "src/alpha.rs:2-23<br>src/beta.rs:2-23",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_duplicate_blocks_uses_manifest_defaults_and_root_fans_out() {
+    let root = temp_workspace("builtin-scan-duplicate-blocks-manifest-fanout");
+    let farmyard = root.join("farmyard");
+    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n").expect("write gitignore");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[catalog]
+alias = "root"
+
+[scan.duplicate_blocks]
+format = "markdown"
+out = "reports/duplicate-blocks.md"
+"#,
+    );
+    write_manifest(
+        &farmyard.join("effigy.toml"),
+        "[catalog]\nalias = \"farmyard\"\n",
+    );
+    write_duplicate_block_file(&farmyard.join("src/alpha.rs"), "shared");
+    write_duplicate_block_file(&farmyard.join("src/beta.rs"), "shared");
+    let report_path = root.join("reports/duplicate-blocks.md");
+
+    let out = run_builtin_ok(root, "scan", &["duplicate-blocks"]);
+
+    assert_output_contains_all(
+        &out,
+        &["Wrote markdown duplicate-blocks report to reports/duplicate-blocks.md (findings: 1)."],
+    );
+    assert_file_text_contains_all(
+        &report_path,
+        &[
+            "# Duplicate Blocks",
+            "- Findings: `1`",
+            "farmyard/src/alpha.rs:2-23<br>farmyard/src/beta.rs:2-23",
+        ],
+    );
 }

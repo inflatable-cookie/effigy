@@ -1,4 +1,4 @@
-use super::super::super::RunnerError;
+use crate::runner::error::RunnerError;
 
 pub(super) fn enforce_non_zero_exit_policy(
     task_name: &str,

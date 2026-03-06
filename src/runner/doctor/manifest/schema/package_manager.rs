@@ -2,6 +2,7 @@ use toml::Value;
 
 use super::diagnostics::SchemaContext;
 use super::tables::validate_known_table;
+use super::values::validate_optional_enum_string_field;
 
 pub(super) fn validate_package_manager_section(
     context: &mut SchemaContext<'_, '_>,
@@ -17,23 +18,12 @@ pub(super) fn validate_package_manager_section(
         return;
     };
     for alias in ["js", "js_ts", "typescript"] {
-        let Some(value) = pm_table.get(alias) else {
-            continue;
-        };
-        if let Some(raw) = value.as_str() {
-            if !matches!(raw, "bun" | "pnpm" | "npm" | "direct") {
-                context.unsupported_value(
-                    "package_manager.js",
-                    raw,
-                    "expected one of: bun, pnpm, npm, direct",
-                );
-            }
-        } else {
-            context.unsupported_value(
-                "package_manager.js",
-                SchemaContext::value_type(value),
-                "expected a string value",
-            );
-        }
+        validate_optional_enum_string_field(
+            context,
+            pm_table.get(alias),
+            &format!("package_manager.{alias}"),
+            &["bun", "pnpm", "npm", "direct"],
+            "expected one of: bun, pnpm, npm, direct",
+        );
     }
 }

@@ -2,9 +2,10 @@ use serde_json::json;
 
 use crate::{render_help, HelpTopic};
 
+use super::super::model::catalog::TaskRuntimeArgs;
 use super::super::render::{encode_json, render_utf8, standard_renderer};
-use super::super::{RunnerError, TaskRuntimeArgs};
 use super::response::schema_payload;
+use crate::runner::error::RunnerError;
 
 pub(in crate::runner) fn reject_verbose_root_for_builtin(
     task_name: &str,

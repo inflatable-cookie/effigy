@@ -2,9 +2,11 @@ use std::path::Path;
 
 use crate::{HelpTopic, TaskInvocation};
 
-use super::super::{run_doctor, RunnerError, TaskRuntimeArgs};
+use super::super::doctor::run_doctor;
+use super::super::model::catalog::TaskRuntimeArgs;
 use super::command_spec::run_passthrough_builtin_command;
 use super::render_builtin_help_topic;
+use crate::runner::error::RunnerError;
 #[path = "doctor/request.rs"]
 mod request;
 

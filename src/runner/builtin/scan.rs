@@ -2,9 +2,10 @@ use std::path::Path;
 
 use crate::TaskInvocation;
 
-use super::super::{LoadedCatalog, RunnerError, TaskRuntimeArgs};
+use super::super::model::catalog::{LoadedCatalog, TaskRuntimeArgs};
 use super::command_spec::run_passthrough_builtin_command;
 use super::render_builtin_help_text;
+use crate::runner::error::RunnerError;
 
 mod execution;
 mod help;
@@ -12,8 +13,8 @@ mod request;
 
 use execution::run_scan_request;
 use help::{
-    render_attention_markers_help, render_generated_assets_help, render_god_files_help,
-    render_scan_help,
+    render_attention_markers_help, render_comment_ratio_help, render_duplicate_blocks_help,
+    render_generated_assets_help, render_god_files_help, render_scan_help,
 };
 use request::{parse_scan_request, scan_candidate_mode, ScanCommand};
 
@@ -29,6 +30,8 @@ pub(super) fn run_builtin_scan(
         |output_json| {
             let help = match scan_candidate_mode(&runtime_args.passthrough) {
                 Some(ScanCommand::GodFiles) => render_god_files_help(),
+                Some(ScanCommand::DuplicateBlocks) => render_duplicate_blocks_help(),
+                Some(ScanCommand::CommentRatio) => render_comment_ratio_help(),
                 Some(ScanCommand::GeneratedAssets) => render_generated_assets_help(),
                 Some(ScanCommand::AttentionMarkers) => render_attention_markers_help(),
                 None => render_scan_help(),

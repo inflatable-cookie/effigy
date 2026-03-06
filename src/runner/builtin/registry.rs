@@ -2,10 +2,11 @@ use std::path::Path;
 
 use crate::TaskInvocation;
 
-use super::super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector};
+use super::super::model::catalog::{LoadedCatalog, TaskRuntimeArgs, TaskSelector};
 use super::{
     cache, completion, config, doctor, help, init, migrate, scan, tasks, test, unlock, watch,
 };
+use crate::runner::error::RunnerError;
 
 pub(super) struct BuiltinRegistryEntry {
     pub(super) name: &'static str,

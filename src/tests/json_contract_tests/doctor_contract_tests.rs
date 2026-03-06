@@ -1,5 +1,24 @@
 use super::prelude::{execution::*, harness::*, json::*, runtime::*};
 
+fn write_duplicate_block_file(path: &std::path::Path, block_prefix: &str, body_lines: usize) {
+    let mut lines = vec![format!("pub fn {block_prefix}_alpha() -> usize {{")];
+    lines.push("    let seed = 1;".to_owned());
+    for idx in 0..body_lines {
+        lines.push(format!("    let acc_{idx} = seed + {idx};"));
+    }
+    lines.push(format!("    acc_{}", body_lines.saturating_sub(1)));
+    lines.push("}".to_owned());
+    fs::write(path, format!("{}\n", lines.join("\n"))).expect("write duplicate block file");
+}
+
+fn write_comment_ratio_file(path: &std::path::Path, comment_lines: usize, code_lines: usize) {
+    let mut lines = (0..comment_lines)
+        .map(|idx| format!("// commentary line {idx}"))
+        .collect::<Vec<String>>();
+    lines.extend((0..code_lines).map(|idx| format!("const line_{idx} = {idx};")));
+    fs::write(path, format!("{}\n", lines.join("\n"))).expect("write comment ratio file");
+}
+
 #[test]
 fn doctor_json_contract_has_versioned_top_level_shape() {
     let root = temp_workspace("doctor-json-contract");
@@ -277,6 +296,179 @@ doctor = false
         .expect("findings array")
         .iter()
         .all(|finding| finding["check_id"] != "scan.generated-assets"));
+}
+
+#[test]
+fn doctor_json_contract_includes_scan_duplicate_blocks_sections_and_findings() {
+    let root = temp_workspace("doctor-json-scan-duplicate-blocks");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.duplicate_blocks]
+warn = 20
+high = 40
+critical = 80
+doctor = true
+"#,
+    );
+    write_duplicate_block_file(&root.join("src/alpha.rs"), "shared", 38);
+    write_duplicate_block_file(&root.join("src/beta.rs"), "shared", 38);
+
+    let rendered = run_doctor_rendered(root, true);
+    let parsed = parse_json(&rendered);
+    assert_schema_v1(&parsed, "effigy.doctor.v1");
+    assert_eq!(parsed["ok"], false);
+
+    let scan_section = parsed["sections"]
+        .as_array()
+        .expect("sections array")
+        .iter()
+        .find(|section| section["check_id"] == "scan.duplicate-blocks")
+        .expect("scan.duplicate-blocks section");
+    assert_eq!(scan_section["severity"], "error");
+    assert_eq!(scan_section["findings"].as_array().map(Vec::len), Some(1));
+    assert!(scan_section["findings"]
+        .as_array()
+        .expect("section findings")
+        .iter()
+        .any(|finding| finding["severity"] == "error"
+            && finding["evidence"].as_str().is_some_and(|evidence| {
+                evidence.contains("[high]") && evidence.contains("src/alpha.rs:1-42")
+            })));
+
+    let flattened_scan_findings = parsed["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .filter(|finding| finding["check_id"] == "scan.duplicate-blocks")
+        .collect::<Vec<&serde_json::Value>>();
+    assert_eq!(flattened_scan_findings.len(), 1);
+}
+
+#[test]
+fn doctor_json_contract_omits_scan_duplicate_blocks_when_doctor_flag_is_disabled() {
+    let root = temp_workspace("doctor-json-scan-duplicate-blocks-disabled");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.duplicate_blocks]
+warn = 20
+high = 40
+critical = 80
+doctor = false
+"#,
+    );
+    write_duplicate_block_file(&root.join("src/alpha.rs"), "shared", 38);
+    write_duplicate_block_file(&root.join("src/beta.rs"), "shared", 38);
+
+    let out = run_doctor(DoctorArgs {
+        repo_override: Some(root),
+        output_json: true,
+        fix: false,
+        verbose: false,
+        explain: None,
+    })
+    .expect("run doctor json");
+
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.doctor.v1");
+    assert_eq!(parsed["ok"], true);
+    assert!(parsed["sections"]
+        .as_array()
+        .expect("sections array")
+        .iter()
+        .all(|section| section["check_id"] != "scan.duplicate-blocks"));
+    assert!(parsed["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .all(|finding| finding["check_id"] != "scan.duplicate-blocks"));
+}
+
+#[test]
+fn doctor_json_contract_includes_scan_comment_ratio_sections_and_findings() {
+    let root = temp_workspace("doctor-json-scan-comment-ratio");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.comment_ratio]
+warn = 1.0
+high = 2.0
+critical = 3.0
+min_code_lines = 20
+"#,
+    );
+    write_comment_ratio_file(&root.join("src/app.ts"), 50, 20);
+
+    let rendered = run_doctor_rendered(root, true);
+    let parsed = parse_json(&rendered);
+    assert_schema_v1(&parsed, "effigy.doctor.v1");
+    assert_eq!(parsed["ok"], false);
+
+    let scan_section = parsed["sections"]
+        .as_array()
+        .expect("sections array")
+        .iter()
+        .find(|section| section["check_id"] == "scan.comment-ratio")
+        .expect("scan.comment-ratio section");
+    assert_eq!(scan_section["severity"], "error");
+    assert_eq!(scan_section["findings"].as_array().map(Vec::len), Some(1));
+    assert!(scan_section["findings"]
+        .as_array()
+        .expect("section findings")
+        .iter()
+        .any(|finding| finding["severity"] == "error"
+            && finding["evidence"].as_str().is_some_and(
+                |evidence| evidence.contains("[high]") && evidence.contains("ratio=2.50")
+            )));
+
+    let flattened_scan_findings = parsed["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .filter(|finding| finding["check_id"] == "scan.comment-ratio")
+        .collect::<Vec<&serde_json::Value>>();
+    assert_eq!(flattened_scan_findings.len(), 1);
+}
+
+#[test]
+fn doctor_json_contract_omits_scan_comment_ratio_when_doctor_flag_is_disabled() {
+    let root = temp_workspace("doctor-json-scan-comment-ratio-disabled");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[scan.comment_ratio]
+warn = 1.0
+high = 2.0
+critical = 3.0
+min_code_lines = 20
+doctor = false
+"#,
+    );
+    write_comment_ratio_file(&root.join("src/app.ts"), 50, 20);
+
+    let out = run_doctor(DoctorArgs {
+        repo_override: Some(root),
+        output_json: true,
+        fix: false,
+        verbose: false,
+        explain: None,
+    })
+    .expect("run doctor json");
+
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.doctor.v1");
+    assert_eq!(parsed["ok"], true);
+    assert!(parsed["sections"]
+        .as_array()
+        .expect("sections array")
+        .iter()
+        .all(|section| section["check_id"] != "scan.comment-ratio"));
+    assert!(parsed["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .all(|finding| finding["check_id"] != "scan.comment-ratio"));
 }
 
 #[test]

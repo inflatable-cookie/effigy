@@ -1,7 +1,9 @@
+use super::super::super::model::catalog::TaskSelector;
+use super::super::super::model::constants::BUILTIN_TASKS;
 use super::super::super::util::{
     parse_task_reference_invocation, render_task_selector, shell_quote,
 };
-use super::super::super::{RunnerError, TaskSelector, BUILTIN_TASKS};
+use crate::runner::error::RunnerError;
 
 pub(super) struct ParsedTaskRef {
     pub(super) selector: TaskSelector,

@@ -1,8 +1,9 @@
 use crate::ui::{KeyValue, Renderer};
 use crate::TaskInvocation;
 
+use super::super::model::catalog::DeferredCommand;
 use super::super::render::trace_renderer;
-use super::super::{DeferredCommand, RunnerError};
+use crate::runner::error::RunnerError;
 
 pub(super) fn render_deferral_trace(
     task: &TaskInvocation,

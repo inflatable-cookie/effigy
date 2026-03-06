@@ -14,7 +14,7 @@ use super::super::super::response::render_text_or_json_lazy;
 use super::super::execution::should_run_builtin_test_tui;
 use super::super::planning::{BuiltinTestCliFlags, BuiltinTestTarget};
 use super::super::suite_selection::BuiltinSuiteSelectionError;
-use super::super::RunnerError;
+use crate::runner::error::RunnerError;
 
 use plan_payload::{build_builtin_test_plan_payload, build_builtin_test_plan_recovery_payload};
 use plan_text::{render_builtin_test_plan_recovery_text, render_builtin_test_plan_text};

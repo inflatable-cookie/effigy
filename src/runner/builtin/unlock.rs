@@ -1,16 +1,14 @@
 use std::path::Path;
 
-use serde_json::json;
-
 use crate::TaskInvocation;
 
-use super::super::locking::{unlock_all, unlock_scopes};
-use super::super::RunnerError;
+use super::super::locking::io::{unlock_all, unlock_scopes};
 use super::command_spec::run_builtin_command;
 use super::help_text::{render_titled_help, HelpSection};
 use super::render_builtin_help_text;
-use super::response::render_optional_text_or_schema_json_lazy;
-use super::text_doc::TextDoc;
+use crate::runner::error::RunnerError;
+#[path = "unlock/output.rs"]
+mod output;
 
 #[path = "unlock/request.rs"]
 mod request;
@@ -41,21 +39,12 @@ fn run_unlock_request(
     } else {
         unlock_scopes(target_root, &request.scopes)?
     };
-    let removed = result.removed;
-    let missing = result.missing;
-
-    render_optional_text_or_schema_json_lazy(
+    output::render_unlock_response(
         request.output_json,
-        "effigy.unlock.v1",
-        || render_unlock_text(target_root, request.unlock_all_flag, &removed, &missing),
-        || {
-            json!({
-                "root": target_root.display().to_string(),
-                "removed": &removed,
-                "missing": &missing,
-                "all": request.unlock_all_flag,
-            })
-        },
+        target_root,
+        request.unlock_all_flag,
+        &result.removed,
+        &result.missing,
     )
 }
 
@@ -82,30 +71,4 @@ fn render_unlock_help() -> String {
             },
         ],
     )
-}
-
-fn render_unlock_text(
-    target_root: &Path,
-    unlock_all_flag: bool,
-    removed: &[String],
-    missing: &[String],
-) -> String {
-    let mut doc = TextDoc::new();
-    doc.kv("unlock root", target_root.display());
-    if unlock_all_flag {
-        doc.kv("mode", "all");
-    } else {
-        doc.kv("mode", "scopes");
-    }
-    doc.kv("removed", removed.len());
-    for entry in removed {
-        doc.bullet(entry);
-    }
-    if !missing.is_empty() {
-        doc.kv("missing", missing.len());
-        for entry in missing {
-            doc.bullet(entry);
-        }
-    }
-    doc.finish()
 }

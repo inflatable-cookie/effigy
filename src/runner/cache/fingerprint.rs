@@ -2,7 +2,8 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::runner::{ManifestTaskCache, RunnerError};
+use crate::runner::error::RunnerError;
+use crate::runner::manifest::task_runtime::ManifestTaskCache;
 
 #[path = "fingerprint/digest.rs"]
 mod digest;

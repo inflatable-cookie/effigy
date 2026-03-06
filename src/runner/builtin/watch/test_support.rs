@@ -1,7 +1,7 @@
 use crate::TaskInvocation;
 
-use super::super::super::RunnerError;
 use super::request::{parse_watch_request, WatchOwner};
+use crate::runner::error::RunnerError;
 
 pub(in crate::runner) struct WatchParseContract {
     pub(in crate::runner) output_json: bool,

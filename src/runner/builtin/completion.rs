@@ -1,16 +1,15 @@
 use std::path::Path;
 
-use serde_json::json;
-
 use crate::TaskInvocation;
 
-use super::super::{RunnerError, TaskRuntimeArgs};
+use super::super::model::catalog::TaskRuntimeArgs;
 use super::command_spec::run_passthrough_builtin_command;
 use super::render_builtin_help_text;
-use super::response::render_optional_text_or_schema_json;
+use crate::runner::error::RunnerError;
 
 mod candidates;
 mod help;
+mod output;
 #[path = "completion/request.rs"]
 mod request;
 mod scripts;
@@ -21,10 +20,11 @@ pub(in crate::runner) mod test_support;
 
 use candidates::run_completion_candidates;
 use help::{render_completion_candidates_help, render_completion_help};
+use output::render_completion_script_response;
 use request::{
     completion_candidate_mode, parse_completion_parsed_request, CompletionParsedRequest,
 };
-use scripts::{command_names, render_completion_script};
+use scripts::render_completion_script;
 
 pub(super) fn run_builtin_completion(
     task: &TaskInvocation,
@@ -55,18 +55,7 @@ pub(super) fn run_builtin_completion(
                 })?;
 
                 let script = render_completion_script(shell);
-                let payload_script = script.clone();
-                let fields = json!({
-                    "shell": shell.as_str(),
-                    "script": payload_script,
-                    "commands": command_names(),
-                });
-                render_optional_text_or_schema_json(
-                    request.output_json,
-                    script,
-                    "effigy.completion.v1",
-                    fields,
-                )
+                render_completion_script_response(request.output_json, shell, script)
             }
         },
     )

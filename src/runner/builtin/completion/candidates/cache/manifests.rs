@@ -5,7 +5,7 @@ use std::time::UNIX_EPOCH;
 
 use super::super::super::scripts::command_names;
 use crate::runner::catalog::discover_catalogs;
-use crate::runner::RunnerError;
+use crate::runner::error::RunnerError;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct ManifestStamp {

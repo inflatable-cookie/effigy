@@ -1,7 +1,8 @@
 use crate::TaskInvocation;
 use std::path::Path;
 
-use super::super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector};
+use super::super::model::catalog::{LoadedCatalog, TaskRuntimeArgs, TaskSelector};
+use crate::runner::error::RunnerError;
 
 mod execution;
 mod planning;

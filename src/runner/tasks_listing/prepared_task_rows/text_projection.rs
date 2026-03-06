@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::super::super::LoadedCatalog;
+use super::super::super::model::catalog::LoadedCatalog;
 use super::super::selection::CatalogTaskMatch;
 use super::catalog_projection::{
     prepare_display_catalog_alias_rows, prepare_matched_catalog_task_rows_for_display,

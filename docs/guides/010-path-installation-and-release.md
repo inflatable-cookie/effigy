@@ -10,6 +10,12 @@ Use this mode when you want changes to propagate immediately from source:
 cargo run --manifest-path /abs/path/to/effigy/Cargo.toml --bin effigy -- <args...>
 ```
 
+First-class local dev wrapper in the Effigy repo:
+
+```bash
+/abs/path/to/effigy/scripts/effigy-dev <args...>
+```
+
 Common wrapper in consumer repos:
 
 ```json
@@ -29,18 +35,32 @@ cd /abs/path/to/effigy
 cargo install --path . --root ./.local-install --force
 ```
 
-Add to PATH (shell profile):
+Link stable/dev entrypoints into `~/.local/bin`:
 
 ```bash
-export PATH="/abs/path/to/effigy/.local-install/bin:$PATH"
+./scripts/install-local-bin-links.sh
 ```
 
 Then run directly:
 
 ```bash
 effigy tasks --repo /abs/path/to/workspace
+effigy-dev tasks --repo /abs/path/to/workspace
 effigy doctor --repo /abs/path/to/workspace
 ```
+
+Shell profile requirement:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Recommended local channel contract:
+- `effigy`: stable installed binary, symlinked from `~/.local/bin/effigy`
+- `effigy-dev`: source/dev wrapper, symlinked from `~/.local/bin/effigy-dev`
+
+If an old shell alias still defines `effigy`, remove it from your shell rc after
+linking the real commands.
 
 ## 3) Fallback Strategy
 
@@ -76,6 +96,7 @@ For now, version is controlled in `Cargo.toml`.
 | Mode | Command | Expected |
 |---|---|---|
 | Source run | `cargo run --manifest-path ../effigy/Cargo.toml --bin effigy -- doctor --repo .` | Doctor report rendered, exit 0 |
+| Dev wrapper | `effigy-dev doctor --repo <workspace>` | Doctor report rendered from current checkout, exit 0 |
 | PATH binary | `effigy --help` | Usage shown, exit 0 |
 | PATH binary | `effigy doctor --repo <workspace>` | Doctor report rendered, exit 0 |
 | Wrapper fallback | `bun effigy tasks` | Catalogs listed, exit 0 |

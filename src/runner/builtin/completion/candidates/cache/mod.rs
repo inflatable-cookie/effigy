@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use self::manifests::{discover_completion_candidates, manifest_stamps_unchanged, ManifestStamp};
 use self::policy::completion_candidates_cache_ttl_policy;
-use super::super::super::super::RunnerError;
+use crate::runner::error::RunnerError;
 
 mod manifests;
 mod policy;

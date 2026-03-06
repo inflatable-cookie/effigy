@@ -48,17 +48,14 @@ fn run_doctor_groups_findings_in_severity_first_order() {
     let warning_idx = rendered
         .find("health.task.discovery")
         .expect("expected warning finding");
-    let info_idx = rendered
-        .find("workspace.root-resolution")
-        .expect("expected info finding");
 
     assert!(
         error_idx < warning_idx,
         "error should be rendered before warning"
     );
     assert!(
-        warning_idx < info_idx,
-        "warning should be rendered before info"
+        !rendered.contains("workspace.root-resolution"),
+        "info-only sections should not be rendered in normal doctor text output"
     );
 }
 

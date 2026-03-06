@@ -10,8 +10,9 @@ mod rows;
 #[path = "text_output/sections.rs"]
 mod sections;
 
+use super::super::model::catalog::LoadedCatalog;
 use super::super::tasks_view::render_resolution_probe_block;
-use super::super::{render, LoadedCatalog, RunnerError};
+use super::super::{render, RunnerError};
 use super::render_context::ListingRenderRequest;
 use super::selection::PreparedFilteredListing;
 use super::selection_dispatch::dispatch_listing_selection;

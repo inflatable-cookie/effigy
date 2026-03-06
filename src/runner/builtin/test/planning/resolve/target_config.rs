@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use crate::runner::manifest::config_sections::ManifestJsPackageManager;
 use crate::runner::manifest::ManifestCargoEnvMatchMode;
+use crate::runner::model::catalog::LoadedCatalog;
 use crate::runner::util::normalize_builtin_test_suite;
-use crate::runner::{LoadedCatalog, ManifestJsPackageManager};
 
 use super::cargo_env::resolve_manifest_cargo_env;
 

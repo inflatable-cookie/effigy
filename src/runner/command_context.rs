@@ -1,28 +1,26 @@
-use std::path::PathBuf;
+#[path = "command_context/cwd.rs"]
+mod cwd;
+#[path = "command_context/repo_override.rs"]
+mod repo_override;
+#[path = "command_context/root.rs"]
+mod root;
+#[path = "command_context/tasks.rs"]
+mod tasks;
 
 use crate::Command;
 
 use super::util::parse_task_runtime_args;
 
-pub(super) fn command_repo_override(cmd: &Command) -> Option<PathBuf> {
-    match cmd {
-        Command::Doctor(args) => args.repo_override.clone(),
-        Command::Tasks(args) => args.repo_override.clone(),
-        Command::Task(task) => parse_task_runtime_args(&task.args)
-            .ok()
-            .and_then(|parsed| parsed.repo_override),
-        Command::Help(_) => None,
-    }
-}
+pub(in crate::runner) use cwd::{canonicalize_or_original, current_working_dir};
+pub(super) use repo_override::command_repo_override;
+pub(super) use root::{resolve_command_root, resolve_repo_root};
+pub(super) use tasks::task_selection_precedence_notes;
 
-pub(super) fn task_selection_precedence_notes() -> Vec<String> {
-    [
-        "explicit catalog alias prefix",
-        "relative/absolute catalog path prefix",
-        "unprefixed nearest in-scope catalog by cwd",
-        "unprefixed shallowest catalog from workspace root",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect()
+fn task_repo_override(cmd: &Command) -> Option<std::path::PathBuf> {
+    parse_task_runtime_args(match cmd {
+        Command::Task(task) => &task.args,
+        _ => return None,
+    })
+    .ok()
+    .and_then(|parsed| parsed.repo_override)
 }

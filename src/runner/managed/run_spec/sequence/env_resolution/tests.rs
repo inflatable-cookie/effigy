@@ -4,8 +4,10 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::runner::manifest::{ManifestEnvEntry, ManifestManagedRunStepTable, ManifestRunStepEnv};
-use crate::runner::{ManifestManagedRunStep, RunnerError};
+use crate::runner::error::RunnerError;
+use crate::runner::manifest::task_runtime::{
+    ManifestEnvEntry, ManifestManagedRunStep, ManifestManagedRunStepTable, ManifestRunStepEnv,
+};
 
 use super::StepEnvAccumulator;
 

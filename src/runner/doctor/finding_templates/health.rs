@@ -1,5 +1,5 @@
 use super::super::contracts::{check_id, remediation};
-use super::super::DoctorState;
+use super::super::report::DoctorState;
 
 pub(in crate::runner::doctor) enum HealthFinding {
     DiscoveryMissing,

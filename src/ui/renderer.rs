@@ -31,6 +31,7 @@ pub trait SpinnerHandle {
     fn set_message(&self, message: &str);
     fn finish_success(&self, message: &str);
     fn finish_error(&self, message: &str);
+    fn finish_clear(&self);
 }
 
 pub trait Renderer {

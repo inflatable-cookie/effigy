@@ -17,10 +17,13 @@ Historical delivered milestones:
 - `011-watch-init-migrate-foundation.md`
 - `012-codebase-consolidation-and-health.md`
 - `013-effigy-northstar-doctrine-alignment.md`
+- `014-attention-marker-scan-and-doctor-integration.md`
+- `015-effigy-self-hosting-and-agent-first-adoption.md`
 
 Current planned milestone:
 
-- `014-attention-marker-scan-and-doctor-integration.md` (complete)
+- `016-duplicate-blocks-scan-and-doctor-integration.md` (complete)
+- `017-comment-ratio-scan-and-doctor-integration.md` (complete)
 
 Rules:
 

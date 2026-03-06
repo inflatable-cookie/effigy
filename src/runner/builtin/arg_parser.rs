@@ -1,5 +1,5 @@
-use super::super::RunnerError;
 use super::{ensure_no_unknown_builtin_args, ensure_no_unknown_builtin_args_with_prefix};
+use crate::runner::error::RunnerError;
 use crate::TaskInvocation;
 
 mod flags;

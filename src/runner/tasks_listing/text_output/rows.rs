@@ -2,9 +2,9 @@ use crate::ui::theme::Theme;
 use crate::ui::{PlainRenderer, Renderer};
 
 use super::super::super::tasks_view::style_text;
-use super::super::super::RunnerError;
 use super::super::prepared_task_rows::{CatalogAliasProjection, CatalogTaskProjection};
 use super::super::row_projection::BuiltinTaskProjection;
+use crate::runner::error::RunnerError;
 
 pub(super) fn render_catalog_alias_rows(
     renderer: &mut PlainRenderer<Vec<u8>>,

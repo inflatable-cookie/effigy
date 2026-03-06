@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::runner::builtin::test::planning::BuiltinResolvedPlan;
 use crate::runner::manifest::ManifestCargoEnvMatchMode;
-use crate::runner::LoadedCatalog;
+use crate::runner::model::catalog::LoadedCatalog;
 use crate::testing::detect_test_runner_plans;
 
 use super::apply_builtin_test_runner_config;

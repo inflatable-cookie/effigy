@@ -1,4 +1,4 @@
-use super::ManifestJsPackageManager;
+use super::manifest::config_sections::ManifestJsPackageManager;
 pub(super) fn command_head(command: &str) -> &str {
     command.split_whitespace().next().unwrap_or_default()
 }

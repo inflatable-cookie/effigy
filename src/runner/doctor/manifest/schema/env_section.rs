@@ -1,11 +1,11 @@
 use toml::Value;
 
 use super::diagnostics::SchemaContext;
+use super::tables::require_table;
 use super::values::validate_table_string_values;
 
 pub(super) fn validate_env_section(context: &mut SchemaContext<'_, '_>, env: &Value) {
-    let Some(table) = env.as_table() else {
-        context.unsupported_value("env", SchemaContext::value_type(env), "expected table");
+    let Some(table) = require_table(context, "env", env, "expected table") else {
         return;
     };
 
@@ -22,15 +22,12 @@ pub(super) fn validate_env_section(context: &mut SchemaContext<'_, '_>, env: &Va
             continue;
         };
         for (index, entry) in entries.iter().enumerate() {
-            let Some(env_table) = entry.as_table() else {
-                context.unsupported_value(
-                    &format!("env.{profile}[{index}]"),
-                    SchemaContext::value_type(entry),
-                    "expected table",
-                );
+            let entry_path = format!("env.{profile}[{index}]");
+            let Some(env_table) = require_table(context, &entry_path, entry, "expected table")
+            else {
                 continue;
             };
-            validate_table_string_values(context, &format!("env.{profile}[{index}]"), env_table);
+            validate_table_string_values(context, &entry_path, env_table);
         }
     }
 }

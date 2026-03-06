@@ -1,8 +1,8 @@
 use crate::{HelpTopic, TaskInvocation};
 
-use super::super::RunnerError;
 use super::command_spec::run_builtin_command;
 use super::render_builtin_help_topic;
+use crate::runner::error::RunnerError;
 #[path = "help/request.rs"]
 mod request;
 

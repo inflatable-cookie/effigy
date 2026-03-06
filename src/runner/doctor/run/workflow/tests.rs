@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use crate::resolver::ResolvedTarget;
 use crate::tasks::ResolutionMode;
 
-use super::super::super::super::TASK_MANIFEST_FILE;
+use super::super::super::super::model::constants::TASK_MANIFEST_FILE;
 use super::super::super::contracts::{check_id, remediation};
-use super::super::super::DoctorSeverity;
+use super::super::super::report::{DoctorSeverity, DoctorState, ManifestSnapshot};
 use super::*;
 
 fn empty_manifest_snapshot() -> ManifestSnapshot {
@@ -23,7 +23,7 @@ fn manifest_availability_missing_manifest_message_is_stable() {
     let manifest = empty_manifest_snapshot();
     let root = Path::new("/tmp/doctor-workspace");
 
-    add_manifest_availability_findings(root, &manifest, &mut state);
+    handler::add_manifest_availability_findings(root, &manifest, &mut state);
 
     assert_eq!(state.findings.len(), 1);
     let finding = &state.findings[0];
@@ -50,7 +50,11 @@ fn manifest_availability_parse_failure_message_is_stable() {
         parse_ok_any: false,
     };
 
-    add_manifest_availability_findings(Path::new("/tmp/doctor-workspace"), &manifest, &mut state);
+    handler::add_manifest_availability_findings(
+        Path::new("/tmp/doctor-workspace"),
+        &manifest,
+        &mut state,
+    );
 
     assert_eq!(state.findings.len(), 1);
     let finding = &state.findings[0];
@@ -82,7 +86,7 @@ fn root_resolution_finding_tracks_expected_mode_labels_and_contract() {
             evidence: Vec::new(),
             warnings: Vec::new(),
         };
-        add_root_resolution_finding(&resolved, &mut state);
+        handler::emit_root_resolution_finding(&resolved, &mut state);
 
         assert_eq!(state.findings.len(), 1);
         let finding = &state.findings[0];

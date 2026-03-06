@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use crate::runner::LoadedCatalog;
+use crate::runner::model::catalog::LoadedCatalog;
 
 pub(super) fn split_catalog_env_reference(entry_ref: &str) -> Option<(&str, &str)> {
     let split_at = entry_ref.rfind(['/', '\\'])?;

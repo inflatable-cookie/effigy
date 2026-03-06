@@ -1,11 +1,11 @@
 use std::io::Error;
 use std::path::Path;
 
-use crate::runner::doctor::DoctorSeverity;
+use crate::runner::doctor::report::DoctorSeverity;
 use crate::tasks::ResolutionMode;
 
 use super::super::contracts::{check_id, remediation};
-use super::super::DoctorState;
+use super::super::report::DoctorState;
 use super::*;
 
 #[test]

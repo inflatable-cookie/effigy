@@ -1,7 +1,7 @@
 use crate::TaskInvocation;
 
-use super::super::super::RunnerError;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
+use crate::runner::error::RunnerError;
 
 const DEFAULT_DEBOUNCE_MS: u64 = 400;
 
@@ -20,6 +20,48 @@ pub(super) struct WatchRequest {
     pub(super) exclude: Vec<String>,
     pub(super) max_runs: Option<usize>,
     pub(super) target: Option<TaskInvocation>,
+}
+
+impl WatchRequest {
+    pub(super) fn validate_execution_policy(&self) -> Result<(), RunnerError> {
+        if self.output_json && self.max_runs.is_none() {
+            return Err(RunnerError::task_invocation(
+                "`--json` requires a bounded watch run (`--once` or `--max-runs <N>`).",
+            ));
+        }
+
+        let owner = self.owner.ok_or_else(|| {
+            RunnerError::task_invocation(
+                "`--owner <effigy|external>` is required to avoid nested watcher conflicts.",
+            )
+        })?;
+        if owner == WatchOwner::External {
+            return Err(RunnerError::task_invocation(
+                "watch owner `external` means task-managed watching is expected. Run the task directly (without `effigy watch`) to avoid nested watcher loops.",
+            ));
+        }
+
+        let target = self.target.as_ref().ok_or_else(|| {
+            RunnerError::task_invocation(
+                "watch requires a target task selector (for example `effigy watch --owner effigy test`).",
+            )
+        })?;
+        if target.name == "watch" {
+            return Err(RunnerError::task_invocation(
+                "watch target cannot be `watch` (nested watch loops are blocked by owner policy).",
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub(super) fn validated_target(&self) -> Result<&TaskInvocation, RunnerError> {
+        self.target.as_ref().ok_or_else(|| {
+            RunnerError::task_invocation(
+                "watch requires a target task selector (for example `effigy watch --owner effigy test`).",
+            )
+        })
+    }
 }
 
 pub(super) fn parse_watch_request(

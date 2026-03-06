@@ -1,8 +1,8 @@
 use crate::TaskInvocation;
 
-use super::super::super::locking::LockScope;
-use super::super::super::RunnerError;
+use super::super::super::locking::model::LockScope;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
+use crate::runner::error::RunnerError;
 
 pub(super) struct UnlockRequest {
     pub(super) output_json: bool,

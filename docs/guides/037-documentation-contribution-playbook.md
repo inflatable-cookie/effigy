@@ -81,14 +81,14 @@ Run in this order:
 
 ```sh
 ./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)
-./scripts/check-quality-gates.sh --docs-only
+effigy-dev qa:docs --repo .
 ./docs/scripts/check-doc-workflow-paths.sh
 ```
 
 If behavior/JSON changed, also run relevant targeted checks:
 
 ```sh
-./scripts/check-quality-gates.sh --json-only --ci
+effigy-dev qa:json:ci --repo .
 ```
 
 ## 5) PR Checklist Snippet
@@ -101,9 +101,9 @@ Copy into PR description:
 - [ ] Required guides updated for this change type
 - [ ] Style/terminology checked against 033/034
 - [ ] `./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)` passed
-- [ ] `./scripts/check-quality-gates.sh --docs-only` passed
+- [ ] `effigy-dev qa:docs --repo .` passed
 - [ ] `./docs/scripts/check-doc-workflow-paths.sh` passed
-- [ ] JSON-related changes: `./scripts/check-quality-gates.sh --json-only --ci` run
+- [ ] JSON-related changes: `effigy-dev qa:json:ci --repo .` run
 ```
 
 ## 6) Escalation Rules

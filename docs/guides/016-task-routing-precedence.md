@@ -136,6 +136,34 @@ When routing looks wrong:
 2. Run `effigy tasks --resolve <request>` for the exact selector.
 3. Check `evidence` lines to confirm whether alias, relative path, CWD-nearest, or shallowest fallback was used.
 
+## Child Task Ownership Rule
+
+Do not duplicate a child-catalog task at the workspace root just to make it
+callable from the root.
+
+If one discovered child catalog is the only owner of a task name, Effigy can
+resolve that unprefixed task from the workspace root already.
+
+Example:
+
+- child catalog owns `farmyard/db:reset`
+- no other catalog defines `db:reset`
+- from workspace root, `effigy db:reset --repo .` resolves to `farmyard/db:reset`
+
+Recommended policy:
+
+- keep the task only in the catalog that actually owns the behavior
+- add a root task only when the root owns different orchestration behavior
+  (for example a multi-step aggregate such as `validate` or `qa`)
+- if multiple catalogs define the same task, require an explicit prefix instead
+  of adding a duplicate root shim
+
+Why this matters:
+
+- avoids root-manifest duplication and drift
+- keeps task ownership close to the code it operates on
+- lets agents and contributors trust routing rather than cargo-culting root aliases
+
 ## Report Diff Example
 
 Capture snapshots before and after a routing change:

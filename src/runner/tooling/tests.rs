@@ -2,7 +2,7 @@ use super::{
     command_head, js_package_manager_binary, required_tools_for_command,
     vitest_command_for_js_package_manager,
 };
-use crate::runner::ManifestJsPackageManager;
+use crate::runner::manifest::config_sections::ManifestJsPackageManager;
 
 #[test]
 fn command_head_parsing_is_stable() {

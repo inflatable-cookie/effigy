@@ -1,11 +1,11 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use super::super::super::RunnerError;
 use super::super::prepared_task_rows::{
     CatalogTaskJsonRow, CatalogTaskJsonRows, ManagedProfileJsonRow,
 };
 use super::rows::BuiltinTaskJsonRow;
+use crate::runner::error::RunnerError;
 
 const TASKS_SCHEMA: &str = "effigy.tasks.v1";
 const FILTERED_TASKS_SCHEMA: &str = "effigy.tasks.filtered.v1";

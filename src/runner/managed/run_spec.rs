@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::runner::manifest::{ManifestEnvEntry, ManifestEnvFileDirective};
+use crate::runner::manifest::task_runtime::{ManifestEnvEntry, ManifestEnvFileDirective};
 
-use super::super::{LoadedCatalog, ManifestManagedRun, RunnerError};
+use super::super::manifest::task_runtime::ManifestManagedRun;
+use super::super::model::catalog::LoadedCatalog;
+use crate::runner::error::RunnerError;
 #[path = "run_spec/command.rs"]
 mod command;
 #[path = "run_spec/run_step.rs"]
@@ -11,7 +13,9 @@ mod run_step;
 #[path = "run_spec/sequence/mod.rs"]
 mod sequence;
 
-use command::{render_command_template, wrap_command_with_task_env};
+use command::{
+    render_builtin_task_reference_invocation, render_task_command, wrap_command_with_cwd,
+};
 
 #[derive(Clone, Copy)]
 pub(in super::super) struct RunSpecContext<'a> {
@@ -32,7 +36,7 @@ impl RunSpecContext<'_> {
     }
 }
 
-pub(super) fn render_task_run_spec(
+pub(in crate::runner) fn render_task_run_spec(
     run: &ManifestManagedRun,
     context: RunSpecContext<'_>,
 ) -> Result<String, RunnerError> {
@@ -42,17 +46,21 @@ pub(super) fn render_task_run_spec(
             context.task_name
         )));
     }
-    let rendered = match run {
-        ManifestManagedRun::Command(command) => {
-            render_command_template(command, context.repo_root, context.args_rendered)
-        }
+    match run {
+        ManifestManagedRun::Command(command) => Ok(render_task_command(command, context)),
         ManifestManagedRun::Sequence(steps) => {
-            sequence::render_run_sequence(steps, context.with_depth(context.depth + 1))?
+            sequence::render_run_sequence(steps, context.with_depth(context.depth + 1))
         }
-    };
-    Ok(wrap_command_with_task_env(
-        rendered,
-        context.task_env,
-        context.repo_root,
-    ))
+    }
+}
+
+pub(in crate::runner) fn render_builtin_reference_invocation(
+    task_ref: &str,
+    args_rendered: &str,
+) -> Result<String, RunnerError> {
+    render_builtin_task_reference_invocation(task_ref, args_rendered)
+}
+
+pub(in crate::runner) fn wrap_reference_command_in_cwd(cwd: &Path, command: &str) -> String {
+    wrap_command_with_cwd(cwd, command)
 }

@@ -105,6 +105,9 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 - [`2026-03-02-docs-qa-report-index-helper-validation.md`](./2026-03/02-092600-docs-qa-report-index-helper-validation.md)
 
+- [`2026-03-06-remaining-helper-surface-classification.md`](./2026-03/06-101500-remaining-helper-surface-classification.md)
+- [`2026-03-06-agent-and-cross-repo-adoption-contract.md`](./2026-03/06-103500-agent-and-cross-repo-adoption-contract.md)
+
 - [`2026-03-10-script-surface-unification-batch-1.md`](./2026-03/10-090000-script-surface-unification-batch-1.md)
 
 - [`2026-03/05-201451-effigy-northstar-doctrine-alignment.md`](./2026-03/05-201451-effigy-northstar-doctrine-alignment.md)
@@ -152,6 +155,8 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-03-05-scan-god-files-doctor-json-bridge-validation.md`](./2026-03/05-203000-scan-god-files-doctor-json-bridge-validation.md)
 - [`2026-03-06-post-m1-regression-pass.md`](./2026-03/06-090000-post-m1-regression-pass.md)
 - [`2026-03-06-scan-attention-markers-envelope-and-doctor-validation.md`](./2026-03/06-091500-scan-attention-markers-envelope-and-doctor-validation.md)
+- [`2026-03-06-duplicate-blocks-docs-and-benchmark-validation.md`](./2026-03/06-151500-duplicate-blocks-docs-and-benchmark-validation.md)
+- [`2026-03-06-comment-ratio-docs-and-benchmark-validation.md`](./2026-03/06-163500-comment-ratio-docs-and-benchmark-validation.md)
 - [`2026-03-07-post-m1-release-readiness-checkpoint.md`](./2026-03/07-090000-post-m1-release-readiness-checkpoint.md)
 
 ## Log template

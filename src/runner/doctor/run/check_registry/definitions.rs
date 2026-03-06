@@ -1,8 +1,13 @@
 use std::path::Path;
 
-use super::super::super::{
-    attention_markers, conflicts, environment, generated_assets, god_files, health, references,
-    DoctorState, ManifestSnapshot,
+use super::super::super::report::{DoctorState, ManifestSnapshot};
+use super::catalog_checks::{
+    run_environment_tools_check, run_health_task_check, run_manifest_conflicts_check,
+    run_task_references_check,
+};
+use super::scan_checks::{
+    run_attention_markers_check, run_comment_ratio_check, run_duplicate_blocks_check,
+    run_generated_assets_check, run_god_files_check,
 };
 
 pub(super) struct DoctorCheckContext<'a> {
@@ -24,89 +29,58 @@ pub(super) type DoctorCheckFn = fn(&DoctorCheckContext<'_>, &mut DoctorState);
 #[derive(Clone, Copy)]
 pub(super) struct DoctorCheckDefinition {
     pub(super) name: &'static str,
+    pub(super) progress_label: Option<&'static str>,
     pub(super) run: DoctorCheckFn,
 }
 
-const DOCTOR_CHECKS: [DoctorCheckDefinition; 7] = [
+const DOCTOR_CHECKS: [DoctorCheckDefinition; 9] = [
     DoctorCheckDefinition {
         name: "manifest_conflicts",
+        progress_label: None,
         run: run_manifest_conflicts_check,
     },
     DoctorCheckDefinition {
         name: "environment_tools",
+        progress_label: None,
         run: run_environment_tools_check,
     },
     DoctorCheckDefinition {
         name: "task_references",
+        progress_label: None,
         run: run_task_references_check,
     },
     DoctorCheckDefinition {
         name: "god_files",
+        progress_label: Some("Doctor scan: god-files"),
         run: run_god_files_check,
     },
     DoctorCheckDefinition {
+        name: "duplicate_blocks",
+        progress_label: Some("Doctor scan: duplicate-blocks"),
+        run: run_duplicate_blocks_check,
+    },
+    DoctorCheckDefinition {
+        name: "comment_ratio",
+        progress_label: Some("Doctor scan: comment-ratio"),
+        run: run_comment_ratio_check,
+    },
+    DoctorCheckDefinition {
         name: "generated_assets",
+        progress_label: Some("Doctor scan: generated-assets"),
         run: run_generated_assets_check,
     },
     DoctorCheckDefinition {
         name: "attention_markers",
+        progress_label: Some("Doctor scan: attention-markers"),
         run: run_attention_markers_check,
     },
     DoctorCheckDefinition {
         name: "health_task",
+        progress_label: None,
         run: run_health_task_check,
     },
 ];
 
 pub(super) fn doctor_check_definitions() -> &'static [DoctorCheckDefinition] {
     &DOCTOR_CHECKS
-}
-
-fn run_manifest_conflicts_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
-    conflicts::check_manifest_alias_conflicts(&context.manifest.parsed_catalogs, state);
-}
-
-fn run_environment_tools_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
-    environment::check_environment_tools(
-        context.resolved_root,
-        &context.manifest.parsed_catalogs,
-        context.manifest.preferred_js_pm,
-        state,
-    );
-}
-
-fn run_task_references_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
-    references::check_task_references(&context.manifest.parsed_catalogs, state);
-}
-
-fn run_health_task_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
-    health::check_health_task(
-        context.resolved_root,
-        &context.manifest.parsed_catalogs,
-        state,
-    );
-}
-
-fn run_god_files_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
-    god_files::check_god_files(
-        context.resolved_root,
-        &context.manifest.parsed_catalogs,
-        state,
-    );
-}
-
-fn run_generated_assets_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
-    generated_assets::check_generated_assets(
-        context.resolved_root,
-        &context.manifest.parsed_catalogs,
-        state,
-    );
-}
-
-fn run_attention_markers_check(context: &DoctorCheckContext<'_>, state: &mut DoctorState) {
-    attention_markers::check_attention_markers(
-        context.resolved_root,
-        &context.manifest.parsed_catalogs,
-        state,
-    );
 }

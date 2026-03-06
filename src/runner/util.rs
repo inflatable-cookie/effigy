@@ -7,27 +7,28 @@ mod shell;
 
 use std::collections::BTreeMap;
 
+use crate::runner::error::RunnerError;
+use crate::runner::model::catalog::{TaskRuntimeArgs, TaskSelector};
+
 pub(super) fn normalize_builtin_test_suite(raw: &str) -> Option<&'static str> {
     parsing::normalize_builtin_test_suite(raw)
 }
 
-pub(super) fn parse_task_runtime_args(
-    args: &[String],
-) -> Result<super::TaskRuntimeArgs, super::RunnerError> {
+pub(super) fn parse_task_runtime_args(args: &[String]) -> Result<TaskRuntimeArgs, RunnerError> {
     parsing::parse_task_runtime_args(args)
 }
 
-pub(super) fn parse_task_selector(raw: &str) -> Result<super::TaskSelector, super::RunnerError> {
+pub(super) fn parse_task_selector(raw: &str) -> Result<TaskSelector, RunnerError> {
     parsing::parse_task_selector(raw)
 }
 
 pub(super) fn parse_task_reference_invocation(
     raw: &str,
-) -> Result<(super::TaskSelector, Vec<String>), super::RunnerError> {
+) -> Result<(TaskSelector, Vec<String>), RunnerError> {
     parsing::parse_task_reference_invocation(raw)
 }
 
-pub(super) fn render_task_selector(selector: &super::TaskSelector) -> String {
+pub(super) fn render_task_selector(selector: &TaskSelector) -> String {
     parsing::render_task_selector(selector)
 }
 

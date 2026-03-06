@@ -225,6 +225,7 @@ Behavior:
 - skips common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts by default
 - respects `.gitignore`/`.ignore` during traversal unless disabled
 - `effigy doctor` uses the same scanner core but keeps its own report semantics; warning-level god-file findings still appear there when `doctor = true`
+- doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-god-files.md`
 - `doctor = false` keeps the config available for `scan` without surfacing it in `effigy doctor`
 
 ## 12) Built-in Generated-Assets Scanner
@@ -257,8 +258,43 @@ Behavior:
 - matches vendored/build paths, bundle/minified/source-map names, and generated markers
 - respects `.gitignore`/`.ignore` during traversal unless disabled
 - `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
+- doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-generated-assets.md`
 
-## 13) Built-in Attention-Markers Scanner
+## 13) Built-in Duplicate-Blocks Scanner
+
+```toml
+[scan.duplicate_blocks]
+warn = 20
+high = 40
+critical = 80
+min_occurrences = 2
+doctor = false
+fail_on_findings = false
+respect_gitignore = true
+include = ["src/**", "crates/**", "tests/**"]
+exclude = ["vendor/**"]
+format = "markdown"
+out = "reports/duplicate-blocks.md"
+```
+
+Use this when you want a repo-level scan for large repeated normalized code spans across source files.
+
+Typical commands:
+- `effigy scan duplicate-blocks`
+- `effigy scan duplicate-blocks --show-warnings`
+- `effigy scan duplicate-blocks --fail-on-findings`
+- `effigy --json scan duplicate-blocks`
+
+Behavior:
+- thresholds are measured in normalized code lines after blank/comment-only line filtering
+- findings report merged duplicate spans, occurrence counts, snippets, and location ranges
+- terminal text output hides warning rows by default and prints a warning count summary; `--show-warnings` restores the full list
+- includes source and test files by default while skipping common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts
+- respects `.gitignore`/`.ignore` during traversal unless disabled
+- `effigy doctor` can include the same scanner when `doctor = true`, with file-level details written to `.effigy/reports/doctor/scan-duplicate-blocks.md`
+- keep `doctor = false` as the default; the current `acowtancy` benchmark takes about `16.9s` and yields enough findings that this is better as an opt-in health check
+
+## 14) Built-in Attention-Markers Scanner
 
 ```toml
 [scan.attention_markers]
@@ -288,8 +324,44 @@ Behavior:
 - includes source and test files by default while skipping common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts
 - respects `.gitignore`/`.ignore` during traversal unless disabled
 - `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
+- doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-attention-markers.md`
 
-## 14) Task-Local Runtime Env (Cargo Isolation)
+## 15) Built-in Comment-Ratio Scanner
+
+```toml
+[scan.comment_ratio]
+warn = 1.5
+high = 2.0
+critical = 3.0
+min_code_lines = 20
+doctor = true
+fail_on_findings = false
+respect_gitignore = true
+include = ["src/**", "crates/**", "tests/**"]
+exclude = ["vendor/**"]
+format = "markdown"
+out = "reports/comment-ratio.md"
+```
+
+Use this when you want a repo-level scan for files where comment-only lines materially outweigh executable lines.
+
+Typical commands:
+- `effigy scan comment-ratio`
+- `effigy scan comment-ratio --show-warnings`
+- `effigy scan comment-ratio --fail-on-findings`
+- `effigy --json scan comment-ratio`
+
+Behavior:
+- thresholds are measured as `comment_lines / code_lines`
+- only files with at least `min_code_lines` code-only lines are evaluated
+- terminal text output hides warning rows by default and prints a warning count summary; `--show-warnings` restores the full list
+- includes source and test files by default while skipping common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts
+- respects `.gitignore`/`.ignore` during traversal unless disabled
+- `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
+- doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-comment-ratio.md`
+- keep `doctor = true` as the default; the current `acowtancy` benchmark takes about `2.4s` and yields `15` findings, which is acceptable for default health runs
+
+## 16) Task-Local Runtime Env (Cargo Isolation)
 
 Compact inline-table shape:
 

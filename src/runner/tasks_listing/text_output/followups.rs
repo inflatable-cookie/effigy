@@ -2,9 +2,9 @@ use crate::ui::theme::Theme;
 use crate::ui::{NoticeLevel, PlainRenderer, Renderer};
 
 use super::super::super::tasks_view::render_resolution_probe_block;
-use super::super::super::RunnerError;
 use super::super::row_projection::BuiltinTaskProjection;
 use super::rows::render_builtin_task_rows;
+use crate::runner::error::RunnerError;
 
 pub(super) fn render_builtin_rows_section<'a>(
     renderer: &mut PlainRenderer<Vec<u8>>,

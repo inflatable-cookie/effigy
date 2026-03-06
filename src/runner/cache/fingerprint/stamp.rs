@@ -5,7 +5,7 @@ use std::time::UNIX_EPOCH;
 use super::digest::{digest_directory, fnv1a_hex};
 use super::resolve::render_relative_or_absolute;
 use super::PathStamp;
-use crate::runner::RunnerError;
+use crate::runner::error::RunnerError;
 
 pub(super) fn stamp_path(catalog_root: &Path, path: &Path) -> Result<PathStamp, RunnerError> {
     let rendered = render_relative_or_absolute(catalog_root, path);

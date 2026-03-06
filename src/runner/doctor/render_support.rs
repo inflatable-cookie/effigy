@@ -1,7 +1,7 @@
 use crate::ui::{PlainRenderer, UiError};
 
 use super::super::render::text_renderer;
-use super::super::RunnerError;
+use crate::runner::error::RunnerError;
 
 pub(super) const DOCTOR_RENDER_TARGET: &str = "doctor output";
 pub(super) const DOCTOR_EXPLAIN_RENDER_TARGET: &str = "doctor explain output";

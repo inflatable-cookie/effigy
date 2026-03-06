@@ -4,8 +4,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::TaskCacheEntry;
-use crate::runner::RunnerError;
+use super::model::TaskCacheEntry;
+use crate::runner::error::RunnerError;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct TaskCacheStore {

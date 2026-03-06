@@ -13,6 +13,8 @@ impl SpinnerHandle for NoopSpinnerHandle {
     fn finish_success(&self, _message: &str) {}
 
     fn finish_error(&self, _message: &str) {}
+
+    fn finish_clear(&self) {}
 }
 
 #[derive(Debug, Clone)]
@@ -39,5 +41,9 @@ impl SpinnerHandle for IndicatifSpinnerHandle {
 
     fn finish_error(&self, message: &str) {
         self.progress.abandon_with_message(message.to_owned());
+    }
+
+    fn finish_clear(&self) {
+        self.progress.finish_and_clear();
     }
 }

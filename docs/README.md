@@ -13,10 +13,16 @@ Effigy docs are organized by intent:
 
 New to Effigy:
 1. [`../README.md`](../README.md)
-2. [`guides/030-contributor-onboarding-15-minutes.md`](./guides/030-contributor-onboarding-15-minutes.md)
-3. [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md)
-4. [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md)
-5. [`guides/025-command-reference-matrix.md`](./guides/025-command-reference-matrix.md)
+2. [`guides/010-path-installation-and-release.md`](./guides/010-path-installation-and-release.md)
+3. [`guides/030-contributor-onboarding-15-minutes.md`](./guides/030-contributor-onboarding-15-minutes.md)
+4. [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md)
+5. [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md)
+6. [`guides/025-command-reference-matrix.md`](./guides/025-command-reference-matrix.md)
+
+Adopting Effigy for AI agents and multi-repo rollout:
+1. [`guides/047-agent-and-cross-repo-adoption.md`](./guides/047-agent-and-cross-repo-adoption.md)
+2. [`guides/024-ci-and-automation-recipes.md`](./guides/024-ci-and-automation-recipes.md)
+3. [`guides/041-distribution-ci-pinning-and-wrapper-migration.md`](./guides/041-distribution-ci-pinning-and-wrapper-migration.md)
 
 Operating and debugging day-to-day:
 1. [`guides/025-command-reference-matrix.md`](./guides/025-command-reference-matrix.md)

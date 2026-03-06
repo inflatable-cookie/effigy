@@ -3,23 +3,22 @@ use std::path::Path;
 use crate::HelpTopic;
 use crate::TaskInvocation;
 
-use super::super::execute::run_manifest_task_with_cwd;
-use super::super::locking::{acquire_scopes, LockScope};
-use super::super::{RunnerError, TaskRuntimeArgs};
+use super::super::model::catalog::TaskRuntimeArgs;
 use super::command_spec::run_passthrough_builtin_command;
 use super::render_builtin_help_topic;
+use crate::runner::error::RunnerError;
 
 mod output;
 #[path = "watch/request.rs"]
 mod request;
+mod runtime;
 mod scan;
 #[cfg(test)]
 #[path = "watch/test_support.rs"]
 pub(in crate::runner) mod test_support;
 
-use output::render_watch_result_json;
-use request::{parse_watch_request, WatchOwner};
-use scan::{build_matcher, collect_snapshot, wait_for_changes};
+use request::parse_watch_request;
+use runtime::run_watch_runtime;
 
 pub(super) fn run_builtin_watch(
     task: &TaskInvocation,
@@ -39,65 +38,6 @@ fn run_watch_request(
     request: request::WatchRequest,
     target_root: &Path,
 ) -> Result<Option<String>, RunnerError> {
-    if request.output_json && request.max_runs.is_none() {
-        return Err(RunnerError::task_invocation(
-            "`--json` requires a bounded watch run (`--once` or `--max-runs <N>`).",
-        ));
-    }
-
-    let owner = request.owner.ok_or_else(|| {
-        RunnerError::task_invocation(
-            "`--owner <effigy|external>` is required to avoid nested watcher conflicts.",
-        )
-    })?;
-    if owner == WatchOwner::External {
-        return Err(RunnerError::task_invocation(
-            "watch owner `external` means task-managed watching is expected. Run the task directly (without `effigy watch`) to avoid nested watcher loops.",
-        ));
-    }
-
-    let target = request.target.ok_or_else(|| {
-        RunnerError::task_invocation(
-            "watch requires a target task selector (for example `effigy watch --owner effigy test`).",
-        )
-    })?;
-    if target.name == "watch" {
-        return Err(RunnerError::task_invocation(
-            "watch target cannot be `watch` (nested watch loops are blocked by owner policy).",
-        ));
-    }
-    let watch_scope = LockScope::Task(format!("watch:{}", target.name));
-    let _watch_lock = acquire_scopes(target_root, &[watch_scope])?;
-
-    let matcher = build_matcher(&request.include, &request.exclude)?;
-    let max_runs = request.max_runs;
-    let mut runs = 0usize;
-    run_watch_target(&target, target_root, request.output_json)?;
-    runs += 1;
-    if Some(runs) == max_runs {
-        return render_watch_result_json(request.output_json, runs);
-    }
-
-    let mut snapshot = collect_snapshot(target_root, &matcher)?;
-    loop {
-        let _changes = wait_for_changes(target_root, &matcher, &mut snapshot, request.debounce_ms)?;
-        run_watch_target(&target, target_root, request.output_json)?;
-        runs += 1;
-        if Some(runs) == max_runs {
-            return render_watch_result_json(request.output_json, runs);
-        }
-    }
-}
-
-fn run_watch_target(
-    target: &TaskInvocation,
-    target_root: &Path,
-    output_json: bool,
-) -> Result<(), RunnerError> {
-    let mut invocation = target.clone();
-    if output_json {
-        invocation.args.push("--json".to_owned());
-    }
-    let _ = run_manifest_task_with_cwd(&invocation, target_root.to_path_buf())?;
-    Ok(())
+    request.validate_execution_policy()?;
+    run_watch_runtime(request, target_root)
 }

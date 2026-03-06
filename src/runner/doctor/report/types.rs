@@ -1,5 +1,3 @@
-use super::super::{LoadedCatalog, ManifestJsPackageManager};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(in crate::runner) enum DoctorSeverity {
     Info,
@@ -52,6 +50,7 @@ pub(in crate::runner) struct DoctorSummary {
 
 #[derive(Debug, Clone)]
 pub(in crate::runner) struct DoctorReport {
+    pub(in crate::runner) resolved_root: String,
     pub(in crate::runner) summary: DoctorSummary,
     pub(in crate::runner) findings: Vec<DoctorFinding>,
     pub(in crate::runner) fixes: Vec<DoctorFixAction>,
@@ -79,11 +78,4 @@ pub(in crate::runner) struct DoctorFixAction {
     pub(in crate::runner) fix_id: String,
     pub(in crate::runner) status: DoctorFixStatus,
     pub(in crate::runner) detail: String,
-}
-
-pub(in crate::runner) struct ManifestSnapshot {
-    pub(in crate::runner) manifest_paths: Vec<std::path::PathBuf>,
-    pub(in crate::runner) parsed_catalogs: Vec<LoadedCatalog>,
-    pub(in crate::runner) preferred_js_pm: Option<ManifestJsPackageManager>,
-    pub(in crate::runner) parse_ok_any: bool,
 }

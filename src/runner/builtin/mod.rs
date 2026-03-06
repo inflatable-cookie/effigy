@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use super::catalog::resolve_catalog_by_prefix;
-use super::{LoadedCatalog, RunnerError, TaskRuntimeArgs, TaskSelector};
+use super::model::catalog::{LoadedCatalog, TaskRuntimeArgs, TaskSelector};
+use crate::runner::error::RunnerError;
 use crate::TaskInvocation;
 
 mod arg_parser;
@@ -9,6 +10,7 @@ mod cache;
 mod command_spec;
 mod completion;
 mod config;
+mod doc_render;
 mod doctor;
 mod help;
 mod help_text;

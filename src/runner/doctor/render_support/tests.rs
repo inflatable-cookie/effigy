@@ -1,7 +1,7 @@
 use crate::ui::UiError;
 
 use super::{map_doctor_render_error, DOCTOR_EXPLAIN_RENDER_TARGET, DOCTOR_RENDER_TARGET};
-use crate::runner::RunnerError;
+use crate::runner::error::RunnerError;
 
 #[test]
 fn map_doctor_render_error_message_contract_is_stable() {

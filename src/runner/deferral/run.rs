@@ -2,11 +2,13 @@ use std::process::Command as ProcessCommand;
 
 use crate::TaskInvocation;
 
+use super::super::model::catalog::{DeferredCommand, TaskRuntimeArgs};
+use super::super::model::constants::DEFER_DEPTH_ENV;
 use super::super::util::{shell_quote, with_local_node_bin_path};
-use super::super::{DeferredCommand, RunnerError, TaskRuntimeArgs, DEFER_DEPTH_ENV};
 use super::trace::render_deferral_trace;
+use crate::runner::error::RunnerError;
 
-pub(super) fn run_deferred_request(
+pub(in crate::runner) fn run_deferred_request(
     task: &TaskInvocation,
     runtime_args: &TaskRuntimeArgs,
     deferral: &DeferredCommand,

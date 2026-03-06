@@ -1,0 +1,27 @@
+[catalog]
+alias = "effigy"
+
+# Keep built-in `test` canonical so `effigy test --plan` remains available.
+# Aggregator tasks below call the built-in through task refs.
+[tasks]
+"fmt:check" = "cargo fmt --all -- --check"
+"build:release" = "cargo build --release --bin effigy"
+"install:local" = "cargo install --path . --root ./.local-install --force"
+"link:local" = "./scripts/install-local-bin-links.sh"
+"bootstrap:local" = [{ task = "install:local" }, { task = "link:local" }]
+"smoke:release" = "./scripts/check-release-smoke.sh ./target/release/effigy"
+"dist:metadata" = "./scripts/check-distribution-metadata.sh"
+"qa:docs" = "./scripts/check-quality-gates.sh --docs-only"
+"qa:json" = "./scripts/check-quality-gates.sh --json-only"
+"qa:json:ci" = "./scripts/check-quality-gates.sh --json-only --ci"
+health = [{ task = "qa:docs" }, { task = "qa:json" }]
+qa = [{ task = "test" }, { task = "qa:docs" }, { task = "qa:json" }]
+"qa:release" = [
+  { task = "fmt:check" },
+  { task = "test" },
+  { task = "qa:docs" },
+  { task = "qa:json:ci" },
+  { task = "build:release" },
+  { task = "smoke:release" },
+  { task = "dist:metadata" }
+]

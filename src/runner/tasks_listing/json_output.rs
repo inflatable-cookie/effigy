@@ -3,7 +3,8 @@ mod payload;
 #[path = "json_output/rows.rs"]
 mod rows;
 
-use super::super::{render, LoadedCatalog, RunnerError};
+use super::super::model::catalog::LoadedCatalog;
+use super::super::{render, RunnerError};
 use super::prepared_task_rows::{prepare_all_catalog_rows_json, prepare_filtered_rows_json};
 use super::render_context::ListingRenderRequest;
 use super::selection::PreparedFilteredListing;
