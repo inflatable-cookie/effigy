@@ -347,6 +347,6 @@ Use catalog aliases to keep task ownership local while retaining root-level orch
 - [`013-testing-orchestration.md`](./013-testing-orchestration.md)
 - [`015-deferral-fallback-migration.md`](./015-deferral-fallback-migration.md)
 - [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
-- [`019-watch-init-migrate-phase-1.md`](./019-watch-init-migrate-phase-1.md)
+- [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
 - [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)

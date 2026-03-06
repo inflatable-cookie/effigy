@@ -33,3 +33,10 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 ## Next Task
 
 Open the next Effigy milestone in `g01/` when a net-new roadmap batch is ready.
+
+
+## Historical language boundary
+
+- New roadmaps and actively maintained roadmap updates must use roadmap IDs and batch language.
+- Older imported roadmap bodies may retain internal `Phase X.Y` execution headings as historical record.
+- Leave those historical headings alone unless that roadmap is reopened for active work, then normalize it in the same batch.

@@ -72,7 +72,7 @@ Read:
 Read:
 1. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 2. [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
-3. [`019-watch-init-migrate-phase-1.md`](./019-watch-init-migrate-phase-1.md)
+3. [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
 
 ### CI Owner
 

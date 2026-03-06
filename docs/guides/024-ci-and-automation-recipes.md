@@ -352,7 +352,7 @@ Warm-hit consistency check:
 ## Related Guides
 
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
-- [`019-watch-init-migrate-phase-1.md`](./019-watch-init-migrate-phase-1.md)
+- [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)

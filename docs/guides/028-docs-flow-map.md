@@ -8,7 +8,7 @@ Use this when your goal is to run commands and recover quickly from failures.
 
 1. [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 2. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-3. [`019-watch-init-migrate-phase-1.md`](./019-watch-init-migrate-phase-1.md)
+3. [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
 4. [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
 5. [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 

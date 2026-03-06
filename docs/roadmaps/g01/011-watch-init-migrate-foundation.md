@@ -1,4 +1,4 @@
-# 011 - Watch Mode, Init, and Migrate (Phase 1)
+# 011 - Watch Mode, Init, and Migrate Foundation
 
 Status: Complete
 Owner: Platform
@@ -21,7 +21,7 @@ This roadmap reduces onboarding and loop-friction by formalizing watch/init/migr
 
 ## Vision Target Delta
 
-- Moved from manual bootstrap/migration conventions to built-in phase-1 workflows with bounded behavior.
+- Moved from manual bootstrap/migration conventions to built-in foundational workflows with bounded behavior.
 
 ## 1) Problem
 
@@ -34,24 +34,24 @@ Without these, adoption cost stays high and teams duplicate migration/watch conv
 
 ## 2) Goals
 
-- [x] Implement watch mode phase-1 for non-watcher task reruns.
+- [x] Implement the foundational watch mode for non-watcher task reruns.
 - [x] Enforce explicit watch-owner policy to avoid nested watcher conflicts.
 - [x] Add `effigy init` to generate valid baseline `effigy.toml` scaffolding.
-- [x] Add `effigy migrate` phase-1 flow for `package.json` script import.
+- [x] Add the foundational `effigy migrate` flow for `package.json` script import.
 - [x] Ensure migrate supports preview + confirm before writes.
 - [x] Keep migration non-destructive (source scripts preserved).
 
 ## 3) Non-Goals
 
-- [ ] No heuristic watcher-ownership inference in phase 1.
+- [ ] No heuristic watcher-ownership inference in this foundational rollout.
 - [ ] No source modification/deletion of `package.json` scripts.
-- [ ] No migration from non-`package.json` sources in phase 1.
+- [ ] No migration from non-`package.json` sources in this foundational rollout.
 - [ ] No remote/shared-state dependency for watch internals.
 - [ ] No schema-breaking manifest changes beyond Batch A/B contracts.
 
 ## 4) Start Gates
 
-Batch C phase-1 starts only when:
+Batch C starts only when:
 
 - [ ] Gate 1: manifest schema freeze for Milestone 1 is stable.
   - reason: `init` and `migrate` must generate currently valid schema.
@@ -62,7 +62,7 @@ Batch C phase-1 starts only when:
 
 ## 5) Baseline Scope
 
-### Watch Mode (Phase 1)
+### Watch Mode
 
 - [x] File-triggered rerun for non-watcher tasks.
 - [x] Explicit watch-owner policy to prevent nested watcher conflicts.
@@ -70,7 +70,7 @@ Batch C phase-1 starts only when:
 - [x] Include/exclude glob controls.
 - [x] Actionable diagnostics for ownership conflicts and invalid watch config.
 
-### Init Helper (Phase 1)
+### Init Helper
 
 - [x] Add `effigy init`.
 - [x] Generate minimal valid `effigy.toml`.
@@ -79,7 +79,7 @@ Batch C phase-1 starts only when:
   - managed dev task (`mode = "tui"`).
 - [x] Ensure generated scaffold validates immediately with existing parser/contracts.
 
-### Migrate Helper (Phase 1)
+### Migrate Helper
 
 - [x] Add `effigy migrate`.
 - [x] Read from `package.json` scripts only.
@@ -124,7 +124,7 @@ Batch C phase-1 starts only when:
 - [x] `effigy init` creates a valid baseline `effigy.toml` scaffold.
 - [x] `effigy migrate` can preview and apply `package.json` script import safely.
 - [x] Migration does not mutate or delete `package.json` scripts.
-- [x] Tests/docs cover phase-1 behavior and operator remediation paths.
+- [x] Tests/docs cover foundational behavior and operator remediation paths.
 
 ## 8) Risks and Mitigations
 
