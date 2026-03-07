@@ -87,7 +87,7 @@ const DOCTOR_CHECKS: [DoctorCheckDefinition; 11] = [
     },
     DoctorCheckDefinition {
         name: "health_task",
-        progress_label: None,
+        progress_label: Some("Doctor task: health"),
         run: run_health_task_check,
     },
 ];

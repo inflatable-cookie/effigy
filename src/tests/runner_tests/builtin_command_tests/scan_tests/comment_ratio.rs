@@ -68,7 +68,14 @@ fn run_manifest_task_builtin_scan_comment_ratio_json_emits_machine_payload() {
     fs::create_dir_all(root.join("src")).expect("mkdir src");
     write_comment_ratio_file(&root.join("src/warn.ts"), 30, 20);
 
-    let args = vec!["comment-ratio", "--warn", "1.0", "--min-code-lines", "20", "--json"];
+    let args = vec![
+        "comment-ratio",
+        "--warn",
+        "1.0",
+        "--min-code-lines",
+        "20",
+        "--json",
+    ];
     let out = run_builtin_ok(root, "scan", &args);
 
     let parsed = parse_json_output_with_schema(&out, "effigy.scan.comment-ratio.v1");

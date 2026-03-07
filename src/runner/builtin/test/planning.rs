@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::runner::model::catalog::{LoadedCatalog, TaskSelector};
+use crate::runner::RunnerError;
 
 #[path = "planning/config.rs"]
 mod config;
@@ -40,7 +41,7 @@ pub(super) fn resolve_builtin_test_targets(
     selector: &TaskSelector,
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
-) -> Vec<BuiltinTestTarget> {
+) -> Result<Vec<BuiltinTestTarget>, RunnerError> {
     resolve::resolve_builtin_test_targets(selector.prefix.as_deref(), resolved_root, catalogs)
 }
 

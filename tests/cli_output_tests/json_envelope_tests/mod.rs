@@ -23,7 +23,10 @@ fn write_god_file_fixture(root: &Path) {
 
 fn write_duplicate_block_fixture(root: &Path) {
     fs::create_dir_all(root.join("src")).expect("mkdir src");
-    let mut lines = vec!["pub fn shared_alpha() -> usize {".to_owned(), "    let seed = 1;".to_owned()];
+    let mut lines = vec![
+        "pub fn shared_alpha() -> usize {".to_owned(),
+        "    let seed = 1;".to_owned(),
+    ];
     for idx in 0..18 {
         lines.push(format!("    let acc_{idx} = seed + {idx};"));
     }

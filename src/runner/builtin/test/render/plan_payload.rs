@@ -30,6 +30,16 @@ pub(super) fn build_builtin_test_plan_payload(
                 "selected_suites": projection.selected_suites,
                 "commands": projection.commands,
                 "evidence": projection.evidence,
+                "suite_details": projection.suite_details.iter().map(|suite| json!({
+                    "suite": suite.suite,
+                    "command": suite.command,
+                    "evidence": suite.evidence,
+                    "suite_env": suite.suite_env,
+                    "suite_env_files": suite.suite_env_files,
+                    "setup_steps": suite.setup_steps,
+                    "teardown_steps": suite.teardown_steps,
+                    "teardown_policy": suite.teardown_policy,
+                })).collect::<Vec<serde_json::Value>>(),
                 "fallback_chain": target.fallback_chain,
             })
         })

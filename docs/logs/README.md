@@ -112,6 +112,19 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 - [`2026-03/05-201451-effigy-northstar-doctrine-alignment.md`](./2026-03/05-201451-effigy-northstar-doctrine-alignment.md)
 
+## Recent Research Batch Logs
+
+- [`2026-03-07-research-batch-20-1-track-01-completion.md`](./2026-03/07-200000-research-batch-20-1-track-01-completion.md)
+- [`2026-03-07-research-batch-20-2-track-02-completion.md`](./2026-03/07-201500-research-batch-20-2-track-02-completion.md)
+- [`2026-03-07-research-batch-20-3-track-03-completion.md`](./2026-03/07-203000-research-batch-20-3-track-03-completion.md)
+- [`2026-03-07-research-batch-20-4-track-04-completion.md`](./2026-03/07-204500-research-batch-20-4-track-04-completion.md)
+- [`2026-03-07-research-batch-20-5-track-05-completion.md`](./2026-03/07-210000-research-batch-20-5-track-05-completion.md)
+- [`2026-03-07-research-batch-21-1-track-06-completion.md`](./2026-03/07-211500-research-batch-21-1-track-06-completion.md)
+- [`2026-03-07-research-batch-21-2-track-07-completion.md`](./2026-03/07-213000-research-batch-21-2-track-07-completion.md)
+- [`2026-03-07-research-batch-21-3-track-08-completion.md`](./2026-03/07-214500-research-batch-21-3-track-08-completion.md)
+- [`2026-03-07-research-batch-21-4-track-09-completion.md`](./2026-03/07-220000-research-batch-21-4-track-09-completion.md)
+- [`2026-03-07-research-batch-21-5-track-10-completion.md`](./2026-03/07-221500-research-batch-21-5-track-10-completion.md)
+
 ## Archived Validation Logs
 
 - [`2026-02-26-deferral-fallback-phase-2-1-checkpoint.md`](./2026-02/26-090000-deferral-fallback-phase-2-1-checkpoint.md)

@@ -12,6 +12,15 @@ const SECTION_TEST_CORE: &[&str] = &[
     "unit = \"bun x vitest run\"",
     "integration = \"cargo nextest run\"",
     "",
+    "[test.suites.managed]",
+    "# Optional lifecycle-aware suite example for managed test environments.",
+    "run = \"cargo nextest run --workspace\"",
+    "env = \"managed-test\"",
+    "env_file = [\".env\", \".env.test\"]",
+    "setup = [{ run = \"cargo run -p app-db --bin migrate_test_db\" }]",
+    "teardown = [{ run = \"cargo run -p app-db --bin reset_test_db\" }]",
+    "teardown_policy = \"always\"",
+    "",
 ];
 
 const RUNNER_COMMENT: &str = "# Per-runner command overrides for built-in detection.";

@@ -8,6 +8,7 @@ Effigy docs are organized by intent:
 - `roadmaps/`: generation-sharded implementation plans and backlog.
 - `logs/`: dated validation artifacts and release notes, segmented by month.
 - `vision/`: long-horizon direction and target envelopes.
+- `research/`: comparative tool research, competitive analysis, and translation memos.
 
 ## Recommended Reading Paths
 
@@ -108,6 +109,13 @@ Supplemental legacy navigation:
 - Top-level envelope schema is `effigy.command.v1`.
 - Validation index lives at [`contracts/json-schema-index.json`](./contracts/json-schema-index.json).
 - Ownership/drift policy lives at [`contracts/README.md`](./contracts/README.md).
+
+## Research Notes
+
+- Research index: [`research/README.md`](./research/README.md)
+- Research implementation bridge: [`research/master-index.md`](./research/master-index.md), [`research/research-to-implementation-playbook.md`](./research/research-to-implementation-playbook.md)
+- Research tracks: [`research/value-tracks/`](./research/value-tracks/)
+- Tool dossiers: [`research/tool-dossiers/`](./research/tool-dossiers/)
 
 ## Vision Notes
 

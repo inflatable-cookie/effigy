@@ -12,7 +12,8 @@ This is the navigation hub for practical runbooks.
 6. [`026-json-payload-examples.md`](./026-json-payload-examples.md) - payload examples for machine consumers.
 7. [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md) - quick manifest scaffolds.
 8. [`028-migration-quick-paths.md`](./028-migration-quick-paths.md) - scenario-based adoption paths.
-9. [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md) - agent-first repo adoption contract and rollout waves.
+9. [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md) - managed builtin test suites with env, setup, teardown, and nextest passthrough.
+10. [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md) - agent-first repo adoption contract and rollout waves.
 
 ## Standards Used In These Guides
 
@@ -53,9 +54,16 @@ Use this section as a fast reference for task env behavior.
 - Built-in cargo test suites inherit manifest `CARGO_*`:
   - `effigy test` auto-applies `[env]` `CARGO_*` entries to `cargo-nextest`/`cargo-test` execution.
   - `[test].cargo_env_match` controls matching scope: `executable-only`, `prefix-aware` (default), `shell-aware`.
+- Lifecycle-aware builtin test suites can also declare:
+  - `test.suites.<name>.env`
+  - `test.suites.<name>.env_file`
+  - `test.suites.<name>.setup`
+  - `test.suites.<name>.teardown`
+  - `test.suites.<name>.teardown_policy`
 
 Canonical source and examples:
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 
@@ -73,7 +81,8 @@ Read:
 Read:
 1. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 2. [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
-3. [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
+3. [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
+4. [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
 
 ### CI Owner
 
@@ -88,7 +97,8 @@ Read:
 1. [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
 2. [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 3. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-4. [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+4. [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
+5. [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 
 ### Maintainer
 

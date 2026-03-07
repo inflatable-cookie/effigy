@@ -88,7 +88,10 @@ doctor = true
         "scan.stale-suppressions",
         "error",
         &[
-            ("warning", "[warning] lint-disable [eslint-disable-next-line]"),
+            (
+                "warning",
+                "[warning] lint-disable [eslint-disable-next-line]",
+            ),
             ("error", "[critical] lint-disable [eslint-disable]"),
         ],
     );

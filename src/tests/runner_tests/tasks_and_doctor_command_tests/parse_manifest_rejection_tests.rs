@@ -31,6 +31,26 @@ fn run_tasks_rejects_invalid_manifest_shapes() {
             expected: &["unknown field `cmd`", "data did not match any variant"],
         },
         ManifestParseRejectionCase {
+            workspace: "reject-unknown-test-suite-field",
+            manifest: "[test.suites.managed]\nrun = \"cargo nextest run\"\nteardwon_policy = \"always\"\n",
+            expected: &["unknown field `teardwon_policy`", "data did not match any variant"],
+        },
+        ManifestParseRejectionCase {
+            workspace: "reject-invalid-test-suite-env-file-type",
+            manifest: "[test.suites.managed]\nrun = \"cargo nextest run\"\nenv_file = true\n",
+            expected: &["data did not match any variant"],
+        },
+        ManifestParseRejectionCase {
+            workspace: "reject-invalid-test-suite-setup-type",
+            manifest: "[test.suites.managed]\nrun = \"cargo nextest run\"\nsetup = \"cargo run -p db --bin migrate_test_db\"\n",
+            expected: &["data did not match any variant"],
+        },
+        ManifestParseRejectionCase {
+            workspace: "reject-invalid-test-suite-teardown-policy",
+            manifest: "[test.suites.managed]\nrun = \"cargo nextest run\"\nteardown_policy = \"alwayss\"\n",
+            expected: &["data did not match any variant of untagged enum ManifestTestSuite"],
+        },
+        ManifestParseRejectionCase {
             workspace: "reject-unknown-task-field",
             manifest: "[tasks.dev]\nrun = \"printf dev\"\nfial_on_non_zero = true\n",
             expected: &[

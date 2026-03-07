@@ -47,10 +47,10 @@ fn run_manifest_task_builtin_subcommand_error_contracts_are_stable() {
 #[test]
 fn run_manifest_task_builtin_subcommand_help_precedence_contracts_are_stable() {
     let mut cases = builtin_shared_help_precedence_cases(
-            "builtin-subcommand-help-cache",
-            "builtin-subcommand-help-completion",
-            "builtin-subcommand-help-completion-candidates",
-        );
+        "builtin-subcommand-help-cache",
+        "builtin-subcommand-help-completion",
+        "builtin-subcommand-help-completion-candidates",
+    );
     cases.extend(builtin_scan_subcommand_help_cases());
 
     assert_builtin_help_case_table(&cases);

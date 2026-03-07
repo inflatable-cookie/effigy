@@ -14,6 +14,9 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
             "Canonical strict-valid effigy.toml schema template",
             "[package_manager]",
             "cargo_env_match = \"prefix-aware\"",
+            "[test.suites.managed]",
+            "env = \"managed-test\"",
+            "teardown_policy = \"always\"",
             "[test.runners]",
             "concurrent = [",
             "task = \"test vitest \\\"user service\\\"\"",
@@ -50,6 +53,8 @@ fn run_manifest_task_builtin_config_schema_target_prints_selected_section() {
         &[
             "(test target)",
             "cargo_env_match = \"prefix-aware\"",
+            "[test.suites.managed]",
+            "setup = [{ run = \"cargo run -p app-db --bin migrate_test_db\" }]",
             "[test.runners]",
         ],
     );

@@ -17,7 +17,7 @@ pub(super) fn try_run_builtin_test(
     catalogs: &[LoadedCatalog],
 ) -> Result<Option<String>, RunnerError> {
     let (flags, passthrough) = planning::extract_builtin_test_flags(&runtime_args.passthrough);
-    let targets = planning::resolve_builtin_test_targets(selector, resolved_root, catalogs);
+    let targets = planning::resolve_builtin_test_targets(selector, resolved_root, catalogs)?;
     let runnable = planning::collect_builtin_test_runnable_targets(&targets);
     if runnable.is_empty() {
         return Ok(None);

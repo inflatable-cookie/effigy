@@ -32,7 +32,10 @@ critical = 20
         &parsed,
         "scan.god-files",
         "error",
-        &[("warning", "[warning] src/warning.ts"), ("error", "[high] src/high.ts")],
+        &[
+            ("warning", "[warning] src/warning.ts"),
+            ("error", "[high] src/high.ts"),
+        ],
     );
 }
 

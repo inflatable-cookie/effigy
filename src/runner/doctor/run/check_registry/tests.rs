@@ -81,7 +81,7 @@ fn doctor_check_registry_is_executor_composable_without_control_flow_changes() {
 }
 
 #[test]
-fn doctor_check_registry_scan_progress_labels_are_stable() {
+fn doctor_check_registry_progress_labels_are_stable() {
     let labels = doctor_check_definitions()
         .iter()
         .filter_map(|check| check.progress_label)
@@ -96,6 +96,7 @@ fn doctor_check_registry_scan_progress_labels_are_stable() {
             "Doctor scan: generated-in-src",
             "Doctor scan: attention-markers",
             "Doctor scan: stale-suppressions",
+            "Doctor task: health",
         ]
     );
 }

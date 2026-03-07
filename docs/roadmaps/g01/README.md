@@ -27,6 +27,14 @@ Current planned milestone:
 - `018-generated-in-src-scan-and-doctor-integration.md` (complete)
 - `019-stale-suppressions-scan-and-doctor-integration.md` (complete)
 
+Research roadmaps (planned):
+- `020-research-phase-1-core-execution.md`
+- `021-research-phase-2-developer-experience.md`
+- `022-research-phase-3-scale-and-integration.md`
+
+Implementation roadmap (planned):
+- `023-builtin-test-suite-lifecycle-and-env.md`
+
 Rules:
 
 - Keep `Generation: g01` markers intact in imported numbered files.

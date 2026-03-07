@@ -13,7 +13,10 @@ pub(crate) fn render_init_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     render_options_section(
         renderer,
         &[
-            ("--dry-run", "Print scaffold content without writing to disk."),
+            (
+                "--dry-run",
+                "Print scaffold content without writing to disk.",
+            ),
             ("--force", "Overwrite existing `effigy.toml` if present."),
             ("--json", "Render machine-readable init report payload."),
             ("-h, --help", "Print command help"),

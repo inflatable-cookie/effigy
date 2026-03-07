@@ -23,9 +23,29 @@ impl StepEnvAccumulator {
     pub(in super::super) fn new(
         task_env_file: Option<&ManifestEnvFileDirective>,
     ) -> Result<Self, RunnerError> {
+        Self::new_with_label(task_env_file, "task env_file")
+    }
+
+    pub(in crate::runner) fn resolve_standalone_env(
+        owner_label: &str,
+        env: Option<&ManifestRunStepEnv>,
+        env_file: Option<&ManifestEnvFileDirective>,
+        env_profiles: &BTreeMap<String, ManifestEnvEntry>,
+        repo_root: &Path,
+        catalogs: &[LoadedCatalog],
+    ) -> Result<BTreeMap<String, String>, RunnerError> {
+        let mut accumulator = Self::new_with_label(env_file, "test suite env_file")?;
+        accumulator.apply_env(owner_label, env, env_profiles, repo_root, catalogs)?;
+        Ok(accumulator.chained_env)
+    }
+
+    fn new_with_label(
+        task_env_file: Option<&ManifestEnvFileDirective>,
+        field_label: &str,
+    ) -> Result<Self, RunnerError> {
         Ok(Self {
             chained_env: BTreeMap::new(),
-            current_env_files: normalize_env_file_directive(task_env_file, "task env_file")?,
+            current_env_files: normalize_env_file_directive(task_env_file, field_label)?,
             dotenv_cache: BTreeMap::new(),
         })
     }
@@ -53,6 +73,17 @@ impl StepEnvAccumulator {
 
     pub(in super::super) fn chained_env(&self) -> &BTreeMap<String, String> {
         &self.chained_env
+    }
+
+    fn apply_env(
+        &mut self,
+        task_name: &str,
+        env: Option<&ManifestRunStepEnv>,
+        env_profiles: &BTreeMap<String, ManifestEnvEntry>,
+        repo_root: &Path,
+        catalogs: &[LoadedCatalog],
+    ) -> Result<(), RunnerError> {
+        self.apply_run_step_env(task_name, env, None, env_profiles, repo_root, catalogs)
     }
 
     fn apply_run_step_env(

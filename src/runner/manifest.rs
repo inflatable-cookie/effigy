@@ -17,8 +17,8 @@ pub(super) use task_runtime::{
     ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedRun, ManifestManagedRunStep,
     ManifestTask,
 };
-pub(super) use test_config::ManifestCargoEnvMatchMode;
 use test_config::ManifestTestConfig;
+pub(super) use test_config::{ManifestCargoEnvMatchMode, ManifestTestSuiteTeardownPolicy};
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]

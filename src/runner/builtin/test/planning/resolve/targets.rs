@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::runner::builtin::test::planning::{BuiltinResolvedPlan, BuiltinTestTarget};
 use crate::runner::model::catalog::LoadedCatalog;
+use crate::runner::RunnerError;
 
 use super::plan_resolution::resolve_target_test_plans;
 
@@ -10,7 +11,7 @@ pub(super) fn resolve_builtin_test_targets(
     prefix: Option<&str>,
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
-) -> Vec<BuiltinTestTarget> {
+) -> Result<Vec<BuiltinTestTarget>, RunnerError> {
     if let Some(prefix) = prefix {
         return resolve_prefixed_target(prefix, catalogs);
     }
@@ -18,17 +19,20 @@ pub(super) fn resolve_builtin_test_targets(
     collect_workspace_targets(resolved_root, catalogs)
 }
 
-fn resolve_prefixed_target(prefix: &str, catalogs: &[LoadedCatalog]) -> Vec<BuiltinTestTarget> {
+fn resolve_prefixed_target(
+    prefix: &str,
+    catalogs: &[LoadedCatalog],
+) -> Result<Vec<BuiltinTestTarget>, RunnerError> {
     let Some(catalog) = catalogs.iter().find(|catalog| catalog.alias == prefix) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let (plans, suite_source, cargo_env, cargo_env_match) =
-        resolve_target_test_plans(catalogs, &catalog.catalog_root);
+        resolve_target_test_plans(catalogs, &catalog.catalog_root)?;
     if plans.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    vec![BuiltinTestTarget {
+    Ok(vec![BuiltinTestTarget {
         name: catalog.alias.clone(),
         root: catalog.catalog_root.clone(),
         fallback_chain: render_fallback_chain(&plans),
@@ -36,17 +40,17 @@ fn resolve_prefixed_target(prefix: &str, catalogs: &[LoadedCatalog]) -> Vec<Buil
         suite_source,
         cargo_env,
         cargo_env_match,
-    }]
+    }])
 }
 
 fn collect_workspace_targets(
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
-) -> Vec<BuiltinTestTarget> {
+) -> Result<Vec<BuiltinTestTarget>, RunnerError> {
     let mut targets = Vec::new();
     for (root, name) in collect_target_roots(resolved_root, catalogs) {
         let (plans, suite_source, cargo_env, cargo_env_match) =
-            resolve_target_test_plans(catalogs, &root);
+            resolve_target_test_plans(catalogs, &root)?;
         if plans.is_empty() {
             continue;
         }
@@ -60,7 +64,7 @@ fn collect_workspace_targets(
             cargo_env_match,
         });
     }
-    targets
+    Ok(targets)
 }
 
 fn collect_target_roots(

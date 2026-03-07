@@ -65,6 +65,9 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("effigy test user-service"));
     assert!(rendered.contains("prefix the suite explicitly"));
     assert!(rendered.contains("check `available-suites` per target"));
+    assert!(rendered.contains(
+        "Configured suites can declare `env`, `env_file`, `setup`, `teardown`, and `teardown_policy`"
+    ));
     assert!(rendered.contains("suggests nearest suite names"));
     assert!(rendered.contains("source of truth and auto-detection is skipped"));
     assert!(rendered.contains("Migration"));
@@ -82,8 +85,16 @@ fn render_test_help_shows_detection_and_config() {
     assert!(rendered.contains("cargo_env_match = \"prefix-aware\""));
     assert!(rendered.contains("[test.suites]"));
     assert!(rendered.contains("unit = \"bun x vitest run\""));
+    assert!(rendered.contains("[test.suites.managed]"));
+    assert!(rendered.contains("env = \"managed-test\""));
+    assert!(rendered.contains("env_file = [\".env\", \".env.test\"]"));
+    assert!(rendered.contains("setup = [{ run = \"cargo run -p app-db --bin migrate_test_db\" }]"));
+    assert!(rendered.contains("teardown = [{ run = \"cargo run -p app-db --bin reset_test_db\" }]"));
+    assert!(rendered.contains("teardown_policy = \"always\""));
     assert!(rendered.contains("[test.runners]"));
     assert!(rendered.contains("vitest = \"bun x vitest run\""));
+    assert!(rendered
+        .contains("Use `--` when the remaining arguments belong to the underlying test runner"));
     assert!(!rendered.contains("[tasks.test]"));
     assert!(rendered.contains("Task-ref chain with quoted args"));
     assert!(rendered.contains(

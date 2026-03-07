@@ -4,10 +4,7 @@ fn owned_strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|item| (*item).to_owned()).collect()
 }
 
-pub(super) fn render_info_notices<R: Renderer>(
-    renderer: &mut R,
-    notices: &[&str],
-) -> UiResult<()> {
+pub(super) fn render_info_notices<R: Renderer>(renderer: &mut R, notices: &[&str]) -> UiResult<()> {
     for notice in notices {
         renderer.notice(NoticeLevel::Info, notice)?;
     }

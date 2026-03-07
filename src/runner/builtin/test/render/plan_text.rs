@@ -59,6 +59,25 @@ pub(super) fn render_builtin_test_plan_text(
             renderer.bullet_list("command", &projection.commands)?;
             renderer.text("")?;
             renderer.bullet_list("evidence", &projection.evidence)?;
+            renderer.text("")?;
+            renderer.bullet_list(
+                "suite-details",
+                &projection
+                    .suite_details
+                    .iter()
+                    .map(|suite| {
+                        format!(
+                            "{}: suite-env={} suite-env-files={} setup-steps={} teardown-steps={} teardown-policy={}",
+                            suite.suite,
+                            suite.suite_env.as_deref().unwrap_or("<none>"),
+                            render_suite_env_files(&suite.suite_env_files),
+                            suite.setup_steps,
+                            suite.teardown_steps,
+                            suite.teardown_policy,
+                        )
+                    })
+                    .collect::<Vec<String>>(),
+            )?;
         } else {
             renderer.key_values(&[
                 KeyValue::new("root", target.root.display().to_string()),
@@ -79,6 +98,14 @@ pub(super) fn render_builtin_test_plan_text(
         renderer.text("")?;
     }
     render_utf8(renderer.into_inner())
+}
+
+fn render_suite_env_files(files: &[String]) -> String {
+    if files.is_empty() {
+        "<none>".to_owned()
+    } else {
+        files.join(", ")
+    }
 }
 
 pub(super) fn render_builtin_test_plan_recovery_text(
