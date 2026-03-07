@@ -2,14 +2,9 @@ use super::constants::{
     DEFAULT_DATA_DIRS, DEFAULT_DOC_DIRS, DEFAULT_EXCLUDED_DIRS, DEFAULT_LOCK_FILE_NAMES,
     GENERATED_ASSET_DIRS, GENERATED_ASSET_NAME_MARKERS, GENERATED_MARKERS,
 };
-use super::model::{
-    AttentionMarkerCategory, AttentionMarkerPatterns, AttentionMarkerSeverity,
-    CommentRatioSeverity, CommentRatioThresholds, DuplicateBlockSeverity, DuplicateBlockThresholds,
-    GeneratedAssetSeverity, GeneratedAssetThresholds, GodFileSeverity, GodFileThresholds,
-};
 use crate::runner::error::RunnerError;
 
-#[path = "support/heuristics.rs"]
+#[path = "support/heuristics/mod.rs"]
 mod heuristics;
 #[path = "support/traversal.rs"]
 mod traversal;
