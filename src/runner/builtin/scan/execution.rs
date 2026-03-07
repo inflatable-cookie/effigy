@@ -4,7 +4,7 @@ use super::super::super::model::catalog::LoadedCatalog;
 use super::request::{ScanCommand, ScanRequest};
 use crate::runner::error::RunnerError;
 
-#[path = "execution/core.rs"]
+#[path = "execution/core/mod.rs"]
 mod core;
 #[path = "execution/modes.rs"]
 mod modes;
