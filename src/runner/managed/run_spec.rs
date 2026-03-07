@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::runner::manifest::task_runtime::{ManifestEnvEntry, ManifestEnvFileDirective};
+use crate::runner::manifest::task_runtime::{
+    ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedRunStep, ManifestRunStepEnv,
+};
 
 use super::super::manifest::task_runtime::ManifestManagedRun;
 use super::super::model::catalog::LoadedCatalog;
@@ -15,6 +17,7 @@ mod sequence;
 
 use command::{
     render_builtin_task_reference_invocation, render_task_command, wrap_command_with_cwd,
+    wrap_command_with_task_env,
 };
 
 #[derive(Clone, Copy)]
@@ -63,4 +66,56 @@ pub(in crate::runner) fn render_builtin_reference_invocation(
 
 pub(in crate::runner) fn wrap_reference_command_in_cwd(cwd: &Path, command: &str) -> String {
     wrap_command_with_cwd(cwd, command)
+}
+
+pub(in crate::runner) fn wrap_command_with_env(
+    command: String,
+    env: &BTreeMap<String, String>,
+    repo_root: &Path,
+) -> String {
+    wrap_command_with_task_env(command, env, repo_root)
+}
+
+pub(in crate::runner) fn resolve_run_step_env(
+    owner_label: &str,
+    env: Option<&ManifestRunStepEnv>,
+    env_file: Option<&ManifestEnvFileDirective>,
+    env_profiles: &BTreeMap<String, ManifestEnvEntry>,
+    repo_root: &Path,
+    catalogs: &[LoadedCatalog],
+) -> Result<BTreeMap<String, String>, RunnerError> {
+    sequence::resolve_standalone_env(
+        owner_label,
+        env,
+        env_file,
+        env_profiles,
+        repo_root,
+        catalogs,
+    )
+}
+
+pub(in crate::runner) fn render_run_step_sequence(
+    owner_label: &str,
+    steps: &[ManifestManagedRunStep],
+    task_env: &BTreeMap<String, String>,
+    task_env_file: Option<&ManifestEnvFileDirective>,
+    env_profiles: &BTreeMap<String, ManifestEnvEntry>,
+    repo_root: &Path,
+    catalogs: &[LoadedCatalog],
+    task_scope_cwd: &Path,
+) -> Result<String, RunnerError> {
+    sequence::render_run_sequence(
+        steps,
+        RunSpecContext {
+            task_name: owner_label,
+            task_env,
+            task_env_file,
+            env_profiles,
+            args_rendered: "",
+            repo_root,
+            catalogs,
+            task_scope_cwd,
+            depth: 1,
+        },
+    )
 }

@@ -22,7 +22,10 @@ fn run_manifest_task_builtin_help_topics_render_expected_content() {
             "builtin-completion-help",
             "completion",
             &["--help"],
-            &["completion Help", "effigy completion <bash|zsh|fish> [--json]"],
+            &[
+                "completion Help",
+                "effigy completion <bash|zsh|fish> [--json]",
+            ],
         ),
     ];
 

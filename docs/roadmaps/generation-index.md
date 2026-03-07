@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: `g01`
-Updated: 2026-03-06
+Updated: 2026-03-07
 
 ## Generation history
 
@@ -14,6 +14,18 @@ Updated: 2026-03-06
   - `017` captures the completed comment-ratio scan and doctor integration milestone.
   - `018` captures the completed generated-in-src scan and doctor integration milestone.
   - `019` captures the completed stale-suppressions scan and doctor integration milestone.
+- `020` captures the planned Research Phase 1: Core Execution.
+- `021` captures the planned Research Phase 2: Developer Experience.
+- `022` captures the planned Research Phase 3: Scale and Integration.
+- `023` captures the planned builtin test suite lifecycle and environment milestone.
+
+## Research Roadmaps
+
+Three-phase research program covering comparative tool analysis:
+
+- **Phase 1 (020)**: Core Execution — Configuration, caching, watch mode, DAG, TUI
+- **Phase 2 (021)**: Developer Experience — Completions, errors, workspaces, portability, env
+- **Phase 3 (022)**: Scale & Integration — Remote execution, CI/CD, IDE, plugins, telemetry
 
 ## Rollover rule
 

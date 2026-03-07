@@ -1,6 +1,3 @@
-#[path = "runnable/cargo_env.rs"]
-mod cargo_env;
-
 use crate::runner::builtin::test::planning::{BuiltinTestRunnable, BuiltinTestTarget};
 use crate::runner::util::shell_quote;
 
@@ -22,12 +19,13 @@ pub(super) fn collect_builtin_test_runnable_targets(
                     },
                     runner: plan.suite,
                     root: target.root.clone(),
-                    command: cargo_env::maybe_wrap_with_cargo_env(
-                        plan.command,
-                        &target.cargo_env,
-                        target.cargo_env_match,
-                        &target.root,
-                    ),
+                    command: plan.command,
+                    cargo_env: target.cargo_env.clone(),
+                    cargo_env_match: target.cargo_env_match,
+                    env: plan.env,
+                    setup_command: plan.setup_command,
+                    teardown_command: plan.teardown_command,
+                    teardown_policy: plan.teardown_policy,
                 })
                 .collect::<Vec<BuiltinTestRunnable>>()
         })

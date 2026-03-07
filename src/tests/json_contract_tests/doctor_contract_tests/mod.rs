@@ -86,7 +86,9 @@ fn assert_scan_findings(
     expected_findings: &[(&str, &str)],
 ) {
     let scan_section = find_section(parsed, check_id);
-    let section_findings = scan_section["findings"].as_array().expect("section findings");
+    let section_findings = scan_section["findings"]
+        .as_array()
+        .expect("section findings");
     assert_eq!(scan_section["severity"], section_severity);
     assert_eq!(section_findings.len(), expected_findings.len());
     for (severity, evidence_snippet) in expected_findings {

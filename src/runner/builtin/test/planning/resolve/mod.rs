@@ -5,6 +5,7 @@ use crate::runner::builtin::test::planning::BuiltinTestTarget;
 use crate::runner::manifest::config_sections::ManifestJsPackageManager;
 use crate::runner::model::catalog::LoadedCatalog;
 use crate::runner::tooling::vitest_command_for_js_package_manager;
+use crate::runner::RunnerError;
 
 mod cargo_env;
 mod plan_resolution;
@@ -16,7 +17,7 @@ pub(super) fn resolve_builtin_test_targets(
     prefix: Option<&str>,
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
-) -> Vec<BuiltinTestTarget> {
+) -> Result<Vec<BuiltinTestTarget>, RunnerError> {
     targets::resolve_builtin_test_targets(prefix, resolved_root, catalogs)
 }
 

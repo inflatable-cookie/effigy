@@ -6,10 +6,10 @@ use super::prelude::{
 #[test]
 fn run_manifest_task_builtin_help_precedence_contract_table() {
     let mut cases = builtin_shared_help_precedence_cases(
-            "builtin-cache-help-precedence",
-            "builtin-completion-help-precedence",
-            "builtin-completion-candidates-help-precedence",
-        );
+        "builtin-cache-help-precedence",
+        "builtin-completion-help-precedence",
+        "builtin-completion-candidates-help-precedence",
+    );
     cases.extend([
         builtin_help_case(
             "builtin-completion-candidates-help-json-precedence",

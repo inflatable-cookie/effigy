@@ -23,6 +23,29 @@ Per target root:
 
 If `tasks.test` exists in the selected catalog, that explicit task always wins.
 
+## Lifecycle-Aware Configured Suites
+
+Builtin `test` can also use configured suite tables instead of plain command strings:
+
+```toml
+[test.suites.integration]
+run = "cargo nextest run --workspace"
+env = "TEST_DATABASE_URL"
+env_file = ".env"
+setup = [{ run = "cargo run -p app-db --bin migrate_test_db" }]
+teardown = [{ run = "cargo run -p app-db --bin reset_test_db" }]
+teardown_policy = "always"
+```
+
+Use this when a suite needs declarative setup/teardown around `nextest`, `cargo test`, or another builtin runner command without falling back to a wrapper task.
+
+Operational notes:
+- suite `env` / `env_file` resolve before setup, run, and teardown
+- `teardown_policy` defaults to `on-success`
+- `teardown_policy = "always"` guarantees cleanup after setup failure or runner failure
+- use `effigy test managed -- --package my-crate --test my_test` when forwarding raw runner args
+- use `effigy test --plan` to inspect `suite-env`, `suite-env-files`, `setup-steps`, `teardown-steps`, and `teardown-policy`
+
 ## Built-in Cargo Env Auto-Apply
 
 When built-in `test` runs cargo suites (detected or configured), Effigy automatically applies manifest `[env]` entries whose keys start with `CARGO_`.
@@ -109,6 +132,7 @@ TUI diagnostics:
 
 ## Related Guides
 
+- [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)

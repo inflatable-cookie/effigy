@@ -33,6 +33,10 @@ pub(crate) fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     )?;
     renderer.notice(
         NoticeLevel::Info,
+        "Configured suites can declare `env`, `env_file`, `setup`, `teardown`, and `teardown_policy`; use plan mode to inspect lifecycle metadata before running them.",
+    )?;
+    renderer.notice(
+        NoticeLevel::Info,
         "When suite names are mistyped or unavailable, effigy suggests nearest suite names and copy-paste retry commands.",
     )?;
     renderer.text("")?;
@@ -79,9 +83,20 @@ pub(crate) fn render_test_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.text("[test.suites]")?;
     renderer.text("unit = \"bun x vitest run\"")?;
     renderer.text("integration = \"cargo nextest run\"")?;
+    renderer.text("[test.suites.managed]")?;
+    renderer.text("run = \"cargo nextest run --workspace\"")?;
+    renderer.text("env = \"managed-test\"")?;
+    renderer.text("env_file = [\".env\", \".env.test\"]")?;
+    renderer.text("setup = [{ run = \"cargo run -p app-db --bin migrate_test_db\" }]")?;
+    renderer.text("teardown = [{ run = \"cargo run -p app-db --bin reset_test_db\" }]")?;
+    renderer.text("teardown_policy = \"always\"")?;
     renderer.text("[test.runners]")?;
     renderer.text("vitest = \"bun x vitest run\"")?;
     renderer.text("\"cargo-nextest\" = \"cargo nextest run --workspace\"")?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Use `--` when the remaining arguments belong to the underlying test runner, for example `effigy test managed -- --package app-db --test smoke`.",
+    )?;
     renderer.text("")?;
     renderer.text("Task-ref chain with quoted args:")?;
     renderer.text("[tasks.validate]")?;

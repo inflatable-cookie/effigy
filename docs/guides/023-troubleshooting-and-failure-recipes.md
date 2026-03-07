@@ -231,6 +231,60 @@ env RUST_LOG=info cargo test --workspace
 - when using default matching (`prefix-aware`), avoid shell-string wrappers where cargo is not the executable token (for example `sh -lc "cargo test --workspace"`)
 - if shell wrappers are unavoidable, opt in with `[test].cargo_env_match = "shell-aware"`
 
+### Symptom: lifecycle suite cleanup did not run after a failed test
+
+Diagnosis:
+
+```sh
+effigy test --plan
+```
+
+Inspect:
+- the selected `[test.suites.<name>]` table
+- `teardown-steps`
+- `teardown-policy`
+
+Fix:
+- set `teardown_policy = "always"` for suites that must clean up shared state even after setup or runner failure
+- keep cleanup commands in `teardown`, not appended manually to the suite `run` command
+
+### Symptom: runner filters or flags are being treated as Effigy arguments
+
+Diagnosis:
+
+```sh
+effigy test --plan <args>
+```
+
+Fix:
+- put the suite name first when needed, then use `--` before runner-specific arguments
+
+Examples:
+
+```sh
+effigy test managed -- --package farmyard-db --test learning_soft_delete
+effigy test vitest -- --runInBand
+effigy test nextest -- user_service --nocapture
+```
+
+### Symptom: setup or teardown commands cannot see suite env values
+
+Diagnosis:
+
+```sh
+effigy test --plan
+```
+
+Inspect:
+- `suite-env`
+- `suite-env-files`
+- whether the named env entry exists in `[env]`
+
+Fix:
+- define the missing env entry in `[env]`, or
+- add the value to the selected dotenv file, or
+- correct `env_file` on the suite table
+
 ## 5) Watch Mode and Lock Errors
 
 ### Symptom: ``--owner <effigy|external> is required``
@@ -322,6 +376,7 @@ Fix:
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+- [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
 
 ## Next Step
 

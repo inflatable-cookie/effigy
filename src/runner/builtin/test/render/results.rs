@@ -31,10 +31,40 @@ pub(crate) fn render_builtin_test_results(
             )
         })
         .collect::<BTreeMap<String, String>>();
+    let suite_metadata_by_root_and_suite = targets
+        .iter()
+        .flat_map(|target| {
+            let root = target.root.display().to_string();
+            target.plans.iter().map(move |plan| {
+                (
+                    (root.clone(), plan.suite.clone()),
+                    (
+                        plan.suite_env.clone(),
+                        plan.suite_env_files.clone(),
+                        plan.setup_steps,
+                        plan.teardown_steps,
+                        match plan.teardown_policy {
+                            crate::runner::manifest::ManifestTestSuiteTeardownPolicy::Always => {
+                                "always".to_owned()
+                            }
+                            crate::runner::manifest::ManifestTestSuiteTeardownPolicy::OnSuccess => {
+                                "on-success".to_owned()
+                            }
+                        },
+                    ),
+                )
+            })
+        })
+        .collect::<BTreeMap<(String, String), (Option<String>, Vec<String>, usize, usize, String)>>(
+        );
     let mut ordered = results
         .iter()
         .map(|result| {
             let root = result.root.display().to_string();
+            let lifecycle = suite_metadata_by_root_and_suite
+                .get(&(root.clone(), result.runner.clone()))
+                .cloned()
+                .unwrap_or_else(|| (None, Vec::new(), 0, 0, "on-success".to_owned()));
             (
                 result.name.clone(),
                 result.runner.clone(),
@@ -43,14 +73,46 @@ pub(crate) fn render_builtin_test_results(
                     .get(&root)
                     .cloned()
                     .unwrap_or_else(|| "unknown".to_owned()),
+                lifecycle.0,
+                lifecycle.1,
+                lifecycle.2,
+                lifecycle.3,
+                lifecycle.4,
                 result.command.clone(),
                 result.success,
                 result.code,
             )
         })
-        .collect::<Vec<(String, String, String, String, String, bool, Option<i32>)>>();
+        .collect::<Vec<(
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Vec<String>,
+            usize,
+            usize,
+            String,
+            String,
+            bool,
+            Option<i32>,
+        )>>();
     ordered.sort_by(|a, b| a.0.cmp(&b.0));
-    for (name, runner, root, cargo_env_match, command, success, code) in ordered {
+    for (
+        name,
+        runner,
+        root,
+        cargo_env_match,
+        suite_env,
+        suite_env_files,
+        setup_steps,
+        teardown_steps,
+        teardown_policy,
+        command,
+        success,
+        code,
+    ) in ordered
+    {
         let status = if success {
             "ok".to_owned()
         } else {
@@ -61,7 +123,9 @@ pub(crate) fn render_builtin_test_results(
         };
         let value = if verbose {
             format!(
-                "{status}  runner:{runner}  root:{root}  cargo-env-match:{cargo_env_match}  command:{command}"
+                "{status}  runner:{runner}  root:{root}  cargo-env-match:{cargo_env_match}  suite-env:{}  suite-env-files:{}  setup-steps:{setup_steps}  teardown-steps:{teardown_steps}  teardown-policy:{teardown_policy}  command:{command}",
+                suite_env.as_deref().unwrap_or("<none>"),
+                render_suite_env_files(&suite_env_files),
             )
         } else {
             status
@@ -70,6 +134,14 @@ pub(crate) fn render_builtin_test_results(
     }
     renderer.text("")?;
     render_utf8(renderer.into_inner())
+}
+
+fn render_suite_env_files(files: &[String]) -> String {
+    if files.is_empty() {
+        "<none>".to_owned()
+    } else {
+        files.join(",")
+    }
 }
 
 pub(crate) fn append_builtin_test_filter_hint(

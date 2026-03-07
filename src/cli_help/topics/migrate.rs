@@ -28,7 +28,10 @@ pub(crate) fn render_migrate_help<R: Renderer>(renderer: &mut R) -> UiResult<()>
                 "--apply",
                 "Write ready imports into `[tasks]` (preview-only by default).",
             ),
-            ("--json", "Render machine-readable migration report payload."),
+            (
+                "--json",
+                "Render machine-readable migration report payload.",
+            ),
             ("-h, --help", "Print command help"),
         ],
     )?;

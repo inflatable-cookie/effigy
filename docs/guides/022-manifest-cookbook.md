@@ -142,6 +142,25 @@ vitest = "bun x vitest run"
 
 Use this to make test routing explicit and reproducible across mixed stacks.
 
+When a suite needs env/setup/teardown semantics, use a full suite table instead of a plain string:
+
+```toml
+[test.suites.managed]
+run = "cargo nextest run --workspace --test-threads=1 --build-jobs=1"
+env = "TEST_DATABASE_URL"
+env_file = ".env"
+setup = [
+  { run = "cargo run -p app-db --bin reset_test_db" },
+  { run = "cargo run -p app-db --bin migrate_test_db" },
+]
+teardown = [
+  { run = "cargo run -p app-db --bin reset_test_db" },
+]
+teardown_policy = "always"
+```
+
+Use this to replace custom wrapper scripts while keeping `effigy test` as the only operator entrypoint.
+
 ## 7) Minimal Test Runner Override Only
 
 ```toml
@@ -516,6 +535,7 @@ Use catalog aliases to keep task ownership local while retaining root-level orch
 ## Related Guides
 
 - [`013-testing-orchestration.md`](./013-testing-orchestration.md)
+- [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
 - [`015-deferral-fallback-migration.md`](./015-deferral-fallback-migration.md)
 - [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
 - [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)

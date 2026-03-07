@@ -15,16 +15,16 @@ fn cache_builtin_inspect_and_invalidate_paths_are_available() {
 
     run_task(&root, "build");
 
-    let inspect_present = run_cache_builtin(&root, &["inspect", "build"])
-        .expect("inspect should succeed");
+    let inspect_present =
+        run_cache_builtin(&root, &["inspect", "build"]).expect("inspect should succeed");
     assert!(inspect_present.contains("status: present"));
 
-    let invalidate = run_cache_builtin(&root, &["invalidate", "build"])
-        .expect("invalidate should succeed");
+    let invalidate =
+        run_cache_builtin(&root, &["invalidate", "build"]).expect("invalidate should succeed");
     assert!(invalidate.contains("removed: 1"));
 
-    let inspect_missing = run_cache_builtin(&root, &["inspect", "build"])
-        .expect("inspect should succeed");
+    let inspect_missing =
+        run_cache_builtin(&root, &["inspect", "build"]).expect("inspect should succeed");
     assert!(inspect_missing.contains("status: missing"));
 }
 
