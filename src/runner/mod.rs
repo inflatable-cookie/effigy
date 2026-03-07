@@ -49,5 +49,5 @@ mod json_contract_tests;
 mod task_ref_parser_tests;
 
 #[cfg(test)]
-#[path = "../tests/cache_tests.rs"]
+#[path = "../tests/cache_tests/mod.rs"]
 mod cache_tests;

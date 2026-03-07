@@ -5,8 +5,8 @@ use super::model::{
 };
 use super::render::render_stale_suppression_text;
 use super::support::{
-    attention_marker_matches_line, count_code_lines, is_generated_artifact, normalize_rel_path,
-    stale_suppression_matches_line,
+    attention_marker_matches_line, comment_ratio_counts, count_code_lines, is_generated_artifact,
+    normalize_rel_path, stale_suppression_matches_line,
 };
 use std::path::{Path, PathBuf};
 
@@ -36,6 +36,35 @@ fn count_code_lines_skips_comment_only_lines_for_hash_style_languages() {
     let path = Path::new("script.py");
     let content = "# comment\n\nvalue = 1\n# more\nprint(value)\n";
     assert_eq!(count_code_lines(path, content), 2);
+}
+
+#[test]
+fn count_code_lines_ignores_comment_tokens_inside_string_literals() {
+    let path = Path::new("src/help.rs");
+    let content = concat!(
+        "let source_root = \"packages/*/src/**\";\n",
+        "let url = \"https://example.test/docs\";\n",
+        "/* real comment */\n",
+        "let marker = \"// still code\";\n",
+    );
+
+    assert_eq!(count_code_lines(path, content), 3);
+}
+
+#[test]
+fn comment_ratio_counts_ignore_comment_tokens_inside_string_literals() {
+    let path = Path::new("src/constants.rs");
+    let content = concat!(
+        "let source_root = \"packages/*/src/**\";\n",
+        "let url = \"https://example.test/docs\";\n",
+        "let marker = \"// still code\";\n",
+        "// real comment\n",
+        "/* another real comment */\n",
+    );
+
+    let counts = comment_ratio_counts(path, content);
+    assert_eq!(counts.code_lines, 3);
+    assert_eq!(counts.comment_lines, 2);
 }
 
 #[test]

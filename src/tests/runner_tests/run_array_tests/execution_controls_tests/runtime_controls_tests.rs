@@ -42,7 +42,10 @@ run = [
   { id = "flaky", run = "sh -lc 'if [ -f \"__RETRY_MARKER__\" ]; then printf ok > \"__OUT_FILE__\"; exit 0; else touch \"__RETRY_MARKER__\"; exit 7; fi'", retry = 1, retry_delay_ms = 10 }
 ]
 "#,
-        &[("__RETRY_MARKER__", &marker), ("__OUT_FILE__", out_file)],
+        &[
+            ("__RETRY_MARKER__", marker.as_path()),
+            ("__OUT_FILE__", out_file),
+        ],
     );
 }
 

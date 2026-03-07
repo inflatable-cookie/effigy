@@ -1,6 +1,6 @@
 #[path = "options/defaults.rs"]
 mod defaults;
-#[path = "options/loading.rs"]
+#[path = "options/loading/mod.rs"]
 mod loading;
 #[path = "options/validation.rs"]
 mod validation;

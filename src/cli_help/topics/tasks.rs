@@ -1,59 +1,48 @@
-use crate::ui::{Renderer, TableSpec, UiResult};
+use super::shared::{
+    render_bullet_section, render_info_notices, render_options_section, render_usage_section,
+};
+use crate::ui::{Renderer, UiResult};
 
 pub(crate) fn render_tasks_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.section("tasks Help")?;
-    renderer.notice(
-        crate::ui::NoticeLevel::Info,
-        "List discovered task catalogs and task commands; use routing probes only when debugging selector resolution.",
+    render_info_notices(
+        renderer,
+        &["List discovered task catalogs and task commands; use routing probes only when debugging selector resolution."],
     )?;
-    renderer.text("")?;
-
-    renderer.section("Usage")?;
-    renderer.text(
-        "effigy tasks [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json] [--pretty true|false]",
-    )?;
-    renderer.text("")?;
-
-    renderer.section("Options")?;
-    renderer.table(&TableSpec::new(
-        vec!["Option".to_owned(), "Description".to_owned()],
-        vec![
-            vec![
-                "--repo <PATH>".to_owned(),
-                "Override target repository path".to_owned(),
-            ],
-            vec![
-                "--task <TASK_NAME>".to_owned(),
-                "Filter output to matching task entries".to_owned(),
-            ],
-            vec![
-                "--resolve <SELECTOR>".to_owned(),
-                "Probe task routing evidence for a selector (for example `<catalog>/task` or `test`)"
-                    .to_owned(),
-            ],
-            vec![
-                "--json".to_owned(),
-                "Render machine-readable task catalog payload".to_owned(),
-            ],
-            vec![
-                "--pretty <true|false>".to_owned(),
-                "When used with --json, toggle pretty formatting (default: true)".to_owned(),
-            ],
-            vec!["-h, --help".to_owned(), "Print command help".to_owned()],
+    render_usage_section(
+        renderer,
+        &[
+            "effigy tasks [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json] [--pretty true|false]",
         ],
-    ))?;
-    renderer.text("")?;
-
-    renderer.section("Examples")?;
-    renderer.bullet_list(
+    )?;
+    render_options_section(
+        renderer,
+        &[
+            ("--repo <PATH>", "Override target repository path"),
+            ("--task <TASK_NAME>", "Filter output to matching task entries"),
+            (
+                "--resolve <SELECTOR>",
+                "Probe task routing evidence for a selector (for example `<catalog>/task` or `test`)",
+            ),
+            ("--json", "Render machine-readable task catalog payload"),
+            (
+                "--pretty <true|false>",
+                "When used with --json, toggle pretty formatting (default: true)",
+            ),
+            ("-h, --help", "Print command help"),
+        ],
+    )?;
+    render_bullet_section(
+        renderer,
+        "Examples",
         "commands",
         &[
-            "effigy tasks".to_owned(),
-            "effigy tasks --repo /path/to/workspace".to_owned(),
-            "effigy tasks --repo /path/to/workspace --task db:reset".to_owned(),
-            "effigy tasks --resolve <catalog>/<task>".to_owned(),
-            "effigy tasks --json --resolve test".to_owned(),
-            "effigy --json tasks --repo /path/to/workspace --task test".to_owned(),
+            "effigy tasks",
+            "effigy tasks --repo /path/to/workspace",
+            "effigy tasks --repo /path/to/workspace --task db:reset",
+            "effigy tasks --resolve <catalog>/<task>",
+            "effigy tasks --json --resolve test",
+            "effigy --json tasks --repo /path/to/workspace --task test",
         ],
     )?;
     Ok(())

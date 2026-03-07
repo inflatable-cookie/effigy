@@ -1,0 +1,133 @@
+const SECTION_DEFER: &[&str] = &[
+    "[defer]",
+    "# Fallback command for unresolved task requests.",
+    "run = \"my-process {request} {args}\"",
+    "",
+];
+
+const SECTION_SHELL: &[&str] = &[
+    "[shell]",
+    "# Interactive shell command used by managed shell tabs.",
+    "run = \"exec ${SHELL:-/bin/zsh} -i\"",
+    "",
+];
+
+const SECTION_SCAN: &[&str] = &[
+    "[scan.god_files]",
+    "# Oversized code-file scanner thresholds use code-only lines.",
+    "warn = 250",
+    "high = 400",
+    "critical = 700",
+    "# Include this scanner in `effigy doctor` by default.",
+    "doctor = true",
+    "fail_on_findings = false",
+    "respect_gitignore = true",
+    "# Optional glob overrides.",
+    "include = [\"src/**\", \"app/**\"]",
+    "exclude = [\"docs/**\", \"dist/**\", \"coverage/**\"]",
+    "",
+    "[scan.duplicate_blocks]",
+    "# Duplicate-block scanner thresholds use normalized code-only line spans.",
+    "warn = 20",
+    "high = 40",
+    "critical = 80",
+    "min_occurrences = 2",
+    "# Keep this opt-in for `effigy doctor` until runtime/noise is validated.",
+    "doctor = false",
+    "fail_on_findings = false",
+    "respect_gitignore = true",
+    "# Optional glob overrides.",
+    "include = [\"src/**\", \"crates/**\", \"tests/**\"]",
+    "exclude = [\"vendor/**\"]",
+    "",
+    "[scan.comment_ratio]",
+    "# Comment-ratio scanner thresholds compare comment-only lines against code-only lines.",
+    "warn = 1.5",
+    "high = 2.0",
+    "critical = 3.0",
+    "min_code_lines = 20",
+    "# Include this scanner in `effigy doctor` by default.",
+    "doctor = true",
+    "fail_on_findings = false",
+    "respect_gitignore = true",
+    "# Optional glob overrides.",
+    "include = [\"src/**\", \"crates/**\", \"tests/**\"]",
+    "exclude = [\"vendor/**\"]",
+    "",
+    "[scan.generated_assets]",
+    "# Bulky vendored/generated asset scanner thresholds use bytes.",
+    "warn = 1000000",
+    "high = 5000000",
+    "critical = 20000000",
+    "# Include this scanner in `effigy doctor` by default.",
+    "doctor = true",
+    "fail_on_findings = false",
+    "respect_gitignore = true",
+    "# Optional glob overrides.",
+    "include = [\"dist/**\", \"vendor/**\"]",
+    "exclude = [\"docs/**\"]",
+    "",
+    "[scan.generated_in_src]",
+    "# Generated-in-src scanner flags generated files committed inside source trees.",
+    "warn = 1",
+    "high = 20000",
+    "critical = 200000",
+    "source_roots = [\"src/**\", \"app/**\", \"lib/**\", \"crates/**\", \"packages/*/src/**\"]",
+    "# Include this scanner in `effigy doctor` by default.",
+    "doctor = true",
+    "fail_on_findings = false",
+    "respect_gitignore = true",
+    "# Optional glob overrides.",
+    "include = [\"src/**\", \"app/**\", \"lib/**\"]",
+    "exclude = [\"vendor/**\"]",
+    "",
+    "[scan.attention_markers]",
+    "# Attention-marker scanner matches deferred-work and deprecation markers.",
+    "warning = [\"TODO\", \"REVIEW\", \"NOTE\", \"placeholder\"]",
+    "high = [\"FIXME\", \"HACK\", \"@deprecated\", \"workaround\"]",
+    "critical = [\"BUG\", \"SECURITY\", \"remove before release\"]",
+    "# Include this scanner in `effigy doctor` by default.",
+    "doctor = true",
+    "fail_on_findings = false",
+    "respect_gitignore = true",
+    "# Optional glob overrides.",
+    "include = [\"src/**\", \"crates/**\", \"tests/**\"]",
+    "exclude = [\"vendor/**\"]",
+    "",
+    "[scan.stale_suppressions]",
+    "# Stale-suppressions scanner matches lint, type, and tool bypass markers.",
+    "warning = [\"@ts-ignore\", \"@ts-expect-error\", \"type: ignore\", \"eslint-disable-next-line\"]",
+    "high = [\"#[allow(\", \"#[expect(\", \"rubocop:disable\", \"swiftlint:disable\"]",
+    "critical = [\"nolint\", \"#[allow(warnings)]\", \"shellcheck disable=\", \"eslint-disable\"]",
+    "# Keep this opt-in for `effigy doctor`; broad suppression markers are noisy in large repos.",
+    "doctor = false",
+    "fail_on_findings = false",
+    "respect_gitignore = true",
+    "# Optional glob overrides.",
+    "include = [\"src/**\", \"crates/**\", \"tests/**\"]",
+    "exclude = [\"vendor/**\"]",
+    "",
+];
+
+const SECTION_TASKS_MINIMAL: &[&str] = &[
+    "[tasks]",
+    "# Compact task command mappings.",
+    "test = \"bun x vitest run\"",
+    "",
+];
+
+pub(super) fn defer_lines() -> &'static [&'static str] {
+    SECTION_DEFER
+}
+
+pub(super) fn shell_lines() -> &'static [&'static str] {
+    SECTION_SHELL
+}
+
+pub(super) fn scan_lines() -> &'static [&'static str] {
+    SECTION_SCAN
+}
+
+pub(super) fn tasks_minimal_lines() -> &'static [&'static str] {
+    SECTION_TASKS_MINIMAL
+}
