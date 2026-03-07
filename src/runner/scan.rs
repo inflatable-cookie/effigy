@@ -1,6 +1,6 @@
 #[path = "scan/constants.rs"]
 mod constants;
-#[path = "scan/execution.rs"]
+#[path = "scan/execution/mod.rs"]
 pub(in crate::runner) mod execution;
 #[path = "scan/model.rs"]
 pub(in crate::runner) mod model;
