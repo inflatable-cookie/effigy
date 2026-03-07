@@ -2,6 +2,7 @@ mod doctor;
 mod general;
 mod init;
 mod migrate;
+mod shared;
 mod tasks;
 mod test;
 mod watch;

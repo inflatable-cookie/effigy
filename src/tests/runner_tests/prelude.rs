@@ -1,4 +1,4 @@
-#[path = "prelude/case_tables.rs"]
+#[path = "prelude/case_tables/mod.rs"]
 mod case_tables;
 #[path = "prelude/error_assertions.rs"]
 mod error_assertions;

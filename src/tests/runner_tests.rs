@@ -32,7 +32,7 @@ mod deferral_tests;
 #[path = "runner_tests/managed_and_locking_tests/mod.rs"]
 mod managed_and_locking_tests;
 
-#[path = "runner_test_support.rs"]
+#[path = "runner_test_support/mod.rs"]
 mod runner_test_support;
 
 #[path = "runner_tests/prelude.rs"]

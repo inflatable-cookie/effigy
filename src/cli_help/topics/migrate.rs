@@ -1,47 +1,46 @@
-use crate::ui::{NoticeLevel, Renderer, TableSpec, UiResult};
+use super::shared::{
+    render_bullet_section, render_info_notices, render_options_section, render_usage_section,
+};
+use crate::ui::{Renderer, UiResult};
 
 pub(crate) fn render_migrate_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.section("migrate Help")?;
-    renderer.notice(
-        NoticeLevel::Info,
-        "Import `package.json` scripts into `[tasks]` with preview-first, explicit apply flow.",
+    render_info_notices(
+        renderer,
+        &["Import `package.json` scripts into `[tasks]` with preview-first, explicit apply flow."],
     )?;
-    renderer.text("")?;
-    renderer.section("Usage")?;
-    renderer.text("effigy migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]")?;
-    renderer.text("")?;
-    renderer.section("Options")?;
-    renderer.table(&TableSpec::new(
-        vec!["Option".to_owned(), "Description".to_owned()],
-        vec![
-            vec![
-                "--from <PATH>".to_owned(),
-                "Override source package file (default: <repo>/package.json).".to_owned(),
-            ],
-            vec![
-                "--script <NAME>".to_owned(),
-                "Repeatable script selector filter (defaults to all scripts).".to_owned(),
-            ],
-            vec![
-                "--apply".to_owned(),
-                "Write ready imports into `[tasks]` (preview-only by default).".to_owned(),
-            ],
-            vec![
-                "--json".to_owned(),
-                "Render machine-readable migration report payload.".to_owned(),
-            ],
-            vec!["-h, --help".to_owned(), "Print command help".to_owned()],
+    render_usage_section(
+        renderer,
+        &["effigy migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]"],
+    )?;
+    render_options_section(
+        renderer,
+        &[
+            (
+                "--from <PATH>",
+                "Override source package file (default: <repo>/package.json).",
+            ),
+            (
+                "--script <NAME>",
+                "Repeatable script selector filter (defaults to all scripts).",
+            ),
+            (
+                "--apply",
+                "Write ready imports into `[tasks]` (preview-only by default).",
+            ),
+            ("--json", "Render machine-readable migration report payload."),
+            ("-h, --help", "Print command help"),
         ],
-    ))?;
-    renderer.text("")?;
-    renderer.section("Phase-1 Scope")?;
-    renderer.bullet_list(
+    )?;
+    render_bullet_section(
+        renderer,
+        "Phase-1 Scope",
         "phase-1 scope",
         &[
-            "import package.json scripts only".to_owned(),
-            "preview + explicit apply flow".to_owned(),
-            "non-destructive source preservation".to_owned(),
-            "manual remediation hints for task-name conflicts".to_owned(),
+            "import package.json scripts only",
+            "preview + explicit apply flow",
+            "non-destructive source preservation",
+            "manual remediation hints for task-name conflicts",
         ],
     )?;
     Ok(())

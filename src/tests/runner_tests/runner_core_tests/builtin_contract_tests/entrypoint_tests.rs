@@ -1,59 +1,56 @@
 use super::prelude::{
     assert_builtin_error_contract_case_table, assert_builtin_help_case_table,
-    BuiltinContractErrorCase, BuiltinHelpCase,
+    builtin_help_case, builtin_shared_unknown_argument_cases,
 };
 
 #[test]
 fn run_manifest_task_builtin_entrypoint_help_json_contract_table() {
     let cases = [
-        BuiltinHelpCase {
-            workspace: "builtin-entrypoint-cache-help-json",
-            command: "cache",
-            args: &["--wat", "--help", "--json"],
-            expected: &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"cache\""],
-        },
-        BuiltinHelpCase {
-            workspace: "builtin-entrypoint-completion-help-json",
-            command: "completion",
-            args: &["--help", "--json", "--wat"],
-            expected: &[
-                "\"schema\": \"effigy.help.v1\"",
-                "\"topic\": \"completion\"",
-            ],
-        },
-        BuiltinHelpCase {
-            workspace: "builtin-entrypoint-completion-candidates-help-json",
-            command: "completion",
-            args: &["candidates", "--help", "--json", "--wat"],
-            expected: &[
+        builtin_help_case(
+            "builtin-entrypoint-cache-help-json",
+            "cache",
+            &["--wat", "--help", "--json"],
+            &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"cache\""],
+        ),
+        builtin_help_case(
+            "builtin-entrypoint-completion-help-json",
+            "completion",
+            &["--help", "--json", "--wat"],
+            &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"completion\""],
+        ),
+        builtin_help_case(
+            "builtin-entrypoint-completion-candidates-help-json",
+            "completion",
+            &["candidates", "--help", "--json", "--wat"],
+            &[
                 "\"schema\": \"effigy.help.v1\"",
                 "\"topic\": \"completion-candidates\"",
             ],
-        },
-        BuiltinHelpCase {
-            workspace: "builtin-entrypoint-watch-help-json",
-            command: "watch",
-            args: &["--help", "--json", "--wat"],
-            expected: &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"watch\""],
-        },
-        BuiltinHelpCase {
-            workspace: "builtin-entrypoint-scan-help-json",
-            command: "scan",
-            args: &["god-files", "--help", "--json", "--wat"],
-            expected: &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"scan\""],
-        },
-        BuiltinHelpCase {
-            workspace: "builtin-entrypoint-scan-bare-help-json",
-            command: "scan",
-            args: &["--json"],
-            expected: &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"scan\""],
-        },
-        BuiltinHelpCase {
-            workspace: "builtin-entrypoint-unlock-help-json",
-            command: "unlock",
-            args: &["--help", "--json", "--wat"],
-            expected: &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"unlock\""],
-        },
+        ),
+        builtin_help_case(
+            "builtin-entrypoint-watch-help-json",
+            "watch",
+            &["--help", "--json", "--wat"],
+            &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"watch\""],
+        ),
+        builtin_help_case(
+            "builtin-entrypoint-scan-help-json",
+            "scan",
+            &["god-files", "--help", "--json", "--wat"],
+            &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"scan\""],
+        ),
+        builtin_help_case(
+            "builtin-entrypoint-scan-bare-help-json",
+            "scan",
+            &["--json"],
+            &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"scan\""],
+        ),
+        builtin_help_case(
+            "builtin-entrypoint-unlock-help-json",
+            "unlock",
+            &["--help", "--json", "--wat"],
+            &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"unlock\""],
+        ),
     ];
 
     assert_builtin_help_case_table(&cases);
@@ -61,38 +58,13 @@ fn run_manifest_task_builtin_entrypoint_help_json_contract_table() {
 
 #[test]
 fn run_manifest_task_builtin_entrypoint_unknown_argument_contract_table() {
-    let cases = [
-        BuiltinContractErrorCase {
-            workspace: "builtin-entrypoint-cache-unknown-arg",
-            command: "cache",
-            args: &["inspect", "--wat"],
-            expected: &["unknown argument(s) for built-in `cache`: --wat"],
-        },
-        BuiltinContractErrorCase {
-            workspace: "builtin-entrypoint-completion-candidates-unknown-arg",
-            command: "completion",
-            args: &["candidates", "--wat"],
-            expected: &["unknown argument(s) for built-in `completion`: candidates --wat"],
-        },
-        BuiltinContractErrorCase {
-            workspace: "builtin-entrypoint-watch-unknown-arg",
-            command: "watch",
-            args: &["--wat"],
-            expected: &["unknown argument(s) for built-in `watch`: --wat"],
-        },
-        BuiltinContractErrorCase {
-            workspace: "builtin-entrypoint-scan-unknown-arg",
-            command: "scan",
-            args: &["god-files", "--wat"],
-            expected: &["unknown argument(s) for built-in `scan`: --wat"],
-        },
-        BuiltinContractErrorCase {
-            workspace: "builtin-entrypoint-unlock-unknown-arg",
-            command: "unlock",
-            args: &["--wat"],
-            expected: &["unknown argument(s) for built-in `unlock`: --wat"],
-        },
-    ];
+    let cases = builtin_shared_unknown_argument_cases(
+        "builtin-entrypoint-cache-unknown-arg",
+        "builtin-entrypoint-completion-candidates-unknown-arg",
+        "builtin-entrypoint-watch-unknown-arg",
+        "builtin-entrypoint-scan-unknown-arg",
+        "builtin-entrypoint-unlock-unknown-arg",
+    );
 
     assert_builtin_error_contract_case_table(&cases);
 }

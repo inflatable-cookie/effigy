@@ -1,6 +1,8 @@
 use std::ffi::OsStr;
 use std::path::Path;
 
+use super::strings::mask_string_literals;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct NormalizedCodeLine {
     pub(in crate::runner) line_number: usize,
@@ -92,18 +94,19 @@ fn collect_comment_filtered_lines(
     let mut in_block_comment = false;
     let mut lines = Vec::new();
     for (line_number, raw_line) in contents.lines().enumerate() {
+        let masked_line = mask_string_literals(raw_line);
         let mut i = 0usize;
         let mut fragments = String::new();
-        while i < raw_line.len() {
+        while i < masked_line.len() {
             if in_block_comment {
                 if let Some((_, block_end)) = block_comment {
-                    if raw_line[i..].starts_with(block_end) {
+                    if masked_line[i..].starts_with(block_end) {
                         in_block_comment = false;
                         i += block_end.len();
                         continue;
                     }
                 }
-                let ch = raw_line[i..]
+                let ch = masked_line[i..]
                     .chars()
                     .next()
                     .expect("unicode-safe block comment advance");
@@ -111,18 +114,18 @@ fn collect_comment_filtered_lines(
                 continue;
             }
             if let Some((block_start, _)) = block_comment {
-                if raw_line[i..].starts_with(block_start) {
+                if masked_line[i..].starts_with(block_start) {
                     in_block_comment = true;
                     i += block_start.len();
                     continue;
                 }
             }
             if let Some(line_prefix) = line_comment {
-                if raw_line[i..].starts_with(line_prefix) {
+                if masked_line[i..].starts_with(line_prefix) {
                     break;
                 }
             }
-            let ch = raw_line[i..]
+            let ch = masked_line[i..]
                 .chars()
                 .next()
                 .expect("unicode-safe line advance");
@@ -150,20 +153,21 @@ fn count_code_and_comment_lines(
     let mut comment_lines = 0usize;
 
     for raw_line in contents.lines() {
+        let masked_line = mask_string_literals(raw_line);
         let mut i = 0usize;
         let mut fragments = String::new();
         let mut saw_comment = false;
-        while i < raw_line.len() {
+        while i < masked_line.len() {
             if in_block_comment {
                 saw_comment = true;
                 if let Some((_, block_end)) = block_comment {
-                    if raw_line[i..].starts_with(block_end) {
+                    if masked_line[i..].starts_with(block_end) {
                         in_block_comment = false;
                         i += block_end.len();
                         continue;
                     }
                 }
-                let ch = raw_line[i..]
+                let ch = masked_line[i..]
                     .chars()
                     .next()
                     .expect("unicode-safe block comment advance");
@@ -171,7 +175,7 @@ fn count_code_and_comment_lines(
                 continue;
             }
             if let Some((block_start, _)) = block_comment {
-                if raw_line[i..].starts_with(block_start) {
+                if masked_line[i..].starts_with(block_start) {
                     in_block_comment = true;
                     saw_comment = true;
                     i += block_start.len();
@@ -179,12 +183,12 @@ fn count_code_and_comment_lines(
                 }
             }
             if let Some(line_prefix) = line_comment {
-                if raw_line[i..].starts_with(line_prefix) {
+                if masked_line[i..].starts_with(line_prefix) {
                     saw_comment = true;
                     break;
                 }
             }
-            let ch = raw_line[i..]
+            let ch = masked_line[i..]
                 .chars()
                 .next()
                 .expect("unicode-safe line advance");

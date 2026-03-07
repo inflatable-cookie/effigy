@@ -1,5 +1,6 @@
 mod common;
 mod markers;
+#[path = "reports/mod.rs"]
 mod reports;
 
 pub(in crate::runner) use markers::{

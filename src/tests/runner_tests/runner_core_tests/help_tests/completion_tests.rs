@@ -1,32 +1,29 @@
 use super::prelude::{
     assert_builtin_error_for_empty_manifest, assert_builtin_help_case_table,
-    assert_builtin_ok_for_empty_manifest, BuiltinHelpCase, BuiltinInvocationCase,
+    assert_builtin_ok_for_empty_manifest, builtin_help_case, builtin_invocation_case,
 };
 
 #[test]
 fn run_manifest_task_builtin_help_topics_render_expected_content() {
     let cases = [
-        BuiltinHelpCase {
-            workspace: "builtin-init-help",
-            command: "init",
-            args: &["--help"],
-            expected: &["init Help", "effigy init [--dry-run] [--force] [--json]"],
-        },
-        BuiltinHelpCase {
-            workspace: "builtin-migrate-help-json",
-            command: "migrate",
-            args: &["--help", "--json"],
-            expected: &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"migrate\""],
-        },
-        BuiltinHelpCase {
-            workspace: "builtin-completion-help",
-            command: "completion",
-            args: &["--help"],
-            expected: &[
-                "completion Help",
-                "effigy completion <bash|zsh|fish> [--json]",
-            ],
-        },
+        builtin_help_case(
+            "builtin-init-help",
+            "init",
+            &["--help"],
+            &["init Help", "effigy init [--dry-run] [--force] [--json]"],
+        ),
+        builtin_help_case(
+            "builtin-migrate-help-json",
+            "migrate",
+            &["--help", "--json"],
+            &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"migrate\""],
+        ),
+        builtin_help_case(
+            "builtin-completion-help",
+            "completion",
+            &["--help"],
+            &["completion Help", "effigy completion <bash|zsh|fish> [--json]"],
+        ),
     ];
 
     assert_builtin_help_case_table(&cases);
@@ -35,20 +32,20 @@ fn run_manifest_task_builtin_help_topics_render_expected_content() {
 #[test]
 fn run_manifest_task_builtin_completion_ok_contract_table() {
     let cases = [
-        BuiltinInvocationCase {
-            workspace: "builtin-completion-bash",
-            args: &["bash"],
-            expected: &["complete -F _effigy effigy", "cache completion"],
-        },
-        BuiltinInvocationCase {
-            workspace: "builtin-completion-json",
-            args: &["zsh", "--json"],
-            expected: &[
+        builtin_invocation_case(
+            "builtin-completion-bash",
+            &["bash"],
+            &["complete -F _effigy effigy", "cache completion"],
+        ),
+        builtin_invocation_case(
+            "builtin-completion-json",
+            &["zsh", "--json"],
+            &[
                 "\"schema\": \"effigy.completion.v1\"",
                 "\"shell\": \"zsh\"",
                 "\"commands\"",
             ],
-        },
+        ),
     ];
 
     assert_builtin_ok_for_empty_manifest("completion", &cases);
@@ -57,21 +54,21 @@ fn run_manifest_task_builtin_completion_ok_contract_table() {
 #[test]
 fn run_manifest_task_builtin_completion_argument_validation_table() {
     let cases = [
-        BuiltinInvocationCase {
-            workspace: "builtin-completion-shell-required",
-            args: &[],
-            expected: &["`completion` requires a shell target (`bash`, `zsh`, or `fish`)"],
-        },
-        BuiltinInvocationCase {
-            workspace: "builtin-completion-multiple-shell-targets",
-            args: &["bash", "zsh"],
-            expected: &["`completion` accepts exactly one shell target (`bash`, `zsh`, or `fish`)"],
-        },
-        BuiltinInvocationCase {
-            workspace: "builtin-completion-candidates-missing-prefix-value",
-            args: &["candidates", "--prefix"],
-            expected: &["completion candidates argument --prefix requires a value"],
-        },
+        builtin_invocation_case(
+            "builtin-completion-shell-required",
+            &[],
+            &["`completion` requires a shell target (`bash`, `zsh`, or `fish`)"],
+        ),
+        builtin_invocation_case(
+            "builtin-completion-multiple-shell-targets",
+            &["bash", "zsh"],
+            &["`completion` accepts exactly one shell target (`bash`, `zsh`, or `fish`)"],
+        ),
+        builtin_invocation_case(
+            "builtin-completion-candidates-missing-prefix-value",
+            &["candidates", "--prefix"],
+            &["completion candidates argument --prefix requires a value"],
+        ),
     ];
 
     assert_builtin_error_for_empty_manifest("completion", &cases);

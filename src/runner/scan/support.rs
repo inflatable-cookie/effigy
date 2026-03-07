@@ -6,7 +6,7 @@ use crate::runner::error::RunnerError;
 
 #[path = "support/heuristics/mod.rs"]
 mod heuristics;
-#[path = "support/traversal.rs"]
+#[path = "support/traversal/mod.rs"]
 mod traversal;
 
 pub(in crate::runner) use heuristics::{

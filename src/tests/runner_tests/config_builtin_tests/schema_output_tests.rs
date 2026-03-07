@@ -99,6 +99,11 @@ fn run_manifest_task_builtin_config_schema_target_scan_prints_god_files_section(
             "critical = 3.0",
             "min_code_lines = 20",
             "doctor = true",
+        ],
+    );
+    assert_output_contains_all(
+        &out,
+        &[
             "[scan.generated_assets]",
             "warn = 1000000",
             "high = 5000000",
@@ -110,6 +115,11 @@ fn run_manifest_task_builtin_config_schema_target_scan_prints_god_files_section(
             "critical = 200000",
             "source_roots = [\"src/**\", \"app/**\", \"lib/**\", \"crates/**\", \"packages/*/src/**\"]",
             "doctor = true",
+        ],
+    );
+    assert_output_contains_all(
+        &out,
+        &[
             "[scan.attention_markers]",
             "warning = [\"TODO\", \"REVIEW\", \"NOTE\", \"placeholder\"]",
             "high = [\"FIXME\", \"HACK\", \"@deprecated\", \"workaround\"]",
