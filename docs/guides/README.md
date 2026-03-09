@@ -90,6 +90,7 @@ Read:
 1. [`017-json-output-contracts.md`](./017-json-output-contracts.md)
 2. [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 3. [`026-json-payload-examples.md`](./026-json-payload-examples.md)
+4. [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 
 ### AI Agent / Repo Integrator
 
@@ -107,6 +108,7 @@ Read:
 2. [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
 3. [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
 4. [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
+5. [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 
 ## Docs Operations
 
@@ -123,6 +125,7 @@ Read:
 - Vision next-task allowlist maintenance: [`045-vision-next-task-allowlist-maintenance.md`](./045-vision-next-task-allowlist-maintenance.md)
 - Vision next-task allowlist PR checklist snippet: [`046-vision-next-task-allowlist-pr-checklist-snippet.md`](./046-vision-next-task-allowlist-pr-checklist-snippet.md)
 - Agent and cross-repo adoption: [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
+- CI binary distribution + release protocol: [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 
 ## Supplemental
 

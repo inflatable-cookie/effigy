@@ -157,17 +157,24 @@ steps in order. No step may be skipped. If any step fails, the agent must stop
 and resolve the failure before continuing.
 
 1. **Determine the release version.**
+   - Run `./scripts/prepare-release.sh` to see the recommended bump type based
+     on `CHANGELOG.md` [Unreleased] entries. Breaking entries → MINOR, otherwise
+     → PATCH.
    - If the human specifies a version, use it.
    - If the human says "patch" or "minor", compute the next version from the
      current `Cargo.toml` version.
    - Confirm the target version with the human before proceeding.
 
-2. **Update `Cargo.toml` version.**
-   - Set the `version` field to the target version.
+2. **Prepare the version bump and changelog.**
+   - Run `./scripts/prepare-release.sh --apply` to update `Cargo.toml` version,
+     move [Unreleased] entries to a dated version heading, and sync `Cargo.lock`.
+   - Review the changes. If the human specified a different version than the
+     script computed, update `Cargo.toml` manually instead.
 
 3. **Draft release notes.**
    - Follow `036-release-notes-authoring-template-and-examples.md`.
    - Place in `docs/logs/YYYY-MM/` with the standard naming convention.
+   - Use the `CHANGELOG.md` entries for the version as a starting point.
    - Present the draft to the human for review before continuing.
 
 4. **Run release gates.**
@@ -202,6 +209,9 @@ and resolve the failure before continuing.
 - Follow the release execution protocol in Section 6c exactly when asked to
   create a release
 - Confirm the target version with the human before making any changes
+- When making changes that affect user-facing behavior, append an entry to
+  `CHANGELOG.md` under the appropriate `[Unreleased]` subsection (Breaking,
+  Added, Changed, or Fixed)
 
 ### 7b) What Agents Must Not Do
 
