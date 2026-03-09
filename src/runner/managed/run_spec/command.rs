@@ -67,7 +67,7 @@ pub(super) fn wrap_command_with_task_env(
         })
         .collect::<Vec<String>>()
         .join(" ");
-    format!("env {env_args} sh -lc {}", shell_quote(&command))
+    format!("env {env_args} sh -c {}", shell_quote(&command))
 }
 
 fn render_task_env_value(value: &str, project_root: &Path) -> String {

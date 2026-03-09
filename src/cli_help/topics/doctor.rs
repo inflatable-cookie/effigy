@@ -41,7 +41,7 @@ pub(crate) fn render_doctor_help<R: Renderer>(renderer: &mut R) -> UiResult<()> 
             "effigy doctor --repo /path/to/workspace",
             "effigy doctor --fix",
             "effigy doctor --verbose",
-            "effigy doctor farmyard/build -- --watch",
+            "effigy doctor frontend/build -- --watch",
             "effigy --json doctor --repo /path/to/workspace",
         ],
     )?;

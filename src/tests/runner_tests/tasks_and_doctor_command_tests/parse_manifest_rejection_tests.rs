@@ -75,7 +75,7 @@ fn run_tasks_rejects_invalid_manifest_shapes() {
         },
         ManifestParseRejectionCase {
             workspace: "reject-legacy-managed-profile-list-entry",
-            manifest: "[tasks.dev]\nmode = \"tui\"\n\n[tasks.dev.profiles]\ndefault = [\"farmyard/api\"]\n",
+            manifest: "[tasks.dev]\nmode = \"tui\"\n\n[tasks.dev.profiles]\ndefault = [\"catalog_a/api\"]\n",
             expected: &["invalid type", "data did not match any variant"],
         },
         ManifestParseRejectionCase {
@@ -85,7 +85,7 @@ fn run_tasks_rejects_invalid_manifest_shapes() {
         },
         ManifestParseRejectionCase {
             workspace: "reject-unknown-catalog-field",
-            manifest: "[catalog]\nalias = \"farmyard\"\naliass = \"dup\"\n",
+            manifest: "[catalog]\nalias = \"catalog_a\"\naliass = \"dup\"\n",
             expected: &["unknown field `aliass`"],
         },
         ManifestParseRejectionCase {

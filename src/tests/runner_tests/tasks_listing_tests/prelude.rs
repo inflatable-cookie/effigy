@@ -8,10 +8,10 @@ pub(super) use super::super::prelude::json::*;
 pub(super) use super::super::prelude::output::*;
 pub(super) use super::super::prelude::runtime::*;
 
-pub(super) fn setup_root_and_farmyard_catalog(name: &str) -> PathBuf {
+pub(super) fn setup_root_and_catalog_a_catalog(name: &str) -> PathBuf {
     setup_root_with_catalog_tasks(
         name,
-        &[("farmyard", &[("reset-db", "printf farmyard")])],
+        &[("catalog_a", &[("reset-db", "printf catalog_a")])],
         true,
     )
 }

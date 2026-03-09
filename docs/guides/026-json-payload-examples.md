@@ -635,8 +635,8 @@ Warm-hit example:
   "cache_ttl_source": "default",
   "manifest_count": 3,
   "candidates": [
-    "farmyard/api",
-    "farmyard/build"
+    "catalog_a/api",
+    "catalog_a/build"
   ]
 }
 ```
@@ -658,8 +658,8 @@ Miss example (invalid env policy fallback):
   "cache_ttl_source": "env_invalid",
   "manifest_count": 3,
   "candidates": [
-    "farmyard/api",
-    "farmyard/build"
+    "catalog_a/api",
+    "catalog_a/build"
   ]
 }
 ```

@@ -29,7 +29,7 @@ trap cleanup EXIT
 
 cat >"$TMP_DIR/effigy.toml" <<'TOML'
 [catalog]
-alias = "farmyard"
+alias = "catalog_a"
 
 [tasks]
 noop = "echo noop"
@@ -44,9 +44,9 @@ TOML
 
 run_cmd "help" "$BIN_PATH" help
 run_cmd "tasks" "$BIN_PATH" tasks --repo "$TMP_DIR"
-run_cmd "prefixed builtin tasks" "$BIN_PATH" farmyard/tasks --repo "$TMP_DIR"
+run_cmd "prefixed builtin tasks" "$BIN_PATH" catalog_a/tasks --repo "$TMP_DIR"
 run_cmd "test plan" "$BIN_PATH" test --plan --repo "$TMP_DIR"
-run_cmd "prefixed builtin test plan" "$BIN_PATH" farmyard/test --plan --repo "$TMP_DIR"
+run_cmd "prefixed builtin test plan" "$BIN_PATH" catalog_a/test --plan --repo "$TMP_DIR"
 run_cmd "completion bash" "$BIN_PATH" completion bash
 run_cmd "completion candidates" "$BIN_PATH" completion candidates --repo "$TMP_DIR"
 

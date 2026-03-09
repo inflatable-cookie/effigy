@@ -115,8 +115,8 @@ doctor = false
 #[test]
 fn run_doctor_reports_generated_assets_across_child_catalogs() {
     let root = temp_workspace("doctor-generated-assets-root-fanout");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(farmyard.join("dist")).expect("mkdir farmyard dist");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(catalog_a.join("dist")).expect("mkdir catalog_a dist");
     fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
         .expect("write root gitignore");
     write_manifest(
@@ -124,10 +124,10 @@ fn run_doctor_reports_generated_assets_across_child_catalogs() {
         "[catalog]\nalias = \"root\"\n[scan.generated_assets]\nwarn = 100\nhigh = 150\ncritical = 300\n",
     );
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n",
     );
-    fs::write(farmyard.join("dist/app.min.js"), vec![b'a'; 180]).expect("write asset");
+    fs::write(catalog_a.join("dist/app.min.js"), vec![b'a'; 180]).expect("write asset");
 
     let err = run_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on child-catalog generated asset");
@@ -141,7 +141,7 @@ fn run_doctor_reports_generated_assets_across_child_catalogs() {
     );
     assert_file_text_contains_all(
         &root.join(".effigy/reports/doctor/scan-generated-assets.md"),
-        &["farmyard/dist/app.min.js", "180 B"],
+        &["catalog_a/dist/app.min.js", "180 B"],
     );
 }
 
@@ -200,8 +200,8 @@ doctor = false
 #[test]
 fn run_doctor_reports_generated_in_src_across_child_catalogs() {
     let root = temp_workspace("doctor-generated-in-src-root-fanout");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(catalog_a.join("src")).expect("mkdir catalog_a src");
     fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
         .expect("write root gitignore");
     write_manifest(
@@ -209,10 +209,10 @@ fn run_doctor_reports_generated_in_src_across_child_catalogs() {
         "[catalog]\nalias = \"root\"\n[scan.generated_in_src]\nwarn = 100\nhigh = 150\ncritical = 300\n",
     );
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n",
     );
-    fs::write(farmyard.join("src/client.generated.ts"), vec![b'a'; 180]).expect("write asset");
+    fs::write(catalog_a.join("src/client.generated.ts"), vec![b'a'; 180]).expect("write asset");
 
     let err = run_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on child-catalog generated-in-src file");
@@ -226,6 +226,6 @@ fn run_doctor_reports_generated_in_src_across_child_catalogs() {
     );
     assert_file_text_contains_all(
         &root.join(".effigy/reports/doctor/scan-generated-in-src.md"),
-        &["farmyard/src/client.generated.ts", "180 B"],
+        &["catalog_a/src/client.generated.ts", "180 B"],
     );
 }

@@ -1,21 +1,21 @@
 use super::prelude::{
     assert_json_array_field, assert_json_string_field_eq, assert_output_excludes_all,
     parse_json_output_with_schema, parse_json_output_with_schema_version, run_catalogs_ok,
-    temp_workspace, write_managed_dev_profile_manifest, write_root_and_farmyard_api_catalog,
+    temp_workspace, write_managed_dev_profile_manifest, write_root_and_catalog_a_api_catalog,
     write_root_manifest,
 };
 
 #[test]
 fn run_manifest_task_builtin_catalogs_json_renders_probe_payload() {
     let root = temp_workspace("builtin-catalogs-json");
-    write_root_and_farmyard_api_catalog(&root);
+    write_root_and_catalog_a_api_catalog(&root);
 
-    let out = run_catalogs_ok(root, &["--json", "--resolve", "farmyard/api"]);
+    let out = run_catalogs_ok(root, &["--json", "--resolve", "catalog_a/api"]);
 
     let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks.v1", 1);
     assert_json_array_field(&parsed, "catalogs");
     assert_json_string_field_eq(&parsed["resolve"], "status", "ok");
-    assert_json_string_field_eq(&parsed["resolve"], "catalog", "farmyard");
+    assert_json_string_field_eq(&parsed["resolve"], "catalog", "catalog_a");
     assert_json_string_field_eq(&parsed["resolve"], "task", "api");
     assert_json_array_field(&parsed, "precedence");
 }
@@ -48,24 +48,24 @@ fn run_manifest_task_builtin_catalogs_json_reports_resolution_errors() {
     let root = temp_workspace("builtin-catalogs-json-error");
     write_root_manifest(&root, "[tasks.root]\nrun = \"printf root\"\n");
 
-    let out = run_catalogs_ok(root, &["--json", "--resolve", "farmyard/api"]);
+    let out = run_catalogs_ok(root, &["--json", "--resolve", "catalog_a/api"]);
 
     let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks.v1", 1);
     assert_json_string_field_eq(&parsed["resolve"], "status", "error");
     assert_eq!(parsed["resolve"]["catalog"], serde_json::Value::Null);
     assert!(parsed["resolve"]["error"]
         .as_str()
-        .is_some_and(|msg| msg.contains("prefix `farmyard` not found")));
+        .is_some_and(|msg| msg.contains("prefix `catalog_a` not found")));
 }
 
 #[test]
 fn run_manifest_task_builtin_catalogs_json_compact_output_has_no_newlines() {
     let root = temp_workspace("builtin-catalogs-json-compact");
-    write_root_and_farmyard_api_catalog(&root);
+    write_root_and_catalog_a_api_catalog(&root);
 
     let out = run_catalogs_ok(
         root,
-        &["--json", "--pretty", "false", "--resolve", "farmyard/api"],
+        &["--json", "--pretty", "false", "--resolve", "catalog_a/api"],
     );
 
     assert_output_excludes_all(&out, &["\n"]);

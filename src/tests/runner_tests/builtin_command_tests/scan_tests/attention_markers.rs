@@ -136,19 +136,19 @@ out = "reports/attention-markers.md"
 
 #[test]
 fn run_manifest_task_builtin_scan_attention_markers_root_fans_out_across_child_catalogs() {
-    let (root, farmyard) = setup_fanout_scan_workspace(
+    let (root, catalog_a) = setup_fanout_scan_workspace(
         "builtin-scan-attention-markers-root-fanout",
-        "farmyard",
+        "catalog_a",
         "src",
     );
     write_attention_file(
-        &farmyard.join("src/lib.rs"),
+        &catalog_a.join("src/lib.rs"),
         &["// TODO: revisit bootstrap ordering"],
     );
 
     let out = run_builtin_ok(root, "scan", &["attention-markers", "--show-warnings"]);
 
-    assert_output_contains_all(&out, &["findings: 1", "farmyard/src/lib.rs:1", "[TODO]"]);
+    assert_output_contains_all(&out, &["findings: 1", "catalog_a/src/lib.rs:1", "[TODO]"]);
 }
 
 #[test]

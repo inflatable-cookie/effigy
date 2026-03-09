@@ -22,6 +22,31 @@ fn task_run_json_contract_reclaims_stale_lock_and_remains_valid_payload() {
 }
 
 #[test]
+fn task_run_json_contract_reclaims_expired_workspace_lock_lease() {
+    let root = temp_workspace("task-run-json-stale-lease-reclaim");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.build]\nrun = \"printf build-ok\"\n",
+    );
+    fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
+    fs::write(
+        root.join(".effigy/locks/workspace.lock"),
+        format!(
+            r#"{{"scope":"workspace","pid":{},"started_at_epoch_ms":0,"heartbeat_at_epoch_ms":0,"hostname":"test-host","workspace_root":"{}"}}"#,
+            std::process::id(),
+            root.display()
+        ),
+    )
+    .expect("write stale lease lock");
+
+    let parsed = run_invocation_json(root, "build", &["--json"]);
+    assert_schema_v1(&parsed, "effigy.task.run.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["task"], "build");
+    assert_eq!(parsed["exit_code"], 0);
+}
+
+#[test]
 fn catalog_task_run_json_contract_success_has_versioned_shape() {
     let root = temp_workspace("task-run-json-contract-success");
     write_manifest(

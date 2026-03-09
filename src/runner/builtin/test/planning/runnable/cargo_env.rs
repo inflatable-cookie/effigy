@@ -26,7 +26,7 @@ pub(super) fn maybe_wrap_with_cargo_env(
         .collect::<Vec<String>>()
         .join(" ");
 
-    format!("env {env_args} sh -lc {}", shell_quote(&command))
+    format!("env {env_args} sh -c {}", shell_quote(&command))
 }
 
 fn is_cargo_command_for_mode(command: &str, mode: ManifestCargoEnvMatchMode) -> bool {

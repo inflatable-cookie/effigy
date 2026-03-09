@@ -90,8 +90,8 @@ fn run_manifest_task_builtin_scan_comment_ratio_json_emits_machine_payload() {
 #[test]
 fn run_manifest_task_builtin_scan_comment_ratio_uses_manifest_defaults_and_root_fans_out() {
     let root = temp_workspace("builtin-scan-comment-ratio-manifest-fanout");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(catalog_a.join("src")).expect("mkdir catalog_a src");
     fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n").expect("write gitignore");
     write_manifest(
         &root.join("effigy.toml"),
@@ -108,10 +108,10 @@ out = "reports/comment-ratio.md"
 "#,
     );
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n",
     );
-    write_comment_ratio_file(&farmyard.join("src/lib.ts"), 30, 20);
+    write_comment_ratio_file(&catalog_a.join("src/lib.ts"), 30, 20);
     let report_path = root.join("reports/comment-ratio.md");
 
     let out = run_builtin_ok(root, "scan", &["comment-ratio"]);
@@ -125,7 +125,7 @@ out = "reports/comment-ratio.md"
         &[
             "# Comment Ratio",
             "- Findings: `1`",
-            "| warning | 1.50 | 30 | 20 | `farmyard/src/lib.ts` |",
+            "| warning | 1.50 | 30 | 20 | `catalog_a/src/lib.ts` |",
         ],
     );
 }

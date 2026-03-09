@@ -137,7 +137,7 @@ Builtin `effigy test` still owns suite selection. Use `--` when the remaining ar
 Examples:
 
 ```sh
-effigy test managed -- --package farmyard-db --test learning_soft_delete
+effigy test managed -- --package catalog_a-db --test learning_soft_delete
 effigy test vitest -- --runInBand
 effigy test nextest -- user_service --nocapture
 ```

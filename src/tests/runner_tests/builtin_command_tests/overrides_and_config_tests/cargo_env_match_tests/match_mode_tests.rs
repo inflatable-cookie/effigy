@@ -19,7 +19,7 @@ CARGO_TARGET_DIR = "{project}/.cache/cargo/shell-aware-target"
 cargo_env_match = "shell-aware"
 
 [test.suites]
-integration = "sh -lc 'cargo nextest run --workspace'"
+integration = "sh -c 'cargo nextest run --workspace'"
 "#,
     );
 
@@ -76,7 +76,7 @@ CARGO_HOME = "{project}/.cache/cargo/should-not-apply-home"
 CARGO_TARGET_DIR = "{project}/.cache/cargo/should-not-apply-target"
 
 [test.suites]
-integration = "sh -lc 'cargo nextest run --workspace'"
+integration = "sh -c 'cargo nextest run --workspace'"
 "#,
     );
 

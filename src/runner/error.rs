@@ -70,6 +70,9 @@ pub enum RunnerError {
         lock_path: PathBuf,
         holder_pid: Option<u32>,
         holder_started_at_epoch_ms: Option<u128>,
+        holder_heartbeat_at_epoch_ms: Option<u128>,
+        holder_hostname: Option<String>,
+        holder_workspace_root: Option<String>,
         remediation: String,
     },
     TaskLockIo {

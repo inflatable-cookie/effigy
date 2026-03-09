@@ -31,10 +31,10 @@ fn setup_prefixed_builtin_test_task_ref(root: &Path, marker: &Path) {
     write_validate_manifest(
         root,
         r#"[tasks.validate]
-run = [{ task = "farmyard/test" }, "printf validate-ok"]
+run = [{ task = "catalog_a/test" }, "printf validate-ok"]
 "#,
     );
-    write_catalog_builtin_test_suite_manifest(root, "farmyard", "farmyard", "unit", marker);
+    write_catalog_builtin_test_suite_manifest(root, "catalog_a", "catalog_a", "unit", marker);
 }
 
 fn setup_task_ref_referenced_task_env(root: &Path, marker: &Path) {
@@ -141,7 +141,7 @@ fn run_manifest_task_run_array_supports_prefixed_builtin_test_task_reference_ste
     let cases = [RunArrayValidateMarkerCase {
         workspace: "run-array-prefixed-builtin-test-task-ref",
         args: &["--verbose-root"],
-        marker_rel: "farmyard/builtin-test-called.log",
+        marker_rel: "catalog_a/builtin-test-called.log",
         expected: &["validate-ok"],
         setup: setup_prefixed_builtin_test_task_ref,
     }];

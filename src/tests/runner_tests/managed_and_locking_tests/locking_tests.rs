@@ -43,6 +43,52 @@ run = "printf ok"
 }
 
 #[test]
+fn run_manifest_task_reclaims_stale_lock_from_expired_lease_even_when_pid_is_alive() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-stale-expired-lease");
+    write_root_manifest(
+        &root,
+        r#"[tasks.dev]
+run = "printf ok"
+"#,
+    );
+
+    write_lock_files(
+        &root,
+        &[(
+            "workspace.lock",
+            &format!(
+                r#"{{"scope":"workspace","pid":{},"started_at_epoch_ms":0,"heartbeat_at_epoch_ms":0,"hostname":"test-host","workspace_root":"{}"}}"#,
+                std::process::id(),
+                root.display()
+            ),
+        )],
+    );
+
+    let out = run_dev(&root, &[]).expect("expired lease should be reclaimed");
+
+    assert_output_equals(&out, "");
+}
+
+#[test]
+fn run_manifest_task_reclaims_invalid_lock_record() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-invalid-record-reclaim");
+    write_root_manifest(
+        &root,
+        r#"[tasks.dev]
+run = "printf ok"
+"#,
+    );
+
+    write_lock_files(&root, &[("workspace.lock", "{invalid-json")]);
+
+    let out = run_dev(&root, &[]).expect("invalid lock record should be reclaimed");
+
+    assert_output_equals(&out, "");
+}
+
+#[test]
 fn run_manifest_task_builtin_unlock_clears_explicit_scopes() {
     let _guard = lock_test();
     let cases = [ManagedUnlockSuccessCase {

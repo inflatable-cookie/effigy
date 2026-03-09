@@ -1,17 +1,17 @@
 use super::prelude::{
     assert_case_table, assert_output_contains_all, assert_output_excludes_all,
     assert_string_items_contains_all, assert_string_items_excludes_all, json_task_column,
-    parse_json_output_with_schema_version, run_tasks_from_repo, setup_root_and_farmyard_catalog,
+    parse_json_output_with_schema_version, run_tasks_from_repo, setup_root_and_catalog_a_catalog,
     setup_root_with_catalog_tasks, temp_workspace, write_managed_dev_profile_manifest,
     ManagedProfileListingCase,
 };
 
 #[test]
 fn run_tasks_with_task_filter_reports_only_matches() {
-    let root = setup_root_and_farmyard_catalog("task-filter");
+    let root = setup_root_and_catalog_a_catalog("task-filter");
 
     let out = run_tasks_from_repo(&root, Some("reset-db"), None, false);
-    assert_output_contains_all(&out, &["Task Matches: reset-db", "farmyard", "reset-db"]);
+    assert_output_contains_all(&out, &["Task Matches: reset-db", "catalog_a", "reset-db"]);
     assert_output_excludes_all(&out, &["root      │ reset-db"]);
 }
 
@@ -62,19 +62,19 @@ fn run_tasks_with_builtin_only_filter_renders_builtin_matches_without_fallback_n
 fn run_tasks_with_filter_and_resolve_renders_resolution_probe_block() {
     let root = setup_root_with_catalog_tasks(
         "task-filter-resolve-probe",
-        &[("farmyard", &[("reset-db", "printf farmyard-reset")])],
+        &[("catalog_a", &[("reset-db", "printf catalog_a-reset")])],
         false,
     );
 
-    let out = run_tasks_from_repo(&root, Some("reset-db"), Some("farmyard/reset-db"), false);
+    let out = run_tasks_from_repo(&root, Some("reset-db"), Some("catalog_a/reset-db"), false);
     assert_output_contains_all(
         &out,
         &[
             "Task Matches: reset-db",
-            "farmyard/reset-db",
-            "Resolution: farmyard/reset-db",
+            "catalog_a/reset-db",
+            "Resolution: catalog_a/reset-db",
             "status: ok",
-            "catalog: farmyard",
+            "catalog: catalog_a",
             "task: reset-db",
         ],
     );

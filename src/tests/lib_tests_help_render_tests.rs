@@ -31,7 +31,7 @@ fn render_doctor_help_shows_fix_and_json_options() {
     assert!(rendered.contains("effigy doctor --fix"));
     assert!(rendered.contains("effigy doctor --verbose"));
     assert!(rendered.contains("effigy doctor <task> <args>"));
-    assert!(rendered.contains("effigy doctor farmyard/build -- --watch"));
+    assert!(rendered.contains("effigy doctor frontend/build -- --watch"));
 }
 
 #[test]

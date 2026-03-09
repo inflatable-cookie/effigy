@@ -1,46 +1,46 @@
 use super::prelude::{
     assert_builtin_ok_empty, assert_output_contains_all, create_workspace_dir,
-    create_workspace_path, run_builtin_ok, setup_root_and_farmyard_ping, temp_workspace,
+    create_workspace_path, run_builtin_ok, setup_root_and_catalog_a_ping, temp_workspace,
     write_catalog_tasks,
 };
 
 #[test]
 fn run_manifest_task_prefixed_uses_named_catalog() {
-    let (root, _) = setup_root_and_farmyard_ping("prefixed");
-    assert_builtin_ok_empty(root, "farmyard/ping", &[]);
+    let (root, _) = setup_root_and_catalog_a_ping("prefixed");
+    assert_builtin_ok_empty(root, "catalog_a/ping", &[]);
 }
 
 #[test]
 fn run_manifest_task_unprefixed_prefers_nearest_catalog_in_scope() {
-    let (root, _) = setup_root_and_farmyard_ping("nearest");
-    let nested = create_workspace_path(&root, "farmyard/crates/api");
+    let (root, _) = setup_root_and_catalog_a_ping("nearest");
+    let nested = create_workspace_path(&root, "catalog_a/crates/api");
     assert_builtin_ok_empty(nested, "ping", &[]);
 }
 
 #[test]
 fn run_manifest_task_relative_prefix_resolves_catalog_by_path() {
     let root = temp_workspace("relative-prefix-path");
-    let dairy = create_workspace_dir(&root, "dairy");
+    let catalog_b = create_workspace_dir(&root, "catalog_b");
     let froyo = create_workspace_dir(&root, "froyo");
 
-    write_catalog_tasks(&dairy, Some("dairy"), &[("dev", "printf dairy")]);
+    write_catalog_tasks(&catalog_b, Some("catalog_b"), &[("dev", "printf catalog_b")]);
     write_catalog_tasks(
         &froyo,
         Some("froyo"),
         &[("validate", "printf froyo-validate")],
     );
 
-    assert_builtin_ok_empty(dairy, "../froyo/validate", &[]);
+    assert_builtin_ok_empty(catalog_b, "../froyo/validate", &[]);
 }
 
 #[test]
 fn run_manifest_task_relative_prefix_prefers_alias_collision_over_path_resolution() {
     let root = temp_workspace("relative-prefix-alias-collision");
-    let dairy = create_workspace_dir(&root, "dairy");
+    let catalog_b = create_workspace_dir(&root, "catalog_b");
     let alias_override = create_workspace_dir(&root, "alias-override");
     let froyo = create_workspace_dir(&root, "froyo");
 
-    write_catalog_tasks(&dairy, Some("dairy"), &[("dev", "printf dairy")]);
+    write_catalog_tasks(&catalog_b, Some("catalog_b"), &[("dev", "printf catalog_b")]);
     write_catalog_tasks(
         &alias_override,
         Some("../froyo"),
@@ -48,7 +48,7 @@ fn run_manifest_task_relative_prefix_prefers_alias_collision_over_path_resolutio
     );
     write_catalog_tasks(&froyo, Some("froyo"), &[("validate", "printf froyo")]);
 
-    let out = run_builtin_ok(dairy, "../froyo/validate", &["--verbose-root"]);
+    let out = run_builtin_ok(catalog_b, "../froyo/validate", &["--verbose-root"]);
 
     assert_output_contains_all(
         &out,

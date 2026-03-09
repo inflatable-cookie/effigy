@@ -63,8 +63,8 @@ doctor = false
 #[test]
 fn run_doctor_reports_duplicate_blocks_across_child_catalogs() {
     let root = temp_workspace("doctor-duplicate-blocks-root-fanout");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(catalog_a.join("src")).expect("mkdir catalog_a src");
     fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
         .expect("write root gitignore");
     write_manifest(
@@ -72,11 +72,11 @@ fn run_doctor_reports_duplicate_blocks_across_child_catalogs() {
         "[catalog]\nalias = \"root\"\n[scan.duplicate_blocks]\nwarn = 20\nhigh = 40\ncritical = 80\ndoctor = true\n",
     );
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n",
     );
-    write_duplicate_block_file(&farmyard.join("src/alpha.rs"), "shared", 38);
-    write_duplicate_block_file(&farmyard.join("src/beta.rs"), "shared", 38);
+    write_duplicate_block_file(&catalog_a.join("src/alpha.rs"), "shared", 38);
+    write_duplicate_block_file(&catalog_a.join("src/beta.rs"), "shared", 38);
 
     let err = run_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on child-catalog duplicate block");
@@ -90,7 +90,7 @@ fn run_doctor_reports_duplicate_blocks_across_child_catalogs() {
     );
     assert_file_text_contains_all(
         &root.join(".effigy/reports/doctor/scan-duplicate-blocks.md"),
-        &["farmyard/src/alpha.rs:1-42", "farmyard/src/beta.rs:1-42"],
+        &["catalog_a/src/alpha.rs:1-42", "catalog_a/src/beta.rs:1-42"],
     );
 }
 
@@ -151,8 +151,8 @@ doctor = false
 #[test]
 fn run_doctor_reports_comment_ratio_across_child_catalogs() {
     let root = temp_workspace("doctor-comment-ratio-root-fanout");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(catalog_a.join("src")).expect("mkdir catalog_a src");
     fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
         .expect("write root gitignore");
     write_manifest(
@@ -160,10 +160,10 @@ fn run_doctor_reports_comment_ratio_across_child_catalogs() {
         "[catalog]\nalias = \"root\"\n[scan.comment_ratio]\nwarn = 1.0\nhigh = 2.0\ncritical = 3.0\nmin_code_lines = 20\n",
     );
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n",
     );
-    write_comment_ratio_file(&farmyard.join("src/lib.ts"), 50, 20);
+    write_comment_ratio_file(&catalog_a.join("src/lib.ts"), 50, 20);
 
     let err = run_doctor_task(root.clone(), &[])
         .expect_err("doctor should fail on child-catalog comment ratio finding");
@@ -177,6 +177,6 @@ fn run_doctor_reports_comment_ratio_across_child_catalogs() {
     );
     assert_file_text_contains_all(
         &root.join(".effigy/reports/doctor/scan-comment-ratio.md"),
-        &["farmyard/src/lib.ts", "ratio=2.50"],
+        &["catalog_a/src/lib.ts", "ratio=2.50"],
     );
 }

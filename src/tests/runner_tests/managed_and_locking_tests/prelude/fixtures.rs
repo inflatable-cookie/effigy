@@ -17,12 +17,12 @@ pub(crate) fn write_catalogs_with_tasks(root: &Path, catalogs: &[(&str, &[(&str,
     }
 }
 
-pub(crate) fn write_farmyard_and_cream_dev_catalogs(root: &Path) {
+pub(crate) fn write_catalog_a_and_catalog_c_dev_catalogs(root: &Path) {
     write_catalogs_with_tasks(
         root,
         &[
-            ("farmyard", &[("api", "printf farmyard-api")]),
-            ("cream", &[("dev", "printf cream-dev")]),
+            ("catalog_a", &[("api", "printf catalog_a-api")]),
+            ("catalog_c", &[("dev", "printf catalog_c-dev")]),
         ],
     );
 }

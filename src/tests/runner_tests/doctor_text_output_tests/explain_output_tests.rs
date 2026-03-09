@@ -7,14 +7,14 @@ use super::prelude::{
 fn run_doctor_explain_text_reports_resolution_selection() {
     let root = setup_doctor_explain_catalog_workspace("doctor-explain-selection");
 
-    let out = run_builtin_ok(root, "doctor", &["farmyard/build"]);
+    let out = run_builtin_ok(root, "doctor", &["catalog_a/build"]);
 
     assert_output_contains_all(
         &out,
         &[
             "Doctor Explain",
             "selection-status: ok",
-            "selected-catalog: farmyard",
+            "selected-catalog: catalog_a",
             "selected-mode: explicit_prefix",
             "selection-reasoning:",
             "candidate-catalogs",

@@ -3,15 +3,15 @@ use super::*;
 #[test]
 fn doctor_explain_json_contract_has_selection_and_deferral_fields() {
     let root = temp_workspace("doctor-explain-json-contract");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
     write_manifest(
         &root.join("effigy.toml"),
         "[tasks.root]\nrun = \"printf root\"\n",
     );
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.build]\nrun = \"printf farmyard\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n[tasks.build]\nrun = \"printf catalog_a\"\n",
     );
 
     let out = with_cwd(&root, || {
@@ -21,7 +21,7 @@ fn doctor_explain_json_contract_has_selection_and_deferral_fields() {
             fix: false,
             verbose: false,
             explain: Some(TaskInvocation {
-                name: "farmyard/build".to_owned(),
+                name: "catalog_a/build".to_owned(),
                 args: vec!["--".to_owned(), "--watch".to_owned()],
             }),
         })
@@ -30,7 +30,7 @@ fn doctor_explain_json_contract_has_selection_and_deferral_fields() {
 
     let parsed = parse_json(&out);
     assert_schema_v1(&parsed, "effigy.doctor.explain.v1");
-    assert_eq!(parsed["request"]["task"], "farmyard/build");
+    assert_eq!(parsed["request"]["task"], "catalog_a/build");
     assert!(parsed["request"]["args"].is_array());
     assert_eq!(parsed["selection"]["status"], "ok");
     assert!(parsed["selection"]["evidence"].is_array());
@@ -44,22 +44,22 @@ fn doctor_explain_json_contract_has_selection_and_deferral_fields() {
 #[test]
 fn doctor_explain_text_and_json_reasoning_fields_and_order_are_consistent() {
     let root = temp_workspace("doctor-explain-text-json-parity");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
     write_manifest(
         &root.join("effigy.toml"),
         "[tasks.root]\nrun = \"printf root\"\n",
     );
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.build]\nrun = \"printf farmyard\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n[tasks.build]\nrun = \"printf catalog_a\"\n",
     );
 
     let text = run_manifest_task_with_cwd(
         &TaskInvocation {
             name: "doctor".to_owned(),
             args: vec![
-                "farmyard/build".to_owned(),
+                "catalog_a/build".to_owned(),
                 "--".to_owned(),
                 "--watch".to_owned(),
             ],
@@ -75,7 +75,7 @@ fn doctor_explain_text_and_json_reasoning_fields_and_order_are_consistent() {
             fix: false,
             verbose: false,
             explain: Some(TaskInvocation {
-                name: "farmyard/build".to_owned(),
+                name: "catalog_a/build".to_owned(),
                 args: vec!["--".to_owned(), "--watch".to_owned()],
             }),
         })
@@ -164,15 +164,15 @@ fn doctor_explain_text_and_json_reasoning_fields_and_order_are_consistent() {
 #[test]
 fn doctor_explain_json_snapshot_prefix_is_stable() {
     let root = temp_workspace("doctor-explain-json-snapshot");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
     write_manifest(
         &root.join("effigy.toml"),
         "[tasks.root]\nrun = \"printf root\"\n",
     );
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.build]\nrun = \"printf farmyard\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n[tasks.build]\nrun = \"printf catalog_a\"\n",
     );
 
     let out = with_cwd(&root, || {
@@ -182,7 +182,7 @@ fn doctor_explain_json_snapshot_prefix_is_stable() {
             fix: false,
             verbose: false,
             explain: Some(TaskInvocation {
-                name: "farmyard/build".to_owned(),
+                name: "catalog_a/build".to_owned(),
                 args: vec!["--".to_owned(), "--watch".to_owned()],
             }),
         })
@@ -211,7 +211,7 @@ fn doctor_explain_json_snapshot_prefix_is_stable() {
         ]
     );
     assert_schema_v1(&parsed, "effigy.doctor.explain.v1");
-    assert_eq!(parsed["request"]["task"], "farmyard/build");
+    assert_eq!(parsed["request"]["task"], "catalog_a/build");
     assert_eq!(
         parsed["reasoning"]["selection"],
         "selected catalog by explicit task prefix"

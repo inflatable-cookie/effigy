@@ -319,7 +319,7 @@ What `cargo qa-release` (via release-gates wrapper) enforces:
 - full `cargo test`
 - docs + JSON quality gates (`check-quality-gates.sh --all --ci`)
 - release binary build
-- release smoke checks (`help`, `tasks`, `farmyard/tasks`, `test --plan`, `farmyard/test --plan`)
+- release smoke checks (`help`, `tasks`, `catalog_a/tasks`, `test --plan`, `catalog_a/test --plan`)
 - distribution metadata validation (`check-distribution-metadata.sh`)
 - install validation from the pushed tag (`check-release-install-from-tag.sh`)
 

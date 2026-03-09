@@ -45,10 +45,10 @@ mod tests {
             "--".to_owned(),
             "managed".to_owned(),
             "--package".to_owned(),
-            "farmyard-db".to_owned(),
+            "catalog_a-db".to_owned(),
         ]);
 
         assert!(flags.plan_mode);
-        assert_eq!(passthrough, vec!["managed", "--package", "farmyard-db"]);
+        assert_eq!(passthrough, vec!["managed", "--package", "catalog_a-db"]);
     }
 }

@@ -29,13 +29,19 @@ pub(super) fn write_lock_conflict(
     lock_path: &std::path::Path,
     holder_pid: &Option<u32>,
     holder_started_at_epoch_ms: &Option<u128>,
+    holder_heartbeat_at_epoch_ms: &Option<u128>,
+    holder_hostname: &Option<String>,
+    holder_workspace_root: &Option<String>,
     remediation: &str,
 ) -> std::fmt::Result {
     write!(
         f,
-        "lock conflict for `{scope}` (holder_pid={}, started_at_epoch_ms={}, lock={}); {remediation}",
+        "lock conflict for `{scope}` (holder_pid={}, started_at_epoch_ms={}, heartbeat_at_epoch_ms={}, holder_hostname={}, holder_workspace_root={}, lock={}); {remediation}",
         render_optional(holder_pid),
         render_optional(holder_started_at_epoch_ms),
+        render_optional(holder_heartbeat_at_epoch_ms),
+        render_optional(holder_hostname),
+        render_optional(holder_workspace_root),
         lock_path.display()
     )
 }

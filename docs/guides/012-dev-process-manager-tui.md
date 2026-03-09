@@ -73,7 +73,7 @@ Example relative repo reference:
 
 ```toml
 [catalog]
-alias = "dairy"
+alias = "catalog_b"
 
 [tasks.dev]
 mode = "tui"
@@ -83,7 +83,7 @@ concurrent = [
 ]
 ```
 
-In this example, `../shared/validate` resolves relative to `dairy` catalog root.
+In this example, `../shared/validate` resolves relative to `catalog_b` catalog root.
 
 ## 3) Runtime Behavior
 

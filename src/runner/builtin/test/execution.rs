@@ -160,7 +160,7 @@ pub(super) fn run_builtin_test_targets_parallel(
                     );
                     let mut process = ProcessCommand::new("sh");
                     process
-                        .arg("-lc")
+                        .arg("-c")
                         .arg(&execution_command)
                         .current_dir(&root);
                     with_local_node_bin_path(&mut process, &root);
@@ -226,7 +226,7 @@ fn lifecycle_execution_command_from_parts(
     let mut script = String::from("status=0\n");
 
     if let Some(setup_command) = setup_command {
-        script.push_str(&format!("sh -lc {}\n", shell_quote(setup_command)));
+        script.push_str(&format!("sh -c {}\n", shell_quote(setup_command)));
         script.push_str("setup_status=$?\n");
         script.push_str("if [ \"$setup_status\" -ne 0 ]; then\n");
         script.push_str("  status=$setup_status\n");
@@ -253,12 +253,12 @@ fn lifecycle_execution_command_from_parts(
     }
 
     script.push_str("exit \"$status\"");
-    format!("sh -lc {}", shell_quote(&script))
+    format!("sh -c {}", shell_quote(&script))
 }
 
 fn render_primary_command_block(command: &str) -> String {
     let mut block = String::new();
-    block.push_str(&format!("sh -lc {}\n", shell_quote(command)));
+    block.push_str(&format!("sh -c {}\n", shell_quote(command)));
     block.push_str("command_status=$?\n");
     block.push_str("if [ \"$command_status\" -ne 0 ]; then\n");
     block.push_str("  status=$command_status\n");
@@ -268,7 +268,7 @@ fn render_primary_command_block(command: &str) -> String {
 
 fn render_teardown_block(teardown_command: &str, preserve_existing_failure: bool) -> String {
     let mut block = String::new();
-    block.push_str(&format!("sh -lc {}\n", shell_quote(teardown_command)));
+    block.push_str(&format!("sh -c {}\n", shell_quote(teardown_command)));
     block.push_str("teardown_status=$?\n");
     block.push_str("if [ \"$teardown_status\" -ne 0 ]; then\n");
     if preserve_existing_failure {

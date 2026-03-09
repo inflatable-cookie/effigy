@@ -6,8 +6,8 @@ use super::prelude::{
 
 #[test]
 fn parse_task_selector_supports_prefixed_task() {
-    let selector = parse_task_selector("farmyard/reset-db").expect("selector");
-    assert_eq!(selector.prefix, Some("farmyard".to_owned()));
+    let selector = parse_task_selector("catalog_a/reset-db").expect("selector");
+    assert_eq!(selector.prefix, Some("catalog_a".to_owned()));
     assert_eq!(selector.task_name, "reset-db");
 }
 
@@ -23,8 +23,8 @@ fn run_manifest_task_unknown_prefix_returns_catalog_error() {
     let root = temp_workspace("unknown-prefix");
     write_root_manifest(&root, "[tasks.reset-db]\nrun = \"printf root\"\n");
 
-    let err = run_task(&root, "farmyard/reset-db", &[]).expect_err("unknown prefix");
-    assert_catalog_prefix_not_found(err, "farmyard", &["root"]);
+    let err = run_task(&root, "catalog_a/reset-db", &[]).expect_err("unknown prefix");
+    assert_catalog_prefix_not_found(err, "catalog_a", &["root"]);
 }
 
 #[test]
@@ -32,18 +32,18 @@ fn run_manifest_task_verbose_root_includes_resolution_trace() {
     let _guard = lock_test();
     let _env = EnvGuard::set_many(&[("EFFIGY_COLOR", None), ("NO_COLOR", None)]);
     let root = temp_workspace("verbose-trace");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(&catalog_a).expect("mkdir");
     write_root_manifest(&root, "[tasks.ping]\nrun = \"printf root\"\n");
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[tasks.ping]\nrun = \"printf farmyard\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[tasks.ping]\nrun = \"printf catalog_a\"\n",
     );
 
-    let out = run_task(&root, "farmyard/ping", &["--verbose-root"]).expect("run");
+    let out = run_task(&root, "catalog_a/ping", &["--verbose-root"]).expect("run");
     assert_output_contains_all(
         &out,
-        &["Task Resolution", "catalog-alias: farmyard", "farmyard"],
+        &["Task Resolution", "catalog-alias: catalog_a", "catalog_a"],
     );
 }
 
