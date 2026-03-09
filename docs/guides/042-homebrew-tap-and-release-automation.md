@@ -12,7 +12,7 @@ This guide defines the Homebrew channel workflow for Effigy releases, including 
 
 Recommended split:
 - core repo: `inflatable-cookie/effigy`
-- tap repo: `inflatable-cookie/homebrew-effigy`
+- tap repo: `inflatable-cookie/homebrew-tap`
 - formula path in tap: `Formula/effigy.rb`
 
 Formula source should reference:
@@ -24,7 +24,7 @@ Formula source should reference:
 Use one canonical formula:
 - name: `effigy`
 - install command:
-  - `brew install inflatable-cookie/effigy/effigy`
+  - `brew install inflatable-cookie/tap/effigy`
 - upgrade command:
   - `brew upgrade effigy`
 
@@ -82,7 +82,7 @@ Implemented tap PR automation:
 
 Required repository wiring:
 - secret: `EFFIGY_TAP_GH_TOKEN` (PAT with contents + pull request write access to tap repo)
-- default tap repo: `inflatable-cookie/homebrew-effigy` (override via workflow-dispatch input)
+- default tap repo: `inflatable-cookie/homebrew-tap` (override via workflow-dispatch input)
 
 Tap repo workflow should run:
 - `brew audit --strict --formula`
@@ -101,7 +101,7 @@ If Homebrew update is broken:
 
 Per release:
 - fresh install:
-  - `brew install inflatable-cookie/effigy/effigy`
+  - `brew install inflatable-cookie/tap/effigy`
 - upgrade path:
   - install old version, then `brew upgrade effigy`
 - command smoke:
