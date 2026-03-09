@@ -1,9 +1,9 @@
+pub(super) use super::super::super::deferral::reset_composer_home_cache_for_tests;
 pub(super) use super::super::prelude::{
     assert_case_table, assert_file_text_equals, assert_output_equals, assert_path_missing, fs,
     lock_test, run_task_in_workspace, temp_workspace, write_defer_manifest, write_executable,
     write_manifest, EnvGuard, Path, PathBuf, RunnerError,
 };
-pub(super) use super::super::super::deferral::reset_composer_home_cache_for_tests;
 
 pub(super) struct DeferredTaskCase {
     pub(super) workspace: &'static str,

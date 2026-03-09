@@ -133,7 +133,7 @@ fn can_extend_backward(
     occurrences: &[DuplicateSeed],
     start_offsets: &[usize],
 ) -> bool {
-    if start_offsets.iter().any(|start| *start == 0) {
+    if start_offsets.contains(&0) {
         return false;
     }
     let reference = &files[occurrences[0].file_index].lines[start_offsets[0] - 1].text;

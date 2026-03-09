@@ -12,7 +12,11 @@ fn run_doctor_and_explain_text_headings_are_stable() {
 
     let explain_root =
         setup_doctor_explain_catalog_workspace("doctor-explain-shared-layout-heading");
-    let explain_out = run_builtin_ok(explain_root, "doctor", &["catalog_a/build", "--", "--watch"]);
+    let explain_out = run_builtin_ok(
+        explain_root,
+        "doctor",
+        &["catalog_a/build", "--", "--watch"],
+    );
     assert!(explain_out.starts_with("Doctor Explain\n"));
 }
 
@@ -40,8 +44,11 @@ fn run_doctor_and_explain_text_row_and_section_order_contract_is_stable() {
     );
 
     let explain_root = setup_doctor_explain_catalog_workspace("doctor-explain-shared-layout-order");
-    let explain_rendered =
-        run_builtin_ok(explain_root, "doctor", &["catalog_a/build", "--", "--watch"]);
+    let explain_rendered = run_builtin_ok(
+        explain_root,
+        "doctor",
+        &["catalog_a/build", "--", "--watch"],
+    );
     let (prefix_block, _) = explain_rendered
         .split_once("\ncandidate-catalogs:\n")
         .expect("expected candidate-catalogs section");
