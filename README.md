@@ -7,27 +7,35 @@ It gives you one command surface for:
 - built-in workflow commands (`tasks`, `doctor`, `test`, `watch`, `init`, `migrate`, `config`, `unlock`, `cache`, `completion`),
 - deterministic task resolution across catalogs.
 
-## Quick Start (2 Minutes)
+## Install
 
-1. Build and run help:
-
-```bash
-cargo run --bin effigy -- --help
-```
-
-2. Preview your discovered tasks:
+**Homebrew** (macOS):
 
 ```bash
-cargo run --bin effigy -- tasks
+brew install inflatable-cookie/tap/effigy
 ```
 
-3. Scaffold a starter manifest if you do not have one:
+**Prebuilt binary** (macOS and Linux):
 
 ```bash
-cargo run --bin effigy -- init
+curl -fsSL https://github.com/inflatable-cookie/effigy/releases/latest/download/effigy-$(uname -m | sed 's/arm64/aarch64/')-$(uname -s | tr A-Z a-z | sed 's/darwin/apple-darwin/;s/linux/unknown-linux-gnu/') -o /usr/local/bin/effigy && chmod +x /usr/local/bin/effigy
 ```
 
-4. Add a minimal task catalog in `effigy.toml`:
+**From source** (requires Rust):
+
+```bash
+cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.2.0
+```
+
+## Quick Start
+
+1. Scaffold a starter manifest:
+
+```bash
+effigy init
+```
+
+2. Add tasks in `effigy.toml`:
 
 ```toml
 [catalog]
@@ -39,11 +47,12 @@ test = "bun x vitest run"
 "db:reset" = "./scripts/reset-db.sh"
 ```
 
-5. Run tasks:
+3. Run tasks:
 
 ```bash
-cargo run --bin effigy -- dev
-cargo run --bin effigy -- app/db:reset
+effigy dev
+effigy app/db:reset
+effigy tasks
 ```
 
 ## Most Common Commands
