@@ -6,34 +6,34 @@ use std::fs;
 #[test]
 fn catalogs_text_contract_includes_core_sections_and_probe_fields() {
     let root = temp_workspace("catalogs-contract-text");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
 
     write_manifest(
         &root.join("effigy.toml"),
         "[defer]\nrun = \"printf deferred\"\n[tasks.root]\nrun = \"printf root\"\n",
     );
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n[tasks.api]\nrun = \"printf api\"\n",
     );
 
     let out = run_manifest_task_with_cwd(
         &TaskInvocation {
             name: "catalogs".to_owned(),
-            args: vec!["--resolve".to_owned(), "farmyard/api".to_owned()],
+            args: vec!["--resolve".to_owned(), "catalog_a/api".to_owned()],
         },
         root,
     )
     .expect("run catalogs text");
 
     let expected_markers = [
-        "Resolution: farmyard/api",
-        "catalog: farmyard",
+        "Resolution: catalog_a/api",
+        "catalog: catalog_a",
         "task: api",
         "lock_scopes: workspace, task:api",
         "evidence:",
-        "selected catalog via explicit prefix `farmyard`",
+        "selected catalog via explicit prefix `catalog_a`",
     ];
     for marker in expected_markers {
         assert!(
@@ -46,12 +46,12 @@ fn catalogs_text_contract_includes_core_sections_and_probe_fields() {
 #[test]
 fn catalogs_json_pretty_contract_uses_tasks_schema_top_level_shape() {
     let root = temp_workspace("catalogs-contract-json-pretty");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
 
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n[tasks.api]\nrun = \"printf api\"\n",
     );
 
     let out = run_manifest_task_with_cwd(
@@ -60,7 +60,7 @@ fn catalogs_json_pretty_contract_uses_tasks_schema_top_level_shape() {
             args: vec![
                 "--json".to_owned(),
                 "--resolve".to_owned(),
-                "farmyard/api".to_owned(),
+                "catalog_a/api".to_owned(),
             ],
         },
         root,
@@ -74,7 +74,7 @@ fn catalogs_json_pretty_contract_uses_tasks_schema_top_level_shape() {
     assert!(parsed["catalog_tasks"].is_array());
     assert!(parsed["builtin_tasks"].is_array());
     assert!(parsed["catalogs"].is_array());
-    assert_eq!(parsed["resolve"]["catalog"], "farmyard");
+    assert_eq!(parsed["resolve"]["catalog"], "catalog_a");
     assert_eq!(parsed["resolve"]["lock_scopes"][0], "workspace");
     assert_eq!(parsed["resolve"]["lock_scopes"][1], "task:api");
 }
@@ -82,12 +82,12 @@ fn catalogs_json_pretty_contract_uses_tasks_schema_top_level_shape() {
 #[test]
 fn catalogs_json_compact_contract_is_single_line_and_valid_json() {
     let root = temp_workspace("catalogs-contract-json-compact");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
 
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n[tasks.api]\nrun = \"printf api\"\n",
     );
 
     let out = run_manifest_task_with_cwd(
@@ -98,7 +98,7 @@ fn catalogs_json_compact_contract_is_single_line_and_valid_json() {
                 "--pretty".to_owned(),
                 "false".to_owned(),
                 "--resolve".to_owned(),
-                "farmyard/api".to_owned(),
+                "catalog_a/api".to_owned(),
             ],
         },
         root,

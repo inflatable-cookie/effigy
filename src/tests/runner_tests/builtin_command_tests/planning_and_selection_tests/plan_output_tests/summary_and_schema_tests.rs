@@ -61,42 +61,42 @@ fn run_manifest_task_builtin_test_plan_marks_configured_suite_source() {
 fn run_manifest_task_builtin_test_plan_mixed_workspace_reports_configured_and_auto_detected_sources(
 ) {
     let root = temp_workspace("builtin-test-plan-mixed-suite-sources");
-    let farmyard = root.join("farmyard");
-    let dairy = root.join("dairy");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    let catalog_a = root.join("catalog_a");
+    let catalog_b = root.join("catalog_b");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
+    fs::create_dir_all(&catalog_b).expect("mkdir catalog_b");
 
     write_root_manifest(&root, "[tasks.dev]\nrun = \"printf root\"\n");
     write_manifest(
-        &farmyard.join("effigy.toml"),
+        &catalog_a.join("effigy.toml"),
         r#"[catalog]
-alias = "farmyard"
+alias = "catalog_a"
 [test.suites]
 unit = "pnpm exec vitest run"
 "#,
     );
     write_manifest(
-        &dairy.join("effigy.toml"),
+        &catalog_b.join("effigy.toml"),
         r#"[catalog]
-alias = "dairy"
+alias = "catalog_b"
 "#,
     );
-    write_package_json_with_vitest_dev_dependency(&dairy);
+    write_package_json_with_vitest_dev_dependency(&catalog_b);
 
     let out = run_builtin_ok(root, "test", &["--plan"]);
     assert_output_contains_all(
         &out,
         &[
             "Target Summary",
-            "farmyard: source=configured suites=unit",
-            "dairy: source=auto-detected suites=vitest",
+            "catalog_a: source=configured suites=unit",
+            "catalog_b: source=auto-detected suites=vitest",
             "cargo-env-match=prefix-aware",
-            "Target: farmyard",
+            "Target: catalog_a",
             "available-suites: unit",
             "suite-source: configured",
             "cargo-env-match: prefix-aware",
             "test.suites.unit",
-            "Target: dairy",
+            "Target: catalog_b",
             "suite-source: auto-detected",
             "cargo-env-match: prefix-aware",
             "vitest",

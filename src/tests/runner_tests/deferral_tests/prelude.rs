@@ -3,6 +3,7 @@ pub(super) use super::super::prelude::{
     lock_test, run_task_in_workspace, temp_workspace, write_defer_manifest, write_executable,
     write_manifest, EnvGuard, Path, PathBuf, RunnerError,
 };
+pub(super) use super::super::super::deferral::reset_composer_home_cache_for_tests;
 
 pub(super) struct DeferredTaskCase {
     pub(super) workspace: &'static str,
@@ -49,10 +50,25 @@ pub(super) fn assert_defer_loop_detected(err: RunnerError, expected_depth: u8) {
     }
 }
 
-pub(super) fn setup_composer_stub(root: &Path, script: &str, marker_file: &Path) -> EnvGuard {
+pub(super) fn setup_implicit_deferral_stub(
+    root: &Path,
+    script: &str,
+    marker_file: &Path,
+    composer_log_file: &Path,
+) -> EnvGuard {
+    let home_dir = root.join("fake-composer-home");
+    let vendor_bin = home_dir.join("vendor/bin");
     let bin_dir = root.join("bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir bin");
-    write_executable(&bin_dir.join("composer"), script);
+    fs::create_dir_all(&bin_dir).expect("mkdir fake composer bin");
+    fs::create_dir_all(&vendor_bin).expect("mkdir composer vendor bin");
+    write_executable(
+        &bin_dir.join("composer"),
+        &format!(
+            "#!/bin/sh\nprintf 'called\\n' >> \"$EFFIGY_TEST_COMPOSER_LOG_FILE\"\nprintf '%s\\n' '{}'\n",
+            home_dir.display()
+        ),
+    );
+    write_executable(&vendor_bin.join("effigy"), script);
 
     let prior_path = std::env::var("PATH").ok().unwrap_or_default();
     let path = format!("{}:{}", bin_dir.display(), prior_path);
@@ -60,8 +76,12 @@ pub(super) fn setup_composer_stub(root: &Path, script: &str, marker_file: &Path)
         ("PATH", Some(path)),
         ("SHELL", Some("/bin/sh".to_owned())),
         (
-            "EFFIGY_TEST_COMPOSER_ARGS_FILE",
+            "EFFIGY_TEST_DEFER_ARGS_FILE",
             Some(marker_file.display().to_string()),
+        ),
+        (
+            "EFFIGY_TEST_COMPOSER_LOG_FILE",
+            Some(composer_log_file.display().to_string()),
         ),
     ])
 }
@@ -88,9 +108,9 @@ pub(super) fn write_implicit_deferral_markers(
     }
 }
 
-pub(super) fn composer_script(exit_code: u8) -> String {
+pub(super) fn implicit_deferral_script(exit_code: u8) -> String {
     format!(
-        "#!/bin/sh\nprintf \"%s\\n\" \"$@\" > \"$EFFIGY_TEST_COMPOSER_ARGS_FILE\"\nexit {exit_code}\n"
+        "#!/bin/sh\nprintf \"%s\\n\" \"$@\" > \"$EFFIGY_TEST_DEFER_ARGS_FILE\"\nexit {exit_code}\n"
     )
 }
 
@@ -156,7 +176,7 @@ pub(super) fn assert_implicit_deferral_case_table(cases: &[ImplicitDeferralCase]
     );
 }
 
-fn composer_exit_code(expectation: &ImplicitDeferralExpectation) -> u8 {
+fn deferral_script_exit_code(expectation: &ImplicitDeferralExpectation) -> u8 {
     match expectation {
         ImplicitDeferralExpectation::ExplicitDeferral => 99,
         _ => 0,
@@ -184,7 +204,7 @@ fn assert_implicit_task_not_found_case(root: &Path, marker: &Path, case: &Implic
     assert_task_not_found_any(err);
     assert_path_missing(
         marker,
-        "composer fallback marker for missing required root markers",
+        "implicit deferral marker for missing required root markers",
     );
 }
 
@@ -195,7 +215,7 @@ fn assert_implicit_explicit_deferral_case(root: &Path, marker: &Path, case: &Imp
         case.args,
         "explicit deferral should succeed",
     );
-    assert_path_missing(marker, "composer fallback marker");
+    assert_path_missing(marker, "implicit deferral marker");
 }
 
 pub(super) fn run_implicit_deferral_case(case: &ImplicitDeferralCase, root: PathBuf) {
@@ -206,9 +226,15 @@ pub(super) fn run_implicit_deferral_case(case: &ImplicitDeferralCase, root: Path
         case.use_nested_markers,
     );
 
-    let marker = root.join("composer-args.log");
-    let composer_exit = composer_exit_code(&case.expectation);
-    let _env = setup_composer_stub(&root, &composer_script(composer_exit), &marker);
+    let marker = root.join("defer-args.log");
+    let composer_log = root.join("composer.log");
+    let script_exit = deferral_script_exit_code(&case.expectation);
+    let _env = setup_implicit_deferral_stub(
+        &root,
+        &implicit_deferral_script(script_exit),
+        &marker,
+        &composer_log,
+    );
 
     match &case.expectation {
         ImplicitDeferralExpectation::Deferred { expected_args } => {

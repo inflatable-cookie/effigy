@@ -59,13 +59,13 @@ fn write_managed_profiles_manifest(root: &Path) {
         root.join("effigy.toml"),
         r#"[tasks.dev]
 mode = "tui"
-concurrent = [{ task = "farmyard/api" }]
+concurrent = [{ task = "catalog_a/api" }]
 
 [tasks.dev.profiles.front]
-concurrent = [{ task = "cream/dev" }]
+concurrent = [{ task = "catalog_c/dev" }]
 
 [tasks.dev.profiles.admin]
-concurrent = [{ task = "dairy/dev" }]
+concurrent = [{ task = "catalog_b/dev" }]
 "#,
     )
     .expect("write manifest");

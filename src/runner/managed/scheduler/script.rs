@@ -87,7 +87,7 @@ fn render_policy_wrapped_command(command: &str, policy: RunStepPolicy) -> String
     }
     lines.push("done".to_owned());
     lines.push("exit \"$__effigy_status\"".to_owned());
-    format!("sh -lc {}", shell_quote(&lines.join("\n")))
+    format!("sh -c {}", shell_quote(&lines.join("\n")))
 }
 
 fn render_wrapped_exec_line(command: &str, timeout_ms: Option<u64>) -> String {
@@ -99,5 +99,5 @@ fn render_wrapped_exec_line(command: &str, timeout_ms: Option<u64>) -> String {
             quoted_command
         );
     }
-    format!("  sh -lc {}", quoted_command)
+    format!("  sh -c {}", quoted_command)
 }

@@ -21,7 +21,7 @@ fn run_doctor_text_output_has_blank_line_between_sections() {
 fn run_doctor_explain_text_snapshot_prefix_block_is_stable() {
     let root = setup_doctor_explain_catalog_workspace("doctor-explain-snapshot-prefix");
 
-    let out = run_builtin_ok(root, "doctor", &["farmyard/build", "--", "--watch"]);
+    let out = run_builtin_ok(root, "doctor", &["catalog_a/build", "--", "--watch"]);
 
     let (prefix_block, _) = out
         .split_once("\ncandidate-catalogs:\n")
@@ -30,7 +30,7 @@ fn run_doctor_explain_text_snapshot_prefix_block_is_stable() {
     assert_eq!(lines.len(), 12);
     assert_eq!(lines[0], "Doctor Explain");
     assert_eq!(lines[1], "──────────────");
-    assert_eq!(lines[2], "request: farmyard/build");
+    assert_eq!(lines[2], "request: catalog_a/build");
     assert_eq!(lines[3], "args: -- --watch");
     assert!(
         lines[4].starts_with("resolved-root: "),
@@ -43,7 +43,7 @@ fn run_doctor_explain_text_snapshot_prefix_block_is_stable() {
         lines[4]
     );
     assert_eq!(lines[5], "selection-status: ok");
-    assert_eq!(lines[6], "selected-catalog: farmyard");
+    assert_eq!(lines[6], "selected-catalog: catalog_a");
     assert_eq!(lines[7], "selected-mode: explicit_prefix");
     assert_eq!(
         lines[8],
@@ -60,11 +60,11 @@ fn run_doctor_explain_text_snapshot_prefix_block_is_stable() {
 #[test]
 fn run_doctor_text_output_snapshot_mixed_findings_and_fix_actions() {
     let root = temp_workspace("doctor-text-snapshot-mixed");
-    let farmyard = create_workspace_dir(&root, "farmyard");
+    let catalog_a = create_workspace_dir(&root, "catalog_a");
     write_manifest(
-        &farmyard.join("effigy.toml"),
+        &catalog_a.join("effigy.toml"),
         r#"[catalog]
-alias = "farmyard"
+alias = "catalog_a"
 
 [tasks.build]
 run = [{ task = "missing/task" }]

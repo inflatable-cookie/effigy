@@ -7,8 +7,8 @@ use super::prelude::{
 fn setup_relative_task_refs(root: &Path) {
     write_catalog_manifest_with_alias(
         root,
-        "dairy",
-        "dairy",
+        "catalog_b",
+        "catalog_b",
         r#"[tasks.dev]
 mode = "tui"
 concurrent = [{ name = "validate-stack", task = "../froyo/validate" }]
@@ -27,7 +27,7 @@ fn run_manifest_task_managed_tui_relative_task_ref_contract_table() {
     let _env = managed_tui_env();
     let cases = [ManagedOutputDerivedCase {
         workspace: "managed-relative-task-ref",
-        invocation: ManagedInvocation::TaskWithRepo("dairy/dev"),
+        invocation: ManagedInvocation::TaskWithRepo("catalog_b/dev"),
         args: &[],
         expected: &["validate-stack", "froyo-validate"],
         expected_absent: &[],

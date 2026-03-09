@@ -84,6 +84,6 @@ fn run_manifest_task_builtin_scan_generated_assets_root_fans_out_across_child_ca
         "generated-assets",
         "dist",
         "dist/app.min.js",
-        "farmyard/dist/app.min.js",
+        "catalog_a/dist/app.min.js",
     );
 }

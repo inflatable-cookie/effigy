@@ -56,7 +56,7 @@ pub(super) fn render_completion_candidates_help() -> String {
                 items: &[
                     "effigy completion candidates",
                     "effigy completion candidates --prefix api",
-                    "effigy completion candidates --repo ./farmyard --json",
+                    "effigy completion candidates --repo ./frontend --json",
                 ],
             },
         ],

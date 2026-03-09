@@ -3,12 +3,12 @@ use super::*;
 #[test]
 fn run_doctor_executes_discovered_health_task() {
     let root = temp_workspace("doctor-health-delegation");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
 
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.health]\nrun = \"printf farmyard-health-ok\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n[tasks.health]\nrun = \"printf catalog_a-health-ok\"\n",
     );
 
     let out = run_doctor_task(root, &[]).expect("doctor run");

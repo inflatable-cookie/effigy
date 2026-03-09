@@ -55,7 +55,7 @@ pub(super) fn spawn_process_instance(
 fn spawn_plain_shell(spec: &ProcessSpec) -> ProcessCommand {
     let mut process = ProcessCommand::new("sh");
     process
-        .arg("-lc")
+        .arg("-c")
         .arg(&spec.run)
         .current_dir(&spec.cwd)
         .stdin(Stdio::piped())
@@ -80,7 +80,7 @@ fn spawn_with_pty_wrapper(spec: &ProcessSpec) -> ProcessCommand {
             .arg("-q")
             .arg("/dev/null")
             .arg("sh")
-            .arg("-lc")
+            .arg("-c")
             .arg(&spec.run)
             .current_dir(&spec.cwd)
             .stdin(Stdio::piped())

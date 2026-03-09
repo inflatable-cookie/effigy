@@ -53,7 +53,7 @@ A version can be tagged for channel publication only if all are true:
 - [x] Smoke checks pass on active workspace(s):
   - `help`
   - `tasks`
-  - prefixed built-ins (`farmyard/tasks`, `farmyard/test`)
+  - prefixed built-ins (`catalog_a/tasks`, `catalog_a/test`)
   - `test --plan`
 - [x] Install validation from release tag is automated:
   - `./scripts/check-release-install-from-tag.sh --tag <tag>`

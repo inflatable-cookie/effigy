@@ -7,7 +7,7 @@ use crate::runner::error::RunnerError;
 pub(super) fn build_shell_process(context: &ExecutionTaskContext<'_>) -> ProcessCommand {
     let mut process = ProcessCommand::new("sh");
     process
-        .arg("-lc")
+        .arg("-c")
         .arg(context.command())
         .current_dir(context.repo_for_task());
     with_local_node_bin_path(&mut process, context.repo_for_task());

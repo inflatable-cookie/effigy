@@ -29,22 +29,22 @@ pub(super) use super::super::prelude::output::*;
 pub(super) use super::super::prelude::runtime::*;
 
 pub(super) fn setup_fanout_catalog_repo(root: &Path) -> (PathBuf, PathBuf) {
-    let farmyard = root.join("farmyard");
-    let dairy = root.join("dairy");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
-    fs::create_dir_all(&dairy).expect("mkdir dairy");
+    let catalog_a = root.join("catalog_a");
+    let catalog_b = root.join("catalog_b");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
+    fs::create_dir_all(&catalog_b).expect("mkdir catalog_b");
     write_root_manifest(root, "[tasks.dev]\nrun = \"printf root\"\n");
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.ping]\nrun = \"printf ok\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n[tasks.ping]\nrun = \"printf ok\"\n",
     );
     write_manifest(
-        &dairy.join("effigy.toml"),
-        "[catalog]\nalias = \"dairy\"\n[tasks.ping]\nrun = \"printf ok\"\n",
+        &catalog_b.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_b\"\n[tasks.ping]\nrun = \"printf ok\"\n",
     );
-    write_package_json_with_test_script(&farmyard);
-    write_package_json_with_test_script(&dairy);
-    (farmyard, dairy)
+    write_package_json_with_test_script(&catalog_a);
+    write_package_json_with_test_script(&catalog_b);
+    (catalog_a, catalog_b)
 }
 
 pub(super) fn assert_builtin_test_non_zero(

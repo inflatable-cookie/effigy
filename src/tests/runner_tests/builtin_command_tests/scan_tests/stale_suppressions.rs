@@ -137,13 +137,13 @@ out = "reports/stale-suppressions.md"
 
 #[test]
 fn run_manifest_task_builtin_scan_stale_suppressions_root_fans_out_across_child_catalogs() {
-    let (root, farmyard) = setup_fanout_scan_workspace(
+    let (root, catalog_a) = setup_fanout_scan_workspace(
         "builtin-scan-stale-suppressions-root-fanout",
-        "farmyard",
+        "catalog_a",
         "src",
     );
     write_attention_file(
-        &farmyard.join("src/lib.rs"),
+        &catalog_a.join("src/lib.rs"),
         &["#[allow(warnings)]", "pub fn lib() {}"],
     );
 
@@ -153,7 +153,7 @@ fn run_manifest_task_builtin_scan_stale_suppressions_root_fans_out_across_child_
         &out,
         &[
             "findings: 1",
-            "farmyard/src/lib.rs:1",
+            "catalog_a/src/lib.rs:1",
             "[#[allow(warnings)]]",
         ],
     );

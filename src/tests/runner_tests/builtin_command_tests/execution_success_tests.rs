@@ -42,31 +42,31 @@ fn run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo() {
 #[test]
 fn run_manifest_task_builtin_test_fans_out_across_catalog_roots() {
     let root = temp_workspace("builtin-test-fanout");
-    let (farmyard, dairy) = setup_fanout_catalog_repo(&root);
-    let farmyard_marker = farmyard.join("vitest-called.log");
-    let dairy_marker = dairy.join("vitest-called.log");
-    install_local_vitest_marker(&farmyard, &farmyard_marker);
-    install_local_vitest_marker(&dairy, &dairy_marker);
+    let (catalog_a, catalog_b) = setup_fanout_catalog_repo(&root);
+    let catalog_a_marker = catalog_a.join("vitest-called.log");
+    let catalog_b_marker = catalog_b.join("vitest-called.log");
+    install_local_vitest_marker(&catalog_a, &catalog_a_marker);
+    install_local_vitest_marker(&catalog_b, &catalog_b_marker);
 
     let out = run_builtin_ok(root, "test", &[]);
-    assert_output_contains_all(&out, &["Test Results", "targets:", "dairy", "farmyard"]);
+    assert_output_contains_all(&out, &["Test Results", "targets:", "catalog_b", "catalog_a"]);
     assert_output_excludes_all(&out, &["runner:vitest", "command:"]);
-    assert_path_exists(&farmyard_marker, "farmyard vitest marker");
-    assert_path_exists(&dairy_marker, "dairy vitest marker");
+    assert_path_exists(&catalog_a_marker, "catalog_a vitest marker");
+    assert_path_exists(&catalog_b_marker, "catalog_b vitest marker");
 }
 
 #[test]
 fn run_manifest_task_prefixed_builtin_test_targets_catalog_root_only() {
     let root = temp_workspace("builtin-test-prefixed-catalog");
-    let (farmyard, dairy) = setup_fanout_catalog_repo(&root);
-    let farmyard_marker = farmyard.join("vitest-called.log");
-    let dairy_marker = dairy.join("vitest-called.log");
-    install_local_vitest_marker(&farmyard, &farmyard_marker);
-    install_local_vitest_marker(&dairy, &dairy_marker);
+    let (catalog_a, catalog_b) = setup_fanout_catalog_repo(&root);
+    let catalog_a_marker = catalog_a.join("vitest-called.log");
+    let catalog_b_marker = catalog_b.join("vitest-called.log");
+    install_local_vitest_marker(&catalog_a, &catalog_a_marker);
+    install_local_vitest_marker(&catalog_b, &catalog_b_marker);
 
-    let out = run_builtin_ok(root, "farmyard/test", &[]);
-    assert_output_contains_all(&out, &["Test Results", "farmyard"]);
-    assert_output_excludes_all(&out, &["dairy"]);
-    assert_path_exists(&farmyard_marker, "farmyard vitest marker");
-    assert_path_missing(&dairy_marker, "dairy vitest marker");
+    let out = run_builtin_ok(root, "catalog_a/test", &[]);
+    assert_output_contains_all(&out, &["Test Results", "catalog_a"]);
+    assert_output_excludes_all(&out, &["catalog_b"]);
+    assert_path_exists(&catalog_a_marker, "catalog_a vitest marker");
+    assert_path_missing(&catalog_b_marker, "catalog_b vitest marker");
 }

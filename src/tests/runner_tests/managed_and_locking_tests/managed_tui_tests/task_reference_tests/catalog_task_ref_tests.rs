@@ -1,7 +1,7 @@
 use super::prelude::{
     assert_managed_output_case_table, assert_managed_output_derived_case_table,
     create_workspace_dir, lock_test, managed_tui_env, write_catalog_tasks,
-    write_farmyard_and_cream_dev_catalogs, write_managed_tui_dev_manifest,
+    write_catalog_a_and_catalog_c_dev_catalogs, write_managed_tui_dev_manifest,
     write_managed_tui_dev_manifest_with_extra, ManagedInvocation, ManagedOutputCase,
     ManagedOutputDerivedCase, Path,
 };
@@ -10,43 +10,43 @@ fn setup_task_refs_and_catalogs(root: &Path) {
     write_managed_tui_dev_manifest(
         root,
         r#"[
-  { name = "api", task = "farmyard/api" },
-  { name = "front", task = "cream/dev" }
+  { name = "api", task = "catalog_a/api" },
+  { name = "front", task = "catalog_c/dev" }
 ]
 "#,
     );
-    write_farmyard_and_cream_dev_catalogs(root);
+    write_catalog_a_and_catalog_c_dev_catalogs(root);
 }
 
 fn setup_compact_profile_task_refs(root: &Path) {
     write_managed_tui_dev_manifest_with_extra(
         root,
-        r#"[{ task = "farmyard/api" }, { task = "cream/dev" }]"#,
+        r#"[{ task = "catalog_a/api" }, { task = "catalog_c/dev" }]"#,
         r#"[tasks.dev.profiles.admin]
-concurrent = [{ task = "farmyard/api" }]"#,
+concurrent = [{ task = "catalog_a/api" }]"#,
     );
-    write_farmyard_and_cream_dev_catalogs(root);
+    write_catalog_a_and_catalog_c_dev_catalogs(root);
 }
 
 fn setup_process_run_array_task_refs(root: &Path) {
-    let farmyard = create_workspace_dir(root, "farmyard");
+    let catalog_a = create_workspace_dir(root, "catalog_a");
     write_managed_tui_dev_manifest_with_extra(
         root,
         r#"[{ name = "combo", task = "combo" }]"#,
         r#"[tasks.combo]
-run = ["printf start", { task = "farmyard/api" }, "printf done"]"#,
+run = ["printf start", { task = "catalog_a/api" }, "printf done"]"#,
     );
     write_catalog_tasks(
-        &farmyard,
-        Some("farmyard"),
-        &[("api", "printf farmyard-api")],
+        &catalog_a,
+        Some("catalog_a"),
+        &[("api", "printf catalog_a-api")],
     );
 }
 
 fn expected_catalog_paths(root: &Path) -> Vec<String> {
     vec![
-        root.join("farmyard").display().to_string(),
-        root.join("cream").display().to_string(),
+        root.join("catalog_a").display().to_string(),
+        root.join("catalog_c").display().to_string(),
     ]
 }
 
@@ -58,7 +58,7 @@ fn run_manifest_task_managed_tui_processes_can_reference_other_tasks() {
         workspace: "managed-task-refs",
         invocation: ManagedInvocation::Dev,
         args: &[],
-        expected: &["farmyard-api", "cream-dev"],
+        expected: &["catalog_a-api", "catalog_c-dev"],
         expected_absent: &[],
         expected_derived: expected_catalog_paths,
         setup: setup_task_refs_and_catalogs,
@@ -78,10 +78,10 @@ fn run_manifest_task_managed_tui_catalog_task_ref_contract_table() {
             args: &[],
             expected: &[
                 "profile: default",
-                "farmyard-api",
-                "cream-dev",
-                "farmyard/api",
-                "cream/dev",
+                "catalog_a-api",
+                "catalog_c-dev",
+                "catalog_a/api",
+                "catalog_c/dev",
             ],
             expected_absent: &[],
             setup: setup_compact_profile_task_refs,
@@ -90,7 +90,7 @@ fn run_manifest_task_managed_tui_catalog_task_ref_contract_table() {
             workspace: "managed-process-run-array",
             invocation: ManagedInvocation::DevWithRepo,
             args: &[],
-            expected: &["printf start", "farmyard-api", "printf done", "cd"],
+            expected: &["printf start", "catalog_a-api", "printf done", "cd"],
             expected_absent: &[],
             setup: setup_process_run_array_task_refs,
         },

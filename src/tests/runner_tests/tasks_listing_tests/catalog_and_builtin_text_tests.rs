@@ -1,14 +1,14 @@
 use super::prelude::{
     assert_builtin_ok_empty, assert_output_contains_all, run_tasks_from_repo,
-    setup_root_and_farmyard_catalog, temp_workspace, write_root_manifest,
+    setup_root_and_catalog_a_catalog, temp_workspace, write_root_manifest,
 };
 
 #[test]
 fn run_tasks_lists_catalogs_and_tasks() {
-    let root = setup_root_and_farmyard_catalog("list-tasks");
+    let root = setup_root_and_catalog_a_catalog("list-tasks");
 
     let out = run_tasks_from_repo(&root, None, None, false);
-    assert_output_contains_all(&out, &["root", "farmyard", "reset-db"]);
+    assert_output_contains_all(&out, &["root", "catalog_a", "reset-db"]);
 }
 
 #[test]

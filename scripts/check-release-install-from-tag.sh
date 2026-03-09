@@ -61,7 +61,7 @@ mkdir -p "$FIXTURE_DIR"
 
 cat >"$FIXTURE_DIR/effigy.toml" <<'TOML'
 [catalog]
-alias = "farmyard"
+alias = "catalog_a"
 
 [tasks]
 noop = "echo noop"
@@ -78,7 +78,7 @@ fi
 
 run_step_quiet "installed binary help" "$INSTALLED_BIN" help
 run_step_quiet "installed binary tasks fixture check" "$INSTALLED_BIN" tasks --repo "$FIXTURE_DIR"
-run_step_quiet "installed binary prefixed builtin tasks check" "$INSTALLED_BIN" farmyard/tasks --repo "$FIXTURE_DIR"
+run_step_quiet "installed binary prefixed builtin tasks check" "$INSTALLED_BIN" catalog_a/tasks --repo "$FIXTURE_DIR"
 run_step_quiet "installed binary json help check" "$INSTALLED_BIN" --json help
 run_step_quiet "installed binary completion check" "$INSTALLED_BIN" completion bash
 run_step_quiet "installed binary completion candidates check" "$INSTALLED_BIN" completion candidates --repo "$FIXTURE_DIR"

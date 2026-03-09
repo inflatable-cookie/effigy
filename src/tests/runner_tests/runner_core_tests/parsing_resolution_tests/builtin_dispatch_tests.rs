@@ -28,15 +28,15 @@ fn run_manifest_task_removed_builtins_show_migration_message() {
 #[test]
 fn run_manifest_task_prefixed_builtin_help_is_supported() {
     let root = temp_workspace("builtin-help-prefixed-catalog");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
     write_manifest(
-        &farmyard.join("effigy.toml"),
+        &catalog_a.join("effigy.toml"),
         r#"[catalog]
-alias = "farmyard"
+alias = "catalog_a"
 "#,
     );
 
-    let out = run_builtin_ok(root, "farmyard/help", &[]);
+    let out = run_builtin_ok(root, "catalog_a/help", &[]);
     assert_output_contains_all(&out, &["Commands", "effigy help"]);
 }

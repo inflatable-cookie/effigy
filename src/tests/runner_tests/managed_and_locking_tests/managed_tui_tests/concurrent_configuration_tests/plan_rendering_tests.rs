@@ -55,7 +55,7 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
             invocation: ManagedInvocation::DevWithRepo,
             args: &[],
             expected: &[
-                "tab-order: dairy/dev, cream/dev, farmyard/api, farmyard/jobs",
+                "tab-order: catalog_b/dev, catalog_c/dev, catalog_a/api, catalog_a/jobs",
                 "start-after-ms",
                 "1200",
             ],

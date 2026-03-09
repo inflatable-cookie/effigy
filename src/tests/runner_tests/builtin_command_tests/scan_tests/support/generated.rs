@@ -249,7 +249,7 @@ pub(in crate::runner::tests::builtin_command_tests::scan_tests) fn assert_genera
     asset_rel: &str,
     expected_path: &str,
 ) {
-    let (root, child) = setup_fanout_scan_workspace(name, "farmyard", child_dir);
+    let (root, child) = setup_fanout_scan_workspace(name, "catalog_a", child_dir);
     write_manifest(&root.join("effigy.toml"), "");
     write_asset_file(&child.join(asset_rel), 180);
 
@@ -264,7 +264,7 @@ pub(in crate::runner::tests::builtin_command_tests::scan_tests) fn assert_genera
     asset_rel: &str,
     expected_path: &str,
 ) {
-    let (root, child) = setup_fanout_scan_workspace(name, "farmyard", child_dir);
+    let (root, child) = setup_fanout_scan_workspace(name, "catalog_a", child_dir);
     write_asset_file(&child.join(asset_rel), 180);
 
     let out = run_builtin_ok(root, "scan", &[scan, "--warn", "100", "--show-warnings"]);

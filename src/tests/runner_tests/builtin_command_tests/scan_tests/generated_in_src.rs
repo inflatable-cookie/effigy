@@ -82,7 +82,7 @@ fn run_manifest_task_builtin_scan_generated_in_src_root_fans_out_across_child_ca
         "generated-in-src",
         "src",
         "src/client.generated.ts",
-        "farmyard/src/client.generated.ts",
+        "catalog_a/src/client.generated.ts",
     );
 }
 

@@ -42,7 +42,7 @@ fn parse_doctor_with_verbose_flag() {
 fn parse_doctor_with_explain_target_and_args() {
     let cmd = parse_command(vec![
         "doctor".to_owned(),
-        "farmyard/build".to_owned(),
+        "catalog_a/build".to_owned(),
         "--".to_owned(),
         "--watch".to_owned(),
     ])
@@ -55,7 +55,7 @@ fn parse_doctor_with_explain_target_and_args() {
             fix: false,
             verbose: false,
             explain: Some(TaskInvocation {
-                name: "farmyard/build".to_owned(),
+                name: "catalog_a/build".to_owned(),
                 args: vec!["--".to_owned(), "--watch".to_owned()],
             }),
         })

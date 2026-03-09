@@ -24,8 +24,8 @@ fn parse_task_reference_invocation_table_valid_cases() {
             args: &[],
         },
         Case {
-            raw: "farmyard/test vitest",
-            prefix: Some("farmyard"),
+            raw: "catalog_a/test vitest",
+            prefix: Some("catalog_a"),
             task: "test",
             args: &["vitest"],
         },

@@ -1,6 +1,9 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Sender};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -19,10 +22,18 @@ const LOCKS_DIR: &str = ".effigy/locks";
 #[derive(Debug)]
 pub(in crate::runner) struct LockGuard {
     path: PathBuf,
+    stop_heartbeat: Option<Sender<()>>,
+    heartbeat_thread: Option<JoinHandle<()>>,
 }
 
 impl Drop for LockGuard {
     fn drop(&mut self) {
+        if let Some(stop) = self.stop_heartbeat.take() {
+            let _ = stop.send(());
+        }
+        if let Some(handle) = self.heartbeat_thread.take() {
+            let _ = handle.join();
+        }
         let _ = fs::remove_file(&self.path);
     }
 }
@@ -32,11 +43,17 @@ pub(in crate::runner) struct UnlockResult {
     pub(in crate::runner) missing: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct LockRecord {
     scope: String,
     pid: u32,
     started_at_epoch_ms: u128,
+    #[serde(default)]
+    heartbeat_at_epoch_ms: u128,
+    #[serde(default)]
+    hostname: Option<String>,
+    #[serde(default)]
+    workspace_root: Option<String>,
 }
 
 pub(in crate::runner) fn acquire_scopes(
@@ -112,10 +129,14 @@ fn acquire_scope_lock(
 ) -> Result<LockGuard, RunnerError> {
     let path = locks_root.join(scope.file_name());
     let scope_label = scope.label();
+    let now = stale::now_epoch_ms();
     let record = LockRecord {
         scope: scope_label.clone(),
         pid: std::process::id(),
-        started_at_epoch_ms: stale::now_epoch_ms(),
+        started_at_epoch_ms: now,
+        heartbeat_at_epoch_ms: now,
+        hostname: stale::lock_hostname(),
+        workspace_root: Some(workspace_root.display().to_string()),
     };
     let body = serde_json::to_vec(&record)
         .map_err(|error| RunnerError::Ui(format!("failed to encode lock record: {error}")))?;
@@ -125,13 +146,25 @@ fn acquire_scope_lock(
             Ok(mut file) => {
                 file.write_all(&body)
                     .map_err(|error| files::task_lock_io(path.clone(), error))?;
-                return Ok(LockGuard { path: path.clone() });
+                return Ok(LockGuard::new(path.clone(), record));
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let existing = files::read_lock_record(&path).ok();
+                let existing = match files::read_lock_record(&path) {
+                    Ok(record) => Some(record),
+                    Err(RunnerError::TaskInvocation(_)) => {
+                        let _ = files::remove_lock_file(&path);
+                        continue;
+                    }
+                    Err(RunnerError::TaskLockIo { error, .. })
+                        if error.kind() == std::io::ErrorKind::NotFound =>
+                    {
+                        continue;
+                    }
+                    Err(other) => return Err(other),
+                };
                 if let Some(existing_record) = existing.as_ref() {
-                    if !stale::pid_is_alive(existing_record.pid) {
-                        files::remove_lock_file(&path)?;
+                    if stale::lock_is_stale(existing_record) {
+                        let _ = files::remove_lock_file(&path);
                         continue;
                     }
                 }
@@ -146,6 +179,36 @@ fn acquire_scope_lock(
             Err(error) => {
                 return Err(files::task_lock_io(path.clone(), error));
             }
+        }
+    }
+}
+
+impl LockGuard {
+    fn new(path: PathBuf, record: LockRecord) -> Self {
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let heartbeat_path = path.clone();
+        let heartbeat_thread = thread::spawn(move || {
+            let mut record = record;
+            loop {
+                match stop_rx.recv_timeout(Duration::from_millis(stale::LOCK_HEARTBEAT_INTERVAL_MS))
+                {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        record.heartbeat_at_epoch_ms = stale::now_epoch_ms();
+                        let Ok(body) = serde_json::to_vec(&record) else {
+                            return;
+                        };
+                        if fs::write(&heartbeat_path, body).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        Self {
+            path,
+            stop_heartbeat: Some(stop_tx),
+            heartbeat_thread: Some(heartbeat_thread),
         }
     }
 }

@@ -63,8 +63,8 @@ doctor = false
 #[test]
 fn run_doctor_reports_attention_markers_across_child_catalogs() {
     let root = temp_workspace("doctor-attention-markers-root-fanout");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(catalog_a.join("src")).expect("mkdir catalog_a src");
     fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
         .expect("write root gitignore");
     write_manifest(
@@ -72,11 +72,11 @@ fn run_doctor_reports_attention_markers_across_child_catalogs() {
         "[catalog]\nalias = \"root\"\n[scan.attention_markers]\nwarning = [\"TODO\"]\nhigh = [\"FIXME\"]\ncritical = [\"BLOCKER\"]\n",
     );
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n",
     );
     fs::write(
-        farmyard.join("src/lib.rs"),
+        catalog_a.join("src/lib.rs"),
         "// FIXME: split bootstrap path\n",
     )
     .expect("write source");
@@ -93,7 +93,7 @@ fn run_doctor_reports_attention_markers_across_child_catalogs() {
     );
     assert_file_text_contains_all(
         &root.join(".effigy/reports/doctor/scan-attention-markers.md"),
-        &["farmyard/src/lib.rs:1", "[FIXME]"],
+        &["catalog_a/src/lib.rs:1", "[FIXME]"],
     );
 }
 
@@ -153,8 +153,8 @@ doctor = false
 #[test]
 fn run_doctor_reports_stale_suppressions_across_child_catalogs() {
     let root = temp_workspace("doctor-stale-suppressions-root-fanout");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(catalog_a.join("src")).expect("mkdir catalog_a src");
     fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n")
         .expect("write root gitignore");
     write_manifest(
@@ -162,11 +162,11 @@ fn run_doctor_reports_stale_suppressions_across_child_catalogs() {
         "[catalog]\nalias = \"root\"\n[scan.stale_suppressions]\nwarning = [\"eslint-disable-next-line\"]\nhigh = [\"#[allow(\"]\ncritical = [\"eslint-disable\"]\ndoctor = true\n",
     );
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n",
     );
     fs::write(
-        farmyard.join("src/lib.rs"),
+        catalog_a.join("src/lib.rs"),
         "#[allow(warnings)]\npub fn lib() {}\n",
     )
     .expect("write source");
@@ -183,6 +183,6 @@ fn run_doctor_reports_stale_suppressions_across_child_catalogs() {
     );
     assert_file_text_contains_all(
         &root.join(".effigy/reports/doctor/scan-stale-suppressions.md"),
-        &["farmyard/src/lib.rs:1", "[#[allow(]"],
+        &["catalog_a/src/lib.rs:1", "[#[allow(]"],
     );
 }

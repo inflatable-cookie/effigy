@@ -107,8 +107,8 @@ fn run_manifest_task_builtin_scan_duplicate_blocks_markdown_out_writes_report() 
 #[test]
 fn run_manifest_task_builtin_scan_duplicate_blocks_uses_manifest_defaults_and_root_fans_out() {
     let root = temp_workspace("builtin-scan-duplicate-blocks-manifest-fanout");
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(farmyard.join("src")).expect("mkdir farmyard src");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(catalog_a.join("src")).expect("mkdir catalog_a src");
     fs::write(root.join(".gitignore"), "*\n!.gitignore\n!effigy.toml\n").expect("write gitignore");
     write_manifest(
         &root.join("effigy.toml"),
@@ -121,11 +121,11 @@ out = "reports/duplicate-blocks.md"
 "#,
     );
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n",
     );
-    write_duplicate_block_file(&farmyard.join("src/alpha.rs"), "shared");
-    write_duplicate_block_file(&farmyard.join("src/beta.rs"), "shared");
+    write_duplicate_block_file(&catalog_a.join("src/alpha.rs"), "shared");
+    write_duplicate_block_file(&catalog_a.join("src/beta.rs"), "shared");
     let report_path = root.join("reports/duplicate-blocks.md");
 
     let out = run_builtin_ok(root, "scan", &["duplicate-blocks"]);
@@ -139,7 +139,7 @@ out = "reports/duplicate-blocks.md"
         &[
             "# Duplicate Blocks",
             "- Findings: `1`",
-            "farmyard/src/alpha.rs:2-23<br>farmyard/src/beta.rs:2-23",
+            "catalog_a/src/alpha.rs:2-23<br>catalog_a/src/beta.rs:2-23",
         ],
     );
 }

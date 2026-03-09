@@ -39,14 +39,14 @@ pub(in crate::runner::tests) fn write_root_ping_task(root: &Path) {
     );
 }
 
-pub(in crate::runner::tests) fn setup_root_and_farmyard_ping(
+pub(in crate::runner::tests) fn setup_root_and_catalog_a_ping(
     workspace: &str,
 ) -> (PathBuf, PathBuf) {
     let root = temp_workspace(workspace);
-    let farmyard = create_workspace_dir(&root, "farmyard");
+    let catalog_a = create_workspace_dir(&root, "catalog_a");
     write_root_ping_task(&root);
-    write_catalog_tasks(&farmyard, Some("farmyard"), &[("ping", "printf farmyard")]);
-    (root, farmyard)
+    write_catalog_tasks(&catalog_a, Some("catalog_a"), &[("ping", "printf catalog_a")]);
+    (root, catalog_a)
 }
 
 pub(in crate::runner::tests) fn write_managed_dev_profile_manifest(root: &Path, profile: &str) {
@@ -108,22 +108,22 @@ pub(in crate::runner::tests) fn run_doctor_err_from_cwd(root: &Path, fix: bool) 
 
 pub(in crate::runner::tests) fn setup_doctor_explain_catalog_workspace(name: &str) -> PathBuf {
     let root = temp_workspace(name);
-    let farmyard = create_workspace_dir(&root, "farmyard");
+    let catalog_a = create_workspace_dir(&root, "catalog_a");
     write_root_manifest(&root, "[tasks.root]\nrun = \"printf root\"\n");
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.build]\nrun = \"printf farmyard\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n[tasks.build]\nrun = \"printf catalog_a\"\n",
     );
     root
 }
 
-pub(in crate::runner::tests) fn write_root_and_farmyard_api_catalog(root: &Path) {
-    let farmyard = root.join("farmyard");
-    fs::create_dir_all(&farmyard).expect("mkdir farmyard");
+pub(in crate::runner::tests) fn write_root_and_catalog_a_api_catalog(root: &Path) {
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
     write_root_manifest(root, "[tasks.root]\nrun = \"printf root\"\n");
     write_manifest(
-        &farmyard.join("effigy.toml"),
-        "[catalog]\nalias = \"farmyard\"\n[tasks.api]\nrun = \"printf api\"\n",
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n[tasks.api]\nrun = \"printf api\"\n",
     );
 }
 

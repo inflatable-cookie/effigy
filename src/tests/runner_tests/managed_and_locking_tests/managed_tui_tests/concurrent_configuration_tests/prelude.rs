@@ -14,10 +14,10 @@ pub(super) fn write_ranked_task_ref_manifest(root: &Path, jobs_start_after_ms: O
             r#"[tasks.dev]
 mode = "tui"
 concurrent = [
-  {{ task = "farmyard/api", start = 1, tab = 3 }},
-  {{ task = "farmyard/jobs", start = 2, tab = 4{} }},
-  {{ task = "cream/dev", start = 3, tab = 2 }},
-  {{ task = "dairy/dev", start = 4, tab = 1 }}
+  {{ task = "catalog_a/api", start = 1, tab = 3 }},
+  {{ task = "catalog_a/jobs", start = 2, tab = 4{} }},
+  {{ task = "catalog_c/dev", start = 3, tab = 2 }},
+  {{ task = "catalog_b/dev", start = 4, tab = 1 }}
 ]
 "#,
             jobs_delay
@@ -33,8 +33,8 @@ mode = "tui"
 concurrent = [
   { name = "api", run = "printf api", start = 1, tab = 3 },
   { name = "jobs", run = "printf jobs", start = 2, tab = 4 },
-  { name = "cream", run = "printf cream", start = 3, tab = 2 },
-  { name = "dairy", run = "printf dairy", start = 4, tab = 1 }
+  { name = "catalog_c", run = "printf catalog_c", start = 3, tab = 2 },
+  { name = "catalog_b", run = "printf catalog_b", start = 4, tab = 1 }
 ]
 "#,
     );
@@ -45,14 +45,14 @@ pub(super) fn write_ranked_catalog_tasks(root: &Path) {
         root,
         &[
             (
-                "farmyard",
+                "catalog_a",
                 &[
-                    ("api", "printf farmyard-api"),
-                    ("jobs", "printf farmyard-jobs"),
+                    ("api", "printf catalog_a-api"),
+                    ("jobs", "printf catalog_a-jobs"),
                 ] as &[(&str, &str)],
             ),
-            ("cream", &[("dev", "printf cream-dev")] as &[(&str, &str)]),
-            ("dairy", &[("dev", "printf dairy-dev")] as &[(&str, &str)]),
+            ("catalog_c", &[("dev", "printf catalog_c-dev")] as &[(&str, &str)]),
+            ("catalog_b", &[("dev", "printf catalog_b-dev")] as &[(&str, &str)]),
         ],
     );
 }
