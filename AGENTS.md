@@ -1,6 +1,6 @@
 # Agent Instructions for Effigy
 
-Effigy is a Rust-based unified task runner for monorepos (v0.1.0, pre-release).
+Effigy is a Rust-based unified task runner for monorepos (v0.2.0).
 
 ## Build & Test
 
