@@ -51,8 +51,14 @@ pub(super) fn write_ranked_catalog_tasks(root: &Path) {
                     ("jobs", "printf catalog_a-jobs"),
                 ] as &[(&str, &str)],
             ),
-            ("catalog_c", &[("dev", "printf catalog_c-dev")] as &[(&str, &str)]),
-            ("catalog_b", &[("dev", "printf catalog_b-dev")] as &[(&str, &str)]),
+            (
+                "catalog_c",
+                &[("dev", "printf catalog_c-dev")] as &[(&str, &str)],
+            ),
+            (
+                "catalog_b",
+                &[("dev", "printf catalog_b-dev")] as &[(&str, &str)],
+            ),
         ],
     );
 }

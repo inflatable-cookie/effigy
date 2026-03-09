@@ -159,10 +159,7 @@ pub(super) fn run_builtin_test_targets_parallel(
                         teardown_policy,
                     );
                     let mut process = ProcessCommand::new("sh");
-                    process
-                        .arg("-c")
-                        .arg(&execution_command)
-                        .current_dir(&root);
+                    process.arg("-c").arg(&execution_command).current_dir(&root);
                     with_local_node_bin_path(&mut process, &root);
                     let status = if capture_output {
                         process

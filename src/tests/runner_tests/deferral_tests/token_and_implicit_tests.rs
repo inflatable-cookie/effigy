@@ -1,10 +1,9 @@
 use super::prelude::{
     assert_deferred_task_case_table, assert_file_text_equals, assert_implicit_deferral_case_table,
-    lock_test, reset_composer_home_cache_for_tests, run_task_expect_empty_output,
-    setup_implicit_deferral_stub,
-    workspace_with_optional_defer_manifest, write_implicit_deferral_markers,
-    DeferredTaskCase, ImplicitDeferralCase, ImplicitDeferralExpectation,
-    ImplicitFallbackDisabledCase, fs, implicit_deferral_script,
+    fs, implicit_deferral_script, lock_test, reset_composer_home_cache_for_tests,
+    run_task_expect_empty_output, setup_implicit_deferral_stub,
+    workspace_with_optional_defer_manifest, write_implicit_deferral_markers, DeferredTaskCase,
+    ImplicitDeferralCase, ImplicitDeferralExpectation, ImplicitFallbackDisabledCase,
 };
 
 #[test]
@@ -106,12 +105,8 @@ fn run_manifest_task_implicit_deferral_caches_composer_home_per_process() {
 
     let marker = root.join("defer-args.log");
     let composer_log = root.join("composer.log");
-    let _env = setup_implicit_deferral_stub(
-        &root,
-        &implicit_deferral_script(0),
-        &marker,
-        &composer_log,
-    );
+    let _env =
+        setup_implicit_deferral_stub(&root, &implicit_deferral_script(0), &marker, &composer_log);
 
     run_task_expect_empty_output(&root, "version", &["--dry-run"], "first implicit deferral");
     reset_composer_home_cache_for_tests();

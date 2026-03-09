@@ -94,7 +94,7 @@ fn spawn_with_pty_wrapper(spec: &ProcessSpec) -> ProcessCommand {
             });
         }
         with_local_node_bin_path(&mut process, &spec.cwd);
-        return process;
+        process
     }
 
     #[cfg(not(target_os = "macos"))]

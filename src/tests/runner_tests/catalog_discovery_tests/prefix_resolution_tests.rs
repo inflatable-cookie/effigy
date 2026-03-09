@@ -23,7 +23,11 @@ fn run_manifest_task_relative_prefix_resolves_catalog_by_path() {
     let catalog_b = create_workspace_dir(&root, "catalog_b");
     let froyo = create_workspace_dir(&root, "froyo");
 
-    write_catalog_tasks(&catalog_b, Some("catalog_b"), &[("dev", "printf catalog_b")]);
+    write_catalog_tasks(
+        &catalog_b,
+        Some("catalog_b"),
+        &[("dev", "printf catalog_b")],
+    );
     write_catalog_tasks(
         &froyo,
         Some("froyo"),
@@ -40,7 +44,11 @@ fn run_manifest_task_relative_prefix_prefers_alias_collision_over_path_resolutio
     let alias_override = create_workspace_dir(&root, "alias-override");
     let froyo = create_workspace_dir(&root, "froyo");
 
-    write_catalog_tasks(&catalog_b, Some("catalog_b"), &[("dev", "printf catalog_b")]);
+    write_catalog_tasks(
+        &catalog_b,
+        Some("catalog_b"),
+        &[("dev", "printf catalog_b")],
+    );
     write_catalog_tasks(
         &alias_override,
         Some("../froyo"),

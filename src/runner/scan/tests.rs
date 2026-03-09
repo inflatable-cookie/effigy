@@ -12,11 +12,13 @@ use std::path::{Path, PathBuf};
 
 #[test]
 fn god_file_thresholds_validate_ordering() {
-    let mut options = GodFileScanOptions::default();
-    options.thresholds = GodFileThresholds {
-        warn: 300,
-        high: 250,
-        critical: 700,
+    let options = GodFileScanOptions {
+        thresholds: GodFileThresholds {
+            warn: 300,
+            high: 250,
+            critical: 700,
+        },
+        ..GodFileScanOptions::default()
     };
     let err = options
         .validate()

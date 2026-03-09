@@ -45,7 +45,11 @@ pub(in crate::runner::tests) fn setup_root_and_catalog_a_ping(
     let root = temp_workspace(workspace);
     let catalog_a = create_workspace_dir(&root, "catalog_a");
     write_root_ping_task(&root);
-    write_catalog_tasks(&catalog_a, Some("catalog_a"), &[("ping", "printf catalog_a")]);
+    write_catalog_tasks(
+        &catalog_a,
+        Some("catalog_a"),
+        &[("ping", "printf catalog_a")],
+    );
     (root, catalog_a)
 }
 

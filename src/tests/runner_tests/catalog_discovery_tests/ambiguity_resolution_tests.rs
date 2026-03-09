@@ -14,7 +14,11 @@ fn run_manifest_task_unprefixed_reports_ambiguity_on_equal_shallow_depth() {
         Some("catalog_a"),
         &[("reset-db", "printf catalog_a")],
     );
-    write_catalog_tasks(&catalog_b, Some("catalog_b"), &[("reset-db", "printf catalog_b")]);
+    write_catalog_tasks(
+        &catalog_b,
+        Some("catalog_b"),
+        &[("reset-db", "printf catalog_b")],
+    );
 
     let err = run_builtin_err(root, "reset-db", &[]);
 

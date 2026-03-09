@@ -36,13 +36,7 @@ pub(super) fn lock_conflict(
     workspace_root: &Path,
     existing: Option<super::LockRecord>,
 ) -> RunnerError {
-    let (
-        holder_pid,
-        started_at,
-        heartbeat_at,
-        holder_hostname,
-        holder_workspace_root,
-    ) = existing
+    let (holder_pid, started_at, heartbeat_at, holder_hostname, holder_workspace_root) = existing
         .map(|record| {
             (
                 Some(record.pid),

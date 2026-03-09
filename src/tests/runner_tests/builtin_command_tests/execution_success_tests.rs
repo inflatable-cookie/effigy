@@ -49,7 +49,10 @@ fn run_manifest_task_builtin_test_fans_out_across_catalog_roots() {
     install_local_vitest_marker(&catalog_b, &catalog_b_marker);
 
     let out = run_builtin_ok(root, "test", &[]);
-    assert_output_contains_all(&out, &["Test Results", "targets:", "catalog_b", "catalog_a"]);
+    assert_output_contains_all(
+        &out,
+        &["Test Results", "targets:", "catalog_b", "catalog_a"],
+    );
     assert_output_excludes_all(&out, &["runner:vitest", "command:"]);
     assert_path_exists(&catalog_a_marker, "catalog_a vitest marker");
     assert_path_exists(&catalog_b_marker, "catalog_b vitest marker");
