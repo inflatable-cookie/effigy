@@ -8,6 +8,16 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Breaking
 
+### Added
+
+### Changed
+
+### Fixed
+
+## [0.2.0] - 2026-03-09
+
+### Breaking
+
 - Change process spawn from login shell (`sh -lc`) to non-login shell (`sh -c`)
   across all execution paths. Fixes PATH clobbering on Linux where `/etc/profile`
   unconditionally resets PATH in login shells. Parent process environment is now
