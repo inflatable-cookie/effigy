@@ -29,6 +29,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01/021-research-phase-2-developer-experience.md` is the second research roadmap (planned).
 - `g01/022-research-phase-3-scale-and-integration.md` is the third research roadmap (planned).
 - `g01/023-builtin-test-suite-lifecycle-and-env.md` is the next implementation roadmap (planned).
+- `g01/024-release-pipeline-validation-and-consumer-ci.md` validates the release pipeline and delivers consumer CI integration (planned).
 
 ## Research Program
 
@@ -50,14 +51,16 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Roadmap `g01.019` is complete. The next planned milestones are the three-phase research program:
+Roadmap `g01.024` is the next implementation milestone: validate the release
+pipeline end-to-end and deliver consumer repo CI integration.
 
-1. **g01.020** - Research Phase 1: Core Execution — Begin with Make, Just, and Task dossiers
-2. **g01.021** - Research Phase 2: Developer Experience — Shell completions, error patterns
-3. **g01.022** - Research Phase 3: Scale & Integration — Remote execution, CI/CD
-4. **g01.023** - Builtin Test Suite Lifecycle and Environment — Declarative setup/teardown/env for builtin test
+Planned milestones:
 
-Open `g01.023` for the next implementation milestone, starting with the builtin test suite schema contract and shared env-resolution reuse.
+1. **g01.024** - Release Pipeline Validation and Consumer CI Integration (planned)
+2. **g01.020** - Research Phase 1: Core Execution (planned)
+3. **g01.021** - Research Phase 2: Developer Experience (planned)
+4. **g01.022** - Research Phase 3: Scale & Integration (planned)
+5. **g01.023** - Builtin Test Suite Lifecycle and Environment (planned)
 
 
 ## Historical language boundary

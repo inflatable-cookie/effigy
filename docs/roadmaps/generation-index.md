@@ -18,6 +18,7 @@ Updated: 2026-03-07
 - `021` captures the planned Research Phase 2: Developer Experience.
 - `022` captures the planned Research Phase 3: Scale and Integration.
 - `023` captures the planned builtin test suite lifecycle and environment milestone.
+- `024` captures the planned release pipeline validation and consumer CI integration milestone.
 
 ## Research Roadmaps
 
