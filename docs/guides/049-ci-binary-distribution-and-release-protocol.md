@@ -13,12 +13,15 @@ protocols defined here.
 
 ## 1) Current State
 
-- Version: `0.1.0` (pre-release, no published tags yet)
-- Workflows: scaffolded in `.github-bak/workflows/`, not yet active
-- Distribution channels documented but not yet executed:
-  - `cargo install` from git tag (requires Rust, slow)
-  - Homebrew tap (macOS only, slow in CI)
-- Missing channel: prebuilt binaries via GitHub Releases
+- Version: `0.2.0`
+- Active workflows in `.github/workflows/`:
+  - `ci.yml` — PR and push validation (format, clippy, tests)
+  - `release-binaries.yml` — tag-triggered: gates → build → GitHub Release → Homebrew tap
+  - `json-contracts.yml` — JSON contract and docs link validation
+- Distribution channels:
+  - **Homebrew** — `brew install inflatable-cookie/tap/effigy` (macOS, prebuilt binaries)
+  - **GitHub Releases** — prebuilt binaries for macOS (arm64, x86_64) and Linux (x86_64)
+  - **`cargo install` from tag** — fallback when prebuilt binaries are unavailable
 
 ## 2) Target Channel Stack for CI
 
@@ -221,8 +224,6 @@ and resolve the failure before continuing.
   tag, or performed manually by a human.
 - **Never modify `.github/workflows/` without explicit human approval.** Workflow
   changes affect the release pipeline and require review.
-- **Never move workflows from `.github-bak/` to `.github/` without explicit
-  human instruction.** Re-enabling workflows is a release readiness decision.
 - **Never bypass release gates.** If gates fail, fix the underlying issue; do
   not skip or weaken the gate.
 - **Never re-tag a failed release.** If a tagged release fails in CI, the fix
@@ -237,20 +238,17 @@ and resolve the failure before continuing.
 - Add or update documentation about release processes
 - Fix code issues that cause release gate failures
 
-## 8) Workflow Activation Sequence
+## 8) Active Workflows
 
-The workflows in `.github-bak/` must be activated in this order when the project
-is ready for its first release:
+All release workflows are now active in `.github/workflows/`:
 
-1. Move `release-gates.yml` to `.github/workflows/` — validates tags
-2. Add a new `release-binaries.yml` to `.github/workflows/` — cross-compiles
-   and publishes GitHub Release
-3. Move `homebrew-tap-metadata.yml` to `.github/workflows/` — generates formula
-   metadata
-4. Move `homebrew-tap-formula-pr.yml` to `.github/workflows/` — opens tap PR
-5. Move remaining workflows as needed
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `ci.yml` | PR, push to main | Format, clippy, tests |
+| `release-binaries.yml` | Tag push `v*` | Gates → build → release → Homebrew tap |
+| `json-contracts.yml` | PR, push to main, daily | JSON contract and docs link validation |
 
-Each step requires human sign-off. Agents must not batch-activate workflows.
+Workflow changes still require explicit human approval.
 
 ## 9) Setup Action (Future)
 
@@ -260,7 +258,7 @@ GitHub Action:
 ```yaml
 - uses: inflatable-cookie/setup-effigy@v1
   with:
-    version: '0.1.0'
+    version: '0.2.0'
 ```
 
 This is not required for initial rollout. Evaluate after three or more consumer

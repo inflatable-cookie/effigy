@@ -41,7 +41,6 @@ Full protocol: [`docs/guides/049-ci-binary-distribution-and-release-protocol.md`
 
 Key rules:
 - Never modify `.github/workflows/` without explicit human approval
-- Never move workflows from `.github-bak/` to `.github/` without human instruction
 - Never bypass release gates — fix the underlying issue instead
 - Never re-tag a failed release — fix goes into the next PATCH
 

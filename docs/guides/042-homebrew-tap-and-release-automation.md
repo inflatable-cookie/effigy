@@ -16,7 +16,7 @@ Recommended split:
 - formula path in tap: `Formula/effigy.rb`
 
 Formula source should reference:
-- release tarball from `inflatable-cookie/effigy` tags
+- prebuilt binaries from `inflatable-cookie/effigy` GitHub Releases
 - stable semantic version tag (for example `v0.2.3`)
 
 ## 3) Formula Strategy
@@ -34,60 +34,53 @@ Do not maintain parallel formula variants (`effigy-dev`, `effigy-beta`) until ch
 
 Release flow:
 1. Tag is created in core repo (`vX.Y.Z`).
-2. CI job computes tarball SHA256 for the tag.
-3. CI updates `Formula/effigy.rb` with:
-   - `url` pointing at the tag tarball
-   - `sha256` matching the tarball
-   - `version` if needed
-4. CI opens or pushes a tap PR/commit.
-5. Formula CI smoke:
-   - `brew audit --strict --formula Formula/effigy.rb`
-   - `brew style Formula/effigy.rb`
-   - `brew install --build-from-source ./Formula/effigy.rb`
-6. Merge tap change after checks pass.
+2. `release-binaries.yml` runs: gates → build (3 targets) → GitHub Release → homebrew job.
+3. Homebrew job downloads published macOS binaries and computes per-architecture SHA256 hashes.
+4. Homebrew job checks out tap repo, regenerates `Formula/effigy.rb` with new URLs/hashes, commits, and pushes.
 
-## 5) Checksum and Bottle Policy
+Build matrix targets:
+- `aarch64-apple-darwin` (Apple Silicon)
+- `x86_64-apple-darwin` (Intel Mac)
+- `x86_64-unknown-linux-gnu` (Linux — not in formula, available as direct download)
 
-Current policy (phase C baseline):
-- required: source tarball `sha256` update on every release.
-- optional: bottled binaries may be added later; source install remains baseline.
+## 5) Formula Design
 
-When bottles are introduced:
-- generate bottles from release tag source.
-- publish bottle artifacts and update formula bottle block in one atomic PR.
-- keep source build path valid as fallback.
+The formula uses prebuilt binaries (not source builds):
 
-## 6) Automation Hooks
+```ruby
+on_macos do
+  if Hardware::CPU.arm?
+    url "<release-url>/effigy-aarch64-apple-darwin"
+    sha256 "<arm64-hash>"
+  elsif Hardware::CPU.intel?
+    url "<release-url>/effigy-x86_64-apple-darwin"
+    sha256 "<x86_64-hash>"
+  end
+end
 
-Add a release-triggered workflow in core repo:
-- trigger: tag push `v*`
-- responsibilities:
-  - run release gates (`./scripts/check-release-gates.sh`)
-  - compute release tarball checksum
-  - call tap update automation (or open PR)
+def install
+  binary = stable.url.split("/").last
+  bin.install binary => "effigy"
+end
+```
 
-Implemented metadata hook:
-- workflow: `.github-bak/workflows/homebrew-tap-metadata.yml`
-- output artifact: `homebrew-metadata-<tag>` containing `tag`, `version`, `url`, `sha256`, `formula`
+Each release updates both architecture URLs and their corresponding SHA256 hashes.
 
-Implemented tap PR automation:
-- workflow: `.github-bak/workflows/homebrew-tap-formula-pr.yml`
-- trigger:
-  - automatic on successful `Homebrew Tap Metadata` workflow runs
-  - manual with `metadata_run_id` for replay/recovery
-- behavior:
-  - downloads `homebrew-metadata-<tag>` artifact from the metadata run
-  - updates `Formula/effigy.rb` in tap repo using `scripts/update-homebrew-formula-from-metadata.sh`
-  - opens/updates a PR in tap repo via `peter-evans/create-pull-request`
+## 6) Automation
+
+Implemented as the `homebrew` job in `.github/workflows/release-binaries.yml`:
+- trigger: runs after the `release` job succeeds (tag push `v*`)
+- guard: `if: ${{ secrets.EFFIGY_TAP_GH_TOKEN != '' }}` (skips gracefully if secret not configured)
+- steps:
+  1. Download both macOS binaries from the just-created GitHub Release
+  2. Compute SHA256 hashes via `curl | sha256sum`
+  3. Check out `inflatable-cookie/homebrew-tap` using PAT
+  4. Write updated `Formula/effigy.rb` via heredoc
+  5. Commit and push directly to tap main branch
 
 Required repository wiring:
-- secret: `EFFIGY_TAP_GH_TOKEN` (PAT with contents + pull request write access to tap repo)
-- default tap repo: `inflatable-cookie/homebrew-tap` (override via workflow-dispatch input)
-
-Tap repo workflow should run:
-- `brew audit --strict --formula`
-- `brew style`
-- build-from-source smoke install
+- secret: `EFFIGY_TAP_GH_TOKEN` (PAT with `contents:write` access to tap repo)
+- tap repo: `inflatable-cookie/homebrew-tap`
 
 ## 7) Rollback and Recovery
 
