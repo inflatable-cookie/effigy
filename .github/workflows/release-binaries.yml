@@ -167,7 +167,7 @@ jobs:
       - name: Checkout tap repository
         uses: actions/checkout@v4
         with:
-          repository: inflatable-cookie/homebrew-effigy
+          repository: inflatable-cookie/homebrew-tap
           token: ${{ secrets.EFFIGY_TAP_GH_TOKEN }}
 
       - name: Update formula
