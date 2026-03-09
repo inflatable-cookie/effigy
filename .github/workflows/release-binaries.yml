@@ -142,3 +142,79 @@ jobs:
               --notes-file release-notes.md \
               artifacts/effigy-*
           fi
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    if: ${{ secrets.EFFIGY_TAP_GH_TOKEN != '' }}
+    steps:
+      - name: Compute binary SHA256 hashes
+        id: hashes
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          BASE="https://github.com/inflatable-cookie/effigy/releases/download/${TAG}"
+          ARM_SHA="$(curl -fsSL "${BASE}/effigy-aarch64-apple-darwin" | sha256sum | awk '{print $1}')"
+          X86_SHA="$(curl -fsSL "${BASE}/effigy-x86_64-apple-darwin" | sha256sum | awk '{print $1}')"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "arm_url=${BASE}/effigy-aarch64-apple-darwin" >> "$GITHUB_OUTPUT"
+          echo "arm_sha=$ARM_SHA" >> "$GITHUB_OUTPUT"
+          echo "x86_url=${BASE}/effigy-x86_64-apple-darwin" >> "$GITHUB_OUTPUT"
+          echo "x86_sha=$X86_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: inflatable-cookie/homebrew-effigy
+          token: ${{ secrets.EFFIGY_TAP_GH_TOKEN }}
+
+      - name: Update formula
+        env:
+          VERSION: ${{ steps.hashes.outputs.version }}
+          TAG: ${{ steps.hashes.outputs.tag }}
+          ARM_URL: ${{ steps.hashes.outputs.arm_url }}
+          ARM_SHA: ${{ steps.hashes.outputs.arm_sha }}
+          X86_URL: ${{ steps.hashes.outputs.x86_url }}
+          X86_SHA: ${{ steps.hashes.outputs.x86_sha }}
+        run: |
+          cat > Formula/effigy.rb <<FORMULA
+          class Effigy < Formula
+            desc "Unified task runner for monorepos and nested workspaces"
+            homepage "https://github.com/inflatable-cookie/effigy"
+            license "MIT"
+            version "${VERSION}"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "${ARM_URL}"
+                sha256 "${ARM_SHA}"
+              elsif Hardware::CPU.intel?
+                url "${X86_URL}"
+                sha256 "${X86_SHA}"
+              end
+            end
+
+            def install
+              binary = stable.url.split("/").last
+              bin.install binary => "effigy"
+            end
+
+            test do
+              assert_match "effigy", shell_output("#{bin}/effigy --help")
+            end
+          end
+          FORMULA
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' Formula/effigy.rb
+
+      - name: Commit and push
+        env:
+          TAG: ${{ steps.hashes.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/effigy.rb
+          git commit -m "bump effigy to ${TAG}"
+          git push
