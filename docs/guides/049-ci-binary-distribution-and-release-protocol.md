@@ -45,11 +45,8 @@ Prebuilt binaries must cover these targets at minimum:
 | `x86_64-apple-darwin`           | macOS | x86_64 | Required |
 | `aarch64-unknown-linux-gnu`     | Linux | arm64  | Optional |
 
-**Note:** Linux targets have zero test coverage as of this writing. The first
-release must include CI-based build and smoke validation on Linux runners before
-Linux binaries are published. If Linux smoke tests cannot be established in time,
-the first release may ship macOS-only binaries and add Linux in a follow-up
-`PATCH`.
+All three required targets are built and smoke-tested in CI (`release-binaries.yml`).
+The Linux binary builds and runs `check-release-smoke.sh` on `ubuntu-latest`.
 
 Binary naming convention:
 
