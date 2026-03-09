@@ -122,8 +122,13 @@ FRESH_UNRELEASED="## [Unreleased]
   echo "$UNRELEASED"
 
   # Write everything after the unreleased section (from the next ## heading onward)
-  sed -n '/^## \[Unreleased\]/,/^## \[/{/^## \[Unreleased\]/d;/^## \[/!d;/^## \[/p;}' "$CHANGELOG"
-  sed -n '/^## \[Unreleased\]/,/^## \[/!{/^## \[Unreleased\]/!p;}' "$CHANGELOG" | tail -n +2
+  # Find the line number of ## [Unreleased], then find the next ## [ heading after it
+  UNRELEASED_LINE="$(grep -n '^## \[Unreleased\]' "$CHANGELOG" | head -1 | cut -d: -f1)"
+  NEXT_HEADING_LINE="$(tail -n +"$((UNRELEASED_LINE + 1))" "$CHANGELOG" | grep -n '^## \[' | head -1 | cut -d: -f1 || true)"
+  if [[ -n "$NEXT_HEADING_LINE" ]]; then
+    # There are prior version sections — output from the next ## heading onward
+    tail -n +"$((UNRELEASED_LINE + NEXT_HEADING_LINE))" "$CHANGELOG"
+  fi
 
 } > "$CHANGELOG.tmp"
 mv "$CHANGELOG.tmp" "$CHANGELOG"
