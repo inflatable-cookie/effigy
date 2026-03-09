@@ -41,11 +41,6 @@ Compatibility wrapper scripts (retained for CI/release tooling integration):
 - `./scripts/validate-distribution-artifacts.sh`
 - `./scripts/generate-distribution-closeout-log.sh`
 - `./scripts/check-distribution-artifact-pipeline-smoke.sh`
-- `./scripts/update-homebrew-formula-from-metadata.sh`
-
-Related CI workflow:
-- `.github-bak/workflows/distribution-artifact-pipeline-smoke.yml`
-- `.github-bak/workflows/distribution-preflight.yml`
 
 Primary JSON mode entrypoint:
 - `effigy --json <command>`
