@@ -61,6 +61,9 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
           - target: aarch64-apple-darwin
             os: macos-latest
           - target: x86_64-apple-darwin
@@ -73,6 +76,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation toolchain
+        if: matrix.cross
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -169,6 +178,7 @@ jobs:
           ARM_SHA="$(curl -fsSL "${BASE}/effigy-aarch64-apple-darwin" | sha256sum | awk '{print $1}')"
           X86_SHA="$(curl -fsSL "${BASE}/effigy-x86_64-apple-darwin" | sha256sum | awk '{print $1}')"
           LINUX_X86_SHA="$(curl -fsSL "${BASE}/effigy-x86_64-unknown-linux-gnu" | sha256sum | awk '{print $1}')"
+          LINUX_ARM_SHA="$(curl -fsSL "${BASE}/effigy-aarch64-unknown-linux-gnu" | sha256sum | awk '{print $1}')"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "arm_url=${BASE}/effigy-aarch64-apple-darwin" >> "$GITHUB_OUTPUT"
@@ -177,6 +187,8 @@ jobs:
           echo "x86_sha=$X86_SHA" >> "$GITHUB_OUTPUT"
           echo "linux_x86_url=${BASE}/effigy-x86_64-unknown-linux-gnu" >> "$GITHUB_OUTPUT"
           echo "linux_x86_sha=$LINUX_X86_SHA" >> "$GITHUB_OUTPUT"
+          echo "linux_arm_url=${BASE}/effigy-aarch64-unknown-linux-gnu" >> "$GITHUB_OUTPUT"
+          echo "linux_arm_sha=$LINUX_ARM_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Checkout tap repository
         uses: actions/checkout@v4
@@ -194,6 +206,8 @@ jobs:
           X86_SHA: ${{ steps.hashes.outputs.x86_sha }}
           LINUX_X86_URL: ${{ steps.hashes.outputs.linux_x86_url }}
           LINUX_X86_SHA: ${{ steps.hashes.outputs.linux_x86_sha }}
+          LINUX_ARM_URL: ${{ steps.hashes.outputs.linux_arm_url }}
+          LINUX_ARM_SHA: ${{ steps.hashes.outputs.linux_arm_sha }}
         run: |
           cat > Formula/effigy.rb <<FORMULA
           class Effigy < Formula
@@ -216,6 +230,9 @@ jobs:
               if Hardware::CPU.intel?
                 url "${LINUX_X86_URL}"
                 sha256 "${LINUX_X86_SHA}"
+              elsif Hardware::CPU.arm?
+                url "${LINUX_ARM_URL}"
+                sha256 "${LINUX_ARM_SHA}"
               end
             end
 

@@ -12,6 +12,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Publish `inflatable-cookie/setup-effigy@v1` GitHub Action for CI binary
   installation with caching
+- Add ARM Linux (`aarch64-unknown-linux-gnu`) binary to release pipeline and
+  Homebrew formula (for AWS Graviton, Docker on Apple Silicon)
 
 ### Changed
 
