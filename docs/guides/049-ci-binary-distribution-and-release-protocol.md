@@ -93,14 +93,28 @@ This is enforced by workflow job dependency, not by convention.
 
 ## 5) Consumer CI Install Pattern
 
-### 5a) Recommended Snippet
+### 5a) Recommended: `setup-effigy` Action
 
-Consumer repos should use this pattern in their CI configuration:
+The preferred way to install Effigy in GitHub Actions workflows:
+
+```yaml
+- uses: inflatable-cookie/setup-effigy@v1
+  with:
+    version: '0.2.3'
+```
+
+This handles platform detection, downloading, and caching automatically.
+See [`inflatable-cookie/setup-effigy`](https://github.com/inflatable-cookie/setup-effigy)
+for full documentation.
+
+### 5a-alt) Manual curl Snippet
+
+For non-GitHub-Actions CI systems, or if the action is not suitable:
 
 ```yaml
 - name: Install effigy
   run: |
-    EFFIGY_VERSION="${EFFIGY_VERSION:-0.1.0}"
+    EFFIGY_VERSION="${EFFIGY_VERSION:-0.2.3}"
     TARGET="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
     case "$TARGET" in
       linux-x86_64)   TRIPLE="x86_64-unknown-linux-gnu" ;;
@@ -247,19 +261,22 @@ All release workflows are now active in `.github/workflows/`:
 
 Workflow changes still require explicit human approval.
 
-## 9) Setup Action (Future)
+## 9) Setup Action
 
-When multiple consumer repos need Effigy in CI, consider publishing a reusable
-GitHub Action:
+The [`inflatable-cookie/setup-effigy`](https://github.com/inflatable-cookie/setup-effigy)
+GitHub Action is published at `v1`. It is the recommended install method for
+GitHub Actions workflows (see Section 5a).
+
+Features:
+- Platform detection (Linux x86_64/ARM64, macOS x86_64/ARM64)
+- Binary caching via `actions/cache@v4`
+- Self-hosted runner support (`$RUNNER_TOOL_CACHE` fallback)
 
 ```yaml
 - uses: inflatable-cookie/setup-effigy@v1
   with:
-    version: '0.2.0'
+    version: '0.2.3'
 ```
-
-This is not required for initial rollout. Evaluate after three or more consumer
-repos are using the curl-based install pattern.
 
 ## 10) Rollback
 

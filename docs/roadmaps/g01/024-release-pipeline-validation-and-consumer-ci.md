@@ -97,18 +97,14 @@ Tasks:
 - [ ] Compute and include Linux binary SHA256 in homebrew job
 - [ ] Test `brew install` on a Linux environment (CI or local)
 
-## 5) `setup-effigy` GitHub Action (Evaluate)
+## 5) `setup-effigy` GitHub Action
 
-Evaluate whether a reusable GitHub Action is warranted based on consumer
-repo count. From doc 049 section 9: consider after three or more consumer
-repos use the curl-based install pattern.
+Published as [`inflatable-cookie/setup-effigy@v1`](https://github.com/inflatable-cookie/setup-effigy).
 
-If warranted:
-- [ ] Create `inflatable-cookie/setup-effigy` action repo
-- [ ] Support `version` input with download + cache
-- [ ] Publish as `v1`
-
-If not yet warranted: defer to backlog.
+- [x] Create `inflatable-cookie/setup-effigy` action repo
+- [x] Support `version` input with download + cache
+- [x] Publish as `v1`
+- [x] Update doc 049 sections 5a and 9
 
 ## 6) ARM Linux Target (Optional)
 
