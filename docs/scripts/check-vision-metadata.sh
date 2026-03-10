@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 require_heading() {
   local file="$1"
   local heading="$2"
-  if ! rg -q "^${heading}$" "$file"; then
+  if ! grep -q "^${heading}$" "$file"; then
     echo "[error] missing heading '${heading}' in ${file#$ROOT_DIR/}" >&2
     return 1
   fi
@@ -60,7 +60,7 @@ report_policy_files=(
 )
 
 for file in "${report_policy_files[@]}"; do
-  if ! rg -q "Vision Target Delta" "$file"; then
+  if ! grep -q "Vision Target Delta" "$file"; then
     echo "[error] missing Vision Target Delta policy in ${file#$ROOT_DIR/}" >&2
     status=1
   fi
@@ -72,7 +72,7 @@ cutoff_policy_files=(
 )
 
 for file in "${cutoff_policy_files[@]}"; do
-  if ! rg -q "2026-03-06" "$file"; then
+  if ! grep -q "2026-03-06" "$file"; then
     echo "[error] missing forward-only cutoff date in ${file#$ROOT_DIR/}" >&2
     status=1
   fi

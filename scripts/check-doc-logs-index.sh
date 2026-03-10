@@ -21,10 +21,10 @@ trap 'rm -f "$all_logs_file" "$indexed_logs_file"' EXIT
 
 find "$LOGS_DIR" -mindepth 2 -maxdepth 2 -type f -name '*.md' -print \
   | sed "s#^$LOGS_DIR/##" \
-  | rg -v '^README\.md$' \
+  | grep -v '^README\.md$' \
   | sort > "$all_logs_file"
 
-rg -o '\(\./[^)]+\.md\)' "$LOGS_INDEX" \
+grep -oE '\(\./[^)]+\.md\)' "$LOGS_INDEX" \
   | sed -E 's/^\(\.\///; s/\)$//' \
   | sort -u > "$indexed_logs_file"
 

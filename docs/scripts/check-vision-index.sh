@@ -19,7 +19,7 @@ awk '
   /^## Vision Artifacts$/ { in_section = 1; next }
   /^## / { if (in_section) exit }
   in_section { print }
-' "$README" | rg '^\d+\.\s+\[[^]]+\]\(\./[^)]+\)$' > "$artifact_lines_file" || true
+' "$README" | grep -E '^[0-9]+\.\s+\[[^]]+\]\(\./[^)]+\)$' > "$artifact_lines_file" || true
 
 if [[ ! -s "$artifact_lines_file" ]]; then
   echo "[error] no vision artifact entries found in docs/vision/README.md" >&2

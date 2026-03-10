@@ -69,7 +69,7 @@ Automation entrypoint:
 - `cargo qa-release` (wraps `scripts/check-release-gates.sh`, including distribution metadata validation)
 
 CI automation:
-- `.github-bak/workflows/release-gates.yml` on tag pushes (`v*`) and manual dispatch.
+- `.github/workflows/release-binaries.yml` (includes release gates) on tag pushes (`v*`) and manual dispatch.
 
 Operational template:
 - [Release Checklist Template](../../guides/014-release-checklist-template.md)

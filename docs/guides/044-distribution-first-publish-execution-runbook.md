@@ -7,8 +7,7 @@ Use this runbook for the first release cycle that should close remaining Distrib
 - Release candidate commit is selected.
 - Version bump and release notes are prepared.
 - Homebrew tap automation path is configured.
-  - `.github-bak/workflows/homebrew-tap-metadata.yml`
-  - `.github-bak/workflows/homebrew-tap-formula-pr.yml`
+  - `.github/workflows/release-binaries.yml` (includes homebrew metadata generation and tap PR automation)
 - CI pinning guide and wrapper policy docs are already in place.
 
 Required inputs:

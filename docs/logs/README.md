@@ -39,7 +39,7 @@ Historical workflow-reference exception:
 
 - logs may keep historical workflow paths (for example `.github/workflows/*.yml`) when they document what existed at the time
 - do not rewrite historical log evidence only to match current repo layout
-- active docs outside `docs/logs/` must use current workflow paths (`.github-bak/workflows/*.yml` in this repository layout)
+- active docs outside `docs/logs/` must use current workflow paths (`.github/workflows/*.yml`)
 
 ## Recent Release Notes
 
@@ -124,6 +124,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-03-07-research-batch-21-3-track-08-completion.md`](./2026-03/07-214500-research-batch-21-3-track-08-completion.md)
 - [`2026-03-07-research-batch-21-4-track-09-completion.md`](./2026-03/07-220000-research-batch-21-4-track-09-completion.md)
 - [`2026-03-07-research-batch-21-5-track-10-completion.md`](./2026-03/07-221500-research-batch-21-5-track-10-completion.md)
+- [`2026-03-07-research-batch-22-1-track-11-completion.md`](./2026-03/07-223000-research-batch-22-1-track-11-completion.md)
 
 ## Archived Validation Logs
 

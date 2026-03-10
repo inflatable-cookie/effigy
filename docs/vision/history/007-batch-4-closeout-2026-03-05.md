@@ -7,7 +7,7 @@ Purpose: close Batch 4 by adding CI workflow enforcement for vision metadata che
 ## 1. Scope Completed
 
 1. Added CI workflow enforcement step in:
-- `.github-bak/workflows/json-contracts.yml`
+- `.github/workflows/json-contracts.yml`
   - `Validate vision metadata coverage` now runs `./docs/scripts/check-vision-metadata.sh`
 
 2. Added forward-only report cutoff date policy (`2026-03-06`) in:
@@ -15,7 +15,7 @@ Purpose: close Batch 4 by adding CI workflow enforcement for vision metadata che
 - `docs/guides/029-docs-qa-checklist-and-validation.md`
 
 3. Corrected docs QA workflow reference path to current repository layout:
-- `docs/guides/029-docs-qa-checklist-and-validation.md` now references `.github-bak/workflows/json-contracts.yml`
+- `docs/guides/029-docs-qa-checklist-and-validation.md` now references `.github/workflows/json-contracts.yml`
 
 4. Extended vision metadata checker policy coverage:
 - `docs/scripts/check-vision-metadata.sh` now fails if the forward-only cutoff date (`2026-03-06`) is missing from required policy docs.
