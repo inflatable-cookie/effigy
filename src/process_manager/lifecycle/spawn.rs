@@ -69,6 +69,9 @@ fn spawn_plain_shell(spec: &ProcessSpec) -> ProcessCommand {
         });
     }
     with_local_node_bin_path(&mut process, &spec.cwd);
+    for (key, value) in &spec.env {
+        process.env(key, value);
+    }
     process
 }
 
@@ -94,6 +97,9 @@ fn spawn_with_pty_wrapper(spec: &ProcessSpec) -> ProcessCommand {
             });
         }
         with_local_node_bin_path(&mut process, &spec.cwd);
+        for (key, value) in &spec.env {
+            process.env(key, value);
+        }
         process
     }
 

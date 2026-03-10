@@ -2,15 +2,24 @@ use std::process::Command as ProcessCommand;
 
 use super::super::util::with_local_node_bin_path;
 use super::context::ExecutionTaskContext;
+use crate::env_schema::secret::SecretString;
 use crate::runner::error::RunnerError;
 
-pub(super) fn build_shell_process(context: &ExecutionTaskContext<'_>) -> ProcessCommand {
+pub(super) fn build_shell_process(
+    context: &ExecutionTaskContext<'_>,
+    secret_env: Option<&[(&str, &SecretString)]>,
+) -> ProcessCommand {
     let mut process = ProcessCommand::new("sh");
     process
         .arg("-c")
         .arg(context.command())
         .current_dir(context.repo_for_task());
     with_local_node_bin_path(&mut process, context.repo_for_task());
+    if let Some(secrets) = secret_env {
+        for (key, secret) in secrets {
+            process.env(key, secret.expose());
+        }
+    }
     process
 }
 

@@ -111,25 +111,112 @@ Staging area for signals from secondary channels awaiting promotion to the resea
 
 ---
 
+## Batch 23.1: Track 16 - Secure Secrets Management
+
+**Date:** 2026-03-07  
+**Tools studied:** Varlock, Mozilla SOPS, git-crypt, age, Doppler  
+**Track:** 16 - Secure Secrets Management (user-requested)  
+
+**Deliverables created:**
+- Tool dossier: `tool-dossiers/varlock.md`
+- Tool dossier: `tool-dossiers/mozilla-sops.md`
+- Tool dossier: `tool-dossiers/git-crypt.md`
+- Tool dossier: `tool-dossiers/age-encryption.md`
+- Tool dossier: `tool-dossiers/doppler.md`
+- Value track: `value-tracks/16-secure-secrets-management.md`
+- Translation memo: `translation-memos/016-secure-secrets-management.md`
+
+**Key findings:**
+- Varlock: Schema validation + external providers, but doesn't encrypt (yet)
+- SOPS: Industry standard for encrypted files in git, complex key management
+- git-crypt: Transparent git encryption, but GPG complexity and maintenance mode
+- age: Modern encryption, simple UX, no configuration - best default choice
+- Doppler: Good UX but cloud-only, subscription cost, vendor lock-in
+
+**Recommendation for Effigy:**
+- Default: age-based encryption (modern, simple, self-hosted)
+- Optional: SOPS integration for enterprise/KMS users
+- Optional: External provider integration (1Password, Bitwarden)
+- Add: Schema validation inspired by Varlock
+
+**Outcome:** research processed  
+**Next:** Implementation phase
+
+---
+
+## Refined Recommendation: External Provider Focus
+
+**Date:** 2026-03-07  
+**Based on:** User feedback from Track 16 research  
+
+**Original recommendation:** age-based file encryption (git-committable)  
+**Refined recommendation:** External provider integration (1Password, Bitwarden, Infisical)
+
+**Rationale:**
+- Most developers already use password managers
+- No key management needed (provider handles it)
+- Centralized secret rotation
+- Simpler team onboarding (grant vault access vs share keys)
+- No copies of secrets in repo or filesystem
+
+**New deliverable:**
+- Translation memo: `translation-memos/016b-external-provider-secrets.md`
+
+**Recommended providers (in order):**
+1. **1Password** - Best UX, most popular, biometric unlock
+2. **Bitwarden Secrets Manager** - Free tier, open source
+3. **Infisical** - Open source, self-hostable
+
+---
+
+## Final Recommendation: Custom @env-spec Implementation
+
+**Date:** 2026-03-07  
+**Based on:** Deeper analysis of Varlock architecture + in-process requirements  
+
+**Original refined recommendation:** Integrate Varlock as external dependency  
+**Final recommendation:** Implement custom @env-spec parser/resolver in Rust
+
+**Rationale:**
+- Varlock is JS/Node-based - spawning processes for every task is slow
+- Effigy needs **in-process access** to env vars for conditional logic
+- Full control over security (zeroization, timeouts, caching)
+- No external binary dependency
+- @env-spec is a well-designed DSL we can implement ourselves
+
+**Implementation strategy:**
+- Custom Rust parser for @env-spec (using nom)
+- Resolution engine for `exec()`, `env()`, templates
+- `SecretString` type with `zeroize::Zeroize`
+- Integration with Effigy runtime for task execution
+
+**New deliverables:**
+- Translation memo: `translation-memos/016c-varlock-integration.md`
+- Implementation handoff: `docs/handoffs/varlock-integration-implementation.md`
+
+**Status:** Research complete, ready for implementation
+
+---
+
 ## watch
 
-*Items waiting for a review trigger. Empty on initial creation.*
+*Items waiting for a review trigger.*
 
 ---
 
 ## lead only
 
-*Items missing primary sources. Empty on initial creation.*
+*Items missing primary sources.*
 
 ---
 
 ## reject
 
-*Items excluded with reason. Empty on initial creation.*
+*Items excluded with reason.*
 
 ---
 
 ## research now (pending processing)
 
-*Items approved for research but not yet processed. Empty on initial creation.*
+*Items approved for research but not yet processed.*
 

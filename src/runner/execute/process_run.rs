@@ -1,21 +1,26 @@
 use super::super::cache::ops::update_task_cache_entry;
 use super::context::ExecutionTaskContext;
 use super::process::{build_shell_process, command_launch_error};
+use crate::env_schema::secret::SecretString;
 use crate::runner::error::RunnerError;
 
 pub(super) fn run_task_process(
     output_json: bool,
     verbose_root: bool,
     context: &ExecutionTaskContext<'_>,
+    secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<String, RunnerError> {
     if output_json {
-        return run_task_process_json(context);
+        return run_task_process_json(context, secret_env);
     }
-    run_task_process_text(verbose_root, context)
+    run_task_process_text(verbose_root, context, secret_env)
 }
 
-fn run_task_process_json(context: &ExecutionTaskContext<'_>) -> Result<String, RunnerError> {
-    let output = build_shell_process(context)
+fn run_task_process_json(
+    context: &ExecutionTaskContext<'_>,
+    secret_env: Option<&[(&str, &SecretString)]>,
+) -> Result<String, RunnerError> {
+    let output = build_shell_process(context, secret_env)
         .output()
         .map_err(|error| command_launch_error(context, error))?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -39,8 +44,9 @@ fn run_task_process_json(context: &ExecutionTaskContext<'_>) -> Result<String, R
 fn run_task_process_text(
     verbose_root: bool,
     context: &ExecutionTaskContext<'_>,
+    secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<String, RunnerError> {
-    let status = build_shell_process(context)
+    let status = build_shell_process(context, secret_env)
         .status()
         .map_err(|error| command_launch_error(context, error))?;
 

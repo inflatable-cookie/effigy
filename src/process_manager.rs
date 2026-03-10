@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::process::Child;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -30,6 +30,9 @@ pub struct ProcessSpec {
     pub cwd: PathBuf,
     pub start_after_ms: u64,
     pub pty: bool,
+    /// Additional environment variables to inject via `Command::env()`.
+    /// Used for env-schema resolved values including secrets.
+    pub env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

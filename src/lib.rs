@@ -1,5 +1,6 @@
 mod cli;
 mod data_loading;
+pub mod env_schema;
 mod fs_probe;
 mod path_error_text;
 mod path_probe;

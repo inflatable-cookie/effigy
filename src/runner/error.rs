@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::env_schema::error::EnvSchemaError;
 use crate::path_error_text::{
     failed_to_parse_path, failed_to_read_path, failed_to_render_path, failed_to_write_path,
 };
@@ -141,6 +142,7 @@ pub enum RunnerError {
     DeferLoopDetected {
         depth: u8,
     },
+    EnvSchema(EnvSchemaError),
 }
 
 impl std::fmt::Display for RunnerError {
@@ -210,6 +212,12 @@ impl From<ResolveError> for RunnerError {
 impl From<ProcessManagerError> for RunnerError {
     fn from(value: ProcessManagerError) -> Self {
         Self::ManagedProcess(value)
+    }
+}
+
+impl From<EnvSchemaError> for RunnerError {
+    fn from(value: EnvSchemaError) -> Self {
+        Self::EnvSchema(value)
     }
 }
 
