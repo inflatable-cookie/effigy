@@ -25,7 +25,7 @@ awk '
   /^## Vision Artifacts$/ { in_section = 1; next }
   /^## / { if (in_section) exit }
   in_section { print }
-' "$README" | rg '^\d+\.\s+\[[^]]+\]\(\./[^)]+\)$' > "$artifact_lines_file" || true
+' "$README" | grep -E '^[0-9]+\.\s+\[[^]]+\]\(\./[^)]+\)$' > "$artifact_lines_file" || true
 
 if [[ ! -s "$artifact_lines_file" ]]; then
   echo "[error] no vision artifact entries found in $README" >&2
@@ -55,7 +55,7 @@ while IFS= read -r line; do
     continue
   fi
 
-  if ! rg -q '^## Next Task$' "$file"; then
+  if ! grep -q '^## Next Task$' "$file"; then
     echo "[error] missing '## Next Task' section in docs/vision/$rel_path" >&2
     status=1
     continue
@@ -85,7 +85,7 @@ while IFS= read -r line; do
   normalized_line="$(sed -E 's/^[[:space:]]*([-*+]|\([0-9]+\)|[0-9]+\.)[[:space:]]+//; s/^[[:space:]]+//' <<<"$first_line")"
   verb="$(awk '{ print $1 }' <<<"$normalized_line" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z].*$//')"
 
-  if [[ -z "$verb" ]] || ! rg -Fxq "$verb" "$verbs_file_normalized"; then
+  if [[ -z "$verb" ]] || ! grep -Fxq "$verb" "$verbs_file_normalized"; then
     echo "[error] non-actionable '## Next Task' lead verb in docs/vision/$rel_path: '$first_line' (allowlist: $VERBS_FILE)" >&2
     status=1
   fi

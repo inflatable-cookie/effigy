@@ -142,7 +142,7 @@ Release: milestone m1
   - result: invalid payload fixtures rejected, valid fixture accepted
 
 ## Rollback Notes
-- Revert workflow changes in `.github-bak/workflows/json-contracts.yml` if pipeline is blocked.
+- Revert workflow changes in `.github/workflows/json-contracts.yml` if pipeline is blocked.
 - Keep local script-based checks as temporary fallback.
 
 ## Compatibility

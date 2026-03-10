@@ -37,7 +37,7 @@ effigy qa --repo .
 ## 2) CI Validation Path
 
 Current workflow file:
-- `.github-bak/workflows/json-contracts.yml`
+- `.github/workflows/json-contracts.yml`
 
 Docs gate job:
 
