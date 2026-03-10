@@ -17,6 +17,7 @@ pub(super) fn build_task_command(
     // Merge env-schema plain (non-sensitive) values into the task env.
     // Task-level `env = { KEY = "value" }` from effigy.toml takes priority.
     let merged_env = merge_env_schema_plain(&selection.task.env, env_schema_resolved.as_ref());
+    let runtime_env_schema_override = preflight.runtime_args_raw.env_schema_override.as_deref();
 
     let run_spec =
         selection
@@ -38,6 +39,7 @@ pub(super) fn build_task_command(
             repo_root: &selection.catalog.catalog_root,
             catalogs: &preflight.catalogs,
             task_scope_cwd: &selection.catalog.catalog_root,
+            runtime_env_schema_override,
             depth: 0,
         },
     )

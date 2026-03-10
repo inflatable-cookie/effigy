@@ -1,10 +1,29 @@
+//! Line-based parser for `.env.schema` files.
+//!
+//! The parser is a hand-written state machine that processes the file line by
+//! line. Comment lines (starting with `#`) are accumulated into an annotation
+//! buffer. When a `KEY=VALUE` line is encountered, the buffered comments are
+//! parsed for `@annotation` tokens, the value expression is parsed, and a
+//! schema entry is emitted. Blank lines reset the annotation buffer.
+//!
+//! This parser is intentionally simple and does not use parser combinators.
+//! The grammar is line-oriented: every non-blank, non-comment line must be a
+//! `KEY=VALUE` pair (the value may be empty).
+
 use std::path::Path;
+
+use regex::Regex;
 
 use super::ast::{
     EntryAnnotations, EnvSchema, EnvSchemaEntry, EnvType, EnvValueExpr, TemplatePart,
 };
 use super::error::EnvSchemaError;
 
+/// Parse the content of a `.env.schema` file into an [`EnvSchema`] AST.
+///
+/// Lines are processed sequentially. Comment lines (`# ...`) accumulate into
+/// an annotation buffer that is consumed by the next `KEY=VALUE` line. Blank
+/// lines reset the buffer. Returns an error on invalid syntax.
 pub(super) fn parse_env_schema(
     content: &str,
     source_path: &Path,
@@ -88,6 +107,8 @@ fn parse_annotations(
 ) -> Result<EntryAnnotations, EnvSchemaError> {
     let mut annotations = EntryAnnotations::default();
     let mut description_parts: Vec<String> = Vec::new();
+    let mut string_min_len = None;
+    let mut string_max_len = None;
 
     for (offset, line) in comment_lines.iter().enumerate() {
         let line_num = first_line + offset;
@@ -97,7 +118,14 @@ fn parse_annotations(
         for token in &tokens {
             if let Some(annotation) = token.strip_prefix('@') {
                 has_annotation = true;
-                parse_single_annotation(annotation, &mut annotations, source_path, line_num)?;
+                parse_single_annotation(
+                    annotation,
+                    &mut annotations,
+                    &mut string_min_len,
+                    &mut string_max_len,
+                    source_path,
+                    line_num,
+                )?;
             } else if !has_annotation {
                 description_parts.push((*token).to_owned());
             }
@@ -108,12 +136,22 @@ fn parse_annotations(
         annotations.description = Some(description_parts.join(" "));
     }
 
+    finalize_string_constraints(
+        &mut annotations,
+        string_min_len,
+        string_max_len,
+        source_path,
+        first_line,
+    )?;
+
     Ok(annotations)
 }
 
 fn parse_single_annotation(
     annotation: &str,
     target: &mut EntryAnnotations,
+    string_min_len: &mut Option<usize>,
+    string_max_len: &mut Option<usize>,
     source_path: &Path,
     line_num: usize,
 ) -> Result<(), EnvSchemaError> {
@@ -133,6 +171,13 @@ fn parse_single_annotation(
             target.sensitive = true;
         }
         "type" => {
+            if target.env_type.is_some() {
+                return Err(EnvSchemaError::Parse {
+                    path: source_path.to_owned(),
+                    line: line_num,
+                    message: "duplicate `@type` annotation".to_owned(),
+                });
+            }
             let type_value = value.ok_or_else(|| EnvSchemaError::Parse {
                 path: source_path.to_owned(),
                 line: line_num,
@@ -142,6 +187,52 @@ fn parse_single_annotation(
         }
         "default" => {
             target.required = target.required.or(Some(false));
+        }
+        "min" => {
+            *string_min_len = Some(parse_length_annotation(
+                "@min",
+                value,
+                *string_min_len,
+                source_path,
+                line_num,
+            )?);
+        }
+        "max" => {
+            *string_max_len = Some(parse_length_annotation(
+                "@max",
+                value,
+                *string_max_len,
+                source_path,
+                line_num,
+            )?);
+        }
+        "pattern" => {
+            if target.pattern.is_some() {
+                return Err(EnvSchemaError::Parse {
+                    path: source_path.to_owned(),
+                    line: line_num,
+                    message: "duplicate `@pattern` annotation".to_owned(),
+                });
+            }
+            let pattern_value =
+                strip_matching_quotes(value.ok_or_else(|| EnvSchemaError::Parse {
+                    path: source_path.to_owned(),
+                    line: line_num,
+                    message: "@pattern requires a value (e.g., @pattern=^https://)".to_owned(),
+                })?);
+            if pattern_value.is_empty() {
+                return Err(EnvSchemaError::Parse {
+                    path: source_path.to_owned(),
+                    line: line_num,
+                    message: "@pattern cannot be empty".to_owned(),
+                });
+            }
+            Regex::new(pattern_value).map_err(|error| EnvSchemaError::Parse {
+                path: source_path.to_owned(),
+                line: line_num,
+                message: format!("invalid `@pattern` regex `{pattern_value}`: {error}"),
+            })?;
+            target.pattern = Some(pattern_value.to_owned());
         }
         other => {
             return Err(EnvSchemaError::Parse {
@@ -153,6 +244,83 @@ fn parse_single_annotation(
     }
 
     Ok(())
+}
+
+fn parse_length_annotation(
+    name: &str,
+    value: Option<&str>,
+    current: Option<usize>,
+    source_path: &Path,
+    line_num: usize,
+) -> Result<usize, EnvSchemaError> {
+    if current.is_some() {
+        return Err(EnvSchemaError::Parse {
+            path: source_path.to_owned(),
+            line: line_num,
+            message: format!("duplicate `{name}` annotation"),
+        });
+    }
+
+    let raw_value = value.ok_or_else(|| EnvSchemaError::Parse {
+        path: source_path.to_owned(),
+        line: line_num,
+        message: format!("{name} requires a numeric value"),
+    })?;
+    raw_value
+        .parse::<usize>()
+        .map_err(|_| EnvSchemaError::Parse {
+            path: source_path.to_owned(),
+            line: line_num,
+            message: format!("{name} requires a non-negative integer, got `{raw_value}`"),
+        })
+}
+
+fn finalize_string_constraints(
+    annotations: &mut EntryAnnotations,
+    min_len: Option<usize>,
+    max_len: Option<usize>,
+    source_path: &Path,
+    line_num: usize,
+) -> Result<(), EnvSchemaError> {
+    if min_len.is_none() && max_len.is_none() {
+        return Ok(());
+    }
+
+    if let (Some(min), Some(max)) = (min_len, max_len) {
+        if min > max {
+            return Err(EnvSchemaError::Parse {
+                path: source_path.to_owned(),
+                line: line_num,
+                message: format!(
+                    "invalid string constraints: `@min={min}` cannot exceed `@max={max}`"
+                ),
+            });
+        }
+    }
+
+    match annotations.env_type.take() {
+        None | Some(EnvType::String { .. }) => {
+            annotations.env_type = Some(EnvType::String { min_len, max_len });
+            Ok(())
+        }
+        Some(other_type) => Err(EnvSchemaError::Parse {
+            path: source_path.to_owned(),
+            line: line_num,
+            message: format!(
+                "`@min`/`@max` require `@type=string`, found `{}`",
+                render_env_type_name(&other_type)
+            ),
+        }),
+    }
+}
+
+fn render_env_type_name(env_type: &EnvType) -> &'static str {
+    match env_type {
+        EnvType::Port => "port",
+        EnvType::Url => "url",
+        EnvType::String { .. } => "string",
+        EnvType::Enum(_) => "enum",
+    }
 }
 
 fn parse_type_annotation(

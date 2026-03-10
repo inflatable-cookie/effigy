@@ -13,6 +13,7 @@ pub enum CliParseError {
     MissingTaskNameValue,
     MissingResolveSelectorValue,
     MissingPrettyValue,
+    MissingFlagValue { flag: String },
     InvalidPrettyValue(String),
     UnknownArgument(String),
 }
@@ -25,6 +26,9 @@ impl std::fmt::Display for CliParseError {
             CliParseError::MissingResolveSelectorValue => write!(f, "--resolve requires a value"),
             CliParseError::MissingPrettyValue => {
                 write!(f, "--pretty requires a value (`true` or `false`)")
+            }
+            CliParseError::MissingFlagValue { flag } => {
+                write!(f, "{flag} requires a value")
             }
             CliParseError::InvalidPrettyValue(value) => write!(
                 f,

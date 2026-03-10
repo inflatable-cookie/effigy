@@ -1,3 +1,10 @@
+//! Shell command executor for `exec('...')` value expressions.
+//!
+//! Runs a command via `sh -c` with a configurable timeout. The child process
+//! stdout is read on a background thread; if the timeout expires the child is
+//! killed and an [`EnvSchemaError::ExecTimeout`] is returned. On success the
+//! trimmed stdout content is returned as the resolved value.
+
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -7,6 +14,12 @@ use std::time::Duration;
 
 use super::error::EnvSchemaError;
 
+/// Run a shell command and return its trimmed stdout.
+///
+/// The command is executed with `sh -c` in the given working directory.
+/// A background thread reads stdout while the main thread enforces the
+/// timeout via `mpsc::channel::recv_timeout`. If the command exceeds the
+/// timeout the child process is killed.
 pub(super) fn run_exec_command(
     command: &str,
     timeout: Duration,

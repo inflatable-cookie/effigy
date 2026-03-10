@@ -16,6 +16,11 @@ pub(in crate::runner) fn reject_verbose_root_for_builtin(
             "`--verbose-root` is not supported for built-in `{task_name}`",
         )));
     }
+    if runtime_args.env_schema_override.is_some() {
+        return Err(RunnerError::task_invocation(format!(
+            "`--env-schema` is not supported for built-in `{task_name}`",
+        )));
+    }
     Ok(())
 }
 

@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 use super::super::super::catalog::select_catalog_and_task;
 use super::super::super::manifest::task_runtime::ManifestManagedRun;
 use super::super::super::model::catalog::{LoadedCatalog, TaskSelection};
+use super::super::super::{env_schema_support, error::RunnerError};
 use super::super::run_spec::{
     render_builtin_reference_invocation, render_task_run_spec, RunSpecContext,
 };
 use super::parser::{is_builtin_task_selector, ParsedTaskRef};
-use crate::runner::error::RunnerError;
 
 pub(super) enum ReferenceTarget<'a> {
     Builtin,
@@ -24,6 +24,7 @@ pub(super) fn resolve_reference_run<'a, F>(
     args_rendered: &str,
     catalogs: &'a [LoadedCatalog],
     task_scope_cwd: &Path,
+    runtime_env_schema_override: Option<&Path>,
     depth: usize,
     missing_run_error: F,
 ) -> Result<ResolvedReferenceRun, RunnerError>
@@ -48,6 +49,7 @@ where
                     &parsed.selector.task_name,
                     args_rendered,
                     catalogs,
+                    runtime_env_schema_override,
                     depth,
                 )?,
                 cwd: selection.catalog.catalog_root.clone(),
@@ -75,19 +77,34 @@ fn render_selected_task_run(
     task_name: &str,
     args_rendered: &str,
     catalogs: &[LoadedCatalog],
+    runtime_env_schema_override: Option<&Path>,
     depth: usize,
 ) -> Result<String, RunnerError> {
+    let env_schema_resolved = env_schema_support::resolve_catalog_env_schema(
+        &selection.catalog.catalog_root,
+        selection.catalog.manifest.env_schema.as_ref(),
+        runtime_env_schema_override,
+    )?;
+    let mut task_env = env_schema_resolved
+        .as_ref()
+        .map(|resolved| resolved.plain_env())
+        .unwrap_or_default();
+    for (key, value) in &selection.task.env {
+        task_env.insert(key.clone(), value.clone());
+    }
+
     render_task_run_spec(
         run_spec,
         RunSpecContext {
             task_name,
-            task_env: &selection.task.env,
+            task_env: &task_env,
             task_env_file: selection.task.env_file.as_ref(),
             env_profiles: &selection.catalog.manifest.env,
             args_rendered,
             repo_root: &selection.catalog.catalog_root,
             catalogs,
             task_scope_cwd: &selection.catalog.catalog_root,
+            runtime_env_schema_override,
             depth,
         },
     )

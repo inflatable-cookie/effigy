@@ -35,6 +35,21 @@ DATABASE_URL = "postgres://from-manifest""#,
     write_env_files(root, &[(".env", "DATABASE_URL=postgres://from-dotenv\n")]);
 }
 
+fn setup_env_schema_value_fallback(root: &Path, marker: &Path) {
+    write_root_api_single_env_capture_manifest(
+        root,
+        marker,
+        None,
+        r#""DATABASE_URL""#,
+        "DATABASE_URL",
+    );
+    std::fs::write(
+        root.join(".env.schema"),
+        "DATABASE_URL=postgres://from-env-schema\n",
+    )
+    .expect("write env schema");
+}
+
 fn setup_unknown_env_profile(root: &Path) {
     write_validate_manifest(
         root,
@@ -63,6 +78,13 @@ fn run_manifest_task_run_array_env_resolution_fallback_contract_table() {
             marker_rel: "env-value-manifest-precedence.out",
             expected: "postgres://from-manifest",
             setup: setup_manifest_env_over_dotenv_fallback,
+        },
+        RunArrayTaskOutputCase {
+            workspace: "run-array-env-value-env-schema-fallback",
+            task: "api",
+            marker_rel: "env-value-env-schema-fallback.out",
+            expected: "postgres://from-env-schema",
+            setup: setup_env_schema_value_fallback,
         },
     ];
 

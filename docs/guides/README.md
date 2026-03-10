@@ -13,7 +13,8 @@ This is the navigation hub for practical runbooks.
 7. [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md) - quick manifest scaffolds.
 8. [`028-migration-quick-paths.md`](./028-migration-quick-paths.md) - scenario-based adoption paths.
 9. [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md) - managed builtin test suites with env, setup, teardown, and nextest passthrough.
-10. [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md) - agent-first repo adoption contract and rollout waves.
+10. [`050-env-schema-integration.md`](./050-env-schema-integration.md) - declarative `.env.schema` files with annotations, type validation, and secret injection.
+11. [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md) - agent-first repo adoption contract and rollout waves.
 
 ## Standards Used In These Guides
 
@@ -64,6 +65,7 @@ Use this section as a fast reference for task env behavior.
 Canonical source and examples:
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
+- [`050-env-schema-integration.md`](./050-env-schema-integration.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 

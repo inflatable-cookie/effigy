@@ -22,7 +22,7 @@ pub struct ResolvedEnv {
 }
 
 /// A single resolved environment entry.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ResolvedEntry {
     pub value: ResolvedValue,
     pub source: ResolvedSource,
@@ -57,6 +57,22 @@ impl ResolvedEnv {
                 ResolvedValue::Secret(s) => Some((key.as_str(), s)),
                 ResolvedValue::Plain(_) => None,
             })
+            .collect()
+    }
+
+    /// Export all resolved values as a `HashMap`, preserving secret/plain variants.
+    pub fn env_values(&self) -> HashMap<String, ResolvedValue> {
+        self.entries
+            .iter()
+            .map(|(key, entry)| (key.clone(), entry.value.clone()))
+            .collect()
+    }
+
+    /// Consume the resolved env and export all values as a `HashMap`.
+    pub fn into_env_values(self) -> HashMap<String, ResolvedValue> {
+        self.entries
+            .into_iter()
+            .map(|(key, entry)| (key, entry.value))
             .collect()
     }
 

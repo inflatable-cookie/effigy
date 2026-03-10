@@ -30,6 +30,7 @@ pub(in super::super) struct RunSpecContext<'a> {
     pub(in super::super) repo_root: &'a Path,
     pub(in super::super) catalogs: &'a [LoadedCatalog],
     pub(in super::super) task_scope_cwd: &'a Path,
+    pub(in super::super) runtime_env_schema_override: Option<&'a Path>,
     pub(in super::super) depth: usize,
 }
 
@@ -83,6 +84,7 @@ pub(in crate::runner) fn resolve_run_step_env(
     env_profiles: &BTreeMap<String, ManifestEnvEntry>,
     repo_root: &Path,
     catalogs: &[LoadedCatalog],
+    runtime_env_schema_override: Option<&Path>,
 ) -> Result<BTreeMap<String, String>, RunnerError> {
     sequence::resolve_standalone_env(
         owner_label,
@@ -91,6 +93,7 @@ pub(in crate::runner) fn resolve_run_step_env(
         env_profiles,
         repo_root,
         catalogs,
+        runtime_env_schema_override,
     )
 }
 
@@ -103,6 +106,7 @@ pub(in crate::runner) fn render_run_step_sequence(
     repo_root: &Path,
     catalogs: &[LoadedCatalog],
     task_scope_cwd: &Path,
+    runtime_env_schema_override: Option<&Path>,
 ) -> Result<String, RunnerError> {
     sequence::render_run_sequence(
         steps,
@@ -115,6 +119,7 @@ pub(in crate::runner) fn render_run_step_sequence(
             repo_root,
             catalogs,
             task_scope_cwd,
+            runtime_env_schema_override,
             depth: 1,
         },
     )

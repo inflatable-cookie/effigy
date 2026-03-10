@@ -73,6 +73,10 @@ pub(crate) fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()>
         NoticeLevel::Info,
         "Use `effigy <built-in-task> --help` for task-specific flags and examples.",
     )?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Generic task invocations also accept `--repo <PATH>`, `--verbose-root`, and `--env-schema <PATH>` before passthrough arguments.",
+    )?;
     renderer.key_values(&[
         KeyValue::new("-h, --help", "Print this help panel"),
         KeyValue::new("--json", "Render command-envelope JSON for CI/tooling"),

@@ -11,6 +11,7 @@ pub(super) fn prepare_execution_runtime_args(
     let runtime_args_exec = TaskRuntimeArgs {
         repo_override: runtime_args_raw.repo_override.clone(),
         verbose_root: runtime_args_raw.verbose_root,
+        env_schema_override: runtime_args_raw.env_schema_override.clone(),
         passthrough: passthrough_without_json,
     };
     Ok((runtime_args_raw, runtime_args_exec, output_json))

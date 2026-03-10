@@ -15,6 +15,7 @@ pub(super) fn normalize_builtin_test_suite(raw: &str) -> Option<&'static str> {
 pub(super) fn parse_task_runtime_args(args: &[String]) -> Result<TaskRuntimeArgs, RunnerError> {
     let mut repo: Option<PathBuf> = None;
     let mut verbose_root = false;
+    let mut env_schema_override: Option<PathBuf> = None;
     let mut passthrough: Vec<String> = Vec::new();
     let mut i = 0usize;
     while i < args.len() {
@@ -29,6 +30,16 @@ pub(super) fn parse_task_runtime_args(args: &[String]) -> Result<TaskRuntimeArgs
             i += 2;
             continue;
         }
+        if arg == "--env-schema" {
+            let Some(value) = args.get(i + 1) else {
+                return Err(RunnerError::task_invocation(
+                    "task argument --env-schema requires a value",
+                ));
+            };
+            env_schema_override = Some(PathBuf::from(value));
+            i += 2;
+            continue;
+        }
         if arg == "--verbose-root" {
             verbose_root = true;
             i += 1;
@@ -40,6 +51,7 @@ pub(super) fn parse_task_runtime_args(args: &[String]) -> Result<TaskRuntimeArgs
     Ok(TaskRuntimeArgs {
         repo_override: repo,
         verbose_root,
+        env_schema_override,
         passthrough,
     })
 }

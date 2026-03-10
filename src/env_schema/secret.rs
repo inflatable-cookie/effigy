@@ -1,17 +1,22 @@
+#[cfg(test)]
 use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 /// A string value that is zeroized from memory on drop.
 ///
 /// Used for environment variables marked `@sensitive`. The value is never
 /// exposed through `Display` or `Debug` — callers must use `expose()` to
 /// access the inner value explicitly.
+#[derive(Clone)]
 pub struct SecretString {
-    inner: String,
+    inner: Zeroizing<String>,
 }
 
 impl SecretString {
     pub fn new(value: String) -> Self {
-        Self { inner: value }
+        Self {
+            inner: Zeroizing::new(value),
+        }
     }
 
     /// Access the secret value. Use this only at the point where the value
@@ -19,11 +24,23 @@ impl SecretString {
     pub fn expose(&self) -> &str {
         &self.inner
     }
-}
 
-impl Drop for SecretString {
-    fn drop(&mut self) {
+    #[cfg(test)]
+    pub(crate) fn zeroize_for_test(&mut self) {
         self.inner.zeroize();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bytes_for_test(&self) -> &[u8] {
+        self.inner.as_bytes()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn raw_bytes_for_test(&self, len: usize) -> &[u8] {
+        assert!(len <= self.inner.capacity());
+        // Inspect the still-owned buffer after zeroization without relying on
+        // the post-zeroize string length, which may be reset to 0.
+        unsafe { std::slice::from_raw_parts(self.inner.as_ptr(), len) }
     }
 }
 
@@ -40,7 +57,7 @@ impl std::fmt::Display for SecretString {
 }
 
 /// A resolved environment value, either plain text or a secret.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ResolvedValue {
     Plain(String),
     Secret(SecretString),

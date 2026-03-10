@@ -13,6 +13,12 @@ fn run_manifest_task_builtin_argument_contract_matrix_is_stable() {
             &["unknown argument(s) for built-in `doctor`: --wat"],
         ),
         builtin_contract_error_case(
+            "builtin-arg-contract-doctor-env-schema-unsupported",
+            "doctor",
+            &["--env-schema", "config/test.env.schema"],
+            &["`--env-schema` is not supported for built-in `doctor`"],
+        ),
+        builtin_contract_error_case(
             "builtin-arg-contract-tasks-missing-task",
             "tasks",
             &["--task"],

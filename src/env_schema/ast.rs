@@ -23,6 +23,7 @@ pub struct EntryAnnotations {
     pub required: Option<bool>,
     pub sensitive: bool,
     pub description: Option<String>,
+    pub pattern: Option<String>,
 }
 
 /// Type annotations constraining the value of an environment variable.

@@ -31,6 +31,7 @@ pub(super) fn resolve_task_reference_run(
         "",
         catalogs,
         task_scope_cwd,
+        None,
         0,
         |detail| context.invalid(detail),
         |detail| context.invalid(detail),
@@ -51,6 +52,7 @@ pub(super) fn resolve_task_reference_step(
     args_rendered: &str,
     catalogs: &[LoadedCatalog],
     task_scope_cwd: &Path,
+    runtime_env_schema_override: Option<&Path>,
     depth: usize,
 ) -> Result<String, RunnerError> {
     let context = StepRefContext {
@@ -62,6 +64,7 @@ pub(super) fn resolve_task_reference_step(
         args_rendered,
         catalogs,
         task_scope_cwd,
+        runtime_env_schema_override,
         depth,
         |detail| context.invalid(detail),
         |detail| context.failure(detail),
@@ -83,6 +86,7 @@ fn resolve_task_reference<'a, FInvalid, FResolve, FMissing>(
     args_rendered: &str,
     catalogs: &'a [LoadedCatalog],
     task_scope_cwd: &Path,
+    runtime_env_schema_override: Option<&Path>,
     depth: usize,
     invalid_error: FInvalid,
     resolve_error: FResolve,
@@ -100,6 +104,7 @@ where
         &merged_args_rendered,
         catalogs,
         task_scope_cwd,
+        runtime_env_schema_override,
         depth,
         |selection| missing_run_error(&parsed, selection),
     )

@@ -82,7 +82,7 @@ fn apply_from_step_profile_resolution_prefers_manifest_then_process_then_dotenv(
         ManifestEnvEntry::Value("from-manifest".to_owned()),
     );
 
-    let mut accumulator = StepEnvAccumulator::new(None).expect("accumulator");
+    let mut accumulator = StepEnvAccumulator::new(None, None).expect("accumulator");
     accumulator
         .apply_from_step("dev", &profile_step("MY_VAR"), &env_profiles, &root, &[])
         .expect("apply env profile");
@@ -100,7 +100,7 @@ fn apply_from_step_profile_resolution_uses_dotenv_when_manifest_and_process_miss
     fs::write(root.join(".env"), "MY_VAR=from-dotenv\n").expect("write .env");
     let _env = EnvGuard::set("MY_VAR", None);
 
-    let mut accumulator = StepEnvAccumulator::new(None).expect("accumulator");
+    let mut accumulator = StepEnvAccumulator::new(None, None).expect("accumulator");
     accumulator
         .apply_from_step("dev", &profile_step("MY_VAR"), &BTreeMap::new(), &root, &[])
         .expect("apply env profile");
@@ -117,7 +117,7 @@ fn apply_from_step_profile_resolution_errors_for_unknown_entry() {
     let root = temp_repo("unknown");
     let _env = EnvGuard::set("MY_VAR", None);
 
-    let mut accumulator = StepEnvAccumulator::new(None).expect("accumulator");
+    let mut accumulator = StepEnvAccumulator::new(None, None).expect("accumulator");
     let err = accumulator
         .apply_from_step("dev", &profile_step("MY_VAR"), &BTreeMap::new(), &root, &[])
         .expect_err("unknown profile should fail");
@@ -134,7 +134,7 @@ fn apply_from_step_profile_resolution_errors_for_unknown_entry() {
 fn apply_from_step_profile_resolution_errors_for_empty_name() {
     let _guard = test_lock().lock().expect("lock");
     let root = temp_repo("empty");
-    let mut accumulator = StepEnvAccumulator::new(None).expect("accumulator");
+    let mut accumulator = StepEnvAccumulator::new(None, None).expect("accumulator");
     let err = accumulator
         .apply_from_step("dev", &profile_step("   "), &BTreeMap::new(), &root, &[])
         .expect_err("empty profile name should fail");
@@ -146,4 +146,35 @@ fn apply_from_step_profile_resolution_errors_for_empty_name() {
         }
         other => panic!("unexpected error: {other}"),
     }
+}
+
+#[test]
+fn apply_from_step_profile_resolution_uses_env_schema_defaults_before_dotenv() {
+    let _guard = test_lock().lock().expect("lock");
+    let root = temp_repo("env-schema");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf ok\"\n",
+    )
+    .expect("manifest");
+    fs::write(root.join(".env.schema"), "MY_VAR=from-env-schema\n").expect("write schema");
+    fs::write(root.join(".env"), "OTHER_VAR=from-dotenv\n").expect("write .env");
+    let _env = EnvGuard::set("MY_VAR", None);
+
+    let catalogs = crate::runner::catalog::discover_catalogs(&root).expect("discover catalogs");
+    let mut accumulator = StepEnvAccumulator::new(None, None).expect("accumulator");
+    accumulator
+        .apply_from_step(
+            "dev",
+            &profile_step("MY_VAR"),
+            &BTreeMap::new(),
+            &root,
+            &catalogs,
+        )
+        .expect("apply env profile");
+
+    assert_eq!(
+        accumulator.chained_env().get("MY_VAR").map(String::as_str),
+        Some("from-env-schema")
+    );
 }

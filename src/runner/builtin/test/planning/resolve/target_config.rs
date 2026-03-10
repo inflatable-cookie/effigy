@@ -114,6 +114,7 @@ fn resolve_configured_suites(
                     &catalog.manifest.env,
                     target_root,
                     catalogs,
+                    None,
                 )?;
                 let setup_command = render_suite_lifecycle_sequence(
                     &format!("{suite_ref}.setup"),
@@ -172,6 +173,7 @@ fn render_suite_lifecycle_sequence(
         target_root,
         catalogs,
         target_root,
+        None,
     )
     .map(Some)
 }
