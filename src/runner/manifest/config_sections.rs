@@ -235,3 +235,14 @@ pub(in crate::runner) enum ManifestJsPackageManager {
     Npm,
     Direct,
 }
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestEnvSchemaConfig {
+    #[serde(default)]
+    pub(in crate::runner) enabled: Option<bool>,
+    #[serde(default)]
+    pub(in crate::runner) schema: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) exec_timeout: Option<u64>,
+}

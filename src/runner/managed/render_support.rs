@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::process_manager::ProcessSpec;
@@ -18,6 +19,7 @@ where
             cwd: process.cwd,
             start_after_ms: process.start_after_ms,
             pty: true,
+            env: BTreeMap::new(),
         })
         .collect()
 }

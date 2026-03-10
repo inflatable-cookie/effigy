@@ -153,6 +153,7 @@ pub(super) fn fmt_runner_error(
         }
         RunnerError::DoctorNonZero { error_count, .. } => write_doctor_non_zero(f, *error_count),
         RunnerError::DeferLoopDetected { depth } => write_defer_loop_detected(f, *depth),
+        RunnerError::EnvSchema(err) => write!(f, "{err}"),
     }
 }
 

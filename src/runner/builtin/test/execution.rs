@@ -43,6 +43,7 @@ pub(super) fn run_builtin_test_targets_tui(
             cwd: suite.root.clone(),
             start_after_ms: 0,
             pty: true,
+            env: std::collections::BTreeMap::new(),
         })
         .collect::<Vec<ProcessSpec>>();
     let outcome = run_multiprocess_tui(

@@ -32,8 +32,16 @@ Research roadmaps (planned):
 - `021-research-phase-2-developer-experience.md`
 - `022-research-phase-3-scale-and-integration.md`
 
-Implementation roadmap (planned):
+Implementation roadmaps (planned):
 - `023-builtin-test-suite-lifecycle-and-env.md`
+
+Release and distribution (complete):
+- `024-release-pipeline-validation-and-consumer-ci.md` (complete)
+
+Current planned milestones:
+- `025-varlock-env-spec-integration.md`
+- `026-changelog-library-and-northstar-profile.md`
+- `027-release-orchestration-system.md`
 
 Rules:
 

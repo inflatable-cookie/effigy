@@ -10,7 +10,7 @@ pub(in crate::runner) mod task_runtime;
 mod test_config;
 
 pub(super) use config_sections::{
-    ManifestPackageManagerConfig, ManifestScanConfig, ManifestShellConfig,
+    ManifestEnvSchemaConfig, ManifestPackageManagerConfig, ManifestScanConfig, ManifestShellConfig,
 };
 use task_defs::deserialize_tasks;
 pub(super) use task_runtime::{
@@ -37,6 +37,8 @@ pub(super) struct TaskManifest {
     pub(super) scan: Option<ManifestScanConfig>,
     #[serde(default)]
     pub(super) shell: Option<ManifestShellConfig>,
+    #[serde(default)]
+    pub(super) env_schema: Option<ManifestEnvSchemaConfig>,
     #[serde(default, deserialize_with = "deserialize_tasks")]
     pub(super) tasks: BTreeMap<String, ManifestTask>,
 }

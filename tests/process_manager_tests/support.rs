@@ -20,6 +20,7 @@ pub(super) fn process_spec(name: &str, run: &str, cwd: &Path) -> ProcessSpec {
         cwd: cwd.to_path_buf(),
         start_after_ms: 0,
         pty: false,
+        env: std::collections::BTreeMap::new(),
     }
 }
 

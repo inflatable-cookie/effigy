@@ -10,6 +10,16 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- Add `@env-spec` integration: declarative `.env.schema` files with annotation
+  DSL (`@type`, `@required`, `@sensitive`), value expressions (`exec()`,
+  `env()`, `${VAR}` templates), type validation, topological dependency
+  resolution, and dual environment injection (plain values via shell wrapping,
+  secrets via `Command::env()` to avoid `ps` exposure)
+- Add `[env_schema]` configuration section in `effigy.toml` with `enabled`,
+  `schema` path override, and `exec_timeout` options
+- Add roadmaps for Varlock @env-spec integration (025), changelog library and
+  Northstar Profile (026), and release orchestration system (027)
+
 ### Changed
 
 ### Fixed
