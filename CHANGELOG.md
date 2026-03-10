@@ -10,6 +10,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- Publish `inflatable-cookie/setup-effigy@v1` GitHub Action for CI binary
+  installation with caching
+
 ### Changed
 
 ### Fixed
