@@ -17,6 +17,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("<catalog>/test fallback"));
     assert!(!rendered.contains("effigy test --plan"));
     assert!(rendered.contains("Use `effigy <built-in-task> --help`"));
+    assert!(rendered.contains("--env-schema <PATH>"));
     assert!(!rendered.contains("Quick Start"));
     assert!(!rendered.contains("effigy Help"));
 }

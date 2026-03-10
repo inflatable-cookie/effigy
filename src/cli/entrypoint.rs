@@ -45,8 +45,9 @@ pub fn run_cli(raw_args: Vec<String>) {
 
     match cmd {
         Command::Help(topic) => run_help_command(&context, topic),
-        command @ (Command::Doctor(_) | Command::Tasks(_) | Command::Task(_)) => {
-            run_and_render_command(&context, command)
-        }
+        command @ (Command::Changelog(_)
+        | Command::Doctor(_)
+        | Command::Tasks(_)
+        | Command::Task(_)) => run_and_render_command(&context, command),
     }
 }

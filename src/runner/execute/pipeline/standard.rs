@@ -1,6 +1,4 @@
-use std::collections::BTreeMap;
 use std::path::Path;
-use std::time::Duration;
 
 use super::super::super::cache::ops::check_task_cache;
 use super::super::super::locking::io::acquire_scopes;
@@ -19,6 +17,7 @@ pub(super) fn run_standard_task(
 ) -> Result<String, RunnerError> {
     let env_schema_resolved = resolve_env_schema_if_present(
         &selection.catalog.catalog_root,
+        preflight.runtime_args_raw.env_schema_override.as_deref(),
         selection.catalog.manifest.env_schema.as_ref(),
     )?;
 
@@ -68,55 +67,12 @@ pub(super) fn run_standard_task(
 
 fn resolve_env_schema_if_present(
     catalog_root: &Path,
+    runtime_override: Option<&Path>,
     config: Option<&ManifestEnvSchemaConfig>,
 ) -> Result<Option<ResolvedEnv>, RunnerError> {
-    // If explicitly disabled, skip entirely.
-    if let Some(cfg) = config {
-        if cfg.enabled == Some(false) {
-            return Ok(None);
-        }
-    }
-
-    // Determine schema path: custom path from config, or default `.env.schema`.
-    let schema_path = match config.and_then(|c| c.schema.as_deref()) {
-        Some(custom) => catalog_root.join(custom),
-        None => catalog_root.join(".env.schema"),
-    };
-
-    // If not explicitly enabled, only proceed if the schema file exists (auto-detect).
-    // If explicitly enabled with a custom path that doesn't exist, that's an error.
-    if !schema_path.is_file() {
-        let explicitly_enabled = config.is_some_and(|c| c.enabled == Some(true));
-        if explicitly_enabled {
-            return Err(RunnerError::task_invocation(format!(
-                "env_schema enabled but schema file not found: {}",
-                schema_path.display()
-            )));
-        }
-        return Ok(None);
-    }
-
-    let dotenv_path = catalog_root.join(".env");
-    let dotenv_overrides = if dotenv_path.is_file() {
-        let content = std::fs::read_to_string(&dotenv_path).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "failed to read {}: {error}",
-                dotenv_path.display()
-            ))
-        })?;
-        crate::runner::util::parse_dotenv_entries(&content)
-    } else {
-        BTreeMap::new()
-    };
-
-    let exec_timeout = config.and_then(|c| c.exec_timeout).unwrap_or(30);
-
-    let resolved = crate::env_schema::load_and_resolve(
-        &schema_path,
-        &dotenv_overrides,
-        Duration::from_secs(exec_timeout),
+    crate::runner::env_schema_support::resolve_catalog_env_schema(
         catalog_root,
-    )?;
-
-    Ok(Some(resolved))
+        config,
+        runtime_override,
+    )
 }

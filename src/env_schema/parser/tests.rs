@@ -130,6 +130,36 @@ fn parse_annotation_type_string() {
 }
 
 #[test]
+fn parse_annotation_type_string_with_constraints_and_pattern() {
+    let content = "# @type=string @min=3 @max=8 @pattern=^[a-z]+$\nNAME=hello";
+    let schema = parse(content);
+    assert_eq!(
+        schema.entries[0].annotations.env_type,
+        Some(EnvType::String {
+            min_len: Some(3),
+            max_len: Some(8)
+        })
+    );
+    assert_eq!(
+        schema.entries[0].annotations.pattern.as_deref(),
+        Some("^[a-z]+$")
+    );
+}
+
+#[test]
+fn parse_annotation_min_before_type_string() {
+    let content = "# @min=2 @max=5 @type=string\nNAME=hello";
+    let schema = parse(content);
+    assert_eq!(
+        schema.entries[0].annotations.env_type,
+        Some(EnvType::String {
+            min_len: Some(2),
+            max_len: Some(5)
+        })
+    );
+}
+
+#[test]
 fn parse_combined_annotations() {
     let content = "# @type=port @required @sensitive\nDB_PORT=5432";
     let schema = parse(content);
@@ -248,6 +278,36 @@ fn parse_error_unknown_annotation() {
 fn parse_error_unknown_type() {
     let err = parse_err("# @type=integer\nPORT=3000");
     assert!(err.contains("unknown type"), "got: {err}");
+}
+
+#[test]
+fn parse_error_string_constraint_requires_integer() {
+    let err = parse_err("# @type=string @min=abc\nNAME=hello");
+    assert!(
+        err.contains("@min requires a non-negative integer"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn parse_error_string_constraints_require_string_type() {
+    let err = parse_err("# @type=port @min=2\nPORT=3000");
+    assert!(
+        err.contains("@min`/`@max` require `@type=string`"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn parse_error_string_min_cannot_exceed_max() {
+    let err = parse_err("# @type=string @min=8 @max=3\nNAME=hello");
+    assert!(err.contains("cannot exceed"), "got: {err}");
+}
+
+#[test]
+fn parse_error_invalid_pattern_regex() {
+    let err = parse_err("# @pattern=[a-\nNAME=hello");
+    assert!(err.contains("invalid `@pattern` regex"), "got: {err}");
 }
 
 #[test]

@@ -17,13 +17,16 @@ pub(in super::super) struct StepEnvAccumulator {
     chained_env: BTreeMap<String, String>,
     current_env_files: Option<Vec<String>>,
     dotenv_cache: BTreeMap<PathBuf, BTreeMap<String, String>>,
+    env_schema_cache: BTreeMap<PathBuf, Option<BTreeMap<String, String>>>,
+    runtime_env_schema_override: Option<PathBuf>,
 }
 
 impl StepEnvAccumulator {
     pub(in super::super) fn new(
         task_env_file: Option<&ManifestEnvFileDirective>,
+        runtime_env_schema_override: Option<&Path>,
     ) -> Result<Self, RunnerError> {
-        Self::new_with_label(task_env_file, "task env_file")
+        Self::new_with_label(task_env_file, "task env_file", runtime_env_schema_override)
     }
 
     pub(in crate::runner) fn resolve_standalone_env(
@@ -33,8 +36,10 @@ impl StepEnvAccumulator {
         env_profiles: &BTreeMap<String, ManifestEnvEntry>,
         repo_root: &Path,
         catalogs: &[LoadedCatalog],
+        runtime_env_schema_override: Option<&Path>,
     ) -> Result<BTreeMap<String, String>, RunnerError> {
-        let mut accumulator = Self::new_with_label(env_file, "test suite env_file")?;
+        let mut accumulator =
+            Self::new_with_label(env_file, "test suite env_file", runtime_env_schema_override)?;
         accumulator.apply_env(owner_label, env, env_profiles, repo_root, catalogs)?;
         Ok(accumulator.chained_env)
     }
@@ -42,11 +47,14 @@ impl StepEnvAccumulator {
     fn new_with_label(
         task_env_file: Option<&ManifestEnvFileDirective>,
         field_label: &str,
+        runtime_env_schema_override: Option<&Path>,
     ) -> Result<Self, RunnerError> {
         Ok(Self {
             chained_env: BTreeMap::new(),
             current_env_files: normalize_env_file_directive(task_env_file, field_label)?,
             dotenv_cache: BTreeMap::new(),
+            env_schema_cache: BTreeMap::new(),
+            runtime_env_schema_override: runtime_env_schema_override.map(Path::to_path_buf),
         })
     }
 
@@ -137,6 +145,17 @@ impl StepEnvAccumulator {
                 }
 
                 if let Some((resolved_key, value)) = resolve_process_env_entry(profile_name) {
+                    self.chained_env.insert(resolved_key, value);
+                    return Ok(());
+                }
+
+                if let Some((resolved_key, value)) = super::sources::resolve_env_schema_entry(
+                    profile_name,
+                    repo_root,
+                    catalogs,
+                    self.runtime_env_schema_override.as_deref(),
+                    &mut self.env_schema_cache,
+                )? {
                     self.chained_env.insert(resolved_key, value);
                     return Ok(());
                 }

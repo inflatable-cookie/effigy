@@ -1,6 +1,9 @@
+//! Error types for env-schema parsing, resolution, and validation.
+
 use std::path::PathBuf;
 use std::time::Duration;
 
+/// Errors that can occur during env-schema loading, resolution, or validation.
 #[derive(Debug)]
 pub enum EnvSchemaError {
     Io {
@@ -47,6 +50,21 @@ pub struct ValidationError {
     pub expected: String,
     pub actual: String,
     pub line: usize,
+}
+
+impl ValidationError {
+    pub fn new(key: String, expected: String, actual: &str, line: usize, sensitive: bool) -> Self {
+        Self {
+            key,
+            expected,
+            actual: if sensitive {
+                "[REDACTED]".to_owned()
+            } else {
+                actual.to_owned()
+            },
+            line,
+        }
+    }
 }
 
 impl std::fmt::Display for EnvSchemaError {

@@ -1,10 +1,12 @@
 mod builtin;
 mod cache;
 mod catalog;
+mod changelog_command;
 mod command_context;
 mod deferral;
 mod doctor;
 mod entrypoints;
+mod env_schema_support;
 mod error;
 mod execute;
 mod locking;

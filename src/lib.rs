@@ -1,3 +1,4 @@
+pub mod changelog;
 mod cli;
 mod data_loading;
 pub mod env_schema;
@@ -30,6 +31,7 @@ use ui::{Renderer, UiResult};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
+    Changelog(ChangelogArgs),
     Doctor(DoctorArgs),
     Tasks(TasksArgs),
     Task(TaskInvocation),
@@ -39,12 +41,28 @@ pub enum Command {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelpTopic {
     General,
+    Changelog,
     Doctor,
     Tasks,
     Test,
     Watch,
     Init,
     Migrate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangelogArgs {
+    pub subcommand: ChangelogSubcommand,
+    pub file: Option<PathBuf>,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChangelogSubcommand {
+    Validate,
+    Format { write: bool },
+    Analyze,
+    Extract { version: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -266,3 +266,44 @@ env_file = ".env.test"
         "postgres://process-database-url",
     );
 }
+
+#[test]
+fn run_manifest_task_builtin_test_resolves_configured_suite_env_from_env_schema() {
+    let _guard = lock_test();
+    let root = temp_workspace("builtin-test-suite-env-schema-configured-suite");
+    write_root_manifest(
+        &root,
+        r#"[test.suites.managed]
+run = "suite-probe"
+env = "TEST_DATABASE_URL"
+"#,
+    );
+    fs::write(
+        root.join(".env.schema"),
+        "TEST_DATABASE_URL={project}/db/from-env-schema.sqlite\n",
+    )
+    .expect("write env schema");
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    write_executable(&bin_dir.join("suite-probe"), SUITE_ENV_ONLY_PROBE_SCRIPT);
+    let prior_path = std::env::var("PATH").ok().unwrap_or_default();
+    let _env = EnvGuard::set_many(&[
+        ("PATH", Some(format!("{}:{prior_path}", bin_dir.display()))),
+        (
+            "EFFIGY_TEST_CARGO_ENV_FILE",
+            Some(root.join("suite-env.log").display().to_string()),
+        ),
+        (
+            "DATABASE_URL",
+            Some("postgres://process-database-url".to_owned()),
+        ),
+    ]);
+
+    let out = run_builtin_ok(root.to_path_buf(), "test", &[]);
+    assert!(out.contains("Test Results"));
+    assert_suite_env_only_matches(
+        &root.join("suite-env.log"),
+        "/db/from-env-schema.sqlite",
+        "postgres://process-database-url",
+    );
+}

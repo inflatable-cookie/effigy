@@ -19,6 +19,21 @@ fn secret_expose_returns_value() {
 }
 
 #[test]
+fn secret_zeroize_for_test_clears_visible_bytes() {
+    let mut secret = SecretString::new("hunter2".to_owned());
+    let original_len = secret.expose().len();
+    assert_eq!(secret.bytes_for_test(), b"hunter2");
+
+    secret.zeroize_for_test();
+
+    assert!(secret.expose().is_empty());
+    assert_eq!(
+        secret.raw_bytes_for_test(original_len),
+        &[0, 0, 0, 0, 0, 0, 0]
+    );
+}
+
+#[test]
 fn resolved_value_plain_display() {
     let value = ResolvedValue::Plain("hello".to_owned());
     assert_eq!(format!("{value}"), "hello");

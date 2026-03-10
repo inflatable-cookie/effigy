@@ -68,6 +68,7 @@ fn resolve_selected_run_or_task(
             context.args_rendered,
             context.catalogs,
             context.task_scope_cwd,
+            context.runtime_env_schema_override,
             context.depth,
         ),
         RunOrTaskRef::Noop => Ok(":".to_owned()),

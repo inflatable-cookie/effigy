@@ -16,6 +16,13 @@ fn make_context() -> ResolutionContext {
     }
 }
 
+fn make_context_with_timeout(timeout: Duration) -> ResolutionContext {
+    ResolutionContext {
+        exec_timeout: timeout,
+        ..make_context()
+    }
+}
+
 fn make_context_with_env(vars: &[(&str, &str)]) -> ResolutionContext {
     let mut ctx = make_context();
     for (k, v) in vars {
@@ -207,6 +214,19 @@ fn resolve_exec_failure() {
 }
 
 #[test]
+fn resolve_exec_timeout() {
+    let s = schema(vec![entry(
+        "SLOW",
+        Some(EnvValueExpr::Exec("sleep 1".to_owned())),
+    )]);
+    let err = resolve_schema(&s, &make_context_with_timeout(Duration::from_millis(50)))
+        .expect_err("exec should time out");
+    let msg = err.to_string();
+    assert!(msg.contains("timed out"), "got: {msg}");
+    assert!(msg.contains("sleep 1"), "got: {msg}");
+}
+
+#[test]
 fn resolve_circular_dependency_detected() {
     let s = schema(vec![
         entry("A", Some(EnvValueExpr::EnvRef("B".to_owned()))),
@@ -262,6 +282,22 @@ fn resolve_plain_and_secret_separation() {
     assert_eq!(secrets.len(), 1);
     assert_eq!(secrets[0].0, "SECRET");
     assert_eq!(secrets[0].1.expose(), "hidden");
+}
+
+#[test]
+fn resolve_debug_output_redacts_secret_values() {
+    let s = schema(vec![
+        entry("HOST", Some(EnvValueExpr::Literal("localhost".to_owned()))),
+        entry_sensitive(
+            "SECRET",
+            Some(EnvValueExpr::Literal("hidden-token".to_owned())),
+        ),
+    ]);
+    let resolved = resolve_schema(&s, &make_context()).unwrap();
+
+    let debug = format!("{resolved:?}");
+    assert!(debug.contains("SecretString(****)"), "got: {debug}");
+    assert!(!debug.contains("hidden-token"), "secret leaked: {debug}");
 }
 
 #[test]

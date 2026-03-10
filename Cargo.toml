@@ -21,4 +21,6 @@ indexmap = { version = "2", features = ["serde"] }
 globset = "0.4"
 walkdir = "2"
 ignore = "0.4"
+semver = "1"
 zeroize = "1"
+regex = "1"

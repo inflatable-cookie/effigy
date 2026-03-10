@@ -20,7 +20,8 @@ pub(super) fn project_run_sequence(
     let mut commands = Vec::<String>::with_capacity(steps.len());
     let mut policies = Vec::<scheduler::RunStepPolicy>::with_capacity(steps.len());
     let mut has_non_default_policy = false;
-    let mut env_state = StepEnvAccumulator::new(context.task_env_file)?;
+    let mut env_state =
+        StepEnvAccumulator::new(context.task_env_file, context.runtime_env_schema_override)?;
 
     for step in steps {
         env_state.apply_from_step(

@@ -9,6 +9,7 @@ mod topics;
 pub fn render_help<R: Renderer>(renderer: &mut R, topic: HelpTopic) -> UiResult<()> {
     match topic {
         HelpTopic::General => topics::render_general_help(renderer),
+        HelpTopic::Changelog => topics::render_changelog_help(renderer),
         HelpTopic::Doctor => topics::render_doctor_help(renderer),
         HelpTopic::Tasks => topics::render_tasks_help(renderer),
         HelpTopic::Test => topics::render_test_help(renderer),

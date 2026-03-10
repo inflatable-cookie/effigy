@@ -40,6 +40,7 @@ pub(super) fn resolve_standalone_env(
     env_profiles: &BTreeMap<String, ManifestEnvEntry>,
     repo_root: &std::path::Path,
     catalogs: &[LoadedCatalog],
+    runtime_env_schema_override: Option<&std::path::Path>,
 ) -> Result<BTreeMap<String, String>, RunnerError> {
     StepEnvAccumulator::resolve_standalone_env(
         owner_label,
@@ -48,5 +49,6 @@ pub(super) fn resolve_standalone_env(
         env_profiles,
         repo_root,
         catalogs,
+        runtime_env_schema_override,
     )
 }

@@ -1,3 +1,4 @@
+mod changelog;
 mod doctor;
 mod general;
 mod init;
@@ -7,6 +8,7 @@ mod tasks;
 mod test;
 mod watch;
 
+pub(crate) use changelog::render_changelog_help;
 pub(crate) use doctor::render_doctor_help;
 pub(crate) use general::render_general_help;
 pub(crate) use init::render_init_help;

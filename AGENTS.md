@@ -53,6 +53,7 @@ Use `./scripts/prepare-release.sh` to check the recommended version bump.
 - JSON contracts: [`docs/guides/017-json-output-contracts.md`](./docs/guides/017-json-output-contracts.md)
 - CI & release: [`docs/guides/049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md)
 - Agent adoption: [`docs/guides/047-agent-and-cross-repo-adoption.md`](./docs/guides/047-agent-and-cross-repo-adoption.md)
+- Env schema: [`docs/guides/050-env-schema-integration.md`](./docs/guides/050-env-schema-integration.md)
 
 ## Terminology
 

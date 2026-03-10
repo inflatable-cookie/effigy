@@ -45,5 +45,6 @@ pub(in crate::runner) struct DeferredCommand {
 pub(in crate::runner) struct TaskRuntimeArgs {
     pub(in crate::runner) repo_override: Option<PathBuf>,
     pub(in crate::runner) verbose_root: bool,
+    pub(in crate::runner) env_schema_override: Option<PathBuf>,
     pub(in crate::runner) passthrough: Vec<String>,
 }

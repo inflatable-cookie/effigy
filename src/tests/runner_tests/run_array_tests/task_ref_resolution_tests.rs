@@ -73,6 +73,26 @@ run = [
     );
 }
 
+fn setup_task_ref_referenced_task_env_schema(root: &Path, marker: &Path) {
+    write_manifest(
+        &root.join("effigy.toml"),
+        &format!(
+            r#"[tasks.capture]
+run = "sh -lc 'printf %s \"$API_URL\" > \"{}\"'"
+
+[tasks.validate]
+run = [{{ task = "capture" }}]
+"#,
+            marker.display()
+        ),
+    );
+    fs::write(
+        root.join(".env.schema"),
+        "API_URL=https://from-env-schema.test\n",
+    )
+    .expect("write env schema");
+}
+
 fn expected_env_directive_path(root: &Path) -> String {
     let canonical_root = fs::canonicalize(root).expect("canonicalize root");
     format!("{}/.cargo/from-directive", canonical_root.display())
@@ -165,6 +185,13 @@ fn run_manifest_task_run_array_task_reference_env_contract_table() {
             marker_rel: "task-ref-env-directive.log",
             expected: expected_env_directive_path,
             setup: setup_env_directive_applies_to_task_ref,
+        },
+        RunArrayTaskOutputDerivedCase {
+            workspace: "run-array-task-ref-env-schema",
+            task: "validate",
+            marker_rel: "task-ref-env-schema.log",
+            expected: |_| "https://from-env-schema.test".to_owned(),
+            setup: setup_task_ref_referenced_task_env_schema,
         },
     ];
 

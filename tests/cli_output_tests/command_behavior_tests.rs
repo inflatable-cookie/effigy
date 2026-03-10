@@ -4,7 +4,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 use super::support::{
-    parse_stdout_json, run_json_cli_command_with_manifest, run_json_task_success, temp_workspace,
+    parse_stdout_json, run_json_cli_command, run_json_cli_command_with_manifest,
+    run_json_task_success, temp_workspace,
 };
 
 #[test]
@@ -63,6 +64,43 @@ fn cli_catalog_task_json_mode_failure_emits_json_and_non_zero_exit() {
     assert_eq!(parsed["error"]["details"]["task"], "fail");
     assert_eq!(parsed["error"]["details"]["exit_code"], 7);
     assert_eq!(parsed["error"]["details"]["stdout"], "fail-out");
+}
+
+#[test]
+fn cli_catalog_task_json_mode_env_schema_sensitive_validation_redacts_error_message() {
+    let root = temp_workspace("cli-json-env-schema-sensitive-validation-fixture");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"[tasks.capture]
+run = "printf should-not-run"
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join(".env.schema"),
+        "# @sensitive @pattern=^tok_[a-z0-9]+$\nAPI_TOKEN=super-secret-token\n",
+    )
+    .expect("write env schema");
+    let output = run_json_cli_command(&root, &["capture"]);
+    let parsed = parse_stdout_json(&output);
+
+    assert!(!output.status.success());
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["command"]["kind"], "task");
+    assert_eq!(parsed["command"]["name"], "capture");
+    assert_eq!(parsed["error"]["kind"], "RunnerError");
+    let message = parsed["error"]["message"].as_str().expect("error message");
+    assert!(
+        message.contains("env schema validation failed"),
+        "got: {message}"
+    );
+    assert!(message.contains("API_TOKEN"), "got: {message}");
+    assert!(message.contains("[REDACTED]"), "got: {message}");
+    assert!(
+        !message.contains("super-secret-token"),
+        "secret leaked in json envelope message: {message}"
+    );
 }
 
 #[test]
