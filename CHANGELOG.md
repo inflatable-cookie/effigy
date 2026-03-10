@@ -14,6 +14,18 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+## [0.2.2] - 2026-03-10
+
+### Breaking
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fix release pipeline failure caused by using `secrets` context in job-level
+  `if` condition — `secrets` is only available at step level in GitHub Actions
 ## [0.2.1] - 2026-03-10
 
 ### Breaking

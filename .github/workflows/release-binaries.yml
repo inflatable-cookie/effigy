@@ -99,6 +99,8 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    outputs:
+      has-tap-token: ${{ steps.check-token.outputs.has-token }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -143,11 +145,20 @@ jobs:
               artifacts/effigy-*
           fi
 
+      - name: Check for Homebrew tap token
+        id: check-token
+        env:
+          TOKEN: ${{ secrets.EFFIGY_TAP_GH_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "has-token=true" >> "$GITHUB_OUTPUT"
+          fi
+
   homebrew:
     name: Update Homebrew tap
     needs: release
     runs-on: ubuntu-latest
-    if: ${{ secrets.EFFIGY_TAP_GH_TOKEN != '' }}
+    if: needs.release.outputs.has-tap-token == 'true'
     steps:
       - name: Compute binary SHA256 hashes
         id: hashes
