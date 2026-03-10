@@ -10,13 +10,22 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.2.3] - 2026-03-10
+
+### Breaking
+
+### Added
+
 - Homebrew formula now supports Linux (Linuxbrew) via `on_linux` block for
   x86_64 binaries
 
 ### Changed
 
 ### Fixed
-
 ## [0.2.2] - 2026-03-10
 
 ### Breaking
