@@ -41,7 +41,7 @@ Release flow:
 Build matrix targets:
 - `aarch64-apple-darwin` (Apple Silicon)
 - `x86_64-apple-darwin` (Intel Mac)
-- `x86_64-unknown-linux-gnu` (Linux — not in formula, available as direct download)
+- `x86_64-unknown-linux-gnu` (Linux x86_64)
 
 ## 5) Formula Design
 
@@ -58,24 +58,34 @@ on_macos do
   end
 end
 
+on_linux do
+  if Hardware::CPU.intel?
+    url "<release-url>/effigy-x86_64-unknown-linux-gnu"
+    sha256 "<linux-x86_64-hash>"
+  end
+end
+
 def install
   binary = stable.url.split("/").last
   bin.install binary => "effigy"
 end
 ```
 
-Each release updates both architecture URLs and their corresponding SHA256 hashes.
+Each release updates all architecture URLs and their corresponding SHA256 hashes
+for macOS (arm64, x86_64) and Linux (x86_64).
 
 ## 6) Automation
 
 Implemented as the `homebrew` job in `.github/workflows/release-binaries.yml`:
 - trigger: runs after the `release` job succeeds (tag push `v*`)
-- guard: `if: ${{ secrets.EFFIGY_TAP_GH_TOKEN != '' }}` (skips gracefully if secret not configured)
+- guard: `if: needs.release.outputs.has-tap-token == 'true'` (the `release` job
+  checks `EFFIGY_TAP_GH_TOKEN` at step level and exports an output; `secrets`
+  context is not available in job-level `if` conditions)
 - steps:
-  1. Download both macOS binaries from the just-created GitHub Release
+  1. Download macOS and Linux binaries from the just-created GitHub Release
   2. Compute SHA256 hashes via `curl | sha256sum`
   3. Check out `inflatable-cookie/homebrew-tap` using PAT
-  4. Write updated `Formula/effigy.rb` via heredoc
+  4. Write updated `Formula/effigy.rb` via heredoc (macOS arm64/x86_64 + Linux x86_64)
   5. Commit and push directly to tap main branch
 
 Required repository wiring:
@@ -93,8 +103,10 @@ If Homebrew update is broken:
 ## 8) Validation Matrix
 
 Per release:
-- fresh install:
+- fresh install (macOS):
   - `brew install inflatable-cookie/tap/effigy`
+- fresh install (Linux):
+  - `brew install inflatable-cookie/tap/effigy` (via Linuxbrew)
 - upgrade path:
   - install old version, then `brew upgrade effigy`
 - command smoke:

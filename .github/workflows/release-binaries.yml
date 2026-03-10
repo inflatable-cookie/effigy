@@ -168,12 +168,15 @@ jobs:
           BASE="https://github.com/inflatable-cookie/effigy/releases/download/${TAG}"
           ARM_SHA="$(curl -fsSL "${BASE}/effigy-aarch64-apple-darwin" | sha256sum | awk '{print $1}')"
           X86_SHA="$(curl -fsSL "${BASE}/effigy-x86_64-apple-darwin" | sha256sum | awk '{print $1}')"
+          LINUX_X86_SHA="$(curl -fsSL "${BASE}/effigy-x86_64-unknown-linux-gnu" | sha256sum | awk '{print $1}')"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "arm_url=${BASE}/effigy-aarch64-apple-darwin" >> "$GITHUB_OUTPUT"
           echo "arm_sha=$ARM_SHA" >> "$GITHUB_OUTPUT"
           echo "x86_url=${BASE}/effigy-x86_64-apple-darwin" >> "$GITHUB_OUTPUT"
           echo "x86_sha=$X86_SHA" >> "$GITHUB_OUTPUT"
+          echo "linux_x86_url=${BASE}/effigy-x86_64-unknown-linux-gnu" >> "$GITHUB_OUTPUT"
+          echo "linux_x86_sha=$LINUX_X86_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Checkout tap repository
         uses: actions/checkout@v4
@@ -189,6 +192,8 @@ jobs:
           ARM_SHA: ${{ steps.hashes.outputs.arm_sha }}
           X86_URL: ${{ steps.hashes.outputs.x86_url }}
           X86_SHA: ${{ steps.hashes.outputs.x86_sha }}
+          LINUX_X86_URL: ${{ steps.hashes.outputs.linux_x86_url }}
+          LINUX_X86_SHA: ${{ steps.hashes.outputs.linux_x86_sha }}
         run: |
           cat > Formula/effigy.rb <<FORMULA
           class Effigy < Formula
@@ -204,6 +209,13 @@ jobs:
               elsif Hardware::CPU.intel?
                 url "${X86_URL}"
                 sha256 "${X86_SHA}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.intel?
+                url "${LINUX_X86_URL}"
+                sha256 "${LINUX_X86_SHA}"
               end
             end
 
