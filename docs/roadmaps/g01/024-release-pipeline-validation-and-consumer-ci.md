@@ -106,15 +106,14 @@ Published as [`inflatable-cookie/setup-effigy@v1`](https://github.com/inflatable
 - [x] Publish as `v1`
 - [x] Update doc 049 sections 5a and 9
 
-## 6) ARM Linux Target (Optional)
+## 6) ARM Linux Target
 
-Add `aarch64-unknown-linux-gnu` to the build matrix for ARM Linux coverage
+Added `aarch64-unknown-linux-gnu` to the build matrix for ARM Linux coverage
 (AWS Graviton, Docker on Apple Silicon).
 
-Tasks:
-- [ ] Add cross-compilation target to build matrix
-- [ ] Validate with `cross` or native ARM runner
-- [ ] Add to Homebrew formula `on_linux` block if applicable
+- [x] Add cross-compilation target to build matrix (via `taiki-e/setup-cross-toolchain-action`)
+- [x] Smoke test runs via QEMU binfmt_misc on x86_64 runner
+- [x] Add to Homebrew formula `on_linux` block with ARM64 entry
 
 ## Completion Criteria
 

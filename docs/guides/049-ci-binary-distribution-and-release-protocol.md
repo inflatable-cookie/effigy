@@ -43,10 +43,11 @@ Prebuilt binaries must cover these targets at minimum:
 | `x86_64-unknown-linux-gnu`      | Linux | x86_64 | Required |
 | `aarch64-apple-darwin`          | macOS | arm64  | Required |
 | `x86_64-apple-darwin`           | macOS | x86_64 | Required |
-| `aarch64-unknown-linux-gnu`     | Linux | arm64  | Optional |
+| `aarch64-unknown-linux-gnu`     | Linux | arm64  | Required |
 
-All three required targets are built and smoke-tested in CI (`release-binaries.yml`).
-The Linux binary builds and runs `check-release-smoke.sh` on `ubuntu-latest`.
+All four targets are built and smoke-tested in CI (`release-binaries.yml`).
+The ARM Linux target uses cross-compilation via `taiki-e/setup-cross-toolchain-action`
+with QEMU for the smoke test.
 
 Binary naming convention:
 
@@ -75,7 +76,7 @@ tag push (v*)
   │     ├─ x86_64-unknown-linux-gnu
   │     ├─ aarch64-apple-darwin
   │     ├─ x86_64-apple-darwin
-  │     └─ aarch64-unknown-linux-gnu (optional)
+  │     └─ aarch64-unknown-linux-gnu (cross-compiled)
   │
   ├─ 3. Smoke test each binary on native runner
   │

@@ -42,6 +42,7 @@ Build matrix targets:
 - `aarch64-apple-darwin` (Apple Silicon)
 - `x86_64-apple-darwin` (Intel Mac)
 - `x86_64-unknown-linux-gnu` (Linux x86_64)
+- `aarch64-unknown-linux-gnu` (Linux ARM64, cross-compiled)
 
 ## 5) Formula Design
 
@@ -62,6 +63,9 @@ on_linux do
   if Hardware::CPU.intel?
     url "<release-url>/effigy-x86_64-unknown-linux-gnu"
     sha256 "<linux-x86_64-hash>"
+  elsif Hardware::CPU.arm?
+    url "<release-url>/effigy-aarch64-unknown-linux-gnu"
+    sha256 "<linux-arm64-hash>"
   end
 end
 
