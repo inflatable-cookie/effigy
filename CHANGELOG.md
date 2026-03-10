@@ -10,6 +10,16 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.2.4] - 2026-03-10
+
+### Breaking
+
+### Added
+
 - Publish `inflatable-cookie/setup-effigy@v1` GitHub Action for CI binary
   installation with caching
 - Add ARM Linux (`aarch64-unknown-linux-gnu`) binary to release pipeline and
@@ -18,7 +28,6 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Changed
 
 ### Fixed
-
 ## [0.2.3] - 2026-03-10
 
 ### Breaking
