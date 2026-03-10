@@ -14,6 +14,36 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+## [0.2.1] - 2026-03-10
+
+### Breaking
+
+### Added
+
+- Homebrew tap auto-update in release pipeline — formula in
+  `inflatable-cookie/homebrew-tap` is updated automatically on each tagged
+  release
+- JSON contracts CI workflow (`.github/workflows/json-contracts.yml`) now
+  active on PRs, pushes to main, and daily schedule
+- CHANGELOG-based release notes — GitHub Releases now use entries from
+  CHANGELOG.md instead of auto-generated notes
+- Install section in README with three channels: Homebrew, prebuilt binary,
+  and cargo install from source
+
+### Changed
+
+- Replace ripgrep (`rg`) with POSIX `grep` in all QA and docs-check scripts
+  so CI runners work without ripgrep installed
+- Remove `.github-bak/` staging directory — all workflows are now active or
+  superseded
+- Update doc 042 (Homebrew Tap) to reflect prebuilt binary formula approach
+- Update doc 049 (Release Protocol) to reflect current active workflow state
+
+### Fixed
+
+- Fix JSON contracts CI failure caused by `rg` not being available on
+  ubuntu-latest runners
+- Fix stale `.github-bak/` workflow references across documentation
 ## [0.2.0] - 2026-03-09
 
 ### Breaking
