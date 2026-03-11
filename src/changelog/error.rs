@@ -7,11 +7,16 @@ use std::path::PathBuf;
 pub enum ChangelogError {
     /// I/O error reading a changelog file.
     Io {
+        /// Path that failed to load.
         path: PathBuf,
+        /// Underlying filesystem error.
         error: std::io::Error,
     },
     /// One or more parse errors in the changelog content.
-    Parse { errors: Vec<ParseDiagnostic> },
+    Parse {
+        /// Collected parse diagnostics.
+        errors: Vec<ParseDiagnostic>,
+    },
 }
 
 /// A single parse error with location information.

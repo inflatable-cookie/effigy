@@ -186,16 +186,16 @@ Expected behavior:
 - preserves category headings and entries as release-note source material
 - exits non-zero if the version is missing or empty
 
-This is the exact release-note extraction surface intended for later workflow
-integration. Until workflow edits are explicitly approved, use it manually when
-drafting the human-reviewed release note. Do not describe workflow-level
-automation cutover as complete until the corresponding workflow change is
-approved and merged.
+This is the same release-note extraction surface now used by Effigy's release
+workflow and by human-authored release-note drafting. Treat the extracted body
+as the machine-generated baseline, then add summary, validation, rollback
+notes, and compatibility context before publishing the human-reviewed note.
 
 ## 8) Historical Workflow Reference Rule
 
 - If a release note/log documents a workflow path that was correct at that time, keep that historical path as-is.
-- For current operational guidance (outside historical logs), use active workflow paths (`.github-bak/workflows/*.yml` in this repository layout).
+- For current operational guidance (outside historical logs), use the active
+  workflow paths in `.github/workflows/*.yml`.
 - Validation check `docs/scripts/check-doc-workflow-paths.sh` intentionally excludes `docs/logs/` to preserve historical evidence fidelity.
 
 ## Expected Outcome
@@ -209,6 +209,7 @@ approved and merged.
 - [`014-release-checklist-template.md`](./014-release-checklist-template.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+- [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
 - [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
 - [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
 
