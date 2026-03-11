@@ -15,7 +15,8 @@ This is the navigation hub for practical runbooks.
 9. [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md) - managed builtin test suites with env, setup, teardown, and nextest passthrough.
 10. [`050-env-schema-integration.md`](./050-env-schema-integration.md) - declarative `.env.schema` files with annotations, type validation, and secret injection.
 11. [`051-release-orchestration.md`](./051-release-orchestration.md) - built-in-first release config reference, workflow walkthrough, gate contract, and backup-wrapper migration guidance.
-12. [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md) - agent-first repo adoption contract and rollout waves.
+12. [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md) - canonical changelog CLI, release-note extraction, and Northstar profile guide.
+13. [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md) - agent-first repo adoption contract and rollout waves.
 
 ## Standards Used In These Guides
 
@@ -95,6 +96,7 @@ Read:
 3. [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 4. [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 5. [`051-release-orchestration.md`](./051-release-orchestration.md)
+6. [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
 
 ### AI Agent / Repo Integrator
 
@@ -116,6 +118,7 @@ Read:
 5. [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
 6. [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 7. [`051-release-orchestration.md`](./051-release-orchestration.md)
+8. [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
 
 ## Docs Operations
 

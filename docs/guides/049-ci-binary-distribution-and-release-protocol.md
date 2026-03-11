@@ -13,7 +13,7 @@ protocols defined here.
 
 ## 1) Current State
 
-- Version: `0.2.0`
+- Version: `0.2.5`
 - Active workflows in `.github/workflows/`:
   - `ci.yml` — PR and push validation (format, clippy, tests)
   - `release-binaries.yml` — tag-triggered: gates → build → GitHub Release → Homebrew tap
@@ -35,10 +35,9 @@ As of 2026-03-11, the built-in `effigy release ...` flow has now passed:
 
 Decision boundary:
 
-- the built-in release path is now suitable for a first human-supervised live
-  Effigy release
-- it is still not approved for unconditional workflow cutover or wrapper
-  retirement
+- the built-in release path is now proven in production on the real Effigy repo
+- wrapper retirement and any further simplification remain deliberate
+  follow-up decisions, not automatic consequences of the first live release
 
 Canonical rehearsal summary:
 - [`../logs/2026-03/11-180500-release-cutover-readiness-rehearsal-brief.md`](../logs/2026-03/11-180500-release-cutover-readiness-rehearsal-brief.md)
@@ -51,8 +50,9 @@ Workflow-cutover update:
 - that cutover was validated on the hosted rehearsal repo via a real tag push
   and published GitHub Release:
   [`../logs/2026-03/11-183500-release-workflow-cutover-hosted-validation.md`](../logs/2026-03/11-183500-release-workflow-cutover-hosted-validation.md)
-- wrapper retirement remains deferred until after a live production Effigy
-  release through the built-in path
+- the workflow cutover is live in production
+- wrapper retirement remains a deliberate follow-up choice rather than an
+  immediate post-release requirement
 
 ## 2) Target Channel Stack for CI
 
@@ -219,13 +219,13 @@ Current command surface:
   entrypoints, and their no-tag/tagged paths are now covered by parity tests
   against the built-in release commands.
 - `scripts/prepare-release.sh` is also a compatibility fallback. Keep it
-  available only as a backup path until Effigy completes its first successful
-  live release through the built-in prepare/execute workflow.
-- The built-in release flow has now completed local and hosted rehearsals,
-  including real GitHub tag-triggered workflow execution. That lowers adoption
-  risk substantially, but does not change the human rule: the first production
-  Effigy release through built-ins still requires explicit operator approval and
-  close monitoring.
+  available as a backup path until maintainers explicitly decide the wrapper is
+  no longer needed.
+- The built-in release flow has now completed local rehearsal, hosted
+  rehearsal, and a real production Effigy release through the built-in
+  prepare/execute path, including real GitHub tag-triggered workflow execution.
+  The operator rule still stands: releases remain explicit human decisions and
+  should be monitored closely while the workflow matures.
 - `effigy release simulate` is available as a full dry-run that runs release
   gates, previews version/changelog mutations, shows the commit/tag that would
   be created without writing files or `.release-prepared.json`, and accepts
@@ -441,19 +441,21 @@ Workflow changes still require explicit human approval.
 The release command surface is shipped in the codebase. The remaining open work
 in this protocol is intentionally human-gated adoption work:
 
-- updating `release-binaries.yml` to consume `effigy changelog extract`
-- retiring `scripts/prepare-release.sh` and `scripts/check-release-gates.sh`
-  after one successful live built-in release
-- completing the first human-approved Effigy release through
-  `effigy release prepare` plus `effigy release execute`
+- deciding when to retire `scripts/prepare-release.sh` and
+  `scripts/check-release-gates.sh`
+- deciding whether any remaining wrapper-oriented docs should be reduced now
+  that the built-in workflow is live
+- continuing release monitoring and adoption follow-through after the first
+  production built-in release
 
-Review-ready workflow audit:
+Historical workflow audit:
 - [`../logs/2026-03/11-170500-release-binaries-changelog-extract-cutover-review.md`](../logs/2026-03/11-170500-release-binaries-changelog-extract-cutover-review.md)
 
-Until those steps are complete:
+Current operating stance:
 - prefer built-in release commands for operator-driven runs
 - keep legacy shell wrappers available as backup channels
-- do not present wrapper retirement or workflow cutover as completed work
+- do not present wrapper retirement as completed work until maintainers
+  explicitly remove those paths
 
 ## 9) Setup Action
 
@@ -492,5 +494,6 @@ If a released binary is broken:
 
 ## Next Step
 
-When ready to execute the first release, follow the activation sequence in
-Section 8, then execute the first-publish runbook in guide 044.
+Use the built-in release flow in guide `051` for future releases, then execute
+the distribution follow-through in guide `044` when a release window requires
+artifact-level acceptance checks.

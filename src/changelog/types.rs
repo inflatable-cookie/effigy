@@ -91,6 +91,8 @@ impl CategoryKind {
     ];
 
     /// Parse a category name from its header text.
+    ///
+    /// Returns `None` for headings outside the fixed Northstar category set.
     pub fn parse_name(s: &str) -> Option<CategoryKind> {
         match s {
             "Breaking" => Some(CategoryKind::Breaking),
@@ -117,7 +119,7 @@ impl CategoryKind {
         }
     }
 
-    /// The section header text for this category.
+    /// The canonical section header text for this category.
     pub fn header_text(self) -> &'static str {
         match self {
             CategoryKind::Breaking => "Breaking",
@@ -150,17 +152,21 @@ impl PartialOrd for CategoryKind {
 }
 
 impl Changelog {
-    /// Returns the Unreleased release, if present.
+    /// Returns the `Unreleased` section, if present.
     pub fn unreleased(&self) -> Option<&Release> {
         self.releases.iter().find(|r| r.version.is_none())
     }
 
-    /// Returns the most recent versioned release (highest version), if any.
+    /// Returns the first versioned release in document order, if any.
+    ///
+    /// In canonical Northstar ordering this is the most recent released
+    /// version, because versioned releases appear newest-to-oldest after
+    /// `Unreleased`.
     pub fn latest_version(&self) -> Option<&Release> {
         self.releases.iter().find(|r| r.version.is_some())
     }
 
-    /// Find a release by version string.
+    /// Find a release by semver version string such as `"0.2.5"`.
     pub fn find_version(&self, version: &str) -> Option<&Release> {
         let target = semver::Version::parse(version).ok()?;
         self.releases
@@ -170,12 +176,12 @@ impl Changelog {
 }
 
 impl Release {
-    /// Whether this is the Unreleased section.
+    /// Whether this release is the special `Unreleased` section.
     pub fn is_unreleased(&self) -> bool {
         self.version.is_none()
     }
 
-    /// Total number of entries across all categories.
+    /// Total number of entries across all categories in this release.
     pub fn entry_count(&self) -> usize {
         self.categories.iter().map(|c| c.entries.len()).sum()
     }
