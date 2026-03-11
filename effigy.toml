@@ -16,12 +16,18 @@ alias = "effigy"
 "qa:json:ci" = "./scripts/check-quality-gates.sh --json-only --ci"
 health = [{ task = "qa:docs" }, { task = "qa:json" }]
 qa = [{ task = "test" }, { task = "qa:docs" }, { task = "qa:json" }]
-"qa:release" = [
-  { task = "fmt:check" },
-  { task = "test" },
-  { task = "qa:docs" },
-  { task = "qa:json:ci" },
-  { task = "build:release" },
-  { task = "smoke:release" },
-  { task = "dist:metadata" }
-]
+"qa:release" = "cargo run --bin effigy -- release gates --repo ."
+
+[release]
+version-file = "Cargo.toml"
+changelog = "CHANGELOG.md"
+sync-files = ["Cargo.lock"]
+tag-format = "v{version}"
+
+[release.gates]
+format = "cargo fmt --all -- --check"
+test = "cargo test"
+qa = "./scripts/check-quality-gates.sh --all --ci"
+build = "cargo build --release --bin effigy"
+smoke = "./scripts/check-release-smoke.sh ./target/release/effigy"
+metadata = "./scripts/check-distribution-metadata.sh"

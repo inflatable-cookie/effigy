@@ -14,7 +14,8 @@ This is the navigation hub for practical runbooks.
 8. [`028-migration-quick-paths.md`](./028-migration-quick-paths.md) - scenario-based adoption paths.
 9. [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md) - managed builtin test suites with env, setup, teardown, and nextest passthrough.
 10. [`050-env-schema-integration.md`](./050-env-schema-integration.md) - declarative `.env.schema` files with annotations, type validation, and secret injection.
-11. [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md) - agent-first repo adoption contract and rollout waves.
+11. [`051-release-orchestration.md`](./051-release-orchestration.md) - built-in-first release config reference, workflow walkthrough, gate contract, and backup-wrapper migration guidance.
+12. [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md) - agent-first repo adoption contract and rollout waves.
 
 ## Standards Used In These Guides
 
@@ -93,6 +94,7 @@ Read:
 2. [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 3. [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 4. [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+5. [`051-release-orchestration.md`](./051-release-orchestration.md)
 
 ### AI Agent / Repo Integrator
 
@@ -101,7 +103,8 @@ Read:
 2. [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 3. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 4. [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
-5. [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+5. [`051-release-orchestration.md`](./051-release-orchestration.md)
+6. [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 
 ### Maintainer
 
@@ -109,8 +112,10 @@ Read:
 1. [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
 2. [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
 3. [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
-4. [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
-5. [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+4. [`014-release-checklist-template.md`](./014-release-checklist-template.md)
+5. [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
+6. [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+7. [`051-release-orchestration.md`](./051-release-orchestration.md)
 
 ## Docs Operations
 

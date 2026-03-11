@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -32,7 +32,7 @@ jobs:
         uses: taiki-e/install-action@cargo-nextest
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: lts/*
 
@@ -98,7 +98,7 @@ jobs:
         run: ./scripts/check-release-smoke.sh ./effigy-${{ matrix.target }}
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: effigy-${{ matrix.target }}
           path: effigy-${{ matrix.target }}
@@ -112,27 +112,41 @@ jobs:
       has-tap-token: ${{ steps.check-token.outputs.has-token }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download all binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-notes-bootstrap
+
+      - name: Build effigy
+        run: cargo build --release --bin effigy
 
       - name: Extract release notes from CHANGELOG.md
         id: notes
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          # Extract the section for this version (between ## [X.Y.Z] and next ## [)
-          NOTES="$(sed -n "/^## \[$VERSION\]/,/^## \[/{/^## \[$VERSION\]/d;/^## \[/d;p;}" CHANGELOG.md)"
-          if [ -z "$NOTES" ]; then
-            echo "::warning::No CHANGELOG.md section found for $VERSION, falling back to generated notes"
-            echo "fallback=true" >> "$GITHUB_OUTPUT"
+          if ./target/release/effigy changelog extract CHANGELOG.md --version "$VERSION" > release-notes.md; then
+            if [ ! -s release-notes.md ]; then
+              echo "::warning::Extractor returned an empty release note body for $VERSION, falling back to generated notes"
+              rm -f release-notes.md
+              echo "fallback=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "fallback=false" >> "$GITHUB_OUTPUT"
+            fi
           else
-            # Write to file to preserve newlines
-            echo "$NOTES" > release-notes.md
-            echo "fallback=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No CHANGELOG.md section found for $VERSION, falling back to generated notes"
+            rm -f release-notes.md
+            echo "fallback=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create release
@@ -191,7 +205,7 @@ jobs:
           echo "linux_arm_sha=$LINUX_ARM_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Checkout tap repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: inflatable-cookie/homebrew-tap
           token: ${{ secrets.EFFIGY_TAP_GH_TOKEN }}

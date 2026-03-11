@@ -13,6 +13,7 @@ mod locking;
 mod managed;
 mod manifest;
 mod model;
+mod release_command;
 mod render;
 mod scan;
 mod tasks_command;

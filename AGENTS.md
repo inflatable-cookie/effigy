@@ -18,7 +18,7 @@ If `effigy` is on PATH, self-hosted QA tasks are available:
 ```bash
 effigy test --plan --repo .   # show test plan
 effigy qa --repo .            # full QA (test + docs + json contracts)
-effigy qa:release --repo .    # release gates
+effigy qa:release --repo .    # delegates to `effigy release gates --repo .`
 ```
 
 Otherwise bootstrap with `cargo run --bin effigy -- ...`.
@@ -44,7 +44,23 @@ Key rules:
 - Never bypass release gates — fix the underlying issue instead
 - Never re-tag a failed release — fix goes into the next PATCH
 
-Use `./scripts/prepare-release.sh` to check the recommended version bump.
+Preferred release command path:
+- `effigy release simulate --repo .`
+- `effigy release status --repo . --check-gates`
+- `effigy release prepare --repo . --plan`
+- `effigy release prepare --repo . --yes --check-gates`
+- `effigy release execute --repo . --plan`
+- `effigy release execute --repo . --yes`
+- `effigy release verify-install --repo . --tag v0.__.__`
+- `effigy changelog extract CHANGELOG.md --version X.Y.Z`
+
+Compatibility backups:
+- `./scripts/prepare-release.sh`
+- `./scripts/check-release-gates.sh`
+- `./scripts/check-release-install-from-tag.sh --tag v0.__.__`
+
+Canonical reference:
+- [`docs/guides/051-release-orchestration.md`](./docs/guides/051-release-orchestration.md)
 
 ## Key Documentation
 
@@ -52,6 +68,7 @@ Use `./scripts/prepare-release.sh` to check the recommended version bump.
 - Task routing: [`docs/guides/016-task-routing-precedence.md`](./docs/guides/016-task-routing-precedence.md)
 - JSON contracts: [`docs/guides/017-json-output-contracts.md`](./docs/guides/017-json-output-contracts.md)
 - CI & release: [`docs/guides/049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md)
+- Release orchestration: [`docs/guides/051-release-orchestration.md`](./docs/guides/051-release-orchestration.md)
 - Agent adoption: [`docs/guides/047-agent-and-cross-repo-adoption.md`](./docs/guides/047-agent-and-cross-repo-adoption.md)
 - Env schema: [`docs/guides/050-env-schema-integration.md`](./docs/guides/050-env-schema-integration.md)
 

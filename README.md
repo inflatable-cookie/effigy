@@ -80,7 +80,7 @@ effigy qa --repo .
 effigy qa:docs --repo .
 effigy qa:json --repo .
 effigy qa:json:ci --repo .
-effigy qa:release --repo .
+effigy qa:release --repo .   # delegates to `effigy release gates --repo .`
 effigy build:release --repo .
 effigy install:local --repo .
 effigy link:local --repo .
@@ -117,6 +117,18 @@ cargo qa-json-ci
 cargo qa-release
 ```
 
+Built-in release workflow (preferred for operator-driven runs):
+
+```bash
+effigy release simulate --repo .
+effigy release status --repo . --check-gates
+effigy release prepare --repo . --plan
+effigy release prepare --repo . --yes --check-gates
+effigy release execute --repo . --plan
+effigy release execute --repo . --yes
+effigy release verify-install --repo . --tag v0.__.__
+```
+
 Compatibility wrappers (use when external tooling requires script entrypoints):
 
 ```bash
@@ -127,6 +139,10 @@ Compatibility wrappers (use when external tooling requires script entrypoints):
 ./scripts/check-release-gates.sh
 ./scripts/check-release-install-from-tag.sh --tag v0.__.__
 ```
+
+For release operations, treat those wrapper scripts as backup channels only.
+The preferred operator path is the built-in `effigy release ...` surface, and
+wrapper retirement should wait until the first successful live built-in release.
 
 ## Task Catalog Basics
 

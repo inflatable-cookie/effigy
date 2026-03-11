@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Wrapper policy:
+# - Compatibility entrypoint retained for CI/release/docs tooling.
+# - Prefer cargo/Effigy command entrypoints for operator-driven runs.
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TAG=""
 REPO_URL=""
@@ -23,6 +27,10 @@ while [[ $# -gt 0 ]]; do
       REPO_URL="$2"
       shift 2
       ;;
+    -h|--help)
+      cargo run --bin effigy -- release --help
+      exit 0
+      ;;
     *)
       echo "[error] unknown option: $1 (supported: --tag, --repo-url)" >&2
       exit 1
@@ -32,23 +40,15 @@ done
 
 cd "$ROOT_DIR"
 
-run_step "format check" cargo fmt --all -- --check
-run_step "full test suite" cargo test
-run_step "quality gates (ci mode)" ./scripts/check-quality-gates.sh --all --ci
-run_step "release binary build" cargo build --release --bin effigy
-run_step "release binary smoke" ./scripts/check-release-smoke.sh ./target/release/effigy
+run_step "release gates" \
+  cargo run --bin effigy -- release gates --repo "$ROOT_DIR"
+
 if [[ -n "$TAG" ]]; then
-  metadata_args=(--tag "$TAG")
-  run_step "distribution metadata validation" ./scripts/check-distribution-metadata.sh "${metadata_args[@]}"
-else
-  run_step "distribution metadata validation" ./scripts/check-distribution-metadata.sh
-fi
-if [[ -n "$TAG" ]]; then
-  install_args=(--tag "$TAG")
+  verify_args=(cargo run --bin effigy -- release verify-install --repo "$ROOT_DIR" --tag "$TAG")
   if [[ -n "$REPO_URL" ]]; then
-    install_args+=(--repo-url "$REPO_URL")
+    verify_args+=(--repo-url "$REPO_URL")
   fi
-  run_step "release install validation from tag" ./scripts/check-release-install-from-tag.sh "${install_args[@]}"
+  run_step "release install validation from tag" "${verify_args[@]}"
 else
   echo "[info] skipping tag install validation (no --tag provided)"
 fi

@@ -7,6 +7,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy help"));
     assert!(rendered.contains("effigy config"));
     assert!(rendered.contains("effigy doctor"));
+    assert!(rendered.contains("effigy release"));
     assert!(rendered.contains("effigy scan"));
     assert!(rendered.contains("effigy test"));
     assert!(rendered.contains("effigy watch"));
@@ -33,6 +34,46 @@ fn render_doctor_help_shows_fix_and_json_options() {
     assert!(rendered.contains("effigy doctor --verbose"));
     assert!(rendered.contains("effigy doctor <task> <args>"));
     assert!(rendered.contains("effigy doctor frontend/build -- --watch"));
+}
+
+#[test]
+fn render_release_help_shows_status_and_gate_options() {
+    let rendered = render_help_text(HelpTopic::Release);
+    assert!(rendered.contains("release Help"));
+    assert!(rendered.contains("effigy release status"));
+    assert!(rendered.contains("effigy release gates"));
+    assert!(rendered.contains("effigy release resume"));
+    assert!(rendered.contains("effigy release verify-install"));
+    assert!(rendered.contains("effigy release simulate"));
+    assert!(
+        rendered.contains("effigy release simulate [--repo <PATH>] [--version <SEMVER>] [--json]")
+    );
+    assert!(rendered.contains("effigy release prepare [--repo <PATH>] [--check-gates]"));
+    assert!(rendered.contains("effigy release prepare (--plan|--dry-run)"));
+    assert!(rendered.contains("effigy release prepare --yes"));
+    assert!(rendered.contains("effigy release resume [--repo <PATH>] [--allow-stale] [--json]"));
+    assert!(rendered.contains("effigy release execute [--repo <PATH>] [--allow-stale]"));
+    assert!(rendered.contains("effigy release execute (--plan|--dry-run)"));
+    assert!(rendered.contains("effigy release execute --yes"));
+    assert!(rendered.contains("--plan"));
+    assert!(rendered.contains("--dry-run"));
+    assert!(rendered.contains("--yes"));
+    assert!(rendered.contains("--check-gates"));
+    assert!(rendered.contains("--version <SEMVER>"));
+    assert!(rendered.contains("--allow-stale"));
+    assert!(rendered.contains("--tag <TAG>"));
+    assert!(rendered.contains("--repo-url <URL>"));
+    assert!(rendered.contains("--repo <PATH>"));
+    assert!(rendered.contains("--json"));
+    assert!(rendered.contains("compact command legend"));
+    assert!(rendered.contains("stale-acknowledgement state"));
+    assert!(rendered.contains("selected version"));
+    assert!(rendered.contains("suggested remediation actions"));
+    assert!(rendered.contains("dedicated prepared-state recovery entrypoint"));
+    assert!(rendered.contains("source fingerprints"));
+    assert!(rendered.contains("branch drift, HEAD movement, and prepared-file content drift"));
+    assert!(rendered.contains("`gates`, `reprepare`, and `discard` shortcuts"));
+    assert!(!rendered.contains("simulate remain roadmap work"));
 }
 
 #[test]

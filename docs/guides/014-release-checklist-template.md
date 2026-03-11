@@ -22,14 +22,18 @@ Owner: `name/team`
 
 - [ ] Distribution preflight passes:
   - [ ] `./scripts/check-distribution-preflight.sh --tag v0.__.__`
+- [ ] Safe release simulation passes:
+  - [ ] `effigy release simulate --repo .`
+- [ ] Release readiness check passes:
+  - [ ] `effigy release status --repo . --check-gates`
 - [ ] Consolidated release gate pass:
-  - [ ] `cargo qa-release`
+  - [ ] `effigy qa:release --repo .`
 - [ ] `cargo fmt` clean.
 - [ ] `cargo test` passes.
 - [ ] Local quality gates pass:
-  - [ ] `cargo qa`
+  - [ ] `effigy qa --repo .`
 - [ ] Docs link integrity check passes:
-  - [ ] `cargo qa-docs`
+  - [ ] `effigy qa:docs --repo .`
 - [ ] CI gate is green before merge/tag:
   - [ ] `json-contracts / Validate docs links`
   - [ ] `json-contracts / Validate JSON contracts`
@@ -43,6 +47,8 @@ Owner: `name/team`
 ## 3) Versioning and Notes
 
 - [ ] Version bump matches policy (`PATCH` vs `MINOR`) from release contract.
+- [ ] Planned version reviewed in built-in prepare preview:
+  - [ ] `effigy release prepare --repo . --plan`
 - [ ] Changelog entry drafted.
 - [ ] Release notes drafted:
   - [ ] highlights
@@ -50,7 +56,24 @@ Owner: `name/team`
   - [ ] breaking changes (if any)
   - [ ] migration steps
 
-## 4) Channel Artifacts
+## 4) Built-In Release Flow
+
+- [ ] Operator path chosen explicitly:
+  - [ ] built-in commands are the primary path for this release
+  - [ ] legacy wrappers are used only if an external tool or migration drill requires them
+- [ ] Prepared-state apply succeeds:
+  - [ ] `effigy release prepare --repo . --yes --check-gates`
+- [ ] Execute preflight succeeds:
+  - [ ] `effigy release execute --repo . --plan`
+- [ ] Human approval recorded before irreversible step.
+- [ ] Final execute succeeds:
+  - [ ] `effigy release execute --repo . --yes`
+- [ ] Compatibility wrappers remain available only as backup channels until one successful live built-in release is complete:
+  - [ ] `./scripts/prepare-release.sh`
+  - [ ] `./scripts/check-release-gates.sh`
+  - [ ] `./scripts/check-release-install-from-tag.sh --tag v0.__.__`
+
+## 5) Channel Artifacts
 
 ### Crates
 - [ ] `Cargo.toml` metadata verified.
@@ -59,7 +82,7 @@ Owner: `name/team`
 - [ ] Tag points to intended commit.
 - [ ] Publish command executed/queued.
 - [ ] Install validated from git tag:
-  - [ ] `./scripts/check-release-install-from-tag.sh --tag v0.__.__`
+  - [ ] `effigy release verify-install --repo . --tag v0.__.__`
 - [ ] Install validated from published crate.
 - [ ] First-publish artifact bundle captured:
   - [ ] `./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__`
@@ -72,13 +95,13 @@ Owner: `name/team`
 - [ ] Fresh install + upgrade path validated.
 - [ ] Tap automation workflow ran for release tag and attached evidence.
 
-## 5) Rollback Preparedness
+## 6) Rollback Preparedness
 
 - [ ] Previous known-good version documented.
 - [ ] Rollback command/instructions prepared.
 - [ ] Communication template prepared for incident/hotfix.
 
-## 6) Post-Release Validation
+## 7) Post-Release Validation
 
 - [ ] Validate install on at least one clean machine/session.
 - [ ] Validate prefixed built-ins still route correctly.
@@ -86,7 +109,7 @@ Owner: `name/team`
 - [ ] Open dated checkpoint log in `docs/logs/YYYY-MM/`.
   - [ ] `./scripts/generate-distribution-closeout-log.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
 
-## 7) Sign-off
+## 8) Sign-off
 
 - [ ] Release approved by owner.
 - [ ] Release announcement sent.
@@ -96,6 +119,7 @@ Owner: `name/team`
 
 ## Related Guides
 
+- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 - [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
 - [`../roadmaps/backlog/release-contract-v0.md`](../roadmaps/backlog/release-contract-v0.md)
 - [`../roadmaps/backlog/distribution-channels.md`](../roadmaps/backlog/distribution-channels.md)

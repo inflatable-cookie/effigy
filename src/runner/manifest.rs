@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 #[path = "manifest/config_sections.rs"]
 pub(in crate::runner) mod config_sections;
@@ -10,7 +11,8 @@ pub(in crate::runner) mod task_runtime;
 mod test_config;
 
 pub(super) use config_sections::{
-    ManifestEnvSchemaConfig, ManifestPackageManagerConfig, ManifestScanConfig, ManifestShellConfig,
+    ManifestEnvSchemaConfig, ManifestPackageManagerConfig, ManifestReleaseConfig,
+    ManifestScanConfig, ManifestShellConfig,
 };
 use task_defs::deserialize_tasks;
 pub(super) use task_runtime::{
@@ -39,6 +41,8 @@ pub(super) struct TaskManifest {
     pub(super) shell: Option<ManifestShellConfig>,
     #[serde(default)]
     pub(super) env_schema: Option<ManifestEnvSchemaConfig>,
+    #[serde(default)]
+    pub(super) release: Option<ManifestReleaseConfig>,
     #[serde(default, deserialize_with = "deserialize_tasks")]
     pub(super) tasks: BTreeMap<String, ManifestTask>,
 }
@@ -53,4 +57,19 @@ pub(super) struct ManifestCatalog {
 #[serde(deny_unknown_fields)]
 pub(super) struct ManifestDefer {
     pub(super) run: String,
+}
+
+pub(in crate::runner) fn load_task_manifest(
+    manifest_path: &Path,
+) -> Result<TaskManifest, super::RunnerError> {
+    let manifest_src = std::fs::read_to_string(manifest_path).map_err(|error| {
+        super::RunnerError::TaskManifestRead {
+            path: manifest_path.to_path_buf(),
+            error,
+        }
+    })?;
+    toml::from_str(&manifest_src).map_err(|error| super::RunnerError::TaskManifestParse {
+        path: manifest_path.to_path_buf(),
+        error,
+    })
 }

@@ -24,6 +24,8 @@ This matrix is a quick operator reference for Effigy commands, key flags, JSON p
 | `effigy unlock` | Clear lock scopes manually | `--all`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
 | `effigy cache` | Inspect and invalidate phase-1 cache metadata | `inspect`, `invalidate`, `--all`, `--json` | `effigy.cache.v1` | `022-manifest-cookbook.md` |
 | `effigy completion` | Generate shell completion scripts and selector candidates | `bash\|zsh\|fish`, `candidates`, `--repo`, `--prefix`, `--json` | `effigy.completion.v1`, `effigy.completion.candidates.v1` | `021-quick-start-and-command-cookbook.md` |
+| `effigy changelog` | Validate, format, analyze, and extract Northstar changelog content | `validate`, `format`, `analyze`, `extract`, `--write`, `--preview`, `--version`, `--json` | changelog subcommands render direct output; some results can be wrapped in `effigy.command.v1` with global JSON mode | `036-release-notes-authoring-template-and-examples.md` |
+| `effigy release` | Inspect release readiness, run gates, preview or apply release mutations, resume prepared-state review, execute release flow, and verify tagged installs | `status`, `gates`, `resume`, `simulate`, `prepare`, `execute`, `verify-install`, `--check-gates`, `--plan`, `--dry-run`, `--yes`, `--version`, `--allow-stale`, `--tag`, `--repo-url`, `--json` | `effigy.release.status.v1`, `effigy.release.gates.v1`, `effigy.release.resume.v1`, `effigy.release.simulate.v1`, `effigy.release.prepare.plan.v1`, `effigy.release.prepare.v1`, `effigy.release.execute.plan.v1`, `effigy.release.execute.v1`, `effigy.release.verify-install.v1` | `051-release-orchestration.md` |
 | `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules | passthrough args, `--json` | `effigy.task.run.v1` | `022-manifest-cookbook.md` |
 
 ## 2) Global JSON Envelope
@@ -67,6 +69,21 @@ effigy cache inspect [<selector>] [--json]
 effigy cache invalidate [<selector>...] [--all] [--json]
 effigy completion <bash|zsh|fish> [--json]
 effigy completion candidates [--repo <PATH>] [--prefix <value>] [--json]
+effigy changelog validate [FILE] [--json]
+effigy changelog format [FILE] [--write|--preview]
+effigy changelog analyze [FILE] [--json]
+effigy changelog extract [FILE] --version <VERSION>
+effigy release status [--repo <PATH>] [--check-gates] [--json]
+effigy release gates [--repo <PATH>] [--json]
+effigy release resume [--repo <PATH>] [--allow-stale] [--json]
+effigy release verify-install [--repo <PATH>] [--tag <TAG>] [--repo-url <URL>] [--json]
+effigy release simulate [--repo <PATH>] [--version <SEMVER>] [--json]
+effigy release prepare [--repo <PATH>] [--check-gates]
+effigy release prepare (--plan|--dry-run) [--repo <PATH>] [--check-gates] [--version <SEMVER>] [--json]
+effigy release prepare --yes [--repo <PATH>] [--check-gates] [--version <SEMVER>] [--json]
+effigy release execute [--repo <PATH>] [--allow-stale]
+effigy release execute (--plan|--dry-run) [--repo <PATH>] [--allow-stale] [--json]
+effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
 ```
 
 ## 4) Scope Notes and Constraints
@@ -112,6 +129,9 @@ effigy completion candidates [--repo <PATH>] [--prefix <value>] [--json]
 - `unlock` accepts either explicit scopes or `--all` (not both).
 - `cache` phase-1 works only for tasks with explicit `[tasks.<name>.cache]` opt-in.
 - `cache invalidate` accepts selectors or `--all` (not both).
+- release operator flows should prefer the built-in `effigy release ...`
+  surface; legacy wrapper scripts are backup channels documented in guide `049`
+  rather than the primary manual interface.
 - task-local runtime env is supported with `env = { KEY = "value" }` under task definitions (full table or compact inline table).
 - run arrays also support env directives (`{ env = { ... } }` or `{ env = "<profile>" }`) to update env for later entries in the chain.
 - run-array env directives also support cross-catalog indirection via `env = "<catalog-path>/<name>"` (path relative to current catalog unless absolute).
@@ -164,6 +184,10 @@ effigy --json scan generated-in-src
 effigy --json scan attention-markers
 effigy --json scan stale-suppressions
 effigy --json test --plan
+effigy release simulate --repo .
+effigy release prepare --repo . --plan
+effigy release execute --repo . --plan
+effigy --json release status --check-gates
 ```
 
 Lock recovery:
@@ -181,4 +205,6 @@ effigy unlock --all
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
+- [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
+- [`051-release-orchestration.md`](./051-release-orchestration.md)
 - [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)

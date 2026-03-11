@@ -42,6 +42,13 @@ Compatibility wrapper scripts (retained for CI/release tooling integration):
 - `./scripts/generate-distribution-closeout-log.sh`
 - `./scripts/check-distribution-artifact-pipeline-smoke.sh`
 
+Release policy note:
+- prefer built-in `effigy release ...` commands for operator-driven release work
+- keep wrapper scripts only where CI or an external contract still requires a
+  script entrypoint
+- do not treat wrapper retirement or workflow cutover as complete until the
+  explicitly human-gated adoption steps in guide `049` are finished
+
 Primary JSON mode entrypoint:
 - `effigy --json <command>`
 
@@ -53,6 +60,8 @@ Before debugging CI, run locally:
 effigy qa --repo .
 effigy qa:json:ci --repo .
 effigy qa:release --repo .
+effigy release simulate --repo .
+effigy release status --repo . --check-gates
 ./scripts/check-distribution-preflight.sh --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
 ./scripts/check-release-install-from-tag.sh --tag v0.__.__
 ./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
@@ -62,6 +71,10 @@ effigy qa:release --repo .
 ./scripts/check-distribution-artifact-pipeline-smoke.sh
 effigy qa:docs --repo .
 ```
+
+For release debugging, use the built-in release commands first and reserve
+wrapper-script reproduction for cases where the CI contract still invokes the
+wrapper directly.
 
 Install pinning and team migration policy:
 - [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)

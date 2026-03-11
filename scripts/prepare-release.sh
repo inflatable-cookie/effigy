@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Legacy compatibility wrapper:
+# - retained as a backup path while the built-in `effigy release prepare`
+#   workflow completes its first live release
+# - not the preferred operator entrypoint for normal manual release runs
+#
 # Reads CHANGELOG.md [Unreleased] section, determines version bump type,
 # and optionally applies the version bump to Cargo.toml and CHANGELOG.md.
 #
 # Usage:
-#   ./scripts/prepare-release.sh            # dry-run (default)
-#   ./scripts/prepare-release.sh --apply    # apply changes
+#   ./scripts/prepare-release.sh            # backup dry-run
+#   ./scripts/prepare-release.sh --apply    # backup apply path
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHANGELOG="$ROOT_DIR/CHANGELOG.md"
