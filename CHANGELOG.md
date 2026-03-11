@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-03-11
+
 ### Added
 - Add changelog library implementing the Northstar Changelog Profile — parse,
   format, validate, analyze, and extract changelogs with `effigy changelog`
