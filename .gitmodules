@@ -1,0 +1,3 @@
+[submodule "setup-effigy"]
+	path = setup-effigy
+	url = git@github.com:inflatable-cookie/setup-effigy.git
