@@ -154,6 +154,75 @@ Raw commands are still reasonable when:
 When using a fallback, keep the reason explicit in repo docs so agents do not
 learn the wrong default.
 
+## 7) Release Orchestration Across Repo Types
+
+When a consumer repo adopts Effigy's release surface, keep the release config
+close to the repo's real version file instead of forcing a Rust-shaped layout.
+
+### Node.js (`package.json`)
+
+```toml
+[release]
+changelog = "CHANGELOG.md"
+tag-format = "v{version}"
+
+[release.gates]
+test = "npm test"
+```
+
+Expected behavior:
+- `effigy release status --repo . --check-gates` reads `package.json` version
+  automatically
+- `effigy release prepare --repo . --plan` previews the `package.json` version
+  update plus changelog move
+- gate commands can stay native to the project (`npm`, `pnpm`, `bun`, shell)
+
+### Python (`pyproject.toml`)
+
+```toml
+[release]
+changelog = "CHANGELOG.md"
+tag-format = "v{version}"
+
+[release.gates]
+test = "pytest -q"
+```
+
+Expected behavior:
+- `effigy release` auto-detects `pyproject.toml`
+- version discovery supports `project.version` and `tool.poetry.version`
+- `effigy release prepare --repo . --plan` previews the pyproject version bump
+
+### Multi-language / Plain `VERSION`
+
+```toml
+[release]
+version-file = "VERSION"
+changelog = "CHANGELOG.md"
+tag-format = "release-{version}"
+
+[release.gates]
+validate = "sh -lc './scripts/validate-all.sh'"
+```
+
+Expected behavior:
+- use this when the repo version is intentionally decoupled from language-specific
+  manifests
+- `effigy release prepare --repo . --yes --check-gates` updates `VERSION`,
+  writes `.release-prepared.json`, and preserves heterogeneous gate commands
+- this is the simplest fit for monorepos with multiple language toolchains
+
+Release adoption policy:
+- prefer `effigy release simulate/status/prepare/execute` for operator-driven
+  release flow once the repo has a stable `[release]` section
+- keep wrapper scripts only when an external automation contract still requires
+  them, and describe them as backup channels rather than the default operator
+  path
+- do not describe wrapper retirement or workflow-level cutover as complete
+  until the repo finishes its explicitly human-gated release-adoption steps
+- document the repo's chosen version file and gate commands in `AGENTS.md` so
+  agents do not fall back to the wrong toolchain defaults
+
 ## Expected Outcome
 
 - AI agents have one short, repeatable contract for using Effigy in project work
@@ -167,6 +236,7 @@ learn the wrong default.
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 - [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
 
 ## Next Step

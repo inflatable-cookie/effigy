@@ -2,7 +2,7 @@
 
 Generation: `g01`
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-03-10
 Depends on: 024
@@ -48,6 +48,16 @@ This roadmap spans two repositories:
 
 Northstar is the authority on _what_ the format is. Effigy is the authority on
 _how_ to work with it.
+
+## Closeout Note (2026-03-10)
+
+This roadmap is complete as the changelog-library foundation for Effigy.
+The implementation ships in `src/changelog.rs` plus the supporting parser,
+formatter, validator, analyzer, extractor, CLI command, and integration tests.
+The Northstar profile source remains upstream in
+`/Users/betterthanclay/Dev/projects/northstar/bundle-docs/research/specifications/northstar-changelog-profile.md`,
+and the older script/workflow migration items are now tracked as part of
+roadmap `027` instead of blocking changelog-library closeout here.
 
 ---
 

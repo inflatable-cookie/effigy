@@ -155,6 +155,10 @@ Release: milestone m1
 
 ## 5) Authoring Rules
 
+- Generate the initial per-version note body from the changelog before editing:
+  - `effigy changelog extract CHANGELOG.md --version X.Y.Z`
+- Treat that extracted output as a baseline, not the final note. Add summary,
+  validation, rollback notes, and compatibility context around it.
 - Prefer concrete commands over prose-only validation claims.
 - Keep migration notes explicit even when no migration is required (`None required`).
 - Use exact schema IDs in JSON-related notes.
@@ -169,7 +173,26 @@ For each new release note:
 2. add link to `docs/logs/README.md` under recent release notes
 3. reference from relevant guide(s) when behavior is user-impacting
 
-## 7) Historical Workflow Reference Rule
+## 7) Built-In Extraction Recipe
+
+Use this when preparing release notes from the just-cut changelog section:
+
+```bash
+effigy changelog extract CHANGELOG.md --version X.Y.Z
+```
+
+Expected behavior:
+- prints only the body for that version, not the outer `## [X.Y.Z] - DATE` heading
+- preserves category headings and entries as release-note source material
+- exits non-zero if the version is missing or empty
+
+This is the exact release-note extraction surface intended for later workflow
+integration. Until workflow edits are explicitly approved, use it manually when
+drafting the human-reviewed release note. Do not describe workflow-level
+automation cutover as complete until the corresponding workflow change is
+approved and merged.
+
+## 8) Historical Workflow Reference Rule
 
 - If a release note/log documents a workflow path that was correct at that time, keep that historical path as-is.
 - For current operational guidance (outside historical logs), use active workflow paths (`.github-bak/workflows/*.yml` in this repository layout).
@@ -184,6 +207,7 @@ For each new release note:
 ## Related Guides
 
 - [`014-release-checklist-template.md`](./014-release-checklist-template.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
 - [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)

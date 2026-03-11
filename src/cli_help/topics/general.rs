@@ -23,6 +23,11 @@ pub(crate) fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()>
                     .to_owned(),
             ],
             vec![
+                "effigy release".to_owned(),
+                "Inspect release readiness from changelog, version files, and optional gates"
+                    .to_owned(),
+            ],
+            vec![
                 "effigy test".to_owned(),
                 "Run built-in auto-detected tests (or explicit tasks.test); supports <catalog>/test fallback".to_owned(),
             ],

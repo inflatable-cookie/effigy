@@ -1,5 +1,6 @@
 use super::prelude::{
-    apply_global_json_flag, command_requests_json, Command, DoctorArgs, TaskInvocation, TasksArgs,
+    apply_global_json_flag, command_requests_json, Command, DoctorArgs, ReleaseArgs,
+    ReleaseSubcommand, TaskInvocation, TasksArgs,
 };
 
 #[test]
@@ -48,7 +49,13 @@ fn command_requests_json_checks_task_or_global_mode() {
         verbose: false,
         explain: None,
     });
+    let cmd_release = Command::Release(ReleaseArgs {
+        subcommand: ReleaseSubcommand::Status { check_gates: false },
+        repo_override: None,
+        output_json: true,
+    });
     assert!(command_requests_json(&cmd_doctor, false));
+    assert!(command_requests_json(&cmd_release, false));
 }
 
 #[test]
@@ -67,9 +74,15 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         verbose: false,
         explain: None,
     });
+    let release_cmd = Command::Release(ReleaseArgs {
+        subcommand: ReleaseSubcommand::Status { check_gates: false },
+        repo_override: None,
+        output_json: false,
+    });
 
     let tasks_applied = apply_global_json_flag(tasks_cmd, true);
     let doctor_applied = apply_global_json_flag(doctor_cmd, true);
+    let release_applied = apply_global_json_flag(release_cmd, true);
     match tasks_applied {
         Command::Tasks(args) => assert!(args.output_json),
         other => panic!("expected tasks command, got: {other:?}"),
@@ -77,5 +90,9 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
     match doctor_applied {
         Command::Doctor(args) => assert!(args.output_json),
         other => panic!("expected doctor command, got: {other:?}"),
+    }
+    match release_applied {
+        Command::Release(args) => assert!(args.output_json),
+        other => panic!("expected release command, got: {other:?}"),
     }
 }

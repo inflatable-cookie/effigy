@@ -57,6 +57,16 @@ assert_file_exists() {
   fi
 }
 
+assert_file_contains() {
+  local path="$1"
+  local pattern="$2"
+  local description="$3"
+  if ! grep -Fq "$pattern" "$path"; then
+    echo "[error] expected $description in $path" >&2
+    exit 1
+  fi
+}
+
 validate_package_metadata() {
   local metadata_json pkg_json name version license description
 
@@ -116,12 +126,17 @@ validate_release_docs_presence() {
 }
 
 validate_release_workflow_wiring() {
-  assert_file_exists "$ROOT_DIR/.github/workflows/release-gates.yml"
-  assert_file_exists "$ROOT_DIR/.github/workflows/homebrew-tap-metadata.yml"
-  assert_file_exists "$ROOT_DIR/.github/workflows/homebrew-tap-formula-pr.yml"
+  local workflow="$ROOT_DIR/.github/workflows/release-binaries.yml"
+  assert_file_exists "$workflow"
   assert_file_exists "$ROOT_DIR/scripts/check-release-install-from-tag.sh"
   assert_file_exists "$ROOT_DIR/scripts/check-distribution-first-publish.sh"
-  assert_file_exists "$ROOT_DIR/scripts/update-homebrew-formula-from-metadata.sh"
+  assert_file_exists "$ROOT_DIR/scripts/generate-distribution-closeout-log.sh"
+  assert_file_exists "$ROOT_DIR/scripts/validate-distribution-artifacts.sh"
+
+  assert_file_contains "$workflow" "name: Release Binaries" "release workflow name"
+  assert_file_contains "$workflow" "Create GitHub Release" "GitHub Release job wiring"
+  assert_file_contains "$workflow" "Update Homebrew tap" "Homebrew automation job wiring"
+  assert_file_contains "$workflow" '      - "v*"' "tag trigger wiring"
 }
 
 cd "$ROOT_DIR"

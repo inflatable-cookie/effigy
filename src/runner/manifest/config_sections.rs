@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(in crate::runner) enum ManifestScanOutputFormat {
@@ -245,4 +247,39 @@ pub(in crate::runner) struct ManifestEnvSchemaConfig {
     pub(in crate::runner) schema: Option<String>,
     #[serde(default)]
     pub(in crate::runner) exec_timeout: Option<u64>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestReleaseConfig {
+    #[serde(default)]
+    pub(in crate::runner) version_file: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) version_path: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) changelog: Option<String>,
+    #[serde(default, rename = "pre-1-0")]
+    pub(in crate::runner) pre_1_0: Option<bool>,
+    #[serde(default)]
+    pub(in crate::runner) sync_files: Vec<String>,
+    #[serde(default)]
+    pub(in crate::runner) gates: BTreeMap<String, ManifestReleaseGateConfig>,
+    #[serde(default)]
+    pub(in crate::runner) tag_format: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+pub(in crate::runner) enum ManifestReleaseGateConfig {
+    Command(String),
+    Detailed(ManifestReleaseGateDetails),
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestReleaseGateDetails {
+    pub(in crate::runner) command: String,
+    #[serde(default)]
+    pub(in crate::runner) description: Option<String>,
 }

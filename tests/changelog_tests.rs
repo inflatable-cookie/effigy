@@ -58,9 +58,14 @@ fn extract_known_version() {
 fn extract_unreleased_section() {
     let content = include_str!("../CHANGELOG.md");
     let parsed = changelog::parse(content).expect("should parse");
+    let analysis = changelog::analyze(&parsed);
 
     let notes = changelog::extract_version(&parsed, "Unreleased");
-    assert!(notes.is_some(), "should find Unreleased section");
+    if analysis.unreleased_is_empty {
+        assert!(notes.is_none(), "empty Unreleased should not render notes");
+    } else {
+        assert!(notes.is_some(), "should render non-empty Unreleased notes");
+    }
 }
 
 #[test]
@@ -147,9 +152,15 @@ fn analyze_json_output_structure() {
 
     // Verify the analysis has the expected structure
     assert!(analysis.current_version.is_some());
-    assert!(!analysis.unreleased_is_empty);
-    assert!(matches!(
-        analysis.suggested_bump,
-        changelog::BumpKind::Patch | changelog::BumpKind::Minor | changelog::BumpKind::Major
-    ));
+    if analysis.unreleased_is_empty {
+        assert!(analysis.unreleased_counts.is_empty());
+        assert_eq!(analysis.suggested_bump, changelog::BumpKind::None);
+        assert!(analysis.next_version.is_none());
+    } else {
+        assert!(matches!(
+            analysis.suggested_bump,
+            changelog::BumpKind::Patch | changelog::BumpKind::Minor | changelog::BumpKind::Major
+        ));
+        assert!(analysis.next_version.is_some());
+    }
 }

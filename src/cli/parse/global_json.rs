@@ -31,6 +31,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
             }
         }
         Command::Changelog(args) => args.output_json = true,
+        Command::Release(args) => args.output_json = true,
         Command::Tasks(args) => args.output_json = true,
         Command::Doctor(args) => args.output_json = true,
         Command::Help(_) => {}
@@ -44,6 +45,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
     }
     match cmd {
         Command::Changelog(args) => args.output_json,
+        Command::Release(args) => args.output_json,
         Command::Tasks(args) => args.output_json,
         Command::Doctor(args) => args.output_json,
         Command::Task(task) => task.args.iter().any(|arg| arg == "--json"),

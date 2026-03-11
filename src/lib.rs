@@ -32,6 +32,7 @@ use ui::{Renderer, UiResult};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Changelog(ChangelogArgs),
+    Release(ReleaseArgs),
     Doctor(DoctorArgs),
     Tasks(TasksArgs),
     Task(TaskInvocation),
@@ -42,6 +43,7 @@ pub enum Command {
 pub enum HelpTopic {
     General,
     Changelog,
+    Release,
     Doctor,
     Tasks,
     Test,
@@ -63,6 +65,42 @@ pub enum ChangelogSubcommand {
     Format { write: bool },
     Analyze,
     Extract { version: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseArgs {
+    pub subcommand: ReleaseSubcommand,
+    pub repo_override: Option<PathBuf>,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReleaseSubcommand {
+    Status {
+        check_gates: bool,
+    },
+    Gates,
+    Resume {
+        allow_stale: bool,
+    },
+    VerifyInstall {
+        tag: Option<String>,
+        repo_url: Option<String>,
+    },
+    Simulate {
+        version_override: Option<String>,
+    },
+    Prepare {
+        plan: bool,
+        check_gates: bool,
+        yes: bool,
+        version_override: Option<String>,
+    },
+    Execute {
+        plan: bool,
+        yes: bool,
+        allow_stale: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

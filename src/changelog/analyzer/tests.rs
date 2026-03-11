@@ -188,6 +188,15 @@ fn analyze_effigy_changelog() {
     let version = analysis.current_version.as_ref().unwrap();
     assert_eq!(version.major, 0);
 
-    // Should have some unreleased entries
-    assert!(!analysis.unreleased_is_empty);
+    // The repo fixture may be checked before a release (with unreleased work)
+    // or immediately after a release preparation (with an intentionally empty
+    // [Unreleased] section). Both states should remain analyzable.
+    if analysis.unreleased_is_empty {
+        assert_eq!(analysis.suggested_bump, BumpKind::None);
+        assert!(analysis.next_version.is_none());
+        assert!(analysis.unreleased_counts.is_empty());
+    } else {
+        assert!(!analysis.unreleased_counts.is_empty());
+        assert!(analysis.next_version.is_some());
+    }
 }

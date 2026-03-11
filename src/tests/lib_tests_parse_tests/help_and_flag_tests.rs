@@ -78,6 +78,13 @@ fn parse_doctor_help_is_scoped() {
 }
 
 #[test]
+fn parse_release_help_is_scoped() {
+    let cmd = parse_command(vec!["release".to_owned(), "--help".to_owned()])
+        .expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Release));
+}
+
+#[test]
 fn parse_help_command_alias_is_general_help() {
     let cmd = parse_command(vec!["help".to_owned()]).expect("parse should succeed");
     assert_eq!(cmd, Command::Help(HelpTopic::General));
