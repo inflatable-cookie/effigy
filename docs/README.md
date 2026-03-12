@@ -59,6 +59,7 @@ deeper links only when you need them.
 - Then use
   [`guides/024-ci-and-automation-recipes.md`](./guides/024-ci-and-automation-recipes.md),
   [`guides/026-json-payload-examples.md`](./guides/026-json-payload-examples.md),
+  [`guides/056-northstar-effigy-consumer-repo-contract.md`](./guides/056-northstar-effigy-consumer-repo-contract.md),
   and [`contracts/README.md`](./contracts/README.md)
 
 ### I want release and distribution flows on built-ins

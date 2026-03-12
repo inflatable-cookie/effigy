@@ -20,10 +20,13 @@ fn apply_global_json_flag_injects_task_arg_when_missing() {
 
 #[test]
 fn command_requests_json_checks_task_or_global_mode() {
+    let version_cmd = Command::Version;
     let cmd = Command::Task(TaskInvocation {
         name: "catalogs".to_owned(),
         args: vec!["--resolve".to_owned(), "catalog-a/api".to_owned()],
     });
+    assert!(!command_requests_json(&version_cmd, false));
+    assert!(command_requests_json(&version_cmd, true));
     assert!(!command_requests_json(&cmd, false));
     assert!(command_requests_json(&cmd, true));
 
@@ -60,6 +63,7 @@ fn command_requests_json_checks_task_or_global_mode() {
 
 #[test]
 fn apply_global_json_flag_sets_non_task_command_json_mode() {
+    let version_cmd = Command::Version;
     let tasks_cmd = Command::Tasks(TasksArgs {
         repo_override: None,
         task_name: None,
@@ -80,9 +84,11 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         output_json: false,
     });
 
+    let version_applied = apply_global_json_flag(version_cmd, true);
     let tasks_applied = apply_global_json_flag(tasks_cmd, true);
     let doctor_applied = apply_global_json_flag(doctor_cmd, true);
     let release_applied = apply_global_json_flag(release_cmd, true);
+    assert_eq!(version_applied, Command::Version);
     match tasks_applied {
         Command::Tasks(args) => assert!(args.output_json),
         other => panic!("expected tasks command, got: {other:?}"),

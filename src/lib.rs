@@ -46,6 +46,7 @@ pub use cli::parse::{
 };
 pub use cli::parse_error::{parse_error_json_details, render_parse_error, PARSE_ERROR_HINT};
 pub use cli::runner_dispatch::run_and_render_command;
+pub use cli::version_dispatch::{build_version_payload, run_version_command};
 use std::path::{Path, PathBuf};
 use ui::{Renderer, UiResult};
 
@@ -55,6 +56,8 @@ use ui::{Renderer, UiResult};
 /// into [`run_and_render_command`] or their own dispatch layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
+    /// Print the current Effigy version.
+    Version,
     /// Built-in changelog command family.
     Changelog(ChangelogArgs),
     /// Built-in docs QA command family.

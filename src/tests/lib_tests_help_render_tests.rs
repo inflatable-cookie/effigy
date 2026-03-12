@@ -5,6 +5,7 @@ fn render_help_writes_structured_sections() {
     let rendered = render_help_text(HelpTopic::General);
     assert!(rendered.contains("Commands"));
     assert!(rendered.contains("effigy help"));
+    assert!(rendered.contains("effigy version"));
     assert!(rendered.contains("effigy config"));
     assert!(rendered.contains("effigy doctor"));
     assert!(rendered.contains("effigy docs"));
@@ -22,6 +23,7 @@ fn render_help_writes_structured_sections() {
     assert!(!rendered.contains("effigy test --plan"));
     assert!(rendered.contains("Use `effigy <built-in-task> --help`"));
     assert!(rendered.contains("--env-schema <PATH>"));
+    assert!(rendered.contains("--version"));
     assert!(!rendered.contains("Quick Start"));
     assert!(!rendered.contains("effigy Help"));
 }

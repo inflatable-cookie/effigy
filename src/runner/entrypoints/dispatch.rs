@@ -12,6 +12,7 @@ use crate::runner::error::RunnerError;
 
 pub(super) fn run_command(cmd: Command) -> Result<String, RunnerError> {
     match cmd {
+        Command::Version => Ok(String::new()),
         Command::Help(_) => Ok(String::new()),
         Command::Changelog(args) => run_changelog(args),
         Command::Docs(args) => run_docs(args),

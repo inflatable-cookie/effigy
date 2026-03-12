@@ -25,6 +25,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
     }
 
     match &mut cmd {
+        Command::Version => {}
         Command::Task(task) => {
             if !task.args.iter().any(|arg| arg == "--json") {
                 task.args.insert(0, "--json".to_owned());
@@ -47,6 +48,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         return true;
     }
     match cmd {
+        Command::Version => false,
         Command::Changelog(args) => args.output_json,
         Command::Docs(args) => args.output_json,
         Command::Contracts(args) => args.output_json,

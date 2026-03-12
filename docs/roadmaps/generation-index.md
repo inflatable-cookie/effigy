@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: `g01`
-Updated: 2026-03-11
+Updated: 2026-03-12
 
 ## Generation history
 
@@ -23,6 +23,7 @@ Updated: 2026-03-11
 - `026` captures the changelog library and Northstar profile milestone.
 - `027` captures the release orchestration milestone.
 - `028` captures the completed script-surface reduction and built-ins milestone.
+- `029` captures the planned Northstar + Effigy consumer adoption kit milestone.
 
 ## Research Roadmaps
 

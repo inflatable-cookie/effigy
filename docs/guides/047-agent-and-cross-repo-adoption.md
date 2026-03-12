@@ -254,6 +254,7 @@ Release adoption policy:
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+- [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 - [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
 

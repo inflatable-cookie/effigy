@@ -54,6 +54,7 @@ pages only when you need more detail.
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 - [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
+- [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 
 ### I want built-in release workflows
 
@@ -159,6 +160,7 @@ Details:
 - [`045-vision-next-task-allowlist-maintenance.md`](./045-vision-next-task-allowlist-maintenance.md)
 - [`046-vision-next-task-allowlist-pr-checklist-snippet.md`](./046-vision-next-task-allowlist-pr-checklist-snippet.md)
 - [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
+- [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 
 ## Standards Used In These Guides

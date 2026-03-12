@@ -10,6 +10,10 @@ pub(crate) fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()>
                 "Show general help (same as --help)".to_owned(),
             ],
             vec![
+                "effigy version".to_owned(),
+                "Print the current Effigy version (same as --version)".to_owned(),
+            ],
+            vec![
                 "effigy tasks".to_owned(),
                 "List discovered catalogs/task commands and probe routing".to_owned(),
             ],
@@ -96,6 +100,7 @@ pub(crate) fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()>
     )?;
     renderer.key_values(&[
         KeyValue::new("-h, --help", "Print this help panel"),
+        KeyValue::new("--version", "Print the current Effigy version"),
         KeyValue::new("--json", "Render command-envelope JSON for CI/tooling"),
     ])?;
     Ok(())

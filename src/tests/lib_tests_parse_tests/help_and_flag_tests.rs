@@ -112,6 +112,18 @@ fn parse_help_command_alias_is_general_help() {
 }
 
 #[test]
+fn parse_version_flag_is_version_command() {
+    let cmd = parse_command(vec!["--version".to_owned()]).expect("parse should succeed");
+    assert_eq!(cmd, Command::Version);
+}
+
+#[test]
+fn parse_version_command_alias_is_version_command() {
+    let cmd = parse_command(vec!["version".to_owned()]).expect("parse should succeed");
+    assert_eq!(cmd, Command::Version);
+}
+
+#[test]
 fn parse_test_help_is_scoped() {
     let cmd =
         parse_command(vec!["test".to_owned(), "--help".to_owned()]).expect("parse should succeed");

@@ -19,6 +19,7 @@ pub fn help_topic_label(topic: HelpTopic) -> &'static str {
 
 pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
     match cmd {
+        Command::Version => ("version", "version".to_owned()),
         Command::Help(topic) => ("help", help_topic_label(*topic).to_owned()),
         Command::Changelog(_) => ("changelog", "changelog".to_owned()),
         Command::Docs(_) => ("docs", "docs".to_owned()),
@@ -57,6 +58,7 @@ mod tests {
 
     #[test]
     fn command_kind_and_name_maps_command_variants() {
+        let version = Command::Version;
         let help = Command::Help(HelpTopic::Doctor);
         let doctor = Command::Doctor(DoctorArgs {
             repo_override: None,
@@ -95,6 +97,10 @@ mod tests {
             args: Vec::new(),
         });
 
+        assert_eq!(
+            command_kind_and_name(&version),
+            ("version", "version".to_owned())
+        );
         assert_eq!(command_kind_and_name(&help), ("help", "doctor".to_owned()));
         assert_eq!(
             command_kind_and_name(&release),
