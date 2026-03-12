@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-03-12
+
 ### Added
 - Add top-level `effigy --version` and `effigy version`, with matching JSON
   envelope output so operators and automation can inspect the current binary
