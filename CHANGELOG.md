@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-03-12
+
 ### Added
 - Add built-in `effigy docs check-paths` so repos can validate required
   contract files/directories such as `README.md`, `AGENTS.md`, and the minimum
