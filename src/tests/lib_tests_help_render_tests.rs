@@ -47,6 +47,7 @@ fn render_docs_help_shows_validation_options() {
     assert!(rendered.contains("effigy docs check-json-examples"));
     assert!(rendered.contains("effigy docs check-headings"));
     assert!(rendered.contains("effigy docs check-contains"));
+    assert!(rendered.contains("effigy docs check-forbidden"));
     assert!(rendered.contains("effigy docs check-index"));
     assert!(rendered.contains("effigy docs check-next-action"));
     assert!(rendered.contains("effigy docs check-workflow-paths"));
@@ -57,6 +58,7 @@ fn render_docs_help_shows_validation_options() {
     assert!(rendered.contains("--require <TEXT>"));
     assert!(rendered.contains("--require-block <N:TEXT>"));
     assert!(rendered.contains("--require-heading <TEXT>"));
+    assert!(rendered.contains("--forbid <TEXT>"));
     assert!(rendered.contains("--policy-index <NAME>"));
     assert!(rendered.contains("--policy <NAME>"));
     assert!(rendered.contains("--dir <PATH>"));

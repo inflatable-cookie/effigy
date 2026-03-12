@@ -108,7 +108,7 @@ Human-review patch target:
   - result: confirmed the release job still uses inline `sed` extraction
 - command: `rg -n "changelog extract|release notes|release-binaries.yml" .github/workflows docs/guides`
   - result: confirmed docs already treat `effigy changelog extract` as the preferred release-note baseline
-- command: `cargo run --bin effigy -- qa:docs --repo .`
+- command: `cargo run --bin effigy -- qa:docs`
   - result: pass after indexing this log in `docs/logs/README.md`
 
 ## Risks

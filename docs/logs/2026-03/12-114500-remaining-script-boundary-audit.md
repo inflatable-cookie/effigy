@@ -24,7 +24,7 @@ Removed in this closeout:
 
 That helper bin added an extra compatibility layer on top of
 `scripts/check-release-gates.sh`. The repo now leads with
-`effigy release gates --repo .`, and the cargo alias can call the same
+`effigy release gates`, and the cargo alias can call the same
 built-in release-gates command directly.
 
 ## Vision Target Delta
@@ -107,7 +107,7 @@ following are true:
 `src/bin/effigy-release-qa.rs`
 
 - rationale: redundant trampoline over the wrapper, not a real boundary
-- cargo alias now calls `effigy release gates --repo .` directly
+- cargo alias now calls `effigy release gates` directly
 
 ## Conclusion
 

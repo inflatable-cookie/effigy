@@ -53,6 +53,10 @@ pub(super) fn run_docs(args: DocsArgs) -> Result<String, RunnerError> {
             paths,
             required_text,
         } => run_check_contains(&repo_root, &paths, &required_text, args.output_json),
+        DocsSubcommand::CheckForbidden {
+            paths,
+            forbidden_text,
+        } => run_check_forbidden(&repo_root, &paths, &forbidden_text, args.output_json),
         DocsSubcommand::CheckIndex {
             policy_index,
             dir,
@@ -359,6 +363,73 @@ fn run_check_contains(
     for finding in findings {
         output.push_str(&format!(
             "missing text `{}` in {}\n",
+            finding["needle"].as_str().unwrap_or_default(),
+            finding["file"].as_str().unwrap_or_default()
+        ));
+    }
+    Err(RunnerError::task_invocation(output.trim_end().to_owned()))
+}
+
+fn run_check_forbidden(
+    repo_root: &Path,
+    paths: &[PathBuf],
+    forbidden_text: &[String],
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    if paths.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "`check-forbidden` requires at least one file path".to_owned(),
+        ));
+    }
+    if forbidden_text.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "`check-forbidden` requires at least one `--forbid` value".to_owned(),
+        ));
+    }
+
+    let files = paths
+        .iter()
+        .map(|path| resolve_repo_input(repo_root, path.clone()))
+        .collect::<Vec<_>>();
+    let mut findings = Vec::new();
+    for file in &files {
+        let content = std::fs::read_to_string(file)
+            .map_err(|err| RunnerError::task_invocation_failed_read(file, err))?;
+        for needle in forbidden_text {
+            if content.contains(needle) {
+                findings.push(json!({
+                    "file": file.display().to_string(),
+                    "kind": "forbidden-text",
+                    "needle": needle,
+                }));
+            }
+        }
+    }
+
+    if output_json {
+        let payload = json!({
+            "schema": "effigy.docs.forbidden-check.v1",
+            "schema_version": 1,
+            "ok": findings.is_empty(),
+            "files": files.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
+            "forbidden_text": forbidden_text,
+            "findings": findings,
+        });
+        return if payload["ok"] == true {
+            Ok(payload.to_string())
+        } else {
+            Err(RunnerError::task_invocation(payload.to_string()))
+        };
+    }
+
+    if findings.is_empty() {
+        return Ok("docs forbidden check passed".to_owned());
+    }
+
+    let mut output = String::new();
+    for finding in findings {
+        output.push_str(&format!(
+            "forbidden text `{}` in {}\n",
             finding["needle"].as_str().unwrap_or_default(),
             finding["file"].as_str().unwrap_or_default()
         ));

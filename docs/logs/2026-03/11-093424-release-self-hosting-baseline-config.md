@@ -9,7 +9,7 @@ Batch: release-self-hosting-baseline-config
 
 - Added a real `[release]` section to Effigy’s root `effigy.toml`.
 - Mirrored the current local release-gate script baseline as release gates.
-- Switched `qa:release` to self-host through `effigy release gates --repo .`.
+- Switched `qa:release` to self-host through `effigy release gates`.
 
 ## Changes
 
@@ -17,7 +17,7 @@ Batch: release-self-hosting-baseline-config
   formatting, and baseline gate commands for format, test, QA, build, smoke,
   and distribution metadata validation.
 - Updated the `qa:release` task to bootstrap the built-in release gate runner
-  via `cargo run --bin effigy -- release gates --repo .`.
+  via `cargo run --bin effigy -- release gates`.
 - Added a contract test that loads the current repo release config, asserts the
   expected gate set, and verifies those commands stay aligned with
   `scripts/check-release-gates.sh`.

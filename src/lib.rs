@@ -161,6 +161,13 @@ pub enum DocsSubcommand {
         /// Substrings that must exist in every file.
         required_text: Vec<String>,
     },
+    /// Validate that one or more text/markdown files do not contain forbidden substrings.
+    CheckForbidden {
+        /// Files to scan.
+        paths: Vec<PathBuf>,
+        /// Substrings that must not exist in any file.
+        forbidden_text: Vec<String>,
+    },
     /// Validate that an index file references all markdown logs under a directory.
     CheckIndex {
         /// Optional named docs-policy index to use from `effigy.toml`.

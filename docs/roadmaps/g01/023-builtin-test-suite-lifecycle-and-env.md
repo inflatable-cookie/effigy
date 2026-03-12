@@ -198,7 +198,7 @@ Design constraint:
 
 - [ ] Replace Farmyard's custom `test:managed` wrapper behavior with builtin test suite config using nextest
 - [ ] Remove repo-local managed wrapper assumptions once parity is proven
-- [ ] Validate `effigy test --plan --repo .` and `effigy test --repo .` in Farmyard against the managed DB lifecycle flow
+- [ ] Validate `effigy test --plan` and `effigy test` in Farmyard against the managed DB lifecycle flow
 - [ ] Publish a checkpoint log documenting the migration and remaining nextest caveats
 
 ## 7) Acceptance Criteria

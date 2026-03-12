@@ -31,7 +31,7 @@ reusable `AGENTS.md` guidance, minimum adoption criteria, and rollout waves.
 
 - command: `./scripts/check-doc-links.sh docs/README.md docs/guides/README.md docs/guides/047-agent-and-cross-repo-adoption.md docs/roadmaps/g01/015-effigy-self-hosting-and-agent-first-adoption.md docs/logs/README.md`
   - result: pass
-- command: `zsh -ic 'effigy-dev qa:docs --repo .'`
+- command: `zsh -ic 'effigy-dev qa:docs'`
   - result: pass
 - command: `git diff --check -- docs/README.md docs/guides/README.md docs/guides/047-agent-and-cross-repo-adoption.md docs/logs/README.md docs/logs/2026-03/06-103500-agent-and-cross-repo-adoption-contract.md docs/roadmaps/g01/015-effigy-self-hosting-and-agent-first-adoption.md`
   - result: pass
