@@ -85,7 +85,8 @@ workflow examples from drifting back to copied `--repo .` defaults.
 The current docs QA surface intentionally splits into two layers:
 
 - generic built-ins such as `effigy docs check-links`,
-  `check-json-examples`, `check-index`, `check-workflow-paths`, and
+  `check-json-examples`, `check-paths`, `check-index`,
+  `check-workflow-paths`, and
   `check-forbidden`
 - Effigy-specific vision-policy checks that remain in repo policy and task wiring
 
@@ -172,6 +173,25 @@ Behavior:
 - fails when any forbidden substring is found in any scanned file
 - works well for agent/docs guardrails such as blocking copied `--repo .`
   examples in active instruction surfaces and workflow snippets
+
+## 5c) What the Path Checker Validates
+
+Built-in command:
+- `effigy docs check-paths`
+
+Behavior:
+- checks that one or more repo-relative files or directories exist
+- works well for starter-contract drift checks such as:
+  - `README.md`
+  - `AGENTS.md`
+  - `docs/README.md`
+  - `docs/vision/README.md`
+  - `docs/roadmaps/README.md`
+  - `docs/logs/README.md`
+  - `docs/policy/vision-next-task-verbs.txt`
+- should be paired with `check-contains`, `check-headings`, or docs-policy
+  checks when the contract also needs content validation rather than only path
+  presence
 
 ### Named docs-policy indexes
 

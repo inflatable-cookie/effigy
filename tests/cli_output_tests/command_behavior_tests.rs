@@ -599,6 +599,274 @@ fn cli_docs_check_next_action_json_rejects_non_actionable_verb() {
 }
 
 #[test]
+fn cli_starter_docs_policy_bundle_tasks_pass_on_neutral_fixture() {
+    let root = temp_workspace("starter-docs-policy-bundle");
+    fs::create_dir_all(root.join("docs/vision/history")).expect("mkdir history");
+    fs::create_dir_all(root.join("docs/roadmaps")).expect("mkdir roadmaps");
+    fs::create_dir_all(root.join("docs/logs")).expect("mkdir logs");
+    fs::create_dir_all(root.join("docs/policy")).expect("mkdir policy");
+    fs::write(
+        root.join("effigy.toml"),
+        r###"[docs_policy.indexes.vision]
+file = "docs/vision/README.md"
+dir = "docs/vision"
+section = "Vision Artifacts"
+exclude = ["history/**"]
+
+[docs_policy.next_actions.vision]
+index = "vision"
+heading = "## Next Task"
+allowlist_file = "docs/policy/vision-next-task-verbs.txt"
+
+[tasks]
+"qa:docs:links" = "effigy docs check-links"
+"qa:docs:index:vision" = "effigy docs check-index --policy-index vision"
+"qa:docs:next-action:vision" = "effigy docs check-next-action --policy vision"
+"qa:docs:agent-defaults" = "effigy docs check-forbidden AGENTS.md README.md docs/README.md --forbid '--repo .'"
+"qa:docs" = [
+  { task = "qa:docs:links" },
+  { task = "qa:docs:index:vision" },
+  { task = "qa:docs:next-action:vision" },
+  { task = "qa:docs:agent-defaults" },
+]
+"qa:northstar:spine" = "effigy docs check-paths README.md AGENTS.md docs/README.md docs/vision/README.md docs/roadmaps/README.md docs/logs/README.md docs/policy/vision-next-task-verbs.txt"
+"qa:northstar:agent-contract" = "effigy docs check-contains AGENTS.md --require 'effigy tasks' --require 'effigy test --plan' --require 'docs/README.md' --require 'docs/vision/README.md' --require 'docs/roadmaps/README.md' --require 'docs/logs/README.md'"
+"qa:northstar:readme" = "effigy docs check-contains README.md --require 'docs/README.md'"
+"qa:northstar:docs-front-door" = "effigy docs check-contains docs/README.md --require 'vision/README.md' --require 'roadmaps/README.md' --require 'logs/README.md'"
+"qa:northstar:headings" = "effigy docs check-headings docs/vision/README.md --require-heading '## Current Vision'"
+"qa:northstar:indexes" = "effigy docs check-index --policy-index vision"
+"qa:northstar:next-action" = "effigy docs check-next-action --policy vision"
+"qa:northstar:agent-defaults" = "effigy docs check-forbidden AGENTS.md README.md docs/README.md --forbid '--repo .'"
+"qa:northstar" = [
+  { task = "qa:northstar:spine" },
+  { task = "qa:northstar:agent-contract" },
+  { task = "qa:northstar:readme" },
+  { task = "qa:northstar:docs-front-door" },
+  { task = "qa:northstar:indexes" },
+  { task = "qa:northstar:next-action" },
+  { task = "qa:northstar:headings" },
+  { task = "qa:northstar:agent-defaults" },
+]
+qa = [{ task = "qa:docs" }, { task = "qa:northstar" }]
+"###,
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("AGENTS.md"),
+        "# Agents\n\n## Start Here\n\n- `effigy tasks`\n- `effigy test --plan`\n\n## Docs Authority\n\n- `docs/README.md`\n- `docs/vision/README.md`\n- `docs/roadmaps/README.md`\n- `docs/logs/README.md`\n",
+    )
+    .expect("write agents");
+    fs::write(
+        root.join("README.md"),
+        "# Fixture\n\nSee [Docs](docs/README.md).\n",
+    )
+    .expect("write readme");
+    fs::write(
+        root.join("docs/README.md"),
+        "# Docs\n\nStart in [Vision](vision/README.md).\n\nSee [Roadmaps](roadmaps/README.md) and [Logs](logs/README.md).\n",
+    )
+    .expect("write docs readme");
+    fs::write(
+        root.join("docs/roadmaps/README.md"),
+        "# Roadmaps\n\n## Generation model\n\nUse g01.\n",
+    )
+    .expect("write roadmaps readme");
+    fs::write(
+        root.join("docs/logs/README.md"),
+        "# Logs\n\n## Segmentation model\n\nUse YYYY-MM.\n",
+    )
+    .expect("write logs readme");
+    fs::write(
+        root.join("docs/policy/vision-next-task-verbs.txt"),
+        "ship\nreview\nexecute\ndefine\ndocument\nvalidate\n",
+    )
+    .expect("write verbs");
+    fs::write(
+        root.join("docs/vision/README.md"),
+        "# Vision\n\n## Current Vision\n\nShip a clean starter contract.\n\n## Vision Artifacts\n1. [Blueprint](./blueprint.md)\n",
+    )
+    .expect("write vision index");
+    fs::write(
+        root.join("docs/vision/blueprint.md"),
+        "# Blueprint\n\n## Next Task\n\n- Define the next validation batch.\n",
+    )
+    .expect("write vision artifact");
+    fs::write(root.join("docs/vision/history/old.md"), "# Old\n").expect("write history");
+
+    let effigy_bin = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"));
+    let effigy_dir = effigy_bin.parent().expect("effigy binary parent");
+    let path = format!(
+        "{}:{}",
+        effigy_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+
+    for task in ["qa:docs", "qa:northstar", "qa"] {
+        let output = Command::new(effigy_bin)
+            .arg("--json")
+            .arg(task)
+            .arg("--repo")
+            .arg(&root)
+            .env("NO_COLOR", "1")
+            .env("PATH", &path)
+            .output()
+            .expect("run effigy");
+        assert!(output.status.success(), "{task} should pass: {output:?}");
+        let parsed = parse_stdout_json(&output);
+        assert_eq!(parsed["schema"], "effigy.command.v1");
+        assert_eq!(parsed["ok"], true);
+        assert_eq!(parsed["command"]["kind"], "task");
+        assert_eq!(parsed["command"]["name"], task);
+    }
+}
+
+#[test]
+fn cli_workspace_container_starter_bundle_passes_via_nested_docs_authority() {
+    let root = temp_workspace("workspace-container-starter-bundle");
+    let authority = root.join("trellis");
+    fs::create_dir_all(authority.join("docs/vision/history")).expect("mkdir history");
+    fs::create_dir_all(authority.join("docs/roadmaps")).expect("mkdir roadmaps");
+    fs::create_dir_all(authority.join("docs/logs")).expect("mkdir logs");
+    fs::create_dir_all(authority.join("docs/policy")).expect("mkdir policy");
+    fs::write(authority.join("package.json"), "{}\n").expect("write authority package marker");
+    fs::write(
+        root.join("effigy.toml"),
+        r###"[tasks]
+"qa:workspace-contract" = "effigy docs check-contains AGENTS.md README.md --require 'trellis/README.md'"
+"qa:docs" = "effigy qa:docs --repo trellis"
+"qa:northstar" = "effigy qa:northstar --repo trellis"
+qa = [{ task = "qa:workspace-contract" }, { task = "qa:docs" }, { task = "qa:northstar" }]
+"###,
+    )
+    .expect("write workspace manifest");
+    fs::write(
+        root.join("AGENTS.md"),
+        "# Workspace\n\nUse `effigy tasks` here, then work through `trellis/README.md` for docs authority tasks.\n",
+    )
+    .expect("write workspace agents");
+    fs::write(
+        root.join("README.md"),
+        "# Workspace\n\nDocs authority: `trellis/README.md`.\n",
+    )
+    .expect("write workspace readme");
+
+    fs::write(
+        authority.join("effigy.toml"),
+        r###"[docs_policy.indexes.vision]
+file = "docs/vision/README.md"
+dir = "docs/vision"
+section = "Vision Artifacts"
+exclude = ["history/**"]
+
+[docs_policy.next_actions.vision]
+index = "vision"
+heading = "## Next Task"
+allowlist_file = "docs/policy/vision-next-task-verbs.txt"
+
+[tasks]
+"qa:docs:links" = "effigy docs check-links"
+"qa:docs:index:vision" = "effigy docs check-index --policy-index vision"
+"qa:docs:next-action:vision" = "effigy docs check-next-action --policy vision"
+"qa:docs:agent-defaults" = "effigy docs check-forbidden AGENTS.md README.md docs/README.md --forbid '--repo .'"
+"qa:docs" = [
+  { task = "qa:docs:links" },
+  { task = "qa:docs:index:vision" },
+  { task = "qa:docs:next-action:vision" },
+  { task = "qa:docs:agent-defaults" },
+]
+"qa:northstar:spine" = "effigy docs check-paths README.md AGENTS.md docs/README.md docs/vision/README.md docs/roadmaps/README.md docs/logs/README.md docs/policy/vision-next-task-verbs.txt"
+"qa:northstar:agent-contract" = "effigy docs check-contains AGENTS.md --require 'effigy tasks' --require 'effigy test --plan' --require 'docs/README.md' --require 'docs/vision/README.md' --require 'docs/roadmaps/README.md' --require 'docs/logs/README.md'"
+"qa:northstar:readme" = "effigy docs check-contains README.md --require 'docs/README.md'"
+"qa:northstar:docs-front-door" = "effigy docs check-contains docs/README.md --require 'vision/README.md' --require 'roadmaps/README.md' --require 'logs/README.md'"
+"qa:northstar:headings" = "effigy docs check-headings docs/vision/README.md --require-heading '## Current Vision'"
+"qa:northstar:indexes" = "effigy docs check-index --policy-index vision"
+"qa:northstar:next-action" = "effigy docs check-next-action --policy vision"
+"qa:northstar:agent-defaults" = "effigy docs check-forbidden AGENTS.md README.md docs/README.md --forbid '--repo .'"
+"qa:northstar" = [
+  { task = "qa:northstar:spine" },
+  { task = "qa:northstar:agent-contract" },
+  { task = "qa:northstar:readme" },
+  { task = "qa:northstar:docs-front-door" },
+  { task = "qa:northstar:indexes" },
+  { task = "qa:northstar:next-action" },
+  { task = "qa:northstar:headings" },
+  { task = "qa:northstar:agent-defaults" },
+]
+qa = [{ task = "qa:docs" }, { task = "qa:northstar" }]
+"###,
+    )
+    .expect("write authority manifest");
+    fs::write(
+        authority.join("AGENTS.md"),
+        "# Agents\n\n## Start Here\n\n- `effigy tasks`\n- `effigy test --plan`\n\n## Docs Authority\n\n- `docs/README.md`\n- `docs/vision/README.md`\n- `docs/roadmaps/README.md`\n- `docs/logs/README.md`\n",
+    )
+    .expect("write authority agents");
+    fs::write(
+        authority.join("README.md"),
+        "# Trellis\n\nSee `docs/README.md`.\n",
+    )
+    .expect("write authority readme");
+    fs::write(
+        authority.join("docs/README.md"),
+        "# Docs\n\nStart here:\n- `vision/README.md`\n- `roadmaps/README.md`\n- `logs/README.md`\n",
+    )
+    .expect("write authority docs readme");
+    fs::write(
+        authority.join("docs/roadmaps/README.md"),
+        "# Roadmaps\n\n## Generation model\n\nUse g01.\n",
+    )
+    .expect("write authority roadmaps readme");
+    fs::write(
+        authority.join("docs/logs/README.md"),
+        "# Logs\n\n## Segmentation model\n\nUse YYYY-MM.\n",
+    )
+    .expect("write authority logs readme");
+    fs::write(
+        authority.join("docs/policy/vision-next-task-verbs.txt"),
+        "ship\nreview\nexecute\ndefine\ndocument\nvalidate\n",
+    )
+    .expect("write authority verbs");
+    fs::write(
+        authority.join("docs/vision/README.md"),
+        "# Vision\n\n## Current Vision\n\nKeep the workspace root thin.\n\n## Vision Artifacts\n1. [Authority Blueprint](./blueprint.md)\n",
+    )
+    .expect("write authority vision index");
+    fs::write(
+        authority.join("docs/vision/blueprint.md"),
+        "# Authority Blueprint\n\n## Next Task\n\n- Define the next authority batch.\n",
+    )
+    .expect("write authority blueprint");
+    fs::write(authority.join("docs/vision/history/old.md"), "# Old\n")
+        .expect("write authority history");
+
+    let effigy_bin = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"));
+    let effigy_dir = effigy_bin.parent().expect("effigy binary parent");
+    let path = format!(
+        "{}:{}",
+        effigy_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+
+    for task in ["qa:docs", "qa:northstar", "qa"] {
+        let output = Command::new(effigy_bin)
+            .arg("--json")
+            .arg(task)
+            .arg("--repo")
+            .arg(&root)
+            .env("NO_COLOR", "1")
+            .env("PATH", &path)
+            .output()
+            .expect("run effigy");
+        assert!(output.status.success(), "{task} should pass: {output:?}");
+        let parsed = parse_stdout_json(&output);
+        assert_eq!(parsed["schema"], "effigy.command.v1");
+        assert_eq!(parsed["ok"], true);
+        assert_eq!(parsed["command"]["kind"], "task");
+        assert_eq!(parsed["command"]["name"], task);
+    }
+}
+
+#[test]
 fn cli_docs_check_headings_json_reports_missing_heading() {
     let root = temp_workspace("docs-check-headings");
     fs::create_dir_all(root.join("docs/guides")).expect("mkdir guides");
@@ -656,6 +924,27 @@ fn cli_docs_check_contains_json_reports_missing_text() {
     .expect("parse details");
     assert_eq!(details["schema"], "effigy.docs.contains-check.v1");
     assert_eq!(details["findings"][0]["kind"], "missing-text");
+}
+
+#[test]
+fn cli_docs_check_paths_json_reports_missing_path() {
+    let root = temp_workspace("docs-check-paths");
+    fs::write(root.join("README.md"), "# Fixture\n").expect("write readme");
+
+    let output = run_json_cli_command(
+        &root,
+        &["docs", "check-paths", "README.md", "docs/README.md"],
+    );
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    let details: Value = serde_json::from_str(
+        parsed["error"]["message"]
+            .as_str()
+            .expect("json error payload"),
+    )
+    .expect("parse details");
+    assert_eq!(details["schema"], "effigy.docs.path-check.v1");
+    assert_eq!(details["findings"][0]["kind"], "missing-path");
 }
 
 #[test]

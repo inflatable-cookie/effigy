@@ -157,6 +157,11 @@ pub enum DocsSubcommand {
         /// Headings that must exist in every file.
         required_headings: Vec<String>,
     },
+    /// Validate that one or more required files/directories exist.
+    CheckPaths {
+        /// Files or directories that must exist.
+        paths: Vec<PathBuf>,
+    },
     /// Validate that one or more text/markdown files contain required substrings.
     CheckContains {
         /// Files to scan.

@@ -77,6 +77,7 @@ where
         "check-links" => parse_docs_check_links(args),
         "check-json-examples" => parse_docs_check_json_examples(args),
         "check-headings" => parse_docs_check_headings(args),
+        "check-paths" => parse_docs_check_paths(args),
         "check-contains" => parse_docs_check_contains(args),
         "check-forbidden" => parse_docs_check_forbidden(args),
         "check-index" => parse_docs_check_index(args),
@@ -288,6 +289,32 @@ where
             paths,
             required_text,
         },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_docs_check_paths<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut paths = Vec::new();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => paths.push(PathBuf::from(arg)),
+        }
+    }
+
+    Ok(Command::Docs(DocsArgs {
+        subcommand: DocsSubcommand::CheckPaths { paths },
         repo_override,
         output_json,
     }))

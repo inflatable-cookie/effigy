@@ -46,6 +46,7 @@ contract, it should provide all of the following.
 ### Required files
 
 ```text
+README.md
 AGENTS.md
 effigy.toml
 CHANGELOG.md
@@ -269,6 +270,7 @@ qa = [{ task = "validate" }, { task = "qa:docs" }, { task = "qa:northstar" }]
 
 Use Effigy built-ins plus task composition for:
 
+- required path presence for the repo front door and docs spine
 - docs link validation
 - docs index consistency
 - required headings or metadata
@@ -283,21 +285,106 @@ Example:
 "qa:docs:agent-defaults" = "effigy docs check-forbidden AGENTS.md README.md .github/workflows/ci.yml --forbid '--repo .'"
 ```
 
+### Starter `qa:northstar` bundle
+
+Pair the task bundle with this minimal native `[docs_policy]` config:
+
+```toml
+[docs_policy.indexes.vision]
+file = "docs/vision/README.md"
+dir = "docs/vision"
+section = "Vision Artifacts"
+exclude = ["history/**"]
+
+[docs_policy.next_actions.vision]
+index = "vision"
+heading = "## Next Task"
+allowlist_file = "docs/policy/vision-next-task-verbs.txt"
+```
+
+Starter policy file:
+
+```text
+ship
+review
+execute
+define
+document
+validate
+```
+
+Use this as the default starter shape unless the repo already has a richer
+equivalent:
+
+```toml
+[tasks]
+"qa:northstar:spine" = "effigy docs check-paths README.md AGENTS.md docs/README.md docs/vision/README.md docs/roadmaps/README.md docs/logs/README.md docs/policy/vision-next-task-verbs.txt"
+"qa:northstar:agent-contract" = "effigy docs check-contains AGENTS.md --require 'effigy tasks' --require 'effigy test --plan' --require 'docs/README.md' --require 'docs/vision/README.md' --require 'docs/roadmaps/README.md' --require 'docs/logs/README.md'"
+"qa:northstar:readme" = "effigy docs check-contains README.md --require 'docs/README.md'"
+"qa:northstar:docs-front-door" = "effigy docs check-contains docs/README.md --require 'vision/README.md' --require 'roadmaps/README.md' --require 'logs/README.md'"
+"qa:northstar:indexes" = "effigy docs check-index --policy-index vision"
+"qa:northstar:next-action" = "effigy docs check-next-action --policy vision"
+"qa:northstar:headings" = "effigy docs check-headings docs/vision/README.md --require-heading '## Current Vision'"
+"qa:northstar:agent-defaults" = "effigy docs check-forbidden AGENTS.md README.md --forbid '--repo .'"
+"qa:northstar" = [
+  { task = "qa:northstar:spine" },
+  { task = "qa:northstar:agent-contract" },
+  { task = "qa:northstar:readme" },
+  { task = "qa:northstar:docs-front-door" },
+  { task = "qa:northstar:indexes" },
+  { task = "qa:northstar:next-action" },
+  { task = "qa:northstar:headings" },
+  { task = "qa:northstar:agent-defaults" },
+]
+```
+
+Treat the bundle as layered:
+
+- Effigy-native checks own the generic engines:
+  `check-paths`, `check-index`, `check-next-action`, `check-headings`,
+  `check-forbidden`
+- repo manifests own policy names, file paths, and any repo-specific required
+  headings
+- the `northstar-effigy` skill should scaffold this starter bundle, not invent
+  a different validation vocabulary per repo
+
+### Product boundary
+
+Keep these pieces Effigy-native:
+
+- generic markdown validation engines
+- generic path-presence validation for repo/docs contract surfaces
+- release validation and install verification
+- docs-policy manifest plumbing
+
+Keep these pieces in the skill/templates layer:
+
+- starter file creation
+- repo-shape choice between single repo and workspace container
+- concrete docs skeleton prose
+- repo-specific heading inventories and policy file contents
+
+Current decision:
+- keep bootstrap scaffolding in the `northstar-effigy` skill/templates for now
+- revisit an Effigy-native bootstrap surface only if later adoption shows
+  repeated pain that the current templates cannot cover cleanly
+
 ## 7) Starter File Set
 
 When the repo is missing the contract, the starter set should be created in
 this order:
 
 1. `effigy.toml`
-2. `AGENTS.md`
-3. `docs/README.md`
-4. `docs/vision/README.md`
-5. first vision document
-6. `docs/roadmaps/README.md`
-7. first roadmap generation README and first active milestone
-8. `docs/logs/README.md`
-9. `CHANGELOG.md`
-10. `[release]` config when the repo is actually being prepared for releases
+2. `README.md`
+3. `AGENTS.md`
+4. `docs/README.md`
+5. `docs/vision/README.md`
+6. first vision document
+7. `docs/roadmaps/README.md`
+8. first roadmap generation README and first active milestone
+9. `docs/logs/README.md`
+10. `CHANGELOG.md`
+11. `[release]` config when the repo is actually being prepared for releases
 
 ## 8) Adoption Levels
 
@@ -334,6 +421,7 @@ least Level 3.
 Use this checklist when assessing a candidate consumer repo:
 
 - [ ] Root `effigy.toml` exists
+- [ ] `README.md` links to `docs/README.md`
 - [ ] `AGENTS.md` teaches the Effigy-first loop
 - [ ] `--repo .` is not taught as a default
 - [ ] `docs/README.md` exists and names the docs authority

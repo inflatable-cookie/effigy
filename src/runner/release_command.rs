@@ -4166,10 +4166,12 @@ fn resolve_verify_install_repo_url(
                 "release verify-install `--repo-url` must not be empty".to_owned(),
             ));
         }
-        return Ok(trimmed);
+        return Ok(normalize_verify_install_repo_url(&trimmed));
     }
 
-    git_remote_url(&resolved.resolved_root, "origin").map_err(RunnerError::task_invocation)
+    let detected =
+        git_remote_url(&resolved.resolved_root, "origin").map_err(RunnerError::task_invocation)?;
+    Ok(normalize_verify_install_repo_url(&detected))
 }
 
 fn make_release_temp_dir(purpose: &str) -> Result<PathBuf, RunnerError> {
@@ -4740,6 +4742,31 @@ fn git_remote_url(repo_root: &Path, remote: &str) -> Result<String, String> {
     } else {
         Ok(trimmed.to_owned())
     }
+}
+
+fn normalize_verify_install_repo_url(repo_url: &str) -> String {
+    let trimmed = repo_url.trim();
+    if trimmed.is_empty()
+        || trimmed.contains("://")
+        || trimmed.starts_with('/')
+        || trimmed.starts_with("./")
+        || trimmed.starts_with("../")
+        || trimmed.starts_with("~/")
+    {
+        return trimmed.to_owned();
+    }
+
+    if let Some((host_part, path_part)) = trimmed.split_once(':') {
+        if !path_part.is_empty()
+            && path_part.contains('/')
+            && !path_part.starts_with('/')
+            && (host_part.contains('@') || host_part.contains('.'))
+        {
+            return format!("ssh://{host_part}/{}", path_part.trim_start_matches('/'));
+        }
+    }
+
+    trimmed.to_owned()
 }
 
 fn git_tag_exists(repo_root: &Path, tag: &str) -> Result<bool, String> {
@@ -6293,16 +6320,19 @@ mod tests {
     use super::{
         build_diff_preview, changelog_preview_line, detect_pyproject_version_path,
         detect_version_file_kind, format_release_tag, json_value_at_path, load_release_config,
-        parse_indexed_review_inspection_request, parse_prepare_mutation_inspection_request,
-        remediation_hints_for_blockers, render_execute_review_menu_lines,
-        render_prepare_review_menu_lines, render_prepared_changelog_contents,
-        render_updated_version_contents, replace_json_string_at_path_preserving_layout,
+        normalize_verify_install_repo_url, parse_indexed_review_inspection_request,
+        parse_prepare_mutation_inspection_request, remediation_hints_for_blockers,
+        render_execute_review_menu_lines, render_prepare_review_menu_lines,
+        render_prepared_changelog_contents, render_updated_version_contents,
+        replace_json_string_at_path_preserving_layout, resolve_verify_install_repo_url,
         resolve_version_field_path, review_label, suggested_bump, toml_value_at_path,
         validate_prepare_version_override, ExecuteReviewState, PrepareReviewState,
         ReleaseBlockedStage, ReleaseConfig, ReleaseContext, ReleaseExecutePlan, ReleasePreparePlan,
         ResolvedVersionSource, SyncFileKind, VersionFileKind,
     };
     use crate::changelog::BumpKind;
+    use crate::resolver::ResolvedTarget;
+    use crate::tasks::ResolutionMode;
 
     #[test]
     fn version_file_kind_detection_matches_supported_names() {
@@ -6635,6 +6665,80 @@ mod tests {
         assert!(execute_hints
             .iter()
             .any(|hint| hint.contains("only prepared release files remain")));
+    }
+
+    #[test]
+    fn normalize_verify_install_repo_url_rewrites_scp_style_ssh_remotes() {
+        assert_eq!(
+            normalize_verify_install_repo_url("git@github.com:betterthanclay/effigy.git"),
+            "ssh://git@github.com/betterthanclay/effigy.git"
+        );
+        assert_eq!(
+            normalize_verify_install_repo_url("github.com:betterthanclay/effigy.git"),
+            "ssh://github.com/betterthanclay/effigy.git"
+        );
+    }
+
+    #[test]
+    fn normalize_verify_install_repo_url_keeps_supported_non_ssh_forms() {
+        assert_eq!(
+            normalize_verify_install_repo_url("https://github.com/betterthanclay/effigy.git"),
+            "https://github.com/betterthanclay/effigy.git"
+        );
+        assert_eq!(
+            normalize_verify_install_repo_url("file:///tmp/effigy.git"),
+            "file:///tmp/effigy.git"
+        );
+        assert_eq!(normalize_verify_install_repo_url("../effigy"), "../effigy");
+        assert_eq!(
+            normalize_verify_install_repo_url("localhost:8080"),
+            "localhost:8080"
+        );
+    }
+
+    #[test]
+    fn resolve_verify_install_repo_url_normalizes_origin_ssh_remote() {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-release-verify-install-remote-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("mkdir");
+
+        let init = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["init", "--quiet"])
+            .status()
+            .expect("git init");
+        assert!(init.success(), "git init should succeed");
+
+        let remote = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:betterthanclay/effigy.git",
+            ])
+            .status()
+            .expect("git remote add");
+        assert!(remote.success(), "git remote add should succeed");
+
+        let resolved = ResolvedTarget {
+            resolved_root: root,
+            resolution_mode: ResolutionMode::Explicit,
+            evidence: vec!["test fixture".to_owned()],
+            warnings: Vec::new(),
+        };
+
+        let repo_url =
+            resolve_verify_install_repo_url(&resolved, None).expect("resolve repo remote");
+        assert_eq!(repo_url, "ssh://git@github.com/betterthanclay/effigy.git");
     }
 
     #[test]

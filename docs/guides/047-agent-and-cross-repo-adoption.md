@@ -125,6 +125,23 @@ these are true:
 If these are not yet true, the repo is still in migration and should document
 Effigy as partial coverage rather than the default loop.
 
+## 4a) Northstar + Effigy Boundary
+
+When a repo wants the full Northstar + Effigy operating model, keep the
+boundary explicit:
+
+- use the reusable repo contract in
+  [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
+  as the source of truth for required files, `qa:northstar`, and docs policy
+- let the `northstar-effigy` skill or template bundle scaffold repo shape,
+  starter files, and adoption mode
+- let Effigy own the generic validation and execution surfaces, for example:
+  `check-paths`, `check-index`, `check-next-action`, `check-headings`,
+  `check-forbidden`, JSON mode, and release orchestration
+
+Do not collapse bootstrap logic into Effigy unless repeated adoption pain shows
+that the skill/template layer cannot cover the gap cleanly.
+
 ## 5) Recommended Rollout Waves
 
 ### Wave 1 - Baseline Task Coverage

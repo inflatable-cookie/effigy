@@ -29,8 +29,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01/021-research-phase-2-developer-experience.md` is the second research roadmap (planned).
 - `g01/022-research-phase-3-scale-and-integration.md` is the third research roadmap (planned).
 - `g01/023-builtin-test-suite-lifecycle-and-env.md` is the next implementation roadmap (planned).
-- `g01/024-release-pipeline-validation-and-consumer-ci.md` validates the release pipeline and delivers consumer CI integration (planned).
-- `g01/029-northstar-effigy-consumer-adoption-kit.md` is the next consumer adoption roadmap (planned).
+- `g01/024-release-pipeline-validation-and-consumer-ci.md` validates the release pipeline and delivers consumer CI integration (complete).
+- `g01/029-northstar-effigy-consumer-adoption-kit.md` is the active consumer-adoption and product-boundary roadmap.
 - `g01/028-script-surface-reduction-and-builtins.md` reduces repo shell logic into Effigy-native command surfaces and is complete.
 
 ## Research Program
@@ -53,10 +53,10 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Roadmap `g01.029` is now the next execution candidate: package the Effigy
-repo's Northstar + Effigy doctrine into a reusable consumer contract, skill
-bundle, scaffolding kit, and validation bundle, then prove it on real consumer
-repos.
+Roadmap `g01.029` is now in consolidation mode: keep the released validation
+bundle stable, keep bootstrap/scaffolding in the `northstar-effigy` skill, and
+only reopen an Effigy-side `init` or repo-contract surface if future adoption
+shows repeated gaps the skill cannot cover cleanly.
 
 
 ## Historical language boundary

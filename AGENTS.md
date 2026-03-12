@@ -1,6 +1,6 @@
 # Agent Instructions for Effigy
 
-Effigy is a Rust-based unified task runner for monorepos (v0.2.0).
+Effigy is a Rust-based unified task runner for monorepos.
 
 ## Build & Test
 
@@ -74,6 +74,7 @@ Canonical reference:
 - CI & release: [`docs/guides/049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md)
 - Release orchestration: [`docs/guides/051-release-orchestration.md`](./docs/guides/051-release-orchestration.md)
 - Agent adoption: [`docs/guides/047-agent-and-cross-repo-adoption.md`](./docs/guides/047-agent-and-cross-repo-adoption.md)
+- Northstar + Effigy repo contract: [`docs/guides/056-northstar-effigy-consumer-repo-contract.md`](./docs/guides/056-northstar-effigy-consumer-repo-contract.md)
 - Env schema: [`docs/guides/050-env-schema-integration.md`](./docs/guides/050-env-schema-integration.md)
 
 ## Terminology

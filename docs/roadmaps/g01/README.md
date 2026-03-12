@@ -20,7 +20,7 @@ Historical delivered milestones:
 - `014-attention-marker-scan-and-doctor-integration.md`
 - `015-effigy-self-hosting-and-agent-first-adoption.md`
 
-Current planned milestone:
+Recently completed milestones:
 
 - `016-duplicate-blocks-scan-and-doctor-integration.md` (complete)
 - `017-comment-ratio-scan-and-doctor-integration.md` (complete)
@@ -38,12 +38,12 @@ Implementation roadmaps (planned):
 Release and distribution (complete):
 - `024-release-pipeline-validation-and-consumer-ci.md` (complete)
 
-Current planned milestones:
+Current active/planned milestones:
 - `025-varlock-env-spec-integration.md`
 - `026-changelog-library-and-northstar-profile.md`
 - `027-release-orchestration-system.md`
 - `028-script-surface-reduction-and-builtins.md` (complete)
-- `029-northstar-effigy-consumer-adoption-kit.md`
+- `029-northstar-effigy-consumer-adoption-kit.md` (active; rollout proved, product boundary being consolidated)
 
 Rules:
 
@@ -52,9 +52,11 @@ Rules:
 
 ## Next Task
 
-Roadmap `g01.029` is now the next consumer-facing milestone: define the
-reusable Northstar + Effigy consumer repo contract, bundle it into an agent
-skill and scaffolding kit, and prove it on real consumer repositories.
+Roadmap `g01.029` now shifts from repo migration to productization: keep the
+starter `qa:northstar` bundle and `[docs_policy]` contract stable, keep
+bootstrap/scaffolding in the `northstar-effigy` skill, and only promote more
+repo-shape logic into Effigy if future consumer adoption shows a real repeated
+gap.
 
 
 ## Historical language boundary
