@@ -2,6 +2,26 @@
 
 Use this guide in a fresh clone to reach a reliable working state quickly.
 
+Use the installed `effigy` path when it is already available. Use `effigy-dev`
+or `cargo run --bin effigy -- ...` only when validating the current checkout
+before the local install is refreshed.
+
+## Start Here
+
+The shortest useful onboarding pass is:
+
+1. confirm the toolchain and local command path
+2. ask the repo what tasks exist
+3. run health and test planning in non-destructive mode
+4. run the docs QA bundle before the first PR
+
+If `effigy` is not yet available on `PATH`, bootstrap first:
+
+```sh
+cargo run --bin effigy -- bootstrap:local --repo .
+type -a effigy effigy-dev
+```
+
 ## Prerequisites
 
 - Rust toolchain (`cargo`, `rustc`)
@@ -18,20 +38,27 @@ jq --version
 ## Minute 0-2: Build + General Help
 
 ```sh
-cargo run --bin effigy -- bootstrap:local --repo .
-type -a effigy effigy-dev
-effigy-dev --help
+effigy --help
+# dev-checkout fallback:
+# effigy-dev --help
 ```
 
 Expected outcome:
-- stable `effigy` and dev `effigy-dev` commands are available from `~/.local/bin`
-- dev help output renders with command list (`tasks`, `doctor`, `test`, `watch`, etc.)
+- the active command path is clear
+- help output renders with the expected built-ins (`tasks`, `doctor`, `test`,
+  `watch`, and others)
 
 ## Minute 2-5: Task Discovery + Routing Probe
 
 ```sh
+effigy tasks --repo .
+effigy tasks --repo . --task qa
+```
+
+Dev-checkout fallback:
+
+```sh
 effigy-dev tasks --repo .
-effigy-dev tasks --repo . --task qa
 ```
 
 Expected outcome:
@@ -41,8 +68,8 @@ Expected outcome:
 ## Minute 5-8: Health + Explain
 
 ```sh
-effigy-dev doctor --repo . --verbose
-effigy-dev doctor --repo . test -- --help
+effigy doctor --repo . --verbose
+effigy doctor --repo . test -- --help
 ```
 
 Expected outcome:
@@ -52,7 +79,7 @@ Expected outcome:
 ## Minute 8-11: Test Planning (Non-Destructive)
 
 ```sh
-effigy-dev test --plan --repo .
+effigy test --plan --repo .
 ```
 
 Expected outcome:
@@ -63,16 +90,16 @@ Expected outcome:
 ## Minute 11-13: JSON Mode Sanity
 
 ```sh
-effigy-dev --json tasks --repo .
-effigy-dev --json doctor --repo .
-effigy-dev --json test --plan --repo .
+effigy --json tasks --repo .
+effigy --json doctor --repo .
+effigy --json test --plan --repo .
 ```
 
 Optional parse checks:
 
 ```sh
-effigy-dev --json tasks --repo . | jq .schema
-effigy-dev --json doctor --repo . | jq .schema
+effigy --json tasks --repo . | jq .schema
+effigy --json doctor --repo . | jq .schema
 ```
 
 Expected outcome:
@@ -81,7 +108,7 @@ Expected outcome:
 ## Minute 13-15: Docs QA Gate
 
 ```sh
-effigy-dev qa:docs --repo .
+effigy qa:docs --repo .
 ```
 
 Expected outcome:
@@ -101,10 +128,10 @@ Expected outcome:
 When returning later, this minimal bundle is usually enough:
 
 ```sh
-effigy-dev tasks --repo .
-effigy-dev doctor --repo . --verbose
-effigy-dev test --plan --repo .
-effigy-dev qa:docs --repo .
+effigy tasks --repo .
+effigy doctor --repo . --verbose
+effigy test --plan --repo .
+effigy qa:docs --repo .
 ```
 
 ## Expected Outcome

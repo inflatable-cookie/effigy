@@ -8,6 +8,36 @@ This matrix is a quick operator reference for Effigy commands, key flags, JSON p
 - Primary tags: `ROUTE`, `CONTRACT`, `OPERATE`
 - Target movement: command lookup stays fast while linking every surface to stable schemas and deep-dive guidance.
 
+## Start Here
+
+Use this page when you already know roughly what you want to do and need the
+right command shape fast.
+
+If you do not know where to start yet, use these first:
+
+```sh
+effigy tasks
+effigy tasks --resolve test
+effigy doctor --verbose
+effigy test --plan
+effigy --json tasks
+```
+
+For narrative workflow guidance instead of lookup, start with:
+
+- [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
+- [`055-everyday-workflows.md`](./055-everyday-workflows.md)
+
+## Pick The Right Command Quickly
+
+- Need to discover tasks or inspect routing: use `effigy tasks`.
+- Need health checks or routing diagnosis for one selector: use `effigy doctor`.
+- Need tests, watch mode, init, or migrate: use `effigy test`, `watch`,
+  `init`, or `migrate`.
+- Need machine-readable output: add `--json`.
+- Need repo-health scanners: use `effigy scan`.
+- Need release workflows: use `effigy release`.
+
 ## 1) Primary Commands
 
 | Command | Purpose | Key Flags | JSON Schema(s) | Deep Dive |
@@ -221,7 +251,22 @@ effigy unlock --all
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
+- [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
 - [`051-release-orchestration.md`](./051-release-orchestration.md)
 - [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
 - [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)
+
+## Expected Outcome
+
+After this guide, you should be able to:
+
+- choose the right Effigy command without scanning multiple docs first
+- confirm the key flags and JSON schema for a command quickly
+- jump from the reference surface to the deeper workflow page only when needed
+
+## Next Step
+
+After using this matrix to find the right command, move to the matching workflow
+guide and simplify the corresponding repo path so people can rely on that
+command directly instead of a local wrapper or tribal workaround.

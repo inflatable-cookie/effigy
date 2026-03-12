@@ -4,6 +4,27 @@ Use this guide for quick manifest bootstraps you can paste and adapt.
 
 For CI workflow snippets, use [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md).
 
+## Start Here
+
+Use this page when you want a working starting point faster than you want a
+full explanation.
+
+Pick the snippet by the repo shape in front of you:
+
+- small single-language repo: start with `Single Rust Repo` or `JS App`
+- multi-catalog workspace: use `Mixed Monorepo Root + Child Catalogs`
+- local dev stack: use `Managed TUI Dev Stack`
+- test ownership and env clarity: use `Built-in Test Suites` and `Cargo
+  Isolation`
+- repo-health checks: use `Repository Scanner Config`
+
+Then verify the pasted shape with:
+
+```sh
+effigy tasks
+effigy test --plan
+```
+
 ## 1) Single Rust Repo (`effigy.toml`)
 
 ```toml
@@ -262,6 +283,18 @@ Keep `[scan.stale_suppressions].doctor = false` unless you want suppression find
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
 
+## Expected Outcome
+
+After this guide, you should be able to:
+
+- grab a working baseline for the repo shape you have
+- adapt it without guessing the basic command surface
+- move from snippet to the deeper cookbook only when you need more nuance
+
 ## Next Step
 
-After pasting a snippet, validate routing and health with the checklist in [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md).
+After pasting a snippet, move to
+[`022-manifest-cookbook.md`](./022-manifest-cookbook.md) to turn the copied
+baseline into an intentional repo-specific contract, then validate the result
+with the checks in
+[`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md).

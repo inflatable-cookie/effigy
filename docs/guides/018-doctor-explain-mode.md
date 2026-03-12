@@ -1,12 +1,25 @@
 # Doctor Explain Mode
 
-Use explain mode to diagnose task resolution decisions without running the task itself.
+Use explain mode when you need Effigy to show its routing decision before a task
+runs.
+
+This guide is for the moment when a selector feels surprising: wrong catalog,
+ambiguity, or deferral that does not match what you expected.
 
 
 ## Vision Alignment
 
 - Primary tags: `ROUTE`, `OPERATE`
 - Target movement: selector reasoning is explicit for operators and automation before task execution.
+
+## When To Use This
+
+Reach for `effigy doctor <selector> -- <args>` when:
+
+- `effigy <task>` resolves somewhere you did not expect
+- a selector is ambiguous and you need the candidate list
+- deferral or fallback behavior needs explaining
+- you want routing evidence without starting the task itself
 
 ## Command Shape
 
@@ -21,6 +34,9 @@ Examples:
 effigy doctor --repo /path/to/workspace catalog-a/build -- --watch
 effigy --json doctor --repo /path/to/workspace catalog-a/build -- --watch
 ```
+
+Use text output for human diagnosis. Use JSON when CI, tooling, or tests need
+stable reasoning fields.
 
 ## Scenario 1: Successful Selection
 
@@ -118,6 +134,15 @@ JSON output excerpt:
 - `ambiguity_candidates`: populated when resolution fails due to ambiguity.
 - `deferral`: whether fallback deferral was considered and selected.
 - `reasoning`: explicit narrative for selection and deferral outcomes.
+
+## Expected Outcome
+
+After this guide, you should be able to:
+
+- tell whether Effigy selected a catalog directly, failed with ambiguity, or
+  fell back to deferral
+- inspect the evidence behind a routing outcome before running the task
+- choose whether text or JSON explain output is the right fit for the next step
 
 ## Related Guides
 

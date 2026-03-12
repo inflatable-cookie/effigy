@@ -2,6 +2,19 @@
 
 Use this guide as the canonical writing standard for Effigy documentation.
 
+Use it when you are editing docs and want the shortest possible answer to
+"what style should this page follow?"
+
+## Start Here
+
+If you only need the essentials, keep these four rules in mind:
+
+1. explain when to use the page before the details
+2. prefer the native `effigy` command path in examples
+3. use `effigy --json <command>` for machine-facing guidance
+4. end practical guides with `Expected Outcome`, `Related Guides`, and
+   `Next Step`
+
 ## 1) Writing Tone
 
 Required tone:
@@ -57,7 +70,7 @@ Schema naming:
 Entry-point strategy:
 - `README.md`: newcomer-critical links only
 - `docs/README.md`: complete docs index
-- `docs/guides/README.md`: persona/task navigation
+- `docs/guides/README.md`: practical goal/task navigation
 
 Cross-linking:
 - each new guide should be linked from at least one index page

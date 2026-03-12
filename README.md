@@ -1,33 +1,46 @@
-# effigy
+# Effigy
 
-Effigy is a unified task runner for monorepos and nested workspaces.
+Effigy gives a repo one way to ask for work.
 
-It gives you one command surface for:
-- project tasks from `effigy.toml`,
-- built-in workflow commands (`tasks`, `doctor`, `test`, `watch`, `init`, `migrate`, `config`, `unlock`, `cache`, `completion`),
-- deterministic task resolution across catalogs.
+Instead of remembering whether a task lives in `package.json`, Cargo, a shell
+script, or a nested workspace, you use one CLI for task routing, built-in
+workflows, and automation-safe output.
+
+The goal is simple: common repo work should feel direct. When a workflow still
+needs too much ceremony, the answer should usually be to improve Effigy or the
+manifest, not to teach people more wrapper scripts.
+
+## What Effigy Puts Up Front
+
+- See what a repo can do with `effigy tasks`.
+- Run local or nested tasks with `effigy <task>` or `effigy <catalog>/<task>`.
+- Standardize everyday workflows with built-ins such as `effigy doctor`,
+  `effigy test`, `effigy watch`, `effigy init`, and `effigy migrate`.
+- Move CI and agent automation onto stable JSON with `effigy --json <command>`.
+- Replace scattered release and validation scripts with built-in command
+  surfaces as adoption grows.
 
 ## Install
 
-**Homebrew** (macOS):
+Homebrew (macOS):
 
 ```bash
 brew install inflatable-cookie/tap/effigy
 ```
 
-**Prebuilt binary** (macOS and Linux):
+Prebuilt binary (macOS and Linux):
 
 ```bash
 curl -fsSL https://github.com/inflatable-cookie/effigy/releases/latest/download/effigy-$(uname -m | sed 's/arm64/aarch64/')-$(uname -s | tr A-Z a-z | sed 's/darwin/apple-darwin/;s/linux/unknown-linux-gnu/') -o /usr/local/bin/effigy && chmod +x /usr/local/bin/effigy
 ```
 
-**From source** (requires Rust):
+From source:
 
 ```bash
-cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.2.0
+cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.2.5
 ```
 
-## Quick Start
+## Start In 5 Minutes
 
 1. Scaffold a starter manifest:
 
@@ -35,7 +48,7 @@ cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.2.0
 effigy init
 ```
 
-2. Add tasks in `effigy.toml`:
+2. Add a few obvious tasks:
 
 ```toml
 [catalog]
@@ -47,199 +60,139 @@ test = "bun x vitest run"
 "db:reset" = "./scripts/reset-db.sh"
 ```
 
-3. Run tasks:
+3. Ask the repo what exists, then run it:
 
 ```bash
-effigy dev
-effigy app/db:reset
 effigy tasks
+effigy dev
+effigy tasks --resolve test
 ```
 
-## Most Common Commands
+If you want the guided version of that flow, start with
+[`021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md).
+
+## Main Workflows
+
+### Find and run work
+
+Use Effigy when you want one entrypoint for repo tasks instead of hunting
+through package managers and subdirectories.
 
 ```bash
 effigy tasks
 effigy tasks --resolve test
+effigy api/build
+```
+
+Details:
+- [`055-everyday-workflows.md`](./docs/guides/055-everyday-workflows.md)
+- [`016-task-routing-precedence.md`](./docs/guides/016-task-routing-precedence.md)
+- [`022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
+
+### Keep the repo healthy
+
+Use built-ins when you want consistent health, test, and watch flows instead of
+custom shell glue.
+
+```bash
 effigy doctor --verbose
 effigy test --plan
 effigy watch --owner effigy --once test
-effigy --json tasks
-effigy unlock --all
-effigy cache inspect
-effigy cache invalidate build
-effigy completion zsh > ~/.zfunc/_effigy
-effigy completion candidates --prefix app
+effigy scan god-files
 ```
 
-## Contributor Commands
+Details:
+- [`018-doctor-explain-mode.md`](./docs/guides/018-doctor-explain-mode.md)
+- [`019-watch-init-migrate-foundation.md`](./docs/guides/019-watch-init-migrate-foundation.md)
+- [`048-built-in-test-suite-lifecycle-and-env.md`](./docs/guides/048-built-in-test-suite-lifecycle-and-env.md)
+- [`023-troubleshooting-and-failure-recipes.md`](./docs/guides/023-troubleshooting-and-failure-recipes.md)
+
+### Shape the manifest instead of more scripts
+
+Use `effigy.toml` to make common setup, env, test, and task routing explicit.
 
 ```bash
-effigy tasks --repo .
-effigy test --plan --repo .
-effigy qa --repo .
-effigy qa:docs --repo .
-effigy qa:json --repo .
-effigy qa:json:ci --repo .
-effigy release gates --repo . # release-gate pass for the current repo
-effigy build:release --repo .
-effigy install:local --repo .
-effigy link:local --repo .
-effigy bootstrap:local --repo .
+effigy init
+effigy migrate --from package.json
+effigy config --schema --minimal
 ```
 
-This repo now self-hosts a root `effigy.toml`. Keep built-in `effigy test` as
-the canonical Rust test entrypoint; the aggregate QA tasks call it via task
-references so `effigy test --plan` stays available.
-If `effigy` is not yet on `PATH`, bootstrap with `cargo run --bin effigy -- ...`.
+Details:
+- [`022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
+- [`050-env-schema-integration.md`](./docs/guides/050-env-schema-integration.md)
+- [`028-migration-quick-paths.md`](./docs/guides/028-migration-quick-paths.md)
 
-Durable local command channels:
+### Automate safely
+
+Use JSON mode and contract docs when Effigy is feeding CI, agents, or other
+tools.
+
+```bash
+effigy --json tasks
+effigy --json doctor
+effigy --json test --plan
+```
+
+Details:
+- [`017-json-output-contracts.md`](./docs/guides/017-json-output-contracts.md)
+- [`024-ci-and-automation-recipes.md`](./docs/guides/024-ci-and-automation-recipes.md)
+- [`026-json-payload-examples.md`](./docs/guides/026-json-payload-examples.md)
+
+### Release from built-ins
+
+Use the release surface when you want preview-first, repeatable release work
+without re-inventing the workflow in shell.
+
+```bash
+effigy release status --repo . --check-gates
+effigy release prepare --repo . --plan
+effigy release execute --repo . --plan
+```
+
+Details:
+- [`051-release-orchestration.md`](./docs/guides/051-release-orchestration.md)
+- [`052-changelog-workflows-and-northstar-profile.md`](./docs/guides/052-changelog-workflows-and-northstar-profile.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md)
+
+## Documentation Paths
+
+- New to Effigy:
+  [`021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md)
+- Want the most common day-to-day flows:
+  [`055-everyday-workflows.md`](./docs/guides/055-everyday-workflows.md)
+- Writing or cleaning up `effigy.toml`:
+  [`022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
+- Need the full command surface:
+  [`025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
+- Need the full docs map:
+  [`docs/README.md`](./docs/README.md)
+- Need practical guide navigation:
+  [`docs/guides/README.md`](./docs/guides/README.md)
+
+## Working On Effigy Itself
+
+This repo self-hosts a root `effigy.toml`, so product development uses Effigy
+for its own QA and release flows.
+
+```bash
+effigy test --plan --repo .
+effigy qa --repo .
+effigy release gates --repo .
+```
+
+If `effigy` is not yet on `PATH`, bootstrap from the checkout:
 
 ```bash
 cargo run --bin effigy -- bootstrap:local --repo .
-type -a effigy effigy-dev
 ```
 
-This installs the stable binary to `./.local-install/bin/effigy`, then links:
-- `~/.local/bin/effigy` -> stable installed binary
-- `~/.local/bin/effigy-dev` -> repo-managed dev wrapper
-
-If you still have `alias effigy=...` in your shell rc, remove it after the
-symlink install so the shell resolves the real command from `~/.local/bin`.
-
-Compatibility fallbacks (use when Effigy is not yet the active entrypoint for a
-caller):
+Compatibility fallbacks remain available for callers that still need them:
 
 ```bash
 cargo qa
 cargo qa-docs
 cargo qa-json
-cargo qa-json-ci
 cargo qa-release
-cargo prepush-ci
-```
-
-Built-in release workflow (preferred for operator-driven runs):
-
-```bash
-effigy release simulate --repo .
-effigy release status --repo . --check-gates
-effigy release prepare --repo . --plan
-effigy release prepare --repo . --yes --check-gates
-effigy release execute --repo . --plan
-effigy release execute --repo . --yes
-effigy release verify-install --repo . --tag v0.__.__
-```
-
-Compatibility wrappers (keep only when external tooling requires script entrypoints):
-
-```bash
-./scripts/check-release-gates.sh
-./scripts/check-release-install-from-tag.sh --tag v0.__.__
-```
-
-For routine QA and docs/contracts/distribution validation, call native
-`effigy qa:*`, `effigy docs ...`, `effigy contracts ...`, and
-`effigy distribution ...` commands directly. The remaining release wrappers are
-backup channels only.
-
-## Task Catalog Basics
-
-Manifest name: `effigy.toml` (discovered recursively).
-
-Example:
-
-```toml
-[catalog]
-alias = "catalog-a"
-
-[tasks."db:reset"]
-run = "cargo run -p app-db --bin reset_dev_db {args}"
-
-[env]
-CARGO_HOME = "{project}/.effigy/cargo/home"
-CARGO_TARGET_DIR = "{project}/.effigy/cargo/target"
-cargo = [{ CARGO_HOME = "{project}/.effigy/cargo/home" }, { CARGO_TARGET_DIR = "{project}/.effigy/cargo/target" }]
-
-[tasks.api]
-run = [{ env = "cargo" }, { env = { RUST_LOG = "info" } }, { run = "cargo run -p api {args}" }]
-# or pull a named env value from another catalog root:
-# run = [{ env = "../shared/CARGO_HOME" }, { run = "cargo run -p api" }]
-
-[tasks.test]
-env_file = [".env.local", ".env.test"]
-run = [{ env = "DATABASE_URL" }, { run = "cargo test -p api" }]
-# run arrays can switch dotenv source mid-chain:
-# run = [{ env_file = ".env.test" }, { env = "DATABASE_URL" }, { run = "cargo test -p api" }]
-
-[tasks.build.cache]
-enabled = true
-inputs = ["src/**/*.rs", "Cargo.toml"]
-outputs = ["target/app"]
-env = ["RUSTFLAGS", "NODE_ENV"]
-```
-
-Interpolation tokens:
-- `{project}`: resolved catalog root path (alias of `{repo}`)
-- `{repo}`: resolved catalog root (shell-quoted)
-- `{args}`: passthrough args (shell-quoted)
-- `{request}`: original unresolved selector (deferral only)
-- in `tasks.<name>.env` values and `[env]` entries, `{project}`/`{repo}` resolve to the catalog root path
-- run-array `env = "<name>"` resolves in order: top-level `[env]`, process env, then `<catalog-root>/.env`
-- run-array `env = "<catalog-path>/<name>"` resolves `<name>` from that catalog's `[env]`, then that catalog's `.env` (path is relative to current catalog unless absolute)
-- run-array `env`/`env_file` directives may be standalone entries (no `run`/`task`) to mutate env state for later steps
-- set `tasks.<name>.env_file = ".env.test"` (or `[".env.local", ".env.test"]`) to change dotenv fallback for that task; run arrays can also switch with `{ env_file = ".env.local" }` or `{ env_file = [".env.local", ".env.test"] }`
-- dotenv parsing accepts `KEY=value` and `export KEY=value` lines; matching single/double quotes around values are stripped
-- built-in `test` auto-applies manifest `[env]` `CARGO_*` entries to cargo-based suites (`cargo-nextest` / `cargo-test`), so you do not need a custom `tasks.test` wrapper for Cargo home/target isolation
-- tune built-in cargo-env command matching with `[test].cargo_env_match` (`executable-only`, `prefix-aware` default, or `shell-aware`)
-
-## Resolution Model
-
-Root selection:
-1. explicit `--repo <PATH>` when provided,
-2. otherwise nearest marker root from cwd,
-3. optional promotion to parent workspace when membership signals indicate it.
-
-Task selection:
-1. explicit prefix (`catalog/task`) selects one catalog,
-2. unprefixed selector chooses nearest in-scope catalog,
-3. otherwise shallowest from workspace root,
-4. ties fail as explicit ambiguity.
-
-Detailed routing guide: [`docs/guides/016-task-routing-precedence.md`](./docs/guides/016-task-routing-precedence.md).
-
-## JSON Output
-
-Canonical JSON mode:
-
-```bash
-effigy --json <command>
-```
-
-Top-level envelope schema: `effigy.command.v1`.
-
-See [`docs/guides/017-json-output-contracts.md`](./docs/guides/017-json-output-contracts.md).
-
-## Terminology Canon
-
-Use the canonical terms across docs and PRs:
-- `selector`: a task request string such as `test` or `api/test`
-- `routing`: how a selector resolves to a catalog and task
-- `deferral`: fallback execution when no selector matches local tasks
-
-See [`docs/guides/034-task-and-command-glossary.md`](./docs/guides/034-task-and-command-glossary.md).
-
-## Documentation Entry Points
-
-- Docs system index: [`docs/README.md`](./docs/README.md)
-- Guides landing (persona/task navigation): [`docs/guides/README.md`](./docs/guides/README.md)
-- Contributor onboarding (15 min): [`docs/guides/030-contributor-onboarding-15-minutes.md`](./docs/guides/030-contributor-onboarding-15-minutes.md)
-- Documentation contribution playbook: [`docs/guides/037-documentation-contribution-playbook.md`](./docs/guides/037-documentation-contribution-playbook.md)
-
-## Development
-
-```bash
-effigy test --plan --repo .
-effigy qa --repo .
 ```
 
 ## Repository Layout
@@ -251,7 +204,9 @@ effigy/
 │   ├── architecture/
 │   ├── contracts/
 │   ├── guides/
+│   ├── logs/
+│   ├── research/
 │   ├── roadmaps/
-│   └── logs/
+│   └── vision/
 └── Cargo.toml
 ```

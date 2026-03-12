@@ -1,138 +1,117 @@
 # Effigy Docs
 
-Effigy docs are organized by intent:
+Use this page when you want the fastest route to the right document.
 
-- `architecture/`: stable design and module boundaries.
-- `contracts/`: machine-readable schema contracts and indexes.
-- `guides/`: operator and contributor runbooks.
-- `roadmaps/`: generation-sharded implementation plans and backlog.
-- `logs/`: dated validation artifacts and release notes, segmented by month.
-- `vision/`: long-horizon direction and target envelopes.
-- `research/`: comparative tool research, competitive analysis, and translation memos.
+Effigy has a wide surface area, but most readers only need a small part of it
+at a time: how to get started, how to run common workflows, how to shape the
+manifest, or how to automate safely. Start with the goal below, then follow the
+deeper links only when you need them.
 
-## Recommended Reading Paths
+## Start Here
 
-New to Effigy:
-1. [`../README.md`](../README.md)
-2. [`guides/010-path-installation-and-release.md`](./guides/010-path-installation-and-release.md)
-3. [`guides/030-contributor-onboarding-15-minutes.md`](./guides/030-contributor-onboarding-15-minutes.md)
-4. [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md)
-5. [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md)
-6. [`guides/025-command-reference-matrix.md`](./guides/025-command-reference-matrix.md)
+1. Read [`../README.md`](../README.md) for the product promise and the shortest
+   first-run path.
+2. Read
+   [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md)
+   for the first useful tasks.
+3. Read
+   [`guides/055-everyday-workflows.md`](./guides/055-everyday-workflows.md)
+   for the most common day-to-day flows.
+4. Read [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md)
+   when you are ready to shape `effigy.toml`.
 
-Adopting Effigy for AI agents and multi-repo rollout:
-1. [`guides/047-agent-and-cross-repo-adoption.md`](./guides/047-agent-and-cross-repo-adoption.md)
-2. [`guides/024-ci-and-automation-recipes.md`](./guides/024-ci-and-automation-recipes.md)
-3. [`guides/041-distribution-ci-pinning-and-wrapper-migration.md`](./guides/041-distribution-ci-pinning-and-wrapper-migration.md)
+## By Goal
 
-Operating and debugging day-to-day:
-1. [`guides/025-command-reference-matrix.md`](./guides/025-command-reference-matrix.md)
-2. [`guides/023-troubleshooting-and-failure-recipes.md`](./guides/023-troubleshooting-and-failure-recipes.md)
-3. [`guides/019-watch-init-migrate-foundation.md`](./guides/019-watch-init-migrate-foundation.md)
-4. [`guides/README.md#env-resolution-cheatsheet`](./guides/README.md#env-resolution-cheatsheet)
+### I want to run work without hunting through the repo
 
-Automating and validating CI:
-1. [`guides/017-json-output-contracts.md`](./guides/017-json-output-contracts.md)
-2. [`guides/024-ci-and-automation-recipes.md`](./guides/024-ci-and-automation-recipes.md)
-3. [`guides/026-json-payload-examples.md`](./guides/026-json-payload-examples.md)
-4. [`guides/029-docs-qa-checklist-and-validation.md`](./guides/029-docs-qa-checklist-and-validation.md)
-5. [`contracts/README.md`](./contracts/README.md)
+- Start with
+  [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md)
+- Then read
+  [`guides/055-everyday-workflows.md`](./guides/055-everyday-workflows.md)
+- Use
+  [`guides/016-task-routing-precedence.md`](./guides/016-task-routing-precedence.md)
+  when routing needs explaining
 
-Maintaining docs process:
-1. [`guides/037-documentation-contribution-playbook.md`](./guides/037-documentation-contribution-playbook.md)
-2. [`guides/039-docs-drift-monitoring.md`](./guides/039-docs-drift-monitoring.md)
-3. [`guides/040-docs-archive-and-deprecation-policy.md`](./guides/040-docs-archive-and-deprecation-policy.md)
+### I want tests, health checks, and watch mode to feel consistent
 
-## Guides Navigation
+- Start with
+  [`guides/055-everyday-workflows.md`](./guides/055-everyday-workflows.md)
+- Then use
+  [`guides/018-doctor-explain-mode.md`](./guides/018-doctor-explain-mode.md),
+  [`guides/019-watch-init-migrate-foundation.md`](./guides/019-watch-init-migrate-foundation.md),
+  and
+  [`guides/048-built-in-test-suite-lifecycle-and-env.md`](./guides/048-built-in-test-suite-lifecycle-and-env.md)
 
-Primary navigation page:
-- [`guides/README.md`](./guides/README.md)
-- Env reference shortcut: [`guides/README.md#env-resolution-cheatsheet`](./guides/README.md#env-resolution-cheatsheet)
+### I want to make the manifest do more of the work
 
-Guide structure standard:
-- practical guides should end with `Expected Outcome`, `Related Guides`, and `Next Step`.
-- docs process guides should keep explicit validation commands and cross-links.
+- Start with
+  [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md)
+- Then use
+  [`guides/050-env-schema-integration.md`](./guides/050-env-schema-integration.md),
+  [`guides/028-migration-quick-paths.md`](./guides/028-migration-quick-paths.md),
+  and
+  [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md)
 
-## Guide Catalog
+### I want automation, CI, or agents to consume Effigy safely
 
-Core runtime guides (`010`-`020`):
-- [`guides/010-path-installation-and-release.md`](./guides/010-path-installation-and-release.md)
-- [`guides/011-output-widgets-and-colour-modes.md`](./guides/011-output-widgets-and-colour-modes.md)
-- [`guides/012-dev-process-manager-tui.md`](./guides/012-dev-process-manager-tui.md)
-- [`guides/013-testing-orchestration.md`](./guides/013-testing-orchestration.md)
-- [`guides/014-release-checklist-template.md`](./guides/014-release-checklist-template.md)
-- [`guides/015-deferral-fallback-migration.md`](./guides/015-deferral-fallback-migration.md)
-- [`guides/016-task-routing-precedence.md`](./guides/016-task-routing-precedence.md)
-- [`guides/017-json-output-contracts.md`](./guides/017-json-output-contracts.md)
-- [`guides/018-doctor-explain-mode.md`](./guides/018-doctor-explain-mode.md)
-- [`guides/019-watch-init-migrate-foundation.md`](./guides/019-watch-init-migrate-foundation.md)
-- [`guides/020-dag-lock-policy-baseline.md`](./guides/020-dag-lock-policy-baseline.md)
+- Start with
+  [`guides/017-json-output-contracts.md`](./guides/017-json-output-contracts.md)
+- Then use
+  [`guides/024-ci-and-automation-recipes.md`](./guides/024-ci-and-automation-recipes.md),
+  [`guides/026-json-payload-examples.md`](./guides/026-json-payload-examples.md),
+  and [`contracts/README.md`](./contracts/README.md)
 
-Workflow and examples (`021`-`028`):
-- [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md)
-- [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md)
-- [`guides/025-command-reference-matrix.md`](./guides/025-command-reference-matrix.md)
-- [`guides/023-troubleshooting-and-failure-recipes.md`](./guides/023-troubleshooting-and-failure-recipes.md)
-- [`guides/024-ci-and-automation-recipes.md`](./guides/024-ci-and-automation-recipes.md)
-- [`guides/026-json-payload-examples.md`](./guides/026-json-payload-examples.md)
-- [`guides/027-copy-paste-snippets.md`](./guides/027-copy-paste-snippets.md)
-- [`guides/028-migration-quick-paths.md`](./guides/028-migration-quick-paths.md)
+### I want release and distribution flows on built-ins
 
-Docs operations (`029`-`040`):
-- [`guides/029-docs-qa-checklist-and-validation.md`](./guides/029-docs-qa-checklist-and-validation.md)
-- [`guides/030-contributor-onboarding-15-minutes.md`](./guides/030-contributor-onboarding-15-minutes.md)
-- [`guides/031-docs-navigation-cleanup.md`](./guides/031-docs-navigation-cleanup.md)
-- [`guides/032-docs-consistency-sweep-and-changelog.md`](./guides/032-docs-consistency-sweep-and-changelog.md)
-- [`guides/033-style-and-terminology-guide.md`](./guides/033-style-and-terminology-guide.md)
-- [`guides/034-task-and-command-glossary.md`](./guides/034-task-and-command-glossary.md)
-- [`guides/035-guide-ownership-and-update-triggers.md`](./guides/035-guide-ownership-and-update-triggers.md)
-- [`guides/036-release-notes-authoring-template-and-examples.md`](./guides/036-release-notes-authoring-template-and-examples.md)
-- [`guides/037-documentation-contribution-playbook.md`](./guides/037-documentation-contribution-playbook.md)
-- [`guides/038-docs-ia-snapshot.md`](./guides/038-docs-ia-snapshot.md)
-- [`guides/039-docs-drift-monitoring.md`](./guides/039-docs-drift-monitoring.md)
-- [`guides/040-docs-archive-and-deprecation-policy.md`](./guides/040-docs-archive-and-deprecation-policy.md)
+- Start with
+  [`guides/051-release-orchestration.md`](./guides/051-release-orchestration.md)
+- Then use
+  [`guides/052-changelog-workflows-and-northstar-profile.md`](./guides/052-changelog-workflows-and-northstar-profile.md),
+  [`guides/049-ci-binary-distribution-and-release-protocol.md`](./guides/049-ci-binary-distribution-and-release-protocol.md),
+  and
+  [`guides/044-distribution-first-publish-execution-runbook.md`](./guides/044-distribution-first-publish-execution-runbook.md)
 
-Distribution and governance extensions (`041`-`045`):
-- [`guides/041-distribution-ci-pinning-and-wrapper-migration.md`](./guides/041-distribution-ci-pinning-and-wrapper-migration.md)
-- [`guides/042-homebrew-tap-and-release-automation.md`](./guides/042-homebrew-tap-and-release-automation.md)
-- [`guides/043-wrapper-channel-evaluation-and-policy.md`](./guides/043-wrapper-channel-evaluation-and-policy.md)
-- [`guides/044-distribution-first-publish-execution-runbook.md`](./guides/044-distribution-first-publish-execution-runbook.md)
-- [`guides/045-vision-next-task-allowlist-maintenance.md`](./guides/045-vision-next-task-allowlist-maintenance.md)
-- [`guides/046-vision-next-task-allowlist-pr-checklist-snippet.md`](./guides/046-vision-next-task-allowlist-pr-checklist-snippet.md)
+### I want to work on the docs themselves
 
-Supplemental legacy navigation:
-- [`guides/028-docs-flow-map.md`](./guides/028-docs-flow-map.md)
+- Start with
+  [`guides/037-documentation-contribution-playbook.md`](./guides/037-documentation-contribution-playbook.md)
+- Then use
+  [`guides/029-docs-qa-checklist-and-validation.md`](./guides/029-docs-qa-checklist-and-validation.md),
+  [`guides/033-style-and-terminology-guide.md`](./guides/033-style-and-terminology-guide.md),
+  and [`guides/039-docs-drift-monitoring.md`](./guides/039-docs-drift-monitoring.md)
 
-## JSON Contract Notes
+## Core Feature Guides
 
-- Canonical JSON mode is `effigy --json <command>`.
-- Top-level envelope schema is `effigy.command.v1`.
-- Validation index lives at [`contracts/json-schema-index.json`](./contracts/json-schema-index.json).
-- Ownership/drift policy lives at [`contracts/README.md`](./contracts/README.md).
+- Quick start:
+  [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md)
+- Everyday workflows:
+  [`guides/055-everyday-workflows.md`](./guides/055-everyday-workflows.md)
+- Manifest patterns:
+  [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md)
+- Command reference:
+  [`guides/025-command-reference-matrix.md`](./guides/025-command-reference-matrix.md)
+- Troubleshooting:
+  [`guides/023-troubleshooting-and-failure-recipes.md`](./guides/023-troubleshooting-and-failure-recipes.md)
+- Migration paths:
+  [`guides/028-migration-quick-paths.md`](./guides/028-migration-quick-paths.md)
 
-## Research Notes
+## Reference Areas
 
-- Research index: [`research/README.md`](./research/README.md)
-- Research implementation bridge: [`research/master-index.md`](./research/master-index.md), [`research/research-to-implementation-playbook.md`](./research/research-to-implementation-playbook.md)
-- Research tracks: [`research/value-tracks/`](./research/value-tracks/)
-- Tool dossiers: [`research/tool-dossiers/`](./research/tool-dossiers/)
-
-## Vision Notes
-
-- Vision index: [`vision/README.md`](./vision/README.md)
-- Vision rollout history: [`vision/history/README.md`](./vision/history/README.md)
+- Practical guide hub: [`guides/README.md`](./guides/README.md)
+- Architecture notes: [`architecture/`](./architecture/)
+- JSON contracts: [`contracts/README.md`](./contracts/README.md)
+- Roadmaps: [`roadmaps/README.md`](./roadmaps/README.md)
+- Release and validation logs: [`logs/README.md`](./logs/README.md)
+- Vision documents: [`vision/README.md`](./vision/README.md)
+- Research notes and source maps: [`research/README.md`](./research/README.md)
 
 ## Terminology Canon
 
 Use the glossary terms consistently:
+
 - `selector`
 - `routing`
 - `deferral`
 
-Reference: [`guides/034-task-and-command-glossary.md`](./guides/034-task-and-command-glossary.md).
-
-## Recent Release Notes
-
-- [`logs/2026-02/28-090000-dag-watch-onboarding-release-note.md`](./logs/2026-02/28-090000-dag-watch-onboarding-release-note.md)
-- [`logs/2026-02/28-090800-json-envelope-removal-release-note.md`](./logs/2026-02/28-090800-json-envelope-removal-release-note.md)
-- [`logs/2026-02/28-090100-doctor-explain-mode-release-note.md`](./logs/2026-02/28-090100-doctor-explain-mode-release-note.md)
+Reference:
+[`guides/034-task-and-command-glossary.md`](./guides/034-task-and-command-glossary.md)

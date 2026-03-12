@@ -15,6 +15,28 @@ config contract.
 - Target movement: release operation becomes a documented Effigy surface instead
   of drifting into repo-local wrapper scripts and one-off release notes logic.
 
+## Start Here
+
+Use this guide when a repo is ready to put release work behind one built-in
+surface instead of a growing set of shell steps.
+
+If you are approaching the release flow for the first time, start with:
+
+```sh
+effigy release simulate --repo .
+effigy release status --repo . --check-gates
+effigy release prepare --repo . --plan
+```
+
+Use the commands by intent:
+
+- `simulate` for a no-write preview of the likely release path
+- `status --check-gates` for current readiness plus configured gate results
+- `prepare --plan` for the exact file mutations Effigy would make
+- `prepare` / `execute` text mode when a human is actively reviewing the flow
+- `prepare --yes` / `execute --yes` when non-interactive operation is required
+- `resume` when a prepared release needs to be inspected or recovered
+
 ## 1) Command Surface
 
 Current built-in release commands:

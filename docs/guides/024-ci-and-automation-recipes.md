@@ -8,6 +8,29 @@ This guide provides copy-paste CI patterns for Effigy JSON contract and command-
 - Primary tags: `CONTRACT`, `RELEASE`, `OPERATE`
 - Target movement: CI recipes keep machine contracts enforceable and release gates repeatable.
 
+## Start Here
+
+Use this guide when the same Effigy command should work both for humans and for
+automation.
+
+Start with the smallest useful automation surface:
+
+```sh
+effigy --json tasks
+effigy qa:docs --repo .
+effigy qa:json:ci --repo .
+effigy release gates --repo .
+```
+
+Choose the path by intent:
+
+- need machine-readable command output: use `effigy --json <command>`
+- need docs and contract validation in CI: use `qa:docs`, `qa:json`, or
+  `qa:json:ci`
+- need release gating: use `effigy release gates --repo .`
+- need wrapper scripts only because an external system still expects them: keep
+  them as compatibility boundaries, not as the preferred operator surface
+
 ## 1) What To Automate
 
 Canonical operator entrypoints:
@@ -404,6 +427,16 @@ Warm-hit consistency check:
     jq -e '.result.cache_age_ms <= .result.effective_cache_ttl_ms' completion-candidates-second.json >/dev/null
 ```
 
+## Expected Outcome
+
+After this guide, you should be able to:
+
+- pick the right Effigy command surface for CI, contract checks, and release
+  gates
+- keep automation on stable JSON or task entrypoints instead of scraping text
+- recognize when a script remains a deliberate compatibility boundary rather
+  than the desired long-term path
+
 ## Related Guides
 
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
@@ -412,3 +445,11 @@ Warm-hit consistency check:
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
 - [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+
+## Next Step
+
+After wiring one of these recipes, use
+[`017-json-output-contracts.md`](./017-json-output-contracts.md) and
+[`026-json-payload-examples.md`](./026-json-payload-examples.md) to validate
+that the machine-facing contract is explicit enough to survive future CLI
+changes.

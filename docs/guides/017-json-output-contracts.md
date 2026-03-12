@@ -1,5 +1,8 @@
 # JSON Output Contracts
 
+Use this guide when Effigy output needs to be consumed by CI, agents, or other
+tools instead of a human reading terminal text.
+
 Effigy has one canonical JSON mode:
 - `--json`: command envelope (`effigy.command.v1`) for CI/tooling.
 
@@ -19,6 +22,23 @@ When JSON mode is active, CLI preamble output is suppressed and output is pure J
 
 - Primary tags: `CONTRACT`, `RELEASE`
 - Target movement: JSON envelopes stay canonical so CI/tooling integrations remain stable across command growth.
+
+## Start Here
+
+If you are automating Effigy for the first time, use this mental model:
+
+- `effigy --json <command>` is the only canonical machine-facing path
+- every JSON response is wrapped in `effigy.command.v1`
+- the command-specific payload lives in `result` or, for some failures,
+  `error.details`
+
+Start with:
+
+```bash
+effigy --json tasks
+effigy --json doctor
+effigy --json test --plan
+```
 
 ## Top-Level Contract
 
@@ -179,6 +199,14 @@ Rule of thumb:
 - `schema_version` is the top-level envelope version.
 - New optional fields may be added in `v1` without removing existing keys.
 - Breaking envelope changes require a new top-level schema/version.
+
+## Expected Outcome
+
+After this guide, you should be able to:
+
+- identify the stable envelope Effigy uses for machine consumers
+- know where command-specific payload data lives inside the envelope
+- choose the right validation path when a JSON contract changes
 
 ## Related Guides
 

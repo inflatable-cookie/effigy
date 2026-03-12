@@ -108,6 +108,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add a dedicated release checkpoint log template guide so real release evidence,
   distribution evidence, and wrapper-retirement decisions can be captured in a
   single dated maintainer artifact
+- Rewrite the top-level README, docs landing pages, and the first layer of
+  workflow guides around newcomer, day-to-day, troubleshooting, automation,
+  release, contribution, and support-doc user flows, add an
+  everyday-workflows guide, refresh the IA snapshot, and move repo-specific
+  self-hosting detail out of the primary quick-start path so the main Effigy
+  feature set is easier to discover before readers drop into the deeper
+  reference material
 
 ## [0.2.5] - 2026-03-11
 

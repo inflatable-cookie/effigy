@@ -1,59 +1,111 @@
 # 038 - Docs IA Snapshot
 
-This snapshot captures the current documentation information architecture for guides `010`-`037`.
+Use this snapshot when you need a fast map of the active documentation system
+without re-reading every guide.
 
-## Guide Map
+This page is intentionally lighter than a full catalog. It highlights the
+current entry points, the main guide clusters, and the support docs that keep
+the system coherent.
 
-| Guide | Purpose | Primary Audience | Trigger-to-Update |
+## Start Here
+
+Choose the entry point by reader intent:
+
+- newcomer or evaluator: [`../../README.md`](../../README.md)
+- docs system overview: [`../README.md`](../README.md), then [`./README.md`](./README.md)
+
+Primary docs entry points:
+
+- repository front door: [`../../README.md`](../../README.md)
+- docs hub: [`../README.md`](../README.md)
+- practical guide hub: [`README.md`](./README.md)
+
+## Current Information Architecture
+
+### Front Doors
+
+| Surface | Purpose | Primary Audience | Update Trigger |
 | --- | --- | --- | --- |
-| `010` PATH installation and release | Local/PATH invocation and release workflow | Operator, Maintainer | install/release channel changes |
-| `011` Output widgets and colour modes | CLI rendering and color/progress behavior | Operator, Maintainer | renderer/env-var behavior changes |
-| `012` Dev process manager TUI | Managed `mode = "tui"` contracts and behavior | Operator | managed task/TUI behavior changes |
-| `013` Testing orchestration | Built-in test detection/plan/execution semantics | Operator, Maintainer | built-in test behavior changes |
-| `014` Release checklist template | Release execution checklist | Maintainer | release process/policy changes |
-| `015` Deferral fallback migration | Legacy deferral strategy and migration | Maintainer | deferral behavior/policy changes |
-| `016` Task routing precedence | Selector resolution rules | Operator, Maintainer | routing logic changes |
-| `017` JSON output contracts | Envelope/payload contract definitions | CI Owner, Maintainer | schema/contract changes |
-| `018` Doctor explain mode | Doctor explain command behavior | Operator, Maintainer | doctor explain fields/behavior changes |
-| `019` Watch/init/migrate phase-1 | Built-in watch/init/migrate behavior | Operator | built-in watch/init/migrate changes |
-| `020` DAG lock/policy baseline | DAG step policy and locking behavior | Maintainer, Operator | DAG/lock policy changes |
-| `021` Quick start + command cookbook | practical command walkthrough | New User, Operator | command usage shape changes |
-| `022` Manifest cookbook | copy/paste `effigy.toml` patterns | Operator, Maintainer | manifest contract changes |
-| `023` Troubleshooting recipes | symptom -> diagnosis -> fix playbook | Operator, CI Owner | user-facing failures/errors change |
-| `024` CI and automation recipes | CI workflow and contract automation patterns | CI Owner | workflow/script contract changes |
-| `025` Command reference matrix | command-to-flags/schema matrix | Operator, Maintainer | command/flag/schema changes |
-| `026` JSON payload examples | realistic schema payload samples | CI Owner, Maintainer | payload field changes |
-| `027` Copy/paste snippets | scenario templates for manifests/CI | Operator, CI Owner | recommended patterns change |
-| `028` Migration quick paths | migration decision paths | Maintainer, Operator | migration strategy changes |
-| `028` Docs flow map (legacy) | legacy linear docs navigation map | New User, Maintainer | navigation model restructuring |
-| `029` Docs QA checklist and validation | docs quality-gate and validation steps | Maintainer, Contributor | docs QA commands/workflow changes |
-| `030` Contributor onboarding (15 min) | first-run contributor command path | Contributor | onboarding command flow changes |
-| `031` Docs navigation cleanup | navigation normalization policy | Maintainer | docs IA/navigation refactors |
-| `032` Docs consistency sweep/changelog | consistency sweep outcomes | Maintainer | entrypoint structure updates |
-| `033` Style and terminology guide | docs writing style rules | Contributor, Maintainer | style/wording standards change |
-| `034` Task and command glossary | canonical term definitions | Contributor, Operator | terminology set changes |
-| `035` Guide ownership and update triggers | docs update trigger matrix | Maintainer | ownership/trigger policy changes |
-| `036` Release notes authoring template | release-note structure and examples | Maintainer | release-note requirements change |
-| `037` Documentation contribution playbook | end-to-end docs contribution workflow | Contributor, Maintainer | docs contribution process changes |
+| `README.md` | product promise, quick start, main workflows | New User, Operator | top-level product workflow or install story changes |
+| `docs/README.md` | docs system routing by goal | New User, Operator, Maintainer | docs structure or primary reading paths change |
+| `docs/guides/README.md` | practical guide navigation | Operator, Contributor, Maintainer | guide lineup or recommended paths change |
 
-## How to Use This Snapshot
+### Core Operator Guides
 
-- planning docs work: use this table to identify which guides are in-scope
-- reviewing behavior changes: cross-check trigger-to-update column
-- onboarding contributors: pair `030` + `037` + this snapshot
+| Guide | Purpose | Primary Audience | Trigger to Update |
+| --- | --- | --- | --- |
+| `021` Quick start and command cookbook | first-run command path | New User, Operator | obvious first-use workflows change |
+| `055` Everyday workflows | day-to-day human workflows | Operator | common operator path changes |
+| `022` Manifest cookbook | `effigy.toml` patterns | Operator, Maintainer | manifest contract changes |
+| `025` Command reference matrix | command and flag lookup | Operator, Maintainer | command/flag/schema changes |
+| `023` Troubleshooting recipes | symptom to fix path | Operator, CI Owner | user-facing failures or diagnostics change |
+
+### Runtime and Contract Deep Dives
+
+| Guide | Purpose | Primary Audience | Trigger to Update |
+| --- | --- | --- | --- |
+| `016` Task routing precedence | selector resolution rules | Operator, Maintainer | routing logic changes |
+| `018` Doctor explain mode | routing diagnosis details | Operator, Maintainer | explain behavior or fields change |
+| `019` Watch, init, and migrate | setup and rerun flows | Operator | built-in watch/init/migrate behavior changes |
+| `017` JSON output contracts | canonical machine-facing contract | CI Owner, Maintainer | envelope or payload rules change |
+| `026` JSON payload examples | realistic machine-facing samples | CI Owner, Maintainer | payload field sets change |
+| `024` CI and automation recipes | CI and automation patterns | CI Owner, Maintainer | workflow wiring or automation guidance changes |
+
+### Release and Change Communication
+
+| Guide | Purpose | Primary Audience | Trigger to Update |
+| --- | --- | --- | --- |
+| `051` Release orchestration | built-in release flow and config | Maintainer | release command or config behavior changes |
+| `052` Changelog workflows | changelog CLI and policy | Maintainer | changelog workflow or library surface changes |
+| `036` Release notes authoring | human release-note structure | Maintainer | release-note requirements change |
+| `014` Release checklist template | execution checklist | Maintainer | release process or gates change |
+
+### Docs Operations and Contribution
+
+| Guide | Purpose | Primary Audience | Trigger to Update |
+| --- | --- | --- | --- |
+| `029` Docs QA checklist and validation | docs validation flow | Contributor, Maintainer | docs QA commands or policy checks change |
+| `030` Contributor onboarding | first-pass contributor setup | Contributor | onboarding command flow changes |
+| `033` Style and terminology guide | writing standard | Contributor, Maintainer | editorial standards change |
+| `037` Documentation contribution playbook | docs update workflow | Contributor, Maintainer | docs contribution process changes |
+| `035` Guide ownership and update triggers | ownership and trigger matrix | Maintainer | ownership or trigger policy changes |
+
+### Supplemental and Historical Support
+
+| Guide | Purpose | Primary Audience | Trigger to Update |
+| --- | --- | --- | --- |
+| `027` Copy/paste snippets | quick bootstrap fragments | Operator, Contributor | recommended starter patterns change |
+| `028` Migration quick paths | scenario-based migration paths | Operator, Maintainer | migration strategy changes |
+| `031` Docs navigation cleanup | navigation cleanup rules | Maintainer | IA normalization rules change |
+| `032` Docs consistency sweep and changelog | prior docs sweep record | Maintainer | another broad docs sweep lands |
+| `038` Docs IA snapshot | current IA summary | Maintainer, Contributor | primary docs structure changes |
+| `028-docs-flow-map` | legacy navigation reference | Maintainer | only when legacy routing notes need refresh |
+
+## How To Use This Snapshot
+
+- planning a docs change: identify the relevant cluster first, then update the
+  entry point if discoverability changes
+- reviewing a product change: use the trigger columns to decide which guides
+  move with it
+- onboarding a contributor: pair `030`, `037`, and the practical guide hub
+  instead of sending people into the whole docs tree
 
 ## Notes
 
-- `028` currently has two guides by design:
-  - `028-migration-quick-paths.md` (primary)
-  - `028-docs-flow-map.md` (supplemental/legacy)
-- numbering continuity is tracked in `031` and `032`.
+- The practical center of gravity has moved toward the top-level README, the
+  docs hub, and the guides hub rather than one linear reading order.
+- `055-everyday-workflows.md` is now part of the main operator path and should
+  be kept in sync with any major workflow simplifications or new friction
+  points.
+- `028` still intentionally has two guides:
+  - `028-migration-quick-paths.md` as the active path
+  - `028-docs-flow-map.md` as supplemental legacy navigation
 
 ## Expected Outcome
 
-- maintainers can quickly identify docs impacted by behavior, schema, workflow, or navigation changes
-- contributors can map update triggers without scanning every guide
-- docs planning and review use one shared IA snapshot
+- maintainers can identify the active front doors and guide clusters quickly
+- contributors can tell which support docs exist to reduce drift
+- large docs changes can be scoped without rediscovering the whole IA
 
 ## Related Guides
 
@@ -64,4 +116,7 @@ This snapshot captures the current documentation information architecture for gu
 
 ## Next Step
 
-After major docs or behavior changes, refresh this snapshot and confirm trigger mappings still align with [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md).
+After a significant docs restructure or feature-surface sweep, refresh this
+snapshot and then verify that [`README.md`](../../README.md),
+[`docs/README.md`](../README.md), and [`docs/guides/README.md`](./README.md)
+still reflect the same current reading paths.
