@@ -66,19 +66,33 @@ pub(in crate::runner) fn attention_marker_matches_line(raw_line: &str, marker_lo
     if !lower_line.contains(marker_lower) {
         return false;
     }
-    let trimmed = lower_line.trim_start();
+    let comment_match = attention_marker_matches_comment_segment(&lower_line, marker_lower);
     if marker_lower.starts_with('@') {
-        return strip_comment_prefix(trimmed)
-            .is_some_and(|body| marker_starts_comment_segment(body, marker_lower))
-            || lower_line.contains("#[deprecated");
+        return comment_match || lower_line.contains("#[deprecated");
     }
     if marker_lower.contains("deprecat") {
-        return lower_line.contains("#[deprecated")
-            || strip_comment_prefix(trimmed)
-                .is_some_and(|body| marker_starts_comment_segment(body, marker_lower));
+        return lower_line.contains("#[deprecated") || comment_match;
     }
-    strip_comment_prefix(trimmed)
-        .is_some_and(|body| marker_starts_comment_segment(body, marker_lower))
+    comment_match
+}
+
+fn attention_marker_matches_comment_segment(lower_line: &str, marker_lower: &str) -> bool {
+    let trimmed = lower_line.trim_start();
+    strip_comment_prefix(trimmed).is_some_and(|body| marker_starts_comment_segment(body, marker_lower))
+        || inline_comment_body(lower_line)
+            .is_some_and(|body| marker_starts_comment_segment(body, marker_lower))
+}
+
+fn inline_comment_body(lower_line: &str) -> Option<&str> {
+    for prefix in ["//", "/*", "<!--"] {
+        if let Some(index) = lower_line.find(prefix) {
+            let candidate = &lower_line[index + prefix.len()..];
+            if !candidate.is_empty() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
 fn strip_comment_prefix(trimmed: &str) -> Option<&str> {
