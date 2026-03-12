@@ -10,15 +10,15 @@ Use it when you need the shortest reliable path from "docs changed" to
 For most docs changes, the first commands should be:
 
 ```sh
-effigy qa:docs --repo .
-effigy docs check-workflow-paths --repo .
+effigy qa:docs
+effigy docs check-workflow-paths
 ```
 
 Then widen the scope only when the change touched command behavior, JSON
 contracts, or broader repo policy:
 
 ```sh
-effigy qa --repo .
+effigy qa
 ```
 
 ## 1) Local Docs QA Checklist
@@ -26,9 +26,9 @@ effigy qa --repo .
 Run in order:
 
 ```sh
-effigy qa:docs --repo .
+effigy qa:docs
 # dev-checkout fallback:
-# effigy-dev qa:docs --repo .
+# effigy-dev qa:docs
 # compatibility fallback:
 # cargo qa-docs
 ```
@@ -41,16 +41,16 @@ Manual checks:
 - completion-candidates examples include both hit and miss telemetry variants
 - new log artifacts are indexed in `docs/logs/README.md`
 - new log artifacts include a `Vision Target Delta` section
-- roadmap/guides vision metadata checks pass via `effigy qa:docs:vision --repo .`
-- docs-referenced workflow paths resolve via `effigy docs check-workflow-paths --repo .`
-- vision artifact index is consistent via `effigy docs check-index --repo . --policy-index vision`
-- vision artifacts have non-empty, actionable follow-on actions via `effigy docs check-next-action --repo . --policy vision`
+- roadmap/guides vision metadata checks pass via `effigy qa:docs:vision`
+- docs-referenced workflow paths resolve via `effigy docs check-workflow-paths`
+- vision artifact index is consistent via `effigy docs check-index --policy-index vision`
+- vision artifacts have non-empty, actionable follow-on actions via `effigy docs check-next-action --policy vision`
 - next-action negative-path coverage lives in Rust CLI tests, not the docs QA runtime bundle
 
 Optional broader check:
 
 ```sh
-effigy qa --repo .
+effigy qa
 ```
 
 ## 2) CI Validation Path
@@ -70,12 +70,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate docs QA bundle
-        run: cargo run --bin effigy -- qa:docs --repo .
+        run: cargo run --bin effigy -- qa:docs
 ```
 
 This ensures markdown links resolve, key JSON examples stay contract-aligned, logs remain indexed, and vision metadata coverage is enforced on every pull request/push.
-`effigy qa:docs --repo .` is now the primary orchestration surface for that bundle.
-`effigy qa:docs:vision --repo .` is now the policy-specific sub-bundle for roadmap/guide heading requirements, report/cutoff text requirements, workflow-path validation, vision index validation, and next-action validation.
+`effigy qa:docs` is now the primary orchestration surface for that bundle.
+`effigy qa:docs:vision` is now the policy-specific sub-bundle for roadmap/guide heading requirements, report/cutoff text requirements, workflow-path validation, vision index validation, and next-action validation.
 
 ## 2a) Built-ins vs Repo Policy
 
@@ -112,7 +112,7 @@ Proposed config direction:
 ## 3) What the Link Checker Validates
 
 Built-in command:
-- `effigy docs check-links --repo .`
+- `effigy docs check-links`
 
 Behavior:
 - scans markdown inline links (`[label](target)`)
@@ -127,7 +127,7 @@ Default scope when called with no args:
 ## 4) What the JSON Example Checker Validates
 
 Built-in command:
-- `effigy docs check-json-examples --repo .`
+- `effigy docs check-json-examples`
 
 Behavior:
 - inspects section `13) Completion Candidates` in `026-json-payload-examples.md`
@@ -143,7 +143,7 @@ Behavior:
 ## 5) What the Logs Index Checker Validates
 
 Built-in command:
-- `effigy docs check-index --repo .`
+- `effigy docs check-index`
 
 Behavior:
 - scans `docs/logs/YYYY-MM/*.md` and excludes `docs/logs/README.md`
@@ -152,7 +152,7 @@ Behavior:
 - fails when index entries point to non-existent log files
 
 Helper:
-- `effigy docs add-log-index --repo . <log-file>` inserts a missing log entry ahead of archived links.
+- `effigy docs add-log-index <log-file>` inserts a missing log entry ahead of archived links.
 
 Forward-only policy cutoff:
 - logs dated on or after `2026-03-06` must include a `## Vision Target Delta` section
@@ -161,7 +161,7 @@ Forward-only policy cutoff:
 ### Named docs-policy indexes
 
 Built-in command:
-- `effigy docs check-index --repo . --policy-index vision`
+- `effigy docs check-index --policy-index vision`
 
 Behavior:
 - loads a named index definition from `[docs_policy.indexes.<NAME>]` in `effigy.toml`
@@ -171,7 +171,7 @@ Behavior:
 ## 5a) What the Next-Action Checker Validates
 
 Built-in command:
-- `effigy docs check-next-action --repo . --policy vision`
+- `effigy docs check-next-action --policy vision`
 
 Behavior:
 - loads a named rule from `[docs_policy.next_actions.<NAME>]` in `effigy.toml`
@@ -220,11 +220,11 @@ Copy into PR description:
 
 ```md
 ## Docs QA
-- [ ] `effigy qa:docs --repo .`
-- [ ] `effigy qa:docs:vision --repo .`
-- [ ] `effigy docs check-workflow-paths --repo .`
-- [ ] `effigy docs check-index --repo . --policy-index vision`
-- [ ] `effigy docs check-next-action --repo . --policy vision`
+- [ ] `effigy qa:docs`
+- [ ] `effigy qa:docs:vision`
+- [ ] `effigy docs check-workflow-paths`
+- [ ] `effigy docs check-index --policy-index vision`
+- [ ] `effigy docs check-next-action --policy vision`
 - [ ] New guide linked from docs entry points
 - [ ] Command and JSON examples verified against current behavior
 - [ ] Completion-candidates JSON examples include hit + miss telemetry variants
@@ -239,28 +239,28 @@ Allowlist-change PRs should use:
 
 ```sh
 # docs links only
-effigy qa:docs --repo .
+effigy qa:docs
 
 # vision metadata coverage
-effigy qa:docs:vision --repo .
+effigy qa:docs:vision
 
 # workflow path references in docs
-effigy docs check-workflow-paths --repo .
+effigy docs check-workflow-paths
 
 # vision closeout index consistency
-effigy docs check-index --repo . --policy-index vision
+effigy docs check-index --policy-index vision
 
 # vision next-task section coverage
-effigy docs check-next-action --repo . --policy vision
+effigy docs check-next-action --policy vision
 
 # index a newly added log artifact
-effigy docs add-log-index --repo . docs/logs/YYYY-MM/DD-HHMMSS-topic.md
+effigy docs add-log-index docs/logs/YYYY-MM/DD-HHMMSS-topic.md
 
 # json contracts only
-effigy qa:json:ci --repo .
+effigy qa:json:ci
 
 # all gates
-effigy qa --repo .
+effigy qa
 ```
 
 ## Expected Outcome

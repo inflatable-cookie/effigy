@@ -21,7 +21,7 @@ Run from repository root.
 ### A) Link integrity
 
 ```sh
-effigy docs check-links --repo . README.md $(find docs -name '*.md' | sort)
+effigy docs check-links README.md $(find docs -name '*.md' | sort)
 ```
 
 Pass criteria:
@@ -56,10 +56,10 @@ Spot-run:
 
 ```sh
 effigy-dev --help
-effigy-dev tasks --repo .
-effigy-dev doctor --repo . --verbose
-effigy-dev test --plan --repo .
-effigy-dev --json tasks --repo . | jq .schema
+effigy-dev tasks
+effigy-dev doctor --verbose
+effigy-dev test --plan
+effigy-dev --json tasks | jq .schema
 ```
 
 Pass criteria:
@@ -69,7 +69,7 @@ Pass criteria:
 ### E) Quality gates
 
 ```sh
-effigy-dev qa:docs --repo .
+effigy-dev qa:docs
 ```
 
 Pass criteria:
@@ -78,7 +78,7 @@ Pass criteria:
 ### F) Workflow path reference coherence
 
 ```sh
-effigy docs check-workflow-paths --repo .
+effigy docs check-workflow-paths
 ```
 
 Pass criteria:
@@ -107,11 +107,11 @@ Owner: <team/person>
 - Monthly docs drift checklist (`039`)
 
 ## Validation
-- command: `effigy docs check-links --repo . README.md $(find docs -name '*.md' | sort)`
+- command: `effigy docs check-links README.md $(find docs -name '*.md' | sort)`
   - result: pass/fail
-- command: `effigy-dev qa:docs --repo .`
+- command: `effigy-dev qa:docs`
   - result: pass/fail
-- command: `effigy-dev test --plan --repo .`
+- command: `effigy-dev test --plan`
   - result: pass/fail
 
 ## Findings

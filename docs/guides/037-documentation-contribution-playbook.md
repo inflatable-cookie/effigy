@@ -92,27 +92,27 @@ Minimum bar:
 Run in this order:
 
 ```sh
-effigy qa:docs --repo .
-effigy docs check-workflow-paths --repo .
+effigy qa:docs
+effigy docs check-workflow-paths
 ```
 
 Fallbacks when validating from a dev checkout instead of the installed binary:
 
 ```sh
-effigy-dev qa:docs --repo .
+effigy-dev qa:docs
 cargo qa-docs
 ```
 
 If behavior/JSON changed, also run relevant targeted checks:
 
 ```sh
-effigy qa:json:ci --repo .
+effigy qa:json:ci
 ```
 
 Dev-checkout fallback:
 
 ```sh
-effigy-dev qa:json:ci --repo .
+effigy-dev qa:json:ci
 ```
 
 ## 5) PR Checklist Snippet
@@ -124,9 +124,9 @@ Copy into PR description:
 - [ ] Change type identified (command/json/manifest/ci/navigation/release-note)
 - [ ] Required guides updated for this change type
 - [ ] Style/terminology checked against 033/034
-- [ ] `effigy qa:docs --repo .` passed
-- [ ] `effigy docs check-workflow-paths --repo .` passed
-- [ ] JSON-related changes: `effigy qa:json:ci --repo .` run
+- [ ] `effigy qa:docs` passed
+- [ ] `effigy docs check-workflow-paths` passed
+- [ ] JSON-related changes: `effigy qa:json:ci` run
 ```
 
 ## 6) Escalation Rules

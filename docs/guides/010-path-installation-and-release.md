@@ -82,7 +82,7 @@ For now, version is controlled in `Cargo.toml`.
 
 ## 5) Release Checklist
 
-1. Run release gates in one pass: `effigy release gates --repo .`.
+1. Run release gates in one pass: `effigy release gates`.
    - compatibility fallback: `cargo qa-release`
 2. Validate install from the release tag:
    - `./scripts/check-release-install-from-tag.sh --tag v0.__.__`
@@ -96,7 +96,7 @@ For now, version is controlled in `Cargo.toml`.
 
 | Mode | Command | Expected |
 |---|---|---|
-| Source run | `cargo run --manifest-path ../effigy/Cargo.toml --bin effigy -- doctor --repo .` | Doctor report rendered, exit 0 |
+| Source run | `cargo run --manifest-path ../effigy/Cargo.toml --bin effigy -- doctor` | Doctor report rendered, exit 0 |
 | Dev wrapper | `effigy-dev doctor --repo <workspace>` | Doctor report rendered from current checkout, exit 0 |
 | PATH binary | `effigy --help` | Usage shown, exit 0 |
 | PATH binary | `effigy doctor --repo <workspace>` | Doctor report rendered, exit 0 |

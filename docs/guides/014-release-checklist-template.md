@@ -21,19 +21,19 @@ Owner: `name/team`
 ## 2) Quality Gates
 
 - [ ] Distribution preflight passes:
-  - [ ] `effigy distribution preflight --repo . --tag v0.__.__`
+  - [ ] `effigy distribution preflight --tag v0.__.__`
 - [ ] Safe release simulation passes:
-  - [ ] `effigy release simulate --repo .`
+  - [ ] `effigy release simulate`
 - [ ] Release readiness check passes:
-  - [ ] `effigy release status --repo . --check-gates`
+  - [ ] `effigy release status --check-gates`
 - [ ] Consolidated release gate pass:
-  - [ ] `effigy release gates --repo .`
+  - [ ] `effigy release gates`
 - [ ] `cargo fmt` clean.
 - [ ] `cargo test` passes.
 - [ ] Local quality gates pass:
-  - [ ] `effigy qa --repo .`
+  - [ ] `effigy qa`
 - [ ] Docs link integrity check passes:
-  - [ ] `effigy qa:docs --repo .`
+  - [ ] `effigy qa:docs`
 - [ ] CI gate is green before merge/tag:
   - [ ] `json-contracts / Validate docs links`
   - [ ] `json-contracts / Validate JSON contracts`
@@ -48,7 +48,7 @@ Owner: `name/team`
 
 - [ ] Version bump matches policy (`PATCH` vs `MINOR`) from release contract.
 - [ ] Planned version reviewed in built-in prepare preview:
-  - [ ] `effigy release prepare --repo . --plan`
+  - [ ] `effigy release prepare --plan`
 - [ ] Changelog entry drafted.
 - [ ] Release notes drafted:
   - [ ] highlights
@@ -62,12 +62,12 @@ Owner: `name/team`
   - [ ] built-in commands are the primary path for this release
   - [ ] legacy wrappers are used only if an external tool or migration drill requires them
 - [ ] Prepared-state apply succeeds:
-  - [ ] `effigy release prepare --repo . --yes --check-gates`
+  - [ ] `effigy release prepare --yes --check-gates`
 - [ ] Execute preflight succeeds:
-  - [ ] `effigy release execute --repo . --plan`
+  - [ ] `effigy release execute --plan`
 - [ ] Human approval recorded before irreversible step.
 - [ ] Final execute succeeds:
-  - [ ] `effigy release execute --repo . --yes`
+  - [ ] `effigy release execute --yes`
 - [ ] Compatibility wrappers remain available only as backup channels until one successful live built-in release is complete:
   - [ ] `./scripts/prepare-release.sh`
   - [ ] `./scripts/check-release-gates.sh`
@@ -78,16 +78,16 @@ Owner: `name/team`
 ### Crates
 - [ ] `Cargo.toml` metadata verified.
 - [ ] Distribution metadata validation passes:
-  - [ ] `effigy distribution validate-metadata --repo . --tag v0.__.__`
+  - [ ] `effigy distribution validate-metadata --tag v0.__.__`
 - [ ] Tag points to intended commit.
 - [ ] Publish command executed/queued.
 - [ ] Install validated from git tag:
-  - [ ] `effigy release verify-install --repo . --tag v0.__.__`
+  - [ ] `effigy release verify-install --tag v0.__.__`
 - [ ] Install validated from published crate.
 - [ ] First-publish artifact bundle captured:
   - [ ] `./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__`
     Side-effecting helper; built-in validation/reporting runs inside the wrapper.
-  - [ ] `effigy distribution validate-artifacts --repo . --artifacts-dir ./artifacts/distribution-v0.__.__`
+  - [ ] `effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-v0.__.__`
 
 ### Homebrew
 - [ ] Formula updated to new version.
@@ -108,7 +108,7 @@ Owner: `name/team`
 - [ ] Validate prefixed built-ins still route correctly.
 - [ ] Validate `test` summary output in compact mode.
 - [ ] Open dated checkpoint log in `docs/logs/YYYY-MM/`.
-  - [ ] `effigy distribution generate-closeout --repo . --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
+  - [ ] `effigy distribution generate-closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
 
 ## 8) Sign-off
 
@@ -133,7 +133,7 @@ Canonical template:
   - [ ] `JSON Contracts`
   - [ ] `Release Binaries`
 - [ ] Tag install validation stayed green across the evaluation window:
-  - [ ] `effigy release verify-install --repo . --tag v0.__.__`
+  - [ ] `effigy release verify-install --tag v0.__.__`
 - [ ] No active CI/docs/downstream contract still points to wrapper scripts as
       the primary entrypoint.
 - [ ] Maintainer decision recorded in the dated release checkpoint log:

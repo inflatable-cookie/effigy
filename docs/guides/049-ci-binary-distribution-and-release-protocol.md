@@ -249,8 +249,8 @@ Current command surface:
   operator review is no longer limited to one-line before/after summaries.
 - Effigy’s own repo now declares a baseline `[release]` section in
   `effigy.toml`, and the local no-tag gate path is
-  `effigy release gates --repo .`.
-- `cargo qa-release` now maps directly to `effigy release gates --repo .`
+  `effigy release gates`.
+- `cargo qa-release` now maps directly to `effigy release gates`
   instead of going through a separate helper binary that shells out to the
   compatibility wrapper.
 - `effigy release prepare --plan` is available as a non-destructive preview of
@@ -341,9 +341,9 @@ Current command surface:
      validation and operator output stay on the supported path.
    - Treat the built-in release previews as the source of truth for version
      selection:
-     - `effigy release status --repo . --check-gates`
-     - `effigy release simulate --repo .`
-     - `effigy release prepare --repo . --plan`
+     - `effigy release status --check-gates`
+     - `effigy release simulate`
+     - `effigy release prepare --plan`
    - Use `./scripts/prepare-release.sh` only as a backup compatibility path
      when an external tool or migration drill explicitly requires the legacy
      script entrypoint.
@@ -355,9 +355,9 @@ Current command surface:
 
 2. **Prepare the version bump and changelog.**
    - Prefer the built-in prepare flow:
-     - interactive operator path: `effigy release prepare --repo .`
+     - interactive operator path: `effigy release prepare`
      - non-interactive apply path:
-       `effigy release prepare --repo . --yes --check-gates`
+       `effigy release prepare --yes --check-gates`
    - For repos using `[release]` config with `sync-files = ["Cargo.lock"]`,
      `effigy release prepare --yes` updates the version file, moves
      `[Unreleased]` entries into a dated release heading, syncs `Cargo.lock`
@@ -367,7 +367,7 @@ Current command surface:
      tooling reasons.
    - Review the changes. If the human specified a different version than the
      built-in suggestion, use the built-in custom-version path instead:
-     `effigy release prepare --repo . --yes --check-gates --version X.Y.Z`
+     `effigy release prepare --yes --check-gates --version X.Y.Z`
 
 3. **Draft release notes.**
    - Follow `036-release-notes-authoring-template-and-examples.md`.
@@ -381,7 +381,7 @@ Current command surface:
 4. **Run release gates.**
    - Run `effigy release gates` when the repo has `[release.gates]` configured
      and you want the built-in sequential fail-fast gate runner.
-   - Otherwise execute `effigy release gates --repo .` (or the compatibility
+   - Otherwise execute `effigy release gates` (or the compatibility
      fallback `cargo qa-release` / underlying scripts).
    - All gates must pass. If any fail, fix the issue and re-run.
    - Do not proceed until gates pass cleanly.
@@ -406,7 +406,7 @@ Current command surface:
 
 - Treat the release gate pipeline as the single source of truth for publish
   readiness
-- Use `effigy release gates --repo .` (or the underlying scripts) to validate before
+- Use `effigy release gates` (or the underlying scripts) to validate before
   any release action
 - Reference exact version numbers, never floating references
 - Update consumer CI snippets to use the pattern in Section 5a
@@ -433,7 +433,7 @@ Current command surface:
 ### 7c) What Agents May Do Autonomously
 
 - Read and reference release documentation
-- Run release gate checks locally (`effigy release gates --repo .`, smoke scripts)
+- Run release gate checks locally (`effigy release gates`, smoke scripts)
 - Draft release notes for human review
 - Use `effigy changelog extract` as the preferred release-note baseline
   generator before any workflow-level cutover

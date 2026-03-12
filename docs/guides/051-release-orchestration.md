@@ -23,9 +23,9 @@ surface instead of a growing set of shell steps.
 If you are approaching the release flow for the first time, start with:
 
 ```sh
-effigy release simulate --repo .
-effigy release status --repo . --check-gates
-effigy release prepare --repo . --plan
+effigy release simulate
+effigy release status --check-gates
+effigy release prepare --plan
 ```
 
 Use the commands by intent:
@@ -243,19 +243,19 @@ by one language manifest.
 Recommended operator flow:
 
 ```sh
-effigy release simulate --repo .
-effigy release simulate --repo . --version 0.2.8
-effigy release status --repo . --check-gates
-effigy release prepare --repo .
-effigy release prepare --repo . --dry-run
-effigy release prepare --repo . --plan
-effigy release prepare --repo . --yes --check-gates
-effigy release resume --repo .
-effigy release execute --repo .
-effigy release execute --repo . --dry-run
-effigy release execute --repo . --plan
-effigy release execute --repo . --yes
-effigy release verify-install --repo . --tag vX.Y.Z
+effigy release simulate
+effigy release simulate --version 0.2.8
+effigy release status --check-gates
+effigy release prepare
+effigy release prepare --dry-run
+effigy release prepare --plan
+effigy release prepare --yes --check-gates
+effigy release resume
+effigy release execute
+effigy release execute --dry-run
+effigy release execute --plan
+effigy release execute --yes
+effigy release verify-install --tag vX.Y.Z
 ```
 
 What each step proves:
@@ -416,6 +416,6 @@ surfaces rather than as the primary release logic.
 
 ## Next Step
 
-After adding `[release]` to a repo, run `effigy release simulate --repo .` and
-`effigy release status --repo . --check-gates` before replacing any existing
+After adding `[release]` to a repo, run `effigy release simulate` and
+`effigy release status --check-gates` before replacing any existing
 release wrapper or CI entrypoint.

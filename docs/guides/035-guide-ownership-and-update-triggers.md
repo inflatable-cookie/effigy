@@ -79,7 +79,7 @@ For docs completeness on non-trivial behavior changes, require:
 4. link-check pass:
 
 ```sh
-effigy docs check-links --repo . README.md $(find docs -name '*.md' | sort)
+effigy docs check-links README.md $(find docs -name '*.md' | sort)
 ```
 
 ## Expected Outcome

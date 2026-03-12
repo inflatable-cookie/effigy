@@ -18,7 +18,7 @@ The shortest useful onboarding pass is:
 If `effigy` is not yet available on `PATH`, bootstrap first:
 
 ```sh
-cargo run --bin effigy -- bootstrap:local --repo .
+cargo run --bin effigy -- bootstrap:local
 type -a effigy effigy-dev
 ```
 
@@ -51,14 +51,14 @@ Expected outcome:
 ## Minute 2-5: Task Discovery + Routing Probe
 
 ```sh
-effigy tasks --repo .
-effigy tasks --repo . --task qa
+effigy tasks
+effigy tasks --task qa
 ```
 
 Dev-checkout fallback:
 
 ```sh
-effigy-dev tasks --repo .
+effigy-dev tasks
 ```
 
 Expected outcome:
@@ -68,8 +68,8 @@ Expected outcome:
 ## Minute 5-8: Health + Explain
 
 ```sh
-effigy doctor --repo . --verbose
-effigy doctor --repo . test -- --help
+effigy doctor --verbose
+effigy doctor test -- --help
 ```
 
 Expected outcome:
@@ -79,7 +79,7 @@ Expected outcome:
 ## Minute 8-11: Test Planning (Non-Destructive)
 
 ```sh
-effigy test --plan --repo .
+effigy test --plan
 ```
 
 Expected outcome:
@@ -90,16 +90,16 @@ Expected outcome:
 ## Minute 11-13: JSON Mode Sanity
 
 ```sh
-effigy --json tasks --repo .
-effigy --json doctor --repo .
-effigy --json test --plan --repo .
+effigy --json tasks
+effigy --json doctor
+effigy --json test --plan
 ```
 
 Optional parse checks:
 
 ```sh
-effigy --json tasks --repo . | jq .schema
-effigy --json doctor --repo . | jq .schema
+effigy --json tasks | jq .schema
+effigy --json doctor | jq .schema
 ```
 
 Expected outcome:
@@ -108,7 +108,7 @@ Expected outcome:
 ## Minute 13-15: Docs QA Gate
 
 ```sh
-effigy qa:docs --repo .
+effigy qa:docs
 ```
 
 Expected outcome:
@@ -128,10 +128,10 @@ Expected outcome:
 When returning later, this minimal bundle is usually enough:
 
 ```sh
-effigy tasks --repo .
-effigy doctor --repo . --verbose
-effigy test --plan --repo .
-effigy qa:docs --repo .
+effigy tasks
+effigy doctor --verbose
+effigy test --plan
+effigy qa:docs
 ```
 
 ## Expected Outcome

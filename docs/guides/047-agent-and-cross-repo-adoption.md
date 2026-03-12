@@ -15,23 +15,23 @@ For repos that adopt Effigy as the primary local loop, the default agent flow
 should be:
 
 ```sh
-effigy tasks --repo .
-effigy doctor --repo .
-effigy test --plan --repo .
+effigy tasks
+effigy doctor
+effigy test --plan
 ```
 
 Then:
 
-- use `effigy <task> --repo .` for supported project work
-- use `effigy test ... --repo .` for supported test flows
-- use `effigy --json <command> --repo .` when the caller needs machine-safe
+- use `effigy <task>` for supported project work
+- use `effigy test ...` for supported test flows
+- use `effigy --json <command>` when the caller needs machine-safe
   parsing
 - fall back to raw tool commands only when Effigy does not yet cover the path
 
 For work inside the Effigy repo itself:
 
-- use `effigy-dev ... --repo .` when validating the current checkout
-- use `effigy ... --repo .` when validating the installed stable channel
+- use `effigy-dev ...` when validating the current checkout
+- use `effigy ...` when validating the installed stable channel
 
 ## 2) What Agents Should Assume
 
@@ -65,11 +65,11 @@ be the default loop:
 Use Effigy as the default command surface for supported project work.
 
 Default flow:
-1. Run `effigy tasks --repo .`
-2. Run `effigy doctor --repo .`
-3. Run `effigy test --plan --repo .`
-4. Prefer `effigy <task> --repo .` and `effigy test ... --repo .`
-5. Use `effigy --json <command> --repo .` for machine-readable output
+1. Run `effigy tasks`
+2. Run `effigy doctor`
+3. Run `effigy test --plan`
+4. Prefer `effigy <task>` and `effigy test ...`
+5. Use `effigy --json <command>` for machine-readable output
 6. Fall back to raw tool commands only when Effigy does not yet cover the path
 
 Testing policy:
@@ -91,8 +91,8 @@ A repo should not claim “Effigy is the default development loop” until all o
 these are true:
 
 1. There is a discoverable root `effigy.toml`.
-2. `effigy tasks --repo .` shows the primary contributor tasks or catalog entrypoints.
-3. `effigy doctor --repo .` provides actionable health/routing output.
+2. `effigy tasks` shows the primary contributor tasks or catalog entrypoints.
+3. `effigy doctor` provides actionable health/routing output.
 4. The repo has one supported default test path:
    - built-in `effigy test`, or
    - explicit `tasks.test` in `effigy.toml`.
@@ -171,9 +171,9 @@ test = "npm test"
 ```
 
 Expected behavior:
-- `effigy release status --repo . --check-gates` reads `package.json` version
+- `effigy release status --check-gates` reads `package.json` version
   automatically
-- `effigy release prepare --repo . --plan` previews the `package.json` version
+- `effigy release prepare --plan` previews the `package.json` version
   update plus changelog move
 - gate commands can stay native to the project (`npm`, `pnpm`, `bun`, shell)
 
@@ -191,7 +191,7 @@ test = "pytest -q"
 Expected behavior:
 - `effigy release` auto-detects `pyproject.toml`
 - version discovery supports `project.version` and `tool.poetry.version`
-- `effigy release prepare --repo . --plan` previews the pyproject version bump
+- `effigy release prepare --plan` previews the pyproject version bump
 
 ### Multi-language / Plain `VERSION`
 
@@ -208,7 +208,7 @@ validate = "sh -lc './scripts/validate-all.sh'"
 Expected behavior:
 - use this when the repo version is intentionally decoupled from language-specific
   manifests
-- `effigy release prepare --repo . --yes --check-gates` updates `VERSION`,
+- `effigy release prepare --yes --check-gates` updates `VERSION`,
   writes `.release-prepared.json`, and preserves heterogeneous gate commands
 - this is the simplest fit for monorepos with multiple language toolchains
 

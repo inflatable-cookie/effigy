@@ -56,8 +56,8 @@ alias = "app"
 
 [tasks]
 dev = "bun run dev"
-test = "bun x vitest run"
 "db:reset" = "./scripts/reset-db.sh"
+build = "bun run build"
 ```
 
 3. Ask the repo what exists, then run it:
@@ -65,8 +65,12 @@ test = "bun x vitest run"
 ```bash
 effigy tasks
 effigy dev
+effigy test --plan
 effigy tasks --resolve test
 ```
+
+Leave `test` to the built-in runner unless you intentionally want
+`tasks.test` to override it.
 
 If you want the guided version of that flow, start with
 [`021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md).
@@ -144,9 +148,9 @@ Use the release surface when you want preview-first, repeatable release work
 without re-inventing the workflow in shell.
 
 ```bash
-effigy release status --repo . --check-gates
-effigy release prepare --repo . --plan
-effigy release execute --repo . --plan
+effigy release status --check-gates
+effigy release prepare --plan
+effigy release execute --plan
 ```
 
 Details:
@@ -175,15 +179,15 @@ This repo self-hosts a root `effigy.toml`, so product development uses Effigy
 for its own QA and release flows.
 
 ```bash
-effigy test --plan --repo .
-effigy qa --repo .
-effigy release gates --repo .
+effigy test --plan
+effigy qa
+effigy release gates
 ```
 
 If `effigy` is not yet on `PATH`, bootstrap from the checkout:
 
 ```bash
-cargo run --bin effigy -- bootstrap:local --repo .
+cargo run --bin effigy -- bootstrap:local
 ```
 
 Compatibility fallbacks remain available for callers that still need them:

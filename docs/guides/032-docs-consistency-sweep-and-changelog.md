@@ -14,7 +14,7 @@ Files reviewed/normalized:
 Validation performed:
 
 ```sh
-effigy docs check-links --repo . README.md $(find docs -name '*.md' | sort)
+effigy docs check-links README.md $(find docs -name '*.md' | sort)
 ```
 
 ## Findings

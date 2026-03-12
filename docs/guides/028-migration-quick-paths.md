@@ -13,7 +13,8 @@ When to use:
 
 Decision path:
 1. Create baseline manifest.
-2. Add minimal tasks (`dev`, `test`, `validate`).
+2. Add minimal tasks (`dev`, `lint`, `build`, `validate`) and keep `test` on
+   the built-in runner unless you need an explicit override.
 3. Verify routing and health.
 4. Add CI JSON checks only after local task flow is stable.
 
@@ -32,10 +33,14 @@ Starter manifest:
 [catalog]
 alias = "app"
 
+[package_manager]
+js = "bun"
+
 [tasks]
 dev = "bun run dev"
-test = "bun x vitest run"
-validate = [{ task = "test" }]
+lint = "bun run lint"
+build = "bun run build"
+validate = [{ task = "lint" }, { task = "build" }]
 ```
 
 Exit criteria:
@@ -89,8 +94,8 @@ Decision path:
 Core scripts:
 
 ```sh
-effigy contracts check-json --repo . --full --print-selected=json
-effigy contracts validate-selection --repo . --artifact ./json-contracts-selected.json
+effigy contracts check-json --full --print-selected=json
+effigy contracts validate-selection --artifact ./json-contracts-selected.json
 ```
 
 Exit criteria:
