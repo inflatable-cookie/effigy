@@ -37,7 +37,7 @@ curl -fsSL https://github.com/inflatable-cookie/effigy/releases/latest/download/
 From source:
 
 ```bash
-cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.2.6
+cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.2.7
 ```
 
 ## Start In 5 Minutes
