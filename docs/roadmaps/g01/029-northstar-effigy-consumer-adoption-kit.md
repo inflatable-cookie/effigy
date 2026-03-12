@@ -61,6 +61,9 @@ This roadmap is based on the consumer-repo scan:
 - [`../../guides/056-northstar-effigy-consumer-repo-contract.md`](../../guides/056-northstar-effigy-consumer-repo-contract.md)
 - [`../../logs/2026-03/12-141200-monkey-consumer-contract-gap-assessment.md`](../../logs/2026-03/12-141200-monkey-consumer-contract-gap-assessment.md)
 - [`../../logs/2026-03/12-155600-compli-me-workspace-docs-authority-pilot.md`](../../logs/2026-03/12-155600-compli-me-workspace-docs-authority-pilot.md)
+- [`../../logs/2026-03/12-184800-signal-released-surface-pilot.md`](../../logs/2026-03/12-184800-signal-released-surface-pilot.md)
+- [`../../logs/2026-03/12-190515-convergence-released-surface-pilot.md`](../../logs/2026-03/12-190515-convergence-released-surface-pilot.md)
+- [`../../logs/2026-03/12-193800-jetstream-released-surface-pilot.md`](../../logs/2026-03/12-193800-jetstream-released-surface-pilot.md)
 
 Key scan findings:
 
@@ -140,9 +143,20 @@ Current pilot boundary:
 - `monkey` proved the single-repo contract in native current-Effigy mode
 - `compli-me` proved that a workspace container can stay thin while a nested
   docs-authority repo carries the real Northstar contract
+- `signal` proved that released `effigy v0.2.6` is enough for native
+  consumer-side `docs_policy`, `qa:docs`, and `qa:northstar` on a real
+  non-Effigy repo
+- `convergence` proved that the same released surface coexists cleanly with a
+  deeper existing repo validation lane, including a successful `effigy validate`
+  pass after contract adoption
+- `jetstream` proved that the same released surface also works on a
+  research-heavy repo with a large existing docs tree and a retained
+  repo-specific docs contract script, once the native docs lane surfaced and
+  cleared real backlog link debt
 - the contract can no longer be documented only as a single-repo shape
 - remaining open: decide exactly where release posture belongs for split
-  workspace/doc-authority projects
+  workspace/doc-authority projects, and close the post-release
+  `verify-install` SSH-remote gap
 
 Tasks:
 
@@ -238,9 +252,10 @@ Tasks:
 
 - [ ] Define the starter `qa:northstar` task bundle shape
 - [ ] Decide whether new built-ins are required or task composition is enough
-- [ ] Close the released-surface gap for consumer repos: native docs validation
-      and release-readiness support must work outside the Effigy repo, not only
-      in unreleased internal builds
+- [ ] Close the remaining released-surface gap for consumer repos: docs
+      validation now works on released `0.2.6`, but release-install
+      verification still needs to handle SSH-style remotes outside Effigy's own
+      repo
 - [ ] Package a starter `[docs_policy]` consumer config where appropriate
 - [ ] Add explicit validation rules for agent-contract drift and docs skeleton
       drift
@@ -262,6 +277,8 @@ Recommended pilot order from the scan:
 2. `compli-me`
 3. `underlay`
 4. `acowtancy`
+5. `signal`
+6. `convergence`
 
 Rationale:
 
@@ -275,6 +292,12 @@ Rationale:
 - `acowtancy` tests workspace-scale orchestration and multi-repo agent
   semantics after the contract is proven in simpler targets, especially around
   a separate planning authority repo (`ledger`) and staged release posture
+- `signal` proves that the released `0.2.6` binary, not just the dev build,
+  can carry native docs-policy validation in a real repo with an existing
+  Northstar docs spine and changelog
+- `convergence` proves that the same released surface works in a repo with an
+  existing deeper validation lane and does not require special shell fallback
+  once the docs contract is normalized
 
 Tasks:
 
@@ -286,6 +309,8 @@ Tasks:
 - [x] Apply the revised contract to `underlay`
 - [x] Record friction and missing-product gaps
 - [x] Apply the revised contract to `acowtancy`
+- [x] Apply the released `0.2.6` contract to `signal`
+- [x] Apply the released `0.2.6` contract to `convergence`
 - [ ] Capture which parts should remain skill-level versus become Effigy-native
 
 Acceptance:
@@ -358,10 +383,15 @@ Acceptance:
   [`../../logs/2026-03/12-163200-underlay-single-repo-pilot.md`](../../logs/2026-03/12-163200-underlay-single-repo-pilot.md)
 - `acowtancy` workspace + ledger-authority pilot:
   [`../../logs/2026-03/12-174500-acowtancy-workspace-ledger-authority-pilot.md`](../../logs/2026-03/12-174500-acowtancy-workspace-ledger-authority-pilot.md)
+- `signal` released-surface pilot:
+  [`../../logs/2026-03/12-184800-signal-released-surface-pilot.md`](../../logs/2026-03/12-184800-signal-released-surface-pilot.md)
+- `convergence` released-surface pilot:
+  [`../../logs/2026-03/12-190515-convergence-released-surface-pilot.md`](../../logs/2026-03/12-190515-convergence-released-surface-pilot.md)
 
 ## Next Task
 
-Use the `acowtancy` result to tighten the skill and contract one more time:
-make the workspace-container mode explicitly distinguish `orchestration root`,
-`docs authority`, and `releasable repos`, then decide which parts of that split
+Use the `signal` and `convergence` results to drive the next broad batch:
+migrate another released-binary consumer repo with an existing Northstar spine,
+then close the remaining `release verify-install` SSH-remote gap so
+post-release validation is as portable as the docs-policy adoption surface.
 belong in reusable templates versus first-class Effigy product surface.

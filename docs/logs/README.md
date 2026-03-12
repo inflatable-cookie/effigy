@@ -58,6 +58,9 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Recent Validation Logs
 
+- [`2026-03-12-jetstream-released-surface-pilot.md`](./2026-03/12-193800-jetstream-released-surface-pilot.md)
+- [`2026-03-12-convergence-released-surface-pilot.md`](./2026-03/12-190515-convergence-released-surface-pilot.md)
+- [`2026-03-12-signal-released-surface-pilot.md`](./2026-03/12-184800-signal-released-surface-pilot.md)
 - [`2026-03-12-acowtancy-workspace-ledger-authority-pilot.md`](./2026-03/12-174500-acowtancy-workspace-ledger-authority-pilot.md)
 - [`2026-03-12-underlay-single-repo-pilot.md`](./2026-03/12-163200-underlay-single-repo-pilot.md)
 - [`2026-03-12-compli-me-workspace-docs-authority-pilot.md`](./2026-03/12-155600-compli-me-workspace-docs-authority-pilot.md)
@@ -190,6 +193,12 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-03/12-163200-underlay-single-repo-pilot.md`](./2026-03/12-163200-underlay-single-repo-pilot.md)
 
 - [`2026-03/12-174500-acowtancy-workspace-ledger-authority-pilot.md`](./2026-03/12-174500-acowtancy-workspace-ledger-authority-pilot.md)
+
+- [`2026-03/12-184800-signal-released-surface-pilot.md`](./2026-03/12-184800-signal-released-surface-pilot.md)
+
+- [`2026-03/12-190515-convergence-released-surface-pilot.md`](./2026-03/12-190515-convergence-released-surface-pilot.md)
+
+- [`2026-03/12-193800-jetstream-released-surface-pilot.md`](./2026-03/12-193800-jetstream-released-surface-pilot.md)
 
 ## Archived Validation Logs
 
