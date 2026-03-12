@@ -37,6 +37,7 @@ Manual checks:
 - newly added guides are linked from at least one landing page
 - numbering/title conventions are consistent with nearby guides
 - command examples match current CLI flags and behavior
+- agent-facing examples do not reintroduce current-directory `--repo` overrides
 - JSON examples use current schema names and versions
 - completion-candidates examples include both hit and miss telemetry variants
 - new log artifacts are indexed in `docs/logs/README.md`
@@ -75,6 +76,8 @@ jobs:
 
 This ensures markdown links resolve, key JSON examples stay contract-aligned, logs remain indexed, and vision metadata coverage is enforced on every pull request/push.
 `effigy qa:docs` is now the primary orchestration surface for that bundle.
+`effigy qa:docs:agent-defaults` keeps agent-facing docs, setup examples, and
+workflow examples from drifting back to copied `--repo .` defaults.
 `effigy qa:docs:vision` is now the policy-specific sub-bundle for roadmap/guide heading requirements, report/cutoff text requirements, workflow-path validation, vision index validation, and next-action validation.
 
 ## 2a) Built-ins vs Repo Policy
@@ -82,8 +85,9 @@ This ensures markdown links resolve, key JSON examples stay contract-aligned, lo
 The current docs QA surface intentionally splits into two layers:
 
 - generic built-ins such as `effigy docs check-links`,
-  `check-json-examples`, `check-index`, and `check-workflow-paths`
-- Effigy-specific vision-policy checks that remain under `docs/scripts/`
+  `check-json-examples`, `check-index`, `check-workflow-paths`, and
+  `check-forbidden`
+- Effigy-specific vision-policy checks that remain in repo policy and task wiring
 
 That boundary is deliberate. Workflow-path validation is generic enough to
 reuse across projects, but the remaining vision checks enforce Effigy's own
@@ -158,6 +162,17 @@ Forward-only policy cutoff:
 - logs dated on or after `2026-03-06` must include a `## Vision Target Delta` section
 - logs before `2026-03-06` do not require backfill
 
+## 5b) What the Forbidden-Text Checker Validates
+
+Built-in command:
+- `effigy docs check-forbidden`
+
+Behavior:
+- scans one or more text files for exact substrings that should not appear
+- fails when any forbidden substring is found in any scanned file
+- works well for agent/docs guardrails such as blocking copied `--repo .`
+  examples in active instruction surfaces and workflow snippets
+
 ### Named docs-policy indexes
 
 Built-in command:
@@ -221,6 +236,7 @@ Copy into PR description:
 ```md
 ## Docs QA
 - [ ] `effigy qa:docs`
+- [ ] `effigy qa:docs:agent-defaults`
 - [ ] `effigy qa:docs:vision`
 - [ ] `effigy docs check-workflow-paths`
 - [ ] `effigy docs check-index --policy-index vision`
@@ -240,6 +256,9 @@ Allowlist-change PRs should use:
 ```sh
 # docs links only
 effigy qa:docs
+
+# agent/default guidance drift
+effigy qa:docs:agent-defaults
 
 # vision metadata coverage
 effigy qa:docs:vision

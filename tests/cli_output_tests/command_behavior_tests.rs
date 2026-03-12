@@ -659,6 +659,33 @@ fn cli_docs_check_contains_json_reports_missing_text() {
 }
 
 #[test]
+fn cli_docs_check_forbidden_json_reports_forbidden_text() {
+    let root = temp_workspace("docs-check-forbidden");
+    fs::write(root.join("AGENTS.md"), "Run `effigy tasks --repo .`\n").expect("write agents");
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "docs",
+            "check-forbidden",
+            "AGENTS.md",
+            "--forbid",
+            "--repo .",
+        ],
+    );
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    let details: Value = serde_json::from_str(
+        parsed["error"]["message"]
+            .as_str()
+            .expect("json error payload"),
+    )
+    .expect("parse details");
+    assert_eq!(details["schema"], "effigy.docs.forbidden-check.v1");
+    assert_eq!(details["findings"][0]["kind"], "forbidden-text");
+}
+
+#[test]
 fn cli_contracts_validate_selection_json_accepts_valid_artifact() {
     let root = temp_workspace("contracts-validate-selection");
     fs::create_dir_all(root.join("docs/contracts")).expect("mkdir contracts");
@@ -3931,10 +3958,7 @@ fn cli_release_prepare_plan_text_mode_includes_remediation_hints_when_blocked() 
         combined.contains("Update `CHANGELOG.md`"),
         "got: {combined}"
     );
-    assert!(
-        combined.contains("effigy release gates --repo ."),
-        "got: {combined}"
-    );
+    assert!(combined.contains("effigy release gates"), "got: {combined}");
 }
 
 #[test]

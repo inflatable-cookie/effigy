@@ -83,8 +83,15 @@ Validation:
 
 ```sh
 effigy docs check-links
+effigy docs check-forbidden AGENTS.md README.md --forbid "--repo ."
 effigy qa:docs
 ```
+
+Command example rule:
+- omit `--repo` unless the example is intentionally targeting a different repo
+- if a repo keeps agent instructions or setup docs, add a small
+  `effigy docs check-forbidden ... --forbid "--repo ."` guard to keep the
+  default honest
 
 ## 6) Terminology Canon
 

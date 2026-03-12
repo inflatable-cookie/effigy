@@ -26,9 +26,9 @@ Release: v0.2.5
 
 ## Built-In Release Path
 
-- `effigy release prepare --repo . --yes --check-gates`
+- `effigy release prepare --yes --check-gates`
   - result: succeeded and wrote a valid `.release-prepared.json`
-- `effigy release execute --repo . --yes`
+- `effigy release execute --yes`
   - result: succeeded; created release commit
     `2f5592ba329fc101bc87f7fa38be0960da53ee5d` with message
     `release: v0.2.5`, pushed `main`, pushed tag `v0.2.5`, and removed
@@ -55,15 +55,15 @@ Release: v0.2.5
 
 ## Distribution Evidence
 
-- `effigy release verify-install --repo . --tag v0.2.5`
+- `effigy release verify-install --tag v0.2.5`
   - result: built-in tag-install path was proven as part of the shipped release
     surface and wrapper parity work, but a dated first-publish artifact bundle
     was not attached to this release checkpoint
 - `./scripts/check-distribution-first-publish.sh --tag v0.2.5 --artifacts-dir ./artifacts/distribution-v0.2.5`
   - result: not recorded in this production checkpoint
-- `effigy distribution validate-artifacts --repo . --artifacts-dir ./artifacts/distribution-v0.2.5`
+- `effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-v0.2.5`
   - result: not recorded in this production checkpoint
-- `effigy distribution generate-closeout --repo . --tag v0.2.5 --artifacts-dir ./artifacts/distribution-v0.2.5`
+- `effigy distribution generate-closeout --tag v0.2.5 --artifacts-dir ./artifacts/distribution-v0.2.5`
   - result: not recorded in this production checkpoint
 
 ## Release Notes

@@ -234,12 +234,12 @@ Agent docs should also define:
 - [x] `./scripts/check-doc-links.sh README.md docs/roadmaps/README.md docs/roadmaps/g01/README.md docs/roadmaps/g01/015-effigy-self-hosting-and-agent-first-adoption.md`
 - [x] `bash -n scripts/effigy-dev scripts/install-local-bin-links.sh`
 - [x] `zsh -ic 'type -a effigy; type -a effigy-dev'`
-- [x] `zsh -ic 'effigy-dev tasks --repo .'`
-- [x] `zsh -ic 'effigy-dev test --plan --repo .'`
-- [x] `zsh -ic 'effigy-dev bootstrap:local --repo .'`
-- [x] `zsh -ic 'effigy tasks --repo .'`
-- [x] `zsh -ic 'effigy-dev qa:docs --repo .'`
-- [x] `zsh -ic 'effigy-dev --json tasks --repo . | jq -r .schema'`
+- [x] `zsh -ic 'effigy-dev tasks'`
+- [x] `zsh -ic 'effigy-dev test --plan'`
+- [x] `zsh -ic 'effigy-dev bootstrap:local'`
+- [x] `zsh -ic 'effigy tasks'`
+- [x] `zsh -ic 'effigy-dev qa:docs'`
+- [x] `zsh -ic 'effigy-dev --json tasks | jq -r .schema'`
 - [x] `./scripts/check-doc-links.sh docs/logs/README.md docs/logs/2026-03/06-101500-remaining-helper-surface-classification.md docs/roadmaps/g01/015-effigy-self-hosting-and-agent-first-adoption.md`
 - [x] `./scripts/check-doc-logs-index.sh`
 - [x] `./scripts/check-doc-links.sh docs/README.md docs/guides/README.md docs/guides/047-agent-and-cross-repo-adoption.md docs/roadmaps/g01/015-effigy-self-hosting-and-agent-first-adoption.md docs/logs/README.md`

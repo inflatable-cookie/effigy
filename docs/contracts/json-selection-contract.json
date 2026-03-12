@@ -1,7 +1,7 @@
 {
   "schema": "effigy.json-contract-selection.v1",
   "schema_version": 1,
-  "producer": "effigy contracts check-json --repo . --print-selected=json",
+  "producer": "effigy contracts check-json --print-selected=json",
   "type": "object",
   "required": [
     "selected",

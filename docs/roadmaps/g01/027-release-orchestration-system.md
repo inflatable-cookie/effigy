@@ -566,7 +566,7 @@ replaced by the new `effigy release` commands.
 Implementation note (2026-03-11):
 - Effigy’s root `effigy.toml` now declares `[release]` with the baseline gate
   set mirrored from `scripts/check-release-gates.sh`, and local self-hosted
-  release-gate validation now runs through `effigy release gates --repo .`
+  release-gate validation now runs through `effigy release gates`
   (with `cargo qa-release` as the cargo alias).
 - `Cargo.lock` sync during prepare is now shipped for Cargo-based repos, with a
   fixture-level parity test against `prepare-release.sh --apply`.

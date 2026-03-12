@@ -23,6 +23,10 @@ effigy release gates # release-gate pass for the current repo
 
 Otherwise bootstrap with `cargo run --bin effigy -- ...`.
 
+Default local rule:
+- do not add a current-directory repo override when already running inside the target repo
+- use `--repo <PATH>` only when intentionally targeting a different repo
+
 ## Changelog
 
 When making changes that affect user-facing behavior, append an entry to

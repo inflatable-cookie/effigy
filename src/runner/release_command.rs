@@ -4050,12 +4050,12 @@ fn remediation_hints_for_blockers(blockers: &[String], stage: ReleaseBlockedStag
             || blocker.contains("no next version could be derived")
         {
             hints.insert(
-                "Update `CHANGELOG.md` so the unreleased section is valid, non-empty, and aligned with the current version, then rerun `effigy release status --repo .`.".to_owned(),
+                "Update `CHANGELOG.md` so the unreleased section is valid, non-empty, and aligned with the current version, then rerun `effigy release status`.".to_owned(),
             );
         }
         if blocker.starts_with("gate `") {
             hints.insert(
-                "Run `effigy release gates --repo .` to inspect the failing gate output, then fix the gate before retrying prepare or execute.".to_owned(),
+                "Run `effigy release gates` to inspect the failing gate output, then fix the gate before retrying prepare or execute.".to_owned(),
             );
         }
         if blocker.contains("requires `--check-gates`") {
@@ -4065,12 +4065,12 @@ fn remediation_hints_for_blockers(blockers: &[String], stage: ReleaseBlockedStag
         }
         if blocker.starts_with("release state file does not exist") {
             hints.insert(
-                "Run `effigy release prepare --repo .` or `effigy release prepare --repo . --yes --check-gates` before attempting execute.".to_owned(),
+                "Run `effigy release prepare` or `effigy release prepare --yes --check-gates` before attempting execute.".to_owned(),
             );
         }
         if blocker.contains("release state is stale") {
             hints.insert(
-                "Prefer rerunning `effigy release prepare --repo .` to refresh the prepared state; use `--allow-stale` only when the stale state has been deliberately reviewed.".to_owned(),
+                "Prefer rerunning `effigy release prepare` to refresh the prepared state; use `--allow-stale` only when the stale state has been deliberately reviewed.".to_owned(),
             );
         }
         if blocker.contains("prepared release source drift detected") {
@@ -6620,7 +6620,7 @@ mod tests {
             .any(|hint| hint.contains("CHANGELOG.md")));
         assert!(prepare_hints
             .iter()
-            .any(|hint| hint.contains("effigy release gates --repo .")));
+            .any(|hint| hint.contains("effigy release gates")));
 
         let execute_hints = remediation_hints_for_blockers(
             &[
@@ -6746,9 +6746,9 @@ mod tests {
                 ("format", "cargo fmt --all -- --check"),
                 (
                     "metadata",
-                    "cargo run --bin effigy -- distribution validate-metadata --repo ."
+                    "cargo run --bin effigy -- distribution validate-metadata"
                 ),
-                ("qa", "cargo run --bin effigy -- qa:ci --repo ."),
+                ("qa", "cargo run --bin effigy -- qa:ci"),
                 (
                     "smoke",
                     "./scripts/check-release-smoke.sh ./target/release/effigy"

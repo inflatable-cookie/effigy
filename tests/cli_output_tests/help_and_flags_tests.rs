@@ -160,6 +160,9 @@ fn cli_docs_help_is_command_specific() {
     assert!(stdout.contains(
         "effigy docs check-contains [--repo <PATH>] <FILE>... --require <TEXT>... [--json]"
     ));
+    assert!(stdout.contains(
+        "effigy docs check-forbidden [--repo <PATH>] <FILE>... --forbid <TEXT>... [--json]"
+    ));
     assert!(
         stdout.contains(
             "effigy docs check-index [--repo <PATH>] [--policy-index <NAME>] [--dir <PATH>] [--index <PATH>] [--json]"

@@ -151,6 +151,37 @@ fn parse_docs_check_next_action_with_policy() {
 }
 
 #[test]
+fn parse_docs_check_forbidden_with_requirements() {
+    let cmd = parse_command(vec![
+        "docs".to_owned(),
+        "check-forbidden".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "AGENTS.md".to_owned(),
+        "setup-effigy/README.md".to_owned(),
+        "--forbid".to_owned(),
+        "--repo .".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Docs(DocsArgs {
+            subcommand: DocsSubcommand::CheckForbidden {
+                paths: vec![
+                    PathBuf::from("AGENTS.md"),
+                    PathBuf::from("setup-effigy/README.md"),
+                ],
+                forbidden_text: vec!["--repo .".to_owned()],
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_docs_check_headings_with_requirements() {
     let cmd = parse_command(vec![
         "docs".to_owned(),

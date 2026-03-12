@@ -86,6 +86,7 @@ Minimum bar:
 - include runnable command examples for behavior docs
 - use exact schema names for JSON docs
 - avoid duplicating long navigation lists across entry pages
+- keep agent-facing examples on repo-root defaults unless cross-repo execution is intentional
 
 ## 4) Validation Commands
 
@@ -94,6 +95,14 @@ Run in this order:
 ```sh
 effigy qa:docs
 effigy docs check-workflow-paths
+```
+
+If the change touches `AGENTS.md`, adoption snippets, setup/install docs, or
+workflow examples,
+also make sure the agent-default drift guard is still green:
+
+```sh
+effigy qa:docs:agent-defaults
 ```
 
 Fallbacks when validating from a dev checkout instead of the installed binary:
@@ -125,6 +134,7 @@ Copy into PR description:
 - [ ] Required guides updated for this change type
 - [ ] Style/terminology checked against 033/034
 - [ ] `effigy qa:docs` passed
+- [ ] Agent/default guidance changes: `effigy qa:docs:agent-defaults` run
 - [ ] `effigy docs check-workflow-paths` passed
 - [ ] JSON-related changes: `effigy qa:json:ci` run
 ```

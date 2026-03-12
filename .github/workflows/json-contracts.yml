@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Validate docs QA bundle
-        run: cargo run --bin effigy -- qa:docs --repo .
+        run: cargo run --bin effigy -- qa:docs
 
   json-contracts:
     name: Validate JSON contracts
@@ -36,11 +36,11 @@ jobs:
       - name: Validate JSON contracts
         run: |
           set -o pipefail
-          cargo run --bin effigy -- contracts check-json --repo . --full --print-selected=json | tee json-contracts.log
+          cargo run --bin effigy -- contracts check-json --full --print-selected=json | tee json-contracts.log
           grep -m1 '^{"selected":' json-contracts.log > json-contracts-selected.json
 
       - name: Validate selection artifact contract
-        run: cargo run --bin effigy -- contracts validate-selection --repo . --artifact ./json-contracts-selected.json
+        run: cargo run --bin effigy -- contracts validate-selection --artifact ./json-contracts-selected.json
 
       - name: Validator smoke check (negative path)
         run: cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture

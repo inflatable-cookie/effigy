@@ -116,6 +116,11 @@ During v0.x, MINOR bumps may include breaking changes.
   docs paths so the main Effigy feature set is easier to discover without
   teaching unnecessary flags before readers drop into the deeper reference
   material
+- Add built-in `effigy docs check-forbidden`, wire `qa:docs` through a
+  self-hosted agent-defaults guard, and update active adoption/setup/help
+  surfaces plus workflow examples, and remove the same bad default from live
+  release remediation hints and completion help examples so copied `--repo .`
+  usage fails validation instead of spreading into downstream agent instructions
 
 ## [0.2.5] - 2026-03-11
 

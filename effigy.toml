@@ -10,17 +10,18 @@ alias = "effigy"
 "link:local" = "./scripts/install-local-bin-links.sh"
 "bootstrap:local" = [{ task = "install:local" }, { task = "link:local" }]
 "smoke:release" = "./scripts/check-release-smoke.sh ./target/release/effigy"
-"dist:metadata" = "cargo run --bin effigy -- distribution validate-metadata --repo ."
-"qa:docs:links" = "cargo run --bin effigy -- docs check-links --repo ."
-"qa:docs:examples" = "cargo run --bin effigy -- docs check-json-examples --repo ."
-"qa:docs:index" = "cargo run --bin effigy -- docs check-index --repo ."
-"qa:docs:vision:roadmaps" = "cargo run --bin effigy -- docs check-headings --repo . docs/roadmaps/g01/001-effigy-foundation.md docs/roadmaps/g01/002-deferral-fallback-system.md docs/roadmaps/g01/003-coloured-output-and-widgets.md docs/roadmaps/g01/004-dev-process-manager-tui.md docs/roadmaps/g01/005-unified-testing-orchestration.md docs/roadmaps/g01/006-tui-terminal-emulation.md docs/roadmaps/g01/007-test-runner-selection-and-environment-policy.md docs/roadmaps/g01/008-universal-json-command-coverage.md docs/roadmaps/g01/009-doctor-health-consolidation.md docs/roadmaps/g01/010-dag-lock-policy-baseline.md docs/roadmaps/g01/011-watch-init-migrate-foundation.md docs/roadmaps/g01/012-codebase-consolidation-and-health.md --require-heading '## Vision Alignment' --require-heading '## Primary Tags' --require-heading '## Target Envelope' --require-heading '## Vision Target Delta'"
-"qa:docs:vision:guides" = "cargo run --bin effigy -- docs check-headings --repo . docs/guides/016-task-routing-precedence.md docs/guides/017-json-output-contracts.md docs/guides/018-doctor-explain-mode.md docs/guides/019-watch-init-migrate-foundation.md docs/guides/020-dag-lock-policy-baseline.md docs/guides/021-quick-start-and-command-cookbook.md docs/guides/022-manifest-cookbook.md docs/guides/023-troubleshooting-and-failure-recipes.md docs/guides/024-ci-and-automation-recipes.md docs/guides/025-command-reference-matrix.md docs/guides/026-json-payload-examples.md --require-heading '## Vision Alignment'"
-"qa:docs:vision:report-policy" = "cargo run --bin effigy -- docs check-contains --repo . docs/logs/README.md docs/guides/036-release-notes-authoring-template-and-examples.md --require 'Vision Target Delta'"
-"qa:docs:vision:cutoff" = "cargo run --bin effigy -- docs check-contains --repo . docs/logs/README.md docs/guides/029-docs-qa-checklist-and-validation.md --require '2026-03-06'"
-"qa:docs:vision:workflow" = "cargo run --bin effigy -- docs check-workflow-paths --repo ."
-"qa:docs:vision:index" = "cargo run --bin effigy -- docs check-index --repo . --policy-index vision"
-"qa:docs:vision:next-action" = "cargo run --bin effigy -- docs check-next-action --repo . --policy vision"
+"dist:metadata" = "cargo run --bin effigy -- distribution validate-metadata"
+"qa:docs:links" = "cargo run --bin effigy -- docs check-links"
+"qa:docs:examples" = "cargo run --bin effigy -- docs check-json-examples"
+"qa:docs:index" = "cargo run --bin effigy -- docs check-index"
+"qa:docs:agent-defaults" = "cargo run --bin effigy -- docs check-forbidden AGENTS.md setup-effigy/README.md .github/workflows/json-contracts.yml docs/contracts/json-selection-contract.json --forbid '--repo .'"
+"qa:docs:vision:roadmaps" = "cargo run --bin effigy -- docs check-headings docs/roadmaps/g01/001-effigy-foundation.md docs/roadmaps/g01/002-deferral-fallback-system.md docs/roadmaps/g01/003-coloured-output-and-widgets.md docs/roadmaps/g01/004-dev-process-manager-tui.md docs/roadmaps/g01/005-unified-testing-orchestration.md docs/roadmaps/g01/006-tui-terminal-emulation.md docs/roadmaps/g01/007-test-runner-selection-and-environment-policy.md docs/roadmaps/g01/008-universal-json-command-coverage.md docs/roadmaps/g01/009-doctor-health-consolidation.md docs/roadmaps/g01/010-dag-lock-policy-baseline.md docs/roadmaps/g01/011-watch-init-migrate-foundation.md docs/roadmaps/g01/012-codebase-consolidation-and-health.md --require-heading '## Vision Alignment' --require-heading '## Primary Tags' --require-heading '## Target Envelope' --require-heading '## Vision Target Delta'"
+"qa:docs:vision:guides" = "cargo run --bin effigy -- docs check-headings docs/guides/016-task-routing-precedence.md docs/guides/017-json-output-contracts.md docs/guides/018-doctor-explain-mode.md docs/guides/019-watch-init-migrate-foundation.md docs/guides/020-dag-lock-policy-baseline.md docs/guides/021-quick-start-and-command-cookbook.md docs/guides/022-manifest-cookbook.md docs/guides/023-troubleshooting-and-failure-recipes.md docs/guides/024-ci-and-automation-recipes.md docs/guides/025-command-reference-matrix.md docs/guides/026-json-payload-examples.md --require-heading '## Vision Alignment'"
+"qa:docs:vision:report-policy" = "cargo run --bin effigy -- docs check-contains docs/logs/README.md docs/guides/036-release-notes-authoring-template-and-examples.md --require 'Vision Target Delta'"
+"qa:docs:vision:cutoff" = "cargo run --bin effigy -- docs check-contains docs/logs/README.md docs/guides/029-docs-qa-checklist-and-validation.md --require '2026-03-06'"
+"qa:docs:vision:workflow" = "cargo run --bin effigy -- docs check-workflow-paths"
+"qa:docs:vision:index" = "cargo run --bin effigy -- docs check-index --policy-index vision"
+"qa:docs:vision:next-action" = "cargo run --bin effigy -- docs check-next-action --policy vision"
 "qa:docs:vision" = [
   { task = "qa:docs:vision:roadmaps" },
   { task = "qa:docs:vision:guides" },
@@ -34,10 +35,11 @@ alias = "effigy"
   { task = "qa:docs:links" },
   { task = "qa:docs:examples" },
   { task = "qa:docs:index" },
+  { task = "qa:docs:agent-defaults" },
   { task = "qa:docs:vision" },
 ]
-"qa:json" = "cargo run --bin effigy -- contracts check-json --repo . --fast --print-selected=text"
-"qa:json:ci" = "cargo run --bin effigy -- contracts check-json --repo . --full --print-selected=json"
+"qa:json" = "cargo run --bin effigy -- contracts check-json --fast --print-selected=text"
+"qa:json:ci" = "cargo run --bin effigy -- contracts check-json --full --print-selected=json"
 "qa:gates" = [{ task = "qa:docs" }, { task = "qa:json" }]
 "qa:ci" = [{ task = "qa:docs" }, { task = "qa:json:ci" }]
 "prepush:test:json-mode" = "cargo test --test cli_output_tests cli_json_mode"
@@ -73,7 +75,7 @@ allowlist_file = "docs/scripts/fixtures/vision-next-task/actionable-verbs.txt"
 [release.gates]
 format = "cargo fmt --all -- --check"
 test = "cargo test"
-qa = "cargo run --bin effigy -- qa:ci --repo ."
+qa = "cargo run --bin effigy -- qa:ci"
 build = "cargo build --release --bin effigy"
 smoke = "./scripts/check-release-smoke.sh ./target/release/effigy"
-metadata = "cargo run --bin effigy -- distribution validate-metadata --repo ."
+metadata = "cargo run --bin effigy -- distribution validate-metadata"

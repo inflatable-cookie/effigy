@@ -40,6 +40,8 @@ Agents should assume:
 - `effigy tasks` is the first discovery surface for supported repo work
 - `effigy doctor` is the first health and routing diagnostic surface
 - `effigy test --plan` is the first test-routing inspection step
+- `--repo` is only needed when intentionally targeting a different repo outside
+  the current working tree
 - built-in `test` prefers `cargo-nextest` when available and falls back to
   `cargo test` only when `cargo-nextest` is unavailable
 - explicit `tasks.test` in `effigy.toml` overrides built-in test auto-detection
@@ -51,6 +53,8 @@ Agents should not assume:
 - that every raw script in a repo is canonical
 - that `cargo test` is the preferred Rust path when Effigy documents a built-in
   test flow
+- that adding a current-directory repo override is a better or safer default
+  than just running the command from the repo root
 - that `cargo run --bin effigy -- ...` is the normal daily interface outside
   bootstrap or explicit source-run fallback
 
@@ -70,7 +74,8 @@ Default flow:
 3. Run `effigy test --plan`
 4. Prefer `effigy <task>` and `effigy test ...`
 5. Use `effigy --json <command>` for machine-readable output
-6. Fall back to raw tool commands only when Effigy does not yet cover the path
+6. Use `--repo <PATH>` only when intentionally operating on another repo
+7. Fall back to raw tool commands only when Effigy does not yet cover the path
 
 Testing policy:
 - treat `effigy test` as the default test entrypoint when available
@@ -84,6 +89,17 @@ Repo maintenance policy:
 
 If the repo is Effigy itself, replace `effigy` with `effigy-dev` for current
 checkout validation and keep `effigy` for installed stable-channel checks.
+
+Recommended enforcement task for adopted repos:
+
+```toml
+[tasks]
+"qa:docs:agent-defaults" = "effigy docs check-forbidden AGENTS.md README.md .github/workflows/ci.yml --forbid '--repo .'"
+```
+
+Adjust the file list to match the repo's real agent-facing surfaces. The point
+is to fail the docs/agent QA bundle when current-directory repo overrides start
+showing up as copied defaults.
 
 ## 4) Minimum Adoption Criteria
 
@@ -128,6 +144,8 @@ Effigy as partial coverage rather than the default loop.
 - update `AGENTS.md` with the Effigy-first contract
 - remove old “just run raw scripts” instructions where Effigy owns the path
 - add JSON-mode notes for automation consumers
+- add a small forbidden-text QA task so `--repo .` does not creep back into
+  copied agent examples
 
 ### Wave 4 - Automation and CI
 
