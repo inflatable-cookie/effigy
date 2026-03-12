@@ -150,14 +150,14 @@ See `026-json-payload-examples.md` for realistic sample responses for each schem
 JSON contract smoke checks:
 
 ```bash
-./scripts/check-json-contracts.sh --fast
-./scripts/check-json-contracts.sh
+effigy contracts check-json --fast
+effigy contracts check-json --full
 ```
 
 Changed-only mode:
 
 ```bash
-./scripts/check-json-contracts.sh --fast --changed-only-base origin/main
+effigy contracts check-json --fast --changed-only origin/main
 ```
 
 ## Layered Contract Strategy
@@ -188,4 +188,4 @@ Rule of thumb:
 
 ## Next Step
 
-After updating any envelope or payload shape, add or refresh examples in [`026-json-payload-examples.md`](./026-json-payload-examples.md) and run `./scripts/check-json-contracts.sh --fast`.
+After updating any envelope or payload shape, add or refresh examples in [`026-json-payload-examples.md`](./026-json-payload-examples.md) and run `effigy contracts check-json --fast`.

@@ -57,6 +57,12 @@ use ui::{Renderer, UiResult};
 pub enum Command {
     /// Built-in changelog command family.
     Changelog(ChangelogArgs),
+    /// Built-in docs QA command family.
+    Docs(DocsArgs),
+    /// Built-in JSON contract command family.
+    Contracts(ContractsArgs),
+    /// Built-in distribution validation/reporting command family.
+    Distribution(DistributionArgs),
     /// Built-in release command family.
     Release(ReleaseArgs),
     /// Built-in doctor command family.
@@ -76,6 +82,12 @@ pub enum HelpTopic {
     General,
     /// Changelog help.
     Changelog,
+    /// Docs help.
+    Docs,
+    /// Contracts help.
+    Contracts,
+    /// Distribution help.
+    Distribution,
     /// Release help.
     Release,
     /// Doctor help.
@@ -101,6 +113,189 @@ pub struct ChangelogArgs {
     pub file: Option<PathBuf>,
     /// Whether the command should render JSON-compatible output.
     pub output_json: bool,
+}
+
+/// Parsed arguments for the built-in docs QA command family.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocsArgs {
+    /// Which docs subcommand should run.
+    pub subcommand: DocsSubcommand,
+    /// Optional repository root override.
+    pub repo_override: Option<PathBuf>,
+    /// Whether the command should render JSON-compatible output.
+    pub output_json: bool,
+}
+
+/// Reusable docs QA subcommands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocsSubcommand {
+    /// Validate markdown links in one or more files.
+    CheckLinks {
+        /// Files to scan. When empty, the command uses its built-in defaults.
+        paths: Vec<PathBuf>,
+    },
+    /// Validate JSON example snippets inside a markdown section.
+    CheckJsonExamples {
+        /// Optional markdown file override.
+        file: Option<PathBuf>,
+        /// Optional section heading override.
+        section: Option<String>,
+        /// Minimum number of fenced `json` blocks expected in the section.
+        min_blocks: Option<usize>,
+        /// Needles that must appear in every captured block.
+        required: Vec<String>,
+        /// Needles that must appear in a specific 1-based block index.
+        required_blocks: Vec<DocsBlockRequirement>,
+    },
+    /// Validate that an index file references all markdown logs under a directory.
+    CheckIndex {
+        /// Optional directory override.
+        dir: Option<PathBuf>,
+        /// Optional index file override.
+        index: Option<PathBuf>,
+    },
+    /// Validate workflow file references in markdown docs.
+    CheckWorkflowPaths {
+        /// Optional directory override for markdown scanning.
+        dir: Option<PathBuf>,
+    },
+    /// Insert a missing log entry into the logs index.
+    AddLogIndex {
+        /// Log path relative to `docs/logs/` or repo root.
+        log_path: PathBuf,
+    },
+}
+
+/// A block-specific substring requirement for docs JSON example validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocsBlockRequirement {
+    /// 1-based block index.
+    pub block_index: usize,
+    /// Required substring.
+    pub needle: String,
+}
+
+/// Parsed arguments for the built-in contracts command family.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContractsArgs {
+    /// Which contracts subcommand should run.
+    pub subcommand: ContractsSubcommand,
+    /// Optional repository root override.
+    pub repo_override: Option<PathBuf>,
+    /// Whether the command should render JSON-compatible output.
+    pub output_json: bool,
+}
+
+/// Parsed arguments for the built-in distribution command family.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DistributionArgs {
+    /// Which distribution subcommand should run.
+    pub subcommand: DistributionSubcommand,
+    /// Optional repository root override.
+    pub repo_override: Option<PathBuf>,
+    /// Whether the command should render JSON-compatible output.
+    pub output_json: bool,
+}
+
+/// Supported reusable distribution subcommands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DistributionSubcommand {
+    /// Validate distribution metadata prerequisites.
+    ValidateMetadata {
+        /// Optional tag override.
+        tag: Option<String>,
+    },
+    /// Run non-publish distribution readiness checks and optionally write a summary.
+    Preflight {
+        /// Optional tag override for metadata alignment checks.
+        tag: Option<String>,
+        /// Skip docs QA.
+        skip_docs: bool,
+        /// Skip artifact-pipeline smoke coverage.
+        skip_smoke: bool,
+        /// Optional summary output path.
+        output_path: Option<PathBuf>,
+    },
+    /// Validate artifact log bundles from first-publish runs.
+    ValidateArtifacts {
+        /// Artifact directory to validate.
+        artifacts_dir: PathBuf,
+        /// Whether Homebrew channel logs are required.
+        expect_homebrew: bool,
+    },
+    /// Generate a closeout log from validated artifact logs.
+    GenerateCloseout {
+        /// Release tag used for the closeout record.
+        tag: String,
+        /// Artifact directory containing publish logs.
+        artifacts_dir: PathBuf,
+        /// Optional output path override.
+        output_path: Option<PathBuf>,
+        /// Owner label written into the closeout log.
+        owner: String,
+        /// Whether Homebrew logs are explicitly required.
+        expect_homebrew: bool,
+    },
+    /// Write a machine-readable first-publish artifact summary file.
+    WriteSummary {
+        /// Release tag used for the publish cycle.
+        tag: String,
+        /// Artifact directory that should receive the summary file.
+        artifacts_dir: PathBuf,
+        /// Optional crate version override.
+        crate_version: Option<String>,
+        /// Repo URL recorded in the summary file.
+        repo_url: String,
+        /// Homebrew formula recorded in the summary file.
+        brew_formula: String,
+        /// Whether Homebrew checks were actually executed.
+        homebrew_executed: bool,
+        /// Captured log filenames in execution order.
+        log_files: Vec<String>,
+    },
+}
+
+/// Supported reusable JSON contract subcommands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContractsSubcommand {
+    /// Validate a JSON selection artifact against the published selection contract.
+    ValidateSelection {
+        /// Optional contract file override.
+        contract_path: Option<PathBuf>,
+        /// Optional artifact file override.
+        artifact_path: Option<PathBuf>,
+    },
+    /// Validate JSON command contracts from a schema index.
+    CheckJson {
+        /// Optional schema index override.
+        index_path: Option<PathBuf>,
+        /// Validation mode.
+        mode: ContractsCheckMode,
+        /// Optional git base ref for changed-only selection.
+        changed_only_base: Option<String>,
+        /// Optional selected-schema preview mode.
+        print_selected: ContractsSelectionPrintMode,
+    },
+}
+
+/// Validation mode for index-driven JSON contract checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContractsCheckMode {
+    /// Run the lighter contract subset.
+    Fast,
+    /// Run the full active contract set.
+    Full,
+}
+
+/// Selected-schema preview mode for index-driven JSON contract checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContractsSelectionPrintMode {
+    /// Do not print the selected schema list.
+    None,
+    /// Print selected schema ids as text lines.
+    Text,
+    /// Print the selection payload as a single JSON line.
+    Json,
 }
 
 /// Supported changelog subcommands.

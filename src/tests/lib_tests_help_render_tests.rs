@@ -7,6 +7,9 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy help"));
     assert!(rendered.contains("effigy config"));
     assert!(rendered.contains("effigy doctor"));
+    assert!(rendered.contains("effigy docs"));
+    assert!(rendered.contains("effigy contracts"));
+    assert!(rendered.contains("effigy distribution"));
     assert!(rendered.contains("effigy release"));
     assert!(rendered.contains("effigy scan"));
     assert!(rendered.contains("effigy test"));
@@ -34,6 +37,61 @@ fn render_doctor_help_shows_fix_and_json_options() {
     assert!(rendered.contains("effigy doctor --verbose"));
     assert!(rendered.contains("effigy doctor <task> <args>"));
     assert!(rendered.contains("effigy doctor frontend/build -- --watch"));
+}
+
+#[test]
+fn render_docs_help_shows_validation_options() {
+    let rendered = render_help_text(HelpTopic::Docs);
+    assert!(rendered.contains("docs Help"));
+    assert!(rendered.contains("effigy docs check-links"));
+    assert!(rendered.contains("effigy docs check-json-examples"));
+    assert!(rendered.contains("effigy docs check-index"));
+    assert!(rendered.contains("effigy docs check-workflow-paths"));
+    assert!(rendered.contains("effigy docs add-log-index"));
+    assert!(rendered.contains("--file <PATH>"));
+    assert!(rendered.contains("--section <TITLE>"));
+    assert!(rendered.contains("--min-blocks <N>"));
+    assert!(rendered.contains("--require <TEXT>"));
+    assert!(rendered.contains("--require-block <N:TEXT>"));
+    assert!(rendered.contains("--dir <PATH>"));
+    assert!(rendered.contains("--index <PATH>"));
+    assert!(rendered.contains("<LOG_FILE>"));
+    assert!(rendered.contains("--json"));
+}
+
+#[test]
+fn render_contracts_help_shows_validation_options() {
+    let rendered = render_help_text(HelpTopic::Contracts);
+    assert!(rendered.contains("contracts Help"));
+    assert!(rendered.contains("effigy contracts check-json"));
+    assert!(rendered.contains("effigy contracts validate-selection"));
+    assert!(rendered.contains("--index <PATH>"));
+    assert!(rendered.contains("--fast"));
+    assert!(rendered.contains("--full"));
+    assert!(rendered.contains("--changed-only <BASE>"));
+    assert!(rendered.contains("--print-selected=json"));
+    assert!(rendered.contains("--contract <PATH>"));
+    assert!(rendered.contains("--artifact <PATH>"));
+    assert!(rendered.contains("--json"));
+}
+
+#[test]
+fn render_distribution_help_shows_validation_options() {
+    let rendered = render_help_text(HelpTopic::Distribution);
+    assert!(rendered.contains("distribution Help"));
+    assert!(rendered.contains("effigy distribution preflight"));
+    assert!(rendered.contains("effigy distribution validate-metadata"));
+    assert!(rendered.contains("effigy distribution validate-artifacts"));
+    assert!(rendered.contains("effigy distribution generate-closeout"));
+    assert!(rendered.contains("effigy distribution write-summary"));
+    assert!(rendered.contains("--tag <TAG>"));
+    assert!(rendered.contains("--artifacts-dir <DIR>"));
+    assert!(rendered.contains("--skip-docs"));
+    assert!(rendered.contains("--skip-smoke"));
+    assert!(rendered.contains("--expect-homebrew"));
+    assert!(rendered.contains("--output <PATH>"));
+    assert!(rendered.contains("--owner <NAME>"));
+    assert!(rendered.contains("--log-file <NAME>"));
 }
 
 #[test]

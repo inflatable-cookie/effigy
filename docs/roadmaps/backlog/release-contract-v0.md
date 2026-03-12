@@ -66,7 +66,7 @@ A version can be tagged for channel publication only if all are true:
   - `./scripts/generate-distribution-closeout-log.sh --tag <tag> --artifacts-dir <dir> [--expect-homebrew]`
 
 Automation entrypoint:
-- `cargo qa-release` (wraps `scripts/check-release-gates.sh`, including distribution metadata validation)
+- `effigy qa:release --repo .` (compatibility fallback: `cargo qa-release`)
 
 CI automation:
 - `.github/workflows/release-binaries.yml` (includes release gates) on tag pushes (`v*`) and manual dispatch.

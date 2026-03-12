@@ -42,6 +42,7 @@ Current planned milestones:
 - `025-varlock-env-spec-integration.md`
 - `026-changelog-library-and-northstar-profile.md`
 - `027-release-orchestration-system.md`
+- `028-script-surface-reduction-and-builtins.md` (complete)
 
 Rules:
 

@@ -4,6 +4,8 @@ set -euo pipefail
 # Wrapper policy:
 # - Compatibility entrypoint retained for CI/release/docs tooling.
 # - Prefer cargo/Effigy command entrypoints for operator-driven runs.
+# - This wrapper should own only real publish/install side effects plus
+#   artifact capture; reusable validation/reporting belongs in Effigy.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TAG="${GITHUB_REF_NAME:-}"
@@ -128,7 +130,7 @@ cleanup() {
 trap cleanup EXIT
 
 run_step "tag install validation" \
-  "$ROOT_DIR/scripts/check-release-install-from-tag.sh" --tag "$TAG" --repo-url "$REPO_URL"
+  cargo run --bin effigy -- release verify-install --repo "$ROOT_DIR" --tag "$TAG" --repo-url "$REPO_URL"
 
 CRATE_INSTALL_ROOT="$TMP_DIR/crates-install-root"
 run_step "crates.io install validation (${CRATE_VERSION})" \
@@ -155,21 +157,33 @@ else
   run_step "homebrew upgrade" brew upgrade effigy
 fi
 
+summary_args=(
+  distribution write-summary
+  --repo "$ROOT_DIR"
+  --tag "$TAG"
+  --artifacts-dir "$ARTIFACTS_DIR"
+  --crate-version "$CRATE_VERSION"
+  --repo-url "$REPO_URL"
+  --brew-formula "$BREW_FORMULA"
+)
+if [[ "$HOME_BREW_EXECUTED" -eq 1 ]]; then
+  summary_args+=(--homebrew-executed)
+fi
+for log_file in "${LOG_FILES[@]}"; do
+  summary_args+=(--log-file "$log_file")
+done
+cargo run --bin effigy -- "${summary_args[@]}"
 summary_path="$ARTIFACTS_DIR/distribution-summary.env"
-{
-  echo "TAG=$TAG"
-  echo "CRATE_VERSION=$CRATE_VERSION"
-  echo "REPO_URL=$REPO_URL"
-  echo "BREW_FORMULA=$BREW_FORMULA"
-  echo "HOMEBREW_EXECUTED=$HOME_BREW_EXECUTED"
-  echo "LOG_FILES=$(IFS=,; echo "${LOG_FILES[*]}")"
-} > "$summary_path"
 
-validate_args=(--artifacts-dir "$ARTIFACTS_DIR")
+validate_args=(
+  distribution validate-artifacts
+  --repo "$ROOT_DIR"
+  --artifacts-dir "$ARTIFACTS_DIR"
+)
 if [[ "$HOME_BREW_EXECUTED" -eq 1 ]]; then
   validate_args+=(--expect-homebrew)
 fi
-"$ROOT_DIR/scripts/validate-distribution-artifacts.sh" "${validate_args[@]}"
+cargo run --bin effigy -- "${validate_args[@]}"
 
 echo "[ok] distribution first-publish matrix passed"
 echo "[ok] artifacts directory: $ARTIFACTS_DIR"

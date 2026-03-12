@@ -46,8 +46,8 @@ Update:
 - ownership/trigger map (`035-guide-ownership-and-update-triggers.md`)
 
 CI layout convention:
-- active workflow docs should reference `.github-bak/workflows/*.yml` in this repository layout
-- if workflows move back to `.github/workflows`, update all docs references in the same PR
+- active workflow docs should reference `.github/workflows/*.yml`
+- if a workflow is renamed or relocated, update all docs references in the same PR
 
 ### 5) Navigation/indexing change
 
@@ -80,9 +80,9 @@ Minimum bar:
 Run in this order:
 
 ```sh
-./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)
+effigy docs check-links --repo .
 effigy-dev qa:docs --repo .
-./docs/scripts/check-doc-workflow-paths.sh
+effigy docs check-workflow-paths --repo .
 ```
 
 If behavior/JSON changed, also run relevant targeted checks:
@@ -100,9 +100,9 @@ Copy into PR description:
 - [ ] Change type identified (command/json/manifest/ci/navigation/release-note)
 - [ ] Required guides updated for this change type
 - [ ] Style/terminology checked against 033/034
-- [ ] `./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)` passed
+- [ ] `effigy docs check-links --repo .` passed
 - [ ] `effigy-dev qa:docs --repo .` passed
-- [ ] `./docs/scripts/check-doc-workflow-paths.sh` passed
+- [ ] `effigy docs check-workflow-paths --repo .` passed
 - [ ] JSON-related changes: `effigy-dev qa:json:ci --repo .` run
 ```
 

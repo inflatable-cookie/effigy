@@ -58,6 +58,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Recent Validation Logs
 
+- [`2026-03-11-script-surface-builtins-migration-plan.md`](./2026-03/11-202500-script-surface-builtins-migration-plan.md)
 - [`2026-03-11-release-workflow-cutover-hosted-validation.md`](./2026-03/11-183500-release-workflow-cutover-hosted-validation.md)
 - [`2026-03-11-release-cutover-readiness-rehearsal-brief.md`](./2026-03/11-180500-release-cutover-readiness-rehearsal-brief.md)
 - [`2026-03-11-release-binaries-changelog-extract-cutover-review.md`](./2026-03/11-170500-release-binaries-changelog-extract-cutover-review.md)

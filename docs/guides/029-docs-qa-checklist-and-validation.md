@@ -23,7 +23,7 @@ Manual checks:
 - new log artifacts are indexed in `docs/logs/README.md`
 - new log artifacts include a `Vision Target Delta` section
 - roadmap/guides vision metadata checks pass via `docs/scripts/check-vision-metadata.sh`
-- docs-referenced workflow paths resolve via `docs/scripts/check-doc-workflow-paths.sh`
+- docs-referenced workflow paths resolve via `effigy docs check-workflow-paths --repo .`
 - vision artifact index is consistent via `docs/scripts/check-vision-index.sh`
 - vision artifacts have non-empty, actionable follow-on actions via `docs/scripts/check-vision-next-task.sh`
 - vision next-task lint fixtures pass via `docs/scripts/check-vision-next-task-regression.sh`
@@ -50,21 +50,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate docs links, JSON examples, and logs index
-        run: ./scripts/check-quality-gates.sh --docs-only
-
-      - name: Validate vision metadata coverage
-        run: ./docs/scripts/check-vision-metadata.sh
+      - name: Validate docs QA bundle
+        run: cargo run --bin effigy -- qa:docs --repo .
 ```
 
 This ensures markdown links resolve, key JSON examples stay contract-aligned, logs remain indexed, and vision metadata coverage is enforced on every pull request/push.
-`./scripts/check-quality-gates.sh --docs-only` now runs `./docs/scripts/check-vision-metadata.sh` directly.
-`./docs/scripts/check-vision-metadata.sh` runs `check-doc-workflow-paths`, `check-vision-index`, `check-vision-next-task`, and `check-vision-next-task-regression`.
+`effigy qa:docs --repo .` is now the primary orchestration surface for that bundle.
+`./docs/scripts/check-vision-metadata.sh` now delegates workflow-path validation to `effigy docs check-workflow-paths --repo .`, then runs `check-vision-index`, `check-vision-next-task`, and `check-vision-next-task-regression`.
 
 ## 3) What the Link Checker Validates
 
-Script:
-- `scripts/check-doc-links.sh`
+Built-in command:
+- `effigy docs check-links --repo .`
 
 Behavior:
 - scans markdown inline links (`[label](target)`)
@@ -74,13 +71,12 @@ Behavior:
 
 Default scope when called with no args:
 - `README.md`
-- `docs/README.md`
-- `docs/guides/*.md`
+- all markdown files under `docs/` recursively
 
 ## 4) What the JSON Example Checker Validates
 
-Script:
-- `scripts/check-doc-json-examples.sh`
+Built-in command:
+- `effigy docs check-json-examples --repo .`
 
 Behavior:
 - inspects section `13) Completion Candidates` in `026-json-payload-examples.md`
@@ -95,8 +91,8 @@ Behavior:
 
 ## 5) What the Logs Index Checker Validates
 
-Script:
-- `scripts/check-doc-logs-index.sh`
+Built-in command:
+- `effigy docs check-index --repo .`
 
 Behavior:
 - scans `docs/logs/YYYY-MM/*.md` and excludes `docs/logs/README.md`
@@ -105,7 +101,7 @@ Behavior:
 - fails when index entries point to non-existent log files
 
 Helper:
-- `scripts/add-log-index-entry.sh <log-file>` inserts a missing log entry ahead of archived links.
+- `effigy docs add-log-index --repo . <log-file>` inserts a missing log entry ahead of archived links.
 
 Forward-only policy cutoff:
 - logs dated on or after `2026-03-06` must include a `## Vision Target Delta` section
@@ -153,7 +149,7 @@ Copy into PR description:
 ## Docs QA
 - [ ] `effigy qa:docs --repo .`
 - [ ] `./docs/scripts/check-vision-metadata.sh`
-- [ ] `./docs/scripts/check-doc-workflow-paths.sh`
+- [ ] `effigy docs check-workflow-paths --repo .`
 - [ ] `./docs/scripts/check-vision-index.sh`
 - [ ] `./docs/scripts/check-vision-next-task.sh`
 - [ ] `./docs/scripts/check-vision-next-task-regression.sh`
@@ -177,7 +173,7 @@ effigy qa:docs --repo .
 ./docs/scripts/check-vision-metadata.sh
 
 # workflow path references in docs
-./docs/scripts/check-doc-workflow-paths.sh
+effigy docs check-workflow-paths --repo .
 
 # vision closeout index consistency
 ./docs/scripts/check-vision-index.sh
@@ -189,7 +185,7 @@ effigy qa:docs --repo .
 ./docs/scripts/check-vision-next-task-regression.sh
 
 # index a newly added log artifact
-./scripts/add-log-index-entry.sh docs/logs/YYYY-MM/DD-HHMMSS-topic.md
+effigy docs add-log-index --repo . docs/logs/YYYY-MM/DD-HHMMSS-topic.md
 
 # json contracts only
 effigy qa:json:ci --repo .

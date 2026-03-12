@@ -52,7 +52,7 @@ Use full task tables when you need settings (`fail_on_non_zero`, `env`, `mode`, 
 run = [
   { id = "lint", run = "bun run lint", retry = 1, retry_delay_ms = 200 },
   { id = "unit", task = "test vitest", depends_on = ["lint"], timeout_ms = 180000 },
-  { id = "contract", run = "./scripts/check-json-contracts.sh --fast", depends_on = ["lint"] },
+  { id = "contract", run = "cargo run --bin effigy -- contracts check-json --repo . --fast --print-selected", depends_on = ["lint"] },
   { id = "report", run = "printf validate-ok", depends_on = ["unit", "contract"], fail_fast = false }
 ]
 ```

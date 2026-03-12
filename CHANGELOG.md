@@ -6,6 +6,66 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- Add built-in `effigy docs` validation commands for markdown link checks, JSON
+  example section checks, and docs-index consistency checks, with the matching
+  `scripts/check-doc-*.sh` entrypoints reduced to thin compatibility wrappers
+- Add built-in `effigy contracts check-json` to run schema-index-driven JSON
+  contract validation, selected-schema reporting, and changed-only checks
+  without the previous shell-library implementation, with
+  `scripts/check-json-contracts*.sh` reduced to thin wrappers over the built-in
+- Add built-in `effigy contracts validate-selection` for JSON selection
+  artifact validation, replacing the prior jq-heavy shell implementation behind
+  `scripts/validate-json-contract-selection-artifact.sh`
+- Add built-in `effigy distribution validate-metadata`,
+  `validate-artifacts`, `generate-closeout`, and `write-summary` so
+  distribution metadata checks, first-publish summary contracts,
+  artifact-bundle validation, and acceptance-closeout log generation no longer
+  depend on shell as the primary implementation language
+
+### Changed
+- Route `qa:json` and `qa:json:ci` directly through `effigy contracts
+  check-json`, and reduce `scripts/check-selection-artifact-validator-smoke.sh`
+  to a compatibility wrapper over targeted Rust coverage instead of owning its
+  own validator fixture logic in shell
+- Route `dist:metadata` and the release `metadata` gate through `effigy
+  distribution validate-metadata`, and reduce
+  `scripts/check-distribution-artifact-pipeline-smoke.sh` to a compatibility
+  wrapper over targeted CLI coverage for the built-in distribution flow
+- Route `qa:docs` and release-gate `qa` orchestration through native
+  `effigy.toml` task composition, broaden `effigy docs check-links` default
+  scope to the full `docs/` tree, and reduce `scripts/check-quality-gates.sh`
+  plus `src/bin/effigy-qa.rs` to compatibility delegation over those task
+  surfaces
+- Reduce `scripts/check-distribution-first-publish.sh` so the
+  `distribution-summary.env` contract is written by `effigy distribution
+  write-summary`; the wrapper now retains only publish/install side effects,
+  step-log capture, and final built-in artifact validation
+- Add built-in `effigy distribution preflight` with summary-file output for
+  the non-publish distribution gate path, and reduce
+  `scripts/check-distribution-preflight.sh` to a compatibility wrapper over
+  the native preflight surface
+- Replace `scripts/check-prepush-ci.sh` with a thin wrapper over native
+  `prepush:ci` task aliases, and update active operator docs to lead with
+  `effigy` task/command entrypoints instead of the old shell-first QA wording
+- Reduce `scripts/check-distribution-first-publish.sh` to the intentional
+  external side-effect boundary by delegating tag verification, summary
+  writing, and artifact validation to native Effigy commands instead of
+  shell-wrapper entrypoints
+- Retire redundant docs/contracts/distribution wrapper scripts and update
+  active workflows, tasks, and operator guides to call native `effigy`
+  commands or targeted Rust tests directly where no external script boundary
+  is needed
+- Remove the unused `scripts/check-json-contracts-ci.sh` wrapper and keep
+  pull-request versus mainline JSON-contract policy in workflow YAML instead of
+  duplicating it in shell
+- Add built-in `effigy docs add-log-index` and retire the old
+  `scripts/add-log-index-entry.sh` helper so docs/log index maintenance stays
+  inside the native docs command surface
+- Add built-in `effigy docs check-workflow-paths` and retire the old
+  `docs/scripts/check-doc-workflow-paths.sh` helper so docs workflow-reference
+  validation no longer depends on a standalone shell script
+
 ## [0.2.5] - 2026-03-11
 
 ### Added

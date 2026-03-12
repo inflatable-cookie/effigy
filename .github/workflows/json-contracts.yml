@@ -17,11 +17,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Validate markdown link targets
-        run: ./scripts/check-quality-gates.sh --docs-only
-
-      - name: Validate vision metadata coverage
-        run: ./docs/scripts/check-vision-metadata.sh
+      - name: Validate docs QA bundle
+        run: cargo run --bin effigy -- qa:docs --repo .
 
   json-contracts:
     name: Validate JSON contracts
@@ -39,14 +36,14 @@ jobs:
       - name: Validate JSON contracts
         run: |
           set -o pipefail
-          ./scripts/check-quality-gates.sh --json-only --ci | tee json-contracts.log
+          cargo run --bin effigy -- contracts check-json --repo . --full --print-selected=json | tee json-contracts.log
           grep -m1 '^{"selected":' json-contracts.log > json-contracts-selected.json
 
       - name: Validate selection artifact contract
-        run: ./scripts/validate-json-contract-selection-artifact.sh ./json-contracts-selected.json
+        run: cargo run --bin effigy -- contracts validate-selection --repo . --artifact ./json-contracts-selected.json
 
       - name: Validator smoke check (negative path)
-        run: ./scripts/check-selection-artifact-validator-smoke.sh
+        run: cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture
 
       - name: Upload JSON contracts artifact
         if: always()
