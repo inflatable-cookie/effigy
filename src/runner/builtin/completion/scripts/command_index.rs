@@ -2,8 +2,9 @@ use super::super::surface::COMPLETION_COMMAND_OPTIONS;
 use crate::runner::model::constants::BUILTIN_TASKS;
 
 pub(super) fn command_names() -> Vec<&'static str> {
-    let mut names = Vec::with_capacity(BUILTIN_TASKS.len() + 1);
+    let mut names = Vec::with_capacity(BUILTIN_TASKS.len() + 2);
     names.push("help");
+    names.push("version");
     for (name, _) in BUILTIN_TASKS {
         names.push(name);
     }
@@ -11,7 +12,10 @@ pub(super) fn command_names() -> Vec<&'static str> {
 }
 
 pub(super) fn command_rows() -> Vec<(&'static str, &'static str)> {
-    let mut rows = vec![("help", "Show general help")];
+    let mut rows = vec![
+        ("help", "Show general help"),
+        ("version", "Print the current Effigy version"),
+    ];
     rows.extend(BUILTIN_TASKS.iter().copied());
     rows
 }
@@ -19,6 +23,7 @@ pub(super) fn command_rows() -> Vec<(&'static str, &'static str)> {
 pub(super) fn command_options(command: &str) -> &'static [&'static str] {
     match command {
         "help" => &["--json", "--help", "-h"],
+        "version" => &["--json", "--help", "-h"],
         "tasks" | "catalogs" => &[
             "--repo",
             "--task",

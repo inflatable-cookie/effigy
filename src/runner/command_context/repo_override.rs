@@ -4,6 +4,7 @@ use crate::Command;
 
 pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf> {
     match cmd {
+        Command::Version => None,
         Command::Changelog(_) => None,
         Command::Docs(args) => args.repo_override.clone(),
         Command::Contracts(args) => args.repo_override.clone(),

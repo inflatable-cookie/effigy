@@ -20,6 +20,7 @@ where
     };
 
     match cmd.as_str() {
+        "--version" | "version" => parse_version_command(args),
         "--help" | "-h" | "help" => Ok(Command::Help(HelpTopic::General)),
         "changelog" => parse_changelog_command(args),
         "docs" => parse_docs_command(args),
@@ -30,6 +31,21 @@ where
         "tasks" | "catalogs" => parse_tasks(args),
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
+    }
+}
+
+fn parse_version_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(arg) = args.next() else {
+        return Ok(Command::Version);
+    };
+
+    match arg.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::General)),
+        other => Err(unknown_argument(other)),
     }
 }
 

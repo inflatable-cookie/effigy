@@ -58,6 +58,10 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Recent Validation Logs
 
+- [`2026-03-12-acowtancy-workspace-ledger-authority-pilot.md`](./2026-03/12-174500-acowtancy-workspace-ledger-authority-pilot.md)
+- [`2026-03-12-underlay-single-repo-pilot.md`](./2026-03/12-163200-underlay-single-repo-pilot.md)
+- [`2026-03-12-compli-me-workspace-docs-authority-pilot.md`](./2026-03/12-155600-compli-me-workspace-docs-authority-pilot.md)
+- [`2026-03-12-monkey-wave-1-pilot-and-released-surface-gap.md`](./2026-03/12-142509-monkey-wave1-pilot-and-released-surface-gap.md)
 - [`2026-03-12-release-checkpoint-v0-2-5.md`](./2026-03/12-131500-release-checkpoint-v0-2-5.md)
 - [`2026-03-12-remaining-script-boundary-audit.md`](./2026-03/12-114500-remaining-script-boundary-audit.md)
 - [`2026-03-12-docs-policy-task-chain-closeout.md`](./2026-03/12-111500-docs-policy-task-chain-closeout.md)
@@ -176,6 +180,16 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-03-07-research-batch-21-4-track-09-completion.md`](./2026-03/07-220000-research-batch-21-4-track-09-completion.md)
 - [`2026-03-07-research-batch-21-5-track-10-completion.md`](./2026-03/07-221500-research-batch-21-5-track-10-completion.md)
 - [`2026-03-07-research-batch-22-1-track-11-completion.md`](./2026-03/07-223000-research-batch-22-1-track-11-completion.md)
+
+- [`2026-03/12-135650-consumer-adoption-landscape-scan.md`](./2026-03/12-135650-consumer-adoption-landscape-scan.md)
+
+- [`2026-03/12-141200-monkey-consumer-contract-gap-assessment.md`](./2026-03/12-141200-monkey-consumer-contract-gap-assessment.md)
+
+- [`2026-03/12-155600-compli-me-workspace-docs-authority-pilot.md`](./2026-03/12-155600-compli-me-workspace-docs-authority-pilot.md)
+
+- [`2026-03/12-163200-underlay-single-repo-pilot.md`](./2026-03/12-163200-underlay-single-repo-pilot.md)
+
+- [`2026-03/12-174500-acowtancy-workspace-ledger-authority-pilot.md`](./2026-03/12-174500-acowtancy-workspace-ledger-authority-pilot.md)
 
 ## Archived Validation Logs
 

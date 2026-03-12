@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Add top-level `effigy --version` and `effigy version`, with matching JSON
+  envelope output so operators and automation can inspect the current binary
+  version without parsing the general help banner
 - Add built-in `effigy docs` validation commands for markdown link checks, JSON
   example section checks, and docs-index consistency checks, with the matching
   `scripts/check-doc-*.sh` entrypoints reduced to thin compatibility wrappers
@@ -73,8 +76,6 @@ During v0.x, MINOR bumps may include breaking changes.
   `effigy docs check-next-action --policy <NAME>` so repo-specific heading and
   actionable-verb rules can be enforced by a reusable built-in engine instead
   of a standalone shell checker
-
-### Changed
 - Move the active vision index validation path onto
   `effigy docs check-index --policy-index vision`, so
   `docs/scripts/check-vision-index.sh` is no longer needed as a standalone
@@ -121,6 +122,23 @@ During v0.x, MINOR bumps may include breaking changes.
   surfaces plus workflow examples, and remove the same bad default from live
   release remediation hints and completion help examples so copied `--repo .`
   usage fails validation instead of spreading into downstream agent instructions
+- Add a concrete Northstar + Effigy consumer repo contract guide, a cross-repo
+  adoption landscape scan, and a first `monkey` pilot gap assessment so the
+  new consumer-adoption roadmap has an explicit Wave 1 source of truth instead
+  of only roadmap intent
+- Refine the Northstar + Effigy consumer-adoption contract after the
+  `compli-me` pilot so the active guidance now models both single-repo
+  adoption and thin-workspace-root plus nested docs-authority adoption instead
+  of assuming every consumer project should carry one root-level docs/release
+  surface
+- Prove the same contract on `underlay` as a shared foundation repo, showing
+  the native single-repo path works outside app repos while also surfacing the
+  remaining question of when changelog/release posture becomes mandatory for
+  adoption
+- Prove the same contract on `acowtancy` as a thin workspace container with
+  `ledger` as the docs authority, and tighten the portable `northstar-effigy`
+  skill plus templates around the explicit split between orchestration roots,
+  docs-authority repos, and releasable repos
 
 ## [0.2.5] - 2026-03-11
 

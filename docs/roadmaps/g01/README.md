@@ -43,11 +43,18 @@ Current planned milestones:
 - `026-changelog-library-and-northstar-profile.md`
 - `027-release-orchestration-system.md`
 - `028-script-surface-reduction-and-builtins.md` (complete)
+- `029-northstar-effigy-consumer-adoption-kit.md`
 
 Rules:
 
 - Keep `Generation: g01` markers intact in imported numbered files.
 - Continue numbering in `g01/` until a manual generation rollover is explicitly justified.
+
+## Next Task
+
+Roadmap `g01.029` is now the next consumer-facing milestone: define the
+reusable Northstar + Effigy consumer repo contract, bundle it into an agent
+skill and scaffolding kit, and prove it on real consumer repositories.
 
 
 ## Historical language boundary
