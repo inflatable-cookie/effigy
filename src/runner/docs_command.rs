@@ -1045,7 +1045,7 @@ fn first_non_empty_section_line(section: &str) -> Option<String> {
 fn extract_lead_verb(line: &str) -> String {
     let normalized = line
         .trim_start()
-        .trim_start_matches(|c: char| matches!(c, '-' | '*' | '+'))
+        .trim_start_matches(['-', '*', '+'])
         .trim_start();
     let normalized = if let Some(rest) = normalized.strip_prefix('(') {
         rest.split_once(')')

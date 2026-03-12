@@ -174,7 +174,7 @@ fn run_check_json(
         ContractsSelectionPrintMode::Json => {
             println!(
                 "{}",
-                serde_json::to_string(&selection_payload)
+                render_selection_payload_json(&selection_payload)
                     .unwrap_or_else(|_| "{\"selected\":[]}".to_owned())
             );
         }
@@ -427,6 +427,33 @@ fn build_selection_payload(
         "changed_only_base": changed_only_base,
         "mode": mode_label(mode),
     })
+}
+
+fn render_selection_payload_json(selection_payload: &Value) -> Result<String, serde_json::Error> {
+    let selected = selection_payload
+        .get("selected")
+        .cloned()
+        .unwrap_or(Value::Array(Vec::new()));
+    let count = selection_payload
+        .get("count")
+        .cloned()
+        .unwrap_or(Value::from(0));
+    let changed_only_base = selection_payload
+        .get("changed_only_base")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let mode = selection_payload
+        .get("mode")
+        .cloned()
+        .unwrap_or(Value::String("full".to_owned()));
+
+    Ok(format!(
+        "{{\"selected\":{},\"count\":{},\"changed_only_base\":{},\"mode\":{}}}",
+        serde_json::to_string(&selected)?,
+        serde_json::to_string(&count)?,
+        serde_json::to_string(&changed_only_base)?,
+        serde_json::to_string(&mode)?,
+    ))
 }
 
 fn print_selected_text(selection_payload: &Value) {
@@ -791,7 +818,10 @@ fn mode_label(mode: ContractsCheckMode) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_schema_payload, split_shell_like_args, validate_selection_payload};
+    use super::{
+        render_selection_payload_json, resolve_schema_payload, split_shell_like_args,
+        validate_selection_payload,
+    };
     use serde_json::json;
 
     #[test]
@@ -833,6 +863,23 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.contains("`count` must equal the number of `selected` entries")));
+    }
+
+    #[test]
+    fn render_selection_payload_json_starts_with_selected_key() {
+        let payload = json!({
+            "changed_only_base": null,
+            "count": 2,
+            "mode": "full",
+            "selected": ["a", "b"],
+        });
+
+        let rendered = render_selection_payload_json(&payload).expect("render selection payload");
+        assert!(rendered.starts_with("{\"selected\":"));
+        assert_eq!(
+            rendered,
+            "{\"selected\":[\"a\",\"b\"],\"count\":2,\"changed_only_base\":null,\"mode\":\"full\"}"
+        );
     }
 
     #[test]
