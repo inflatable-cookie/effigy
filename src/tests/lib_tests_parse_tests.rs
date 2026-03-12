@@ -1,5 +1,7 @@
 pub(super) use super::prelude;
 
+#[path = "lib_tests_parse_tests/docs_and_contracts_option_tests.rs"]
+mod docs_and_contracts_option_tests;
 #[path = "lib_tests_parse_tests/doctor_and_tasks_option_tests.rs"]
 mod doctor_and_tasks_option_tests;
 #[path = "lib_tests_parse_tests/help_and_flag_tests.rs"]

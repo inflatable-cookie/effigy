@@ -23,6 +23,18 @@ pub(crate) fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()>
                     .to_owned(),
             ],
             vec![
+                "effigy docs".to_owned(),
+                "Run reusable docs QA checks such as markdown link, JSON example, and index validation".to_owned(),
+            ],
+            vec![
+                "effigy contracts".to_owned(),
+                "Validate reusable JSON contract artifacts such as selection payloads".to_owned(),
+            ],
+            vec![
+                "effigy distribution".to_owned(),
+                "Validate distribution metadata/artifact bundles and generate closeout evidence".to_owned(),
+            ],
+            vec![
                 "effigy release".to_owned(),
                 "Inspect release readiness from changelog, version files, and optional gates"
                     .to_owned(),

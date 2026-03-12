@@ -21,7 +21,7 @@ Owner: `name/team`
 ## 2) Quality Gates
 
 - [ ] Distribution preflight passes:
-  - [ ] `./scripts/check-distribution-preflight.sh --tag v0.__.__`
+  - [ ] `effigy distribution preflight --repo . --tag v0.__.__`
 - [ ] Safe release simulation passes:
   - [ ] `effigy release simulate --repo .`
 - [ ] Release readiness check passes:
@@ -78,7 +78,7 @@ Owner: `name/team`
 ### Crates
 - [ ] `Cargo.toml` metadata verified.
 - [ ] Distribution metadata validation passes:
-  - [ ] `./scripts/check-distribution-metadata.sh --tag v0.__.__`
+  - [ ] `effigy distribution validate-metadata --repo . --tag v0.__.__`
 - [ ] Tag points to intended commit.
 - [ ] Publish command executed/queued.
 - [ ] Install validated from git tag:
@@ -86,7 +86,8 @@ Owner: `name/team`
 - [ ] Install validated from published crate.
 - [ ] First-publish artifact bundle captured:
   - [ ] `./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__`
-  - [ ] `./scripts/validate-distribution-artifacts.sh --artifacts-dir ./artifacts/distribution-v0.__.__`
+    Side-effecting helper; built-in validation/reporting runs inside the wrapper.
+  - [ ] `effigy distribution validate-artifacts --repo . --artifacts-dir ./artifacts/distribution-v0.__.__`
 
 ### Homebrew
 - [ ] Formula updated to new version.
@@ -107,7 +108,7 @@ Owner: `name/team`
 - [ ] Validate prefixed built-ins still route correctly.
 - [ ] Validate `test` summary output in compact mode.
 - [ ] Open dated checkpoint log in `docs/logs/YYYY-MM/`.
-  - [ ] `./scripts/generate-distribution-closeout-log.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
+  - [ ] `effigy distribution generate-closeout --repo . --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
 
 ## 8) Sign-off
 

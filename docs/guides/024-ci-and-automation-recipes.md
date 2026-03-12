@@ -15,6 +15,7 @@ Canonical operator entrypoints:
 - `effigy qa:docs --repo .`
 - `effigy qa:json --repo .`
 - `effigy qa:json:ci --repo .`
+- `effigy qa:ci --repo .`
 - `effigy qa:release --repo .`
 - `effigy-dev <command> --repo .` when validating the current checkout before refreshing the installed binary
 
@@ -24,23 +25,18 @@ Compatibility fallbacks:
 - `cargo qa-json`
 - `cargo qa-json-ci`
 - `cargo qa-release`
+- `cargo prepush-ci`
+
+Task-composition note:
+- `qa:docs` is a native task chain over `effigy docs check-links`, `check-json-examples`, `check-index`, plus `docs/scripts/check-vision-metadata.sh`
+- `qa:ci` is the native docs-plus-CI-contracts aggregation path used by release-gate wiring
 
 Compatibility wrapper scripts (retained for CI/release tooling integration):
-- `./scripts/check-json-contracts-ci.sh`
-- `./scripts/check-json-contracts.sh`
-- `./scripts/validate-json-contract-selection-artifact.sh`
-- `./scripts/check-selection-artifact-validator-smoke.sh`
 - `./docs/scripts/check-vision-metadata.sh`
-- `./docs/scripts/check-doc-workflow-paths.sh`
 - `./scripts/check-release-gates.sh`
 - `./scripts/check-release-smoke.sh`
 - `./scripts/check-release-install-from-tag.sh`
-- `./scripts/check-distribution-metadata.sh`
-- `./scripts/check-distribution-preflight.sh`
 - `./scripts/check-distribution-first-publish.sh`
-- `./scripts/validate-distribution-artifacts.sh`
-- `./scripts/generate-distribution-closeout-log.sh`
-- `./scripts/check-distribution-artifact-pipeline-smoke.sh`
 
 Release policy note:
 - prefer built-in `effigy release ...` commands for operator-driven release work
@@ -62,13 +58,14 @@ effigy qa:json:ci --repo .
 effigy qa:release --repo .
 effigy release simulate --repo .
 effigy release status --repo . --check-gates
-./scripts/check-distribution-preflight.sh --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
+effigy distribution preflight --repo . --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
 ./scripts/check-release-install-from-tag.sh --tag v0.__.__
 ./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 # writes ./artifacts/distribution-v0.__.__/distribution-summary.env
-./scripts/validate-distribution-artifacts.sh --artifacts-dir ./artifacts/distribution-v0.__.__
-./scripts/generate-distribution-closeout-log.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
-./scripts/check-distribution-artifact-pipeline-smoke.sh
+effigy distribution validate-metadata --repo . --tag v0.__.__
+effigy distribution validate-artifacts --repo . --artifacts-dir ./artifacts/distribution-v0.__.__
+effigy distribution generate-closeout --repo . --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
+cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture
 effigy qa:docs --repo .
 ```
 
@@ -82,14 +79,14 @@ Install pinning and team migration policy:
 PR-style changed-only simulation:
 
 ```sh
-./scripts/check-json-contracts.sh --fast --changed-only origin/main --print-selected=json
+effigy contracts check-json --fast --changed-only origin/main --print-selected=json
 ```
 
 Validate artifact payload shape:
 
 ```sh
-./scripts/validate-json-contract-selection-artifact.sh ./json-contracts-selected.json
-./scripts/check-selection-artifact-validator-smoke.sh
+effigy contracts validate-selection --artifact ./json-contracts-selected.json
+cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture
 ```
 
 ## 3) Recipe: PR-Optimized Contracts Job
@@ -118,14 +115,14 @@ jobs:
       - name: Validate JSON contracts
         run: |
           set -o pipefail
-          ./scripts/check-json-contracts-ci.sh | tee json-contracts.log
+          cargo run --bin effigy -- contracts check-json --repo . --full --print-selected=json | tee json-contracts.log
           grep -m1 '^{"selected":' json-contracts.log > json-contracts-selected.json
 
       - name: Validate selection artifact contract
-        run: ./scripts/validate-json-contract-selection-artifact.sh ./json-contracts-selected.json
+        run: cargo run --bin effigy -- contracts validate-selection --repo . --artifact ./json-contracts-selected.json
 
       - name: Validator smoke check
-        run: ./scripts/check-selection-artifact-validator-smoke.sh
+        run: cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture
 
       - name: Upload contracts artifacts
         if: always()
@@ -138,7 +135,9 @@ jobs:
 ```
 
 Notes:
-- `check-json-contracts-ci.sh` auto-switches behavior by event (`pull_request` vs non-PR).
+- `effigy contracts check-json` is the primary validator; event-aware PR vs mainline behavior should live in workflow YAML rather than a shell wrapper.
+- `effigy distribution preflight`, `validate-metadata`, `validate-artifacts`, and `generate-closeout` are the primary distribution validation/reporting surfaces; the matching `scripts/*.sh` files are compatibility entrypoints.
+- `./scripts/check-distribution-first-publish.sh` is the one remaining intentional side-effect wrapper for real publish/install/Homebrew execution; it now delegates reusable validation work to `effigy release verify-install`, `effigy distribution write-summary`, and `effigy distribution validate-artifacts`.
 - `set -o pipefail` ensures failures inside pipe chains fail the step.
 
 ## 4) Recipe: Nightly Full Contract Sweep
@@ -147,7 +146,7 @@ When you want explicit nightly full coverage:
 
 ```yaml
 - name: Nightly full JSON contract sweep
-  run: ./scripts/check-json-contracts.sh --full --print-selected=json | tee json-contracts-nightly.log
+  run: cargo run --bin effigy -- contracts check-json --repo . --full --print-selected=json | tee json-contracts-nightly.log
 ```
 
 Optional artifact upload:
@@ -219,7 +218,7 @@ If a workflow produces a `selected` payload, gate it with the validator:
 
 ```yaml
 - name: Validate selection artifact contract
-  run: ./scripts/validate-json-contract-selection-artifact.sh ./json-contracts-selected.json
+  run: cargo run --bin effigy -- contracts validate-selection --repo . --artifact ./json-contracts-selected.json
 ```
 
 This checks:
@@ -230,12 +229,12 @@ This checks:
 
 ## 7) Failure Triage Playbook
 
-### Case: CI fails in `check-json-contracts-ci.sh`
+### Case: CI fails in `effigy contracts check-json`
 
 Run locally:
 
 ```sh
-./scripts/check-json-contracts-ci.sh
+cargo run --bin effigy -- contracts check-json --repo . --full --print-selected=json
 ```
 
 Then inspect selection payload in log:
@@ -249,13 +248,13 @@ grep -m1 '^{"selected":' json-contracts.log | jq .
 Run validator directly:
 
 ```sh
-./scripts/validate-json-contract-selection-artifact.sh ./json-contracts-selected.json
+cargo run --bin effigy -- contracts validate-selection --repo . --artifact ./json-contracts-selected.json
 ```
 
 Then run smoke validator:
 
 ```sh
-./scripts/check-selection-artifact-validator-smoke.sh
+cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture
 ```
 
 ### Case: command payload schema mismatch
@@ -263,13 +262,13 @@ Then run smoke validator:
 Run fast checker with selected output:
 
 ```sh
-./scripts/check-json-contracts.sh --fast --print-selected=text
+effigy contracts check-json --fast --print-selected
 ```
 
 Then run full mode to catch heavy-schema paths:
 
 ```sh
-./scripts/check-json-contracts.sh --full --print-selected=text
+effigy contracts check-json --full --print-selected
 ```
 
 ## 8) Artifact Conventions
@@ -297,7 +296,7 @@ Canonical checklist and troubleshooting live in [`029-docs-qa-checklist-and-vali
 Use this fast path before pushing changes that touch command behavior, JSON schemas, or docs contracts:
 
 ```sh
-cargo qa
+effigy prepush:ci --repo .
 ```
 
 ## 11) Recipe: Tag-Driven Release Gates
@@ -319,16 +318,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo qa-release
+      - run: cargo run --bin effigy -- qa:release --repo .
 ```
 
-What `cargo qa-release` (via release-gates wrapper) enforces:
+What `effigy qa:release --repo .` enforces:
 - `cargo fmt --check`
 - full `cargo test`
-- docs + JSON quality gates (`check-quality-gates.sh --all --ci`)
+- docs + JSON quality gates (`qa:ci`)
 - release binary build
 - release smoke checks (`help`, `tasks`, `catalog_a/tasks`, `test --plan`, `catalog_a/test --plan`)
-- distribution metadata validation (`check-distribution-metadata.sh`)
+- distribution metadata validation (`effigy distribution validate-metadata`)
 - install validation from the pushed tag (`check-release-install-from-tag.sh`)
 
 ## 12) Recipe: Assert Completion Cache Policy Fields

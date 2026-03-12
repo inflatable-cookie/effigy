@@ -17,8 +17,8 @@ This folder contains machine-consumer JSON contract artifacts used by Effigy com
 
 | Artifact | Owner | Update triggers | Validation command |
 | --- | --- | --- | --- |
-| `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `./scripts/check-json-contracts.sh --fast --print-selected=text` |
-| `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `./scripts/validate-json-contract-selection-artifact.sh ./json-contracts-selected.json` |
+| `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
+| `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
 ## Change Policy
 

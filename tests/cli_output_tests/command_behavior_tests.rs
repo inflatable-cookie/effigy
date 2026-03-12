@@ -277,6 +277,569 @@ fn install_effigy_cargo_shim(root: &std::path::Path) -> (std::path::PathBuf, std
     (shim_bin, log_path)
 }
 
+#[test]
+fn cli_docs_check_links_json_reports_broken_relative_targets() {
+    let root = temp_workspace("docs-check-links");
+    fs::create_dir_all(root.join("docs/guides")).expect("mkdir docs");
+    fs::write(
+        root.join("README.md"),
+        "[Guide](./docs/guides/guide.md)\n[Missing](./docs/missing.md)\n",
+    )
+    .expect("write readme");
+    fs::write(root.join("docs/guides/guide.md"), "# Guide\n").expect("write guide");
+
+    let output = run_json_cli_command(&root, &["docs", "check-links", "README.md"]);
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    let details: Value = serde_json::from_str(
+        parsed["error"]["message"]
+            .as_str()
+            .expect("json error payload"),
+    )
+    .expect("parse details");
+    assert_eq!(parsed["command"]["kind"], "docs");
+    assert_eq!(details["schema"], "effigy.docs.link-check.v1");
+    assert_eq!(details["ok"], false);
+    assert_eq!(details["broken_links"][0]["target"], "./docs/missing.md");
+}
+
+#[test]
+fn cli_docs_check_links_without_paths_scans_full_docs_tree() {
+    let root = temp_workspace("docs-check-links-default-scope");
+    fs::create_dir_all(root.join("docs/logs/2026-03")).expect("mkdir logs");
+    fs::create_dir_all(root.join("docs/research")).expect("mkdir research");
+    fs::write(root.join("README.md"), "[Docs](./docs/README.md)\n").expect("write readme");
+    fs::write(
+        root.join("docs/README.md"),
+        "[Log](./logs/2026-03/example.md)\n",
+    )
+    .expect("write docs readme");
+    fs::write(
+        root.join("docs/logs/2026-03/example.md"),
+        "[Missing](../missing.md)\n",
+    )
+    .expect("write log");
+    fs::write(root.join("docs/research/example.md"), "# Research\n").expect("write research");
+
+    let output = run_json_cli_command(&root, &["docs", "check-links"]);
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    let details: Value = serde_json::from_str(
+        parsed["error"]["message"]
+            .as_str()
+            .expect("json error payload"),
+    )
+    .expect("parse details");
+
+    let checked = details["checked_files"]
+        .as_array()
+        .expect("checked files")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<_>>();
+    assert!(checked
+        .iter()
+        .any(|path| path.ends_with("docs/logs/2026-03/example.md")));
+    assert!(checked
+        .iter()
+        .any(|path| path.ends_with("docs/research/example.md")));
+    assert_eq!(details["broken_links"][0]["target"], "../missing.md");
+}
+
+#[test]
+fn cli_docs_check_json_examples_json_uses_default_completion_policy() {
+    let root = temp_workspace("docs-check-json-examples");
+    fs::create_dir_all(root.join("docs/guides")).expect("mkdir docs");
+    fs::write(
+        root.join("docs/guides/026-json-payload-examples.md"),
+        "## 13) Completion Candidates\n\n```json\n{\n  \"schema\": \"effigy.completion.candidates.v1\",\n  \"schema_version\": 1,\n  \"cache_state\": \"hit\",\n  \"cache_age_ms\": 1,\n  \"cache_ttl_ms\": 2,\n  \"effective_cache_ttl_ms\": 2,\n  \"cache_ttl_source\": \"config\"\n}\n```\n\n```json\n{\n  \"schema\": \"effigy.completion.candidates.v1\",\n  \"schema_version\": 1,\n  \"cache_state\": \"miss\",\n  \"cache_hit\": false,\n  \"cache_age_ms\": 1,\n  \"cache_ttl_ms\": 2,\n  \"effective_cache_ttl_ms\": 2,\n  \"cache_ttl_source\": \"config\"\n}\n```\n",
+    )
+    .expect("write examples");
+
+    let output = run_json_cli_command(&root, &["docs", "check-json-examples"]);
+    assert!(output.status.success());
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.docs.json-examples.v1");
+    assert_eq!(parsed["result"]["ok"], true);
+    assert_eq!(parsed["result"]["block_count"], 2);
+}
+
+#[test]
+fn cli_docs_check_index_json_reports_missing_entries() {
+    let root = temp_workspace("docs-check-index");
+    fs::create_dir_all(root.join("docs/logs/2026-03")).expect("mkdir logs");
+    fs::write(
+        root.join("docs/logs/README.md"),
+        "# Logs\n\n- [One](./2026-03/one.md)\n",
+    )
+    .expect("write index");
+    fs::write(root.join("docs/logs/2026-03/one.md"), "# One\n").expect("write one");
+    fs::write(root.join("docs/logs/2026-03/two.md"), "# Two\n").expect("write two");
+
+    let output = run_json_cli_command(&root, &["docs", "check-index"]);
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    let details: Value = serde_json::from_str(
+        parsed["error"]["message"]
+            .as_str()
+            .expect("json error payload"),
+    )
+    .expect("parse details");
+    assert_eq!(details["schema"], "effigy.docs.index-check.v1");
+    assert_eq!(details["ok"], false);
+    assert_eq!(details["missing"][0], "2026-03/two.md");
+}
+
+#[test]
+fn cli_docs_add_log_index_json_inserts_missing_entry() {
+    let root = temp_workspace("docs-add-log-index");
+    fs::create_dir_all(root.join("docs/logs/2026-03")).expect("mkdir logs");
+    fs::write(
+        root.join("docs/logs/README.md"),
+        "# Logs\n\n- [`2026-03/01-000000-old.md`](./2026-03/01-000000-old.md)\n\n## Archived Validation Logs\n- archived\n",
+    )
+    .expect("write index");
+    fs::write(root.join("docs/logs/2026-03/01-000000-old.md"), "# Old\n").expect("write old");
+    fs::write(
+        root.join("docs/logs/2026-03/02-160000-my-log.md"),
+        "# New\n",
+    )
+    .expect("write new");
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "docs",
+            "add-log-index",
+            "docs/logs/2026-03/02-160000-my-log.md",
+        ],
+    );
+    assert!(output.status.success());
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.docs.add-log-index.v1");
+    assert_eq!(parsed["result"]["ok"], true);
+    assert_eq!(parsed["result"]["already_indexed"], false);
+
+    let updated = fs::read_to_string(root.join("docs/logs/README.md")).expect("read index");
+    let marker = updated.find("## Archived Validation Logs").expect("marker");
+    let entry = updated
+        .find("2026-03/02-160000-my-log.md")
+        .expect("new entry");
+    assert!(entry < marker);
+}
+
+#[test]
+fn cli_docs_check_workflow_paths_json_reports_stale_workflow_reference() {
+    let root = temp_workspace("docs-check-workflow-paths");
+    fs::create_dir_all(root.join("docs/guides")).expect("mkdir guides");
+    fs::create_dir_all(root.join(".github/workflows")).expect("mkdir workflows");
+    fs::write(
+        root.join("docs/guides/example.md"),
+        "See .github-bak/workflows/json-contracts.yml for details.\n",
+    )
+    .expect("write guide");
+    fs::write(
+        root.join(".github/workflows/json-contracts.yml"),
+        "name: JSON Contracts\n",
+    )
+    .expect("write workflow");
+
+    let output = run_json_cli_command(&root, &["docs", "check-workflow-paths"]);
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    let details: Value = serde_json::from_str(
+        parsed["error"]["message"]
+            .as_str()
+            .expect("json error payload"),
+    )
+    .expect("parse details");
+    assert_eq!(details["schema"], "effigy.docs.workflow-path-check.v1");
+    assert_eq!(details["ok"], false);
+    assert_eq!(
+        details["findings"][0]["workflow_path"],
+        ".github-bak/workflows/json-contracts.yml"
+    );
+    assert_eq!(details["findings"][0]["reason"], "stale workflow path");
+    assert_eq!(
+        details["findings"][0]["suggestion"],
+        ".github/workflows/json-contracts.yml"
+    );
+}
+
+#[test]
+fn cli_contracts_validate_selection_json_accepts_valid_artifact() {
+    let root = temp_workspace("contracts-validate-selection");
+    fs::create_dir_all(root.join("docs/contracts")).expect("mkdir contracts");
+    fs::write(
+        root.join("docs/contracts/json-selection-contract.json"),
+        "{\n  \"schema\": \"effigy.selection.contract.v1\",\n  \"schema_version\": 1,\n  \"required\": [\"selected\", \"count\", \"changed_only_base\", \"mode\"],\n  \"properties\": {\n    \"mode\": {\n      \"enum\": [\"full\", \"changed-only\"]\n    }\n  }\n}\n",
+    )
+    .expect("write contract");
+    fs::write(
+        root.join("json-contracts-selected.json"),
+        "{\n  \"selected\": [\"docs/contracts/json-selection-contract.json\"],\n  \"count\": 1,\n  \"changed_only_base\": null,\n  \"mode\": \"full\"\n}\n",
+    )
+    .expect("write artifact");
+
+    let output = run_json_cli_command(&root, &["contracts", "validate-selection"]);
+    assert!(output.status.success());
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(
+        parsed["result"]["schema"],
+        "effigy.contracts.selection-validation.v1"
+    );
+    assert_eq!(parsed["result"]["ok"], true);
+}
+
+#[test]
+fn cli_contracts_check_json_json_runs_indexed_command_checks() {
+    let root = temp_workspace("contracts-check-json");
+    fs::create_dir_all(root.join("docs/contracts")).expect("mkdir contracts");
+    fs::write(
+        root.join("docs/contracts/json-schema-index.json"),
+        "{\n  \"version\": 1,\n  \"schemas\": [\n    {\n      \"schema\": \"effigy.command.v1\",\n      \"schema_version\": 1,\n      \"command\": \"effigy --json help\",\n      \"status\": \"active\"\n    }\n  ]\n}\n",
+    )
+    .expect("write index");
+
+    let output = run_json_cli_command(&root, &["contracts", "check-json", "--fast"]);
+    assert!(output.status.success());
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.contracts.check-json.v1");
+    assert_eq!(parsed["result"]["ok"], true);
+    assert_eq!(parsed["result"]["selection"]["count"], 1);
+    assert_eq!(parsed["result"]["checks"], 1);
+    assert_eq!(parsed["result"]["failures"], Value::Array(Vec::new()));
+}
+
+#[test]
+fn cli_contracts_validate_selection_rejects_invalid_artifacts() {
+    let root = temp_workspace("contracts-validate-selection-invalid");
+    fs::create_dir_all(root.join("docs/contracts")).expect("mkdir contracts");
+    fs::write(
+        root.join("docs/contracts/json-selection-contract.json"),
+        "{\n  \"schema\": \"effigy.selection.contract.v1\",\n  \"schema_version\": 1,\n  \"required\": [\"selected\", \"count\", \"changed_only_base\", \"mode\"],\n  \"properties\": {\n    \"mode\": {\n      \"enum\": [\"fast\", \"full\"]\n    }\n  }\n}\n",
+    )
+    .expect("write contract");
+
+    let cases = [
+        (
+            "invalid-count",
+            "{\n  \"selected\": [\"effigy.tasks.v1\"],\n  \"count\": 2,\n  \"changed_only_base\": \"HEAD\",\n  \"mode\": \"fast\"\n}\n",
+        ),
+        (
+            "invalid-mode",
+            "{\n  \"selected\": [\"effigy.tasks.v1\"],\n  \"count\": 1,\n  \"changed_only_base\": \"HEAD\",\n  \"mode\": \"unknown\"\n}\n",
+        ),
+        (
+            "invalid-selected-item",
+            "{\n  \"selected\": [\"effigy.tasks.v1\", 123],\n  \"count\": 2,\n  \"changed_only_base\": \"HEAD\",\n  \"mode\": \"fast\"\n}\n",
+        ),
+    ];
+
+    for (name, artifact) in cases {
+        let artifact_path = root.join(format!("{name}.json"));
+        fs::write(&artifact_path, artifact).expect("write artifact");
+        let output = run_json_cli_command(
+            &root,
+            &[
+                "contracts",
+                "validate-selection",
+                "--artifact",
+                artifact_path.to_str().expect("utf8 path"),
+            ],
+        );
+        assert!(!output.status.success(), "{name} should fail");
+        let parsed = parse_stdout_json(&output);
+        let details: Value = serde_json::from_str(
+            parsed["error"]["message"]
+                .as_str()
+                .expect("json error payload"),
+        )
+        .expect("parse details");
+        assert_eq!(
+            details["schema"],
+            "effigy.contracts.selection-validation.v1"
+        );
+        assert_eq!(details["ok"], false);
+        assert!(
+            details["errors"]
+                .as_array()
+                .is_some_and(|errors| !errors.is_empty()),
+            "{name} should report validation errors"
+        );
+    }
+}
+
+#[test]
+fn cli_distribution_validate_artifacts_json_reports_missing_logs() {
+    let root = temp_workspace("distribution-validate-artifacts");
+    let artifacts = root.join("artifacts");
+    fs::create_dir_all(&artifacts).expect("mkdir artifacts");
+    fs::write(artifacts.join("01-tag-install-validation.log"), "ok\n").expect("write log");
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "distribution",
+            "validate-artifacts",
+            "--artifacts-dir",
+            artifacts.to_str().expect("utf8 path"),
+        ],
+    );
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    let details: Value = serde_json::from_str(
+        parsed["error"]["message"]
+            .as_str()
+            .expect("json error payload"),
+    )
+    .expect("parse details");
+    assert_eq!(details["schema"], "effigy.distribution.artifacts.v1");
+    assert_eq!(details["ok"], false);
+    assert!(details["missing"]
+        .as_array()
+        .is_some_and(|missing| !missing.is_empty()));
+}
+
+#[test]
+fn cli_distribution_preflight_json_writes_summary_when_smoke_skipped() {
+    let root = temp_workspace("distribution-preflight");
+    fs::create_dir_all(root.join(".github/workflows")).expect("mkdir workflows");
+    fs::create_dir_all(root.join("docs/guides")).expect("mkdir guides");
+    fs::create_dir_all(root.join("docs/logs")).expect("mkdir docs logs");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
+
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"effigy\"\nversion = \"0.2.5\"\nlicense = \"MIT\"\ndescription = \"fixture\"\nedition = \"2021\"\n",
+    )
+    .expect("write cargo manifest");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.\"qa:docs\"]\nrun = \"printf docs-ok\"\n",
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("README.md"),
+        "# Fixture\n\nSee [guides](docs/guides/010-path-installation-and-release.md).\n",
+    )
+    .expect("write readme");
+    fs::write(root.join("docs/README.md"), "# Docs\n").expect("write docs readme");
+    fs::write(root.join("docs/logs/README.md"), "# Logs\n").expect("write docs logs readme");
+    fs::write(
+        root.join(".github/workflows/release-binaries.yml"),
+        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
+    )
+    .expect("write workflow");
+
+    for guide in [
+        "010-path-installation-and-release.md",
+        "014-release-checklist-template.md",
+        "041-distribution-ci-pinning-and-wrapper-migration.md",
+        "042-homebrew-tap-and-release-automation.md",
+        "044-distribution-first-publish-execution-runbook.md",
+    ] {
+        fs::write(root.join("docs/guides").join(guide), "# Guide\n").expect("write guide");
+    }
+
+    for script in [
+        "check-release-install-from-tag.sh",
+        "check-distribution-first-publish.sh",
+    ] {
+        fs::write(root.join("scripts").join(script), "#!/bin/sh\nexit 0\n").expect("write script");
+    }
+
+    let summary_path = root.join("artifacts/distribution-preflight-v0.2.5.env");
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "distribution",
+            "preflight",
+            "--tag",
+            "v0.2.5",
+            "--skip-smoke",
+            "--output",
+            summary_path.to_str().expect("utf8 summary path"),
+        ],
+    );
+    let parsed = parse_stdout_json(&output);
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(
+        parsed["result"]["schema"],
+        "effigy.distribution.preflight.v1"
+    );
+    assert_eq!(parsed["result"]["ok"], true);
+    assert_eq!(parsed["result"]["tag"], "v0.2.5");
+    assert_eq!(parsed["result"]["docs_status"], "ok");
+    assert_eq!(parsed["result"]["metadata_status"], "ok");
+    assert_eq!(parsed["result"]["smoke_status"], "skipped");
+    assert_eq!(
+        parsed["result"]["output"],
+        summary_path.to_str().expect("utf8 summary path")
+    );
+
+    let summary = fs::read_to_string(&summary_path).expect("read preflight summary");
+    assert!(summary.contains("TAG=v0.2.5"));
+    assert!(summary.contains("DOCS_STATUS=ok"));
+    assert!(summary.contains("METADATA_STATUS=ok"));
+    assert!(summary.contains("SMOKE_STATUS=skipped"));
+}
+
+#[test]
+fn cli_distribution_generate_closeout_json_writes_report() {
+    let root = temp_workspace("distribution-generate-closeout");
+    let artifacts = root.join("artifacts");
+    fs::create_dir_all(&artifacts).expect("mkdir artifacts");
+    for name in [
+        "01-tag-install-validation.log",
+        "02-crates-io-install-validation.log",
+        "03-crates-io-binary-help.log",
+        "04-crates-io-binary-json-tasks.log",
+    ] {
+        fs::write(artifacts.join(name), "ok\n").expect("write log");
+    }
+    let output_path = root.join("docs/logs/closeout.md");
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "distribution",
+            "generate-closeout",
+            "--tag",
+            "v0.2.5",
+            "--artifacts-dir",
+            artifacts.to_str().expect("utf8 path"),
+            "--output",
+            output_path.to_str().expect("utf8 path"),
+        ],
+    );
+    assert!(output.status.success());
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(
+        parsed["result"]["schema"],
+        "effigy.distribution.closeout.v1"
+    );
+    assert_eq!(parsed["result"]["ok"], true);
+    assert!(output_path.is_file());
+    let rendered = fs::read_to_string(&output_path).expect("read closeout");
+    assert!(rendered.contains("Distribution Acceptance Closeout (v0.2.5)"));
+}
+
+#[test]
+fn cli_distribution_write_summary_json_writes_contract_file() {
+    let root = temp_workspace("distribution-write-summary");
+    let artifacts = root.join("artifacts");
+    fs::create_dir_all(&artifacts).expect("mkdir artifacts");
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "distribution",
+            "write-summary",
+            "--tag",
+            "v0.2.5",
+            "--artifacts-dir",
+            artifacts.to_str().expect("utf8 path"),
+            "--homebrew-executed",
+            "--log-file",
+            "01-tag-install-validation.log",
+            "--log-file",
+            "02-crates-io-install-validation.log",
+        ],
+    );
+    assert!(output.status.success());
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.distribution.summary.v1");
+    assert_eq!(parsed["result"]["ok"], true);
+
+    let rendered =
+        fs::read_to_string(artifacts.join("distribution-summary.env")).expect("read summary");
+    assert!(rendered.contains("TAG=v0.2.5"));
+    assert!(rendered.contains("CRATE_VERSION=0.2.5"));
+    assert!(rendered.contains("HOMEBREW_EXECUTED=1"));
+    assert!(rendered
+        .contains("LOG_FILES=01-tag-install-validation.log,02-crates-io-install-validation.log"));
+}
+
+#[test]
+fn cli_distribution_artifact_pipeline_smoke_fixture_passes() {
+    let root = temp_workspace("distribution-artifact-pipeline-smoke");
+    let artifacts = root.join("artifacts");
+    let output_path = root.join("docs/logs/distribution-closeout.md");
+    fs::create_dir_all(&artifacts).expect("mkdir artifacts");
+    for name in [
+        "01-tag-install-validation.log",
+        "02-crates-io-install-validation-0-1-0.log",
+        "03-crates-io-binary-help.log",
+        "04-crates-io-binary-json-tasks.log",
+        "05-homebrew-install.log",
+        "06-homebrew-binary-help.log",
+        "07-homebrew-binary-json-tasks.log",
+        "08-homebrew-upgrade.log",
+    ] {
+        fs::write(artifacts.join(name), "ok\n").expect("write log");
+    }
+    fs::write(
+        artifacts.join("distribution-summary.env"),
+        concat!(
+            "TAG=v0.1.0\n",
+            "CRATE_VERSION=0.1.0\n",
+            "REPO_URL=https://github.com/inflatable-cookie/effigy.git\n",
+            "BREW_FORMULA=inflatable-cookie/effigy/effigy\n",
+            "HOMEBREW_EXECUTED=1\n",
+            "LOG_FILES=01-tag-install-validation.log,02-crates-io-install-validation-0-1-0.log,03-crates-io-binary-help.log,04-crates-io-binary-json-tasks.log,05-homebrew-install.log,06-homebrew-binary-help.log,07-homebrew-binary-json-tasks.log,08-homebrew-upgrade.log\n",
+        ),
+    )
+    .expect("write summary");
+
+    let validate = run_json_cli_command(
+        &root,
+        &[
+            "distribution",
+            "validate-artifacts",
+            "--artifacts-dir",
+            artifacts.to_str().expect("utf8 path"),
+            "--expect-homebrew",
+        ],
+    );
+    assert!(validate.status.success(), "{validate:?}");
+    let validate_json = parse_stdout_json(&validate);
+    assert_eq!(
+        validate_json["result"]["schema"],
+        "effigy.distribution.artifacts.v1"
+    );
+    assert_eq!(validate_json["result"]["ok"], true);
+
+    let generate = run_json_cli_command(
+        &root,
+        &[
+            "distribution",
+            "generate-closeout",
+            "--tag",
+            "v0.1.0",
+            "--artifacts-dir",
+            artifacts.to_str().expect("utf8 path"),
+            "--output",
+            output_path.to_str().expect("utf8 path"),
+        ],
+    );
+    assert!(generate.status.success(), "{generate:?}");
+    let generate_json = parse_stdout_json(&generate);
+    assert_eq!(
+        generate_json["result"]["schema"],
+        "effigy.distribution.closeout.v1"
+    );
+    assert_eq!(generate_json["result"]["ok"], true);
+
+    let rendered = fs::read_to_string(&output_path).expect("read closeout");
+    assert!(rendered.contains("# Distribution Acceptance Closeout (v0.1.0)"));
+    assert!(rendered.contains("- Homebrew evidence included: true."));
+    assert!(rendered.contains("- 08-homebrew-upgrade.log"));
+}
+
 fn run_release_wrapper(
     root: &std::path::Path,
     script_name: &str,

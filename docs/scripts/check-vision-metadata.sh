@@ -78,7 +78,7 @@ for file in "${cutoff_policy_files[@]}"; do
   fi
 done
 
-if ! "$ROOT_DIR/docs/scripts/check-doc-workflow-paths.sh"; then
+if ! cargo run --bin effigy -- docs check-workflow-paths --repo "$ROOT_DIR" >/dev/null; then
   status=1
 fi
 

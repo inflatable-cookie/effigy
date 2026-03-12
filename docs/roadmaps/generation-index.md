@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: `g01`
-Updated: 2026-03-07
+Updated: 2026-03-11
 
 ## Generation history
 
@@ -19,6 +19,10 @@ Updated: 2026-03-07
 - `022` captures the planned Research Phase 3: Scale and Integration.
 - `023` captures the planned builtin test suite lifecycle and environment milestone.
 - `024` captures the planned release pipeline validation and consumer CI integration milestone.
+- `025` captures the env-schema integration milestone.
+- `026` captures the changelog library and Northstar profile milestone.
+- `027` captures the release orchestration milestone.
+- `028` captures the completed script-surface reduction and built-ins milestone.
 
 ## Research Roadmaps
 

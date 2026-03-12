@@ -18,7 +18,7 @@ Copy into PR description:
 - [ ] `./docs/scripts/check-vision-next-task-regression.sh` passed
 - [ ] `./docs/scripts/check-vision-next-task.sh` passed
 - [ ] `./docs/scripts/check-vision-metadata.sh` passed
-- [ ] `cargo qa-docs` passed
+- [ ] `effigy qa:docs --repo .` passed
 ```
 
 ## Required Evidence Fields

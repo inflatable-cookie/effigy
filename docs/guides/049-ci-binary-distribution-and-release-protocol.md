@@ -365,7 +365,7 @@ Current command surface:
 4. **Run release gates.**
    - Run `effigy release gates` when the repo has `[release.gates]` configured
      and you want the built-in sequential fail-fast gate runner.
-   - Otherwise execute `cargo qa-release` (or the underlying scripts).
+   - Otherwise execute `effigy qa:release --repo .` (or the compatibility fallback `cargo qa-release` / underlying scripts).
    - All gates must pass. If any fail, fix the issue and re-run.
    - Do not proceed until gates pass cleanly.
 
@@ -416,7 +416,7 @@ Current command surface:
 ### 7c) What Agents May Do Autonomously
 
 - Read and reference release documentation
-- Run release gate checks locally (`cargo qa-release`, smoke scripts)
+- Run release gate checks locally (`effigy qa:release --repo .`, smoke scripts)
 - Draft release notes for human review
 - Use `effigy changelog extract` as the preferred release-note baseline
   generator before any workflow-level cutover

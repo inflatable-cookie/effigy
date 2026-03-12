@@ -89,8 +89,8 @@ Decision path:
 Core scripts:
 
 ```sh
-./scripts/check-json-contracts-ci.sh
-./scripts/validate-json-contract-selection-artifact.sh ./json-contracts-selected.json
+effigy contracts check-json --repo . --full --print-selected=json
+effigy contracts validate-selection --repo . --artifact ./json-contracts-selected.json
 ```
 
 Exit criteria:

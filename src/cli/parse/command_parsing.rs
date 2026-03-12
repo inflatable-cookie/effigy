@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use crate::{
-    ChangelogArgs, ChangelogSubcommand, Command, DoctorArgs, HelpTopic, ReleaseArgs,
+    ChangelogArgs, ChangelogSubcommand, Command, ContractsArgs, ContractsCheckMode,
+    ContractsSelectionPrintMode, ContractsSubcommand, DistributionArgs, DistributionSubcommand,
+    DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, HelpTopic, ReleaseArgs,
     ReleaseSubcommand, TaskInvocation, TasksArgs,
 };
 
@@ -20,6 +22,9 @@ where
     match cmd.as_str() {
         "--help" | "-h" | "help" => Ok(Command::Help(HelpTopic::General)),
         "changelog" => parse_changelog_command(args),
+        "docs" => parse_docs_command(args),
+        "contracts" => parse_contracts_command(args),
+        "distribution" => parse_distribution_command(args),
         "release" => parse_release(args),
         "doctor" => parse_doctor(args),
         "tasks" | "catalogs" => parse_tasks(args),
@@ -34,9 +39,697 @@ fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
         "watch" => Some(HelpTopic::Watch),
         "init" => Some(HelpTopic::Init),
         "migrate" => Some(HelpTopic::Migrate),
+        "docs" => Some(HelpTopic::Docs),
+        "contracts" => Some(HelpTopic::Contracts),
+        "distribution" => Some(HelpTopic::Distribution),
         "release" => Some(HelpTopic::Release),
         _ => None,
     }
+}
+
+fn parse_docs_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcmd) = args.next() else {
+        return Ok(Command::Help(HelpTopic::Docs));
+    };
+
+    match subcmd.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::Docs)),
+        "check-links" => parse_docs_check_links(args),
+        "check-json-examples" => parse_docs_check_json_examples(args),
+        "check-index" => parse_docs_check_index(args),
+        "check-workflow-paths" => parse_docs_check_workflow_paths(args),
+        "add-log-index" => parse_docs_add_log_index(args),
+        other => Err(unknown_argument(other)),
+    }
+}
+
+fn parse_docs_check_links<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut paths = Vec::new();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => paths.push(PathBuf::from(arg)),
+        }
+    }
+
+    Ok(Command::Docs(DocsArgs {
+        subcommand: DocsSubcommand::CheckLinks { paths },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_docs_check_json_examples<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut file: Option<PathBuf> = None;
+    let mut section: Option<String> = None;
+    let mut min_blocks: Option<usize> = None;
+    let mut required = Vec::new();
+    let mut required_blocks = Vec::new();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--file" => {
+                file = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--file".to_owned(),
+                    },
+                )?));
+            }
+            "--section" => {
+                section = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--section".to_owned(),
+                    },
+                )?);
+            }
+            "--min-blocks" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--min-blocks".to_owned(),
+                    },
+                )?;
+                min_blocks =
+                    Some(
+                        value
+                            .parse::<usize>()
+                            .map_err(|_| CliParseError::InvalidFlagValue {
+                                flag: "--min-blocks".to_owned(),
+                                value: value.clone(),
+                                expected: "a positive integer".to_owned(),
+                            })?,
+                    );
+            }
+            "--require" => {
+                required.push(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--require".to_owned(),
+                    },
+                )?);
+            }
+            "--require-block" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--require-block".to_owned(),
+                    },
+                )?;
+                let Some((block_index, needle)) = value.split_once(':') else {
+                    return Err(CliParseError::InvalidFlagValue {
+                        flag: "--require-block".to_owned(),
+                        value,
+                        expected: "`<1-based-block-index>:<substring>`".to_owned(),
+                    });
+                };
+                let block_index =
+                    block_index
+                        .parse::<usize>()
+                        .map_err(|_| CliParseError::InvalidFlagValue {
+                            flag: "--require-block".to_owned(),
+                            value: value.clone(),
+                            expected: "`<1-based-block-index>:<substring>`".to_owned(),
+                        })?;
+                required_blocks.push(DocsBlockRequirement {
+                    block_index,
+                    needle: needle.to_owned(),
+                });
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Docs(DocsArgs {
+        subcommand: DocsSubcommand::CheckJsonExamples {
+            file,
+            section,
+            min_blocks,
+            required,
+            required_blocks,
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_docs_check_index<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut dir: Option<PathBuf> = None;
+    let mut index: Option<PathBuf> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--dir" => {
+                dir = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--dir".to_owned(),
+                    },
+                )?));
+            }
+            "--index" => {
+                index = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--index".to_owned(),
+                    },
+                )?));
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Docs(DocsArgs {
+        subcommand: DocsSubcommand::CheckIndex { dir, index },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_docs_add_log_index<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut log_path: Option<PathBuf> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => {
+                if log_path.is_some() {
+                    return Err(unknown_argument(arg));
+                }
+                log_path = Some(PathBuf::from(arg));
+            }
+        }
+    }
+
+    let log_path = log_path.ok_or_else(|| CliParseError::MissingFlagValue {
+        flag: "<LOG_FILE>".to_owned(),
+    })?;
+
+    Ok(Command::Docs(DocsArgs {
+        subcommand: DocsSubcommand::AddLogIndex { log_path },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_docs_check_workflow_paths<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut dir: Option<PathBuf> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--dir" => {
+                dir = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--dir".to_owned(),
+                    },
+                )?));
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Docs(DocsArgs {
+        subcommand: DocsSubcommand::CheckWorkflowPaths { dir },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_contracts_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcmd) = args.next() else {
+        return Ok(Command::Help(HelpTopic::Contracts));
+    };
+
+    match subcmd.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::Contracts)),
+        "validate-selection" => parse_contracts_validate_selection(args),
+        "check-json" => parse_contracts_check_json(args),
+        other => Err(unknown_argument(other)),
+    }
+}
+
+fn parse_contracts_validate_selection<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut contract_path: Option<PathBuf> = None;
+    let mut artifact_path: Option<PathBuf> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--contract" => {
+                contract_path = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--contract".to_owned(),
+                    },
+                )?));
+            }
+            "--artifact" => {
+                artifact_path = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--artifact".to_owned(),
+                    },
+                )?));
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Contracts)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Contracts(ContractsArgs {
+        subcommand: ContractsSubcommand::ValidateSelection {
+            contract_path,
+            artifact_path,
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_contracts_check_json<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut index_path: Option<PathBuf> = None;
+    let mut mode = ContractsCheckMode::Full;
+    let mut changed_only_base: Option<String> = None;
+    let mut print_selected = ContractsSelectionPrintMode::None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--index" => {
+                index_path = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--index".to_owned(),
+                    },
+                )?));
+            }
+            "--fast" => mode = ContractsCheckMode::Fast,
+            "--full" => mode = ContractsCheckMode::Full,
+            "--changed-only" | "--changed-only-base" => {
+                changed_only_base = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue { flag: arg },
+                )?);
+            }
+            "--print-selected" | "--print-selected=text" => {
+                print_selected = ContractsSelectionPrintMode::Text;
+            }
+            "--print-selected=json" => {
+                print_selected = ContractsSelectionPrintMode::Json;
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Contracts)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Contracts(ContractsArgs {
+        subcommand: ContractsSubcommand::CheckJson {
+            index_path,
+            mode,
+            changed_only_base,
+            print_selected,
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_distribution_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcmd) = args.next() else {
+        return Ok(Command::Help(HelpTopic::Distribution));
+    };
+
+    match subcmd.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::Distribution)),
+        "validate-metadata" => parse_distribution_validate_metadata(args),
+        "preflight" => parse_distribution_preflight(args),
+        "validate-artifacts" => parse_distribution_validate_artifacts(args),
+        "generate-closeout" => parse_distribution_generate_closeout(args),
+        "write-summary" => parse_distribution_write_summary(args),
+        other => Err(unknown_argument(other)),
+    }
+}
+
+fn parse_distribution_validate_metadata<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut tag: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--tag" => {
+                tag = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--tag".to_owned(),
+                    },
+                )?);
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Distribution)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Distribution(DistributionArgs {
+        subcommand: DistributionSubcommand::ValidateMetadata { tag },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_distribution_preflight<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut tag: Option<String> = None;
+    let mut skip_docs = false;
+    let mut skip_smoke = false;
+    let mut output_path: Option<PathBuf> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--tag" => {
+                tag = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--tag".to_owned(),
+                    },
+                )?);
+            }
+            "--skip-docs" => skip_docs = true,
+            "--skip-smoke" => skip_smoke = true,
+            "--output" => {
+                output_path = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--output".to_owned(),
+                    },
+                )?));
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Distribution)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Distribution(DistributionArgs {
+        subcommand: DistributionSubcommand::Preflight {
+            tag,
+            skip_docs,
+            skip_smoke,
+            output_path,
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_distribution_validate_artifacts<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut artifacts_dir: Option<PathBuf> = None;
+    let mut expect_homebrew = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--artifacts-dir" => {
+                artifacts_dir = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--artifacts-dir".to_owned(),
+                    },
+                )?));
+            }
+            "--expect-homebrew" => expect_homebrew = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Distribution)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    let artifacts_dir = artifacts_dir.ok_or_else(|| CliParseError::MissingFlagValue {
+        flag: "--artifacts-dir".to_owned(),
+    })?;
+
+    Ok(Command::Distribution(DistributionArgs {
+        subcommand: DistributionSubcommand::ValidateArtifacts {
+            artifacts_dir,
+            expect_homebrew,
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_distribution_generate_closeout<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut tag: Option<String> = None;
+    let mut artifacts_dir: Option<PathBuf> = None;
+    let mut output_path: Option<PathBuf> = None;
+    let mut owner = "Effigy".to_owned();
+    let mut expect_homebrew = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--tag" => {
+                tag = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--tag".to_owned(),
+                    },
+                )?);
+            }
+            "--artifacts-dir" => {
+                artifacts_dir = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--artifacts-dir".to_owned(),
+                    },
+                )?));
+            }
+            "--output" => {
+                output_path = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--output".to_owned(),
+                    },
+                )?));
+            }
+            "--owner" => {
+                owner = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--owner".to_owned(),
+                    },
+                )?;
+            }
+            "--expect-homebrew" => expect_homebrew = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Distribution)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Distribution(DistributionArgs {
+        subcommand: DistributionSubcommand::GenerateCloseout {
+            tag: tag.ok_or_else(|| CliParseError::MissingFlagValue {
+                flag: "--tag".to_owned(),
+            })?,
+            artifacts_dir: artifacts_dir.ok_or_else(|| CliParseError::MissingFlagValue {
+                flag: "--artifacts-dir".to_owned(),
+            })?,
+            output_path,
+            owner,
+            expect_homebrew,
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_distribution_write_summary<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut tag: Option<String> = None;
+    let mut artifacts_dir: Option<PathBuf> = None;
+    let mut crate_version: Option<String> = None;
+    let mut repo_url = "https://github.com/inflatable-cookie/effigy.git".to_owned();
+    let mut brew_formula = "inflatable-cookie/effigy/effigy".to_owned();
+    let mut homebrew_executed = false;
+    let mut log_files = Vec::new();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--tag" => {
+                tag = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--tag".to_owned(),
+                    },
+                )?);
+            }
+            "--artifacts-dir" => {
+                artifacts_dir = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--artifacts-dir".to_owned(),
+                    },
+                )?));
+            }
+            "--crate-version" => {
+                crate_version = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--crate-version".to_owned(),
+                    },
+                )?);
+            }
+            "--repo-url" => {
+                repo_url = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--repo-url".to_owned(),
+                    },
+                )?;
+            }
+            "--brew-formula" => {
+                brew_formula = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--brew-formula".to_owned(),
+                    },
+                )?;
+            }
+            "--homebrew-executed" => homebrew_executed = true,
+            "--log-file" => log_files.push(next_required_value(
+                &mut args,
+                CliParseError::MissingFlagValue {
+                    flag: "--log-file".to_owned(),
+                },
+            )?),
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Distribution)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Distribution(DistributionArgs {
+        subcommand: DistributionSubcommand::WriteSummary {
+            tag: tag.ok_or_else(|| CliParseError::MissingFlagValue {
+                flag: "--tag".to_owned(),
+            })?,
+            artifacts_dir: artifacts_dir.ok_or_else(|| CliParseError::MissingFlagValue {
+                flag: "--artifacts-dir".to_owned(),
+            })?,
+            crate_version,
+            repo_url,
+            brew_formula,
+            homebrew_executed,
+            log_files,
+        },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_tasks<I>(args: I) -> Result<Command, CliParseError>

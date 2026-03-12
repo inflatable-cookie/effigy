@@ -10,10 +10,32 @@ alias = "effigy"
 "link:local" = "./scripts/install-local-bin-links.sh"
 "bootstrap:local" = [{ task = "install:local" }, { task = "link:local" }]
 "smoke:release" = "./scripts/check-release-smoke.sh ./target/release/effigy"
-"dist:metadata" = "./scripts/check-distribution-metadata.sh"
-"qa:docs" = "./scripts/check-quality-gates.sh --docs-only"
-"qa:json" = "./scripts/check-quality-gates.sh --json-only"
-"qa:json:ci" = "./scripts/check-quality-gates.sh --json-only --ci"
+"dist:metadata" = "cargo run --bin effigy -- distribution validate-metadata --repo ."
+"qa:docs:links" = "cargo run --bin effigy -- docs check-links --repo ."
+"qa:docs:examples" = "cargo run --bin effigy -- docs check-json-examples --repo ."
+"qa:docs:index" = "cargo run --bin effigy -- docs check-index --repo ."
+"qa:docs:vision" = "./docs/scripts/check-vision-metadata.sh"
+"qa:docs" = [
+  { task = "qa:docs:links" },
+  { task = "qa:docs:examples" },
+  { task = "qa:docs:index" },
+  { task = "qa:docs:vision" },
+]
+"qa:json" = "cargo run --bin effigy -- contracts check-json --repo . --fast --print-selected=text"
+"qa:json:ci" = "cargo run --bin effigy -- contracts check-json --repo . --full --print-selected=json"
+"qa:gates" = [{ task = "qa:docs" }, { task = "qa:json" }]
+"qa:ci" = [{ task = "qa:docs" }, { task = "qa:json:ci" }]
+"prepush:test:json-mode" = "cargo test --test cli_output_tests cli_json_mode"
+"prepush:test:lib" = "cargo test --lib"
+"prepush:test:cli-output" = "cargo test --test cli_output_tests"
+"prepush:ci" = [
+  { task = "qa:json:ci" },
+  { task = "prepush:test:json-mode" },
+  { task = "prepush:test:lib" },
+  { task = "prepush:test:cli-output" },
+  { task = "qa:docs" },
+]
+"dist:preflight:smoke" = "cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture"
 health = [{ task = "qa:docs" }, { task = "qa:json" }]
 qa = [{ task = "test" }, { task = "qa:docs" }, { task = "qa:json" }]
 "qa:release" = "cargo run --bin effigy -- release gates --repo ."
@@ -27,7 +49,7 @@ tag-format = "v{version}"
 [release.gates]
 format = "cargo fmt --all -- --check"
 test = "cargo test"
-qa = "./scripts/check-quality-gates.sh --all --ci"
+qa = "cargo run --bin effigy -- qa:ci --repo ."
 build = "cargo build --release --bin effigy"
 smoke = "./scripts/check-release-smoke.sh ./target/release/effigy"
-metadata = "./scripts/check-distribution-metadata.sh"
+metadata = "cargo run --bin effigy -- distribution validate-metadata --repo ."

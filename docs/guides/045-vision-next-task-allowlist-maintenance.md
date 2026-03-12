@@ -46,7 +46,7 @@ Unacceptable lead phrases:
 ./docs/scripts/check-vision-next-task-regression.sh
 ./docs/scripts/check-vision-next-task.sh
 ./docs/scripts/check-vision-metadata.sh
-cargo qa-docs
+effigy qa:docs --repo .
 ```
 
 5. In your PR notes, include:
@@ -60,7 +60,7 @@ cargo qa-docs
 - [ ] No vague/passive intent introduced.
 - [ ] Regression fixtures still pass.
 - [ ] Existing vision artifacts still pass.
-- [ ] Docs QA (`cargo qa-docs`) remains green.
+- [ ] Docs QA (`effigy qa:docs --repo .`) remains green.
 
 ## Expected Outcome
 

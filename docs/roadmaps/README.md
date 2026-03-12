@@ -30,6 +30,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01/022-research-phase-3-scale-and-integration.md` is the third research roadmap (planned).
 - `g01/023-builtin-test-suite-lifecycle-and-env.md` is the next implementation roadmap (planned).
 - `g01/024-release-pipeline-validation-and-consumer-ci.md` validates the release pipeline and delivers consumer CI integration (planned).
+- `g01/028-script-surface-reduction-and-builtins.md` reduces repo shell logic into Effigy-native command surfaces and is complete.
 
 ## Research Program
 
@@ -51,16 +52,16 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Roadmap `g01.024` is the next implementation milestone: validate the release
-pipeline end-to-end and deliver consumer repo CI integration.
+Roadmap `g01.028` is complete: reusable docs/contracts/distribution logic has
+been moved into Effigy-native built-ins and task composition, with shell
+reduced to thin compatibility wrappers and external side-effect boundaries.
 
 Planned milestones:
 
-1. **g01.024** - Release Pipeline Validation and Consumer CI Integration (planned)
+1. **g01.023** - Builtin Test Suite Lifecycle and Environment (planned)
 2. **g01.020** - Research Phase 1: Core Execution (planned)
 3. **g01.021** - Research Phase 2: Developer Experience (planned)
 4. **g01.022** - Research Phase 3: Scale & Integration (planned)
-5. **g01.023** - Builtin Test Suite Lifecycle and Environment (planned)
 
 
 ## Historical language boundary

@@ -6744,8 +6744,11 @@ mod tests {
             vec![
                 ("build", "cargo build --release --bin effigy"),
                 ("format", "cargo fmt --all -- --check"),
-                ("metadata", "./scripts/check-distribution-metadata.sh"),
-                ("qa", "./scripts/check-quality-gates.sh --all --ci"),
+                (
+                    "metadata",
+                    "cargo run --bin effigy -- distribution validate-metadata --repo ."
+                ),
+                ("qa", "cargo run --bin effigy -- qa:ci --repo ."),
                 (
                     "smoke",
                     "./scripts/check-release-smoke.sh ./target/release/effigy"

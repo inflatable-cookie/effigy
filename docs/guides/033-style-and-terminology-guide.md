@@ -67,8 +67,8 @@ Cross-linking:
 Validation:
 
 ```sh
-./scripts/check-doc-links.sh README.md $(find docs -name '*.md' | sort)
-./scripts/check-quality-gates.sh --docs-only
+effigy docs check-links --repo .
+effigy qa:docs --repo .
 ```
 
 ## 6) Terminology Canon
