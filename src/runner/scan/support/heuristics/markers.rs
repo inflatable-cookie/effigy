@@ -66,32 +66,46 @@ pub(in crate::runner) fn attention_marker_matches_line(raw_line: &str, marker_lo
     if !lower_line.contains(marker_lower) {
         return false;
     }
-    if marker_lower.contains("deprecat") {
-        return true;
-    }
     let trimmed = lower_line.trim_start();
-    let comment_prefixes = ["//", "/*", "*", "<!--", "--"];
-    if comment_prefixes
-        .iter()
-        .any(|prefix| trimmed.starts_with(prefix))
-        || (trimmed.starts_with('#') && !trimmed.starts_with("#["))
-    {
-        return true;
+    if marker_lower.starts_with('@') {
+        return strip_comment_prefix(trimmed)
+            .is_some_and(|body| marker_starts_comment_segment(body, marker_lower))
+            || lower_line.contains("#[deprecated");
     }
-    if let Some(marker_index) = lower_line.find(marker_lower) {
-        if comment_prefixes.iter().any(|prefix| {
-            lower_line
-                .find(prefix)
-                .is_some_and(|comment_index| comment_index < marker_index)
-        }) {
-            return true;
-        }
-        if let Some(comment_index) = lower_line.find('#') {
-            return comment_index < marker_index
-                && lower_line.as_bytes().get(comment_index + 1).copied() != Some(b'[');
+    if marker_lower.contains("deprecat") {
+        return lower_line.contains("#[deprecated")
+            || strip_comment_prefix(trimmed)
+                .is_some_and(|body| marker_starts_comment_segment(body, marker_lower));
+    }
+    strip_comment_prefix(trimmed)
+        .is_some_and(|body| marker_starts_comment_segment(body, marker_lower))
+}
+
+fn strip_comment_prefix(trimmed: &str) -> Option<&str> {
+    for prefix in ["//", "/*", "*", "<!--", "--"] {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            return Some(rest);
         }
     }
-    false
+    if trimmed.starts_with("#[") || trimmed.starts_with("##") {
+        return None;
+    }
+    trimmed.strip_prefix('#')
+}
+
+fn marker_starts_comment_segment(body: &str, marker_lower: &str) -> bool {
+    let body = body.trim_start();
+    let body = body.trim_start_matches(['-', '*', '[', '(']);
+    let body = body.trim_start();
+    let Some(rest) = body.strip_prefix(marker_lower) else {
+        return false;
+    };
+    rest.is_empty()
+        || rest.starts_with(':')
+        || rest.starts_with(' ')
+        || rest.starts_with(']')
+        || rest.starts_with(')')
+        || rest.starts_with('-')
 }
 
 pub(in crate::runner) fn stale_suppression_matches_line(

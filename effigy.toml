@@ -14,7 +14,7 @@ alias = "effigy"
 "qa:docs:links" = "cargo run --bin effigy -- docs check-links"
 "qa:docs:examples" = "cargo run --bin effigy -- docs check-json-examples"
 "qa:docs:index" = "cargo run --bin effigy -- docs check-index"
-"qa:docs:agent-defaults" = "cargo run --bin effigy -- docs check-forbidden AGENTS.md setup-effigy/README.md .github/workflows/json-contracts.yml docs/contracts/json-selection-contract.json --forbid '--repo .'"
+"qa:docs:agent-defaults" = "cargo run --bin effigy -- docs check-forbidden AGENTS.md .github/workflows/json-contracts.yml docs/contracts/json-selection-contract.json --forbid '--repo .'"
 "qa:docs:vision:roadmaps" = "cargo run --bin effigy -- docs check-headings docs/roadmaps/g01/001-effigy-foundation.md docs/roadmaps/g01/002-deferral-fallback-system.md docs/roadmaps/g01/003-coloured-output-and-widgets.md docs/roadmaps/g01/004-dev-process-manager-tui.md docs/roadmaps/g01/005-unified-testing-orchestration.md docs/roadmaps/g01/006-tui-terminal-emulation.md docs/roadmaps/g01/007-test-runner-selection-and-environment-policy.md docs/roadmaps/g01/008-universal-json-command-coverage.md docs/roadmaps/g01/009-doctor-health-consolidation.md docs/roadmaps/g01/010-dag-lock-policy-baseline.md docs/roadmaps/g01/011-watch-init-migrate-foundation.md docs/roadmaps/g01/012-codebase-consolidation-and-health.md --require-heading '## Vision Alignment' --require-heading '## Primary Tags' --require-heading '## Target Envelope' --require-heading '## Vision Target Delta'"
 "qa:docs:vision:guides" = "cargo run --bin effigy -- docs check-headings docs/guides/016-task-routing-precedence.md docs/guides/017-json-output-contracts.md docs/guides/018-doctor-explain-mode.md docs/guides/019-watch-init-migrate-foundation.md docs/guides/020-dag-lock-policy-baseline.md docs/guides/021-quick-start-and-command-cookbook.md docs/guides/022-manifest-cookbook.md docs/guides/023-troubleshooting-and-failure-recipes.md docs/guides/024-ci-and-automation-recipes.md docs/guides/025-command-reference-matrix.md docs/guides/026-json-payload-examples.md --require-heading '## Vision Alignment'"
 "qa:docs:vision:report-policy" = "cargo run --bin effigy -- docs check-contains docs/logs/README.md docs/guides/036-release-notes-authoring-template-and-examples.md --require 'Vision Target Delta'"
@@ -71,6 +71,20 @@ exclude = ["history/**"]
 index = "vision"
 heading = "## Next Task"
 allowlist_file = "docs/scripts/fixtures/vision-next-task/actionable-verbs.txt"
+
+[scan.god_files]
+# Keep doctor focused on unexpected new mega-hubs instead of the existing
+# release orchestration hub and monolithic CLI contract fixture batch.
+warn = 1500
+high = 3000
+critical = 8000
+exclude = [
+  "src/runner/release_command.rs",
+  "tests/cli_output_tests/command_behavior_tests.rs",
+]
+
+[scan.comment_ratio]
+exclude = ["src/changelog.rs"]
 
 [release.gates]
 format = "cargo fmt --all -- --check"

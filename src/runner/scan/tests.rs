@@ -179,3 +179,19 @@ fn attention_marker_matching_ignores_markers_inside_strings() {
         "deprecated"
     ));
 }
+
+#[test]
+fn attention_marker_matching_ignores_plain_prose_category_words() {
+    assert!(!attention_marker_matches_line(
+        r#"//! Categories are ordered: Breaking first, Security last."#,
+        "security"
+    ));
+    assert!(!attention_marker_matches_line(
+        r#"/// - Prior bug fix"#,
+        "bug"
+    ));
+    assert!(!attention_marker_matches_line(
+        r#"enum CategoryKind { Deprecated, Removed, Fixed }"#,
+        "deprecated"
+    ));
+}
