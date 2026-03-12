@@ -77,6 +77,8 @@ fn parse_docs_check_index_with_overrides() {
     let cmd = parse_command(vec![
         "docs".to_owned(),
         "check-index".to_owned(),
+        "--policy-index".to_owned(),
+        "vision".to_owned(),
         "--dir".to_owned(),
         "docs/logs".to_owned(),
         "--index".to_owned(),
@@ -89,6 +91,7 @@ fn parse_docs_check_index_with_overrides() {
         cmd,
         Command::Docs(DocsArgs {
             subcommand: DocsSubcommand::CheckIndex {
+                policy_index: Some("vision".to_owned()),
                 dir: Some(PathBuf::from("docs/logs")),
                 index: Some(PathBuf::from("docs/logs/README.md")),
             },
@@ -115,6 +118,60 @@ fn parse_docs_add_log_index_with_repo_override() {
         Command::Docs(DocsArgs {
             subcommand: DocsSubcommand::AddLogIndex {
                 log_path: PathBuf::from("docs/logs/2026-03/02-160000-my-log.md"),
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_docs_check_next_action_with_policy() {
+    let cmd = parse_command(vec![
+        "docs".to_owned(),
+        "check-next-action".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--policy".to_owned(),
+        "vision".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Docs(DocsArgs {
+            subcommand: DocsSubcommand::CheckNextAction {
+                policy_name: Some("vision".to_owned()),
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_docs_check_headings_with_requirements() {
+    let cmd = parse_command(vec![
+        "docs".to_owned(),
+        "check-headings".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "docs/guides/024-ci-and-automation-recipes.md".to_owned(),
+        "--require-heading".to_owned(),
+        "## Vision Alignment".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Docs(DocsArgs {
+            subcommand: DocsSubcommand::CheckHeadings {
+                paths: vec![PathBuf::from(
+                    "docs/guides/024-ci-and-automation-recipes.md"
+                )],
+                required_headings: vec!["## Vision Alignment".to_owned()],
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,

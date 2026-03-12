@@ -207,6 +207,8 @@ notes, and compatibility context before publishing the human-reviewed note.
 ## Related Guides
 
 - [`014-release-checklist-template.md`](./014-release-checklist-template.md)
+- [`053-release-wrapper-retirement-record-template.md`](./053-release-wrapper-retirement-record-template.md)
+- [`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)

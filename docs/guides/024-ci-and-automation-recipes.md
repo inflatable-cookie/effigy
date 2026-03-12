@@ -16,7 +16,7 @@ Canonical operator entrypoints:
 - `effigy qa:json --repo .`
 - `effigy qa:json:ci --repo .`
 - `effigy qa:ci --repo .`
-- `effigy qa:release --repo .`
+- `effigy release gates --repo .`
 - `effigy-dev <command> --repo .` when validating the current checkout before refreshing the installed binary
 
 Compatibility fallbacks:
@@ -28,15 +28,30 @@ Compatibility fallbacks:
 - `cargo prepush-ci`
 
 Task-composition note:
-- `qa:docs` is a native task chain over `effigy docs check-links`, `check-json-examples`, `check-index`, plus `docs/scripts/check-vision-metadata.sh`
+- `qa:docs` is a native task chain over `effigy docs check-links`, `check-json-examples`, `check-index`, plus `qa:docs:vision`
 - `qa:ci` is the native docs-plus-CI-contracts aggregation path used by release-gate wiring
+- the remaining `docs/scripts/check-vision-*.sh` checks are intentionally
+  repo-policy surfaces for now; further migration should happen behind the
+  proposed optional `[docs_policy]` config boundary rather than as hardcoded
+  built-in defaults
+- the active vision index, next-action, and file-policy checks now run through
+  native commands and manifest task composition, while fixture-style negative
+  cases live in Rust tests
+
+Design notes:
+- [`2026-03-12-docs-policy-config-boundary.md`](../logs/2026-03/12-093000-docs-policy-config-boundary.md)
+- [`2026-03-12-minimal-docs-policy-config-design.md`](../logs/2026-03/12-094500-minimal-docs-policy-config-design.md)
 
 Compatibility wrapper scripts (retained for CI/release tooling integration):
-- `./docs/scripts/check-vision-metadata.sh`
 - `./scripts/check-release-gates.sh`
 - `./scripts/check-release-smoke.sh`
 - `./scripts/check-release-install-from-tag.sh`
 - `./scripts/check-distribution-first-publish.sh`
+
+Boundary note:
+- `cargo qa-release` now maps straight to `effigy release gates --repo .`
+  rather than a separate helper binary layered on top of the release wrapper
+  path
 
 Release policy note:
 - prefer built-in `effigy release ...` commands for operator-driven release work
@@ -55,7 +70,7 @@ Before debugging CI, run locally:
 ```sh
 effigy qa --repo .
 effigy qa:json:ci --repo .
-effigy qa:release --repo .
+effigy release gates --repo .
 effigy release simulate --repo .
 effigy release status --repo . --check-gates
 effigy distribution preflight --repo . --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
@@ -318,10 +333,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo run --bin effigy -- qa:release --repo .
+      - run: cargo run --bin effigy -- release gates --repo .
 ```
 
-What `effigy qa:release --repo .` enforces:
+What `effigy release gates --repo .` enforces:
 - `cargo fmt --check`
 - full `cargo test`
 - docs + JSON quality gates (`qa:ci`)

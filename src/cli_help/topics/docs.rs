@@ -17,7 +17,10 @@ pub(crate) fn render_docs_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         &[
             "effigy docs check-links [--repo <PATH>] [<FILE>...] [--json]",
             "effigy docs check-json-examples [--repo <PATH>] [--file <PATH>] [--section <TITLE>] [--min-blocks <N>] [--require <TEXT>]... [--require-block <N:TEXT>]... [--json]",
-            "effigy docs check-index [--repo <PATH>] [--dir <PATH>] [--index <PATH>] [--json]",
+            "effigy docs check-headings [--repo <PATH>] <FILE>... --require-heading <TEXT>... [--json]",
+            "effigy docs check-contains [--repo <PATH>] <FILE>... --require <TEXT>... [--json]",
+            "effigy docs check-index [--repo <PATH>] [--policy-index <NAME>] [--dir <PATH>] [--index <PATH>] [--json]",
+            "effigy docs check-next-action [--repo <PATH>] [--policy <NAME>] [--json]",
             "effigy docs check-workflow-paths [--repo <PATH>] [--dir <PATH>] [--json]",
             "effigy docs add-log-index [--repo <PATH>] <LOG_FILE> [--json]",
             "effigy --json docs check-links [--repo <PATH>] [<FILE>...]",
@@ -48,6 +51,22 @@ pub(crate) fn render_docs_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
                 "Require a substring in one specific 1-based JSON example block",
             ),
             (
+                "--require-heading <TEXT>",
+                "Require a heading to appear in every file passed to `check-headings`",
+            ),
+            (
+                "--require <TEXT>",
+                "Require a substring in every file passed to `check-contains`",
+            ),
+            (
+                "--policy-index <NAME>",
+                "Use a named `[docs_policy.indexes.<NAME>]` definition from `effigy.toml`",
+            ),
+            (
+                "--policy <NAME>",
+                "Use a named `[docs_policy.next_actions.<NAME>]` definition from `effigy.toml`",
+            ),
+            (
                 "--dir <PATH>",
                 "Override the directory scanned by `check-index` or `check-workflow-paths`",
             ),
@@ -70,8 +89,12 @@ pub(crate) fn render_docs_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         &[
             "effigy docs check-links README.md docs/guides/README.md",
             "effigy docs check-json-examples",
+            "effigy docs check-headings docs/guides/024-ci-and-automation-recipes.md --require-heading \"## Vision Alignment\"",
+            "effigy docs check-contains docs/logs/README.md --require \"Vision Target Delta\"",
             "effigy docs check-json-examples --file docs/guides/026-json-payload-examples.md --section \"13) Completion Candidates\"",
             "effigy docs check-index --dir docs/logs --index docs/logs/README.md",
+            "effigy docs check-index --policy-index vision --repo .",
+            "effigy docs check-next-action --policy vision --repo .",
             "effigy docs check-workflow-paths --repo .",
             "effigy docs add-log-index docs/logs/2026-03/02-160000-my-log.md",
             "effigy --json docs check-links README.md",

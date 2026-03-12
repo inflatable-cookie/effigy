@@ -148,7 +148,6 @@ Agent docs should also define:
   - `qa:docs`
   - `qa:json`
   - `qa:json:ci`
-  - `qa:release`
   - `build:release`
   - `install:local`
   - `smoke:release`

@@ -65,6 +65,49 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add built-in `effigy docs check-workflow-paths` and retire the old
   `docs/scripts/check-doc-workflow-paths.sh` helper so docs workflow-reference
   validation no longer depends on a standalone shell script
+- Add optional `[docs_policy.indexes]` manifest support and
+  `effigy docs check-index --policy-index <NAME>` so repo-specific markdown
+  index rules can be supplied declaratively instead of hardcoded into generic
+  built-ins
+- Add optional `[docs_policy.next_actions]` manifest support and
+  `effigy docs check-next-action --policy <NAME>` so repo-specific heading and
+  actionable-verb rules can be enforced by a reusable built-in engine instead
+  of a standalone shell checker
+
+### Changed
+- Move the active vision index validation path onto
+  `effigy docs check-index --policy-index vision`, so
+  `docs/scripts/check-vision-index.sh` is no longer needed as a standalone
+  entrypoint in the repo's active docs QA flow
+- Move the active vision next-action validation path onto
+  `effigy docs check-next-action --policy vision`, so
+  `docs/scripts/check-vision-next-task.sh` is no longer needed as a standalone
+  entrypoint in the repo's active docs QA flow
+- Move next-action negative-path coverage out of a shell regression harness and
+  into Rust CLI tests, so docs QA validates the live repo state without mixing
+  in fixture-only shell checks
+- Replace the last docs-policy shell bundle with visible `qa:docs:vision` task
+  composition plus generic `effigy docs check-headings` /
+  `effigy docs check-contains` validators, so repo policy stays in the
+  manifest/task graph instead of a dedicated bash entrypoint
+- Remove the redundant `effigy-release-qa` helper binary and point
+  `cargo qa-release` directly at `effigy release gates --repo .`, reducing one
+  more compatibility layer without changing the operator-facing release gate
+  path
+- Stop advertising the broken `qa:release` task alias and lead with
+  `effigy release gates --repo .` plus `cargo qa-release`, because
+  manifest-task wrapping around release gates still self-nests under the
+  workspace lock when release gates invoke nested Effigy commands
+- Classify the remaining top-level release/bootstrap scripts into durable
+  external boundaries versus timed compatibility backups, and document explicit
+  retirement criteria for the three release wrapper scripts instead of keeping
+  their lifespan open-ended
+- Add a dedicated release-wrapper retirement record template guide so the next
+  real release cycle can capture a concrete keep/retire decision in one
+  reusable checkpoint artifact
+- Add a dedicated release checkpoint log template guide so real release evidence,
+  distribution evidence, and wrapper-retirement decisions can be captured in a
+  single dated maintainer artifact
 
 ## [0.2.5] - 2026-03-11
 

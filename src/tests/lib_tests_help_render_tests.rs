@@ -45,7 +45,10 @@ fn render_docs_help_shows_validation_options() {
     assert!(rendered.contains("docs Help"));
     assert!(rendered.contains("effigy docs check-links"));
     assert!(rendered.contains("effigy docs check-json-examples"));
+    assert!(rendered.contains("effigy docs check-headings"));
+    assert!(rendered.contains("effigy docs check-contains"));
     assert!(rendered.contains("effigy docs check-index"));
+    assert!(rendered.contains("effigy docs check-next-action"));
     assert!(rendered.contains("effigy docs check-workflow-paths"));
     assert!(rendered.contains("effigy docs add-log-index"));
     assert!(rendered.contains("--file <PATH>"));
@@ -53,6 +56,9 @@ fn render_docs_help_shows_validation_options() {
     assert!(rendered.contains("--min-blocks <N>"));
     assert!(rendered.contains("--require <TEXT>"));
     assert!(rendered.contains("--require-block <N:TEXT>"));
+    assert!(rendered.contains("--require-heading <TEXT>"));
+    assert!(rendered.contains("--policy-index <NAME>"));
+    assert!(rendered.contains("--policy <NAME>"));
     assert!(rendered.contains("--dir <PATH>"));
     assert!(rendered.contains("--index <PATH>"));
     assert!(rendered.contains("<LOG_FILE>"));

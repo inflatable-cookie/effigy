@@ -557,15 +557,17 @@ replaced by the new `effigy release` commands.
   release notes (requires human approval per CLAUDE.md)
 - [x] Update guide 049 (Release Protocol) section 6c to reference new commands
 - [x] Update guide 014 (Release Checklist) to reference new workflow
-- [ ] Retire `prepare-release.sh` and `check-release-gates.sh` (keep as
-  backup until one successful release with new system)
-- [ ] Execute first release using `effigy release prepare` + `effigy release
+- [ ] Retire `prepare-release.sh`, `check-release-gates.sh`, and
+  `check-release-install-from-tag.sh` after the explicit wrapper-retirement
+  criteria in guide `049` are met
+- [x] Execute first release using `effigy release prepare` + `effigy release
   execute`
 
 Implementation note (2026-03-11):
 - Effigy’s root `effigy.toml` now declares `[release]` with the baseline gate
-  set mirrored from `scripts/check-release-gates.sh`, and `qa:release` now
-  self-hosts through `cargo run --bin effigy -- release gates --repo .`.
+  set mirrored from `scripts/check-release-gates.sh`, and local self-hosted
+  release-gate validation now runs through `effigy release gates --repo .`
+  (with `cargo qa-release` as the cargo alias).
 - `Cargo.lock` sync during prepare is now shipped for Cargo-based repos, with a
   fixture-level parity test against `prepare-release.sh --apply`.
 - Effigy now also ships `effigy release verify-install` for the tag-install
@@ -581,6 +583,10 @@ Implementation note (2026-03-11):
   tagged install wrapper runs the same built-in `release verify-install` path.
 - The remaining self-hosting work is now about workflow adoption and successful
   operator usage, not uncertainty about the shipped command mappings.
+- Wrapper-retirement is now a policy checkpoint rather than a code gap:
+  maintainers should retire the three release compatibility wrappers only after
+  two consecutive real built-in releases complete green without wrapper
+  fallback and no active downstream contract still depends on the script paths.
 - The release checklist template (`014`) and repo-level operator guidance now
   point maintainers at `effigy release simulate/status/prepare/execute` as the
   preferred workflow, while keeping the wrapper scripts documented as backup

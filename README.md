@@ -80,7 +80,7 @@ effigy qa --repo .
 effigy qa:docs --repo .
 effigy qa:json --repo .
 effigy qa:json:ci --repo .
-effigy qa:release --repo .   # delegates to `effigy release gates --repo .`
+effigy release gates --repo . # release-gate pass for the current repo
 effigy build:release --repo .
 effigy install:local --repo .
 effigy link:local --repo .

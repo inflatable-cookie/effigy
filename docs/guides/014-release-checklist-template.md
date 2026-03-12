@@ -27,7 +27,7 @@ Owner: `name/team`
 - [ ] Release readiness check passes:
   - [ ] `effigy release status --repo . --check-gates`
 - [ ] Consolidated release gate pass:
-  - [ ] `effigy qa:release --repo .`
+  - [ ] `effigy release gates --repo .`
 - [ ] `cargo fmt` clean.
 - [ ] `cargo test` passes.
 - [ ] Local quality gates pass:
@@ -116,12 +116,39 @@ Owner: `name/team`
 - [ ] Release announcement sent.
 - [ ] Backlog/roadmap status updated.
 
+## 9) Wrapper Retirement Record
+
+Fill this only when evaluating whether the release compatibility wrappers should
+be retired.
+
+Canonical template:
+- [`053-release-wrapper-retirement-record-template.md`](./053-release-wrapper-retirement-record-template.md)
+
+- [ ] This release is part of a wrapper-retirement evaluation window.
+- [ ] Prior built-in release in comparison window recorded: `v0.__.__`
+- [ ] Built-in `prepare` + `execute` path used for both releases.
+- [ ] No wrapper fallback was required across the evaluation window.
+- [ ] Hosted workflows stayed green across the evaluation window:
+  - [ ] `CI`
+  - [ ] `JSON Contracts`
+  - [ ] `Release Binaries`
+- [ ] Tag install validation stayed green across the evaluation window:
+  - [ ] `effigy release verify-install --repo . --tag v0.__.__`
+- [ ] No active CI/docs/downstream contract still points to wrapper scripts as
+      the primary entrypoint.
+- [ ] Maintainer decision recorded in the dated release checkpoint log:
+  - [ ] keep wrappers for another release cycle
+  - [ ] retire `scripts/prepare-release.sh`
+  - [ ] retire `scripts/check-release-gates.sh`
+  - [ ] retire `scripts/check-release-install-from-tag.sh`
+
 ---
 
 ## Related Guides
 
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 - [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
+- [`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md)
 - [`../roadmaps/backlog/release-contract-v0.md`](../roadmaps/backlog/release-contract-v0.md)
 - [`../roadmaps/backlog/distribution-channels.md`](../roadmaps/backlog/distribution-channels.md)
 - [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
