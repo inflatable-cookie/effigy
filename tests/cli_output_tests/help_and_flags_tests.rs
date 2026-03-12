@@ -196,6 +196,7 @@ fn cli_docs_help_is_command_specific() {
     assert!(stdout.contains(
         "effigy docs check-headings [--repo <PATH>] <FILE>... --require-heading <TEXT>... [--json]"
     ));
+    assert!(stdout.contains("effigy docs check-paths [--repo <PATH>] <PATH>... [--json]"));
     assert!(stdout.contains(
         "effigy docs check-contains [--repo <PATH>] <FILE>... --require <TEXT>... [--json]"
     ));

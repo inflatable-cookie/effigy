@@ -49,6 +49,9 @@ pub(super) fn run_docs(args: DocsArgs) -> Result<String, RunnerError> {
             paths,
             required_headings,
         } => run_check_headings(&repo_root, &paths, &required_headings, args.output_json),
+        DocsSubcommand::CheckPaths { paths } => {
+            run_check_paths(&repo_root, &paths, args.output_json)
+        }
         DocsSubcommand::CheckContains {
             paths,
             required_text,
@@ -365,6 +368,61 @@ fn run_check_contains(
             "missing text `{}` in {}\n",
             finding["needle"].as_str().unwrap_or_default(),
             finding["file"].as_str().unwrap_or_default()
+        ));
+    }
+    Err(RunnerError::task_invocation(output.trim_end().to_owned()))
+}
+
+fn run_check_paths(
+    repo_root: &Path,
+    paths: &[PathBuf],
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    if paths.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "`check-paths` requires at least one path".to_owned(),
+        ));
+    }
+
+    let resolved_paths = paths
+        .iter()
+        .map(|path| resolve_repo_input(repo_root, path.clone()))
+        .collect::<Vec<_>>();
+    let findings = resolved_paths
+        .iter()
+        .filter(|path| !path.exists())
+        .map(|path| {
+            json!({
+                "path": path.display().to_string(),
+                "kind": "missing-path",
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if output_json {
+        let payload = json!({
+            "schema": "effigy.docs.path-check.v1",
+            "schema_version": 1,
+            "ok": findings.is_empty(),
+            "paths": resolved_paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
+            "findings": findings,
+        });
+        return if payload["ok"] == true {
+            Ok(payload.to_string())
+        } else {
+            Err(RunnerError::task_invocation(payload.to_string()))
+        };
+    }
+
+    if findings.is_empty() {
+        return Ok("docs path check passed".to_owned());
+    }
+
+    let mut output = String::new();
+    for finding in findings {
+        output.push_str(&format!(
+            "missing path {}\n",
+            finding["path"].as_str().unwrap_or_default()
         ));
     }
     Err(RunnerError::task_invocation(output.trim_end().to_owned()))

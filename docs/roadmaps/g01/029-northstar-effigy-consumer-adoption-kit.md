@@ -64,6 +64,15 @@ This roadmap is based on the consumer-repo scan:
 - [`../../logs/2026-03/12-184800-signal-released-surface-pilot.md`](../../logs/2026-03/12-184800-signal-released-surface-pilot.md)
 - [`../../logs/2026-03/12-190515-convergence-released-surface-pilot.md`](../../logs/2026-03/12-190515-convergence-released-surface-pilot.md)
 - [`../../logs/2026-03/12-193800-jetstream-released-surface-pilot.md`](../../logs/2026-03/12-193800-jetstream-released-surface-pilot.md)
+- [`../../logs/2026-03/12-210000-workspace-docs-authority-cohort-contact-patch-underlay-reference.md`](../../logs/2026-03/12-210000-workspace-docs-authority-cohort-contact-patch-underlay-reference.md)
+- [`../../logs/2026-03/12-212500-songsprout-trellis-authority-only-pilot.md`](../../logs/2026-03/12-212500-songsprout-trellis-authority-only-pilot.md)
+- [`../../logs/2026-03/12-214500-songsprout-root-delegation-follow-up.md`](../../logs/2026-03/12-214500-songsprout-root-delegation-follow-up.md)
+- [`../../logs/2026-03/12-220500-consumer-adoption-closeout-matrix.md`](../../logs/2026-03/12-220500-consumer-adoption-closeout-matrix.md)
+- [`../../logs/2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md`](../../logs/2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md)
+- [`../../logs/2026-03/12-225500-starter-docs-policy-bundle-proof.md`](../../logs/2026-03/12-225500-starter-docs-policy-bundle-proof.md)
+- [`../../logs/2026-03/12-233000-contract-drift-path-check-layer.md`](../../logs/2026-03/12-233000-contract-drift-path-check-layer.md)
+- [`../../logs/2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md`](../../logs/2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md)
+- [`../../logs/2026-03/12-235900-source-of-truth-consolidation.md`](../../logs/2026-03/12-235900-source-of-truth-consolidation.md)
 
 Key scan findings:
 
@@ -153,10 +162,24 @@ Current pilot boundary:
   research-heavy repo with a large existing docs tree and a retained
   repo-specific docs contract script, once the native docs lane surfaced and
   cleared real backlog link debt
+- `contact-patch` and `underlay-reference` proved that thin workspace roots
+  with dedicated docs-authority catalogs can standardize on root-level
+  `qa:docs` / `qa:northstar` orchestration plus native authority-level docs
+  policy on released `0.2.6`
+- `songsprout` now matches that same workspace-container contract end to end:
+  root-level docs orchestration plus native authority-level docs policy in
+  `trellis`
 - the contract can no longer be documented only as a single-repo shape
+- the remaining rollout state is now explicit:
+  - fully adopted consumer repos: `monkey`, `compli-me`, `underlay`,
+    `acowtancy`, `signal`, `convergence`, `jetstream`, `contact-patch`,
+    `underlay-reference`, `songsprout`
+  - ready but deferred until calmer worktrees: `finch`, `loophole`
+  - needs Effigy adoption first: `pug`
+  - intentionally different from the consumer contract: `nucleus`
 - remaining open: decide exactly where release posture belongs for split
-  workspace/doc-authority projects, and close the post-release
-  `verify-install` SSH-remote gap
+  workspace/doc-authority projects, finish the validation/productization
+  boundary, and close the post-release `verify-install` SSH-remote gap
 
 Tasks:
 
@@ -250,22 +273,43 @@ Possible additions:
 
 Tasks:
 
-- [ ] Define the starter `qa:northstar` task bundle shape
-- [ ] Decide whether new built-ins are required or task composition is enough
-- [ ] Close the remaining released-surface gap for consumer repos: docs
-      validation now works on released `0.2.6`, but release-install
-      verification still needs to handle SSH-style remotes outside Effigy's own
-      repo
-- [ ] Package a starter `[docs_policy]` consumer config where appropriate
-- [ ] Add explicit validation rules for agent-contract drift and docs skeleton
+- [x] Define the starter `qa:northstar` task bundle shape
+- [x] Decide whether new built-ins are required or task composition is enough
+- [x] Close the remaining released-surface gap for consumer repos: docs
+      validation now works on released `0.2.6`, and release-install
+      verification now handles SSH-style remotes outside Effigy's own repo
+- [x] Package a starter `[docs_policy]` consumer config where appropriate
+- [x] Add explicit validation rules for agent-contract drift and docs skeleton
       drift
-- [ ] Ensure the validation bundle works without Effigy-repo-specific file
+- [x] Ensure the validation bundle works without Effigy-repo-specific file
       assumptions
 
 Acceptance:
 
 - a consumer repo can fail fast when the Northstar + Effigy contract drifts
 - adoption is not dependent on manual doc review alone
+
+Current decision:
+
+- the starter `qa:northstar` bundle should be task-composed from existing
+  Effigy-native validators:
+  `docs check-index`, `docs check-next-action`, `docs check-headings`, and
+  `docs check-forbidden`
+- the starter native consumer docs-policy bundle is now explicit:
+  `[docs_policy.indexes.vision]` + `[docs_policy.next_actions.vision]` plus a
+  repo-owned `docs/policy/vision-next-task-verbs.txt`
+- that starter bundle is proven by a neutral fixture test instead of only by
+  Effigy's own docs tree or migrated consumer repos
+- one additional generic built-in was justified for contract hardening:
+  `effigy docs check-paths`, which covers repo/docs spine presence checks more
+  cleanly than substring-based heuristics
+- the finished starter bundle is now also proven in a thin workspace root with
+  a nested docs-authority fixture, so Wave 3 no longer depends on Effigy-shaped
+  repo assumptions
+- repo shape choice, starter file creation, and concrete heading inventories
+  remain skill/template work
+- Effigy product scope should stay focused on reusable validation engines and
+  release/runtime surfaces
 
 ## Wave 4 - Consumer Pilot Rollout
 
@@ -311,6 +355,7 @@ Tasks:
 - [x] Apply the revised contract to `acowtancy`
 - [x] Apply the released `0.2.6` contract to `signal`
 - [x] Apply the released `0.2.6` contract to `convergence`
+- [x] Classify the remaining untouched repos by migration worthiness
 - [ ] Capture which parts should remain skill-level versus become Effigy-native
 
 Acceptance:
@@ -320,6 +365,28 @@ Acceptance:
 - pilot evidence clearly separates `works today on released Effigy` from
   `needs new product surface`
 - pilot evidence covers both app repos and shared foundation repos
+
+Current closeout matrix:
+
+- fully adopted consumer repos:
+  `monkey`, `compli-me`, `underlay`, `acowtancy`, `signal`, `convergence`,
+  `jetstream`, `contact-patch`, `underlay-reference`, `songsprout`
+- source-of-truth repos, not consumer rollout targets:
+  `effigy`, `northstar`
+- ready for full contract, but defer for now:
+  `finch`, `loophole`
+- needs Effigy adoption first:
+  `pug`
+- intentionally different or low-value for this contract:
+  `nucleus`
+
+Rollout consequence:
+
+- the broad consumer sweep is effectively complete
+- remaining repo work is targeted follow-up, not another open-ended migration
+  batch
+- the next milestone should focus on reusable validation, starter bundles, and
+  product-boundary decisions
 
 ## Wave 5 - Productization Boundary
 
@@ -387,11 +454,23 @@ Acceptance:
   [`../../logs/2026-03/12-184800-signal-released-surface-pilot.md`](../../logs/2026-03/12-184800-signal-released-surface-pilot.md)
 - `convergence` released-surface pilot:
   [`../../logs/2026-03/12-190515-convergence-released-surface-pilot.md`](../../logs/2026-03/12-190515-convergence-released-surface-pilot.md)
+- rollout closeout matrix:
+  [`../../logs/2026-03/12-220500-consumer-adoption-closeout-matrix.md`](../../logs/2026-03/12-220500-consumer-adoption-closeout-matrix.md)
+- product boundary + verify-install SSH closeout:
+  [`../../logs/2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md`](../../logs/2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md)
+- starter docs-policy bundle proof:
+  [`../../logs/2026-03/12-225500-starter-docs-policy-bundle-proof.md`](../../logs/2026-03/12-225500-starter-docs-policy-bundle-proof.md)
+- contract-drift path-check layer:
+  [`../../logs/2026-03/12-233000-contract-drift-path-check-layer.md`](../../logs/2026-03/12-233000-contract-drift-path-check-layer.md)
+- workspace bundle proof + bootstrap boundary:
+  [`../../logs/2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md`](../../logs/2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md)
+- source-of-truth consolidation:
+  [`../../logs/2026-03/12-235900-source-of-truth-consolidation.md`](../../logs/2026-03/12-235900-source-of-truth-consolidation.md)
 
 ## Next Task
 
-Use the `signal` and `convergence` results to drive the next broad batch:
-migrate another released-binary consumer repo with an existing Northstar spine,
-then close the remaining `release verify-install` SSH-remote gap so
-post-release validation is as portable as the docs-policy adoption surface.
-belong in reusable templates versus first-class Effigy product surface.
+Wave 3 is now complete and the source-of-truth docs are aligned. Keep
+bootstrap scaffolding in the `northstar-effigy` skill for now, keep the
+starter `qa:northstar` bundle stable across future repo adoptions, and only
+reopen an Effigy-side `init` / repo-contract surface if repeated real-world
+adoption pain shows the current skill/templates cannot cover the gap cleanly.

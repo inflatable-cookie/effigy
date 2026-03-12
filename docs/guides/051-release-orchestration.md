@@ -102,6 +102,9 @@ Current built-in release commands:
 - `effigy release verify-install`
   - install the tagged binary from git into a temporary root and validate the
     installed command against a fixture repo
+  - when Effigy auto-detects `origin`, scp-style SSH remotes such as
+    `git@github.com:owner/repo.git` are normalized for install verification, so
+    operators do not need to translate them into `ssh://...` form by hand
 
 Related built-ins:
 
@@ -257,6 +260,10 @@ effigy release execute --plan
 effigy release execute --yes
 effigy release verify-install --tag vX.Y.Z
 ```
+
+`verify-install` can auto-detect the repo URL from `origin`, or you can pass
+`--repo-url <URL>` explicitly. Both paths accept normal HTTPS/file URLs, and
+scp-style SSH remotes are normalized automatically for the install step.
 
 What each step proves:
 

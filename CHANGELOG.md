@@ -6,6 +6,37 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- Add built-in `effigy docs check-paths` so repos can validate required
+  contract files/directories such as `README.md`, `AGENTS.md`, and the minimum
+  Northstar docs spine without bespoke shell checks
+
+### Changed
+- Define the reusable `qa:northstar` starter bundle around existing native docs
+  validators (`check-index`, `check-next-action`, `check-headings`,
+  `check-forbidden`) and document the product boundary between Effigy-native
+  validation engines and the `northstar-effigy` skill/template layer
+- Package the starter native consumer `[docs_policy]` bundle for vision index
+  and next-action validation, fix the contract docs to use the real
+  `check-headings --require-heading` flag, and prove the reusable `qa:docs` /
+  `qa:northstar` shape against a neutral fixture instead of only migrated repos
+- Extend the starter `qa:northstar` bundle with root/front-door/docs-spine
+  drift checks using `check-paths` plus generic `check-contains` rules for
+  agent-loop and discoverability surfaces
+- Prove the completed starter bundle on both single-repo and workspace-root +
+  nested-docs-authority fixtures, and keep bootstrap scaffolding in the
+  `northstar-effigy` skill/templates layer instead of productizing an Effigy
+  `init` surface prematurely
+- Align the README, docs landing pages, agent-adoption guide, and roadmap
+  indexes with the finished product boundary so the source-of-truth docs no
+  longer describe `g01.029` as a future migration milestone
+
+### Fixed
+- Normalize scp-style SSH remotes such as `git@github.com:owner/repo.git`
+  during `effigy release verify-install`, so tagged install verification works
+  from auto-detected `origin` remotes without requiring manual `--repo-url`
+  rewriting
+
 ## [0.2.6] - 2026-03-12
 
 ### Added

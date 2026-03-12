@@ -56,6 +56,11 @@ pages only when you need more detail.
 - [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
 - [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 
+If the goal is full repo adoption:
+- let the `northstar-effigy` skill own bootstrap/scaffolding
+- let Effigy own generic validation, JSON contracts, and release/runtime
+  surfaces
+
 ### I want built-in release workflows
 
 - [`051-release-orchestration.md`](./051-release-orchestration.md)

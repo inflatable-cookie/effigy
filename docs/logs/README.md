@@ -58,6 +58,16 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Recent Validation Logs
 
+- [`2026-03-12-northstar-effigy-productization-handoff.md`](./2026-03/12-235950-northstar-effigy-productization-handoff.md)
+- [`2026-03-12-source-of-truth-consolidation.md`](./2026-03/12-235900-source-of-truth-consolidation.md)
+- [`2026-03-12-workspace-bundle-proof-and-bootstrap-boundary.md`](./2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md)
+- [`2026-03-12-contract-drift-path-check-layer.md`](./2026-03/12-233000-contract-drift-path-check-layer.md)
+- [`2026-03-12-starter-docs-policy-bundle-proof.md`](./2026-03/12-225500-starter-docs-policy-bundle-proof.md)
+- [`2026-03-12-product-boundary-and-verify-install-ssh-closeout.md`](./2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md)
+- [`2026-03-12-consumer-adoption-closeout-matrix.md`](./2026-03/12-220500-consumer-adoption-closeout-matrix.md)
+- [`2026-03-12-songsprout-root-delegation-follow-up.md`](./2026-03/12-214500-songsprout-root-delegation-follow-up.md)
+- [`2026-03-12-songsprout-trellis-authority-only-pilot.md`](./2026-03/12-212500-songsprout-trellis-authority-only-pilot.md)
+- [`2026-03-12-workspace-docs-authority-cohort-contact-patch-underlay-reference.md`](./2026-03/12-210000-workspace-docs-authority-cohort-contact-patch-underlay-reference.md)
 - [`2026-03-12-jetstream-released-surface-pilot.md`](./2026-03/12-193800-jetstream-released-surface-pilot.md)
 - [`2026-03-12-convergence-released-surface-pilot.md`](./2026-03/12-190515-convergence-released-surface-pilot.md)
 - [`2026-03-12-signal-released-surface-pilot.md`](./2026-03/12-184800-signal-released-surface-pilot.md)
@@ -199,6 +209,22 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-03/12-190515-convergence-released-surface-pilot.md`](./2026-03/12-190515-convergence-released-surface-pilot.md)
 
 - [`2026-03/12-193800-jetstream-released-surface-pilot.md`](./2026-03/12-193800-jetstream-released-surface-pilot.md)
+
+- [`2026-03/12-210000-workspace-docs-authority-cohort-contact-patch-underlay-reference.md`](./2026-03/12-210000-workspace-docs-authority-cohort-contact-patch-underlay-reference.md)
+
+- [`2026-03/12-212500-songsprout-trellis-authority-only-pilot.md`](./2026-03/12-212500-songsprout-trellis-authority-only-pilot.md)
+
+- [`2026-03/12-214500-songsprout-root-delegation-follow-up.md`](./2026-03/12-214500-songsprout-root-delegation-follow-up.md)
+
+- [`2026-03/12-220500-consumer-adoption-closeout-matrix.md`](./2026-03/12-220500-consumer-adoption-closeout-matrix.md)
+
+- [`2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md`](./2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md)
+
+- [`2026-03/12-225500-starter-docs-policy-bundle-proof.md`](./2026-03/12-225500-starter-docs-policy-bundle-proof.md)
+
+- [`2026-03/12-233000-contract-drift-path-check-layer.md`](./2026-03/12-233000-contract-drift-path-check-layer.md)
+
+- [`2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md`](./2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md)
 
 ## Archived Validation Logs
 

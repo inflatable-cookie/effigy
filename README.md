@@ -37,7 +37,7 @@ curl -fsSL https://github.com/inflatable-cookie/effigy/releases/latest/download/
 From source:
 
 ```bash
-cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.2.5
+cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.2.6
 ```
 
 ## Start In 5 Minutes
@@ -141,6 +141,12 @@ Details:
 - [`017-json-output-contracts.md`](./docs/guides/017-json-output-contracts.md)
 - [`024-ci-and-automation-recipes.md`](./docs/guides/024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](./docs/guides/026-json-payload-examples.md)
+- [`047-agent-and-cross-repo-adoption.md`](./docs/guides/047-agent-and-cross-repo-adoption.md)
+- [`056-northstar-effigy-consumer-repo-contract.md`](./docs/guides/056-northstar-effigy-consumer-repo-contract.md)
+
+When you want a repo to adopt the full Northstar + Effigy flow, keep the
+bootstrap/scaffolding logic in the `northstar-effigy` skill and use Effigy to
+validate the resulting contract with native docs, QA, and release surfaces.
 
 ### Release from built-ins
 

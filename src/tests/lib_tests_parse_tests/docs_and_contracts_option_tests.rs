@@ -211,6 +211,31 @@ fn parse_docs_check_headings_with_requirements() {
 }
 
 #[test]
+fn parse_docs_check_paths_with_repo_and_json() {
+    let cmd = parse_command(vec![
+        "docs".to_owned(),
+        "check-paths".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "README.md".to_owned(),
+        "docs/README.md".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Docs(DocsArgs {
+            subcommand: DocsSubcommand::CheckPaths {
+                paths: vec![PathBuf::from("README.md"), PathBuf::from("docs/README.md")],
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_docs_check_workflow_paths_with_dir_override() {
     let cmd = parse_command(vec![
         "docs".to_owned(),

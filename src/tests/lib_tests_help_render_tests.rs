@@ -48,6 +48,7 @@ fn render_docs_help_shows_validation_options() {
     assert!(rendered.contains("effigy docs check-links"));
     assert!(rendered.contains("effigy docs check-json-examples"));
     assert!(rendered.contains("effigy docs check-headings"));
+    assert!(rendered.contains("effigy docs check-paths"));
     assert!(rendered.contains("effigy docs check-contains"));
     assert!(rendered.contains("effigy docs check-forbidden"));
     assert!(rendered.contains("effigy docs check-index"));
