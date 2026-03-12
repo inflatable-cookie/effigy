@@ -78,7 +78,8 @@ pub(in crate::runner) fn attention_marker_matches_line(raw_line: &str, marker_lo
 
 fn attention_marker_matches_comment_segment(lower_line: &str, marker_lower: &str) -> bool {
     let trimmed = lower_line.trim_start();
-    strip_comment_prefix(trimmed).is_some_and(|body| marker_starts_comment_segment(body, marker_lower))
+    strip_comment_prefix(trimmed)
+        .is_some_and(|body| marker_starts_comment_segment(body, marker_lower))
         || inline_comment_body(lower_line)
             .is_some_and(|body| marker_starts_comment_segment(body, marker_lower))
 }
