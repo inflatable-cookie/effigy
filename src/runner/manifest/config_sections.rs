@@ -252,6 +252,38 @@ pub(in crate::runner) struct ManifestEnvSchemaConfig {
 #[derive(Debug, serde::Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestDocsPolicyConfig {
+    #[serde(default)]
+    pub(in crate::runner) indexes: BTreeMap<String, ManifestDocsPolicyIndexConfig>,
+    #[serde(default, alias = "next_actions")]
+    pub(in crate::runner) next_actions: BTreeMap<String, ManifestDocsPolicyNextActionConfig>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestDocsPolicyIndexConfig {
+    pub(in crate::runner) file: String,
+    pub(in crate::runner) dir: String,
+    #[serde(default)]
+    pub(in crate::runner) section: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) exclude: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestDocsPolicyNextActionConfig {
+    pub(in crate::runner) index: String,
+    pub(in crate::runner) heading: String,
+    #[serde(alias = "allowlist_file")]
+    pub(in crate::runner) allowlist_file: String,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
 pub(in crate::runner) struct ManifestReleaseConfig {
     #[serde(default)]
     pub(in crate::runner) version_file: Option<String>,

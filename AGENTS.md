@@ -18,7 +18,7 @@ If `effigy` is on PATH, self-hosted QA tasks are available:
 ```bash
 effigy test --plan --repo .   # show test plan
 effigy qa --repo .            # full QA (test + docs + json contracts)
-effigy qa:release --repo .    # delegates to `effigy release gates --repo .`
+effigy release gates --repo . # release-gate pass for the current repo
 ```
 
 Otherwise bootstrap with `cargo run --bin effigy -- ...`.

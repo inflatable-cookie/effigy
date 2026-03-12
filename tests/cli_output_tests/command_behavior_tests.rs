@@ -467,6 +467,198 @@ fn cli_docs_check_workflow_paths_json_reports_stale_workflow_reference() {
 }
 
 #[test]
+fn cli_docs_check_index_json_uses_named_policy_index() {
+    let root = temp_workspace("docs-check-index-policy");
+    fs::create_dir_all(root.join("docs/vision/history")).expect("mkdir vision");
+    fs::write(
+        root.join("effigy.toml"),
+        "[docs_policy.indexes.vision]\nfile = \"docs/vision/README.md\"\ndir = \"docs/vision\"\nsection = \"Vision Artifacts\"\nexclude = [\"history/**\"]\n",
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("docs/vision/README.md"),
+        "# Vision\n\n## Vision Artifacts\n1. [Blueprint](./blueprint.md)\n",
+    )
+    .expect("write index");
+    fs::write(root.join("docs/vision/blueprint.md"), "# Blueprint\n").expect("write blueprint");
+    fs::write(root.join("docs/vision/history/old.md"), "# Old\n").expect("write history");
+
+    let output = run_json_cli_command(&root, &["docs", "check-index", "--policy-index", "vision"]);
+    assert!(output.status.success());
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.docs.index-check.v1");
+    assert_eq!(parsed["result"]["ok"], true);
+    assert_eq!(parsed["result"]["policy_index"], "vision");
+    assert_eq!(parsed["result"]["section"], "Vision Artifacts");
+}
+
+#[test]
+fn cli_docs_check_next_action_json_uses_named_policy() {
+    let root = temp_workspace("docs-check-next-action-policy");
+    fs::create_dir_all(root.join("docs/vision")).expect("mkdir vision");
+    fs::create_dir_all(root.join("fixtures")).expect("mkdir fixtures");
+    fs::write(
+        root.join("effigy.toml"),
+        "[docs_policy.indexes.vision]\nfile = \"docs/vision/README.md\"\ndir = \"docs/vision\"\nsection = \"Vision Artifacts\"\n\n[docs_policy.next_actions.vision]\nindex = \"vision\"\nheading = \"## Next Task\"\nallowlist_file = \"fixtures/verbs.txt\"\n",
+    )
+    .expect("write manifest");
+    fs::write(root.join("fixtures/verbs.txt"), "ship\nreview\nexecute\n").expect("write verbs");
+    fs::write(
+        root.join("docs/vision/README.md"),
+        "# Vision\n\n## Vision Artifacts\n1. [Blueprint](./blueprint.md)\n",
+    )
+    .expect("write index");
+    fs::write(
+        root.join("docs/vision/blueprint.md"),
+        "# Blueprint\n\n## Next Task\n\n- Execute the follow-up batch.\n",
+    )
+    .expect("write artifact");
+
+    let output = run_json_cli_command(&root, &["docs", "check-next-action", "--policy", "vision"]);
+    assert!(output.status.success());
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(
+        parsed["result"]["schema"],
+        "effigy.docs.next-action-check.v1"
+    );
+    assert_eq!(parsed["result"]["ok"], true);
+    assert_eq!(parsed["result"]["policy"], "vision");
+}
+
+#[test]
+fn cli_docs_check_next_action_json_rejects_missing_heading() {
+    let root = temp_workspace("docs-check-next-action-missing-heading");
+    fs::create_dir_all(root.join("docs/vision")).expect("mkdir vision");
+    fs::create_dir_all(root.join("fixtures")).expect("mkdir fixtures");
+    fs::write(
+        root.join("effigy.toml"),
+        "[docs_policy.indexes.vision]\nfile = \"docs/vision/README.md\"\ndir = \"docs/vision\"\nsection = \"Vision Artifacts\"\n\n[docs_policy.next_actions.vision]\nindex = \"vision\"\nheading = \"## Next Task\"\nallowlist_file = \"fixtures/verbs.txt\"\n",
+    )
+    .expect("write manifest");
+    fs::write(root.join("fixtures/verbs.txt"), "ship\nreview\nexecute\n").expect("write verbs");
+    fs::write(
+        root.join("docs/vision/README.md"),
+        "# Vision\n\n## Vision Artifacts\n1. [Blueprint](./blueprint.md)\n",
+    )
+    .expect("write index");
+    fs::write(
+        root.join("docs/vision/blueprint.md"),
+        "# Blueprint\n\n## Next Steps\n\n- Execute the follow-up batch.\n",
+    )
+    .expect("write artifact");
+
+    let output = run_json_cli_command(&root, &["docs", "check-next-action", "--policy", "vision"]);
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    let details: Value = serde_json::from_str(
+        parsed["error"]["message"]
+            .as_str()
+            .expect("json error payload"),
+    )
+    .expect("parse details");
+    assert_eq!(details["schema"], "effigy.docs.next-action-check.v1");
+    assert_eq!(details["ok"], false);
+    assert_eq!(details["findings"][0]["kind"], "missing-heading");
+}
+
+#[test]
+fn cli_docs_check_next_action_json_rejects_non_actionable_verb() {
+    let root = temp_workspace("docs-check-next-action-non-actionable");
+    fs::create_dir_all(root.join("docs/vision")).expect("mkdir vision");
+    fs::create_dir_all(root.join("fixtures")).expect("mkdir fixtures");
+    fs::write(
+        root.join("effigy.toml"),
+        "[docs_policy.indexes.vision]\nfile = \"docs/vision/README.md\"\ndir = \"docs/vision\"\nsection = \"Vision Artifacts\"\n\n[docs_policy.next_actions.vision]\nindex = \"vision\"\nheading = \"## Next Task\"\nallowlist_file = \"fixtures/verbs.txt\"\n",
+    )
+    .expect("write manifest");
+    fs::write(root.join("fixtures/verbs.txt"), "ship\nreview\nexecute\n").expect("write verbs");
+    fs::write(
+        root.join("docs/vision/README.md"),
+        "# Vision\n\n## Vision Artifacts\n1. [Blueprint](./blueprint.md)\n",
+    )
+    .expect("write index");
+    fs::write(
+        root.join("docs/vision/blueprint.md"),
+        "# Blueprint\n\n## Next Task\n\nConsider the follow-up batch.\n",
+    )
+    .expect("write artifact");
+
+    let output = run_json_cli_command(&root, &["docs", "check-next-action", "--policy", "vision"]);
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    let details: Value = serde_json::from_str(
+        parsed["error"]["message"]
+            .as_str()
+            .expect("json error payload"),
+    )
+    .expect("parse details");
+    assert_eq!(details["schema"], "effigy.docs.next-action-check.v1");
+    assert_eq!(details["ok"], false);
+    assert_eq!(details["findings"][0]["kind"], "non-actionable");
+    assert_eq!(details["findings"][0]["verb"], "consider");
+}
+
+#[test]
+fn cli_docs_check_headings_json_reports_missing_heading() {
+    let root = temp_workspace("docs-check-headings");
+    fs::create_dir_all(root.join("docs/guides")).expect("mkdir guides");
+    fs::write(
+        root.join("docs/guides/example.md"),
+        "# Example\n\n## Something Else\n",
+    )
+    .expect("write guide");
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "docs",
+            "check-headings",
+            "docs/guides/example.md",
+            "--require-heading",
+            "## Vision Alignment",
+        ],
+    );
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    let details: Value = serde_json::from_str(
+        parsed["error"]["message"]
+            .as_str()
+            .expect("json error payload"),
+    )
+    .expect("parse details");
+    assert_eq!(details["schema"], "effigy.docs.heading-check.v1");
+    assert_eq!(details["findings"][0]["kind"], "missing-heading");
+}
+
+#[test]
+fn cli_docs_check_contains_json_reports_missing_text() {
+    let root = temp_workspace("docs-check-contains");
+    fs::create_dir_all(root.join("docs")).expect("mkdir docs");
+    fs::write(root.join("docs/example.md"), "# Example\n").expect("write doc");
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "docs",
+            "check-contains",
+            "docs/example.md",
+            "--require",
+            "Vision Target Delta",
+        ],
+    );
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    let details: Value = serde_json::from_str(
+        parsed["error"]["message"]
+            .as_str()
+            .expect("json error payload"),
+    )
+    .expect("parse details");
+    assert_eq!(details["schema"], "effigy.docs.contains-check.v1");
+    assert_eq!(details["findings"][0]["kind"], "missing-text");
+}
+
+#[test]
 fn cli_contracts_validate_selection_json_accepts_valid_artifact() {
     let root = temp_workspace("contracts-validate-selection");
     fs::create_dir_all(root.join("docs/contracts")).expect("mkdir contracts");
@@ -1765,6 +1957,10 @@ fn cli_release_prepare_plan_json_mode_reports_planned_mutations() {
     assert_eq!(parsed["result"]["ready"], true);
     assert_eq!(parsed["result"]["planned_version"], "0.2.5");
     assert_eq!(parsed["result"]["tag"], "release-0.2.5");
+    let release_date = parsed["result"]["release_date"]
+        .as_str()
+        .expect("release_date string");
+    let expected_release_heading = format!("## [0.2.5] - {release_date}");
     let mutations = parsed["result"]["mutations"]
         .as_array()
         .expect("mutations array");
@@ -1788,13 +1984,13 @@ fn cli_release_prepare_plan_json_mode_reports_planned_mutations() {
         .any(|line| line.as_str() == Some("+ version = \"0.2.5\"")));
     assert_eq!(
         mutations[1]["detail_lines"][1],
-        "release heading: ## [0.2.5] - 2026-03-11"
+        format!("release heading: {expected_release_heading}")
     );
     assert!(mutations[1]["diff_preview"]
         .as_array()
         .expect("changelog diff preview")
         .iter()
-        .any(|line| line.as_str() == Some("+ ## [0.2.5] - 2026-03-11")));
+        .any(|line| line.as_str() == Some(format!("+ {expected_release_heading}").as_str())));
 }
 
 #[test]

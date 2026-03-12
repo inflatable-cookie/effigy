@@ -58,6 +58,11 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Recent Validation Logs
 
+- [`2026-03-12-release-checkpoint-v0-2-5.md`](./2026-03/12-131500-release-checkpoint-v0-2-5.md)
+- [`2026-03-12-remaining-script-boundary-audit.md`](./2026-03/12-114500-remaining-script-boundary-audit.md)
+- [`2026-03-12-docs-policy-task-chain-closeout.md`](./2026-03/12-111500-docs-policy-task-chain-closeout.md)
+- [`2026-03-12-minimal-docs-policy-config-design.md`](./2026-03/12-094500-minimal-docs-policy-config-design.md)
+- [`2026-03-12-docs-policy-config-boundary.md`](./2026-03/12-093000-docs-policy-config-boundary.md)
 - [`2026-03-11-script-surface-builtins-migration-plan.md`](./2026-03/11-202500-script-surface-builtins-migration-plan.md)
 - [`2026-03-11-release-workflow-cutover-hosted-validation.md`](./2026-03/11-183500-release-workflow-cutover-hosted-validation.md)
 - [`2026-03-11-release-cutover-readiness-rehearsal-brief.md`](./2026-03/11-180500-release-cutover-readiness-rehearsal-brief.md)

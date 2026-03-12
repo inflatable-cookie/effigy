@@ -364,7 +364,10 @@ For Effigy itself:
 - `scripts/check-release-install-from-tag.sh` is now a compatibility wrapper
   over `effigy release verify-install`
 - `scripts/prepare-release.sh` still exists as a compatibility/backstop path
-  until the remaining workflow and first-release adoption tasks are completed
+  until the wrapper-retirement criteria in guide `049` are satisfied
+- `scripts/check-release-smoke.sh` remains an intentional binary-artifact smoke
+  harness rather than a migration leftover, so it should not be retired on the
+  same schedule as the release wrappers
 
 ## 10) Current Limits
 

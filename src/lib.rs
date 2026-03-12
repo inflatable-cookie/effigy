@@ -147,12 +147,33 @@ pub enum DocsSubcommand {
         /// Needles that must appear in a specific 1-based block index.
         required_blocks: Vec<DocsBlockRequirement>,
     },
+    /// Validate that one or more markdown files contain required headings.
+    CheckHeadings {
+        /// Files to scan.
+        paths: Vec<PathBuf>,
+        /// Headings that must exist in every file.
+        required_headings: Vec<String>,
+    },
+    /// Validate that one or more text/markdown files contain required substrings.
+    CheckContains {
+        /// Files to scan.
+        paths: Vec<PathBuf>,
+        /// Substrings that must exist in every file.
+        required_text: Vec<String>,
+    },
     /// Validate that an index file references all markdown logs under a directory.
     CheckIndex {
+        /// Optional named docs-policy index to use from `effigy.toml`.
+        policy_index: Option<String>,
         /// Optional directory override.
         dir: Option<PathBuf>,
         /// Optional index file override.
         index: Option<PathBuf>,
+    },
+    /// Validate that indexed markdown artifacts contain a non-empty actionable next section.
+    CheckNextAction {
+        /// Optional named docs-policy next-action rule to use from `effigy.toml`.
+        policy_name: Option<String>,
     },
     /// Validate workflow file references in markdown docs.
     CheckWorkflowPaths {

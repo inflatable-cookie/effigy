@@ -82,7 +82,7 @@ For now, version is controlled in `Cargo.toml`.
 
 ## 5) Release Checklist
 
-1. Run release gates in one pass: `effigy qa:release --repo .`.
+1. Run release gates in one pass: `effigy release gates --repo .`.
    - compatibility fallback: `cargo qa-release`
 2. Validate install from the release tag:
    - `./scripts/check-release-install-from-tag.sh --tag v0.__.__`

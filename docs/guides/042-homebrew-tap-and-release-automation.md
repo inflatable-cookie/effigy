@@ -127,4 +127,7 @@ Per release:
 
 ## Next Step
 
-After the first production run, attach the generated tap PR URL in a dated checkpoint log and proceed to first-publish channel matrix execution.
+After the first production run, attach the generated tap PR URL in a dated
+checkpoint log using
+[`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md)
+and proceed to first-publish channel matrix execution.

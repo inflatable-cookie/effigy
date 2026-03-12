@@ -219,8 +219,21 @@ Current command surface:
   entrypoints, and their no-tag/tagged paths are now covered by parity tests
   against the built-in release commands.
 - `scripts/prepare-release.sh` is also a compatibility fallback. Keep it
-  available as a backup path until maintainers explicitly decide the wrapper is
-  no longer needed.
+  available as a backup path until maintainers explicitly retire it under the
+  release-wrapper criteria below.
+- Release-wrapper retirement criteria for `scripts/prepare-release.sh`,
+  `scripts/check-release-gates.sh`, and
+  `scripts/check-release-install-from-tag.sh`:
+  - at least two consecutive real Effigy releases completed through the built-in
+    `effigy release ...` flow without falling back to the wrapper path
+  - the corresponding hosted workflows and install validation checks stayed
+    green on those releases
+  - no active CI, docs, or downstream operator contract still requires the
+    script path as the primary entrypoint
+- Permanent shell boundaries are different: keep
+  `scripts/check-release-smoke.sh`, `scripts/check-distribution-first-publish.sh`,
+  `scripts/effigy-dev`, and `scripts/install-local-bin-links.sh` unless their
+  external-binary or local-machine responsibilities change materially.
 - The built-in release flow has now completed local rehearsal, hosted
   rehearsal, and a real production Effigy release through the built-in
   prepare/execute path, including real GitHub tag-triggered workflow execution.
@@ -235,8 +248,11 @@ Current command surface:
   richer per-file mutation previews, including concise inline diff snippets, so
   operator review is no longer limited to one-line before/after summaries.
 - Effigy’s own repo now declares a baseline `[release]` section in
-  `effigy.toml`, and `effigy qa:release --repo .` delegates to
-  `effigy release gates --repo .` for the local no-tag gate path.
+  `effigy.toml`, and the local no-tag gate path is
+  `effigy release gates --repo .`.
+- `cargo qa-release` now maps directly to `effigy release gates --repo .`
+  instead of going through a separate helper binary that shells out to the
+  compatibility wrapper.
 - `effigy release prepare --plan` is available as a non-destructive preview of
   the proposed version/changelog mutations, but it does not write files.
 - Plain `effigy release prepare` is now available in text mode as a
@@ -365,7 +381,8 @@ Current command surface:
 4. **Run release gates.**
    - Run `effigy release gates` when the repo has `[release.gates]` configured
      and you want the built-in sequential fail-fast gate runner.
-   - Otherwise execute `effigy qa:release --repo .` (or the compatibility fallback `cargo qa-release` / underlying scripts).
+   - Otherwise execute `effigy release gates --repo .` (or the compatibility
+     fallback `cargo qa-release` / underlying scripts).
    - All gates must pass. If any fail, fix the issue and re-run.
    - Do not proceed until gates pass cleanly.
 
@@ -389,7 +406,7 @@ Current command surface:
 
 - Treat the release gate pipeline as the single source of truth for publish
   readiness
-- Use `effigy qa:release` (or the underlying scripts) to validate before
+- Use `effigy release gates --repo .` (or the underlying scripts) to validate before
   any release action
 - Reference exact version numbers, never floating references
 - Update consumer CI snippets to use the pattern in Section 5a
@@ -416,7 +433,7 @@ Current command surface:
 ### 7c) What Agents May Do Autonomously
 
 - Read and reference release documentation
-- Run release gate checks locally (`effigy qa:release --repo .`, smoke scripts)
+- Run release gate checks locally (`effigy release gates --repo .`, smoke scripts)
 - Draft release notes for human review
 - Use `effigy changelog extract` as the preferred release-note baseline
   generator before any workflow-level cutover
@@ -450,6 +467,15 @@ in this protocol is intentionally human-gated adoption work:
 
 Historical workflow audit:
 - [`../logs/2026-03/11-170500-release-binaries-changelog-extract-cutover-review.md`](../logs/2026-03/11-170500-release-binaries-changelog-extract-cutover-review.md)
+
+## 8b) Wrapper Retirement Record
+
+When maintainers decide whether to retire the release compatibility wrappers,
+record the decision in the release checkpoint log or closeout note using the
+template in guide [`053-release-wrapper-retirement-record-template.md`](./053-release-wrapper-retirement-record-template.md):
+
+Do not retire the wrappers without writing that record. The point is to make
+the retirement decision reviewable and reversible, not to rely on memory.
 
 Current operating stance:
 - prefer built-in release commands for operator-driven runs

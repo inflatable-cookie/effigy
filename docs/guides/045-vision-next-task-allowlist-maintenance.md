@@ -5,8 +5,8 @@ Use this guide when updating `docs/scripts/fixtures/vision-next-task/actionable-
 ## 1) Purpose
 
 The allowlist controls which lead verbs are accepted by:
-- `docs/scripts/check-vision-next-task.sh`
-- `docs/scripts/check-vision-next-task-regression.sh`
+- `effigy docs check-next-action --repo . --policy vision`
+- targeted Rust CLI tests covering missing-heading and non-actionable cases
 
 Changes to this file directly affect docs QA behavior for `docs/vision/*` artifacts.
 
@@ -43,9 +43,9 @@ Unacceptable lead phrases:
 4. Run validation:
 
 ```sh
-./docs/scripts/check-vision-next-task-regression.sh
-./docs/scripts/check-vision-next-task.sh
-./docs/scripts/check-vision-metadata.sh
+effigy docs check-next-action --repo . --policy vision
+effigy qa:docs:vision --repo .
+cargo test --test cli_output_tests cli_docs_check_next_action_json_ -- --nocapture
 effigy qa:docs --repo .
 ```
 

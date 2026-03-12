@@ -11,8 +11,8 @@ pub(in crate::runner) mod task_runtime;
 mod test_config;
 
 pub(super) use config_sections::{
-    ManifestEnvSchemaConfig, ManifestPackageManagerConfig, ManifestReleaseConfig,
-    ManifestScanConfig, ManifestShellConfig,
+    ManifestDocsPolicyConfig, ManifestEnvSchemaConfig, ManifestPackageManagerConfig,
+    ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
 };
 use task_defs::deserialize_tasks;
 pub(super) use task_runtime::{
@@ -41,6 +41,8 @@ pub(super) struct TaskManifest {
     pub(super) shell: Option<ManifestShellConfig>,
     #[serde(default)]
     pub(super) env_schema: Option<ManifestEnvSchemaConfig>,
+    #[serde(default)]
+    pub(super) docs_policy: Option<ManifestDocsPolicyConfig>,
     #[serde(default)]
     pub(super) release: Option<ManifestReleaseConfig>,
     #[serde(default, deserialize_with = "deserialize_tasks")]

@@ -16,7 +16,9 @@ This is the navigation hub for practical runbooks.
 10. [`050-env-schema-integration.md`](./050-env-schema-integration.md) - declarative `.env.schema` files with annotations, type validation, and secret injection.
 11. [`051-release-orchestration.md`](./051-release-orchestration.md) - built-in-first release config reference, workflow walkthrough, gate contract, and backup-wrapper migration guidance.
 12. [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md) - canonical changelog CLI, release-note extraction, and Northstar profile guide.
-13. [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md) - agent-first repo adoption contract and rollout waves.
+13. [`053-release-wrapper-retirement-record-template.md`](./053-release-wrapper-retirement-record-template.md) - copy-paste record for deciding when release backup wrappers can be retired.
+14. [`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md) - single release checkpoint artifact template covering release evidence, distribution evidence, and wrapper-retirement decisions.
+15. [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md) - agent-first repo adoption contract and rollout waves.
 
 ## Standards Used In These Guides
 
@@ -119,6 +121,8 @@ Read:
 6. [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 7. [`051-release-orchestration.md`](./051-release-orchestration.md)
 8. [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
+9. [`053-release-wrapper-retirement-record-template.md`](./053-release-wrapper-retirement-record-template.md)
+10. [`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md)
 
 ## Docs Operations
 

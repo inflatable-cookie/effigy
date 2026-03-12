@@ -2,8 +2,8 @@
 
 Use this snippet when a PR changes:
 - `docs/scripts/fixtures/vision-next-task/actionable-verbs.txt`
-- `docs/scripts/check-vision-next-task.sh`
-- `docs/scripts/check-vision-next-task-regression.sh`
+- `effigy docs check-next-action --repo . --policy vision`
+- the Rust CLI next-action negative-path coverage
 
 ## Checklist Snippet
 
@@ -15,9 +15,9 @@ Copy into PR description:
 - [ ] Added/removed verbs listed explicitly
 - [ ] One passing `## Next Task` example included
 - [ ] One failing `## Next Task` example included (or reason not applicable)
-- [ ] `./docs/scripts/check-vision-next-task-regression.sh` passed
-- [ ] `./docs/scripts/check-vision-next-task.sh` passed
-- [ ] `./docs/scripts/check-vision-metadata.sh` passed
+- [ ] `cargo test --test cli_output_tests cli_docs_check_next_action_json_ -- --nocapture` passed
+- [ ] `effigy docs check-next-action --repo . --policy vision` passed
+- [ ] `effigy qa:docs:vision --repo .` passed
 - [ ] `effigy qa:docs --repo .` passed
 ```
 

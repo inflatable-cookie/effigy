@@ -256,6 +256,12 @@ Completion note:
   `scripts/check-distribution-first-publish.sh`, which is retained as the
   external boundary for real publish/install side effects rather than as a home
   for reusable validation logic.
+- The remaining `docs/scripts/check-vision-*.sh` surface is intentionally not
+  part of this roadmap closeout. Those checks are mostly Effigy-specific
+  docs-policy enforcement and should only migrate further behind a minimal
+  config boundary instead of being hardcoded into generic built-ins.
+- Follow-on design note:
+  [`../../logs/2026-03/12-093000-docs-policy-config-boundary.md`](../../logs/2026-03/12-093000-docs-policy-config-boundary.md)
 
 ## Non-Goals
 

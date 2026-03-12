@@ -8,6 +8,7 @@ use serde_json::json;
 use walkdir::WalkDir;
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
+use crate::runner::manifest::{load_task_manifest, ManifestDocsPolicyConfig};
 use crate::{DocsArgs, DocsBlockRequirement, DocsSubcommand};
 
 use super::error::RunnerError;
@@ -44,8 +45,27 @@ pub(super) fn run_docs(args: DocsArgs) -> Result<String, RunnerError> {
             &required_blocks,
             args.output_json,
         ),
-        DocsSubcommand::CheckIndex { dir, index } => {
-            run_check_index(&repo_root, dir.as_ref(), index.as_ref(), args.output_json)
+        DocsSubcommand::CheckHeadings {
+            paths,
+            required_headings,
+        } => run_check_headings(&repo_root, &paths, &required_headings, args.output_json),
+        DocsSubcommand::CheckContains {
+            paths,
+            required_text,
+        } => run_check_contains(&repo_root, &paths, &required_text, args.output_json),
+        DocsSubcommand::CheckIndex {
+            policy_index,
+            dir,
+            index,
+        } => run_check_index(
+            &repo_root,
+            policy_index.as_deref(),
+            dir.as_ref(),
+            index.as_ref(),
+            args.output_json,
+        ),
+        DocsSubcommand::CheckNextAction { policy_name } => {
+            run_check_next_action(&repo_root, policy_name.as_deref(), args.output_json)
         }
         DocsSubcommand::CheckWorkflowPaths { dir } => {
             run_check_workflow_paths(&repo_root, dir.as_ref(), args.output_json)
@@ -212,40 +232,164 @@ fn run_check_json_examples(
     Err(RunnerError::task_invocation(failures.join("\n")))
 }
 
+fn run_check_headings(
+    repo_root: &Path,
+    paths: &[PathBuf],
+    required_headings: &[String],
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    if paths.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "`check-headings` requires at least one file path".to_owned(),
+        ));
+    }
+    if required_headings.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "`check-headings` requires at least one `--require-heading` value".to_owned(),
+        ));
+    }
+
+    let files = paths
+        .iter()
+        .map(|path| resolve_repo_input(repo_root, path.clone()))
+        .collect::<Vec<_>>();
+    let mut findings = Vec::new();
+    for file in &files {
+        let content = std::fs::read_to_string(file)
+            .map_err(|err| RunnerError::task_invocation_failed_read(file, err))?;
+        for heading in required_headings {
+            if !content.lines().any(|line| line.trim() == heading.trim()) {
+                findings.push(json!({
+                    "file": file.display().to_string(),
+                    "kind": "missing-heading",
+                    "heading": heading,
+                }));
+            }
+        }
+    }
+
+    if output_json {
+        let payload = json!({
+            "schema": "effigy.docs.heading-check.v1",
+            "schema_version": 1,
+            "ok": findings.is_empty(),
+            "files": files.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
+            "required_headings": required_headings,
+            "findings": findings,
+        });
+        return if payload["ok"] == true {
+            Ok(payload.to_string())
+        } else {
+            Err(RunnerError::task_invocation(payload.to_string()))
+        };
+    }
+
+    if findings.is_empty() {
+        return Ok("docs heading check passed".to_owned());
+    }
+
+    let mut output = String::new();
+    for finding in findings {
+        output.push_str(&format!(
+            "missing heading `{}` in {}\n",
+            finding["heading"].as_str().unwrap_or_default(),
+            finding["file"].as_str().unwrap_or_default()
+        ));
+    }
+    Err(RunnerError::task_invocation(output.trim_end().to_owned()))
+}
+
+fn run_check_contains(
+    repo_root: &Path,
+    paths: &[PathBuf],
+    required_text: &[String],
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    if paths.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "`check-contains` requires at least one file path".to_owned(),
+        ));
+    }
+    if required_text.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "`check-contains` requires at least one `--require` value".to_owned(),
+        ));
+    }
+
+    let files = paths
+        .iter()
+        .map(|path| resolve_repo_input(repo_root, path.clone()))
+        .collect::<Vec<_>>();
+    let mut findings = Vec::new();
+    for file in &files {
+        let content = std::fs::read_to_string(file)
+            .map_err(|err| RunnerError::task_invocation_failed_read(file, err))?;
+        for needle in required_text {
+            if !content.contains(needle) {
+                findings.push(json!({
+                    "file": file.display().to_string(),
+                    "kind": "missing-text",
+                    "needle": needle,
+                }));
+            }
+        }
+    }
+
+    if output_json {
+        let payload = json!({
+            "schema": "effigy.docs.contains-check.v1",
+            "schema_version": 1,
+            "ok": findings.is_empty(),
+            "files": files.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
+            "required_text": required_text,
+            "findings": findings,
+        });
+        return if payload["ok"] == true {
+            Ok(payload.to_string())
+        } else {
+            Err(RunnerError::task_invocation(payload.to_string()))
+        };
+    }
+
+    if findings.is_empty() {
+        return Ok("docs contains check passed".to_owned());
+    }
+
+    let mut output = String::new();
+    for finding in findings {
+        output.push_str(&format!(
+            "missing text `{}` in {}\n",
+            finding["needle"].as_str().unwrap_or_default(),
+            finding["file"].as_str().unwrap_or_default()
+        ));
+    }
+    Err(RunnerError::task_invocation(output.trim_end().to_owned()))
+}
+
 fn run_check_index(
     repo_root: &Path,
+    policy_index: Option<&str>,
     dir_override: Option<&PathBuf>,
     index_override: Option<&PathBuf>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let dir = resolve_repo_input(
-        repo_root,
-        dir_override
-            .cloned()
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_LOGS_DIR)),
-    );
-    let index = resolve_repo_input(
-        repo_root,
-        index_override
-            .cloned()
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_LOGS_INDEX)),
-    );
+    let spec = resolve_docs_index_spec(repo_root, policy_index, dir_override, index_override)?;
 
-    if !dir.is_dir() {
+    if !spec.dir.is_dir() {
         return Err(RunnerError::task_invocation(format!(
-            "logs directory not found: {}",
-            dir.display()
+            "docs index directory not found: {}",
+            spec.dir.display()
         )));
     }
-    if !index.is_file() {
+    if !spec.index.is_file() {
         return Err(RunnerError::task_invocation(format!(
-            "logs index not found: {}",
-            index.display()
+            "docs index not found: {}",
+            spec.index.display()
         )));
     }
 
-    let all_docs = collect_markdown_children(&dir);
-    let indexed = collect_index_markdown_links(&index, &dir)?;
+    let all_docs = collect_markdown_children(&spec.dir, &spec.exclude);
+    let indexed = collect_index_markdown_links(&spec.index, spec.section.as_deref())?;
     let missing = all_docs.difference(&indexed).cloned().collect::<Vec<_>>();
     let extra = indexed.difference(&all_docs).cloned().collect::<Vec<_>>();
 
@@ -254,8 +398,10 @@ fn run_check_index(
             "schema": "effigy.docs.index-check.v1",
             "schema_version": 1,
             "ok": missing.is_empty() && extra.is_empty(),
-            "dir": dir.display().to_string(),
-            "index": index.display().to_string(),
+            "dir": spec.dir.display().to_string(),
+            "index": spec.index.display().to_string(),
+            "policy_index": spec.policy_name,
+            "section": spec.section,
             "missing": missing,
             "extra": extra,
         });
@@ -267,12 +413,15 @@ fn run_check_index(
     }
 
     if missing.is_empty() && extra.is_empty() {
-        return Ok("logs index check passed".to_owned());
+        return Ok(match spec.policy_name.as_deref() {
+            Some(name) => format!("docs index check passed ({name})"),
+            None => "docs index check passed".to_owned(),
+        });
     }
 
     let mut output = String::new();
     if !missing.is_empty() {
-        output.push_str("logs index is missing entries:\n");
+        output.push_str("docs index is missing entries:\n");
         for entry in &missing {
             output.push_str(&format!("  - {entry}\n"));
         }
@@ -281,12 +430,249 @@ fn run_check_index(
         if !output.is_empty() {
             output.push('\n');
         }
-        output.push_str("logs index references non-existent log files:\n");
+        output.push_str("docs index references non-existent markdown files:\n");
         for entry in &extra {
             output.push_str(&format!("  - {entry}\n"));
         }
     }
     Err(RunnerError::task_invocation(output.trim_end().to_owned()))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DocsIndexSpec {
+    policy_name: Option<String>,
+    dir: PathBuf,
+    index: PathBuf,
+    section: Option<String>,
+    exclude: Vec<String>,
+}
+
+fn resolve_docs_index_spec(
+    repo_root: &Path,
+    policy_index: Option<&str>,
+    dir_override: Option<&PathBuf>,
+    index_override: Option<&PathBuf>,
+) -> Result<DocsIndexSpec, RunnerError> {
+    let policy = load_docs_policy_config(repo_root)?;
+    let configured =
+        policy_index.and_then(|name| policy.indexes.get(name).map(|entry| (name, entry)));
+
+    if let Some(name) = policy_index {
+        if configured.is_none() {
+            let available = policy.indexes.keys().cloned().collect::<Vec<_>>();
+            let suffix = if available.is_empty() {
+                "no `[docs_policy.indexes]` entries are configured".to_owned()
+            } else {
+                format!("available indexes: {}", available.join(", "))
+            };
+            return Err(RunnerError::task_invocation(format!(
+                "unknown docs policy index `{name}` in `effigy.toml`; {suffix}"
+            )));
+        }
+    }
+
+    let dir = resolve_repo_input(
+        repo_root,
+        dir_override
+            .cloned()
+            .or_else(|| configured.map(|(_, entry)| PathBuf::from(entry.dir.clone())))
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_LOGS_DIR)),
+    );
+    let index = resolve_repo_input(
+        repo_root,
+        index_override
+            .cloned()
+            .or_else(|| configured.map(|(_, entry)| PathBuf::from(entry.file.clone())))
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_LOGS_INDEX)),
+    );
+
+    Ok(DocsIndexSpec {
+        policy_name: policy_index.map(ToOwned::to_owned),
+        dir,
+        index,
+        section: configured.and_then(|(_, entry)| entry.section.clone()),
+        exclude: configured
+            .map(|(_, entry)| entry.exclude.clone())
+            .unwrap_or_default(),
+    })
+}
+
+fn load_docs_policy_config(repo_root: &Path) -> Result<ManifestDocsPolicyConfig, RunnerError> {
+    let manifest_path = repo_root.join("effigy.toml");
+    if !manifest_path.is_file() {
+        return Ok(ManifestDocsPolicyConfig::default());
+    }
+    Ok(load_task_manifest(&manifest_path)?
+        .docs_policy
+        .unwrap_or_default())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DocsNextActionSpec {
+    policy_name: Option<String>,
+    index: DocsIndexSpec,
+    heading: String,
+    heading_without_hashes: String,
+    allowlist_file: PathBuf,
+}
+
+fn run_check_next_action(
+    repo_root: &Path,
+    policy_name: Option<&str>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let spec = resolve_docs_next_action_spec(repo_root, policy_name)?;
+    let referenced =
+        collect_index_markdown_links(&spec.index.index, spec.index.section.as_deref())?;
+    let allowlist = load_next_action_allowlist(&spec.allowlist_file)?;
+    let mut findings = Vec::new();
+
+    for relative in referenced {
+        let file = spec.index.dir.join(&relative);
+        if !file.is_file() {
+            findings.push(json!({
+                "file": file.display().to_string(),
+                "relative": relative,
+                "kind": "missing-file",
+                "message": format!("missing indexed markdown file: {}", file.display()),
+            }));
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&file)
+            .map_err(|err| RunnerError::task_invocation_failed_read(&file, err))?;
+        let Some(section) = extract_h2_section(&content, &spec.heading_without_hashes) else {
+            findings.push(json!({
+                "file": file.display().to_string(),
+                "relative": relative,
+                "kind": "missing-heading",
+                "message": format!("missing `{}` section in {}", spec.heading, file.display()),
+            }));
+            continue;
+        };
+        let Some(first_line) = first_non_empty_section_line(&section) else {
+            findings.push(json!({
+                "file": file.display().to_string(),
+                "relative": relative,
+                "kind": "empty-section",
+                "message": format!("empty `{}` section in {}", spec.heading, file.display()),
+            }));
+            continue;
+        };
+        let verb = extract_lead_verb(&first_line);
+        if verb.is_empty() || !allowlist.contains(&verb) {
+            findings.push(json!({
+                "file": file.display().to_string(),
+                "relative": relative,
+                "kind": "non-actionable",
+                "message": format!(
+                    "non-actionable `{}` lead verb in {}: `{}`",
+                    spec.heading,
+                    file.display(),
+                    first_line
+                ),
+                "line": first_line,
+                "verb": verb,
+                "allowlist_file": spec.allowlist_file.display().to_string(),
+            }));
+        }
+    }
+
+    if output_json {
+        let payload = json!({
+            "schema": "effigy.docs.next-action-check.v1",
+            "schema_version": 1,
+            "ok": findings.is_empty(),
+            "policy": spec.policy_name,
+            "heading": spec.heading,
+            "index": spec.index.index.display().to_string(),
+            "dir": spec.index.dir.display().to_string(),
+            "allowlist_file": spec.allowlist_file.display().to_string(),
+            "findings": findings,
+        });
+        return if payload["ok"] == true {
+            Ok(payload.to_string())
+        } else {
+            Err(RunnerError::task_invocation(payload.to_string()))
+        };
+    }
+
+    if findings.is_empty() {
+        return Ok(match spec.policy_name.as_deref() {
+            Some(name) => format!("docs next-action check passed ({name})"),
+            None => "docs next-action check passed".to_owned(),
+        });
+    }
+
+    let mut output = String::new();
+    for finding in findings {
+        output.push_str(finding["message"].as_str().unwrap_or_default());
+        output.push('\n');
+    }
+    Err(RunnerError::task_invocation(output.trim_end().to_owned()))
+}
+
+fn resolve_docs_next_action_spec(
+    repo_root: &Path,
+    policy_name: Option<&str>,
+) -> Result<DocsNextActionSpec, RunnerError> {
+    let policy = load_docs_policy_config(repo_root)?;
+    let name = policy_name.unwrap_or("vision");
+    let Some(entry) = policy.next_actions.get(name) else {
+        let available = policy.next_actions.keys().cloned().collect::<Vec<_>>();
+        let suffix = if available.is_empty() {
+            "no `[docs_policy.next_actions]` entries are configured".to_owned()
+        } else {
+            format!("available next-action policies: {}", available.join(", "))
+        };
+        return Err(RunnerError::task_invocation(format!(
+            "unknown docs next-action policy `{name}` in `effigy.toml`; {suffix}"
+        )));
+    };
+
+    let heading_without_hashes = entry
+        .heading
+        .trim()
+        .trim_start_matches('#')
+        .trim()
+        .to_owned();
+    if heading_without_hashes.is_empty() {
+        return Err(RunnerError::task_invocation(format!(
+            "invalid docs next-action heading for policy `{name}`: heading cannot be empty"
+        )));
+    }
+
+    Ok(DocsNextActionSpec {
+        policy_name: Some(name.to_owned()),
+        index: resolve_docs_index_spec(repo_root, Some(&entry.index), None, None)?,
+        heading: format!("## {heading_without_hashes}"),
+        heading_without_hashes,
+        allowlist_file: resolve_repo_input(repo_root, PathBuf::from(&entry.allowlist_file)),
+    })
+}
+
+fn load_next_action_allowlist(path: &Path) -> Result<BTreeSet<String>, RunnerError> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|err| RunnerError::task_invocation_failed_read(path, err))?;
+    let mut verbs = BTreeSet::new();
+    for line in content.lines() {
+        let trimmed = line
+            .split('#')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase();
+        if !trimmed.is_empty() {
+            verbs.insert(trimmed);
+        }
+    }
+    if verbs.is_empty() {
+        return Err(RunnerError::task_invocation(format!(
+            "actionable verb allowlist is empty: {}",
+            path.display()
+        )));
+    }
+    Ok(verbs)
 }
 
 fn run_add_log_index(
@@ -647,6 +1033,40 @@ fn extract_fenced_json_blocks(section: &str) -> Vec<String> {
     blocks
 }
 
+fn first_non_empty_section_line(section: &str) -> Option<String> {
+    section
+        .lines()
+        .skip(1)
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn extract_lead_verb(line: &str) -> String {
+    let normalized = line
+        .trim_start()
+        .trim_start_matches(|c: char| matches!(c, '-' | '*' | '+'))
+        .trim_start();
+    let normalized = if let Some(rest) = normalized.strip_prefix('(') {
+        rest.split_once(')')
+            .map(|(_, tail)| tail.trim_start())
+            .unwrap_or(normalized)
+    } else {
+        normalized
+    };
+    let normalized = normalized
+        .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.')
+        .trim_start();
+    normalized
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect::<String>()
+        .to_lowercase()
+}
+
 fn default_json_example_requirements() -> Vec<String> {
     vec![
         "\"schema\": \"effigy.completion.candidates.v1\"".to_owned(),
@@ -672,13 +1092,14 @@ fn default_json_example_block_requirements() -> Vec<DocsBlockRequirement> {
     ]
 }
 
-fn collect_markdown_children(dir: &Path) -> BTreeSet<String> {
+fn collect_markdown_children(dir: &Path, exclude: &[String]) -> BTreeSet<String> {
     WalkDir::new(dir)
         .min_depth(1)
         .into_iter()
         .filter_map(Result::ok)
         .map(|entry| entry.into_path())
         .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+        .filter(|path| !path_matches_any_exclude(path, dir, exclude))
         .filter_map(|path| {
             path.strip_prefix(dir)
                 .ok()
@@ -691,29 +1112,56 @@ fn collect_markdown_children(dir: &Path) -> BTreeSet<String> {
 
 fn collect_index_markdown_links(
     index: &Path,
-    base_dir: &Path,
+    section: Option<&str>,
 ) -> Result<BTreeSet<String>, RunnerError> {
     let content = std::fs::read_to_string(index)
         .map_err(|err| RunnerError::task_invocation_failed_read(index, err))?;
+    let content = if let Some(section_name) = section {
+        extract_h2_section(&content, section_name).ok_or_else(|| {
+            RunnerError::task_invocation(format!(
+                "section `{section_name}` not found in {}",
+                index.display()
+            ))
+        })?
+    } else {
+        content
+    };
     let link_re = Regex::new(r"\((\./[^)]+\.md)\)").expect("index link regex");
     let mut links = BTreeSet::new();
     for capture in link_re.captures_iter(&content) {
         let relative = capture[1].trim_start_matches("./");
-        let normalized = Path::new(relative);
-        if normalized.starts_with(base_dir) {
-            continue;
-        }
-        links.insert(normalized.to_string_lossy().replace('\\', "/"));
+        links.insert(relative.replace('\\', "/"));
     }
     Ok(links)
+}
+
+fn path_matches_any_exclude(path: &Path, root: &Path, exclude: &[String]) -> bool {
+    let relative = match path.strip_prefix(root) {
+        Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
+        Err(_) => return false,
+    };
+    exclude
+        .iter()
+        .any(|pattern| path_matches_exclude(&relative, pattern))
+}
+
+fn path_matches_exclude(relative: &str, pattern: &str) -> bool {
+    let normalized = pattern.trim_start_matches("./").replace('\\', "/");
+    if let Some(prefix) = normalized.strip_suffix("/**") {
+        relative == prefix || relative.starts_with(&format!("{prefix}/"))
+    } else {
+        relative == normalized || relative.starts_with(&format!("{normalized}/"))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_link_check_files, collect_workflow_check_files, extract_fenced_json_blocks,
-        extract_h2_section, insert_log_index_entry, normalize_log_index_relative_path,
-        scan_markdown_links,
+        collect_index_markdown_links, collect_link_check_files, collect_markdown_children,
+        collect_workflow_check_files, extract_fenced_json_blocks, extract_h2_section,
+        extract_lead_verb, first_non_empty_section_line, insert_log_index_entry,
+        normalize_log_index_relative_path, path_matches_exclude, resolve_docs_index_spec,
+        resolve_docs_next_action_spec, scan_markdown_links,
     };
     use std::{fs, path::Path};
 
@@ -827,5 +1275,116 @@ mod tests {
 
         assert!(rendered.contains(&"docs/guides/example.md".to_owned()));
         assert!(!rendered.contains(&"docs/logs/2026-03/example.md".to_owned()));
+    }
+
+    #[test]
+    fn collect_markdown_children_respects_excludes() {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-doc-index-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("history")).expect("mkdir history");
+        fs::write(root.join("README.md"), "# Root\n").expect("write readme");
+        fs::write(root.join("active.md"), "# Active\n").expect("write active");
+        fs::write(root.join("history/old.md"), "# Old\n").expect("write old");
+
+        let files = collect_markdown_children(&root, &[String::from("history/**")]);
+        assert!(files.contains("active.md"));
+        assert!(!files.contains("history/old.md"));
+    }
+
+    #[test]
+    fn collect_index_markdown_links_can_scope_to_section() {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-doc-index-section-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("mkdir");
+        let index = root.join("README.md");
+        fs::write(
+            &index,
+            "# Root\n\n## Vision Artifacts\n- [One](./one.md)\n\n## Other\n- [Two](./two.md)\n",
+        )
+        .expect("write index");
+
+        let links = collect_index_markdown_links(&index, Some("Vision Artifacts")).expect("links");
+        assert!(links.contains("one.md"));
+        assert!(!links.contains("two.md"));
+    }
+
+    #[test]
+    fn path_matches_exclude_supports_recursive_suffix() {
+        assert!(path_matches_exclude("history/one.md", "history/**"));
+        assert!(!path_matches_exclude("active/one.md", "history/**"));
+    }
+
+    #[test]
+    fn resolve_docs_index_spec_loads_named_policy_index() {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-doc-policy-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("mkdir");
+        fs::write(
+            root.join("effigy.toml"),
+            "[docs_policy.indexes.vision]\nfile = \"docs/vision/README.md\"\ndir = \"docs/vision\"\nsection = \"Vision Artifacts\"\nexclude = [\"history/**\"]\n",
+        )
+        .expect("write manifest");
+
+        let spec = resolve_docs_index_spec(&root, Some("vision"), None, None).expect("spec");
+        assert_eq!(spec.policy_name.as_deref(), Some("vision"));
+        assert_eq!(spec.index, root.join("docs/vision/README.md"));
+        assert_eq!(spec.dir, root.join("docs/vision"));
+        assert_eq!(spec.section.as_deref(), Some("Vision Artifacts"));
+        assert_eq!(spec.exclude, vec!["history/**"]);
+    }
+
+    #[test]
+    fn first_non_empty_section_line_skips_heading_and_blank_lines() {
+        let line = first_non_empty_section_line("## Next Task\n\nShip the thing.\n").expect("line");
+        assert_eq!(line, "Ship the thing.");
+    }
+
+    #[test]
+    fn extract_lead_verb_handles_bullets_and_numbering() {
+        assert_eq!(extract_lead_verb("- Execute cleanup."), "execute");
+        assert_eq!(extract_lead_verb("1. Review follow-up."), "review");
+        assert_eq!(extract_lead_verb("(1) Ship parity."), "ship");
+    }
+
+    #[test]
+    fn resolve_docs_next_action_spec_loads_named_policy() {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-doc-next-action-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("docs/scripts/fixtures")).expect("mkdir");
+        fs::write(
+            root.join("effigy.toml"),
+            "[docs_policy.indexes.vision]\nfile = \"docs/vision/README.md\"\ndir = \"docs/vision\"\nsection = \"Vision Artifacts\"\n\n[docs_policy.next_actions.vision]\nindex = \"vision\"\nheading = \"## Next Task\"\nallowlist_file = \"docs/scripts/fixtures/verbs.txt\"\n",
+        )
+        .expect("write manifest");
+
+        let spec = resolve_docs_next_action_spec(&root, Some("vision")).expect("spec");
+        assert_eq!(spec.policy_name.as_deref(), Some("vision"));
+        assert_eq!(spec.heading, "## Next Task");
+        assert_eq!(spec.heading_without_hashes, "Next Task");
+        assert_eq!(
+            spec.allowlist_file,
+            root.join("docs/scripts/fixtures/verbs.txt")
+        );
+        assert_eq!(spec.index.policy_name.as_deref(), Some("vision"));
     }
 }

@@ -22,11 +22,11 @@ Manual checks:
 - completion-candidates examples include both hit and miss telemetry variants
 - new log artifacts are indexed in `docs/logs/README.md`
 - new log artifacts include a `Vision Target Delta` section
-- roadmap/guides vision metadata checks pass via `docs/scripts/check-vision-metadata.sh`
+- roadmap/guides vision metadata checks pass via `effigy qa:docs:vision --repo .`
 - docs-referenced workflow paths resolve via `effigy docs check-workflow-paths --repo .`
-- vision artifact index is consistent via `docs/scripts/check-vision-index.sh`
-- vision artifacts have non-empty, actionable follow-on actions via `docs/scripts/check-vision-next-task.sh`
-- vision next-task lint fixtures pass via `docs/scripts/check-vision-next-task-regression.sh`
+- vision artifact index is consistent via `effigy docs check-index --repo . --policy-index vision`
+- vision artifacts have non-empty, actionable follow-on actions via `effigy docs check-next-action --repo . --policy vision`
+- next-action negative-path coverage lives in Rust CLI tests, not the docs QA runtime bundle
 
 Optional broader check:
 
@@ -56,7 +56,39 @@ jobs:
 
 This ensures markdown links resolve, key JSON examples stay contract-aligned, logs remain indexed, and vision metadata coverage is enforced on every pull request/push.
 `effigy qa:docs --repo .` is now the primary orchestration surface for that bundle.
-`./docs/scripts/check-vision-metadata.sh` now delegates workflow-path validation to `effigy docs check-workflow-paths --repo .`, then runs `check-vision-index`, `check-vision-next-task`, and `check-vision-next-task-regression`.
+`effigy qa:docs:vision --repo .` is now the policy-specific sub-bundle for roadmap/guide heading requirements, report/cutoff text requirements, workflow-path validation, vision index validation, and next-action validation.
+
+## 2a) Built-ins vs Repo Policy
+
+The current docs QA surface intentionally splits into two layers:
+
+- generic built-ins such as `effigy docs check-links`,
+  `check-json-examples`, `check-index`, and `check-workflow-paths`
+- Effigy-specific vision-policy checks that remain under `docs/scripts/`
+
+That boundary is deliberate. Workflow-path validation is generic enough to
+reuse across projects, but the remaining vision checks enforce Effigy's own
+docs governance model: inventory rules for `docs/vision/README.md`,
+`## Next Task` policy, the actionable-verb allowlist, and related rollout
+conventions.
+
+Those policy checks should only move into built-ins behind a small config
+surface. They should not become hardcoded defaults for every Effigy-adopting
+repo.
+
+Design note:
+- [`../logs/2026-03/12-093000-docs-policy-config-boundary.md`](../logs/2026-03/12-093000-docs-policy-config-boundary.md)
+- [`../logs/2026-03/12-094500-minimal-docs-policy-config-design.md`](../logs/2026-03/12-094500-minimal-docs-policy-config-design.md)
+
+Proposed config direction:
+- generic docs engines continue to work with useful defaults
+- stricter repo doctrine should move into an optional `[docs_policy]` section
+  in `effigy.toml`
+- the first config-backed migration target should be the vision index check,
+  not the more policy-heavy next-task allowlist logic
+- the active next-action path now uses a config-backed built-in, but the
+  allowlist semantics still live in repo policy data rather than product
+  defaults
 
 ## 3) What the Link Checker Validates
 
@@ -107,6 +139,28 @@ Forward-only policy cutoff:
 - logs dated on or after `2026-03-06` must include a `## Vision Target Delta` section
 - logs before `2026-03-06` do not require backfill
 
+### Named docs-policy indexes
+
+Built-in command:
+- `effigy docs check-index --repo . --policy-index vision`
+
+Behavior:
+- loads a named index definition from `[docs_policy.indexes.<NAME>]` in `effigy.toml`
+- uses that config to select the index file, docs directory, optional section scope, and exclusion rules
+- lets repo-specific index policy stay declarative instead of hardcoded into the built-in
+
+## 5a) What the Next-Action Checker Validates
+
+Built-in command:
+- `effigy docs check-next-action --repo . --policy vision`
+
+Behavior:
+- loads a named rule from `[docs_policy.next_actions.<NAME>]` in `effigy.toml`
+- resolves the indexed artifact set through the named docs-policy index
+- requires a configured heading such as `## Next Task`
+- requires the first non-empty line in that section to start with an allowlisted actionable verb
+- keeps the heading name and allowlist path repo-configurable instead of hardcoded
+
 ## 6) Common Failure Modes
 
 ### Broken relative path after file move
@@ -148,11 +202,10 @@ Copy into PR description:
 ```md
 ## Docs QA
 - [ ] `effigy qa:docs --repo .`
-- [ ] `./docs/scripts/check-vision-metadata.sh`
+- [ ] `effigy qa:docs:vision --repo .`
 - [ ] `effigy docs check-workflow-paths --repo .`
-- [ ] `./docs/scripts/check-vision-index.sh`
-- [ ] `./docs/scripts/check-vision-next-task.sh`
-- [ ] `./docs/scripts/check-vision-next-task-regression.sh`
+- [ ] `effigy docs check-index --repo . --policy-index vision`
+- [ ] `effigy docs check-next-action --repo . --policy vision`
 - [ ] New guide linked from docs entry points
 - [ ] Command and JSON examples verified against current behavior
 - [ ] Completion-candidates JSON examples include hit + miss telemetry variants
@@ -170,19 +223,16 @@ Allowlist-change PRs should use:
 effigy qa:docs --repo .
 
 # vision metadata coverage
-./docs/scripts/check-vision-metadata.sh
+effigy qa:docs:vision --repo .
 
 # workflow path references in docs
 effigy docs check-workflow-paths --repo .
 
 # vision closeout index consistency
-./docs/scripts/check-vision-index.sh
+effigy docs check-index --repo . --policy-index vision
 
 # vision next-task section coverage
-./docs/scripts/check-vision-next-task.sh
-
-# vision next-task regression fixtures
-./docs/scripts/check-vision-next-task-regression.sh
+effigy docs check-next-action --repo . --policy vision
 
 # index a newly added log artifact
 effigy docs add-log-index --repo . docs/logs/YYYY-MM/DD-HHMMSS-topic.md

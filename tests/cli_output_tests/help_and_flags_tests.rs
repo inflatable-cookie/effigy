@@ -154,6 +154,20 @@ fn cli_docs_help_is_command_specific() {
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("docs Help"));
     assert!(stdout.contains("effigy docs check-links [--repo <PATH>] [<FILE>...] [--json]"));
+    assert!(stdout.contains(
+        "effigy docs check-headings [--repo <PATH>] <FILE>... --require-heading <TEXT>... [--json]"
+    ));
+    assert!(stdout.contains(
+        "effigy docs check-contains [--repo <PATH>] <FILE>... --require <TEXT>... [--json]"
+    ));
+    assert!(
+        stdout.contains(
+            "effigy docs check-index [--repo <PATH>] [--policy-index <NAME>] [--dir <PATH>] [--index <PATH>] [--json]"
+        )
+    );
+    assert!(
+        stdout.contains("effigy docs check-next-action [--repo <PATH>] [--policy <NAME>] [--json]")
+    );
     assert!(
         stdout.contains("effigy docs check-workflow-paths [--repo <PATH>] [--dir <PATH>] [--json]")
     );
