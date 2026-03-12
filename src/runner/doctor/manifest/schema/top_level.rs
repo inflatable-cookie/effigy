@@ -9,11 +9,13 @@ pub(super) fn validate_top_level_keys(
     let allowed_top = [
         "catalog",
         "defer",
+        "docs_policy",
         "env",
-        "test",
         "package_manager",
+        "release",
         "scan",
         "shell",
+        "test",
         "tasks",
     ];
     for key in table.keys() {

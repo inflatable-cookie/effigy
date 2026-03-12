@@ -11,6 +11,17 @@ During v0.x, MINOR bumps may include breaking changes.
   patch release, while leaving consumer repos alone because no active CI/docs
   pins below `0.2.7` were found in the rollout audit
 
+### Fixed
+- Keep `effigy doctor` aligned with the live manifest surface by accepting
+  `[docs_policy]` and `[release]`, add coverage against the current repo
+  manifest so new top-level sections do not silently drift out of the schema,
+  and tighten attention-marker matching so category words in changelog/docs
+  prose no longer report as real attention markers
+- Stop `qa:docs:agent-defaults` from failing in CI when the `setup-effigy`
+  submodule is not checked out, and calibrate this repo's `scan.god_files`
+  baseline so doctor focuses on unexpected new mega-hubs instead of known
+  intentional command/test aggregation points
+
 ## [0.2.7] - 2026-03-12
 
 ### Added

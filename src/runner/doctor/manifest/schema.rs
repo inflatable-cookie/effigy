@@ -5,8 +5,10 @@ use toml::Value;
 use super::super::report::DoctorState;
 
 mod diagnostics;
+mod docs_policy_section;
 mod env_section;
 mod package_manager;
+mod release_section;
 mod scan_section;
 mod tables;
 mod tasks;
@@ -14,9 +16,14 @@ mod test_section;
 mod top_level;
 mod values;
 
+#[cfg(test)]
+mod tests;
+
 use diagnostics::SchemaContext;
+use docs_policy_section::validate_docs_policy_section;
 use env_section::validate_env_section;
 use package_manager::validate_package_manager_section;
+use release_section::validate_release_section;
 use scan_section::validate_scan_section;
 use tables::validate_known_table;
 use tasks::validate_tasks_table;
@@ -44,6 +51,12 @@ pub(super) fn validate_manifest_schema(
     }
     if let Some(env) = table.get("env") {
         validate_env_section(&mut context, env);
+    }
+    if let Some(docs_policy) = table.get("docs_policy") {
+        validate_docs_policy_section(&mut context, docs_policy);
+    }
+    if let Some(release) = table.get("release") {
+        validate_release_section(&mut context, release);
     }
     if let Some(shell) = table.get("shell") {
         validate_known_table(&mut context, "shell", shell, &["run"]);
