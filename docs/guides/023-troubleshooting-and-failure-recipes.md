@@ -10,6 +10,15 @@ Use [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for f
 - Primary tags: `OPERATE`, `ROUTE`
 - Target movement: failure triage paths reduce time-to-diagnosis and keep remediation steps action-oriented.
 
+## When To Use This
+
+Reach for this guide when:
+
+- a task does not resolve where you expected
+- a built-in command fails and you need the shortest diagnosis path
+- watch mode, locks, env resolution, or deferral behavior feels unclear
+- CI is failing and you need the human-first version of the fix path
+
 ## 1) Fast Triage Flow
 
 Start with:
@@ -368,6 +377,14 @@ Fix:
 
 - use `effigy tasks --resolve <selector>` for routing evidence only,
 - use `effigy doctor <selector> -- <args>` for full explain output including selection and deferral reasoning.
+
+## Expected Outcome
+
+After this guide, you should be able to:
+
+- choose the shortest useful diagnosis command for a failure
+- separate routing issues from manifest, env, watch, and test issues
+- turn a symptom into a concrete fix or a more precise follow-up question
 
 ## Related Guides
 

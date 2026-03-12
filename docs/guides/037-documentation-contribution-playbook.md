@@ -2,6 +2,18 @@
 
 Use this playbook for any docs-affecting change.
 
+Use it when the question is not "how do I write prose?" but "which docs move
+with this product change, and how do I prove I updated the right ones?"
+
+## Start Here
+
+Work in this order:
+
+1. Identify the primary change type.
+2. Update the matching docs surfaces in the same batch.
+3. Run the docs QA bundle.
+4. Run JSON contract checks too if the change affects machine-facing output.
+
 ## 1) Choose Change Type
 
 Pick one primary change type:
@@ -80,12 +92,24 @@ Minimum bar:
 Run in this order:
 
 ```sh
-effigy docs check-links --repo .
-effigy-dev qa:docs --repo .
+effigy qa:docs --repo .
 effigy docs check-workflow-paths --repo .
 ```
 
+Fallbacks when validating from a dev checkout instead of the installed binary:
+
+```sh
+effigy-dev qa:docs --repo .
+cargo qa-docs
+```
+
 If behavior/JSON changed, also run relevant targeted checks:
+
+```sh
+effigy qa:json:ci --repo .
+```
+
+Dev-checkout fallback:
 
 ```sh
 effigy-dev qa:json:ci --repo .
@@ -100,10 +124,9 @@ Copy into PR description:
 - [ ] Change type identified (command/json/manifest/ci/navigation/release-note)
 - [ ] Required guides updated for this change type
 - [ ] Style/terminology checked against 033/034
-- [ ] `effigy docs check-links --repo .` passed
-- [ ] `effigy-dev qa:docs --repo .` passed
+- [ ] `effigy qa:docs --repo .` passed
 - [ ] `effigy docs check-workflow-paths --repo .` passed
-- [ ] JSON-related changes: `effigy-dev qa:json:ci --repo .` run
+- [ ] JSON-related changes: `effigy qa:json:ci --repo .` run
 ```
 
 ## 6) Escalation Rules

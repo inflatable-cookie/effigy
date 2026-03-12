@@ -2,6 +2,25 @@
 
 Use this checklist before merging documentation changes.
 
+Use it when you need the shortest reliable path from "docs changed" to
+"confidence that the docs still hang together."
+
+## Start Here
+
+For most docs changes, the first commands should be:
+
+```sh
+effigy qa:docs --repo .
+effigy docs check-workflow-paths --repo .
+```
+
+Then widen the scope only when the change touched command behavior, JSON
+contracts, or broader repo policy:
+
+```sh
+effigy qa --repo .
+```
+
 ## 1) Local Docs QA Checklist
 
 Run in order:
@@ -244,6 +263,14 @@ effigy qa:json:ci --repo .
 effigy qa --repo .
 ```
 
+## Expected Outcome
+
+After this guide, you should be able to:
+
+- run the right docs validation bundle for a change without guessing
+- tell which checks are generic built-ins versus repo-specific policy checks
+- catch navigation, workflow-path, and contract-example drift before merge
+
 ## Related Guides
 
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
@@ -252,3 +279,9 @@ effigy qa --repo .
 - [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
 - [`045-vision-next-task-allowlist-maintenance.md`](./045-vision-next-task-allowlist-maintenance.md)
 - [`046-vision-next-task-allowlist-pr-checklist-snippet.md`](./046-vision-next-task-allowlist-pr-checklist-snippet.md)
+
+## Next Step
+
+After the docs QA bundle passes, update the relevant landing pages or workflow
+guides in the same change so the documentation remains discoverable instead of
+only technically valid.

@@ -2,11 +2,43 @@
 
 This cookbook provides copy-paste manifest patterns you can adapt directly.
 
+Use it when the next improvement should happen in `effigy.toml` instead of in
+another wrapper script, shell note, or team-specific convention.
+
 
 ## Vision Alignment
 
 - Primary tags: `ROUTE`, `MAINT`
 - Target movement: manifest patterns encode maintainable routing and execution conventions with minimal ambiguity.
+
+## Start Here
+
+Pick the first pattern by the friction you want to remove:
+
+- Need one clean starting point: use `Small Single-Repo Starter`.
+- Need a few simple commands and task chains: use `Compact Tasks + Task Chain`.
+- Need env/test/workflow behavior to be explicit: jump to `Run-Array Env
+  Directives` and `Built-in Test Fanout`.
+- Need repo-health checks without more custom tooling: jump to the `scan.*`
+  patterns.
+
+Useful companion commands while editing:
+
+```sh
+effigy init
+effigy config --schema --minimal
+effigy tasks
+effigy test --plan
+```
+
+## How To Use This Cookbook
+
+- Start with the smallest pattern that removes real friction.
+- Prefer one clear task name over multiple aliases for the same action.
+- Move repeated env/test/setup rules into the manifest once, not into multiple
+  task wrappers.
+- When the manifest starts to explain the repo better than a README snippet,
+  you are moving in the right direction.
 
 ## 1) Small Single-Repo Starter
 
@@ -541,3 +573,20 @@ Use catalog aliases to keep task ownership local while retaining root-level orch
 - [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
 - [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
+- [`055-everyday-workflows.md`](./055-everyday-workflows.md)
+
+## Expected Outcome
+
+After this guide, you should be able to:
+
+- choose a manifest pattern that matches the next real repo friction
+- move task, env, test, and scan behavior into `effigy.toml` deliberately
+- avoid growing new wrapper scripts when the manifest can own the workflow
+
+## Next Step
+
+After adapting one of these patterns, run `effigy tasks` and `effigy test --plan`
+to confirm the repo now explains itself more clearly, then use
+[`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+or [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) to
+close any remaining rough edges in the operator path.

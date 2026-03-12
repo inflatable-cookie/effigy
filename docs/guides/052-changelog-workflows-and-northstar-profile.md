@@ -9,6 +9,27 @@ a CLI workflow and a reusable library surface.
 - Target movement: changelog handling becomes one documented, testable Effigy
   surface instead of a mix of ad-hoc markdown editing and release-note scripts.
 
+## Start Here
+
+Use this guide when the changelog should become part of the release contract
+instead of a loosely managed markdown file.
+
+Start with the command that matches the job in front of you:
+
+```bash
+effigy changelog validate CHANGELOG.md
+effigy changelog analyze CHANGELOG.md
+effigy changelog extract CHANGELOG.md --version X.Y.Z
+```
+
+Quick chooser:
+
+- use `validate` while editing changelog structure
+- use `format` when layout drift has accumulated
+- use `analyze` before release prep to inspect the next suggested bump
+- use `extract` after selecting or cutting a release to generate release-note
+  source material
+
 ## 1) What Effigy Supports
 
 Effigy ships a built-in changelog surface for four jobs:

@@ -1,22 +1,44 @@
 # 019 - Watch, Init, and Migrate Foundation
 
-This guide covers the foundational contract for:
-- `effigy watch`
-- `effigy init`
-- `effigy migrate`
+Use this guide when you want to start a repo, migrate an existing script
+surface, or rerun a task on file changes without inventing a local wrapper.
 
+These commands solve different problems, but they share the same goal: reduce
+the amount of repo-specific ceremony around common setup and iteration loops.
 
 ## Vision Alignment
 
 - Primary tags: `ROUTE`, `OPERATE`, `MAINT`
-- Target movement: watch/init/migrate onboarding flows stay bounded, predictable, and low-friction.
+- Target movement: watch/init/migrate onboarding flows stay bounded,
+  predictable, and low-friction.
+
+## Start Here
+
+Choose the command by the friction you are trying to remove:
+
+- Use `effigy init` when a repo has no `effigy.toml` yet.
+- Use `effigy migrate` when tasks already exist in `package.json` and should
+  move into the manifest.
+- Use `effigy watch` when a task already exists and should rerun on changes.
+
+Common first commands:
+
+```sh
+effigy init
+effigy migrate --from package.json
+effigy watch --owner effigy --once test
+```
 
 ## `effigy watch`
 
-Foundational watch mode is policy-first:
+Use watch mode when you want a bounded, explicit rerun loop instead of ad-hoc
+watcher nesting.
+
+The foundational contract is policy-first:
+
 - owner policy is mandatory (`--owner <effigy|external>`)
-- `external` owner fails fast to avoid nested watcher loops
-- `effigy` owner enables file-triggered reruns with debounce and glob controls
+- `external` fails fast to avoid nested watcher loops
+- `effigy` enables file-triggered reruns with debounce and glob controls
 
 ### Usage
 
@@ -30,16 +52,21 @@ effigy watch --owner external test
 
 - `--json` is supported for bounded runs only (`--once` or `--max-runs <N>`).
 - Default excludes include `.git/**`, `node_modules/**`, and `target/**`.
-- Effigy acquires a watch-owner lock scope per target (`task:watch:<target>`); concurrent
-  owners for the same target fail fast with lock diagnostics.
-- If a watch lock must be cleared manually: `effigy unlock task:watch:<target>`.
+- Effigy acquires a watch-owner lock scope per target (`task:watch:<target>`).
+- Concurrent owners for the same target fail fast with lock diagnostics.
+- If a watch lock must be cleared manually, use
+  `effigy unlock task:watch:<target>`.
 
 ## `effigy init`
 
+Use `init` when the repo needs a clean starting point for Effigy instead of a
+blank manifest created by hand.
+
 `init` creates a baseline `effigy.toml` scaffold with:
+
 - a minimal valid `[tasks]` section
-- commented managed-task example (`mode = "tui"`)
-- commented DAG-style run sequence example
+- a commented managed-task example (`mode = "tui"`)
+- a commented DAG-style run sequence example
 
 ### Usage
 
@@ -57,7 +84,12 @@ effigy init --json
 
 ## `effigy migrate`
 
-`migrate` imports `package.json` scripts into `[tasks]` with preview-first behavior.
+Use `migrate` when a repo already has useful `package.json` scripts and the
+next step is to move them into `[tasks]` without doing the whole rewrite by
+hand.
+
+`migrate` imports `package.json` scripts into `[tasks]` with preview-first
+behavior.
 
 ### Usage
 
@@ -73,7 +105,8 @@ effigy migrate --from ./frontend/package.json --apply --json
 - Source is `package.json` by default (`--from` overrides).
 - Preview mode does not write files.
 - `--apply` writes only ready imports.
-- Existing task-name conflicts are skipped and reported with manual remediation guidance.
+- Existing task-name conflicts are skipped and reported with manual remediation
+  guidance.
 - `package.json` is never modified by migration.
 
 ## JSON Schemas
@@ -94,12 +127,24 @@ effigy migrate --from ./frontend/package.json --apply --json
 | `migrate` behavior | preview/apply/non-destructive import behavior | `src/tests/runner_tests.rs` |
 | `migrate` JSON payload | `effigy.migrate.v1` payload shape | `src/tests/json_contract_tests.rs` |
 
+## Expected Outcome
+
+After this guide, you should be able to:
+
+- pick the right command for first-time setup, script migration, or rerun loops
+- use preview-first paths for init and migrate safely
+- understand the lock and owner rules that keep watch mode predictable
+
 ## Related Guides
 
 - DAG run/policy/lock baseline: [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
 - Troubleshooting watch and lock failures: [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - CI recipes for JSON command automation: [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+- Scenario-based adoption paths: [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
 
 ## Next Step
 
-After adopting any watch/init/migrate flow, add a path-specific rollout checklist in [`028-migration-quick-paths.md`](./028-migration-quick-paths.md) and validate commands via [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md).
+After adopting any watch/init/migrate flow, move to
+[`028-migration-quick-paths.md`](./028-migration-quick-paths.md) and convert
+the next repo-specific bootstrap or watcher script into a documented Effigy
+path.

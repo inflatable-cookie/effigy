@@ -2,6 +2,25 @@
 
 Use this guide to write consistent release notes for Effigy milestones and incremental releases.
 
+Use it when a behavior change is already shipped or about to ship and the
+remaining job is to explain the change clearly to humans.
+
+## Start Here
+
+Work in this order:
+
+1. extract the raw release body from the changelog
+2. wrap it with summary, validation, rollback, and compatibility context
+3. link the note from `docs/logs/README.md`
+
+Start with:
+
+```bash
+effigy changelog extract CHANGELOG.md --version X.Y.Z
+```
+
+Treat that output as the baseline, not the finished note.
+
 ## 1) Required Structure
 
 Every release note should include these sections in this order:

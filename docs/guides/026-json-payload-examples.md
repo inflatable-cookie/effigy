@@ -2,6 +2,9 @@
 
 This guide provides realistic pretty-printed JSON payload samples for Effigy command contracts.
 
+Use it when you already know JSON mode exists and now need to see what a real
+payload looks like before wiring assertions or integrations.
+
 All examples assume canonical JSON mode:
 
 ```sh
@@ -15,6 +18,26 @@ At runtime, these payloads are returned inside the top-level `effigy.command.v1`
 
 - Primary tags: `CONTRACT`, `RELEASE`
 - Target movement: payload examples remain trustworthy fixtures for schema-aware consumers and release validation.
+
+## Start Here
+
+Use this page in two passes:
+
+- first, confirm the envelope shape in `effigy.command.v1`
+- then jump to the command-specific payload you are integrating against
+
+Common starting points:
+
+- `Tasks` when you need discovery or routing data
+- `Doctor` or `Doctor Explain` when you need health or routing reasoning
+- `Test Plan` and `Test Results` when you are integrating test automation
+- `Scan *` payloads when you need raw repo-health findings instead of doctor
+  normalization
+
+Companion references:
+
+- [`017-json-output-contracts.md`](./017-json-output-contracts.md)
+- [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 
 ## 1) Envelope Example (`effigy.command.v1`)
 
@@ -795,8 +818,23 @@ Failure variant:
 - Field sets can grow with new optional keys while retaining schema compatibility.
 - Use `jq` in CI to assert required fields instead of strict full-document equality.
 
+## Expected Outcome
+
+After this guide, you should be able to:
+
+- find a realistic example close to the payload you need
+- distinguish envelope fields from command-specific payload fields
+- write safer assertions against stable required keys instead of full-document
+  equality
+
 ## Related Guides
 
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+
+## Next Step
+
+After using one of these examples, run the real command with
+`effigy --json <command>` in your target repo and tighten your integration
+around the fields that are actually required for the workflow.
