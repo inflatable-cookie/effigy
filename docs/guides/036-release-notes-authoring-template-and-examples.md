@@ -150,12 +150,12 @@ Release: milestone m1
 
 ## Migration Notes
 - Replace ad-hoc JSON checks with:
-  - `effigy contracts check-json --repo . --full --print-selected=json`
-  - `effigy contracts validate-selection --repo . --artifact ./json-contracts-selected.json`
-- Keep `effigy contracts check-json --repo . --fast --print-selected=json` for local preflight.
+  - `effigy contracts check-json --full --print-selected=json`
+  - `effigy contracts validate-selection --artifact ./json-contracts-selected.json`
+- Keep `effigy contracts check-json --fast --print-selected=json` for local preflight.
 
 ## Validation
-- command: `effigy contracts check-json --repo . --full --print-selected=json`
+- command: `effigy contracts check-json --full --print-selected=json`
   - result: schema-index selection and validation passes
 - command: `cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture`
   - result: invalid payload fixtures rejected, valid fixture accepted
@@ -215,7 +215,7 @@ notes, and compatibility context before publishing the human-reviewed note.
 - If a release note/log documents a workflow path that was correct at that time, keep that historical path as-is.
 - For current operational guidance (outside historical logs), use the active
   workflow paths in `.github/workflows/*.yml`.
-- Validation check `effigy docs check-workflow-paths --repo .` intentionally excludes `docs/logs/` to preserve historical evidence fidelity.
+- Validation check `effigy docs check-workflow-paths` intentionally excludes `docs/logs/` to preserve historical evidence fidelity.
 
 ## Expected Outcome
 

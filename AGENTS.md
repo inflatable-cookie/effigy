@@ -16,9 +16,9 @@ cargo clippy --all-targets -- -D warnings \
 If `effigy` is on PATH, self-hosted QA tasks are available:
 
 ```bash
-effigy test --plan --repo .   # show test plan
-effigy qa --repo .            # full QA (test + docs + json contracts)
-effigy release gates --repo . # release-gate pass for the current repo
+effigy test --plan   # show test plan
+effigy qa            # full QA (test + docs + json contracts)
+effigy release gates # release-gate pass for the current repo
 ```
 
 Otherwise bootstrap with `cargo run --bin effigy -- ...`.
@@ -45,13 +45,13 @@ Key rules:
 - Never re-tag a failed release — fix goes into the next PATCH
 
 Preferred release command path:
-- `effigy release simulate --repo .`
-- `effigy release status --repo . --check-gates`
-- `effigy release prepare --repo . --plan`
-- `effigy release prepare --repo . --yes --check-gates`
-- `effigy release execute --repo . --plan`
-- `effigy release execute --repo . --yes`
-- `effigy release verify-install --repo . --tag v0.__.__`
+- `effigy release simulate`
+- `effigy release status --check-gates`
+- `effigy release prepare --plan`
+- `effigy release prepare --yes --check-gates`
+- `effigy release execute --plan`
+- `effigy release execute --yes`
+- `effigy release verify-install --tag v0.__.__`
 - `effigy changelog extract CHANGELOG.md --version X.Y.Z`
 
 Compatibility backups:

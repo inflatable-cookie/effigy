@@ -17,9 +17,9 @@ Start with the smallest useful automation surface:
 
 ```sh
 effigy --json tasks
-effigy qa:docs --repo .
-effigy qa:json:ci --repo .
-effigy release gates --repo .
+effigy qa:docs
+effigy qa:json:ci
+effigy release gates
 ```
 
 Choose the path by intent:
@@ -27,20 +27,20 @@ Choose the path by intent:
 - need machine-readable command output: use `effigy --json <command>`
 - need docs and contract validation in CI: use `qa:docs`, `qa:json`, or
   `qa:json:ci`
-- need release gating: use `effigy release gates --repo .`
+- need release gating: use `effigy release gates`
 - need wrapper scripts only because an external system still expects them: keep
   them as compatibility boundaries, not as the preferred operator surface
 
 ## 1) What To Automate
 
 Canonical operator entrypoints:
-- `effigy qa --repo .`
-- `effigy qa:docs --repo .`
-- `effigy qa:json --repo .`
-- `effigy qa:json:ci --repo .`
-- `effigy qa:ci --repo .`
-- `effigy release gates --repo .`
-- `effigy-dev <command> --repo .` when validating the current checkout before refreshing the installed binary
+- `effigy qa`
+- `effigy qa:docs`
+- `effigy qa:json`
+- `effigy qa:json:ci`
+- `effigy qa:ci`
+- `effigy release gates`
+- `effigy-dev <command>` when validating the current checkout before refreshing the installed binary
 
 Compatibility fallbacks:
 - `cargo qa`
@@ -72,7 +72,7 @@ Compatibility wrapper scripts (retained for CI/release tooling integration):
 - `./scripts/check-distribution-first-publish.sh`
 
 Boundary note:
-- `cargo qa-release` now maps straight to `effigy release gates --repo .`
+- `cargo qa-release` now maps straight to `effigy release gates`
   rather than a separate helper binary layered on top of the release wrapper
   path
 
@@ -91,20 +91,20 @@ Primary JSON mode entrypoint:
 Before debugging CI, run locally:
 
 ```sh
-effigy qa --repo .
-effigy qa:json:ci --repo .
-effigy release gates --repo .
-effigy release simulate --repo .
-effigy release status --repo . --check-gates
-effigy distribution preflight --repo . --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
+effigy qa
+effigy qa:json:ci
+effigy release gates
+effigy release simulate
+effigy release status --check-gates
+effigy distribution preflight --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
 ./scripts/check-release-install-from-tag.sh --tag v0.__.__
 ./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 # writes ./artifacts/distribution-v0.__.__/distribution-summary.env
-effigy distribution validate-metadata --repo . --tag v0.__.__
-effigy distribution validate-artifacts --repo . --artifacts-dir ./artifacts/distribution-v0.__.__
-effigy distribution generate-closeout --repo . --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
+effigy distribution validate-metadata --tag v0.__.__
+effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-v0.__.__
+effigy distribution generate-closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture
-effigy qa:docs --repo .
+effigy qa:docs
 ```
 
 For release debugging, use the built-in release commands first and reserve
@@ -153,11 +153,11 @@ jobs:
       - name: Validate JSON contracts
         run: |
           set -o pipefail
-          cargo run --bin effigy -- contracts check-json --repo . --full --print-selected=json | tee json-contracts.log
+          cargo run --bin effigy -- contracts check-json --full --print-selected=json | tee json-contracts.log
           grep -m1 '^{"selected":' json-contracts.log > json-contracts-selected.json
 
       - name: Validate selection artifact contract
-        run: cargo run --bin effigy -- contracts validate-selection --repo . --artifact ./json-contracts-selected.json
+        run: cargo run --bin effigy -- contracts validate-selection --artifact ./json-contracts-selected.json
 
       - name: Validator smoke check
         run: cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture
@@ -184,7 +184,7 @@ When you want explicit nightly full coverage:
 
 ```yaml
 - name: Nightly full JSON contract sweep
-  run: cargo run --bin effigy -- contracts check-json --repo . --full --print-selected=json | tee json-contracts-nightly.log
+  run: cargo run --bin effigy -- contracts check-json --full --print-selected=json | tee json-contracts-nightly.log
 ```
 
 Optional artifact upload:
@@ -256,7 +256,7 @@ If a workflow produces a `selected` payload, gate it with the validator:
 
 ```yaml
 - name: Validate selection artifact contract
-  run: cargo run --bin effigy -- contracts validate-selection --repo . --artifact ./json-contracts-selected.json
+  run: cargo run --bin effigy -- contracts validate-selection --artifact ./json-contracts-selected.json
 ```
 
 This checks:
@@ -272,7 +272,7 @@ This checks:
 Run locally:
 
 ```sh
-cargo run --bin effigy -- contracts check-json --repo . --full --print-selected=json
+cargo run --bin effigy -- contracts check-json --full --print-selected=json
 ```
 
 Then inspect selection payload in log:
@@ -286,7 +286,7 @@ grep -m1 '^{"selected":' json-contracts.log | jq .
 Run validator directly:
 
 ```sh
-cargo run --bin effigy -- contracts validate-selection --repo . --artifact ./json-contracts-selected.json
+cargo run --bin effigy -- contracts validate-selection --artifact ./json-contracts-selected.json
 ```
 
 Then run smoke validator:
@@ -334,7 +334,7 @@ Canonical checklist and troubleshooting live in [`029-docs-qa-checklist-and-vali
 Use this fast path before pushing changes that touch command behavior, JSON schemas, or docs contracts:
 
 ```sh
-effigy prepush:ci --repo .
+effigy prepush:ci
 ```
 
 ## 11) Recipe: Tag-Driven Release Gates
@@ -356,10 +356,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo run --bin effigy -- release gates --repo .
+      - run: cargo run --bin effigy -- release gates
 ```
 
-What `effigy release gates --repo .` enforces:
+What `effigy release gates` enforces:
 - `cargo fmt --check`
 - full `cargo test`
 - docs + JSON quality gates (`qa:ci`)

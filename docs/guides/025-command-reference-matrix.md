@@ -230,9 +230,9 @@ effigy --json scan generated-in-src
 effigy --json scan attention-markers
 effigy --json scan stale-suppressions
 effigy --json test --plan
-effigy release simulate --repo .
-effigy release prepare --repo . --plan
-effigy release execute --repo . --plan
+effigy release simulate
+effigy release prepare --plan
+effigy release execute --plan
 effigy --json release status --check-gates
 ```
 

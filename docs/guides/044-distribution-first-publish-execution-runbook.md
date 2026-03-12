@@ -17,7 +17,7 @@ Required inputs:
 Recommended preflight before opening publish window:
 
 ```bash
-effigy distribution preflight --repo . --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env
+effigy distribution preflight --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env
 ```
 
 Keep `./scripts/check-distribution-first-publish.sh` as the side-effecting
@@ -36,9 +36,9 @@ Optional one-command execution helper:
 
 ```bash
 ./scripts/check-distribution-first-publish.sh --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
-effigy distribution generate-closeout --repo . --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
+effigy distribution generate-closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
 # use --expect-homebrew when Homebrew checks are expected in this release window
-# effigy distribution generate-closeout --repo . --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z --expect-homebrew
+# effigy distribution generate-closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z --expect-homebrew
 ```
 
 The helper is intentionally the remaining side-effecting wrapper. It delegates

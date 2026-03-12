@@ -46,6 +46,8 @@ For procedural docs:
 - commands must be runnable from repo root unless explicitly stated
 - show canonical JSON mode as `effigy --json <command>`
 - for non-destructive guidance, prefer plan/dry-run flags first (`--plan`, `--dry-run`)
+- omit `--repo` in examples unless the command is intentionally targeting a
+  different repo than the current working tree
 
 Example:
 
@@ -80,8 +82,8 @@ Cross-linking:
 Validation:
 
 ```sh
-effigy docs check-links --repo .
-effigy qa:docs --repo .
+effigy docs check-links
+effigy qa:docs
 ```
 
 ## 6) Terminology Canon

@@ -49,10 +49,11 @@ alias = "app"
 [tasks]
 fmt = "cargo fmt --all"
 lint = "cargo clippy --all-targets --all-features -- -D warnings"
-test = "cargo test"
+check = [{ task = "fmt" }, { task = "lint" }]
 ```
 
-Use when you want one local catalog with explicit command ownership.
+Use when you want one local catalog with explicit command ownership while
+leaving `effigy test` available as the built-in test entrypoint.
 
 ## 2) Compact Tasks + Task Chain
 
@@ -84,7 +85,7 @@ Use full task tables when you need settings (`fail_on_non_zero`, `env`, `mode`, 
 run = [
   { id = "lint", run = "bun run lint", retry = 1, retry_delay_ms = 200 },
   { id = "unit", task = "test vitest", depends_on = ["lint"], timeout_ms = 180000 },
-  { id = "contract", run = "cargo run --bin effigy -- contracts check-json --repo . --fast --print-selected", depends_on = ["lint"] },
+  { id = "contract", run = "cargo run --bin effigy -- contracts check-json --fast --print-selected", depends_on = ["lint"] },
   { id = "report", run = "printf validate-ok", depends_on = ["unit", "contract"], fail_fast = false }
 ]
 ```

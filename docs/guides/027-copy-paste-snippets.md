@@ -34,15 +34,17 @@ alias = "app"
 [tasks]
 fmt = "cargo fmt --all"
 lint = "cargo clippy --all-targets --all-features -- -D warnings"
-test = "cargo test"
-check = [{ task = "fmt" }, { task = "lint" }, { task = "test" }]
+check = [{ task = "fmt" }, { task = "lint" }]
 ```
 
 Run:
 
 ```sh
 effigy check
+effigy test --plan
 ```
+
+This starter deliberately leaves `test` to the built-in runner.
 
 ## 2) JS App (`effigy.toml`)
 
@@ -56,17 +58,20 @@ js = "bun"
 [tasks]
 dev = "bun run dev"
 lint = "bun run lint"
-test = "bun x vitest run"
 build = "bun run build"
-validate = [{ task = "lint" }, { task = "test" }, { task = "build" }]
+validate = [{ task = "lint" }, { task = "build" }]
 ```
 
 Run:
 
 ```sh
 effigy validate
+effigy test --plan
 effigy watch --owner effigy --once test
 ```
+
+This starter also leaves `test` on the built-in path so package-manager
+autodetection stays available.
 
 ## 3) Mixed Monorepo Root + Child Catalogs
 

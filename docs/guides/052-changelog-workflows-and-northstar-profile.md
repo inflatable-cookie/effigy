@@ -210,8 +210,8 @@ When preparing a release:
 ```bash
 effigy changelog validate CHANGELOG.md
 effigy changelog analyze CHANGELOG.md
-effigy release status --repo . --check-gates
-effigy release prepare --repo . --plan
+effigy release status --check-gates
+effigy release prepare --plan
 ```
 
 When drafting release notes after a tag is cut:

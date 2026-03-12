@@ -148,7 +148,7 @@ Example:
 
 - child catalog owns `catalog_a/db:reset`
 - no other catalog defines `db:reset`
-- from workspace root, `effigy db:reset --repo .` resolves to `catalog_a/db:reset`
+- from workspace root, `effigy db:reset` resolves to `catalog_a/db:reset`
 
 Recommended policy:
 

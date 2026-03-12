@@ -5,7 +5,7 @@ Use this guide when updating `docs/scripts/fixtures/vision-next-task/actionable-
 ## 1) Purpose
 
 The allowlist controls which lead verbs are accepted by:
-- `effigy docs check-next-action --repo . --policy vision`
+- `effigy docs check-next-action --policy vision`
 - targeted Rust CLI tests covering missing-heading and non-actionable cases
 
 Changes to this file directly affect docs QA behavior for `docs/vision/*` artifacts.
@@ -43,10 +43,10 @@ Unacceptable lead phrases:
 4. Run validation:
 
 ```sh
-effigy docs check-next-action --repo . --policy vision
-effigy qa:docs:vision --repo .
+effigy docs check-next-action --policy vision
+effigy qa:docs:vision
 cargo test --test cli_output_tests cli_docs_check_next_action_json_ -- --nocapture
-effigy qa:docs --repo .
+effigy qa:docs
 ```
 
 5. In your PR notes, include:
@@ -60,7 +60,7 @@ effigy qa:docs --repo .
 - [ ] No vague/passive intent introduced.
 - [ ] Regression fixtures still pass.
 - [ ] Existing vision artifacts still pass.
-- [ ] Docs QA (`effigy qa:docs --repo .`) remains green.
+- [ ] Docs QA (`effigy qa:docs`) remains green.
 
 ## Expected Outcome
 

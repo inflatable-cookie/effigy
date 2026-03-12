@@ -76,7 +76,7 @@ Policy:
   "scripts": {
     "effigy": "cargo run --manifest-path ../effigy/Cargo.toml --bin effigy --",
     "tasks:list": "bun effigy tasks",
-    "doctor": "bun effigy doctor --repo ."
+    "doctor": "bun effigy doctor"
   }
 }
 ```
@@ -87,7 +87,7 @@ Policy:
 {
   "scripts": {
     "tasks:list": "effigy tasks",
-    "doctor": "effigy doctor --repo ."
+    "doctor": "effigy doctor"
   }
 }
 ```

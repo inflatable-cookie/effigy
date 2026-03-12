@@ -48,8 +48,8 @@ alias = "app"
 
 [tasks]
 dev = "bun run dev"
-test = "bun x vitest run"
 "db:reset" = "./scripts/reset-db.sh"
+build = "bun run build"
 ```
 
 Run it with:
@@ -58,6 +58,7 @@ Run it with:
 effigy tasks
 effigy dev
 effigy app/db:reset
+effigy test --plan
 ```
 
 This is the baseline mental model:
@@ -65,6 +66,8 @@ This is the baseline mental model:
 - define tasks in `effigy.toml`
 - let Effigy discover nearby catalogs
 - run tasks by intent instead of by directory or package manager
+- leave `test` to the built-in runner unless you intentionally want explicit
+  `tasks.test` behavior
 
 For more patterns, use
 [`022-manifest-cookbook.md`](./022-manifest-cookbook.md).

@@ -36,13 +36,13 @@ Release: vX.Y.Z
 - Remaining gap: `...` or `None`
 
 ## Built-In Release Path
-- `effigy release simulate --repo .`
+- `effigy release simulate`
   - result: ...
-- `effigy release status --repo . --check-gates`
+- `effigy release status --check-gates`
   - result: ...
-- `effigy release prepare --repo . --yes --check-gates`
+- `effigy release prepare --yes --check-gates`
   - result: ...
-- `effigy release execute --repo . --yes`
+- `effigy release execute --yes`
   - result: ...
 
 ## Hosted Workflow Results
@@ -58,13 +58,13 @@ Release: vX.Y.Z
 
 ## Distribution Evidence
 - artifacts directory: `./artifacts/distribution-vX.Y.Z`
-- `effigy release verify-install --repo . --tag vX.Y.Z`
+- `effigy release verify-install --tag vX.Y.Z`
   - result: ...
 - `./scripts/check-distribution-first-publish.sh --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
   - result: ...
-- `effigy distribution validate-artifacts --repo . --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+- `effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-vX.Y.Z`
   - result: ...
-- `effigy distribution generate-closeout --repo . --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+- `effigy distribution generate-closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
   - result: ...
 
 ## Release Notes
