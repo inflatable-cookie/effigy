@@ -11,11 +11,11 @@ rehearsal and a hosted GitHub rehearsal.
 Validated command path:
 
 ```text
-effigy release simulate --repo ...
-effigy release status --repo ...
-effigy release prepare --repo ... --yes --check-gates
-effigy release execute --repo ... --plan
-effigy release execute --repo ... --yes
+effigy release simulate..
+effigy release status..
+effigy release prepare.. --yes --check-gates
+effigy release execute.. --plan
+effigy release execute.. --yes
 ```
 
 Validated release variants:

@@ -26,11 +26,11 @@ Related roadmap: 002-deferral-fallback-system
   - result: exit 1, expected error: no `effigy.toml` catalogs found.
 - command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- version --repo /Users/betterthanclay/Dev/legacy/sites/r7-playground`
   - result: exit 0, implicit fallback executed legacy global effigy (`Effigy : v0.10.11`).
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- repo-pulse --repo /Users/betterthanclay/Dev/projects/acowtancy`
+- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- repo-pulse`
   - result: exit 0, pulse report rendered, root markers include `package.json, .git`.
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- tasks --repo /Users/betterthanclay/Dev/projects/acowtancy`
+- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- tasks`
   - result: exit 0, catalogs and tasks rendered (acowtancy/cream/dairy/farmyard).
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- version --repo /Users/betterthanclay/Dev/projects/acowtancy`
+- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- version`
   - result: exit 1, expected unresolved-task error, no deferral engaged.
 
 ## Risks / Follow-ups

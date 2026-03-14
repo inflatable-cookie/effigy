@@ -18,9 +18,9 @@ All commands executed from:
 `/Users/betterthanclay/Dev/projects/effigy`
 
 ```bash
-cargo run --quiet --bin effigy -- catalogs --repo /Users/betterthanclay/Dev/projects/acowtancy --resolve farmyard/api
-cargo run --quiet --bin effigy -- catalogs --repo /Users/betterthanclay/Dev/projects/acowtancy --json --resolve farmyard/api
-cargo run --quiet --bin effigy -- catalogs --repo /Users/betterthanclay/Dev/projects/acowtancy --json --pretty false --resolve farmyard/api
+cargo run --quiet --bin effigy -- catalogs --resolve farmyard/api
+cargo run --quiet --bin effigy -- catalogs --json --resolve farmyard/api
+cargo run --quiet --bin effigy -- catalogs --json --pretty false --resolve farmyard/api
 ```
 
 Note: Effigy currently renders the standard CLI header preamble before command output in all modes, including JSON.

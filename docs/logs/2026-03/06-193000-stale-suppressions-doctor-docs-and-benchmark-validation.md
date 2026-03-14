@@ -17,7 +17,7 @@ Batch: stale-suppressions-closeout
 - Closed roadmap `g01.019` and updated roadmap indexes.
 
 ## Benchmark
-- Command: `./target/debug/effigy scan stale-suppressions --repo /Users/betterthanclay/Dev/projects/acowtancy`
+- Command: `./target/debug/effigy scan stale-suppressions`
 - Result: `scanned-files: 1905`, `matched-lines: 69`, `findings: 69`
 - Severity counts: `critical=0`, `high=64`, `warning=5`
 - Runtime: about `3.9s`

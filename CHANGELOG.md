@@ -143,11 +143,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `effigy docs check-contains` validators, so repo policy stays in the
   manifest/task graph instead of a dedicated bash entrypoint
 - Remove the redundant `effigy-release-qa` helper binary and point
-  `cargo qa-release` directly at `effigy release gates --repo .`, reducing one
+  `cargo qa-release` directly at `effigy release gates`, reducing one
   more compatibility layer without changing the operator-facing release gate
   path
 - Stop advertising the broken `qa:release` task alias and lead with
-  `effigy release gates --repo .` plus `cargo qa-release`, because
+  `effigy release gates` plus `cargo qa-release`, because
   manifest-task wrapping around release gates still self-nests under the
   workspace lock when release gates invoke nested Effigy commands
 - Classify the remaining top-level release/bootstrap scripts into durable

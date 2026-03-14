@@ -27,11 +27,11 @@ Related roadmap: 009 - Doctor Health Consolidation
   - result: pass (`37` tests).
 - command: `./scripts/check-json-contracts.sh --full`
   - result: pass (all selected schemas validated, including `effigy.doctor.v1`, raw and envelope modes).
-- command: `cargo run --quiet --bin effigy -- doctor --repo .`
+- command: `cargo run --quiet --bin effigy -- doctor`
   - result: exit `0`; doctor report rendered with root-resolution info + remediation findings.
 - command: `cargo run --quiet --bin effigy -- doctor --fix --repo /private/tmp/effigy-doctor-fix-smoke-9wA6wK`
   - result: exit `0`; `manifest.health_task_scaffold` applied and reported; `tasks.health` scaffold written.
-- command: `cargo run --quiet --bin effigy -- repo-pulse --repo .`
+- command: `cargo run --quiet --bin effigy -- repo-pulse`
   - result: exit `1`; explicit migration guidance rendered: use `effigy doctor` or define `tasks.health`.
 
 ## Risks / Follow-ups
