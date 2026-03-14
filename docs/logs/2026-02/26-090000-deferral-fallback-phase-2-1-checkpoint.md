@@ -24,7 +24,7 @@ Related roadmap: 002 - Deferral Fallback System
 ## Validation
 - command: `cargo test`
   - result: pass, includes new deferral tests.
-- command: `cargo run --bin effigy -- repo-pulse --repo /Users/betterthanclay/Dev/projects/acowtancy`
+- command: `cargo run --bin effigy -- repo-pulse`
   - result: pass.
 
 ## Risks / Follow-ups

@@ -21,7 +21,7 @@ Catalog discovery only descended into entries where `file_type.is_dir()` was tru
 
 ## Validation Matrix
 
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- tasks --repo /Users/betterthanclay/Dev/projects/acowtancy`
+- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- tasks`
   - result (before fix): catalog list excluded `underlay` (6 catalogs total).
 
 - command: `cargo test discover_catalogs_includes_symlinked_catalog_directories -- --nocapture`
@@ -32,10 +32,10 @@ Catalog discovery only descended into entries where `file_type.is_dir()` was tru
   - cwd: `/Users/betterthanclay/Dev/projects/effigy`
   - result: pass; combined symlink discovery tests executed (`discover_catalogs_includes_symlinked_catalog_directories`, `discover_catalogs_reports_alias_conflict_for_symlinked_catalog`).
 
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- tasks --repo /Users/betterthanclay/Dev/projects/acowtancy --task underlay/check:types`
+- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- tasks --task underlay/check:types`
   - result (after fix): pass; `underlay/check:types` discovered from `/Users/betterthanclay/Dev/projects/acowtancy/underlay/effigy.toml`.
 
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- underlay/check:types --repo /Users/betterthanclay/Dev/projects/acowtancy --pretty false`
+- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- underlay/check:types --pretty false`
   - result (after fix): pass; explicit `underlay/...` prefix resolves and executes.
 
 ## Risks / Follow-ups

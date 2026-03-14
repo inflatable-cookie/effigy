@@ -34,7 +34,7 @@ Batch: 18.3-18.4
   - result: passed
 - command: `bash docs/scripts/check-vision-metadata.sh`
   - result: passed
-- command: `command time -p ./target-codex-generated-in-src/debug/effigy scan generated-in-src --repo /Users/betterthanclay/Dev/projects/acowtancy`
+- command: `command time -p ./target-codex-generated-in-src/debug/effigy scan generated-in-src`
   - result: `scanned-files=1716`, `candidate-files=4`, `findings=4`, `real=2.06s`
 
 ## Risks

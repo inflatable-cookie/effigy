@@ -21,12 +21,12 @@ All commands executed from:
 `/Users/betterthanclay/Dev/projects/effigy`
 
 ```bash
-cargo run --quiet --bin effigy -- --json tasks --repo /Users/betterthanclay/Dev/projects/acowtancy
-cargo run --quiet --bin effigy -- --json tasks --repo /Users/betterthanclay/Dev/projects/acowtancy --task test
-cargo run --quiet --bin effigy -- --json repo-pulse --repo /Users/betterthanclay/Dev/projects/effigy
-cargo run --quiet --bin effigy -- --json catalogs --repo /Users/betterthanclay/Dev/projects/acowtancy --resolve farmyard/api
-cargo run --quiet --bin effigy -- --json test --plan --repo /Users/betterthanclay/Dev/projects/effigy
-cargo run --quiet --bin effigy -- --json test --repo /Users/betterthanclay/Dev/projects/effigy
+cargo run --quiet --bin effigy -- --json tasks
+cargo run --quiet --bin effigy -- --json tasks --task test
+cargo run --quiet --bin effigy -- --json repo-pulse
+cargo run --quiet --bin effigy -- --json catalogs --resolve farmyard/api
+cargo run --quiet --bin effigy -- --json test --plan
+cargo run --quiet --bin effigy -- --json test
 ```
 
 ## Contract Identity Checks

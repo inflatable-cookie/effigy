@@ -40,7 +40,7 @@ Batch: duplicate-blocks-docs-and-benchmark-validation
   - result: passed
 - command: `bash docs/scripts/check-vision-metadata.sh`
   - result: passed
-- command: `target-codex-dup2/debug/effigy scan duplicate-blocks --repo /Users/betterthanclay/Dev/projects/acowtancy`
+- command: `target-codex-dup2/debug/effigy scan duplicate-blocks`
   - result: completed in `16.85s` with `scanned-files=1905`, `candidate-blocks=207604`, `findings=95`
 
 ## Risks

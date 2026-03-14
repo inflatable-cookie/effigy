@@ -47,8 +47,8 @@ produced the earlier Node 20 warnings during hosted validation.
 Ran built-in release flow from the same validated branch:
 
 ```text
-effigy release prepare --repo ... --yes --check-gates --version 0.2.7
-effigy release execute --repo ... --yes
+effigy release prepare.. --yes --check-gates --version 0.2.7
+effigy release execute.. --yes
 ```
 
 Results:

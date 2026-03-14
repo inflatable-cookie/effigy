@@ -950,7 +950,7 @@ fn cli_docs_check_paths_json_reports_missing_path() {
 #[test]
 fn cli_docs_check_forbidden_json_reports_forbidden_text() {
     let root = temp_workspace("docs-check-forbidden");
-    fs::write(root.join("AGENTS.md"), "Run `effigy tasks --repo .`\n").expect("write agents");
+    fs::write(root.join("AGENTS.md"), "Run `effigy tasks`\n").expect("write agents");
 
     let output = run_json_cli_command(
         &root,

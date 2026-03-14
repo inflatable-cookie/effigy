@@ -37,7 +37,7 @@ Batch: comment-ratio-docs-and-benchmark-validation
   - result: passed
 - command: `CARGO_TARGET_DIR=target-codex-comment cargo test cli_json_mode_scan_comment_ratio_ --test cli_output_tests`
   - result: passed
-- command: `command time -p target-codex-comment/debug/effigy scan comment-ratio --repo /Users/betterthanclay/Dev/projects/acowtancy`
+- command: `command time -p target-codex-comment/debug/effigy scan comment-ratio`
   - result: `scanned-files=1905`, `candidate-files=1472`, `findings=15`, `real=2.41s`
 - command: `bash docs/scripts/check-vision-metadata.sh`
   - result: passed
