@@ -329,7 +329,7 @@ effigy unlock --all
 Fix:
 
 ```sh
-effigy unlock workspace
+effigy unlock shared:<name>
 effigy unlock task:<name>
 effigy unlock profile:<task>/<profile>
 ```

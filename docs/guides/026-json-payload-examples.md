@@ -114,7 +114,6 @@ Companion references:
       "selected catalog via explicit prefix `api`"
     ],
     "lock_scopes": [
-      "workspace",
       "task:build"
     ]
   }

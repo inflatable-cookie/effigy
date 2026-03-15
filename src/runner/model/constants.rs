@@ -33,7 +33,7 @@ pub(in crate::runner) const BUILTIN_TASKS: [(&str, &str); 12] = [
     ),
     (
         "unlock",
-        "Manually clear lock scopes (`workspace`, `task:*`, `profile:*/*`)",
+        "Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`)",
     ),
     (
         "cache",

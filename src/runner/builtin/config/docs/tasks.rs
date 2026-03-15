@@ -9,6 +9,8 @@ const SECTION_TASKS_CANONICAL_PREFIX: &[&str] = &[
     "[tasks.dev]",
     "# Managed dev task configuration.",
     "mode = \"tui\"",
+    "# Optional shared lock name when multiple tasks should serialize together.",
+    "lock = \"dev-stack\"",
     "fail_on_non_zero = true",
     "# Concurrent launch plan with explicit start and tab ordering.",
     "concurrent = [",

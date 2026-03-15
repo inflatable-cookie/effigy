@@ -141,6 +141,8 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
 - `tasks --pretty false` is valid only with `--json`.
 - `watch --json` requires bounded mode (`--once` or `--max-runs`).
 - `watch --owner` is required; `external` owner blocks nested watch loops.
+- task execution locks on `task:<name>` by default; use `tasks.<name>.lock = "<shared-name>"` to opt multiple tasks into the same `shared:<name>` scope.
+- managed `mode = "tui"` tasks also acquire `profile:<task>/<profile>` in addition to the task or shared scope.
 - `scan god-files` accepts either `--json` or `--markdown`, not both.
 - `scan god-files --out <PATH>` resolves relative paths from the scanned repo root.
 - `scan god-files` hides warning rows in terminal text output unless `--show-warnings` is set.

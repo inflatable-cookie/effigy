@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(in crate::runner) enum LockScope {
     Workspace,
+    Shared(String),
     Task(String),
     Profile { task: String, profile: String },
 }
@@ -10,6 +11,13 @@ impl LockScope {
         let raw = value.trim();
         if raw == "workspace" {
             return Some(Self::Workspace);
+        }
+        if let Some(name) = raw.strip_prefix("shared:") {
+            let name = name.trim();
+            if !name.is_empty() {
+                return Some(Self::Shared(name.to_owned()));
+            }
+            return None;
         }
         if let Some(task) = raw.strip_prefix("task:") {
             let task = task.trim();
@@ -37,6 +45,7 @@ impl LockScope {
     pub(in crate::runner) fn label(&self) -> String {
         match self {
             Self::Workspace => "workspace".to_owned(),
+            Self::Shared(name) => format!("shared:{name}"),
             Self::Task(task) => format!("task:{task}"),
             Self::Profile { task, profile } => format!("profile:{task}/{profile}"),
         }

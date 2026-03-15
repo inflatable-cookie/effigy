@@ -2,11 +2,15 @@ use std::collections::BTreeMap;
 
 use indexmap::IndexMap;
 
+use crate::runner::locking::model::LockScope;
+
 #[derive(Debug, serde::Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub(in crate::runner) struct ManifestTask {
     #[serde(default)]
     pub(in crate::runner) run: Option<ManifestManagedRun>,
+    #[serde(default)]
+    pub(in crate::runner) lock: Option<String>,
     #[serde(default)]
     pub(in crate::runner) env: BTreeMap<String, String>,
     #[serde(default)]
@@ -128,6 +132,15 @@ impl ManifestManagedProfile {
             None
         } else {
             Some(self.concurrent.as_slice())
+        }
+    }
+}
+
+impl ManifestTask {
+    pub(in crate::runner) fn lock_scope(&self, task_name: &str) -> LockScope {
+        match self.lock.as_deref().map(str::trim) {
+            Some(name) if !name.is_empty() => LockScope::Shared(name.to_owned()),
+            _ => LockScope::Task(task_name.to_owned()),
         }
     }
 }
