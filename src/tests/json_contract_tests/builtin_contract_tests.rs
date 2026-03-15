@@ -73,13 +73,13 @@ fn builtin_migrate_json_contract_has_versioned_shape() {
 fn builtin_unlock_json_contract_has_versioned_shape() {
     let root = temp_workspace("unlock-json-contract");
     fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
-    fs::write(root.join(".effigy/locks/workspace.lock"), "{}").expect("write workspace lock");
+    fs::write(root.join(".effigy/locks/shared-dev-stack.lock"), "{}").expect("write shared lock");
 
     let repo_arg = root.display().to_string();
     let parsed = run_invocation_json(
         root,
         "unlock",
-        &["--repo", &repo_arg, "--json", "workspace"],
+        &["--repo", &repo_arg, "--json", "shared:dev-stack"],
     );
     assert_schema_v1(&parsed, "effigy.unlock.v1");
     assert_eq!(parsed["ok"], true);

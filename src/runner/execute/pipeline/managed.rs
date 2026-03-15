@@ -23,17 +23,14 @@ pub(super) fn run_managed_task(
     };
 
     let repo_for_task = selection.catalog.catalog_root.clone();
-    let _lock_guards = acquire_scopes(
-        &preflight.resolved.resolved_root,
-        &[
-            LockScope::Workspace,
-            LockScope::Task(preflight.selector.task_name.clone()),
-            LockScope::Profile {
-                task: preflight.selector.task_name.clone(),
-                profile: plan.profile.clone(),
-            },
-        ],
-    )?;
+    let mut lock_scopes = vec![selection.task.lock_scope(&preflight.selector.task_name)];
+    if selection.task.mode.as_deref() == Some("tui") {
+        lock_scopes.push(LockScope::Profile {
+            task: preflight.selector.task_name.clone(),
+            profile: plan.profile.clone(),
+        });
+    }
+    let _lock_guards = acquire_scopes(&preflight.resolved.resolved_root, &lock_scopes)?;
 
     run_or_render_managed_task(
         &preflight.selector.task_name,

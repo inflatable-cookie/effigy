@@ -47,8 +47,8 @@ Policy keys:
 ## 3) Lock Scopes
 
 Runtime locks are file-based under `.effigy/locks`:
-- `workspace`
-- `task:<name>`
+- `task:<name>` by default
+- `shared:<name>` when a task opts into a shared lock name
 - `profile:<task>/<profile>` (managed `mode = "tui"` runs)
 
 On lock conflict, Effigy reports:
@@ -65,8 +65,8 @@ Stale locks are auto-reclaimed when the holder PID is no longer alive.
 Use the built-in unlock command:
 
 ```sh
-effigy unlock workspace
-effigy unlock task:dev profile:dev/admin
+effigy unlock task:dev
+effigy unlock shared:dev-stack task:dev profile:dev/admin
 effigy unlock --all
 effigy unlock --all --json
 ```

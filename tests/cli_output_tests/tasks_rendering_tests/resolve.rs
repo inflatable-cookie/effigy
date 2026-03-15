@@ -15,7 +15,7 @@ Resolution: cattle-grid/build
 status: ok
 catalog: cattle-grid
 task: build
-lock_scopes: workspace, task:build
+lock_scopes: task:build
 evidence:
 - selected catalog via explicit prefix `cattle-grid`
 
@@ -48,7 +48,7 @@ Resolution: dev front
 status: ok
 catalog: root
 task: dev
-lock_scopes: workspace, task:dev, profile:dev/front
+lock_scopes: task:dev, profile:dev/front
 evidence:
 - selected shallowest catalog `root` by depth 0 from workspace root
 - managed profile `front` resolved via invocation `dev front`
@@ -85,7 +85,7 @@ Resolution: dev missing-profile
 status: error
 catalog: <none>
 task: dev
-lock_scopes: workspace, task:dev, profile:dev/missing-profile
+lock_scopes: task:dev, profile:dev/missing-profile
 • warn: managed profile `missing-profile` not found for task `dev`; available: default, front
 
 ";
@@ -95,4 +95,31 @@ lock_scopes: workspace, task:dev, profile:dev/missing-profile
     );
     assert!(!stdout.contains("\nCatalogs\n"));
     assert!(!stdout.contains("\nTasks\n"));
+}
+
+#[test]
+fn cli_tasks_resolve_shared_lock_name_is_concise() {
+    let root = temp_workspace("cli-text-fixture-tail-resolve-shared-lock");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"[tasks.api]
+run = "printf api"
+lock = "backend"
+"#,
+    )
+    .expect("write manifest");
+
+    let stdout = run_effigy(&["tasks", "--resolve", "api"], Some(&root), false);
+    let expected = "\
+Resolution: api
+───────────────
+status: ok
+catalog: root
+task: api
+lock_scopes: shared:backend
+evidence:
+- selected shallowest catalog `root` by depth 0 from workspace root
+
+";
+    assert_eq!(extract_tail(&stdout, "\nResolution: api\n"), expected);
 }

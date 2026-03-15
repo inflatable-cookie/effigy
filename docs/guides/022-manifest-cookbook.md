@@ -135,6 +135,7 @@ Behavior:
 ```toml
 [tasks.dev]
 mode = "tui"
+lock = "dev-stack"
 fail_on_non_zero = true
 
 concurrent = [
@@ -152,6 +153,12 @@ concurrent = [
 ```
 
 Use for multi-process local development with profile-specific variants.
+
+Lock behavior:
+- tasks lock on `task:<name>` by default, so unrelated tasks can run concurrently in the same repo
+- set `tasks.<name>.lock = "<shared-name>"` when multiple tasks should serialize together
+- managed TUI tasks still add `profile:<task>/<profile>` so profile-specific runs stay isolated
+- recover specific collisions with `effigy unlock task:<name>`, `effigy unlock shared:<name>`, or `effigy unlock profile:<task>/<profile>`
 
 ## 6) Built-in Test Fanout and Suite Source of Truth
 

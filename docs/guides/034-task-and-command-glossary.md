@@ -140,13 +140,14 @@ Definition:
 - Runtime lock key used to avoid conflicting executions.
 
 Common scopes:
-- `workspace`
-- `task:<name>`
+- `task:<name>` by default
+- `shared:<name>` for explicit cross-task serialization
 - `profile:<task>/<profile>`
 
 Recovery command:
 
 ```sh
+effigy unlock shared:dev-stack
 effigy unlock task:watch:test
 ```
 

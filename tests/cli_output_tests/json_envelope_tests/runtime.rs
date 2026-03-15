@@ -80,11 +80,11 @@ fn cli_json_mode_lock_conflict_wraps_runner_failure() {
             .expect("run holding command")
     });
 
-    let workspace_lock = root.join(".effigy/locks/workspace.lock");
+    let workspace_lock = root.join(".effigy/locks/task-dev.lock");
     wait_for_path_exists(
         &workspace_lock,
         Duration::from_secs(5),
-        "workspace lock for task=dev",
+        "task lock for task=dev",
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))

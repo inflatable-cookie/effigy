@@ -10,6 +10,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Refresh Effigy's own install and `setup-effigy` examples to `0.2.7` after the
   patch release, while leaving consumer repos alone because no active CI/docs
   pins below `0.2.7` were found in the rollout audit
+- Change default task locking from workspace-wide to per-task scopes, and add
+  per-task shared lock names via `tasks.<name>.lock = "<shared-name>"` for the
+  cases that still need explicit cross-task serialization
 
 ### Fixed
 - Keep `effigy doctor` aligned with the live manifest surface by accepting

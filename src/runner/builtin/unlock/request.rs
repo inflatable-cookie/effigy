@@ -29,7 +29,7 @@ pub(super) fn parse_unlock_request(
         parser.unknown_if_flag_or(arg, |value| {
             let Some(scope) = LockScope::parse(value) else {
                 return Err(RunnerError::task_invocation(format!(
-                    "`{}` unlock target `{value}` is invalid; expected `workspace`, `task:<name>`, or `profile:<task>/<profile>`",
+                    "`{}` unlock target `{value}` is invalid; expected `workspace`, `shared:<name>`, `task:<name>`, or `profile:<task>/<profile>`",
                     task.name
                 )));
             };

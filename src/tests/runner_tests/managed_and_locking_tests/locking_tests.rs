@@ -1,7 +1,8 @@
 use super::prelude::{
     assert_live_dev_lock_conflict, assert_output_equals, assert_unlock_invocation_error_case_table,
-    assert_unlock_success_case_table, lock_test, run_dev, temp_workspace, write_lock_files,
-    write_root_manifest, ManagedUnlockInvocationErrorCase, ManagedUnlockSuccessCase,
+    assert_unlock_success_case_table, lock_test, run_dev, run_task_with_repo, temp_workspace,
+    thread, write_lock_files, write_root_manifest, Duration, ManagedUnlockInvocationErrorCase,
+    ManagedUnlockSuccessCase,
 };
 
 #[test]
@@ -15,7 +16,7 @@ run = "sleep 1"
 "#,
     );
 
-    assert_live_dev_lock_conflict(&root, 120, "workspace", "effigy unlock workspace");
+    assert_live_dev_lock_conflict(&root, 120, "task:dev", "effigy unlock task:dev");
 }
 
 #[test]
@@ -32,8 +33,8 @@ run = "printf ok"
     write_lock_files(
         &root,
         &[(
-            "workspace.lock",
-            r#"{"scope":"workspace","pid":999999,"started_at_epoch_ms":0}"#,
+            "task-dev.lock",
+            r#"{"scope":"task:dev","pid":999999,"started_at_epoch_ms":0}"#,
         )],
     );
 
@@ -56,9 +57,9 @@ run = "printf ok"
     write_lock_files(
         &root,
         &[(
-            "workspace.lock",
+            "task-dev.lock",
             &format!(
-                r#"{{"scope":"workspace","pid":{},"started_at_epoch_ms":0,"heartbeat_at_epoch_ms":0,"hostname":"test-host","workspace_root":"{}"}}"#,
+                r#"{{"scope":"task:dev","pid":{},"started_at_epoch_ms":0,"heartbeat_at_epoch_ms":0,"hostname":"test-host","workspace_root":"{}"}}"#,
                 std::process::id(),
                 root.display()
             ),
@@ -81,7 +82,7 @@ run = "printf ok"
 "#,
     );
 
-    write_lock_files(&root, &[("workspace.lock", "{invalid-json")]);
+    write_lock_files(&root, &[("task-dev.lock", "{invalid-json")]);
 
     let out = run_dev(&root, &[]).expect("invalid lock record should be reclaimed");
 
@@ -93,9 +94,9 @@ fn run_manifest_task_builtin_unlock_clears_explicit_scopes() {
     let _guard = lock_test();
     let cases = [ManagedUnlockSuccessCase {
         workspace: "unlock-explicit-scopes",
-        args: &["workspace", "task:dev"],
-        lock_files: &[("workspace.lock", "{}"), ("task-dev.lock", "{}")],
-        removed_lock_files: &["workspace.lock", "task-dev.lock"],
+        args: &["shared:dev-stack", "task:dev"],
+        lock_files: &[("shared-dev-stack.lock", "{}"), ("task-dev.lock", "{}")],
+        removed_lock_files: &["shared-dev-stack.lock", "task-dev.lock"],
         expected: &["removed: 2"],
     }];
 
@@ -119,4 +120,57 @@ fn run_manifest_task_builtin_unlock_argument_validation_contract_table() {
     ];
 
     assert_unlock_invocation_error_case_table(&cases);
+}
+
+#[test]
+fn different_tasks_do_not_conflict_by_default() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-task-default-isolation");
+    write_root_manifest(
+        &root,
+        r#"[tasks.dev]
+run = "sleep 1"
+
+[tasks.build]
+run = "printf build-ok"
+"#,
+    );
+
+    let root_for_thread = root.clone();
+    let join = thread::spawn(move || run_dev(&root_for_thread, &[]));
+    std::thread::sleep(Duration::from_millis(120));
+
+    let _out = run_task_with_repo(&root, "build", &[]).expect("build should not block on dev");
+
+    join.join()
+        .expect("thread join")
+        .expect("first run should complete");
+}
+
+#[test]
+fn shared_lock_name_conflicts_across_tasks() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-shared-name-conflict");
+    write_root_manifest(
+        &root,
+        r#"[tasks.dev]
+run = "sleep 1"
+lock = "dev-stack"
+
+[tasks.build]
+run = "printf build-ok"
+lock = "dev-stack"
+"#,
+    );
+
+    let root_for_thread = root.clone();
+    let join = thread::spawn(move || run_dev(&root_for_thread, &[]));
+    std::thread::sleep(Duration::from_millis(120));
+
+    let err = run_task_with_repo(&root, "build", &[]).expect_err("shared lock should conflict");
+    super::prelude::assert_lock_conflict(err, "shared:dev-stack", "effigy unlock shared:dev-stack");
+
+    join.join()
+        .expect("thread join")
+        .expect("first run should complete");
 }

@@ -2,7 +2,6 @@ use std::path::Path;
 
 use super::super::super::cache::ops::check_task_cache;
 use super::super::super::locking::io::acquire_scopes;
-use super::super::super::locking::model::LockScope;
 use super::super::context::ExecutionTaskContext;
 use super::super::preflight::ExecutionPreflight;
 use super::{super::cache_hit, super::process_run, command};
@@ -29,10 +28,7 @@ pub(super) fn run_standard_task(
 
     let _lock_guards = acquire_scopes(
         &preflight.resolved.resolved_root,
-        &[
-            LockScope::Workspace,
-            LockScope::Task(preflight.selector.task_name.clone()),
-        ],
+        &[selection.task.lock_scope(&preflight.selector.task_name)],
     )?;
 
     let cache_check = check_task_cache(

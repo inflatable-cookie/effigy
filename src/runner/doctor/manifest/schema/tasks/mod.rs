@@ -3,8 +3,8 @@ use toml::Value;
 use super::diagnostics::SchemaContext;
 use super::tables::{require_table, validate_allowed_keys, validate_concurrent_array};
 use super::values::{
-    validate_optional_enum_string_field, validate_optional_non_empty_string_or_array_field,
-    validate_optional_table_string_values_field,
+    validate_optional_enum_string_field, validate_optional_non_empty_string_field,
+    validate_optional_non_empty_string_or_array_field, validate_optional_table_string_values_field,
 };
 
 mod profiles;
@@ -40,6 +40,7 @@ pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &
         };
 
         validate_task_table_keys(context, task_name, task_table);
+        validate_task_lock_field(context, task_name, task_table.get("lock"));
         validate_task_mode(context, task_name, task_table.get("mode"));
         validate_task_run_field(context, task_name, task_table.get("run"));
         validate_task_env_field(context, task_name, task_table.get("env"));
@@ -91,6 +92,7 @@ fn validate_task_table_keys(
         task_table,
         &[
             "run",
+            "lock",
             "env",
             "env_file",
             "mode",
@@ -99,6 +101,14 @@ fn validate_task_table_keys(
             "profiles",
         ],
     );
+}
+
+fn validate_task_lock_field(
+    context: &mut SchemaContext<'_, '_>,
+    task_name: &str,
+    lock: Option<&Value>,
+) {
+    validate_optional_non_empty_string_field(context, lock, &format!("tasks.{task_name}.lock"));
 }
 
 fn validate_task_mode(context: &mut SchemaContext<'_, '_>, task_name: &str, mode: Option<&Value>) {

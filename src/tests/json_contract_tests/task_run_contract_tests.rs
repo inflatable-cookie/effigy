@@ -9,8 +9,8 @@ fn task_run_json_contract_reclaims_stale_lock_and_remains_valid_payload() {
     );
     fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
     fs::write(
-        root.join(".effigy/locks/workspace.lock"),
-        r#"{"scope":"workspace","pid":999999,"started_at_epoch_ms":0}"#,
+        root.join(".effigy/locks/task-dev.lock"),
+        r#"{"scope":"task:dev","pid":999999,"started_at_epoch_ms":0}"#,
     )
     .expect("write stale lock");
 
@@ -30,9 +30,9 @@ fn task_run_json_contract_reclaims_expired_workspace_lock_lease() {
     );
     fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
     fs::write(
-        root.join(".effigy/locks/workspace.lock"),
+        root.join(".effigy/locks/task-dev.lock"),
         format!(
-            r#"{{"scope":"workspace","pid":{},"started_at_epoch_ms":0,"heartbeat_at_epoch_ms":0,"hostname":"test-host","workspace_root":"{}"}}"#,
+            r#"{{"scope":"task:dev","pid":{},"started_at_epoch_ms":0,"heartbeat_at_epoch_ms":0,"hostname":"test-host","workspace_root":"{}"}}"#,
             std::process::id(),
             root.display()
         ),

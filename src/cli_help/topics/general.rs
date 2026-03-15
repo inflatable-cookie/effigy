@@ -63,7 +63,8 @@ pub(crate) fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()>
             ],
             vec![
                 "effigy unlock".to_owned(),
-                "Manually clear lock scopes (`workspace`, `task:*`, `profile:*/*`)".to_owned(),
+                "Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`)"
+                    .to_owned(),
             ],
             vec![
                 "effigy cache".to_owned(),

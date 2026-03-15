@@ -15,14 +15,24 @@ fn builtin_unlock_parser_contracts_are_stable() {
 
     let parsed = parse_unlock_contract_request(
         &task,
-        &string_args(&["workspace", "task:dev", "profile:dev/admin"]),
+        &string_args(&[
+            "workspace",
+            "shared:dev-stack",
+            "task:dev",
+            "profile:dev/admin",
+        ]),
     )
     .expect("unlock parse");
     assert!(!parsed.output_json);
     assert!(!parsed.unlock_all_flag);
     assert_eq!(
         parsed.scopes,
-        string_args(&["workspace", "task:dev", "profile:dev/admin"])
+        string_args(&[
+            "workspace",
+            "shared:dev-stack",
+            "task:dev",
+            "profile:dev/admin"
+        ])
     );
 
     assert_parser_task_invocation_error(

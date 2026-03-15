@@ -58,13 +58,18 @@ fn render_unlock_help() -> String {
             },
             HelpSection::Bulleted {
                 heading: "Scopes",
-                items: &["workspace", "task:<name>", "profile:<task>/<profile>"],
+                items: &[
+                    "workspace",
+                    "shared:<name>",
+                    "task:<name>",
+                    "profile:<task>/<profile>",
+                ],
             },
             HelpSection::Bulleted {
                 heading: "Examples",
                 items: &[
                     "effigy unlock workspace",
-                    "effigy unlock task:dev profile:dev/admin",
+                    "effigy unlock shared:dev-stack task:dev profile:dev/admin",
                     "effigy unlock --all",
                     "effigy unlock --all --json",
                 ],
