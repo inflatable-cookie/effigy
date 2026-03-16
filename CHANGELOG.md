@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-03-16
+
 ### Added
 - Add explicit built-in deferral through `[defer].builtins = ["release", ...]`
   so legacy repos can route selected parser-level command families back through
