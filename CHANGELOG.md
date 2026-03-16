@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-03-15
+
 ### Changed
 - Refresh Effigy's own install and `setup-effigy` examples to `0.2.7` after the
   patch release, while leaving consumer repos alone because no active CI/docs
