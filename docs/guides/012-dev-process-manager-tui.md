@@ -47,6 +47,9 @@ Profile entries support:
 - integrated shell tab via `task = "shell"` (uses `[shell].run` or default shell command).
 - optional profile overrides via `[tasks.dev.profiles.<name>]` with their own `concurrent = [...]`.
 
+Run-array note:
+- if another task sequence uses `{ task = "dev" }` to reference a managed/concurrent task, Effigy delegates through a nested `effigy <task>` invocation rather than requiring that managed task to also define an inline `run = ...`
+
 Optional global shell command override:
 
 ```toml

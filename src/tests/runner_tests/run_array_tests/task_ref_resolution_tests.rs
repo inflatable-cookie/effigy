@@ -1,7 +1,7 @@
 use super::prelude::{
     assert_run_array_builtin_test_task_ref_case_table, assert_run_array_task_output_case_table,
     assert_run_array_task_output_derived_case_table, assert_run_array_validate_marker_case_table,
-    assert_run_array_validate_task_ref_parse_error_case_table, fs,
+    assert_run_array_validate_task_ref_parse_error_case_table, fs, run_validate_ok, temp_workspace,
     write_capture_task_ref_validate_manifest, write_catalog_builtin_test_suite_manifest,
     write_manifest, write_validate_manifest, BuiltinTestTaskRefCase, Path, RunArrayTaskOutputCase,
     RunArrayTaskOutputDerivedCase, RunArrayTaskRefParseErrorCase, RunArrayValidateMarkerCase,
@@ -118,6 +118,21 @@ fn run_manifest_task_run_array_task_reference_output_contract_table() {
     ];
 
     assert_run_array_task_output_case_table(&cases);
+}
+
+#[test]
+fn run_manifest_task_run_array_can_reference_managed_concurrent_tasks() {
+    let manifest = r#"[tasks.dev_stack]
+mode = "tui"
+concurrent = [{ name = "api", run = "printf api" }]
+
+[tasks.validate]
+run = [{ task = "dev_stack" }]
+"#;
+    let root = temp_workspace("run-array-task-ref-managed-concurrent");
+    write_validate_manifest(&root, manifest);
+
+    run_validate_ok(&root, &[]);
 }
 
 #[test]

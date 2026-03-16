@@ -20,6 +20,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Hide explicitly deferred built-ins from general help and the built-in section
   of `effigy tasks`, so legacy-command ownership is reflected consistently in
   both routing and discovery surfaces
+- Run-array `task = "..."` steps now support managed/concurrent task targets by
+  delegating through a nested Effigy invocation when the referenced task has no
+  inline `run = ...`, instead of failing with a misleading missing-run error
 
 ## [0.2.8] - 2026-03-15
 

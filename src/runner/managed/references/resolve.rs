@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use super::super::super::catalog::select_catalog_and_task;
+use super::super::super::managed::profiles::has_concurrent_schema;
 use super::super::super::manifest::task_runtime::ManifestManagedRun;
 use super::super::super::model::catalog::{LoadedCatalog, TaskSelection};
 use super::super::super::{env_schema_support, error::RunnerError};
@@ -36,25 +37,19 @@ where
             command: render_builtin_reference_invocation(&parsed.selector_rendered, args_rendered)?,
             cwd: task_scope_cwd.to_path_buf(),
         }),
-        Ok(ReferenceTarget::Catalog(selection)) => {
-            let run_spec = selection
-                .task
-                .run
-                .as_ref()
-                .ok_or_else(|| missing_run_error(&selection))?;
-            Ok(ResolvedReferenceRun {
-                command: render_selected_task_run(
-                    &selection,
-                    run_spec,
-                    &parsed.selector.task_name,
-                    args_rendered,
-                    catalogs,
-                    runtime_env_schema_override,
-                    depth,
-                )?,
-                cwd: selection.catalog.catalog_root.clone(),
-            })
-        }
+        Ok(ReferenceTarget::Catalog(selection)) => Ok(ResolvedReferenceRun {
+            command: render_selected_task_invocation(
+                &selection,
+                &parsed.selector_rendered,
+                &parsed.selector.task_name,
+                args_rendered,
+                catalogs,
+                runtime_env_schema_override,
+                depth,
+                || missing_run_error(&selection),
+            )?,
+            cwd: selection.catalog.catalog_root.clone(),
+        }),
         Err(error) => Err(error),
     }
 }
@@ -69,6 +64,38 @@ fn resolve_reference_target<'a>(
         Err(_) if is_builtin_task_selector(&parsed.selector) => Ok(ReferenceTarget::Builtin),
         Err(error) => Err(error),
     }
+}
+
+fn render_selected_task_invocation<F>(
+    selection: &TaskSelection<'_>,
+    selector_rendered: &str,
+    task_name: &str,
+    args_rendered: &str,
+    catalogs: &[LoadedCatalog],
+    runtime_env_schema_override: Option<&Path>,
+    depth: usize,
+    missing_run_error: F,
+) -> Result<String, RunnerError>
+where
+    F: FnOnce() -> RunnerError,
+{
+    if let Some(run_spec) = selection.task.run.as_ref() {
+        return render_selected_task_run(
+            selection,
+            run_spec,
+            task_name,
+            args_rendered,
+            catalogs,
+            runtime_env_schema_override,
+            depth,
+        );
+    }
+
+    if selection.task.mode.is_some() || has_concurrent_schema(selection.task) {
+        return render_builtin_reference_invocation(selector_rendered, args_rendered);
+    }
+
+    Err(missing_run_error())
 }
 
 fn render_selected_task_run(

@@ -524,6 +524,7 @@ Behavior:
 - run-array env directives support either inline maps (`env = { ... }`) or named entries (`env = "CARGO_HOME"`/`env = "cargo"` from `[env]`)
 - named entry resolution order is `[env]` -> process env -> dotenv fallback (`.env` or `env_file` override)
 - referenced tasks keep their own `env` when called via `task = "..."` entries
+- run-array `task = "..."` entries can target managed `mode = "tui"` / `concurrent = [...]` tasks; Effigy delegates those through a nested task invocation instead of requiring inline `run = ...`
 - env value token substitution supports `{project}` and `{repo}` (aliases for catalog root path)
 - built-in `test` also reads manifest `[env]` for `CARGO_*` keys and applies them automatically to cargo suites (`cargo-nextest`/`cargo-test`)
 - set `[test].cargo_env_match = "executable-only"` for direct cargo binary token matching only
