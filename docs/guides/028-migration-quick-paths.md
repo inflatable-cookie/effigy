@@ -76,6 +76,7 @@ builtins = ["release"]
 ```
 
 Use `builtins = ["release"]` when a legacy command family still owns that name and Effigy's native built-in would otherwise intercept it during migration.
+If the repo is still on the automatic PHP-legacy fallback (`composer.json` + `effigy.json` with no explicit `[defer]`), `release` already defers by default.
 
 Exit criteria:
 - high-frequency selectors resolve directly via catalogs

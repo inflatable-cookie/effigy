@@ -21,6 +21,10 @@ pub(in crate::runner) fn select_deferral(
     infer_implicit_root_deferral(workspace_root)
 }
 
+pub(in crate::runner) fn implicit_root_deferral_is_enabled(workspace_root: &Path) -> bool {
+    workspace_root.join("effigy.json").is_file() && workspace_root.join("composer.json").is_file()
+}
+
 fn select_explicit_catalog(
     selector: &TaskSelector,
     catalogs: &[LoadedCatalog],
@@ -83,9 +87,7 @@ fn catalog_source(catalog: &LoadedCatalog) -> String {
 }
 
 fn infer_implicit_root_deferral(workspace_root: &Path) -> Option<DeferredCommand> {
-    let has_effigy_json = workspace_root.join("effigy.json").is_file();
-    let has_composer_json = workspace_root.join("composer.json").is_file();
-    if has_effigy_json && has_composer_json {
+    if implicit_root_deferral_is_enabled(workspace_root) {
         return Some(DeferredCommand {
             template: IMPLICIT_ROOT_DEFER_TEMPLATE.to_owned(),
             working_dir: workspace_root.to_path_buf(),

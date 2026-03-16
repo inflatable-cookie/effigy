@@ -10,6 +10,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add explicit built-in deferral through `[defer].builtins = ["release", ...]`
   so legacy repos can route selected parser-level command families back through
   defer instead of Effigy's native built-ins
+- Defer `release` by default in automatic PHP-legacy mode (`composer.json` +
+  `effigy.json`), so legacy repos do not need an explicit
+  `builtins = ["release"]` entry just to preserve their existing release flow
 
 ### Changed
 - Hide explicitly deferred built-ins from general help and the built-in section

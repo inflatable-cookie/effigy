@@ -6,8 +6,7 @@ use crate::{
 use serde_json::json;
 
 pub fn run_help_command(context: &CliExecutionContext<'_>, topic: HelpTopic) {
-    let deferred_builtins =
-        crate::runner::explicitly_deferred_builtins_for_root(context.command_root);
+    let deferred_builtins = crate::runner::deferred_builtins_for_root(context.command_root);
     if context.suppress_header {
         let payload = build_help_payload_for_root(topic, context.command_root);
         if context.emit_json_envelope {
@@ -38,7 +37,7 @@ pub fn build_help_payload(topic: HelpTopic) -> serde_json::Value {
 pub fn build_help_payload_for_root(topic: HelpTopic, root: &std::path::Path) -> serde_json::Value {
     let topic_label = help_topic_label(topic);
     let mut help_renderer = PlainRenderer::new(Vec::<u8>::new(), false);
-    let deferred_builtins = crate::runner::explicitly_deferred_builtins_for_root(root);
+    let deferred_builtins = crate::runner::deferred_builtins_for_root(root);
     let _ = render_help_with_deferred_builtins(&mut help_renderer, topic, &deferred_builtins);
     let rendered = String::from_utf8(help_renderer.into_inner()).unwrap_or_default();
     json!({
@@ -94,5 +93,33 @@ mod tests {
         let text = payload["text"].as_str().expect("help text");
         assert!(!text.contains("effigy release"), "got: {text}");
         assert!(text.contains("effigy doctor"), "got: {text}");
+    }
+
+    #[test]
+    fn build_help_payload_for_root_hides_implicitly_deferred_release_builtin() {
+        let root = temp_workspace("help-hidden-implicit-release");
+        fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
+        fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
+
+        let payload = build_help_payload_for_root(HelpTopic::General, &root);
+        let text = payload["text"].as_str().expect("help text");
+        assert!(!text.contains("effigy release"), "got: {text}");
+        assert!(text.contains("effigy doctor"), "got: {text}");
+    }
+
+    #[test]
+    fn build_help_payload_for_root_keeps_release_visible_when_explicit_deferral_owns_routing() {
+        let root = temp_workspace("help-explicit-does-not-hide-release");
+        fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
+        fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
+        fs::write(
+            root.join("effigy.toml"),
+            "[defer]\nrun = \"printf deferred\"\n",
+        )
+        .expect("write manifest");
+
+        let payload = build_help_payload_for_root(HelpTopic::General, &root);
+        let text = payload["text"].as_str().expect("help text");
+        assert!(text.contains("effigy release"), "got: {text}");
     }
 }

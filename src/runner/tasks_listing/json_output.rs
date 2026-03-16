@@ -10,7 +10,7 @@ use super::render_context::ListingRenderRequest;
 use super::selection::PreparedFilteredListing;
 use super::selection_dispatch::dispatch_listing_selection;
 use super::ListingCatalogSnapshot;
-use crate::runner::explicitly_deferred_builtins_from_catalogs;
+use crate::runner::deferred_builtins_from_catalogs;
 use payload::{encode_catalog_payload, encode_filtered_payload, JsonPayloadContext};
 use rows::{builtin_rows_json, builtin_task_rows_json};
 
@@ -64,7 +64,7 @@ fn build_catalog_payload(
 ) -> Result<serde_json::Value, RunnerError> {
     let rows = prepare_all_catalog_rows_json(ordered_catalogs);
     let deferred_builtins =
-        explicitly_deferred_builtins_from_catalogs(snapshot.catalogs(), snapshot.resolved_root());
+        deferred_builtins_from_catalogs(snapshot.catalogs(), snapshot.resolved_root());
     encode_catalog_payload(context, rows, builtin_task_rows_json(&deferred_builtins))
 }
 

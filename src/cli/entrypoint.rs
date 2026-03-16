@@ -69,7 +69,7 @@ fn parse_command_with_explicit_builtin_deferral(
     let Some(root) = explicit_deferred_builtin_root(first, &args[1..], cwd) else {
         return parse_command(args);
     };
-    let deferred_builtins = crate::runner::explicitly_deferred_builtins_for_root(&root);
+    let deferred_builtins = crate::runner::deferred_builtins_for_root(&root);
     if !deferred_builtins.contains(first) {
         return parse_command(args);
     }

@@ -41,6 +41,11 @@ Implicit command template:
 <built-in legacy defer process> {request} {args}
 ```
 
+Implicit built-in bypass:
+- in that automatic PHP-legacy mode, `release` is deferred by default even without `builtins = ["release"]`
+- that also hides `release` from general help and from the built-in section in `effigy tasks`
+- add explicit `builtins = [...]` only when you need to bypass additional native built-ins beyond that default
+
 ## 4) Safety guard
 
 Effigy sets `EFFIGY_DEFER_DEPTH` and blocks recursive re-entry after one hop.

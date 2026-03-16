@@ -13,6 +13,7 @@ pub(in crate::runner) const EXPLICITLY_DEFERRABLE_COMMAND_BUILTINS: [&str; 7] = 
     "doctor",
     "tasks",
 ];
+pub(in crate::runner) const IMPLICITLY_DEFERRED_COMMAND_BUILTINS: [&str; 1] = ["release"];
 pub(in crate::runner) const BUILTIN_TASKS: [(&str, &str); 12] = [
     ("help", "Show general help (same as --help)"),
     (
