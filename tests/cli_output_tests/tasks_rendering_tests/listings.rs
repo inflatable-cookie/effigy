@@ -68,3 +68,20 @@ fn cli_tasks_hides_explicitly_deferred_builtins() {
     assert!(!stdout.contains("- release :"), "got: {stdout}");
     assert!(stdout.contains("- doctor :"), "got: {stdout}");
 }
+
+#[test]
+fn cli_tasks_hides_implicitly_deferred_release_builtin() {
+    let root = temp_workspace("cli-tasks-hidden-implicit-release");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf dev\"\n",
+    )
+    .expect("write manifest");
+    fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
+    fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
+
+    let stdout = run_effigy(&["tasks"], Some(&root), false);
+    assert!(stdout.contains("\n\nBuilt-in Tasks\n"));
+    assert!(!stdout.contains("- release :"), "got: {stdout}");
+    assert!(stdout.contains("- doctor :"), "got: {stdout}");
+}

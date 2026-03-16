@@ -225,6 +225,7 @@ Notes:
 - unresolved selectors still defer through `run = ...` as before
 - `builtins = ["release"]` is the explicit escape hatch for legacy repos where a parser-level Effigy built-in would otherwise shadow the old command family
 - explicitly deferred built-ins disappear from general help and from the built-in section in `effigy tasks`
+- pure PHP-legacy repos using the automatic `composer.json` + `effigy.json` fallback already defer `release` by default, so you only need `builtins = [...]` when you are bypassing additional built-ins or overriding that implicit mode with explicit `[defer]`
 
 ## 9) Shell Override for Managed Tabs
 

@@ -99,7 +99,7 @@ pub(in crate::runner) fn render_builtin_general_help_for_root(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let mut renderer = standard_renderer(output_json);
-    let deferred_builtins = crate::runner::explicitly_deferred_builtins_for_root(root);
+    let deferred_builtins = crate::runner::deferred_builtins_for_root(root);
     crate::render_help_with_deferred_builtins(
         &mut renderer,
         HelpTopic::General,

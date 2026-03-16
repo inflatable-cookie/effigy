@@ -10,8 +10,8 @@ use super::super::prepared_task_rows::{
 use super::super::row_projection::builtin_task_rows_filtered;
 use super::followups::render_builtin_rows_section;
 use super::rows::{render_catalog_alias_rows, render_catalog_task_rows};
+use crate::runner::deferred_builtins_from_catalogs;
 use crate::runner::error::RunnerError;
-use crate::runner::explicitly_deferred_builtins_from_catalogs;
 
 pub(super) fn render_default_tasks_text(
     renderer: &mut PlainRenderer<Vec<u8>>,
@@ -22,7 +22,7 @@ pub(super) fn render_default_tasks_text(
     resolved_root: &Path,
 ) -> Result<(), RunnerError> {
     let prepared_rows = prepare_default_text_rows(ordered_catalogs, resolved_root);
-    let deferred_builtins = explicitly_deferred_builtins_from_catalogs(catalogs, resolved_root);
+    let deferred_builtins = deferred_builtins_from_catalogs(catalogs, resolved_root);
     let has_catalog_scope = !prepared_rows.catalog_alias_rows().is_empty();
     render_catalogs_section(
         renderer,

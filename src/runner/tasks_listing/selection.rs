@@ -4,8 +4,8 @@ use super::render_context::{ListingRenderRequest, ListingSelection};
 use super::row_projection::{builtin_task_rows_filtered, BuiltinTaskProjection};
 use super::ListingCatalogSnapshot;
 use super::BUILTIN_TEST_FALLBACK_NOTE;
+use crate::runner::deferred_builtins_from_catalogs;
 use crate::runner::error::RunnerError;
-use crate::runner::explicitly_deferred_builtins_from_catalogs;
 
 pub(super) struct CatalogTaskMatch<'a> {
     catalog: &'a LoadedCatalog,
@@ -98,7 +98,7 @@ fn prepare_filtered_listing<'a>(
 ) -> Result<PreparedFilteredListing<'a>, RunnerError> {
     let selector = super::super::util::parse_task_selector(filter)?;
     let catalog_matches = matched_catalog_tasks(catalogs, &selector);
-    let deferred_builtins = explicitly_deferred_builtins_from_catalogs(catalogs, resolved_root);
+    let deferred_builtins = deferred_builtins_from_catalogs(catalogs, resolved_root);
     let builtin_matches = builtin_matches(&selector, &deferred_builtins);
     let notes = selector_notes(&selector);
     Ok(PreparedFilteredListing {

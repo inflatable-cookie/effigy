@@ -11,4 +11,5 @@ pub(super) use policy::should_attempt_deferral;
 #[cfg(test)]
 pub(crate) use run::reset_composer_home_cache_for_tests;
 pub(super) use run::run_deferred_request;
+pub(in crate::runner) use select::implicit_root_deferral_is_enabled;
 pub(super) use select::select_deferral;
