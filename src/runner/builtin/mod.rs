@@ -30,8 +30,8 @@ mod watch;
 
 pub(super) use support::{
     ensure_no_unknown_builtin_args, ensure_no_unknown_builtin_args_with_prefix,
-    has_builtin_help_flag, has_builtin_json_flag, render_builtin_help_text,
-    render_builtin_help_topic,
+    has_builtin_help_flag, has_builtin_json_flag, render_builtin_general_help_for_root,
+    render_builtin_help_text, render_builtin_help_topic,
 };
 
 fn resolve_builtin_task_target_root(

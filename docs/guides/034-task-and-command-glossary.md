@@ -48,6 +48,7 @@ Example:
 ```toml
 [defer]
 run = "composer global exec effigy -- {request} {args}"
+builtins = ["release"]
 ```
 
 ## Command Envelope

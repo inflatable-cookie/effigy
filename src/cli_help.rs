@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::ui::theme::Theme;
@@ -7,8 +8,16 @@ use crate::HelpTopic;
 mod topics;
 
 pub fn render_help<R: Renderer>(renderer: &mut R, topic: HelpTopic) -> UiResult<()> {
+    render_help_with_deferred_builtins(renderer, topic, &BTreeSet::new())
+}
+
+pub fn render_help_with_deferred_builtins<R: Renderer>(
+    renderer: &mut R,
+    topic: HelpTopic,
+    deferred_builtins: &BTreeSet<String>,
+) -> UiResult<()> {
     match topic {
-        HelpTopic::General => topics::render_general_help(renderer),
+        HelpTopic::General => topics::render_general_help(renderer, deferred_builtins),
         HelpTopic::Changelog => topics::render_changelog_help(renderer),
         HelpTopic::Docs => topics::render_docs_help(renderer),
         HelpTopic::Contracts => topics::render_contracts_help(renderer),

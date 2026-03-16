@@ -1,3 +1,6 @@
+use std::collections::BTreeSet;
+use std::path::Path;
+
 mod builtin;
 mod cache;
 mod catalog;
@@ -37,6 +40,34 @@ use model::{
 
 pub use entrypoints::{resolve_command_root, run_command};
 pub use error::RunnerError;
+
+pub(crate) fn explicitly_deferred_builtins_for_root(root: &Path) -> BTreeSet<String> {
+    let manifest_path = root.join(model::constants::TASK_MANIFEST_FILE);
+    manifest::load_task_manifest(&manifest_path)
+        .ok()
+        .and_then(|manifest| {
+            manifest
+                .defer
+                .as_ref()
+                .map(|defer| defer.explicitly_deferred_builtins())
+        })
+        .unwrap_or_default()
+}
+
+pub(in crate::runner) fn explicitly_deferred_builtins_from_catalogs(
+    catalogs: &[LoadedCatalog],
+    resolved_root: &Path,
+) -> BTreeSet<String> {
+    catalogs
+        .iter()
+        .find(|catalog| catalog.catalog_root == resolved_root)
+        .map(|catalog| catalog.deferred_builtins.clone())
+        .unwrap_or_default()
+}
+
+pub(crate) fn builtin_can_be_explicitly_deferred(name: &str) -> bool {
+    model::constants::EXPLICITLY_DEFERRABLE_COMMAND_BUILTINS.contains(&name)
+}
 
 #[cfg(test)]
 #[path = "../tests/runner_tests.rs"]

@@ -216,9 +216,15 @@ Use when auto-detection is fine but default commands need tuning.
 ```toml
 [defer]
 run = "my-process {request} {args}"
+builtins = ["release"]
 ```
 
 Use only when unresolved selectors should be delegated to another runner.
+
+Notes:
+- unresolved selectors still defer through `run = ...` as before
+- `builtins = ["release"]` is the explicit escape hatch for legacy repos where a parser-level Effigy built-in would otherwise shadow the old command family
+- explicitly deferred built-ins disappear from general help and from the built-in section in `effigy tasks`
 
 ## 9) Shell Override for Managed Tabs
 

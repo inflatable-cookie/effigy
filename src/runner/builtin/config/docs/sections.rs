@@ -2,6 +2,8 @@ const SECTION_DEFER: &[&str] = &[
     "[defer]",
     "# Fallback command for unresolved task requests.",
     "run = \"my-process {request} {args}\"",
+    "# Optional built-in command families that should bypass Effigy's built-in implementation.",
+    "builtins = [\"release\"]",
     "",
 ];
 

@@ -6,6 +6,16 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- Add explicit built-in deferral through `[defer].builtins = ["release", ...]`
+  so legacy repos can route selected parser-level command families back through
+  defer instead of Effigy's native built-ins
+
+### Changed
+- Hide explicitly deferred built-ins from general help and the built-in section
+  of `effigy tasks`, so legacy-command ownership is reflected consistently in
+  both routing and discovery surfaces
+
 ## [0.2.8] - 2026-03-15
 
 ### Changed

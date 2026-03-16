@@ -9,9 +9,11 @@ use super::super::model::constants::BUILTIN_TASKS;
 use super::super::util::parse_task_reference_invocation;
 use super::model::ResolveProbe;
 use crate::runner::error::RunnerError;
+use crate::runner::explicitly_deferred_builtins_from_catalogs;
 
 pub(in crate::runner) fn build_resolve_probe(
     raw_selector: Option<String>,
+    resolved_root: &std::path::Path,
     catalogs: &[LoadedCatalog],
 ) -> Result<Option<serde_json::Value>, RunnerError> {
     let Some(raw_selector) = raw_selector else {
@@ -20,6 +22,7 @@ pub(in crate::runner) fn build_resolve_probe(
     let (selector, selector_args) = parse_task_reference_invocation(&raw_selector)?;
     let selector_task_name = selector.task_name.clone();
     let cwd = current_working_dir()?;
+    let deferred_builtins = explicitly_deferred_builtins_from_catalogs(catalogs, resolved_root);
 
     let probe = match select_catalog_and_task(&selector, catalogs, &cwd) {
         Ok(selection) => build_selected_probe(
@@ -28,15 +31,20 @@ pub(in crate::runner) fn build_resolve_probe(
             &selector_args,
             selection,
         ),
-        Err(_error) if is_builtin_or_catalogs_task(&selector_task_name) => ResolveProbe::ok(
-            &raw_selector,
-            &selector_task_name,
-            None,
-            None,
-            Vec::new(),
-            vec![format!("resolved built-in task `{selector_task_name}`")],
-        )
-        .into_json(),
+        Err(_error)
+            if is_builtin_or_catalogs_task(&selector_task_name)
+                && !deferred_builtins.contains(&selector_task_name) =>
+        {
+            ResolveProbe::ok(
+                &raw_selector,
+                &selector_task_name,
+                None,
+                None,
+                Vec::new(),
+                vec![format!("resolved built-in task `{selector_task_name}`")],
+            )
+            .into_json()
+        }
         Err(error) => ResolveProbe::error(
             &raw_selector,
             &selector_task_name,

@@ -3,6 +3,7 @@ use super::super::manifest::task_runtime::ManifestTask;
 use super::super::model::catalog::LoadedCatalog;
 use super::super::model::constants::BUILTIN_TASKS;
 use super::super::tasks_view::{managed_profile_display_rows, ManagedProfileDisplayRow};
+use std::collections::BTreeSet;
 
 pub(super) struct TaskSignatureProjection {
     task: String,
@@ -27,6 +28,12 @@ impl TaskSignatureProjection {
 
 pub(super) fn builtin_task_rows() -> impl Iterator<Item = BuiltinTaskProjection<'static>> {
     BUILTIN_TASKS.iter().copied()
+}
+
+pub(super) fn builtin_task_rows_filtered(
+    deferred_builtins: &BTreeSet<String>,
+) -> impl Iterator<Item = BuiltinTaskProjection<'static>> + '_ {
+    builtin_task_rows().filter(|(task, _)| !deferred_builtins.contains(*task))
 }
 
 pub(super) fn project_catalog_task_display_rows(
