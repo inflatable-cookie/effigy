@@ -72,7 +72,10 @@ Temporary compatibility snippet:
 ```toml
 [defer]
 run = "composer global exec effigy -- {request} {args}"
+builtins = ["release"]
 ```
+
+Use `builtins = ["release"]` when a legacy command family still owns that name and Effigy's native built-in would otherwise intercept it during migration.
 
 Exit criteria:
 - high-frequency selectors resolve directly via catalogs

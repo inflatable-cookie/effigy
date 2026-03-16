@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use super::super::manifest::task_runtime::ManifestTask;
@@ -10,6 +11,7 @@ pub(in crate::runner) struct LoadedCatalog {
     pub(in crate::runner) manifest_path: PathBuf,
     pub(in crate::runner) manifest: TaskManifest,
     pub(in crate::runner) defer_run: Option<String>,
+    pub(in crate::runner) deferred_builtins: BTreeSet<String>,
     pub(in crate::runner) depth: usize,
 }
 

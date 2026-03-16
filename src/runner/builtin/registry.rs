@@ -127,7 +127,7 @@ impl BuiltinDispatch {
             Self::Catalogs => tasks::run_builtin_tasks(task, runtime_args, target_root, true),
             Self::Tasks => tasks::run_builtin_tasks(task, runtime_args, target_root, false),
             Self::Config => config::run_builtin_config(task, &runtime_args.passthrough),
-            Self::Help => help::run_builtin_help(task, &runtime_args.passthrough),
+            Self::Help => help::run_builtin_help(task, &runtime_args.passthrough, target_root),
             Self::Watch => watch::run_builtin_watch(task, runtime_args, target_root),
             Self::Init => init::run_builtin_init(task, &runtime_args.passthrough, target_root),
             Self::Migrate => {

@@ -184,6 +184,31 @@ fn tasks_filtered_json_contract_with_resolve_has_diagnostics_and_probe_fields() 
     assert_eq!(parsed["resolve"]["lock_scopes"][0], "task:build");
 }
 
+#[test]
+fn tasks_json_contract_excludes_explicitly_deferred_builtins() {
+    let root = temp_workspace("tasks-json-contract-hidden-deferred-builtin");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[defer]\nrun = \"printf deferred\"\nbuiltins = [\"release\"]\n",
+    );
+
+    let out = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: None,
+            resolve_selector: None,
+            output_json: true,
+            pretty_json: true,
+        })
+    })
+    .expect("run tasks json");
+
+    let parsed = parse_json(&out);
+    let builtin_tasks = parsed["builtin_tasks"].as_array().expect("builtin_tasks");
+    assert!(!builtin_tasks.iter().any(|item| item["task"] == "release"));
+    assert!(builtin_tasks.iter().any(|item| item["task"] == "doctor"));
+}
+
 fn sorted_object_keys(value: &serde_json::Value) -> Vec<&str> {
     let mut keys = value
         .as_object()

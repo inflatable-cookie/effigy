@@ -16,12 +16,18 @@ Add to `effigy.toml`:
 ```toml
 [defer]
 run = "my-process {request} {args}"
+builtins = ["release"]
 ```
 
 Token behavior:
 - `{request}`: original task request (`foo`, `catalog-a/test`, etc.)
 - `{args}`: passthrough arguments after request
 - `{repo}`: shell-quoted catalog/repo path selected for deferral
+
+Optional built-in bypass:
+- `builtins = ["release", ...]` tells Effigy to skip its own parser-level built-in for those command families and treat them like deferred legacy requests instead
+- use this for legacy repos where commands such as `release` already exist in the old system and must not be shadowed by Effigy's native built-ins
+- explicitly deferred built-ins are also removed from general help and from the built-in section in `effigy tasks`
 
 ## 3) Implicit legacy fallback
 

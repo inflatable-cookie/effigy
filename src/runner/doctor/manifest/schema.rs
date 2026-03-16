@@ -47,7 +47,7 @@ pub(super) fn validate_manifest_schema(
         validate_known_table(&mut context, "catalog", catalog, &["alias"]);
     }
     if let Some(defer) = table.get("defer") {
-        validate_known_table(&mut context, "defer", defer, &["run"]);
+        validate_known_table(&mut context, "defer", defer, &["run", "builtins"]);
     }
     if let Some(env) = table.get("env") {
         validate_env_section(&mut context, env);

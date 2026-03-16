@@ -1,10 +1,11 @@
 use super::super::manifest::task_runtime::ManifestTask;
 use super::super::model::catalog::{LoadedCatalog, TaskSelector};
 use super::render_context::{ListingRenderRequest, ListingSelection};
-use super::row_projection::{builtin_task_rows, BuiltinTaskProjection};
+use super::row_projection::{builtin_task_rows_filtered, BuiltinTaskProjection};
 use super::ListingCatalogSnapshot;
 use super::BUILTIN_TEST_FALLBACK_NOTE;
 use crate::runner::error::RunnerError;
+use crate::runner::explicitly_deferred_builtins_from_catalogs;
 
 pub(super) struct CatalogTaskMatch<'a> {
     catalog: &'a LoadedCatalog,
@@ -37,7 +38,11 @@ pub(super) fn prepare_listing_selection<'snap>(
             ordered_catalogs: snapshot.ordered_catalogs(),
         }),
         ListingSelection::Filtered(filter) => Ok(PreparedListingSelection::Filtered {
-            filtered_listing: prepare_filtered_listing(snapshot.catalogs(), filter)?,
+            filtered_listing: prepare_filtered_listing(
+                snapshot.catalogs(),
+                snapshot.resolved_root(),
+                filter,
+            )?,
         }),
     }
 }
@@ -88,11 +93,13 @@ impl<'a> PreparedFilteredListing<'a> {
 
 fn prepare_filtered_listing<'a>(
     catalogs: &'a [LoadedCatalog],
+    resolved_root: &std::path::Path,
     filter: &str,
 ) -> Result<PreparedFilteredListing<'a>, RunnerError> {
     let selector = super::super::util::parse_task_selector(filter)?;
     let catalog_matches = matched_catalog_tasks(catalogs, &selector);
-    let builtin_matches = builtin_matches(&selector);
+    let deferred_builtins = explicitly_deferred_builtins_from_catalogs(catalogs, resolved_root);
+    let builtin_matches = builtin_matches(&selector, &deferred_builtins);
     let notes = selector_notes(&selector);
     Ok(PreparedFilteredListing {
         filter: filter.to_owned(),
@@ -130,12 +137,15 @@ fn matched_catalog_tasks<'a>(
         .collect::<Vec<CatalogTaskMatch<'a>>>()
 }
 
-fn builtin_matches(selector: &TaskSelector) -> Vec<BuiltinTaskProjection<'static>> {
+fn builtin_matches(
+    selector: &TaskSelector,
+    deferred_builtins: &std::collections::BTreeSet<String>,
+) -> Vec<BuiltinTaskProjection<'static>> {
     if !selector_targets_builtin(selector) {
         return Vec::new();
     }
 
-    builtin_task_rows()
+    builtin_task_rows_filtered(deferred_builtins)
         .filter(|(task, _)| selector.task_name == *task)
         .collect::<Vec<BuiltinTaskProjection<'static>>>()
 }

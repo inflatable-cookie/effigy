@@ -1,4 +1,5 @@
 use serde_json::json;
+use std::path::Path;
 
 use crate::{render_help, HelpTopic};
 
@@ -91,4 +92,19 @@ pub(in crate::runner) fn render_builtin_help_text(
         return encode_json(&payload, true);
     }
     Ok(text)
+}
+
+pub(in crate::runner) fn render_builtin_general_help_for_root(
+    root: &Path,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let mut renderer = standard_renderer(output_json);
+    let deferred_builtins = crate::runner::explicitly_deferred_builtins_for_root(root);
+    crate::render_help_with_deferred_builtins(
+        &mut renderer,
+        HelpTopic::General,
+        &deferred_builtins,
+    )?;
+    let rendered = render_utf8(renderer.into_inner())?;
+    render_builtin_help_text("general", rendered, output_json)
 }

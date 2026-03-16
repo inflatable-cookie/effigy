@@ -47,6 +47,7 @@ pub use cli::parse::{
 pub use cli::parse_error::{parse_error_json_details, render_parse_error, PARSE_ERROR_HINT};
 pub use cli::runner_dispatch::run_and_render_command;
 pub use cli::version_dispatch::{build_version_payload, run_version_command};
+pub use cli_help::render_help_with_deferred_builtins;
 use std::path::{Path, PathBuf};
 use ui::{Renderer, UiResult};
 

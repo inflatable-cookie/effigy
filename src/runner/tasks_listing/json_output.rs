@@ -10,11 +10,13 @@ use super::render_context::ListingRenderRequest;
 use super::selection::PreparedFilteredListing;
 use super::selection_dispatch::dispatch_listing_selection;
 use super::ListingCatalogSnapshot;
+use crate::runner::explicitly_deferred_builtins_from_catalogs;
 use payload::{encode_catalog_payload, encode_filtered_payload, JsonPayloadContext};
 use rows::{builtin_rows_json, builtin_task_rows_json};
 
 struct JsonDispatchContext<'a, 'snap> {
     json_context: &'a JsonPayloadContext<'snap>,
+    snapshot: &'snap ListingCatalogSnapshot<'snap>,
 }
 
 pub(super) fn render_tasks_json(
@@ -29,6 +31,7 @@ pub(super) fn render_tasks_json(
     );
     let mut context = JsonDispatchContext {
         json_context: &json_context,
+        snapshot,
     };
     let payload = dispatch_listing_selection(
         request,
@@ -44,7 +47,7 @@ fn render_catalog_payload(
     context: &mut JsonDispatchContext<'_, '_>,
     ordered_catalogs: &[&LoadedCatalog],
 ) -> Result<serde_json::Value, RunnerError> {
-    build_catalog_payload(context.json_context, ordered_catalogs)
+    build_catalog_payload(context.json_context, context.snapshot, ordered_catalogs)
 }
 
 fn render_filtered_payload(
@@ -56,10 +59,13 @@ fn render_filtered_payload(
 
 fn build_catalog_payload(
     context: &JsonPayloadContext<'_>,
+    snapshot: &ListingCatalogSnapshot<'_>,
     ordered_catalogs: &[&LoadedCatalog],
 ) -> Result<serde_json::Value, RunnerError> {
     let rows = prepare_all_catalog_rows_json(ordered_catalogs);
-    encode_catalog_payload(context, rows, builtin_task_rows_json())
+    let deferred_builtins =
+        explicitly_deferred_builtins_from_catalogs(snapshot.catalogs(), snapshot.resolved_root());
+    encode_catalog_payload(context, rows, builtin_task_rows_json(&deferred_builtins))
 }
 
 fn build_filtered_payload(

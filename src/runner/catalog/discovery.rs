@@ -46,6 +46,11 @@ pub(in crate::runner) fn discover_catalogs(
             catalog_root,
             manifest_path,
             defer_run: manifest.defer.as_ref().map(|defer| defer.run.clone()),
+            deferred_builtins: manifest
+                .defer
+                .as_ref()
+                .map(|defer| defer.explicitly_deferred_builtins())
+                .unwrap_or_default(),
             manifest,
         });
     }

@@ -1,94 +1,108 @@
+use std::collections::BTreeSet;
+
 use crate::ui::{KeyValue, NoticeLevel, Renderer, TableSpec, UiResult};
 
-pub(crate) fn render_general_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
+pub(crate) fn render_general_help<R: Renderer>(
+    renderer: &mut R,
+    deferred_builtins: &BTreeSet<String>,
+) -> UiResult<()> {
+    let commands = vec![
+        ("effigy help", "Show general help (same as --help)", None),
+        (
+            "effigy version",
+            "Print the current Effigy version (same as --version)",
+            None,
+        ),
+        (
+            "effigy tasks",
+            "List discovered catalogs/task commands and probe routing",
+            Some("tasks"),
+        ),
+        (
+            "effigy config",
+            "Show supported effigy.toml configuration keys and examples",
+            None,
+        ),
+        (
+            "effigy doctor",
+            "Run remedial-first health checks for environment, manifests, and task references",
+            Some("doctor"),
+        ),
+        (
+            "effigy docs",
+            "Run reusable docs QA checks such as markdown link, JSON example, and index validation",
+            Some("docs"),
+        ),
+        (
+            "effigy contracts",
+            "Validate reusable JSON contract artifacts such as selection payloads",
+            Some("contracts"),
+        ),
+        (
+            "effigy distribution",
+            "Validate distribution metadata/artifact bundles and generate closeout evidence",
+            Some("distribution"),
+        ),
+        (
+            "effigy release",
+            "Inspect release readiness from changelog, version files, and optional gates",
+            Some("release"),
+        ),
+        (
+            "effigy test",
+            "Run built-in auto-detected tests (or explicit tasks.test); supports <catalog>/test fallback",
+            None,
+        ),
+        (
+            "effigy watch",
+            "Watch mode phase-1 runtime with explicit owner policy and debounce/glob controls",
+            None,
+        ),
+        (
+            "effigy init",
+            "Initialize baseline effigy.toml scaffold with safe overwrite/dry-run controls",
+            None,
+        ),
+        (
+            "effigy migrate",
+            "Migrate package scripts into `[tasks]` with preview/apply flow",
+            None,
+        ),
+        (
+            "effigy unlock",
+            "Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`)",
+            None,
+        ),
+        (
+            "effigy cache",
+            "Inspect/invalidate phase-1 task cache metadata (`inspect`, `invalidate`)",
+            None,
+        ),
+        (
+            "effigy completion",
+            "Generate shell completion scripts and selector candidates",
+            None,
+        ),
+        (
+            "effigy scan",
+            "Run built-in repository scanners such as `god-files` and `attention-markers`",
+            None,
+        ),
+        ("effigy <task>", "Resolve task across discovered catalogs", None),
+        (
+            "effigy <catalog>/<task>",
+            "Run task from explicit catalog alias",
+            None,
+        ),
+    ];
     renderer.section("Commands")?;
     renderer.table(&TableSpec::new(
         Vec::new(),
-        vec![
-            vec![
-                "effigy help".to_owned(),
-                "Show general help (same as --help)".to_owned(),
-            ],
-            vec![
-                "effigy version".to_owned(),
-                "Print the current Effigy version (same as --version)".to_owned(),
-            ],
-            vec![
-                "effigy tasks".to_owned(),
-                "List discovered catalogs/task commands and probe routing".to_owned(),
-            ],
-            vec![
-                "effigy config".to_owned(),
-                "Show supported effigy.toml configuration keys and examples".to_owned(),
-            ],
-            vec![
-                "effigy doctor".to_owned(),
-                "Run remedial-first health checks for environment, manifests, and task references"
-                    .to_owned(),
-            ],
-            vec![
-                "effigy docs".to_owned(),
-                "Run reusable docs QA checks such as markdown link, JSON example, and index validation".to_owned(),
-            ],
-            vec![
-                "effigy contracts".to_owned(),
-                "Validate reusable JSON contract artifacts such as selection payloads".to_owned(),
-            ],
-            vec![
-                "effigy distribution".to_owned(),
-                "Validate distribution metadata/artifact bundles and generate closeout evidence".to_owned(),
-            ],
-            vec![
-                "effigy release".to_owned(),
-                "Inspect release readiness from changelog, version files, and optional gates"
-                    .to_owned(),
-            ],
-            vec![
-                "effigy test".to_owned(),
-                "Run built-in auto-detected tests (or explicit tasks.test); supports <catalog>/test fallback".to_owned(),
-            ],
-            vec![
-                "effigy watch".to_owned(),
-                "Watch mode phase-1 runtime with explicit owner policy and debounce/glob controls"
-                    .to_owned(),
-            ],
-            vec![
-                "effigy init".to_owned(),
-                "Initialize baseline effigy.toml scaffold with safe overwrite/dry-run controls"
-                    .to_owned(),
-            ],
-            vec![
-                "effigy migrate".to_owned(),
-                "Migrate package scripts into `[tasks]` with preview/apply flow".to_owned(),
-            ],
-            vec![
-                "effigy unlock".to_owned(),
-                "Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`)"
-                    .to_owned(),
-            ],
-            vec![
-                "effigy cache".to_owned(),
-                "Inspect/invalidate phase-1 task cache metadata (`inspect`, `invalidate`)"
-                    .to_owned(),
-            ],
-            vec![
-                "effigy completion".to_owned(),
-                "Generate shell completion scripts and selector candidates".to_owned(),
-            ],
-            vec![
-                "effigy scan".to_owned(),
-                "Run built-in repository scanners such as `god-files` and `attention-markers`"
-                    .to_owned(),
-            ],
-            vec![
-                "effigy <task>".to_owned(),
-                "Resolve task across discovered catalogs".to_owned(),
-            ],
-            vec![
-                "effigy <catalog>/<task>".to_owned(),
-                "Run task from explicit catalog alias".to_owned(),
-            ],
-        ],
+        commands
+            .into_iter()
+            .filter(|(_, _, builtin)| builtin.is_none_or(|name| !deferred_builtins.contains(name)))
+            .map(|(command, description, _)| vec![command.to_owned(), description.to_owned()])
+            .collect::<Vec<Vec<String>>>(),
     ))?;
     renderer.text("")?;
     renderer.notice(

@@ -41,7 +41,11 @@ pub(super) fn prepare_tasks_command(args: &TasksArgs) -> Result<PreparedTasksCom
     let cwd = current_working_dir()?;
     let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
     let catalogs = discover_catalogs_allow_missing(&resolved.resolved_root)?;
-    let resolve_probe = build_resolve_probe(args.resolve_selector.clone(), &catalogs)?;
+    let resolve_probe = build_resolve_probe(
+        args.resolve_selector.clone(),
+        &resolved.resolved_root,
+        &catalogs,
+    )?;
 
     Ok(PreparedTasksCommand {
         resolved_root: resolved.resolved_root,

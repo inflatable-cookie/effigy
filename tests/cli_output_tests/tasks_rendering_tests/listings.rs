@@ -53,3 +53,18 @@ Task Matches: build
         expected
     );
 }
+
+#[test]
+fn cli_tasks_hides_explicitly_deferred_builtins() {
+    let root = temp_workspace("cli-tasks-hidden-deferred-builtin");
+    fs::write(
+        root.join("effigy.toml"),
+        "[defer]\nrun = \"printf deferred\"\nbuiltins = [\"release\"]\n",
+    )
+    .expect("write manifest");
+
+    let stdout = run_effigy(&["tasks"], Some(&root), false);
+    assert!(stdout.contains("\n\nBuilt-in Tasks\n"));
+    assert!(!stdout.contains("- release :"), "got: {stdout}");
+    assert!(stdout.contains("- doctor :"), "got: {stdout}");
+}

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::Path;
 
 #[path = "manifest/config_sections.rs"]
@@ -59,6 +60,8 @@ pub(super) struct ManifestCatalog {
 #[serde(deny_unknown_fields)]
 pub(super) struct ManifestDefer {
     pub(super) run: String,
+    #[serde(default)]
+    pub(super) builtins: Vec<String>,
 }
 
 pub(in crate::runner) fn load_task_manifest(
@@ -74,4 +77,15 @@ pub(in crate::runner) fn load_task_manifest(
         path: manifest_path.to_path_buf(),
         error,
     })
+}
+
+impl ManifestDefer {
+    pub(in crate::runner) fn explicitly_deferred_builtins(&self) -> BTreeSet<String> {
+        self.builtins
+            .iter()
+            .map(|name| name.trim())
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect::<BTreeSet<String>>()
+    }
 }

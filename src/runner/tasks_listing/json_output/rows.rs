@@ -1,6 +1,7 @@
 use serde::Serialize;
+use std::collections::BTreeSet;
 
-use super::super::row_projection::{builtin_task_rows, BuiltinTaskProjection};
+use super::super::row_projection::{builtin_task_rows_filtered, BuiltinTaskProjection};
 
 #[derive(Clone, Serialize)]
 pub(super) struct BuiltinTaskJsonRow {
@@ -8,8 +9,10 @@ pub(super) struct BuiltinTaskJsonRow {
     description: String,
 }
 
-pub(super) fn builtin_task_rows_json() -> Vec<BuiltinTaskJsonRow> {
-    builtin_rows_json(builtin_task_rows())
+pub(super) fn builtin_task_rows_json(
+    deferred_builtins: &BTreeSet<String>,
+) -> Vec<BuiltinTaskJsonRow> {
+    builtin_rows_json(builtin_task_rows_filtered(deferred_builtins))
 }
 
 pub(super) fn builtin_rows_json<'a, I>(rows: I) -> Vec<BuiltinTaskJsonRow>
