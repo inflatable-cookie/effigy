@@ -34,6 +34,10 @@ Prebuilt binary (macOS and Linux):
 curl -fsSL https://github.com/inflatable-cookie/effigy/releases/latest/download/effigy-$(uname -m | sed 's/arm64/aarch64/')-$(uname -s | tr A-Z a-z | sed 's/darwin/apple-darwin/;s/linux/unknown-linux-gnu/') -o /usr/local/bin/effigy && chmod +x /usr/local/bin/effigy
 ```
 
+Linux note: GNU/Linux release binaries are built against an Ubuntu 22.04
+baseline and should run on systems with `glibc >= 2.35`. If your distro is
+older, use `cargo install` instead.
+
 From source:
 
 ```bash

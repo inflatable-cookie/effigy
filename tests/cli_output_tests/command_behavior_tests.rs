@@ -1136,7 +1136,7 @@ fn cli_distribution_preflight_json_writes_summary_when_smoke_skipped() {
     fs::write(root.join("docs/logs/README.md"), "# Logs\n").expect("write docs logs readme");
     fs::write(
         root.join(".github/workflows/release-binaries.yml"),
-        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
+        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./scripts/check-linux-glibc-floor.sh ./effigy-${{ matrix.target }} 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
     )
     .expect("write workflow");
 
@@ -1151,6 +1151,7 @@ fn cli_distribution_preflight_json_writes_summary_when_smoke_skipped() {
     }
 
     for script in [
+        "check-linux-glibc-floor.sh",
         "check-release-install-from-tag.sh",
         "check-distribution-first-publish.sh",
     ] {

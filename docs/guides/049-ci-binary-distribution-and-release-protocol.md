@@ -80,6 +80,13 @@ All four targets are built and smoke-tested in CI (`release-binaries.yml`).
 The ARM Linux target uses cross-compilation via `taiki-e/setup-cross-toolchain-action`
 with QEMU for the smoke test.
 
+Linux GNU compatibility policy:
+- Linux release binaries are built on `ubuntu-22.04` to keep the glibc floor
+  stable at `GLIBC_2.35`
+- `scripts/check-linux-glibc-floor.sh` runs in the release build job and fails
+  the workflow if a Linux artifact starts requiring a newer glibc symbol
+  version
+
 Binary naming convention:
 
 ```
@@ -109,13 +116,15 @@ tag push (v*)
   │     ├─ x86_64-apple-darwin
   │     └─ aarch64-unknown-linux-gnu (cross-compiled)
   │
-  ├─ 3. Smoke test each binary on native runner
+  ├─ 3. Check Linux GLIBC floor before publish
   │
-  ├─ 4. Create GitHub Release with binaries attached
+  ├─ 4. Smoke test each binary on native runner
   │
-  ├─ 5. Homebrew tap metadata + formula PR (existing)
+  ├─ 5. Create GitHub Release with binaries attached
   │
-  └─ 6. crates.io publish (existing, when ready)
+  ├─ 6. Homebrew tap metadata + formula PR (existing)
+  │
+  └─ 7. crates.io publish (existing, when ready)
 ```
 
 ### 4c) Release Gate Prerequisite

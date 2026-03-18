@@ -44,6 +44,10 @@ Build matrix targets:
 - `x86_64-unknown-linux-gnu` (Linux x86_64)
 - `aarch64-unknown-linux-gnu` (Linux ARM64, cross-compiled)
 
+Linux GNU release artifacts are built on an Ubuntu 22.04 baseline and checked
+with `scripts/check-linux-glibc-floor.sh` so published binaries do not drift to
+newer glibc requirements unexpectedly.
+
 ## 5) Formula Design
 
 The formula uses prebuilt binaries (not source builds):
