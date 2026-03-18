@@ -1050,7 +1050,7 @@ run = "sh ./scripts/root-setup.sh"
         assert!(result.root_setup.is_empty());
         assert!(result.child_results.is_empty());
         let text = render_bootstrap_result(&result, false).expect("render bootstrap text");
-        assert!(text.contains("no [bootstrap] contract was found"));
+        assert!(text.contains("no effigy.toml bootstrap contract found"));
         let json = render_bootstrap_result(&result, true).expect("render bootstrap json");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse json");
         assert_eq!(parsed["manifest"]["file_found"], false);
