@@ -6,7 +6,7 @@ use super::validate_manifest_schema;
 use crate::runner::doctor::report::DoctorState;
 
 #[test]
-fn validate_manifest_schema_accepts_docs_policy_and_release_sections() {
+fn validate_manifest_schema_accepts_docs_policy_bootstrap_and_release_sections() {
     let manifest: Value = toml::from_str(
         r###"
 [catalog]
@@ -25,6 +25,18 @@ exclude = ["history/**"]
 index = "vision"
 heading = "## Next Task"
 allowlist_file = "docs/policy/vision-next-task-verbs.txt"
+
+[bootstrap]
+setup = ["bootstrap:local", "doctor"]
+start = "dev"
+submodules = "recursive"
+
+[[bootstrap.children]]
+path = "aura"
+repo = "git@github.com:inflatable-cookie/aura.git"
+branch = "main"
+setup = ["install"]
+required = true
 
 [release]
 version-file = "Cargo.toml"

@@ -7,6 +7,7 @@ pub fn help_topic_label(topic: HelpTopic) -> &'static str {
         HelpTopic::Docs => "docs",
         HelpTopic::Contracts => "contracts",
         HelpTopic::Distribution => "distribution",
+        HelpTopic::Bootstrap => "bootstrap",
         HelpTopic::Release => "release",
         HelpTopic::Doctor => "doctor",
         HelpTopic::Tasks => "tasks",
@@ -25,6 +26,7 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
         Command::Docs(_) => ("docs", "docs".to_owned()),
         Command::Contracts(_) => ("contracts", "contracts".to_owned()),
         Command::Distribution(_) => ("distribution", "distribution".to_owned()),
+        Command::Bootstrap(_) => ("bootstrap", "bootstrap".to_owned()),
         Command::Release(_) => ("release", "release".to_owned()),
         Command::Doctor(_) => ("doctor", "doctor".to_owned()),
         Command::Tasks(_) => ("tasks", "tasks".to_owned()),
@@ -36,8 +38,9 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
 mod tests {
     use super::{command_kind_and_name, help_topic_label};
     use crate::{
-        Command, ContractsArgs, ContractsSubcommand, DistributionArgs, DistributionSubcommand,
-        DoctorArgs, HelpTopic, ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
+        BootstrapArgs, Command, ContractsArgs, ContractsSubcommand, DistributionArgs,
+        DistributionSubcommand, DoctorArgs, HelpTopic, ReleaseArgs, ReleaseSubcommand,
+        TaskInvocation, TasksArgs,
     };
 
     #[test]
@@ -47,6 +50,7 @@ mod tests {
         assert_eq!(help_topic_label(HelpTopic::Docs), "docs");
         assert_eq!(help_topic_label(HelpTopic::Contracts), "contracts");
         assert_eq!(help_topic_label(HelpTopic::Distribution), "distribution");
+        assert_eq!(help_topic_label(HelpTopic::Bootstrap), "bootstrap");
         assert_eq!(help_topic_label(HelpTopic::Release), "release");
         assert_eq!(help_topic_label(HelpTopic::Doctor), "doctor");
         assert_eq!(help_topic_label(HelpTopic::Tasks), "tasks");
@@ -78,6 +82,14 @@ mod tests {
         let distribution = Command::Distribution(DistributionArgs {
             subcommand: DistributionSubcommand::ValidateMetadata { tag: None },
             repo_override: None,
+            output_json: false,
+        });
+        let bootstrap = Command::Bootstrap(BootstrapArgs {
+            repo_url: "git@github.com:inflatable-cookie/effigy.git".to_owned(),
+            path: None,
+            branch: None,
+            start: false,
+            plan: true,
             output_json: false,
         });
         let release = Command::Release(ReleaseArgs {
@@ -117,6 +129,10 @@ mod tests {
         assert_eq!(
             command_kind_and_name(&distribution),
             ("distribution", "distribution".to_owned())
+        );
+        assert_eq!(
+            command_kind_and_name(&bootstrap),
+            ("bootstrap", "bootstrap".to_owned())
         );
         assert_eq!(command_kind_and_name(&tasks), ("tasks", "tasks".to_owned()));
         assert_eq!(command_kind_and_name(&task), ("task", "build".to_owned()));

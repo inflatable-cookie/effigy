@@ -15,6 +15,8 @@ pages only when you need more detail.
    `effigy.toml` patterns.
 4. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for
    the full command and flag surface.
+5. [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md) when the
+   job is "clone this repo here and bring it up."
 
 ## By Goal
 
@@ -23,6 +25,12 @@ pages only when you need more detail.
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+
+### I want to clone a repo here and bring it up
+
+- [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
+- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 
 ### I want to run tasks and understand routing
 
@@ -140,6 +148,7 @@ Details:
 - [`053-release-wrapper-retirement-record-template.md`](./053-release-wrapper-retirement-record-template.md)
 - [`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
+- [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
 
 ### Docs and Governance
 

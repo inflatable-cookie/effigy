@@ -218,7 +218,6 @@ fn cli_docs_help_is_command_specific() {
     assert!(!stdout.contains("contracts Help"));
 }
 
-#[test]
 fn cli_contracts_help_is_command_specific() {
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("contracts")

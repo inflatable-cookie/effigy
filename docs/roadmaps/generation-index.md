@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
-Current generation: `g01`
-Updated: 2026-03-12
+Current generation: `g02`
+Updated: 2026-03-17
 
 ## Generation history
 
@@ -24,6 +24,9 @@ Updated: 2026-03-12
 - `027` captures the release orchestration milestone.
 - `028` captures the completed script-surface reduction and built-ins milestone.
 - `029` captures the active Northstar + Effigy consumer adoption and product-boundary milestone.
+- `g02`
+  - Starts a new product cycle after the implementation/consolidation-heavy `g01` sequence.
+  - `001` captures the planned stateless bootstrap command and clone contract milestone.
 
 ## Research Roadmaps
 

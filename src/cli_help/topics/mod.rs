@@ -1,3 +1,4 @@
+mod bootstrap;
 mod changelog;
 mod contracts;
 mod distribution;
@@ -12,6 +13,7 @@ mod tasks;
 mod test;
 mod watch;
 
+pub(crate) use bootstrap::render_bootstrap_help;
 pub(crate) use changelog::render_changelog_help;
 pub(crate) use contracts::render_contracts_help;
 pub(crate) use distribution::render_distribution_help;

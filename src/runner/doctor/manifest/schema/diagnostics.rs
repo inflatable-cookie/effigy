@@ -41,6 +41,10 @@ impl<'a, 'b> SchemaContext<'a, 'b> {
         );
     }
 
+    pub(super) fn unsupported_nested_key(&mut self, parent: &str, key: &str) {
+        self.unsupported_key(&format!("{parent}.{key}"));
+    }
+
     pub(super) fn unsupported_value(&mut self, key_path: &str, actual: &str, expected: &str) {
         self.state.add_check_error(
             check_id::MANIFEST_SCHEMA_UNSUPPORTED_VALUE,
@@ -52,6 +56,10 @@ impl<'a, 'b> SchemaContext<'a, 'b> {
             ),
             schema_supported_value(key_path, expected),
         );
+    }
+
+    pub(super) fn invalid_value_type(&mut self, key_path: &str, expected: &str) {
+        self.unsupported_value(key_path, "wrong value type", expected);
     }
 
     pub(super) fn value_type(value: &Value) -> &'static str {

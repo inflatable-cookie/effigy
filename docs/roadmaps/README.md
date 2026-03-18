@@ -11,7 +11,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Layout
 
-- `g01/` current roadmap generation
+- `g02/` current roadmap generation
+- `g01/` previous implementation and consolidation generation
 - `generation-index.md` active generation and rollover history
 - `backlog/` deferred scope with promotion criteria
 
@@ -30,8 +31,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01/022-research-phase-3-scale-and-integration.md` is the third research roadmap (planned).
 - `g01/023-builtin-test-suite-lifecycle-and-env.md` is the next implementation roadmap (planned).
 - `g01/024-release-pipeline-validation-and-consumer-ci.md` validates the release pipeline and delivers consumer CI integration (complete).
-- `g01/029-northstar-effigy-consumer-adoption-kit.md` is the active consumer-adoption and product-boundary roadmap.
+- `g01/029-northstar-effigy-consumer-adoption-kit.md` is the consumer-adoption and product-boundary consolidation roadmap.
 - `g01/028-script-surface-reduction-and-builtins.md` reduces repo shell logic into Effigy-native command surfaces and is complete.
+- `g02/001-bootstrap-command-and-clone-contract.md` starts the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up.
 
 ## Research Program
 
@@ -53,10 +55,10 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Roadmap `g01.029` is now in consolidation mode: keep the released validation
-bundle stable, keep bootstrap/scaffolding in the `northstar-effigy` skill, and
-only reopen an Effigy-side `init` or repo-contract surface if future adoption
-shows repeated gaps the skill cannot cover cleanly.
+Roadmap `g02.001` is the next active design surface: define the exact
+`effigy bootstrap` parser contract and JSON schema, then implement the
+stateless clone/update/setup/start path without introducing machine-global
+workspace config.
 
 
 ## Historical language boundary

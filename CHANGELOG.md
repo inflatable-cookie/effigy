@@ -6,6 +6,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- Start `g02.001` with a first-class `effigy bootstrap` command surface and
+  initial runtime: parser/help/JSON-envelope wiring, root clone-or-update,
+  repo-owned `[bootstrap]` manifest loading, optional submodule sync, child
+  repo checkout, declared setup tasks, explicit `--start`, and preview support
+  through `--plan`
+
 ## [0.2.9] - 2026-03-16
 
 ### Added

@@ -44,6 +44,11 @@ pub(crate) fn render_general_help<R: Renderer>(
             Some("distribution"),
         ),
         (
+            "effigy bootstrap",
+            "Clone/update a repo from a git URL and apply its repo-owned `[bootstrap]` contract",
+            Some("bootstrap"),
+        ),
+        (
             "effigy release",
             "Inspect release readiness from changelog, version files, and optional gates",
             Some("release"),

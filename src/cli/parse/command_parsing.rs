@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{
-    ChangelogArgs, ChangelogSubcommand, Command, ContractsArgs, ContractsCheckMode,
+    BootstrapArgs, ChangelogArgs, ChangelogSubcommand, Command, ContractsArgs, ContractsCheckMode,
     ContractsSelectionPrintMode, ContractsSubcommand, DistributionArgs, DistributionSubcommand,
     DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, HelpTopic, ReleaseArgs,
     ReleaseSubcommand, TaskInvocation, TasksArgs,
@@ -26,6 +26,7 @@ where
         "docs" => parse_docs_command(args),
         "contracts" => parse_contracts_command(args),
         "distribution" => parse_distribution_command(args),
+        "bootstrap" => parse_bootstrap(args),
         "release" => parse_release(args),
         "doctor" => parse_doctor(args),
         "tasks" | "catalogs" => parse_tasks(args),
@@ -58,9 +59,69 @@ fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
         "docs" => Some(HelpTopic::Docs),
         "contracts" => Some(HelpTopic::Contracts),
         "distribution" => Some(HelpTopic::Distribution),
+        "bootstrap" => Some(HelpTopic::Bootstrap),
         "release" => Some(HelpTopic::Release),
         _ => None,
     }
+}
+
+fn parse_bootstrap<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_url: Option<String> = None;
+    let mut path: Option<PathBuf> = None;
+    let mut branch: Option<String> = None;
+    let mut start = false;
+    let mut plan = false;
+    let mut output_json = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bootstrap)),
+            "--json" => output_json = true,
+            "--start" => start = true,
+            "--plan" => plan = true,
+            "--path" => {
+                path = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--path".to_owned(),
+                    },
+                )?));
+            }
+            "--branch" => {
+                branch = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--branch".to_owned(),
+                    },
+                )?);
+            }
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ if repo_url.is_none() => repo_url = Some(arg),
+            _ => return Err(unknown_argument(arg)),
+        }
+    }
+
+    let Some(repo_url) = repo_url else {
+        if plan || path.is_some() || branch.is_some() || start || output_json {
+            return Err(CliParseError::MissingFlagValue {
+                flag: "<GIT_URL>".to_owned(),
+            });
+        }
+        return Ok(Command::Help(HelpTopic::Bootstrap));
+    };
+
+    Ok(Command::Bootstrap(BootstrapArgs {
+        repo_url,
+        path,
+        branch,
+        start,
+        plan,
+        output_json,
+    }))
 }
 
 fn parse_docs_command<I>(args: I) -> Result<Command, CliParseError>

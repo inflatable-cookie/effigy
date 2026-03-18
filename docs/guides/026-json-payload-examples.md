@@ -30,6 +30,7 @@ Common starting points:
 
 - `Tasks` when you need discovery or routing data
 - `Doctor` or `Doctor Explain` when you need health or routing reasoning
+- `Bootstrap` when you need clone-or-update bring-up planning or execution data
 - `Test Plan` and `Test Results` when you are integrating test automation
 - `Scan *` payloads when you need raw repo-health findings instead of doctor
   normalization
@@ -312,7 +313,68 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 8) Scan God Files (`effigy.scan.god-files.v1`)
+## 8) Bootstrap (`effigy.bootstrap.v1`)
+
+```json
+{
+  "schema": "effigy.bootstrap.v1",
+  "schema_version": 1,
+  "ok": true,
+  "phase": "executed",
+  "repo_url": "git@github.com:inflatable-cookie/loophole.git",
+  "repo_name": "loophole",
+  "destination": "/workspace/sandboxes/loophole",
+  "destination_source": "cwd-default",
+  "branch": "main",
+  "root_repo_state": "cloned",
+  "manifest_found": true,
+  "submodules": {
+    "policy": "recursive",
+    "applied": true
+  },
+  "setup": {
+    "root": [
+      "bootstrap:local",
+      "doctor"
+    ],
+    "children": [
+      {
+        "path": "aura",
+        "repo": "git@github.com:inflatable-cookie/aura.git",
+        "required": true,
+        "repo_state": "cloned",
+        "setup": [
+          "install"
+        ],
+        "warning": null
+      },
+      {
+        "path": "chorus",
+        "repo": "git@github.com:inflatable-cookie/chorus.git",
+        "required": false,
+        "repo_state": "failed",
+        "setup": [],
+        "warning": "optional child `chorus` failed: bootstrap destination remote mismatch: expected `git@github.com:inflatable-cookie/chorus.git`, found `git@github.com:someone-else/chorus.git`"
+      }
+    ]
+  },
+  "start": {
+    "requested": true,
+    "task": "aura/dev",
+    "ran": true
+  },
+  "warnings": [
+    "optional child `chorus` failed: bootstrap destination remote mismatch: expected `git@github.com:inflatable-cookie/chorus.git`, found `git@github.com:someone-else/chorus.git`"
+  ],
+  "display": "bootstrapped git@github.com:inflatable-cookie/loophole.git -> /workspace/sandboxes/loophole"
+}
+```
+
+Use `phase = "plan"` payloads when you need destination/branch/start intent
+without mutation. Use `phase = "executed"` when you need to assert what was
+actually cloned, updated, or started.
+
+## 9) Scan God Files (`effigy.scan.god-files.v1`)
 
 ```json
 {
@@ -350,7 +412,7 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 9) Scan Duplicate Blocks (`effigy.scan.duplicate-blocks.v1`)
+## 10) Scan Duplicate Blocks (`effigy.scan.duplicate-blocks.v1`)
 
 ```json
 {
@@ -415,7 +477,7 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 10) Scan Comment Ratio (`effigy.scan.comment-ratio.v1`)
+## 11) Scan Comment Ratio (`effigy.scan.comment-ratio.v1`)
 
 ```json
 {
@@ -456,7 +518,7 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 10) Scan Generated Assets (`effigy.scan.generated-assets.v1`)
+## 12) Scan Generated Assets (`effigy.scan.generated-assets.v1`)
 
 ```json
 {
@@ -493,7 +555,7 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 11) Scan Generated In Src (`effigy.scan.generated-in-src.v1`)
+## 13) Scan Generated In Src (`effigy.scan.generated-in-src.v1`)
 
 ```json
 {
@@ -540,7 +602,7 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 12) Init (`effigy.init.v1`)
+## 14) Init (`effigy.init.v1`)
 
 ```json
 {
@@ -555,7 +617,7 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 11) Migrate (`effigy.migrate.v1`)
+## 15) Migrate (`effigy.migrate.v1`)
 
 ```json
 {
@@ -582,7 +644,7 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 10) Config (`effigy.config.v1`)
+## 16) Config (`effigy.config.v1`)
 
 ```json
 {
@@ -597,7 +659,7 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 11) Unlock (`effigy.unlock.v1`)
+## 17) Unlock (`effigy.unlock.v1`)
 
 ```json
 {
@@ -613,7 +675,7 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 12) Completion (`effigy.completion.v1`)
+## 18) Completion (`effigy.completion.v1`)
 
 ```json
 {
@@ -638,7 +700,7 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 13) Completion Candidates (`effigy.completion.candidates.v1`)
+## 19) Completion Candidates (`effigy.completion.candidates.v1`)
 
 Warm-hit example:
 
@@ -686,7 +748,7 @@ Miss example (invalid env policy fallback):
 }
 ```
 
-## 15) Scan Attention Markers (`effigy.scan.attention-markers.v1`)
+## 20) Scan Attention Markers (`effigy.scan.attention-markers.v1`)
 
 ```json
 {
@@ -737,7 +799,7 @@ Miss example (invalid env policy fallback):
 }
 ```
 
-## 16) Scan Stale Suppressions (`effigy.scan.stale-suppressions.v1`)
+## 21) Scan Stale Suppressions (`effigy.scan.stale-suppressions.v1`)
 
 ```json
 {
@@ -780,7 +842,7 @@ Miss example (invalid env policy fallback):
 }
 ```
 
-## 17) Task Run (`effigy.task.run.v1`)
+## 22) Task Run (`effigy.task.run.v1`)
 
 ```json
 {
