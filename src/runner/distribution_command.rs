@@ -207,6 +207,7 @@ fn run_validate_metadata(
     ];
     let required_files = [
         ".github/workflows/release-binaries.yml",
+        "scripts/check-linux-glibc-floor.sh",
         "scripts/check-release-install-from-tag.sh",
         "scripts/check-distribution-first-publish.sh",
     ];
@@ -247,6 +248,18 @@ fn run_validate_metadata(
         ("Create GitHub Release", "GitHub Release job wiring"),
         ("Update Homebrew tap", "Homebrew automation job wiring"),
         ("      - \"v*\"", "tag trigger wiring"),
+        (
+            "          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04",
+            "x86_64 Linux release baseline pinning",
+        ),
+        (
+            "          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04",
+            "aarch64 Linux release baseline pinning",
+        ),
+        (
+            "./scripts/check-linux-glibc-floor.sh ./effigy-${{ matrix.target }} 2.35",
+            "Linux glibc compatibility guard",
+        ),
     ] {
         if !workflow.contains(needle) {
             errors.push(format!(
