@@ -417,6 +417,22 @@ Acceptance:
 - multi-repo environments can be brought up from one command
 - plan mode fully explains clone/update/setup/start decisions
 
+Live pilot validation:
+
+- [x] Prove the surface on a real root-orchestrator workspace (`loophole`)
+- [x] Prove the surface on a real workspace with sibling local package
+  dependency ordering and a separate docs authority (`songsprout`)
+
+Pilot lessons captured so far:
+
+- released `effigy v0.2.9` still rejects `[bootstrap]`, so current adoption
+  proofs must use the dev build
+- root-owned setup ordering matters when child repos install local
+  `file:../...` dependencies
+- root-owned setup tasks should remain the place where cross-repo install
+  ordering is expressed; child `setup = [...]` is still useful, but not
+  required for every workspace
+
 ## Wave 2 - Update and Recovery Hardening
 
 Once Wave 1 is stable, harden the surface for real operator use.
@@ -435,6 +451,14 @@ Acceptance:
 - recovery after partial failure is inspectable
 - advanced checkout/update controls exist only where proven necessary
 
+Current evidence:
+
+- child checkout summaries, optional-child warnings, and no-contract reporting
+  are already in place
+- dirty and remote-mismatched update failures are already explicit
+- no live pilot has yet demonstrated a need for reset-style update policies or
+  resume state
+
 ## Wave 3 - Product Boundary Review
 
 After real use, decide what stays native and what should remain repo task logic.
@@ -452,6 +476,14 @@ Acceptance:
 - repo-local tasks remain the home for domain-specific provisioning
 - the command stays simpler than the shell folklore it replaces
 
+Current decision pressure:
+
+- the next blocker is not command viability; it is the unreleased parser/runtime
+  surface for `[bootstrap]`
+- one more pilot may still be useful, but only after deciding whether the
+  current implementation should be released first so consuming repos are not
+  pinned to `target/debug/effigy`
+
 ## Related Guides
 
 - [`../../guides/019-watch-init-migrate-foundation.md`](../../guides/019-watch-init-migrate-foundation.md)
@@ -461,6 +493,6 @@ Acceptance:
 
 ## Next Task
 
-Turn this roadmap into an implementation contract by defining the exact CLI
-syntax, parser variants, and `effigy.bootstrap.v1` JSON schema before writing
-any clone/update runtime code.
+Use the live pilot cohort to make the next release-boundary decision:
+either run one more real workspace pilot or prepare bootstrap for release so
+`[bootstrap]` stops being a dev-build-only surface.

@@ -58,6 +58,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Recent Validation Logs
 
+- [`2026-03-18-bootstrap-live-pilot-cohort-loophole-songsprout.md`](./2026-03/18-110000-bootstrap-live-pilot-cohort-loophole-songsprout.md)
 - [`2026-03-12-northstar-effigy-productization-handoff.md`](./2026-03/12-235950-northstar-effigy-productization-handoff.md)
 - [`2026-03-12-source-of-truth-consolidation.md`](./2026-03/12-235900-source-of-truth-consolidation.md)
 - [`2026-03-12-workspace-bundle-proof-and-bootstrap-boundary.md`](./2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md)
