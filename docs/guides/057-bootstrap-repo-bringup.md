@@ -131,6 +131,8 @@ What ships now:
 - setup task execution for root and children
 - explicit `--start`
 - plan mode and JSON payloads
+- explicit reporting for root/child checkout state, requested branch behavior,
+  and whether a manifest existed without a `[bootstrap]` contract
 
 What is still later work:
 

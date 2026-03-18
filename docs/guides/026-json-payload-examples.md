@@ -326,12 +326,50 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
   "destination": "/workspace/sandboxes/loophole",
   "destination_source": "cwd-default",
   "branch": "main",
+  "root": {
+    "repo": "git@github.com:inflatable-cookie/loophole.git",
+    "repo_name": "loophole",
+    "destination": "/workspace/sandboxes/loophole",
+    "destination_source": "cwd-default",
+    "requested_branch": "main",
+    "repo_state": "cloned",
+    "update_strategy": "branch"
+  },
   "root_repo_state": "cloned",
   "manifest_found": true,
+  "manifest": {
+    "path": "/workspace/sandboxes/loophole/effigy.toml",
+    "file_found": true,
+    "bootstrap_contract_found": true
+  },
   "submodules": {
     "policy": "recursive",
     "applied": true
   },
+  "children": [
+    {
+      "path": "aura",
+      "destination": "/workspace/sandboxes/loophole/aura",
+      "repo": "git@github.com:inflatable-cookie/aura.git",
+      "requested_branch": "main",
+      "required": true,
+      "repo_state": "cloned",
+      "setup": [
+        "install"
+      ],
+      "warning": null
+    },
+    {
+      "path": "chorus",
+      "destination": "/workspace/sandboxes/loophole/chorus",
+      "repo": "git@github.com:inflatable-cookie/chorus.git",
+      "requested_branch": null,
+      "required": false,
+      "repo_state": "failed",
+      "setup": [],
+      "warning": "optional child `chorus` failed: bootstrap destination remote mismatch: expected `git@github.com:inflatable-cookie/chorus.git`, found `git@github.com:someone-else/chorus.git`"
+    }
+  ],
   "setup": {
     "root": [
       "bootstrap:local",
@@ -373,6 +411,14 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 Use `phase = "plan"` payloads when you need destination/branch/start intent
 without mutation. Use `phase = "executed"` when you need to assert what was
 actually cloned, updated, or started.
+
+Read these fields first:
+
+- `root` for the root checkout decision and final root repo state
+- `manifest` to distinguish “no `effigy.toml`” from “manifest exists but has no
+  `[bootstrap]` contract”
+- `children` for per-child destination, branch, repo state, and warning detail
+- `start` for whether bring-up launch was requested and whether it actually ran
 
 ## 9) Scan God Files (`effigy.scan.god-files.v1`)
 

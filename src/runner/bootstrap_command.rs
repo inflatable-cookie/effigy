@@ -39,7 +39,9 @@ struct BootstrapResolution {
 struct BootstrapExecutionResult {
     request: BootstrapResolution,
     root_repo_state: &'static str,
+    manifest_path: PathBuf,
     manifest_found: bool,
+    bootstrap_contract_found: bool,
     submodules_policy: ManifestBootstrapSubmodulesPolicy,
     submodules_applied: bool,
     root_setup: Vec<String>,
@@ -53,6 +55,8 @@ struct BootstrapExecutionResult {
 struct BootstrapChildResult {
     path: String,
     repo: String,
+    destination: PathBuf,
+    branch: Option<String>,
     required: bool,
     repo_state: &'static str,
     setup: Vec<String>,
@@ -101,6 +105,10 @@ fn execute_bootstrap_request(
         .cloned()
         .unwrap_or_default();
     let manifest_found = manifest.is_some();
+    let bootstrap_contract_found = manifest
+        .as_ref()
+        .map(|manifest| manifest.bootstrap.is_some())
+        .unwrap_or(false);
     let submodules_policy = bootstrap
         .submodules
         .unwrap_or(ManifestBootstrapSubmodulesPolicy::None);
@@ -120,6 +128,8 @@ fn execute_bootstrap_request(
                 child_results.push(BootstrapChildResult {
                     path: child.path.clone(),
                     repo: child.repo.clone(),
+                    destination: child_destination,
+                    branch: child.branch.clone(),
                     required: child.required,
                     repo_state,
                     setup,
@@ -132,6 +142,8 @@ fn execute_bootstrap_request(
                 child_results.push(BootstrapChildResult {
                     path: child.path.clone(),
                     repo: child.repo.clone(),
+                    destination: child_destination,
+                    branch: child.branch.clone(),
                     required: false,
                     repo_state: "failed",
                     setup: Vec::new(),
@@ -164,7 +176,9 @@ fn execute_bootstrap_request(
     Ok(BootstrapExecutionResult {
         request: request.clone(),
         root_repo_state,
+        manifest_path,
         manifest_found,
+        bootstrap_contract_found,
         submodules_policy,
         submodules_applied,
         root_setup,
@@ -228,12 +242,36 @@ fn render_bootstrap_result(
         "destination": result.request.destination.display().to_string(),
         "destination_source": result.request.destination_source,
         "branch": result.request.branch,
+        "root": {
+            "repo": result.request.repo_url,
+            "repo_name": result.request.repo_name,
+            "destination": result.request.destination.display().to_string(),
+            "destination_source": result.request.destination_source,
+            "requested_branch": result.request.branch,
+            "repo_state": result.root_repo_state,
+            "update_strategy": if result.request.branch.is_some() { "branch" } else { "default-head" },
+        },
         "root_repo_state": result.root_repo_state,
         "manifest_found": result.manifest_found,
+        "manifest": {
+            "path": result.manifest_path.display().to_string(),
+            "file_found": result.manifest_found,
+            "bootstrap_contract_found": result.bootstrap_contract_found,
+        },
         "submodules": {
             "policy": submodule_policy_label(result.submodules_policy),
             "applied": result.submodules_applied,
         },
+        "children": result.child_results.iter().map(|child| json!({
+            "path": child.path,
+            "destination": child.destination.display().to_string(),
+            "repo": child.repo,
+            "requested_branch": child.branch,
+            "required": child.required,
+            "repo_state": child.repo_state,
+            "setup": child.setup,
+            "warning": child.warning,
+        })).collect::<Vec<_>>(),
         "setup": {
             "root": result.root_setup,
             "children": result.child_results.iter().map(|child| json!({
@@ -278,8 +316,13 @@ fn render_bootstrap_result(
     ];
     if !result.root_setup.is_empty() {
         lines.push(format!("root setup: {}", result.root_setup.join(", ")));
-    } else if result.manifest_found {
+    } else if result.bootstrap_contract_found {
         lines.push("root setup: none".to_owned());
+    } else if result.manifest_found {
+        lines.push(format!(
+            "manifest: {} present, but no [bootstrap] contract was found",
+            result.manifest_path.display()
+        ));
     } else {
         lines.push("manifest: no effigy.toml bootstrap contract found".to_owned());
     }
@@ -290,6 +333,9 @@ fn render_bootstrap_result(
                 line.push_str(&format!("; setup {}", child.setup.join(", ")));
             } else if child.warning.is_none() {
                 line.push_str("; setup none");
+            }
+            if let Some(branch) = child.branch.as_deref() {
+                line.push_str(&format!("; branch {branch}"));
             }
             if let Some(warning) = child.warning.as_deref() {
                 line.push_str(&format!("; warning {warning}"));
@@ -309,6 +355,10 @@ fn render_bootstrap_result(
                 "not requested"
             }
         ));
+    } else if result.request.start_requested {
+        lines.push("start task: requested but no [bootstrap].start is configured".to_owned());
+    } else if result.bootstrap_contract_found {
+        lines.push("start task: none".to_owned());
     }
     for warning in &result.warnings {
         lines.push(format!("[warn] {warning}"));
@@ -549,7 +599,8 @@ fn submodule_policy_label(policy: ManifestBootstrapSubmodulesPolicy) -> &'static
 mod tests {
     use super::{
         derive_repo_name, execute_bootstrap_request, normalize_bootstrap_repo_url,
-        resolve_bootstrap_request, run_bootstrap_with_cwd, ManifestBootstrapSubmodulesPolicy,
+        render_bootstrap_result, resolve_bootstrap_request, run_bootstrap_with_cwd,
+        ManifestBootstrapSubmodulesPolicy,
     };
     use crate::BootstrapArgs;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -792,6 +843,17 @@ run = "sh ./scripts/root-setup.sh"
         remote
     }
 
+    fn create_plain_root_remote() -> PathBuf {
+        let worktree = temp_dir("root-plain-worktree");
+        fs::write(worktree.join("README.md"), "# plain root\n").expect("write readme");
+        init_git_repo(&worktree);
+        commit_all(&worktree, "init plain root");
+        let remote = bare_remote_path("root-plain-bare");
+        init_bare_remote(&remote);
+        attach_remote_and_push(&worktree, &remote);
+        remote
+    }
+
     #[test]
     fn derive_repo_name_supports_https_and_ssh_git_urls() {
         assert_eq!(
@@ -875,6 +937,7 @@ run = "sh ./scripts/root-setup.sh"
         let result = execute_bootstrap_request(&request).expect("execute bootstrap");
         assert_eq!(result.root_repo_state, "cloned");
         assert!(result.manifest_found);
+        assert!(result.bootstrap_contract_found);
         assert_eq!(
             result.submodules_policy,
             ManifestBootstrapSubmodulesPolicy::None
@@ -962,6 +1025,37 @@ run = "sh ./scripts/root-setup.sh"
             .contains("optional child `missing-child` failed"));
         assert_eq!(result.root_setup, vec!["bootstrap:root".to_owned()]);
         assert_eq!(result.warnings.len(), 1);
+    }
+
+    #[test]
+    fn execute_bootstrap_request_reports_missing_bootstrap_contract_cleanly() {
+        let root_remote = create_plain_root_remote();
+        let cwd = temp_dir("bootstrap-no-manifest");
+        let request = resolve_bootstrap_request(
+            &cwd,
+            &BootstrapArgs {
+                repo_url: root_remote.display().to_string(),
+                path: None,
+                branch: None,
+                start: false,
+                plan: false,
+                output_json: false,
+            },
+        )
+        .expect("resolve request");
+
+        let result = execute_bootstrap_request(&request).expect("execute bootstrap");
+        assert!(result.manifest_found);
+        assert!(!result.bootstrap_contract_found);
+        assert!(result.root_setup.is_empty());
+        assert!(result.child_results.is_empty());
+        let text = render_bootstrap_result(&result, false).expect("render bootstrap text");
+        assert!(text.contains("no [bootstrap] contract was found"));
+        let json = render_bootstrap_result(&result, true).expect("render bootstrap json");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse json");
+        assert_eq!(parsed["manifest"]["file_found"], true);
+        assert_eq!(parsed["manifest"]["bootstrap_contract_found"], false);
+        assert_eq!(parsed["children"], serde_json::json!([]));
     }
 
     #[test]
