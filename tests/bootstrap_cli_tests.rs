@@ -3,14 +3,18 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static TEMP_WORKSPACE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn temp_workspace(name: &str) -> PathBuf {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time")
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("effigy-bootstrap-cli-{name}-{ts}"));
+    let seq = TEMP_WORKSPACE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("effigy-bootstrap-cli-{name}-{ts}-{seq}"));
     fs::create_dir_all(&root).expect("mkdir workspace");
     root
 }
