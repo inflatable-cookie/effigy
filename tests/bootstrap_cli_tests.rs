@@ -181,6 +181,17 @@ run = "sh ./scripts/start.sh"
     remote
 }
 
+fn create_plain_root_remote() -> PathBuf {
+    let worktree = temp_workspace("plain-root-worktree");
+    fs::write(worktree.join("README.md"), "# plain root\n").expect("write plain readme");
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init plain root");
+    let remote = temp_workspace("plain-root-bare").join("remote.git");
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+    remote
+}
+
 #[test]
 fn bootstrap_help_is_command_specific() {
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
@@ -270,4 +281,29 @@ fn bootstrap_executes_root_child_and_start_via_binary() {
         fs::read_to_string(destination.join("start.txt")).expect("start marker"),
         "started"
     );
+}
+
+#[test]
+fn bootstrap_reports_missing_bootstrap_contract_via_binary() {
+    let root_remote = create_plain_root_remote();
+    let cwd = temp_workspace("no-bootstrap-contract");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("bootstrap")
+        .arg(root_remote.display().to_string())
+        .env("NO_COLOR", "1")
+        .current_dir(&cwd)
+        .output()
+        .expect("run effigy bootstrap");
+
+    assert!(output.status.success(), "bootstrap failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["command"]["kind"], "bootstrap");
+    assert_eq!(parsed["result"]["schema"], "effigy.bootstrap.v1");
+    assert_eq!(parsed["result"]["phase"], "executed");
+    assert_eq!(parsed["result"]["manifest"]["file_found"], false);
+    assert_eq!(parsed["result"]["manifest"]["bootstrap_contract_found"], false);
+    assert_eq!(parsed["result"]["children"], serde_json::json!([]));
+    assert_eq!(parsed["result"]["root"]["repo_state"], "cloned");
 }

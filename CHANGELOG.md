@@ -18,6 +18,10 @@ During v0.x, MINOR bumps may include breaking changes.
   on dirty or remote-mismatched existing checkouts, preserving optional-child
   failures as warnings instead of hard errors, and making text-mode execution
   summaries report missing setup/child state more explicitly
+- Expand `effigy.bootstrap.v1` and text-mode output to report root checkout
+  decisions, per-child destination/branch outcome details, and the difference
+  between “no manifest file” and “manifest exists but has no `[bootstrap]`
+  contract”
 
 ## [0.2.9] - 2026-03-16
 
