@@ -603,11 +603,11 @@ mod tests {
         ManifestBootstrapSubmodulesPolicy,
     };
     use crate::BootstrapArgs;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::Command as ProcessCommand;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1045,7 +1045,7 @@ run = "sh ./scripts/root-setup.sh"
         .expect("resolve request");
 
         let result = execute_bootstrap_request(&request).expect("execute bootstrap");
-        assert!(result.manifest_found);
+        assert!(!result.manifest_found);
         assert!(!result.bootstrap_contract_found);
         assert!(result.root_setup.is_empty());
         assert!(result.child_results.is_empty());
@@ -1053,7 +1053,7 @@ run = "sh ./scripts/root-setup.sh"
         assert!(text.contains("no [bootstrap] contract was found"));
         let json = render_bootstrap_result(&result, true).expect("render bootstrap json");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse json");
-        assert_eq!(parsed["manifest"]["file_found"], true);
+        assert_eq!(parsed["manifest"]["file_found"], false);
         assert_eq!(parsed["manifest"]["bootstrap_contract_found"], false);
         assert_eq!(parsed["children"], serde_json::json!([]));
     }

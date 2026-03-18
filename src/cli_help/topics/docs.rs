@@ -103,7 +103,7 @@ pub(crate) fn render_docs_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy docs check-paths README.md docs/README.md docs/vision/README.md",
             "effigy docs check-contains docs/logs/README.md --require \"Vision Target Delta\"",
             "effigy docs check-forbidden AGENTS.md setup-effigy/README.md --forbid \"--repo .\"",
-            "effigy docs check-json-examples --file docs/guides/026-json-payload-examples.md --section \"13) Completion Candidates\"",
+            "effigy docs check-json-examples --file docs/guides/026-json-payload-examples.md --section \"Completion Candidates\"",
             "effigy docs check-index --dir docs/logs --index docs/logs/README.md",
             "effigy docs check-index --policy-index vision",
             "effigy docs check-next-action --policy vision",

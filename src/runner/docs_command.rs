@@ -16,7 +16,7 @@ use super::error::RunnerError;
 const DEFAULT_LINK_FILES: &[&str] = &["README.md"];
 const DEFAULT_LINK_DOCS_DIR: &str = "docs";
 const DEFAULT_JSON_EXAMPLES_FILE: &str = "docs/guides/026-json-payload-examples.md";
-const DEFAULT_JSON_EXAMPLES_SECTION: &str = "13) Completion Candidates";
+const DEFAULT_JSON_EXAMPLES_SECTION: &str = "Completion Candidates";
 const DEFAULT_LOGS_DIR: &str = "docs/logs";
 const DEFAULT_LOGS_INDEX: &str = "docs/logs/README.md";
 const DEFAULT_WORKFLOW_DOCS_DIR: &str = "docs";
@@ -1110,14 +1110,26 @@ fn collect_workflow_check_files(dir: &Path, logs_dir: &Path, exclude_logs: bool)
     files
 }
 
+fn normalize_section_title(title: &str) -> &str {
+    let trimmed = title.trim();
+    let rest = trimmed.trim_start_matches(|c: char| c.is_ascii_digit());
+    let rest = rest
+        .strip_prefix(") ")
+        .or_else(|| rest.strip_prefix(". "))
+        .unwrap_or(trimmed);
+    rest.trim()
+}
+
 fn extract_h2_section(content: &str, section_title: &str) -> Option<String> {
     let mut in_section = false;
     let mut lines = Vec::new();
+    let wanted = normalize_section_title(section_title);
 
     for line in content.lines() {
         if let Some(title) = line.strip_prefix("## ") {
             let title = title.trim();
-            let is_match = title == section_title || title.starts_with(section_title);
+            let normalized = normalize_section_title(title);
+            let is_match = normalized == wanted || normalized.starts_with(wanted);
             if in_section && !is_match {
                 break;
             }
@@ -1299,6 +1311,21 @@ mod tests {
         let content = "## One\nalpha\n## Two\nbeta\n## Three\ngamma\n";
         let section = extract_h2_section(content, "Two").expect("section");
         assert_eq!(section, "## Two\nbeta");
+    }
+
+    #[test]
+    fn extract_h2_section_matches_numbered_heading_without_ordinal() {
+        let content =
+            "## 8) Bootstrap (`effigy.bootstrap.v1`)\nalpha\n## 19) Completion Candidates (`effigy.completion.candidates.v1`)\nbeta\n";
+        let section = extract_h2_section(
+            content,
+            "Completion Candidates (`effigy.completion.candidates.v1`)",
+        )
+        .expect("section");
+        assert_eq!(
+            section,
+            "## 19) Completion Candidates (`effigy.completion.candidates.v1`)\nbeta"
+        );
     }
 
     #[test]

@@ -22,6 +22,14 @@ During v0.x, MINOR bumps may include breaking changes.
   decisions, per-child destination/branch outcome details, and the difference
   between “no manifest file” and “manifest exists but has no `[bootstrap]`
   contract”
+- Pin Linux release artifacts to an Ubuntu 22.04 glibc baseline and add a
+  release-time GLIBC floor check so GNU binaries do not regress to newer libc
+  requirements like `GLIBC_2.39` without the workflow failing first
+- Make `effigy docs check-json-examples` resilient to numbered section drift by
+  matching semantic H2 titles like `Completion Candidates` even when guide
+  insertions change the visible ordinal, and fix the bootstrap no-manifest test
+  expectation that was still asserting an `effigy.toml` existed in the plain
+  fixture repo
 
 ## [0.2.9] - 2026-03-16
 
