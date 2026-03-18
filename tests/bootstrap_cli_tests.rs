@@ -81,14 +81,20 @@ fn attach_remote_and_push(worktree: &Path, remote: &Path) {
         .arg(remote)
         .output()
         .expect("git remote add");
-    assert!(add_remote.status.success(), "git remote add failed: {add_remote:?}");
+    assert!(
+        add_remote.status.success(),
+        "git remote add failed: {add_remote:?}"
+    );
     let branch = Command::new("git")
         .arg("-C")
         .arg(worktree)
         .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
         .output()
         .expect("git symbolic-ref");
-    assert!(branch.status.success(), "git symbolic-ref failed: {branch:?}");
+    assert!(
+        branch.status.success(),
+        "git symbolic-ref failed: {branch:?}"
+    );
     let branch = String::from_utf8(branch.stdout)
         .expect("utf8 branch")
         .trim()
@@ -169,7 +175,9 @@ run = "sh ./scripts/start.sh"
     .expect("write start script");
     for name in ["root-setup.sh", "start.sh"] {
         let script = worktree.join("scripts").join(name);
-        let mut perms = fs::metadata(&script).expect("script metadata").permissions();
+        let mut perms = fs::metadata(&script)
+            .expect("script metadata")
+            .permissions();
         perms.set_mode(0o755);
         fs::set_permissions(&script, perms).expect("chmod script");
     }
@@ -303,7 +311,10 @@ fn bootstrap_reports_missing_bootstrap_contract_via_binary() {
     assert_eq!(parsed["result"]["schema"], "effigy.bootstrap.v1");
     assert_eq!(parsed["result"]["phase"], "executed");
     assert_eq!(parsed["result"]["manifest"]["file_found"], false);
-    assert_eq!(parsed["result"]["manifest"]["bootstrap_contract_found"], false);
+    assert_eq!(
+        parsed["result"]["manifest"]["bootstrap_contract_found"],
+        false
+    );
     assert_eq!(parsed["result"]["children"], serde_json::json!([]));
     assert_eq!(parsed["result"]["root"]["repo_state"], "cloned");
 }
