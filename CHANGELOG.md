@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-03-18
+
 ### Added
 - Start `g02.001` with a first-class `effigy bootstrap` command surface and
   initial runtime: parser/help/JSON-envelope wiring, root clone-or-update,
