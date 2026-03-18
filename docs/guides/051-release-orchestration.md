@@ -156,6 +156,7 @@ Supported `[release]` fields:
   - optional list of extra files Effigy should keep in sync during prepare
   - currently supported:
     - `Cargo.lock`
+      - synced with `cargo generate-lockfile --quiet`
 - `tag-format`
   - optional tag template
   - supports `{version}` placeholder

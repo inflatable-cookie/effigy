@@ -2362,7 +2362,7 @@ fn cli_release_prepare_plan_json_mode_includes_sync_file_mutation_when_configure
         .is_some_and(|path| path.ends_with("/Cargo.lock")));
     assert_eq!(
         mutations[2]["detail_lines"][0],
-        "sync command: cargo check --quiet"
+        "sync command: cargo generate-lockfile --quiet"
     );
     assert_eq!(
         mutations[2]["diff_preview"]

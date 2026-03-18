@@ -50,6 +50,8 @@ Owner: `name/team`
 - [ ] Planned version reviewed in built-in prepare preview:
   - [ ] `effigy release prepare --plan`
 - [ ] Changelog entry drafted.
+- [ ] Root `README.md` and other front-door install examples updated when they
+  pin a specific release tag/version.
 - [ ] Release notes drafted:
   - [ ] highlights
   - [ ] vision target delta (tags, movement, remaining gap)

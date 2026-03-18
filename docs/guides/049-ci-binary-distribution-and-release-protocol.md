@@ -371,6 +371,9 @@ Current command surface:
      `effigy release prepare --yes` updates the version file, moves
      `[Unreleased]` entries into a dated release heading, syncs `Cargo.lock`
      when configured, and writes `.release-prepared.json`.
+   - Review versioned install examples in user-facing docs, especially the root
+     `README.md`, and refresh any explicit release tags so the front door does
+     not lag the newly prepared version.
    - Use `./scripts/prepare-release.sh --apply` only as a backup compatibility
      path when the built-in command cannot be used for migration or external
      tooling reasons.
