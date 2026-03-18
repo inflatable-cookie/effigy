@@ -2157,6 +2157,9 @@ fn collect_release_status(
     check_gates: bool,
 ) -> Result<ReleaseStatus, RunnerError> {
     let context = load_release_context(&resolved.resolved_root)?;
+    if check_gates && !context.config.gates.is_empty() {
+        emit_release_progress_line("checking release gates for status");
+    }
     let gate_report = if check_gates {
         run_release_gates(&resolved.resolved_root, &context.config.gates, true)
     } else {
@@ -2201,6 +2204,9 @@ fn build_release_prepare_plan(
     check_gates: bool,
     version_override: Option<semver::Version>,
 ) -> Result<ReleasePreparePlan, RunnerError> {
+    if check_gates && !context.config.gates.is_empty() {
+        emit_release_progress_line("checking release gates for prepare plan");
+    }
     let gate_report = if check_gates {
         run_release_gates(&context.repo_root, &context.config.gates, true)
     } else {
@@ -2358,6 +2364,9 @@ fn collect_release_simulation(
     version_override: Option<semver::Version>,
 ) -> Result<ReleaseSimulation, RunnerError> {
     let context = load_release_context(&resolved.resolved_root)?;
+    if !context.config.gates.is_empty() {
+        emit_release_progress_line("checking release gates for simulation");
+    }
     let gate_report = run_release_gates(&resolved.resolved_root, &context.config.gates, true);
     let prepare_plan = build_release_prepare_plan_with_gate_report(
         &context,
@@ -2546,6 +2555,9 @@ fn execute_release_prepare(
 
 fn run_standalone_release_gates(resolved: &ResolvedTarget) -> Result<ReleaseGateRun, RunnerError> {
     let config = load_release_config(&resolved.resolved_root)?;
+    if !config.gates.is_empty() {
+        emit_release_progress_line("running standalone release gates");
+    }
     let report = run_release_gates(&resolved.resolved_root, &config.gates, true);
     let blockers = gate_blockers(&report.results);
 
@@ -3002,6 +3014,7 @@ fn execute_release(
     if let Err(message) = git_add_release_files(&resolved.resolved_root, &state.files_modified) {
         blockers.push(message);
     } else {
+        emit_release_progress_line("creating release commit");
         match git_commit_release(
             &resolved.resolved_root,
             commit_message.as_deref().unwrap_or("release: vunknown"),
@@ -3016,6 +3029,7 @@ fn execute_release(
 
     if blockers.is_empty() {
         if let Some(prepared_tag) = tag.as_deref() {
+            emit_release_progress_line(&format!("creating tag `{prepared_tag}`"));
             match git_create_tag(&resolved.resolved_root, prepared_tag) {
                 Ok(()) => tag_created = true,
                 Err(message) => blockers.push(message),
@@ -3024,6 +3038,7 @@ fn execute_release(
     }
 
     if blockers.is_empty() {
+        emit_release_progress_line("pushing release commit and tag");
         match git_push_release(
             &resolved.resolved_root,
             branch.as_deref().unwrap_or("HEAD"),
@@ -3036,6 +3051,7 @@ fn execute_release(
     }
 
     if blockers.is_empty() {
+        emit_release_progress_line(&format!("removing {}", plan.state_file.display()));
         std::fs::remove_file(&plan.state_file)
             .map_err(|error| RunnerError::task_invocation_failed_write(&plan.state_file, error))?;
         state_file_removed = true;

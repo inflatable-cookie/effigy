@@ -7,10 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
-- Make text-mode `effigy release prepare` and other release-gate paths report
-  live mutation and gate progress on TTYs, so long-running steps like
-  `cargo check`, `cargo test`, and `cargo build` no longer appear to hang while
-  the release pipeline is still making forward progress
+- Make text-mode release orchestration report live phase, mutation, and gate
+  progress on TTYs across `status`, `simulate`, `prepare`, `gates`, and
+  `execute`, so long-running steps like `cargo check`, `cargo test`, and
+  `cargo build` no longer appear to hang while the release pipeline is still
+  making forward progress
 
 ## [0.2.10] - 2026-03-18
 
