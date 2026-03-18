@@ -33,7 +33,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01/024-release-pipeline-validation-and-consumer-ci.md` validates the release pipeline and delivers consumer CI integration (complete).
 - `g01/029-northstar-effigy-consumer-adoption-kit.md` is the consumer-adoption and product-boundary consolidation roadmap.
 - `g01/028-script-surface-reduction-and-builtins.md` reduces repo shell logic into Effigy-native command surfaces and is complete.
-- `g02/001-bootstrap-command-and-clone-contract.md` starts the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up.
+- `g02/001-bootstrap-command-and-clone-contract.md` starts the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up, and is now implemented plus live-pilot validated on `loophole` and `songsprout`.
 
 ## Research Program
 
@@ -55,10 +55,10 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Roadmap `g02.001` is the next active design surface: define the exact
-`effigy bootstrap` parser contract and JSON schema, then implement the
-stateless clone/update/setup/start path without introducing machine-global
-workspace config.
+Roadmap `g02.001` is the next active release-boundary surface: decide whether
+bootstrap needs one more pilot or whether the next batch should prepare the
+feature for release so consuming repos can use `[bootstrap]` without relying
+on a dev build.
 
 
 ## Historical language boundary

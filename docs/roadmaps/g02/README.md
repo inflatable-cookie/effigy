@@ -11,7 +11,7 @@ Generation theme:
 
 Current milestones:
 
-- [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (planned; stateless repo acquisition and environment bootstrap built-in)
+- [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (in progress; built-in implemented and live-pilot validated on `loophole` and `songsprout`, but not yet released)
 
 Rules:
 
@@ -21,6 +21,7 @@ Rules:
 
 ## Next Task
 
-Roadmap `g02.001` is the current design entrypoint: define the exact
-`effigy bootstrap` parser surface and `effigy.bootstrap.v1` JSON schema before
-starting runtime implementation.
+Roadmap `g02.001` is now past initial implementation: use the live
+`loophole` and `songsprout` pilots to decide whether bootstrap needs one more
+workspace proof or whether the next meaningful step is release preparation so
+`[bootstrap]` stops being a dev-build-only manifest surface.
