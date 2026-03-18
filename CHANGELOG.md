@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- Switch `release.sync-files = ["Cargo.lock"]` preparation from
+  `cargo check --quiet` to `cargo generate-lockfile --quiet`, so
+  `effigy release prepare --yes` can refresh the lockfile without stalling in a
+  build-oriented Cargo path.
+
 ## [0.2.11] - 2026-03-18
 
 ### Fixed

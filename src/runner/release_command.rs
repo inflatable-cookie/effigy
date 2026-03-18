@@ -4271,15 +4271,15 @@ fn build_sync_mutations(sync_files: &[ResolvedSyncFile]) -> Vec<FileMutationPlan
             SyncFileKind::CargoLock => FileMutationPlan {
                 path: sync.path.clone(),
                 kind: "sync-file",
-                summary: "sync Cargo.lock via `cargo check --quiet`".to_owned(),
+                summary: "sync Cargo.lock via `cargo generate-lockfile --quiet`".to_owned(),
                 before_preview: if sync.path.exists() {
                     "Cargo.lock exists and will be regenerated".to_owned()
                 } else {
                     "Cargo.lock is missing and will be created".to_owned()
                 },
-                after_preview: "Cargo.lock synced via `cargo check --quiet`".to_owned(),
+                after_preview: "Cargo.lock synced via `cargo generate-lockfile --quiet`".to_owned(),
                 detail_lines: vec![
-                    "sync command: cargo check --quiet".to_owned(),
+                    "sync command: cargo generate-lockfile --quiet".to_owned(),
                     "preview fidelity: lockfile contents are generated at apply time".to_owned(),
                 ],
                 diff_preview: Vec::new(),
@@ -4362,11 +4362,11 @@ fn apply_release_mutations(root: &Path, mutations: &[FileMutationPlan]) -> Resul
 
 fn sync_cargo_lock(root: &Path, lockfile: &Path) -> Result<(), String> {
     emit_release_progress_line(&format!(
-        "syncing {} via `cargo check --quiet`",
+        "syncing {} via `cargo generate-lockfile --quiet`",
         lockfile.display()
     ));
     let output = ProcessCommand::new("cargo")
-        .arg("check")
+        .arg("generate-lockfile")
         .arg("--quiet")
         .current_dir(root)
         .output()
@@ -4383,7 +4383,7 @@ fn sync_cargo_lock(root: &Path, lockfile: &Path) -> Result<(), String> {
     } else if !stdout.is_empty() {
         stdout
     } else {
-        "cargo check --quiet exited unsuccessfully".to_owned()
+        "cargo generate-lockfile --quiet exited unsuccessfully".to_owned()
     };
     Err(format!("failed to sync {}: {detail}", lockfile.display()))
 }
