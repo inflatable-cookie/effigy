@@ -278,18 +278,26 @@ fn render_bootstrap_result(
     ];
     if !result.root_setup.is_empty() {
         lines.push(format!("root setup: {}", result.root_setup.join(", ")));
+    } else if result.manifest_found {
+        lines.push("root setup: none".to_owned());
+    } else {
+        lines.push("manifest: no effigy.toml bootstrap contract found".to_owned());
     }
     if !result.child_results.is_empty() {
         for child in &result.child_results {
             let mut line = format!("child {}: {}", child.path, child.repo_state);
             if !child.setup.is_empty() {
                 line.push_str(&format!("; setup {}", child.setup.join(", ")));
+            } else if child.warning.is_none() {
+                line.push_str("; setup none");
             }
             if let Some(warning) = child.warning.as_deref() {
                 line.push_str(&format!("; warning {warning}"));
             }
             lines.push(line);
         }
+    } else {
+        lines.push("children: none".to_owned());
     }
     if let Some(start_task) = result.start_task.as_deref() {
         lines.push(format!(
@@ -544,18 +552,22 @@ mod tests {
         resolve_bootstrap_request, run_bootstrap_with_cwd, ManifestBootstrapSubmodulesPolicy,
     };
     use crate::BootstrapArgs;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::Command as ProcessCommand;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
     fn temp_dir(name: &str) -> PathBuf {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("effigy-bootstrap-{name}-{ts}"));
+        let seq = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("effigy-bootstrap-{name}-{ts}-{seq}"));
         fs::create_dir_all(&dir).expect("mkdir temp");
         dir
     }
@@ -648,6 +660,18 @@ mod tests {
         assert!(push.status.success(), "git push failed: {push:?}");
     }
 
+    fn clone_remote(remote: &Path, name: &str) -> PathBuf {
+        let clone_path = temp_dir(name);
+        let output = ProcessCommand::new("git")
+            .arg("clone")
+            .arg(remote)
+            .arg(&clone_path)
+            .output()
+            .expect("git clone");
+        assert!(output.status.success(), "git clone failed: {output:?}");
+        clone_path
+    }
+
     fn create_child_remote(name: &str) -> PathBuf {
         let worktree = temp_dir(&format!("{name}-worktree"));
         fs::create_dir_all(worktree.join("scripts")).expect("mkdir child scripts");
@@ -725,6 +749,44 @@ run = "sh ./scripts/start.sh"
         init_git_repo(&worktree);
         commit_all(&worktree, "init root");
         let remote = bare_remote_path("root-bare");
+        init_bare_remote(&remote);
+        attach_remote_and_push(&worktree, &remote);
+        remote
+    }
+
+    fn create_root_remote_with_optional_missing_child() -> PathBuf {
+        let worktree = temp_dir("root-optional-child-worktree");
+        fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
+        fs::write(
+            worktree.join("effigy.toml"),
+            r#"[bootstrap]
+setup = ["bootstrap:root"]
+
+[[bootstrap.children]]
+path = "missing-child"
+repo = "/definitely/not/a/real/repo.git"
+setup = ["bootstrap:child"]
+required = false
+
+[tasks."bootstrap:root"]
+run = "sh ./scripts/root-setup.sh"
+"#,
+        )
+        .expect("write manifest");
+        fs::write(
+            worktree.join("scripts/root-setup.sh"),
+            "#!/bin/sh\nset -eu\nprintf root-setup > root-setup.txt\n",
+        )
+        .expect("write root setup");
+        let script = worktree.join("scripts/root-setup.sh");
+        let mut perms = fs::metadata(&script)
+            .expect("script metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).expect("chmod script");
+        init_git_repo(&worktree);
+        commit_all(&worktree, "init root optional child");
+        let remote = bare_remote_path("root-optional-child-bare");
         init_bare_remote(&remote);
         attach_remote_and_push(&worktree, &remote);
         remote
@@ -833,6 +895,76 @@ run = "sh ./scripts/start.sh"
     }
 
     #[test]
+    fn execute_bootstrap_request_fails_for_existing_remote_mismatch() {
+        let child_remote = create_child_remote("child-app-mismatch");
+        let root_remote = create_root_remote_with_bootstrap(&child_remote);
+        let other_remote = create_root_remote_with_bootstrap(&child_remote);
+        let destination = clone_remote(&other_remote, "bootstrap-remote-mismatch-clone");
+        let request = super::BootstrapResolution {
+            repo_url: root_remote.display().to_string(),
+            repo_name: "remote".to_owned(),
+            destination,
+            destination_source: "explicit-path",
+            branch: None,
+            start_requested: false,
+        };
+
+        let err = execute_bootstrap_request(&request).expect_err("remote mismatch should fail");
+        let message = err.to_string();
+        assert!(message.contains("bootstrap destination remote mismatch"));
+    }
+
+    #[test]
+    fn execute_bootstrap_request_fails_for_existing_dirty_checkout() {
+        let child_remote = create_child_remote("child-app-dirty");
+        let root_remote = create_root_remote_with_bootstrap(&child_remote);
+        let destination = clone_remote(&root_remote, "bootstrap-dirty-clone");
+        fs::write(destination.join("DIRTY.txt"), "dirty\n").expect("write dirty file");
+        let request = super::BootstrapResolution {
+            repo_url: root_remote.display().to_string(),
+            repo_name: "remote".to_owned(),
+            destination,
+            destination_source: "explicit-path",
+            branch: None,
+            start_requested: false,
+        };
+
+        let err = execute_bootstrap_request(&request).expect_err("dirty checkout should fail");
+        let message = err.to_string();
+        assert!(message.contains("bootstrap destination has uncommitted changes"));
+    }
+
+    #[test]
+    fn execute_bootstrap_request_warns_for_optional_child_failures() {
+        let root_remote = create_root_remote_with_optional_missing_child();
+        let cwd = temp_dir("bootstrap-optional-child");
+        let request = resolve_bootstrap_request(
+            &cwd,
+            &BootstrapArgs {
+                repo_url: root_remote.display().to_string(),
+                path: None,
+                branch: None,
+                start: false,
+                plan: false,
+                output_json: false,
+            },
+        )
+        .expect("resolve request");
+
+        let result = execute_bootstrap_request(&request).expect("execute bootstrap");
+        assert_eq!(result.child_results.len(), 1);
+        assert_eq!(result.child_results[0].repo_state, "failed");
+        assert!(!result.child_results[0].required);
+        assert!(result.child_results[0]
+            .warning
+            .as_deref()
+            .expect("optional child warning")
+            .contains("optional child `missing-child` failed"));
+        assert_eq!(result.root_setup, vec!["bootstrap:root".to_owned()]);
+        assert_eq!(result.warnings.len(), 1);
+    }
+
+    #[test]
     fn run_bootstrap_with_cwd_starts_when_requested() {
         let child_remote = create_child_remote("child-app-start");
         let root_remote = create_root_remote_with_bootstrap(&child_remote);
@@ -855,5 +987,26 @@ run = "sh ./scripts/start.sh"
             fs::read_to_string(destination.join("start.txt")).expect("start marker"),
             "started"
         );
+    }
+
+    #[test]
+    fn run_bootstrap_with_cwd_reports_optional_child_warning_in_text_output() {
+        let root_remote = create_root_remote_with_optional_missing_child();
+        let cwd = temp_dir("bootstrap-optional-child-text");
+        let out = run_bootstrap_with_cwd(
+            BootstrapArgs {
+                repo_url: root_remote.display().to_string(),
+                path: None,
+                branch: None,
+                start: false,
+                plan: false,
+                output_json: false,
+            },
+            cwd,
+        )
+        .expect("run bootstrap");
+        assert!(out.contains("[ok] bootstrap completed"));
+        assert!(out.contains("child missing-child: failed"));
+        assert!(out.contains("[warn] optional child `missing-child` failed"));
     }
 }

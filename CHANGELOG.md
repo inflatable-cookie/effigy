@@ -13,6 +13,12 @@ During v0.x, MINOR bumps may include breaking changes.
   repo checkout, declared setup tasks, explicit `--start`, and preview support
   through `--plan`
 
+### Fixed
+- Harden `effigy bootstrap` around real bring-up edge cases by failing cleanly
+  on dirty or remote-mismatched existing checkouts, preserving optional-child
+  failures as warnings instead of hard errors, and making text-mode execution
+  summaries report missing setup/child state more explicitly
+
 ## [0.2.9] - 2026-03-16
 
 ### Added
