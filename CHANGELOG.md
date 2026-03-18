@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-03-18
+
 ### Fixed
 - Make text-mode release orchestration report live phase, mutation, and gate
   progress on TTYs across `status`, `simulate`, `prepare`, `gates`, and
