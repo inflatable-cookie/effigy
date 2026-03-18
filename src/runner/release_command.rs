@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::time::Instant;
@@ -2478,6 +2478,9 @@ fn execute_release_prepare(
         });
     }
 
+    if check_gates && !context.config.gates.is_empty() {
+        emit_release_progress_line("re-running release gates against prepared files");
+    }
     let gate_report = if check_gates {
         run_release_gates(&resolved.resolved_root, &context.config.gates, true)
     } else {
@@ -3968,8 +3971,15 @@ fn run_release_gates(root: &Path, gates: &[ResolvedGate], fail_fast: bool) -> Ga
     let mut stopped_early = false;
 
     for gate in gates {
+        emit_release_progress_line(&format!("running gate `{}`", gate.name));
         let result = run_release_gate(root, gate);
         let passed = result.passed;
+        emit_release_progress_line(&format!(
+            "gate `{}` {} ({})",
+            gate.name,
+            if passed { "passed" } else { "failed" },
+            format_release_progress_duration(result.duration_ms),
+        ));
         results.push(result);
         if fail_fast && !passed {
             stopped_early = results.len() < gates.len();
@@ -4323,6 +4333,7 @@ fn apply_release_mutations(root: &Path, mutations: &[FileMutationPlan]) -> Resul
     for mutation in mutations {
         match &mutation.apply {
             FileMutationApply::Write { after_contents } => {
+                emit_release_progress_line(&format!("writing {}", mutation.path.display()));
                 std::fs::write(&mutation.path, after_contents).map_err(|error| {
                     format!("failed to write {}: {error}", mutation.path.display())
                 })?;
@@ -4334,6 +4345,10 @@ fn apply_release_mutations(root: &Path, mutations: &[FileMutationPlan]) -> Resul
 }
 
 fn sync_cargo_lock(root: &Path, lockfile: &Path) -> Result<(), String> {
+    emit_release_progress_line(&format!(
+        "syncing {} via `cargo check --quiet`",
+        lockfile.display()
+    ));
     let output = ProcessCommand::new("cargo")
         .arg("check")
         .arg("--quiet")
@@ -4341,6 +4356,7 @@ fn sync_cargo_lock(root: &Path, lockfile: &Path) -> Result<(), String> {
         .output()
         .map_err(|error| format!("failed to sync {}: {error}", lockfile.display()))?;
     if output.status.success() {
+        emit_release_progress_line(&format!("synced {}", lockfile.display()));
         return Ok(());
     }
 
@@ -4354,6 +4370,24 @@ fn sync_cargo_lock(root: &Path, lockfile: &Path) -> Result<(), String> {
         "cargo check --quiet exited unsuccessfully".to_owned()
     };
     Err(format!("failed to sync {}: {detail}", lockfile.display()))
+}
+
+fn release_progress_enabled() -> bool {
+    std::io::stderr().is_terminal()
+}
+
+fn emit_release_progress_line(message: &str) {
+    if release_progress_enabled() {
+        eprintln!("[release] {message}");
+    }
+}
+
+fn format_release_progress_duration(duration_ms: u128) -> String {
+    if duration_ms >= 1_000 {
+        format!("{:.1}s", duration_ms as f64 / 1_000.0)
+    } else {
+        format!("{duration_ms}ms")
+    }
 }
 
 fn write_release_prepared_state(
@@ -6319,16 +6353,16 @@ fn verification_results_json(results: &[VerificationStepResult]) -> Vec<serde_js
 mod tests {
     use super::{
         build_diff_preview, changelog_preview_line, detect_pyproject_version_path,
-        detect_version_file_kind, format_release_tag, json_value_at_path, load_release_config,
-        normalize_verify_install_repo_url, parse_indexed_review_inspection_request,
-        parse_prepare_mutation_inspection_request, remediation_hints_for_blockers,
-        render_execute_review_menu_lines, render_prepare_review_menu_lines,
-        render_prepared_changelog_contents, render_updated_version_contents,
-        replace_json_string_at_path_preserving_layout, resolve_verify_install_repo_url,
-        resolve_version_field_path, review_label, suggested_bump, toml_value_at_path,
-        validate_prepare_version_override, ExecuteReviewState, PrepareReviewState,
-        ReleaseBlockedStage, ReleaseConfig, ReleaseContext, ReleaseExecutePlan, ReleasePreparePlan,
-        ResolvedVersionSource, SyncFileKind, VersionFileKind,
+        detect_version_file_kind, format_release_progress_duration, format_release_tag,
+        json_value_at_path, load_release_config, normalize_verify_install_repo_url,
+        parse_indexed_review_inspection_request, parse_prepare_mutation_inspection_request,
+        remediation_hints_for_blockers, render_execute_review_menu_lines,
+        render_prepare_review_menu_lines, render_prepared_changelog_contents,
+        render_updated_version_contents, replace_json_string_at_path_preserving_layout,
+        resolve_verify_install_repo_url, resolve_version_field_path, review_label, suggested_bump,
+        toml_value_at_path, validate_prepare_version_override, ExecuteReviewState,
+        PrepareReviewState, ReleaseBlockedStage, ReleaseConfig, ReleaseContext, ReleaseExecutePlan,
+        ReleasePreparePlan, ResolvedVersionSource, SyncFileKind, VersionFileKind,
     };
     use crate::changelog::BumpKind;
     use crate::resolver::ResolvedTarget;
@@ -6352,6 +6386,12 @@ mod tests {
             detect_version_file_kind(std::path::Path::new("VERSION")),
             Some(VersionFileKind::PlainText)
         );
+    }
+
+    #[test]
+    fn release_progress_duration_formats_subsecond_and_seconds() {
+        assert_eq!(format_release_progress_duration(842), "842ms");
+        assert_eq!(format_release_progress_duration(1_500), "1.5s");
     }
 
     #[test]
