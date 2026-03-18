@@ -227,6 +227,38 @@ Notes:
 - explicitly deferred built-ins disappear from general help and from the built-in section in `effigy tasks`
 - pure PHP-legacy repos using the automatic `composer.json` + `effigy.json` fallback already defer `release` by default, so you only need `builtins = [...]` when you are bypassing additional built-ins or overriding that implicit mode with explicit `[defer]`
 
+## 8b) Bootstrap Repo Bring-Up
+
+```toml
+[bootstrap]
+setup = ["bootstrap:local", "doctor"]
+start = "dev"
+submodules = "recursive"
+
+[[bootstrap.children]]
+path = "aura"
+repo = "git@github.com:inflatable-cookie/aura.git"
+branch = "main"
+setup = ["install"]
+required = true
+
+[tasks."bootstrap:local"]
+run = "bun install"
+```
+
+Use this when the repo should be able to describe its own first-run bring-up
+path after `effigy bootstrap <git-url>`.
+
+Behavior:
+- root setup tasks run in the cloned or updated root repo
+- child setup tasks run inside each child repo
+- `start` only runs when the operator supplies `--start`
+- child `path` values are always relative to the root repo
+- optional children (`required = false`) degrade to warnings instead of failing
+  the whole bootstrap
+- existing dirty or mismatched checkouts fail fast instead of being silently
+  repurposed
+
 ## 9) Shell Override for Managed Tabs
 
 ```toml

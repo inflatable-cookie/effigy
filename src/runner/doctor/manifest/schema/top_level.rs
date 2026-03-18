@@ -10,6 +10,7 @@ pub(super) fn validate_top_level_keys(
         "catalog",
         "defer",
         "docs_policy",
+        "bootstrap",
         "env",
         "package_manager",
         "release",

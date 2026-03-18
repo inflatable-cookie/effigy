@@ -281,6 +281,46 @@ pub(in crate::runner) struct ManifestDocsPolicyNextActionConfig {
     pub(in crate::runner) allowlist_file: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestBootstrapConfig {
+    #[serde(default)]
+    pub(in crate::runner) setup: Vec<String>,
+    #[serde(default)]
+    pub(in crate::runner) start: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) submodules: Option<ManifestBootstrapSubmodulesPolicy>,
+    #[serde(default)]
+    pub(in crate::runner) children: Vec<ManifestBootstrapChildConfig>,
+}
+
+#[derive(Debug, serde::Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub(in crate::runner) enum ManifestBootstrapSubmodulesPolicy {
+    None,
+    Init,
+    Recursive,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestBootstrapChildConfig {
+    pub(in crate::runner) path: String,
+    pub(in crate::runner) repo: String,
+    #[serde(default)]
+    pub(in crate::runner) branch: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) setup: Vec<String>,
+    #[serde(default = "default_bootstrap_child_required")]
+    pub(in crate::runner) required: bool,
+}
+
+fn default_bootstrap_child_required() -> bool {
+    true
+}
+
 #[derive(Debug, serde::Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]

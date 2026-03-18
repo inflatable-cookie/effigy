@@ -4,6 +4,7 @@ use toml::Value;
 
 use super::super::report::DoctorState;
 
+mod bootstrap_section;
 mod diagnostics;
 mod docs_policy_section;
 mod env_section;
@@ -19,6 +20,7 @@ mod values;
 #[cfg(test)]
 mod tests;
 
+use bootstrap_section::validate_bootstrap_section;
 use diagnostics::SchemaContext;
 use docs_policy_section::validate_docs_policy_section;
 use env_section::validate_env_section;
@@ -54,6 +56,9 @@ pub(super) fn validate_manifest_schema(
     }
     if let Some(docs_policy) = table.get("docs_policy") {
         validate_docs_policy_section(&mut context, docs_policy);
+    }
+    if let Some(bootstrap) = table.get("bootstrap") {
+        validate_bootstrap_section(&mut context, bootstrap);
     }
     if let Some(release) = table.get("release") {
         validate_release_section(&mut context, release);

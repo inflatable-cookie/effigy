@@ -51,6 +51,7 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::Docs(_)
         | Command::Contracts(_)
         | Command::Distribution(_)
+        | Command::Bootstrap(_)
         | Command::Release(_)
         | Command::Doctor(_)
         | Command::Tasks(_)

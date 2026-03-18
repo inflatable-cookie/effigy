@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+mod bootstrap_command;
 mod builtin;
 mod cache;
 mod catalog;

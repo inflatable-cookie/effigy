@@ -36,6 +36,8 @@ For narrative workflow guidance instead of lookup, start with:
   `init`, or `migrate`.
 - Need machine-readable output: add `--json`.
 - Need repo-health scanners: use `effigy scan`.
+- Need to clone or update a repo and run its declared bring-up path: use
+  `effigy bootstrap`.
 - Need release workflows: use `effigy release`.
 
 ## 1) Primary Commands
@@ -48,6 +50,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion | `check-links`, `check-json-examples`, `check-headings`, `check-paths`, `check-contains`, `check-forbidden`, `check-index`, `check-next-action`, `check-workflow-paths`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1` | `029-docs-qa-checklist-and-validation.md` |
 | `effigy contracts` | Validate reusable JSON contract artifacts such as selection payloads and schema-index contract coverage | `check-json`, `validate-selection`, `--repo`, `--index`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--contract`, `--artifact`, `--json` | `effigy.contracts.check-json.v1`, `effigy.contracts.selection-validation.v1` | `017-json-output-contracts.md` |
 | `effigy distribution` | Run non-publish distribution preflight checks, validate release/distribution metadata, write first-publish summary contracts, check artifact bundles, and generate acceptance closeout logs from captured artifacts | `preflight`, `validate-metadata`, `validate-artifacts`, `generate-closeout`, `write-summary`, `--repo`, `--tag`, `--skip-docs`, `--skip-smoke`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--output`, `--owner`, `--expect-homebrew`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.distribution.preflight.v1`, `effigy.distribution.metadata.v1`, `effigy.distribution.artifacts.v1`, `effigy.distribution.closeout.v1`, `effigy.distribution.summary.v1` | `044-distribution-first-publish-execution-runbook.md` |
+| `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, and optionally start the declared dev task | `<git-url>`, `--path`, `--branch`, `--start`, `--plan`, `--json` | `effigy.bootstrap.v1` | `057-bootstrap-repo-bringup.md` |
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--json`, `--markdown`, `--out`, `--fail-on-findings`, `--show-warnings` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
 | `effigy test` | Run built-in or explicit `tasks.test` test orchestration | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-foundation.md` |
@@ -101,6 +104,7 @@ effigy distribution validate-metadata [--repo <PATH>] [--tag <TAG>] [--json]
 effigy distribution validate-artifacts [--repo <PATH>] --artifacts-dir <DIR> [--expect-homebrew] [--json]
 effigy distribution generate-closeout [--repo <PATH>] --tag <TAG> --artifacts-dir <DIR> [--output <PATH>] [--owner <NAME>] [--expect-homebrew] [--json]
 effigy distribution write-summary [--repo <PATH>] --tag <TAG> --artifacts-dir <DIR> [--crate-version <VER>] [--repo-url <URL>] [--brew-formula <NAME>] [--homebrew-executed] [--log-file <NAME>]... [--json]
+effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--start] [--plan] [--json]
 effigy scan god-files [--threshold <N>] [--high <N>] [--critical <N>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
 effigy scan duplicate-blocks [--threshold <N>] [--high <N>] [--critical <N>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
 effigy scan comment-ratio [--threshold <RATIO>] [--high <RATIO>] [--critical <RATIO>] [--min-code-lines <N>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
@@ -141,6 +145,10 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
 - `tasks --pretty false` is valid only with `--json`.
 - `watch --json` requires bounded mode (`--once` or `--max-runs`).
 - `watch --owner` is required; `external` owner blocks nested watch loops.
+- `bootstrap` is stateless by default: destination is cwd-relative unless `--path`
+  is supplied.
+- `bootstrap` runs `start` only when `--start` is supplied.
+- `bootstrap` fails fast on dirty existing checkouts or remote mismatches.
 - task execution locks on `task:<name>` by default; use `tasks.<name>.lock = "<shared-name>"` to opt multiple tasks into the same `shared:<name>` scope.
 - managed `mode = "tui"` tasks also acquire `profile:<task>/<profile>` in addition to the task or shared scope.
 - `scan god-files` accepts either `--json` or `--markdown`, not both.
@@ -235,6 +243,7 @@ effigy --json scan comment-ratio
 effigy --json scan generated-in-src
 effigy --json scan attention-markers
 effigy --json scan stale-suppressions
+effigy --json bootstrap git@github.com:inflatable-cookie/loophole.git --plan
 effigy --json test --plan
 effigy release simulate
 effigy release prepare --plan
@@ -258,6 +267,7 @@ effigy unlock --all
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
+- [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
 - [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
 - [`051-release-orchestration.md`](./051-release-orchestration.md)
 - [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)

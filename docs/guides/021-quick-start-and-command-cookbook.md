@@ -114,6 +114,17 @@ effigy config --schema --minimal
 
 Use these when the repo still depends on scattered scripts and ad-hoc setup.
 
+### Bootstrap a repo from anywhere
+
+```sh
+effigy bootstrap git@github.com:inflatable-cookie/loophole.git --plan
+effigy bootstrap git@github.com:inflatable-cookie/loophole.git
+effigy bootstrap git@github.com:inflatable-cookie/loophole.git --start
+```
+
+Use this when the repo should describe its own bring-up path in `[bootstrap]`
+instead of relying on a setup checklist or local shell history.
+
 ### Switch to automation-safe output
 
 ```sh
@@ -130,6 +141,8 @@ Use JSON mode when CI, scripts, or agents are consuming Effigy output.
   [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - Need more manifest patterns:
   [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- Need repo bring-up from a git URL:
+  [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
 - Need task routing detail:
   [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
 - Need tests, watch, init, or migrate detail:
@@ -156,6 +169,7 @@ After this guide, you should be able to:
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
+- [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
 
 ## Next Step
 

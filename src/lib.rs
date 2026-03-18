@@ -67,6 +67,8 @@ pub enum Command {
     Contracts(ContractsArgs),
     /// Built-in distribution validation/reporting command family.
     Distribution(DistributionArgs),
+    /// Built-in repo bootstrap planning/execution command family.
+    Bootstrap(BootstrapArgs),
     /// Built-in release command family.
     Release(ReleaseArgs),
     /// Built-in doctor command family.
@@ -92,6 +94,8 @@ pub enum HelpTopic {
     Contracts,
     /// Distribution help.
     Distribution,
+    /// Bootstrap help.
+    Bootstrap,
     /// Release help.
     Release,
     /// Doctor help.
@@ -230,6 +234,23 @@ pub struct DistributionArgs {
     pub subcommand: DistributionSubcommand,
     /// Optional repository root override.
     pub repo_override: Option<PathBuf>,
+    /// Whether the command should render JSON-compatible output.
+    pub output_json: bool,
+}
+
+/// Parsed arguments for the built-in bootstrap command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapArgs {
+    /// Git URL for the repo being bootstrapped.
+    pub repo_url: String,
+    /// Optional destination override.
+    pub path: Option<PathBuf>,
+    /// Optional branch override.
+    pub branch: Option<String>,
+    /// Whether the eventual runtime should start the configured dev task.
+    pub start: bool,
+    /// Whether the command should stay on the plan-only path.
+    pub plan: bool,
     /// Whether the command should render JSON-compatible output.
     pub output_json: bool,
 }
