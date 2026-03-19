@@ -79,6 +79,12 @@ Leave `test` to the built-in runner unless you intentionally want
 If you want the guided version of that flow, start with
 [`021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md).
 
+To clone and bootstrap a repo in one shot from another directory:
+
+```bash
+effigy bootstrap git@github.com:inflatable-cookie/effigy.git
+```
+
 ## Main Workflows
 
 ### Find and run work

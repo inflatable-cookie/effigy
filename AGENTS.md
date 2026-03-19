@@ -23,6 +23,9 @@ effigy release gates # release-gate pass for the current repo
 
 Otherwise bootstrap with `cargo run --bin effigy -- ...`.
 
+For first-time local bring-up from outside this repo:
+- use `effigy bootstrap git@github.com:inflatable-cookie/effigy.git`
+
 Default local rule:
 - do not add a current-directory repo override when already running inside the target repo
 - use `--repo <PATH>` only when intentionally targeting a different repo
