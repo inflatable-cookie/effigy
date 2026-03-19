@@ -1,6 +1,9 @@
 [catalog]
 alias = "effigy"
 
+[bootstrap]
+setup = ["bootstrap:local"]
+
 # Keep built-in `test` canonical so `effigy test --plan` remains available.
 # Aggregator tasks below call the built-in through task refs.
 [tasks]
