@@ -135,7 +135,7 @@ fail_on_non_zero = true
 concurrent = [
   { task = "app/api", start = 1, tab = 2 },
   { task = "app/worker", start = 2, tab = 3, start_after_ms = 1200 },
-  { run = "bun run web:dev", start = 3, tab = 1 },
+  { run = "bun run web:dev", start = 3, tab = 1, shutdown_on_exit = true },
   { task = "shell", start = 4, tab = 4 }
 ]
 
@@ -152,6 +152,10 @@ Run:
 effigy dev
 effigy dev admin
 ```
+
+Use `shutdown_on_exit = true` on the process that should act as the session
+root. This is especially useful for Electron-style stacks where closing the
+main app window should stop the rest of the dev processes too.
 
 ## 5) Built-in Test Suites as Source of Truth
 

@@ -46,4 +46,11 @@ pub(super) fn handle_exit_event_impl(
             },
         );
     }
+
+    if state
+        .shutdown_on_exit_processes
+        .contains(&event_item.process)
+    {
+        state.shutdown_requested = true;
+    }
 }

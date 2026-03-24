@@ -42,6 +42,7 @@ pub(super) fn resolve_concurrent_process_entries(
                 run,
                 cwd,
                 start_after_ms: normalized.start_after_ms,
+                shutdown_on_exit: normalized.shutdown_on_exit,
             },
             start_rank: normalized.start_rank,
             tab_rank: normalized.tab_rank,
@@ -56,6 +57,7 @@ struct NormalizedConcurrentEntry {
     start_rank: usize,
     tab_rank: usize,
     start_after_ms: u64,
+    shutdown_on_exit: bool,
 }
 
 fn normalize_entry(
@@ -78,6 +80,7 @@ fn normalize_entry(
         start_rank,
         tab_rank,
         start_after_ms: entry.start_after_ms.unwrap_or(0),
+        shutdown_on_exit: entry.shutdown_on_exit.unwrap_or(false),
     }
 }
 

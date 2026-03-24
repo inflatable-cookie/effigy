@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::process_manager::{ProcessEvent, ProcessEventKind, ProcessSupervisor};
@@ -11,12 +12,16 @@ const STREAM_DRAIN_POLLS_AFTER_EXIT: usize = 3;
 pub(super) fn collect_stream_non_zero_exits(
     supervisor: &ProcessSupervisor,
     expected: usize,
+    shutdown_on_exit_processes: &[String],
     renderer: &mut impl Renderer,
 ) -> Result<Vec<(String, String)>, RunnerError> {
-    let mut state = StreamState::default();
+    let mut state = StreamState::new(shutdown_on_exit_processes);
     while state.exit_count < expected || state.drained_after_exit < STREAM_DRAIN_POLLS_AFTER_EXIT {
         if let Some(event) = supervisor.next_event_timeout(STREAM_EVENT_POLL_INTERVAL) {
             state.record_event(event, renderer)?;
+            if state.shutdown_triggered {
+                break;
+            }
         } else {
             state.record_idle_tick(expected);
         }
@@ -25,14 +30,28 @@ pub(super) fn collect_stream_non_zero_exits(
     Ok(state.finish())
 }
 
-#[derive(Default)]
 struct StreamState {
     exit_count: usize,
     drained_after_exit: usize,
     non_zero_exits: Vec<(String, String)>,
+    shutdown_on_exit_processes: HashSet<String>,
+    shutdown_triggered: bool,
 }
 
 impl StreamState {
+    fn new(shutdown_on_exit_processes: &[String]) -> Self {
+        Self {
+            exit_count: 0,
+            drained_after_exit: 0,
+            non_zero_exits: Vec::new(),
+            shutdown_on_exit_processes: shutdown_on_exit_processes
+                .iter()
+                .cloned()
+                .collect::<HashSet<String>>(),
+            shutdown_triggered: false,
+        }
+    }
+
     fn record_event(
         &mut self,
         event: ProcessEvent,
@@ -63,6 +82,16 @@ impl StreamState {
         if event.payload != "exit=0" {
             self.non_zero_exits
                 .push((event.process.clone(), event.payload.clone()));
+        }
+        if self.shutdown_on_exit_processes.contains(&event.process) {
+            self.shutdown_triggered = true;
+            renderer.notice(
+                NoticeLevel::Info,
+                &format!(
+                    "process `{}` requested managed shutdown on exit",
+                    event.process
+                ),
+            )?;
         }
         renderer.notice(
             NoticeLevel::Info,

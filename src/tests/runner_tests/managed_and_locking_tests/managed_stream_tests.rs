@@ -44,6 +44,19 @@ concurrent = [{ name = "api", run = "sh -lc 'exit 9'" }]
     );
 }
 
+fn setup_managed_stream_shutdown_on_exit(root: &Path) {
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [
+  { name = "window", run = "sh -lc 'exit 0'", shutdown_on_exit = true },
+  { name = "watch", run = "sh -lc 'sleep 5; printf watch-still-running'" }
+]
+"#,
+    );
+}
+
 #[test]
 fn run_manifest_task_managed_stream_output_contract_table() {
     let _guard = lock_test();
@@ -88,6 +101,19 @@ fn run_manifest_task_managed_stream_output_contract_table() {
             ],
             expected_absent: &[],
             setup: setup_managed_stream_fail_on_non_zero_disabled,
+        },
+        ManagedOutputCase {
+            workspace: "managed-stream-shutdown-on-exit",
+            invocation: ManagedInvocation::Dev,
+            args: &[],
+            expected: &[
+                "Managed Task Runtime",
+                "shutdown-on-exit: window",
+                "process `window` requested managed shutdown on exit",
+                "process `window` exit=0",
+            ],
+            expected_absent: &["watch-still-running"],
+            setup: setup_managed_stream_shutdown_on_exit,
         },
     ];
 

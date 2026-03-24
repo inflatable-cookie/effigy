@@ -6,6 +6,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- Managed concurrent tasks now support `shutdown_on_exit = true` on
+  individual `concurrent` entries, allowing one process such as an Electron
+  main window to shut down the whole stack when it exits.
+
 ### Fixed
 - Switch `release.sync-files = ["Cargo.lock"]` preparation from
   `cargo check --quiet` to `cargo generate-lockfile --quiet`, so

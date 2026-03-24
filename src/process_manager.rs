@@ -29,6 +29,7 @@ pub struct ProcessSpec {
     pub run: String,
     pub cwd: PathBuf,
     pub start_after_ms: u64,
+    pub shutdown_on_exit: bool,
     pub pty: bool,
     /// Additional environment variables to inject via `Command::env()`.
     /// Used for env-schema resolved values including secrets.

@@ -19,6 +19,7 @@ pub(super) fn process_spec(name: &str, run: &str, cwd: &Path) -> ProcessSpec {
         run: run.to_owned(),
         cwd: cwd.to_path_buf(),
         start_after_ms: 0,
+        shutdown_on_exit: false,
         pty: false,
         env: std::collections::BTreeMap::new(),
     }

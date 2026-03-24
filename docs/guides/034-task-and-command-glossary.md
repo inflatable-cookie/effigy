@@ -178,13 +178,15 @@ effigy test --plan
 
 Definition:
 - Task with `mode = "tui"` and `concurrent` process entries, rendered in multiprocess UI.
+- Individual `concurrent` entries can set `shutdown_on_exit = true` when one
+  process should end the whole managed session on exit.
 
 Example:
 
 ```toml
 [tasks.dev]
 mode = "tui"
-concurrent = [{ run = "cargo run -p api", start = 1, tab = 1 }]
+concurrent = [{ run = "cargo run -p api", start = 1, tab = 1, shutdown_on_exit = true }]
 ```
 
 ## Notes

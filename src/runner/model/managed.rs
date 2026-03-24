@@ -6,6 +6,7 @@ pub(in crate::runner) struct ManagedProcessSpec {
     pub(in crate::runner) run: String,
     pub(in crate::runner) cwd: PathBuf,
     pub(in crate::runner) start_after_ms: u64,
+    pub(in crate::runner) shutdown_on_exit: bool,
 }
 
 #[derive(Debug)]

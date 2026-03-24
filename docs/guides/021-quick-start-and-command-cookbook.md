@@ -69,6 +69,11 @@ This is the baseline mental model:
 - leave `test` to the built-in runner unless you intentionally want explicit
   `tasks.test` behavior
 
+When a repo has a multi-process dev stack, move that lifecycle into the
+manifest too. A managed `concurrent` entry can set `shutdown_on_exit = true`
+when one process should shut the rest of the stack down cleanly, such as an
+Electron main window or a primary app shell.
+
 For more patterns, use
 [`022-manifest-cookbook.md`](./022-manifest-cookbook.md).
 

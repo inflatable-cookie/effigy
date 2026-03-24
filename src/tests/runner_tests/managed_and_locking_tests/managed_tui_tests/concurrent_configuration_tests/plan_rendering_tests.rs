@@ -10,7 +10,7 @@ fn setup_concurrent_entries(root: &Path) {
         r#"[tasks.dev]
 mode = "tui"
 concurrent = [
-  { task = "api", start = 1, tab = 3 },
+  { task = "api", start = 1, tab = 3, shutdown_on_exit = true },
   { run = "printf background", start = 2, tab = 2, start_after_ms = 250 },
   { task = "front", start = 3, tab = 1 }
 ]
@@ -42,10 +42,12 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
                 "Managed Task Plan",
                 "profile: default",
                 "tab-order: front, process-2, api",
+                "shutdown-on-exit: api",
                 "printf api",
                 "printf background",
                 "printf front",
                 "250",
+                "enabled",
             ],
             expected_absent: &[],
             setup: setup_concurrent_entries,
