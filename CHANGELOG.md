@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-03-24
+
 ### Added
 - Managed concurrent tasks now support `shutdown_on_exit = true` on
   individual `concurrent` entries, allowing one process such as an Electron
