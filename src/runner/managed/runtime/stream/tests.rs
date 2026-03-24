@@ -84,7 +84,7 @@ fn event(process: &str, kind: ProcessEventKind, payload: &str) -> ProcessEvent {
 
 #[test]
 fn stream_state_records_stdout_and_stderr_lines() {
-    let mut state = StreamState::default();
+    let mut state = StreamState::new(&[]);
     let mut renderer = RecordingRenderer::default();
 
     state
@@ -111,7 +111,7 @@ fn stream_state_records_stdout_and_stderr_lines() {
 
 #[test]
 fn stream_state_records_non_zero_exits_and_exit_notices() {
-    let mut state = StreamState::default();
+    let mut state = StreamState::new(&[]);
     let mut renderer = RecordingRenderer::default();
 
     state
@@ -143,7 +143,7 @@ fn stream_state_records_non_zero_exits_and_exit_notices() {
 
 #[test]
 fn stream_state_only_drains_after_all_expected_exits() {
-    let mut state = StreamState::default();
+    let mut state = StreamState::new(&[]);
 
     state.record_idle_tick(1);
     assert_eq!(state.drained_after_exit, 0);
@@ -151,4 +151,26 @@ fn stream_state_only_drains_after_all_expected_exits() {
     state.exit_count = 1;
     state.record_idle_tick(1);
     assert_eq!(state.drained_after_exit, 1);
+}
+
+#[test]
+fn stream_state_marks_shutdown_when_flagged_process_exits() {
+    let mut state = StreamState::new(&["window".to_owned()]);
+    let mut renderer = RecordingRenderer::default();
+
+    state
+        .record_event(
+            event("window", ProcessEventKind::Exit, "exit=0"),
+            &mut renderer,
+        )
+        .expect("flagged exit should render notice");
+
+    assert!(state.shutdown_triggered);
+    assert_eq!(
+        renderer.notices,
+        vec![
+            "process `window` requested managed shutdown on exit".to_owned(),
+            "process `window` exit=0".to_owned(),
+        ]
+    );
 }

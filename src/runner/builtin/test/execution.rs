@@ -42,6 +42,7 @@ pub(super) fn run_builtin_test_targets_tui(
             run: lifecycle_execution_command(suite),
             cwd: suite.root.clone(),
             start_after_ms: 0,
+            shutdown_on_exit: false,
             pty: true,
             env: std::collections::BTreeMap::new(),
         })

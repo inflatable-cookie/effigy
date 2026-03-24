@@ -52,6 +52,12 @@ pub(super) fn run_managed_task_runtime(
     repo_root: &Path,
     plan: ManagedTaskPlan,
 ) -> Result<String, RunnerError> {
+    let shutdown_on_exit_processes = plan
+        .processes
+        .iter()
+        .filter(|process| process.shutdown_on_exit)
+        .map(|process| process.name.clone())
+        .collect::<Vec<String>>();
     let specs = managed_process_specs(plan.processes.iter().cloned());
     let expected = specs.len();
     let supervisor = ProcessSupervisor::spawn(repo_root.to_path_buf(), specs)?;
@@ -66,8 +72,12 @@ pub(super) fn run_managed_task_runtime(
         Vec::new(),
         &["Running managed profile in temporary stream mode."],
     )?;
-    let non_zero_exits =
-        stream::collect_stream_non_zero_exits(&supervisor, expected, &mut renderer)?;
+    let non_zero_exits = stream::collect_stream_non_zero_exits(
+        &supervisor,
+        expected,
+        &shutdown_on_exit_processes,
+        &mut renderer,
+    )?;
 
     supervisor.terminate_all();
     policy::enforce_non_zero_exit_policy(

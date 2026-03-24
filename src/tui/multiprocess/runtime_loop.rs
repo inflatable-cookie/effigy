@@ -18,6 +18,9 @@ pub(super) fn run_event_loop(
             MAX_EVENTS_PER_TICK,
             runtime.vt_emulator_enabled,
         );
+        if runtime.state.shutdown_requested {
+            break;
+        }
         runtime.state.spinner_tick = runtime.state.spinner_tick.wrapping_add(1);
 
         let size = runtime.terminal.size()?;

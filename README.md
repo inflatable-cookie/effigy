@@ -136,6 +136,11 @@ Details:
 - [`050-env-schema-integration.md`](./docs/guides/050-env-schema-integration.md)
 - [`028-migration-quick-paths.md`](./docs/guides/028-migration-quick-paths.md)
 
+For managed multi-process stacks, `concurrent` entries can also declare
+`shutdown_on_exit = true` when one process should act as the lifecycle root for
+the whole session, such as an Electron main window closing the rest of the dev
+stack.
+
 ### Automate safely
 
 Use JSON mode and contract docs when Effigy is feeding CI, agents, or other

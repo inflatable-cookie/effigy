@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use vt100::Parser as VtParser;
@@ -44,6 +44,8 @@ impl SessionState {
             options_index: 0,
             observed_non_zero: HashMap::new(),
             exit_states: HashMap::new(),
+            shutdown_on_exit_processes: HashSet::new(),
+            shutdown_requested: false,
             spinner_tick: 0,
             vt_parsers,
             vt_saw_chunk,

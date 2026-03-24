@@ -42,6 +42,8 @@ pub(in crate::runner) struct ManifestManagedConcurrentEntry {
     pub(in crate::runner) tab: Option<usize>,
     #[serde(default)]
     pub(in crate::runner) start_after_ms: Option<u64>,
+    #[serde(default)]
+    pub(in crate::runner) shutdown_on_exit: Option<bool>,
 }
 
 #[derive(Debug, serde::Deserialize)]

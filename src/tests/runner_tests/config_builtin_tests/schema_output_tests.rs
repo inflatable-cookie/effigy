@@ -21,7 +21,7 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
             "concurrent = [",
             "task = \"test vitest \\\"user service\\\"\"",
             "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
-            "{ task = \"catalog-a/api\", start = 1, tab = 3 }",
+            "{ task = \"catalog-a/api\", start = 1, tab = 3, shutdown_on_exit = true }",
         ],
     );
 }

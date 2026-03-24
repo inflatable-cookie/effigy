@@ -95,7 +95,15 @@ pub(super) fn validate_concurrent_array(
             context,
             &format!("{path}[{index}]"),
             table,
-            &["name", "task", "run", "start", "tab", "start_after_ms"],
+            &[
+                "name",
+                "task",
+                "run",
+                "start",
+                "tab",
+                "start_after_ms",
+                "shutdown_on_exit",
+            ],
         );
     }
 }

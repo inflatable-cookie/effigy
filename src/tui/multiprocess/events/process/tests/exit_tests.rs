@@ -70,3 +70,15 @@ fn exit_event_marks_success_and_clears_observed_non_zero() {
     );
     assert!(!state.observed_non_zero.contains_key("api"));
 }
+
+#[test]
+fn exit_event_requests_shutdown_for_flagged_process() {
+    let mut state = state_with_process("api");
+    state.shutdown_on_exit_processes.insert("api".to_owned());
+    let mut diagnostics = diagnostics();
+    let event = process_event("api", ProcessEventKind::Exit, "exit=0", None);
+
+    handle_exit_event(&event, &mut state, &mut diagnostics);
+
+    assert!(state.shutdown_requested);
+}

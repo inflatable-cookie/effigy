@@ -151,6 +151,8 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
 - `bootstrap` fails fast on dirty existing checkouts or remote mismatches.
 - task execution locks on `task:<name>` by default; use `tasks.<name>.lock = "<shared-name>"` to opt multiple tasks into the same `shared:<name>` scope.
 - managed `mode = "tui"` tasks also acquire `profile:<task>/<profile>` in addition to the task or shared scope.
+- managed `concurrent` entries accept `shutdown_on_exit = true` when one
+  process should terminate the whole managed session after it exits.
 - `scan god-files` accepts either `--json` or `--markdown`, not both.
 - `scan god-files --out <PATH>` resolves relative paths from the scanned repo root.
 - `scan god-files` hides warning rows in terminal text output unless `--show-warnings` is set.

@@ -27,7 +27,7 @@ mode = "tui"
 concurrent = [
   { task = "catalog-a/api", start = 1, tab = 3 },
   { task = "catalog-a/jobs", start = 2, tab = 4, start_after_ms = 1200 },
-  { task = "catalog-b/dev", start = 3, tab = 2 },
+  { task = "catalog-b/dev", start = 3, tab = 2, shutdown_on_exit = true },
   { run = "my-other-arbitrary-process", start = 4, tab = 1 },
   { task = "shell", start = 5, tab = 5 }
 ]
@@ -45,6 +45,8 @@ Profile entries support:
 - arbitrary process commands via `run = "..."`, or
 - relative path task references (`../repo/task`) via `task = "..."`, resolved from the current catalog root.
 - integrated shell tab via `task = "shell"` (uses `[shell].run` or default shell command).
+- optional lifecycle root via `shutdown_on_exit = true` on a single process or a
+  small set of processes when their exit should stop the full managed session.
 - optional profile overrides via `[tasks.dev.profiles.<name>]` with their own `concurrent = [...]`.
 
 Run-array note:
@@ -88,9 +90,28 @@ concurrent = [
 
 In this example, `../shared/validate` resolves relative to `catalog_b` catalog root.
 
+Electron-style lifecycle-root example:
+
+```toml
+[tasks.desktop]
+mode = "tui"
+
+concurrent = [
+  { run = "bun run electron:main", start = 1, tab = 2, shutdown_on_exit = true },
+  { run = "bun run vite", start = 2, tab = 1 },
+  { task = "shell", start = 3, tab = 3 }
+]
+```
+
+Closing the Electron window exits `electron:main`, and Effigy then tears down
+the rest of the managed session instead of leaving `vite` or helper processes
+behind.
+
 ## 3) Runtime Behavior
 
 - One tab per managed process.
+- If a process has `shutdown_on_exit = true`, its exit becomes a full-session
+  stop signal for the rest of the managed stack.
 - Include `{ task = "shell", ... }` in `concurrent` to enable a `shell` tab.
 - Non-shell tabs use input panel mode (`Tab` toggles command/insert; `Enter` sends input).
 - Shell tab uses direct terminal capture mode:
@@ -118,6 +139,8 @@ In this example, `../shared/validate` resolves relative to `catalog_b` catalog r
 3. In a Vite tab, send `r` then `Enter` and confirm restart behavior.
 4. Use another terminal tab/window for ad-hoc commands while the dev stack is running.
 5. Exit with `q` and verify child process teardown.
+6. If you use `shutdown_on_exit`, close the designated root process and verify
+   Effigy tears down the remaining child processes automatically.
 
 ## Related Guides
 

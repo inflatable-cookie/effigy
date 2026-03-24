@@ -18,15 +18,21 @@ pub(super) fn prepare_runtime_session(
         .map(|process| process.name.clone())
         .collect::<Vec<String>>();
     let process_names = select_process_tabs(default_tabs, tab_order);
+    let shutdown_on_exit_processes = processes
+        .iter()
+        .filter(|process| process.shutdown_on_exit)
+        .map(|process| process.name.clone())
+        .collect();
 
     let supervisor = ProcessSupervisor::spawn(repo_root, processes)?;
     let terminal = init_terminal()?;
-    let state = SessionState::new(
+    let mut state = SessionState::new(
         process_names,
         VT_PARSER_ROWS,
         VT_PARSER_COLS,
         VT_PARSER_SCROLLBACK,
     );
+    state.shutdown_on_exit_processes = shutdown_on_exit_processes;
     let diagnostics = RuntimeDiagnostics::from_env();
     let vt_emulator_enabled = vt_emulator_enabled_from_env();
 

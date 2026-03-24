@@ -18,6 +18,7 @@ where
             run: process.run,
             cwd: process.cwd,
             start_after_ms: process.start_after_ms,
+            shutdown_on_exit: process.shutdown_on_exit,
             pty: true,
             env: BTreeMap::new(),
         })
@@ -44,6 +45,10 @@ pub(super) fn write_managed_overview(
     items.push(KeyValue::new(
         "fail-on-non-zero",
         managed_fail_on_non_zero_label(plan.fail_on_non_zero),
+    ));
+    items.push(KeyValue::new(
+        "shutdown-on-exit",
+        managed_shutdown_on_exit_label(&plan.processes),
     ));
 
     renderer.section(title)?;
@@ -78,6 +83,7 @@ pub(super) fn write_managed_plan_process_table(
             "cwd".to_owned(),
             "run".to_owned(),
             "start-after-ms".to_owned(),
+            "shutdown-on-exit".to_owned(),
         ],
         managed_plan_process_rows(plan),
     ))?;
@@ -112,12 +118,34 @@ fn managed_plan_process_rows(plan: &ManagedTaskPlan) -> Vec<Vec<String>> {
                 process.cwd.display().to_string(),
                 process.run.clone(),
                 process.start_after_ms.to_string(),
+                managed_process_shutdown_on_exit_label(process.shutdown_on_exit).to_owned(),
             ]
         })
         .collect::<Vec<Vec<String>>>()
 }
 
 fn managed_fail_on_non_zero_label(enabled: bool) -> &'static str {
+    if enabled {
+        "enabled"
+    } else {
+        "disabled"
+    }
+}
+
+fn managed_shutdown_on_exit_label(processes: &[ManagedProcessSpec]) -> String {
+    let names = processes
+        .iter()
+        .filter(|process| process.shutdown_on_exit)
+        .map(|process| process.name.as_str())
+        .collect::<Vec<&str>>();
+    if names.is_empty() {
+        "disabled".to_owned()
+    } else {
+        names.join(", ")
+    }
+}
+
+fn managed_process_shutdown_on_exit_label(enabled: bool) -> &'static str {
     if enabled {
         "enabled"
     } else {

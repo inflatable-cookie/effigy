@@ -141,7 +141,7 @@ fail_on_non_zero = true
 concurrent = [
   { task = "app/api", start = 1, tab = 2 },
   { task = "app/worker", start = 2, tab = 3, start_after_ms = 1200 },
-  { run = "bun run docs:dev", start = 3, tab = 1 },
+  { run = "bun run docs:dev", start = 3, tab = 1, shutdown_on_exit = true },
   { task = "shell", start = 4, tab = 4 }
 ]
 
@@ -153,6 +153,30 @@ concurrent = [
 ```
 
 Use for multi-process local development with profile-specific variants.
+
+Lifecycle controls:
+- `fail_on_non_zero = true` keeps non-zero exits as task failures.
+- `shutdown_on_exit = true` on a `concurrent` entry tells Effigy to stop the
+  whole managed session when that process exits, even if it exits `0`.
+- Use `shutdown_on_exit` when one process is the natural root of the session,
+  such as an Electron window, desktop shell, or primary app process.
+
+Electron-style example:
+
+```toml
+[tasks.desktop]
+mode = "tui"
+
+concurrent = [
+  { run = "bun run electron:main", start = 1, tab = 2, shutdown_on_exit = true },
+  { run = "bun run vite", start = 2, tab = 1 },
+  { task = "shell", start = 3, tab = 3 }
+]
+```
+
+Use this when closing the Electron app window should tear down the supporting
+web/dev processes automatically instead of leaving them running in the
+background.
 
 Lock behavior:
 - tasks lock on `task:<name>` by default, so unrelated tasks can run concurrently in the same repo

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
 use vt100::Parser as VtParser;
@@ -37,6 +37,8 @@ pub(super) struct SessionState {
     pub(super) options_index: usize,
     pub(super) observed_non_zero: HashMap<String, String>,
     pub(super) exit_states: HashMap<String, ProcessExitState>,
+    pub(super) shutdown_on_exit_processes: HashSet<String>,
+    pub(super) shutdown_requested: bool,
     pub(super) spinner_tick: usize,
     pub(super) vt_parsers: HashMap<String, VtParser>,
     pub(super) vt_saw_chunk: HashMap<String, bool>,
