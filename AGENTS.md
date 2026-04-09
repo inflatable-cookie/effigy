@@ -72,6 +72,8 @@ Canonical reference:
 ## Key Documentation
 
 - Guides hub: [`docs/guides/README.md`](./docs/guides/README.md)
+- Strict planning lane: [`docs/specs/README.md`](./docs/specs/README.md)
+- Working rules: [`docs/contracts/001-working-rules.md`](./docs/contracts/001-working-rules.md)
 - Task routing: [`docs/guides/016-task-routing-precedence.md`](./docs/guides/016-task-routing-precedence.md)
 - JSON contracts: [`docs/guides/017-json-output-contracts.md`](./docs/guides/017-json-output-contracts.md)
 - CI & release: [`docs/guides/049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md)
@@ -85,3 +87,12 @@ Canonical reference:
 - **selector**: a task request string (`test`, `api/test`)
 - **routing**: how a selector resolves to a catalog and task
 - **deferral**: fallback execution when no selector matches local tasks
+
+## Strict Continuation Rule
+
+- In the active strict lane, `continue` should resolve through the previous
+  `Next Task`.
+- If there is an active ready batch card, execution should anchor on that card.
+- If there is no ready card, stop in planning instead of improvising execution.
+- When the next move is materially ambiguous, ask for intent instead of
+  guessing.

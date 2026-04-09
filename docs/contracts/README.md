@@ -1,6 +1,9 @@
 # Contracts Index
 
-This folder contains machine-consumer JSON contract artifacts used by Effigy command surfaces.
+This folder contains both:
+
+- machine-consumer JSON contract artifacts used by Effigy command surfaces
+- repo-local working rules that govern active strict-lane execution
 
 ## Vision Alignment
 
@@ -10,6 +13,8 @@ This folder contains machine-consumer JSON contract artifacts used by Effigy com
 
 ## Artifacts
 
+- [`001-working-rules.md`](./001-working-rules.md): strict execution rules for
+  the active Effigy product lane.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -29,4 +34,5 @@ This folder contains machine-consumer JSON contract artifacts used by Effigy com
 
 ## Next Task
 
-Add docs QA automation that fails when contract index ownership/trigger references are removed or drift from current validation commands.
+Keep both the machine contracts and the active working-rules contract aligned
+to the real validation commands and live execution posture.
