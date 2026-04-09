@@ -35,6 +35,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01/028-script-surface-reduction-and-builtins.md` reduces repo shell logic into Effigy-native command surfaces and is complete.
 - `g02/001-bootstrap-command-and-clone-contract.md` starts the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up, and is now implemented plus live-pilot validated on `loophole` and `songsprout`.
 
+## Active Strict Lane
+
+- `g02.001` remains the active roadmap milestone.
+- `docs/specs/001-bootstrap-release-and-adoption-strict-lane.md` is the active
+  strict planning lane around that roadmap.
+- `docs/specs/batch-cards/001-decide-bootstrap-release-readiness-from-live-proof.md`
+  is the current ready card.
+
 ## Research Program
 
 Three-phase comparative research program:
@@ -55,10 +63,9 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Roadmap `g02.001` is the next active release-boundary surface: decide whether
-bootstrap needs one more pilot or whether the next batch should prepare the
-feature for release so consuming repos can use `[bootstrap]` without relying
-on a dev build.
+Execute the active ready card for `g02.001`, then leave the next bootstrap move
+explicit as release preparation, one narrower proof wave, or a real intent
+checkpoint.
 
 
 ## Historical language boundary

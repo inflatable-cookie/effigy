@@ -19,6 +19,8 @@ deeper links only when you need them.
    for the most common day-to-day flows.
 4. Read [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md)
    when you are ready to shape `effigy.toml`.
+5. Read [`specs/README.md`](./specs/README.md) when the active product lane
+   needs strict planning or ready-card execution control.
 
 ## By Goal
 
@@ -108,6 +110,7 @@ For full repo adoption:
 - Practical guide hub: [`guides/README.md`](./guides/README.md)
 - Architecture notes: [`architecture/`](./architecture/)
 - JSON contracts: [`contracts/README.md`](./contracts/README.md)
+- Active strict planning lane: [`specs/README.md`](./specs/README.md)
 - Roadmaps: [`roadmaps/README.md`](./roadmaps/README.md)
 - Release and validation logs: [`logs/README.md`](./logs/README.md)
 - Vision documents: [`vision/README.md`](./vision/README.md)
@@ -123,3 +126,8 @@ Use the glossary terms consistently:
 
 Reference:
 [`guides/034-task-and-command-glossary.md`](./guides/034-task-and-command-glossary.md)
+
+## Next Task
+
+Use the active strict `g02.001` spec lane to decide whether bootstrap now
+needs release preparation or one narrower proof wave.

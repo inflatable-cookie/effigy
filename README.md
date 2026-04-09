@@ -220,6 +220,17 @@ cargo qa-json
 cargo qa-release
 ```
 
+## Current Planning Posture
+
+Effigy's active product lane is `g02.001`.
+
+Use these surfaces before continuing bootstrap or release-boundary work:
+
+- [`docs/roadmaps/README.md`](./docs/roadmaps/README.md)
+- [`docs/roadmaps/g02/001-bootstrap-command-and-clone-contract.md`](./docs/roadmaps/g02/001-bootstrap-command-and-clone-contract.md)
+- [`docs/specs/README.md`](./docs/specs/README.md)
+- [`docs/contracts/001-working-rules.md`](./docs/contracts/001-working-rules.md)
+
 ## Repository Layout
 
 ```text
@@ -235,3 +246,8 @@ effigy/
 │   └── vision/
 └── Cargo.toml
 ```
+
+## Next Task
+
+Complete the active strict `g02.001` planning batch so the next bootstrap move
+is explicitly release preparation or one narrower proof wave.

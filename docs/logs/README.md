@@ -62,6 +62,11 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-03-12-northstar-effigy-productization-handoff.md`](./2026-03/12-235950-northstar-effigy-productization-handoff.md)
 - [`2026-03-12-source-of-truth-consolidation.md`](./2026-03/12-235900-source-of-truth-consolidation.md)
 - [`2026-03-12-workspace-bundle-proof-and-bootstrap-boundary.md`](./2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md)
+
+## Current Evidence Window
+
+- [`2026-03-18-bootstrap-live-pilot-cohort-loophole-songsprout.md`](./2026-03/18-110000-bootstrap-live-pilot-cohort-loophole-songsprout.md)
+- [`2026-04-09-effigy-full-strict-lane-install.md`](./2026-04/09-effigy-full-strict-lane-install.md)
 - [`2026-03-12-contract-drift-path-check-layer.md`](./2026-03/12-233000-contract-drift-path-check-layer.md)
 - [`2026-03-12-starter-docs-policy-bundle-proof.md`](./2026-03/12-225500-starter-docs-policy-bundle-proof.md)
 - [`2026-03-12-product-boundary-and-verify-install-ssh-closeout.md`](./2026-03/12-223500-product-boundary-and-verify-install-ssh-closeout.md)
@@ -307,3 +312,8 @@ Batch: <batch-slug>
 ## Next Task
 - ...
 ```
+
+## Next Task
+
+Keep the active evidence window aligned to `g02.001` and its strict lane so
+the next bootstrap decision does not rely on broad historical log lists alone.
