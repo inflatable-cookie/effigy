@@ -18,7 +18,7 @@ Current milestones:
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/011-reconcile-demo-contract-against-signal-pilot.md`](../specs/batch-cards/011-reconcile-demo-contract-against-signal-pilot.md)
+- [`../specs/batch-cards/012-decide-demo-runner-foundation-implementation-slice.md`](../specs/batch-cards/012-decide-demo-runner-foundation-implementation-slice.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` planning batch to reconcile the settled demo contract
-against Signal next, so the first implementation lane starts from a real pilot
-instead of abstract browser assumptions.
+Use the active `g02.003` planning batch to define the first bounded demo-runner
+implementation slice next, using Signal's proof system as the calibration
+point.
