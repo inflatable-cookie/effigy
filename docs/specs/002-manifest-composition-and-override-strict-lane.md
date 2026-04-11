@@ -63,5 +63,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.002` ready card, then either leave another explicit
-ready card or return the lane to a real intent checkpoint.
+Execute the active `g02.002` ready card on override/conflict/explainability,
+then either leave another explicit ready card or return the lane to a real
+intent checkpoint.

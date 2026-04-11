@@ -1,6 +1,6 @@
 # 002 Decide Composition Contract Shape
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.002`
 Spec: `docs/specs/002-manifest-composition-and-override-strict-lane.md`
@@ -52,5 +52,23 @@ Make the first bounded design decision for manifest composition:
 
 ## Next Task
 
-Complete this planning batch, then either open the next ready card for override
-details/explainability or return the lane to an explicit intent checkpoint.
+## Decision
+
+The first bounded contract decision is now explicit:
+
+- use `[manifest].include` as the root composition surface
+- compose partial manifest fragments rather than pretending included files are
+  standalone roots
+- resolve paths relative to the including file
+- allow nested composition, but fail hard on cycles and unreadable fragments
+- keep override intent at the include-site rather than hidden inside arbitrary
+  feature data
+
+This is enough for later lanes, including demos, to assume one general split
+config model. It is not yet enough to implement composition safely, because the
+override/conflict rules and explainability surfaces still need their own batch.
+
+## Next Task
+
+Open the next ready card for override semantics, conflict handling, and
+effective-manifest explainability.

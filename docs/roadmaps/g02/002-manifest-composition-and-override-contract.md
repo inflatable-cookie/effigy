@@ -130,6 +130,19 @@ We need to decide naming and semantics:
 
 The product decision should optimize for clarity rather than novelty.
 
+Decision for Batch `02.1`:
+
+- use `include`
+- do not introduce separate `require` or `import` semantics in the first
+  contract
+
+Reason:
+
+- `include` reads clearly for ordered manifest composition
+- missing or unreadable fragments can still fail hard without needing a second
+  keyword just to mean “required”
+- `import` suggests a larger module system than this lane is trying to design
+
 ### 5.2 Fragment shape
 
 Need to choose whether included files are:
@@ -139,6 +152,11 @@ Need to choose whether included files are:
 
 Current bias: partial fragments are cleaner because they preserve one real root
 and avoid pretending that nested config files are standalone repos.
+
+Decision for Batch `02.1`:
+
+- included files are partial manifest fragments
+- they extend the effective manifest; they are not independent repo roots
 
 ### 5.3 Override model
 
@@ -153,9 +171,24 @@ Need an explicit override system in the contract. Areas to define:
 This lane should assume we need overrides and design them deliberately instead
 of hoping additive merge alone is enough.
 
-## 6) Candidate UX
+Decision for Batch `02.1`:
 
-Illustrative only, not final syntax:
+- override intent belongs at the include-site, not inside arbitrary key/value
+  leaves
+- the exact override granularity and merge rules are the next bounded batch
+
+## 6) Preferred Contract Shape
+
+Batch `02.1` decision:
+
+- root composition surface: `[manifest]`
+- composition keyword: `include`
+- fragment model: partial manifest fragments
+- path resolution: relative to the file declaring the include
+- nested composition: allowed, with cycle detection and failure-first behavior
+- override intent: declared on include entries, not hidden inside feature data
+
+Illustrative shape:
 
 ```toml
 [manifest]
@@ -166,7 +199,7 @@ include = [
 ]
 ```
 
-Potential later override example:
+Preferred override direction for the next batch:
 
 ```toml
 [manifest]
@@ -176,16 +209,18 @@ include = [
 ]
 ```
 
-This roadmap should decide the real syntax and semantics, not just the idea.
+This lane has now settled the root contract direction. The next batch should
+define what `override = true` actually authorizes, what conflicts still fail,
+and how that is explained in tooling.
 
 ## 7) Execution Plan
 
 ### Batch 02.1 - Contract Design
 
-- [ ] Define root composition section and naming
-- [ ] Define fragment shape and path resolution rules
-- [ ] Define merge model and initial conflict rules
-- [ ] Define cycle/error behavior
+- [x] Define root composition section and naming
+- [x] Define fragment shape and path resolution rules
+- [x] Define the initial conflict-first posture and include-site override boundary
+- [x] Define cycle/error behavior as failure-first, including nested include cycles
 
 ### Batch 02.2 - Override Model
 
@@ -209,8 +244,8 @@ This roadmap should decide the real syntax and semantics, not just the idea.
 
 ## 8) Acceptance Criteria
 
-- [ ] Effigy has one documented composition model for arbitrary manifest
-      content
+- [x] Effigy has one documented root composition direction for arbitrary
+      manifest content
 - [ ] Override behavior is explicit rather than implied
 - [ ] Split-file config does not require feature-specific semantics
 - [ ] The design is inspectable enough that operators and agents can understand
@@ -229,6 +264,6 @@ This roadmap should decide the real syntax and semantics, not just the idea.
 
 ## Next Task
 
-Use the active `g02.002` strict lane to decide the root composition section,
-fragment shape, file-resolution rules, and explicit override model before demo
-or any other feature claims its own external config semantics.
+Use the active `g02.002` strict lane to decide the override/conflict model and
+effective-manifest explainability next, now that the root composition shape is
+explicit enough for later feature planning.
