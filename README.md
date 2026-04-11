@@ -317,6 +317,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to decide the next bounded browser
-follow-up after query controls, keeping broader runtime and desktop-client
-questions deferred unless the new evidence changes that boundary.
+Use the active `g02.003` ready card to implement bounded detail-pane
+navigation, keeping broader runtime and desktop-client questions deferred
+unless the new evidence changes that boundary.

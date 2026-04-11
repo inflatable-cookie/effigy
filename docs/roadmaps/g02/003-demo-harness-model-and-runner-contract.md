@@ -1057,17 +1057,57 @@ Still deferred:
 
 ### 10.18 Post-Query Follow-Up Boundary
 
-Batch `03.21` target:
+Batch `03.21` delivered:
 
 Choose the next bounded browser follow-up after query controls.
 
-Scope for the next decision slice:
+What this settled:
 
-- decide whether the next priority is richer detail/log polish, broader browse
-  ergonomics, or another tighter browser-facing proof affordance
-- keep the decision grounded in the shipped self-hosted demos and browser
-  behavior
-- keep broader runtime and desktop-client questions deferred
+- the next honest browser gap is detail-pane navigation, not broader browse
+  ergonomics or richer log streaming
+- the self-hosted demos now produce enough receipt, artifact, and recent-output
+  content that a static detail pane becomes the next concrete usability limit
+- richer detail/log polish remains possible later, but the immediate boundary is
+  reaching content the browser already knows how to render
+
+Why detail navigation next:
+
+- `browser-proof-report` and `lifecycle-window` both accumulate enough detail
+  content that lower sections become unreachable in a fixed-height pane
+- the current browser already supports discovery and narrowing well enough for
+  the two shipped demos; longer selected-record inspection is now the tighter
+  bottleneck
+- detail-pane navigation stays bounded inside view navigation and does not
+  widen into richer rendering or terminal behavior
+
+Still deferred:
+
+- richer live-log handling beyond bounded recent output
+- artifact preview or richer rendering
+- terminal emulation
+- broader generic runtime cancellation
+- multi-attempt history or queueing
+- desktop-client decisions
+
+### 10.19 Browser Detail-Navigation Slice
+
+Batch `03.22` target:
+
+Implement bounded detail-pane navigation for long selected-demo records.
+
+In scope for the next implementation slice:
+
+- bounded vertical navigation in the detail pane
+- visible operator feedback about detail position when needed
+- keeping artifact selection coherent while the pane scrolls
+- proving the change against the shipped self-hosted demos
+
+Out of scope for the next implementation slice:
+
+- richer live-log streaming
+- artifact preview or richer rendering
+- multi-attempt history or queueing
+- broader generic runtime cancellation
 
 ## 11) Acceptance Criteria
 
@@ -1090,6 +1130,5 @@ Scope for the next decision slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to choose the next bounded browser
-follow-up after query controls without reopening broader runtime-cancellation
-scope.
+Use the active `g02.003` strict lane to implement bounded detail-pane
+navigation without reopening broader runtime-cancellation scope.
