@@ -1,6 +1,6 @@
 # 038 Decide Demo Post-History-Drilldown Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -47,5 +47,6 @@ tooling.
 
 ## Next Task
 
-Execute the active decision batch to choose the next bounded follow-up after
-historical-attempt drilldown, then open one explicit ready card for that slice.
+Execute [`039-implement-demo-history-query-controls.md`](./039-implement-demo-history-query-controls.md)
+to add bounded history-query narrowing and selection ergonomics without
+widening `demo list` or the browser.

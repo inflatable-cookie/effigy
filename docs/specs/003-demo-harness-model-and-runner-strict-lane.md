@@ -69,6 +69,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to choose the next bounded
-follow-up after historical-attempt drilldown, then keep browser density,
-runtime expansion, and desktop-client questions separate.
+Execute the active `g02.003` ready card next to add bounded history-query
+narrowing and selection ergonomics, then keep browser density, runtime
+expansion, and desktop-client questions separate.
