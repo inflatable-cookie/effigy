@@ -1,6 +1,6 @@
 # 026 Implement Demo Browser Query Controls
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -50,6 +50,5 @@ can narrow the registry without dropping back to `demo list`.
 
 ## Next Task
 
-Ship bounded browser query controls, then reassess whether the next slice
-should return to richer detail/log polish or stay on broader browse/discovery
-ergonomics.
+Decide the next bounded browser follow-up through
+[`027-decide-demo-post-query-follow-up-boundary.md`](./027-decide-demo-post-query-follow-up-boundary.md).

@@ -1025,24 +1025,49 @@ Still deferred:
 
 ### 10.17 Browser Query Controls Slice
 
-Batch `03.20` target:
+Batch `03.20` delivered:
 
 Implement bounded browser query controls on top of the shipped `demo list`
 contract.
 
-In scope for the next implementation slice:
+What shipped:
 
 - in-browser query state for the highest-signal existing filters
+- one-line browser prompts for `search` and `owner`
+- bounded cycle/toggle controls for `status`, `gap`, and `stale-only`
 - visible operator feedback about active query constraints
 - honest empty-state handling when filters narrow the registry to no results
 - reuse of existing runner query semantics rather than browser-only logic
 
-Out of scope for the next implementation slice:
+What this proved:
+
+- the browser can adopt the existing `demo list` contract directly instead of
+  inventing a second filtering model
+- browseability becomes the next real operator concern before richer
+  artifact/log rendering
+- the TUI can add bounded input affordances without collapsing into a general
+  editor or terminal lane
+
+Still deferred:
 
 - new query semantics not already shipped through `demo list`
 - richer log streaming or terminal emulation
 - artifact preview or richer rendering
 - multi-attempt history or queueing
+
+### 10.18 Post-Query Follow-Up Boundary
+
+Batch `03.21` target:
+
+Choose the next bounded browser follow-up after query controls.
+
+Scope for the next decision slice:
+
+- decide whether the next priority is richer detail/log polish, broader browse
+  ergonomics, or another tighter browser-facing proof affordance
+- keep the decision grounded in the shipped self-hosted demos and browser
+  behavior
+- keep broader runtime and desktop-client questions deferred
 
 ## 11) Acceptance Criteria
 
@@ -1065,5 +1090,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to implement bounded browser query
-controls without reopening broader runtime-cancellation scope.
+Use the active `g02.003` strict lane to choose the next bounded browser
+follow-up after query controls without reopening broader runtime-cancellation
+scope.

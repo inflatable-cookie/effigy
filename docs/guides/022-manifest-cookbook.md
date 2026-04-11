@@ -183,6 +183,8 @@ Lifecycle notes:
   `--stale-only`, and `--group-by`.
 - `demo browser` now provides the first live list/detail TUI on top of the
   shipped registry, query, inspect, run, stop, and rerun surfaces.
+- inside `demo browser`, use `/` for search, `O` for owner, `S` for status,
+  `G` for gap, `f` for stale-only, and `c` to clear the active query.
 - inside `demo browser`, use `[` and `]` to select a recorded artifact and
   `o` to open it with the platform default handler.
 - `demo browser` now also shows bounded recent stdout/stderr output for the

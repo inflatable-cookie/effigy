@@ -47,6 +47,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add bounded recent-output visibility inside `effigy demo browser`, so
   operators can inspect active or latest runner-owned stdout/stderr without
   leaving the browser or dropping into a second terminal
+- Add bounded in-browser query controls to `effigy demo browser`, so operators
+  can narrow proof inventory by search, owner, status, gap, and stale state
+  without leaving the browser for `demo list`
 
 ### Changed
 - Route catalog discovery, doctor strict-parse checks, docs-policy loading, and

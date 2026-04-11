@@ -192,6 +192,8 @@ The first browser foundation gives you:
 - a grouped demo list on the left
 - a detail pane for the selected demo
 - in-browser `run`, `stop`, `rerun`, and refresh actions
+- in-browser query controls for search, owner, status, gap, and stale-only
+  filtering
 - artifact selection with `[` and `]`, plus `o` to open the selected artifact
 - bounded recent stdout/stderr visibility for the selected demo when runner-
   owned logs exist
@@ -315,6 +317,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement bounded browser query
-controls, keeping broader runtime and desktop-client questions deferred unless
-the new evidence changes that boundary.
+Use the active `g02.003` ready card to decide the next bounded browser
+follow-up after query controls, keeping broader runtime and desktop-client
+questions deferred unless the new evidence changes that boundary.

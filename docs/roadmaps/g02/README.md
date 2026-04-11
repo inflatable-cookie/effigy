@@ -13,12 +13,12 @@ Current milestones:
 
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
 - [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
-- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, and bounded browser live log visibility now shipped; the next slice is bounded browser query controls)
+- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, and in-browser query controls now shipped)
 
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/026-implement-demo-browser-query-controls.md`](../specs/batch-cards/026-implement-demo-browser-query-controls.md)
+- [`../specs/batch-cards/027-decide-demo-post-query-follow-up-boundary.md`](../specs/batch-cards/027-decide-demo-post-query-follow-up-boundary.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement bounded browser query
-controls, while broader stoppability stays deferred behind a runtime-handle
-boundary.
+Use the active `g02.003` ready card to decide the next bounded browser
+follow-up after query controls, while broader stoppability stays deferred
+behind a runtime-handle boundary.
