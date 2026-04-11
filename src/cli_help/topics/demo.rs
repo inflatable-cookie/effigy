@@ -12,7 +12,7 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     render_info_notices(
         renderer,
         &[
-            "Use `effigy demo browser` for the first interactive proof browser, `effigy demo list` for direct CLI discovery, `effigy demo inspect <DEMO_ID>` to inspect one record in detail, and `effigy demo run <DEMO_ID>` to record a new normalized attempt before `stop` or `rerun` when lifecycle control exists for that demo. Inside the browser, use `[` and `]` to move across artifact references, `o` to open the selected artifact when one is recorded, and the detail pane to inspect bounded recent stdout/stderr output when runner-owned logs exist.",
+            "Use `effigy demo browser` for the first interactive proof browser, `effigy demo list` for direct CLI discovery, `effigy demo inspect <DEMO_ID>` to inspect one record in detail, and `effigy demo run <DEMO_ID>` to record a new normalized attempt before `stop` or `rerun` when lifecycle control exists for that demo. Inside the browser, use `/` for search, `O` for owner, `S` for status, `G` for gap, `f` for stale-only, `c` to clear filters, `[` and `]` to move across artifact references, `o` to open the selected artifact when one is recorded, and the detail pane to inspect bounded recent stdout/stderr output when runner-owned logs exist.",
         ],
     )?;
 

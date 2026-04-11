@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to implement bounded browser query controls on top of
-the shipped demo browser, then keep this surface trimmed so it reflects live
-planning rather than every historical plan.
+Use the active spec lane to choose the next bounded browser follow-up after
+query controls, then keep this surface trimmed so it reflects live planning
+rather than every historical plan.

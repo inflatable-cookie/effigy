@@ -20,7 +20,10 @@ use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use crate::runner::{run_command, RunnerError};
-use crate::{Command, DemoArgs, DemoListGroupBy, DemoListQuery, DemoSubcommand};
+use crate::{
+    Command, DemoArgs, DemoListGap, DemoListGroupBy, DemoListQuery, DemoListStatus,
+    DemoSubcommand,
+};
 
 type BrowserTerminal = Terminal<CrosstermBackend<Stdout>>;
 
@@ -54,6 +57,7 @@ fn restore_browser_terminal(terminal: &mut BrowserTerminal) -> Result<(), Runner
 struct DemoBrowserApp {
     repo_root: PathBuf,
     group_by: Option<DemoListGroupBy>,
+    query: DemoListQuery,
     rows: Vec<BrowserRow>,
     selected_demo_id: Option<String>,
     selected_row_index: usize,
@@ -62,6 +66,8 @@ struct DemoBrowserApp {
     footer_message: String,
     pending_action: Option<PendingAction>,
     last_refresh: Instant,
+    total_demo_count: usize,
+    prompt: Option<QueryPromptState>,
 }
 
 impl DemoBrowserApp {
@@ -69,6 +75,10 @@ impl DemoBrowserApp {
         Self {
             repo_root,
             group_by: initial_group_by,
+            query: DemoListQuery {
+                group_by: initial_group_by,
+                ..DemoListQuery::default()
+            },
             rows: Vec::new(),
             selected_demo_id: None,
             selected_row_index: 0,
@@ -77,6 +87,8 @@ impl DemoBrowserApp {
             footer_message: "Loading demo registry...".to_owned(),
             pending_action: None,
             last_refresh: Instant::now() - Duration::from_secs(5),
+            total_demo_count: 0,
+            prompt: None,
         }
     }
 
@@ -109,17 +121,52 @@ impl DemoBrowserApp {
     }
 
     fn handle_key(&mut self, code: KeyCode) -> Result<bool, RunnerError> {
+        if self.handle_prompt_key(code)? {
+            return Ok(false);
+        }
         match code {
             KeyCode::Esc | KeyCode::Char('q') => return Ok(true),
             KeyCode::Down | KeyCode::Char('j') => self.select_next_demo(),
             KeyCode::Up | KeyCode::Char('k') => self.select_previous_demo(),
             KeyCode::Char('g') => {
                 self.group_by = next_group_by(self.group_by);
+                self.query.group_by = self.group_by;
                 self.refresh_state()?;
                 self.footer_message = format!(
                     "Grouping demos by {}",
                     self.group_by.map_or("none", DemoListGroupBy::as_str)
                 );
+            }
+            KeyCode::Char('/') => self.open_prompt(QueryPromptKind::Search),
+            KeyCode::Char('O') => self.open_prompt(QueryPromptKind::Owner),
+            KeyCode::Char('S') => {
+                self.query.status = next_status_filter(self.query.status);
+                self.refresh_state()?;
+                self.footer_message =
+                    filter_change_message("status", self.query.status.map(DemoListStatus::as_str));
+            }
+            KeyCode::Char('G') => {
+                self.query.gap = next_gap_filter(self.query.gap);
+                self.refresh_state()?;
+                self.footer_message =
+                    filter_change_message("gap", self.query.gap.map(DemoListGap::as_str));
+            }
+            KeyCode::Char('f') => {
+                self.query.stale_only = !self.query.stale_only;
+                self.refresh_state()?;
+                self.footer_message = if self.query.stale_only {
+                    "Enabled stale-only demo filtering.".to_owned()
+                } else {
+                    "Disabled stale-only demo filtering.".to_owned()
+                };
+            }
+            KeyCode::Char('c') => {
+                self.query = DemoListQuery {
+                    group_by: self.group_by,
+                    ..DemoListQuery::default()
+                };
+                self.refresh_state()?;
+                self.footer_message = "Cleared demo browser query filters.".to_owned();
             }
             KeyCode::Char('R') => {
                 self.refresh_state()?;
@@ -133,6 +180,68 @@ impl DemoBrowserApp {
             _ => {}
         }
         Ok(false)
+    }
+
+    fn handle_prompt_key(&mut self, code: KeyCode) -> Result<bool, RunnerError> {
+        let Some(prompt) = self.prompt.as_mut() else {
+            return Ok(false);
+        };
+        match code {
+            KeyCode::Esc => {
+                self.prompt = None;
+                self.footer_message = "Cancelled browser query prompt.".to_owned();
+                Ok(true)
+            }
+            KeyCode::Enter => {
+                let prompt = self.prompt.take().expect("prompt exists");
+                match prompt.kind {
+                    QueryPromptKind::Search => {
+                        self.query.search = normalized_prompt_value(&prompt.value);
+                        self.refresh_state()?;
+                        self.footer_message =
+                            prompt_apply_message("search", self.query.search.as_deref());
+                    }
+                    QueryPromptKind::Owner => {
+                        self.query.owner = normalized_prompt_value(&prompt.value);
+                        self.refresh_state()?;
+                        self.footer_message =
+                            prompt_apply_message("owner", self.query.owner.as_deref());
+                    }
+                }
+                Ok(true)
+            }
+            KeyCode::Backspace => {
+                prompt.value.pop();
+                Ok(true)
+            }
+            KeyCode::Char(ch) => {
+                if !ch.is_control() {
+                    prompt.value.push(ch);
+                }
+                Ok(true)
+            }
+            _ => Ok(true),
+        }
+    }
+
+    fn open_prompt(&mut self, kind: QueryPromptKind) {
+        let current = match kind {
+            QueryPromptKind::Search => self.query.search.clone(),
+            QueryPromptKind::Owner => self.query.owner.clone(),
+        }
+        .unwrap_or_default();
+        self.prompt = Some(QueryPromptState {
+            kind,
+            value: current,
+        });
+        self.footer_message = match kind {
+            QueryPromptKind::Search => {
+                "Editing search filter. Enter applies, Esc cancels.".to_owned()
+            }
+            QueryPromptKind::Owner => {
+                "Editing owner filter. Enter applies, Esc cancels.".to_owned()
+            }
+        };
     }
 
     fn selected_detail(&self) -> Option<&DemoDetail> {
@@ -364,10 +473,7 @@ impl DemoBrowserApp {
             &self.repo_root,
             DemoArgs {
                 subcommand: DemoSubcommand::List {
-                    query: DemoListQuery {
-                        group_by: self.group_by,
-                        ..DemoListQuery::default()
-                    },
+                    query: self.query.clone(),
                 },
                 repo_override: Some(self.repo_root.clone()),
                 output_json: true,
@@ -378,6 +484,7 @@ impl DemoBrowserApp {
                 "failed to parse demo list payload for browser: {error}"
             ))
         })?;
+        self.total_demo_count = list_payload.total_count;
         self.rows = rows_from_payload(&list_payload);
 
         let selected_id = self
@@ -440,6 +547,9 @@ impl DemoBrowserApp {
         if self.rows.is_empty() {
             self.render_empty_overlay(frame, area);
         }
+        if self.prompt.is_some() {
+            self.render_prompt_overlay(frame, area);
+        }
     }
 
     fn render_header(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -447,28 +557,37 @@ impl DemoBrowserApp {
             .pending_action
             .as_ref()
             .map_or("idle", |action| action.label.as_str());
-        let text = Line::from(vec![
-            Span::styled(
-                " Demo Browser ",
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
-            Span::styled("group:", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(format!(
-                " {}",
-                self.group_by.map_or("none", DemoListGroupBy::as_str)
-            )),
-            Span::raw("  "),
-            Span::styled("pending:", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(format!(" {pending}")),
-            Span::raw("  "),
-            Span::styled("repo:", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(format!(" {}", self.repo_root.display())),
-        ]);
-        frame.render_widget(Paragraph::new(text), area);
+        let lines = vec![
+            Line::from(vec![
+                Span::styled(
+                    " Demo Browser ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled("group:", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(format!(
+                    " {}",
+                    self.group_by.map_or("none", DemoListGroupBy::as_str)
+                )),
+                Span::raw("  "),
+                Span::styled("pending:", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(format!(" {pending}")),
+                Span::raw("  "),
+                Span::styled("repo:", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(format!(" {}", self.repo_root.display())),
+            ]),
+            Line::from(vec![
+                Span::styled("query:", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(format!(" {}", query_summary(&self.query))),
+                Span::raw("  "),
+                Span::styled("count:", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(format!(" {}/{}", self.rows_demo_count(), self.total_demo_count)),
+            ]),
+        ];
+        frame.render_widget(Paragraph::new(lines), area);
     }
 
     fn render_body(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -551,6 +670,18 @@ impl DemoBrowserApp {
             Span::raw("move  "),
             Span::styled(" g ", key_style()),
             Span::raw("group  "),
+            Span::styled(" / ", key_style()),
+            Span::raw("search  "),
+            Span::styled(" O ", key_style()),
+            Span::raw("owner  "),
+            Span::styled(" S ", key_style()),
+            Span::raw("status  "),
+            Span::styled(" G ", key_style()),
+            Span::raw("gap  "),
+            Span::styled(" f ", key_style()),
+            Span::raw("stale  "),
+            Span::styled(" c ", key_style()),
+            Span::raw("clear  "),
             Span::styled(" r ", key_style()),
             Span::raw("run/rerun  "),
             Span::styled(" s ", key_style()),
@@ -572,14 +703,54 @@ impl DemoBrowserApp {
     fn render_empty_overlay(&self, frame: &mut Frame<'_>, area: Rect) {
         let overlay = centered_rect(60, 20, area);
         frame.render_widget(Clear, overlay);
-        let notice = Paragraph::new(vec![
-            Line::from("No demos are declared in the current manifest."),
-            Line::from(""),
-            Line::from("Add `[demos.<id>]` entries to `effigy.toml` first."),
-        ])
+        let lines = if self.total_demo_count == 0 {
+            vec![
+                Line::from("No demos are declared in the current manifest."),
+                Line::from(""),
+                Line::from("Add `[demos.<id>]` entries to `effigy.toml` first."),
+            ]
+        } else {
+            vec![
+                Line::from("No demos match the current browser query."),
+                Line::from(""),
+                Line::from(format!("Active query: {}", query_summary(&self.query))),
+                Line::from("Use c to clear filters or adjust search/owner/status/gap/stale."),
+            ]
+        };
+        let notice = Paragraph::new(lines)
         .block(Block::default().title("Demo Browser").borders(Borders::ALL))
         .wrap(Wrap { trim: true });
         frame.render_widget(notice, overlay);
+    }
+
+    fn render_prompt_overlay(&self, frame: &mut Frame<'_>, area: Rect) {
+        let Some(prompt) = &self.prompt else {
+            return;
+        };
+        let overlay = centered_rect(68, 22, area);
+        frame.render_widget(Clear, overlay);
+        let prompt_widget = Paragraph::new(vec![
+            Line::from(prompt.kind.title()),
+            Line::from(""),
+            Line::from(prompt.kind.help()),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("value: ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(prompt.render_value()),
+            ]),
+            Line::from(""),
+            Line::from("Enter applies. Esc cancels. Empty clears the filter."),
+        ])
+        .block(Block::default().title("Query Control").borders(Borders::ALL))
+        .wrap(Wrap { trim: true });
+        frame.render_widget(prompt_widget, overlay);
+    }
+
+    fn rows_demo_count(&self) -> usize {
+        self.rows
+            .iter()
+            .filter(|row| matches!(row, BrowserRow::Demo(_)))
+            .count()
     }
 }
 
@@ -973,6 +1144,77 @@ fn yes_no(value: bool) -> &'static str {
     }
 }
 
+fn next_status_filter(current: Option<DemoListStatus>) -> Option<DemoListStatus> {
+    match current {
+        None => Some(DemoListStatus::Planned),
+        Some(DemoListStatus::Planned) => Some(DemoListStatus::Ready),
+        Some(DemoListStatus::Ready) => Some(DemoListStatus::Running),
+        Some(DemoListStatus::Running) => Some(DemoListStatus::Passed),
+        Some(DemoListStatus::Passed) => Some(DemoListStatus::Failed),
+        Some(DemoListStatus::Failed) => Some(DemoListStatus::Broken),
+        Some(DemoListStatus::Broken) => Some(DemoListStatus::Missing),
+        Some(DemoListStatus::Missing) => None,
+    }
+}
+
+fn next_gap_filter(current: Option<DemoListGap>) -> Option<DemoListGap> {
+    match current {
+        None => Some(DemoListGap::Existing),
+        Some(DemoListGap::Existing) => Some(DemoListGap::Planned),
+        Some(DemoListGap::Planned) => Some(DemoListGap::Missing),
+        Some(DemoListGap::Missing) => Some(DemoListGap::Broken),
+        Some(DemoListGap::Broken) => Some(DemoListGap::Stale),
+        Some(DemoListGap::Stale) => None,
+    }
+}
+
+fn normalized_prompt_value(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+fn query_summary(query: &DemoListQuery) -> String {
+    let mut parts = Vec::new();
+    if let Some(search) = &query.search {
+        parts.push(format!("search={search}"));
+    }
+    if let Some(owner) = &query.owner {
+        parts.push(format!("owner={owner}"));
+    }
+    if let Some(status) = query.status {
+        parts.push(format!("status={}", status.as_str()));
+    }
+    if let Some(gap) = query.gap {
+        parts.push(format!("gap={}", gap.as_str()));
+    }
+    if query.stale_only {
+        parts.push("stale-only=true".to_owned());
+    }
+    if parts.is_empty() {
+        "none".to_owned()
+    } else {
+        parts.join(", ")
+    }
+}
+
+fn filter_change_message(label: &str, value: Option<&str>) -> String {
+    match value {
+        Some(value) => format!("Set {label} filter to `{value}`."),
+        None => format!("Cleared {label} filter."),
+    }
+}
+
+fn prompt_apply_message(label: &str, value: Option<&str>) -> String {
+    match value {
+        Some(value) => format!("Set {label} filter to `{value}`."),
+        None => format!("Cleared {label} filter."),
+    }
+}
+
 #[derive(Clone)]
 enum BrowserRow {
     Group(String),
@@ -985,8 +1227,47 @@ struct PendingAction {
     receiver: Receiver<Result<JsonValue, RunnerError>>,
 }
 
+struct QueryPromptState {
+    kind: QueryPromptKind,
+    value: String,
+}
+
+impl QueryPromptState {
+    fn render_value(&self) -> String {
+        if self.value.is_empty() {
+            "<empty>".to_owned()
+        } else {
+            self.value.clone()
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum QueryPromptKind {
+    Search,
+    Owner,
+}
+
+impl QueryPromptKind {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Search => "Edit Search Filter",
+            Self::Owner => "Edit Owner Filter",
+        }
+    }
+
+    fn help(self) -> &'static str {
+        match self {
+            Self::Search => "Match demo id, title, or summary text.",
+            Self::Owner => "Match one exact demo owner.",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct DemoListPayload {
+    #[serde(default)]
+    total_count: usize,
     demos: Vec<DemoSummary>,
     #[serde(default)]
     groups: Option<Vec<DemoGroup>>,
@@ -1086,9 +1367,11 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        clamp_artifact_index, first_demo_id, next_group_by, read_recent_log_lines,
-        resolve_artifact_path, resolve_repo_relative_path, row_contains_demo, selected_artifact,
-        BrowserRow, DemoDetail, DemoEntrypoint, DemoLatestAttempt, DemoListGroupBy, DemoSummary,
+        clamp_artifact_index, first_demo_id, next_gap_filter, next_group_by, next_status_filter,
+        query_summary, read_recent_log_lines, resolve_artifact_path, resolve_repo_relative_path,
+        row_contains_demo, selected_artifact, BrowserRow, DemoDetail, DemoEntrypoint,
+        DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListQuery, DemoListStatus,
+        DemoSummary,
     };
 
     fn summary(id: &str) -> DemoSummary {
@@ -1224,5 +1507,42 @@ mod tests {
         let lines = read_recent_log_lines(&temp_path, 4).expect("read log");
         let _ = std::fs::remove_file(&temp_path);
         assert_eq!(lines, vec!["six", "seven", "eight", "nine"]);
+    }
+
+    #[test]
+    fn browser_status_filter_cycle_is_bounded() {
+        assert_eq!(next_status_filter(None), Some(DemoListStatus::Planned));
+        assert_eq!(
+            next_status_filter(Some(DemoListStatus::Broken)),
+            Some(DemoListStatus::Missing)
+        );
+        assert_eq!(next_status_filter(Some(DemoListStatus::Missing)), None);
+    }
+
+    #[test]
+    fn browser_gap_filter_cycle_is_bounded() {
+        assert_eq!(next_gap_filter(None), Some(DemoListGap::Existing));
+        assert_eq!(
+            next_gap_filter(Some(DemoListGap::Broken)),
+            Some(DemoListGap::Stale)
+        );
+        assert_eq!(next_gap_filter(Some(DemoListGap::Stale)), None);
+    }
+
+    #[test]
+    fn browser_query_summary_is_human_readable() {
+        let query = DemoListQuery {
+            search: Some("auth".to_owned()),
+            owner: Some("signal".to_owned()),
+            status: Some(DemoListStatus::Ready),
+            gap: Some(DemoListGap::Existing),
+            stale_only: true,
+            ..DemoListQuery::default()
+        };
+        assert_eq!(
+            query_summary(&query),
+            "search=auth, owner=signal, status=ready, gap=existing, stale-only=true"
+        );
+        assert_eq!(query_summary(&DemoListQuery::default()), "none");
     }
 }
