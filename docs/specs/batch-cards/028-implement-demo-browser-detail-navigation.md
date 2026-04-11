@@ -1,6 +1,6 @@
 # 028 Implement Demo Browser Detail Navigation
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -47,6 +47,6 @@ push the detail pane beyond one viewport.
 
 ## Next Task
 
-Ship bounded detail-pane navigation, then reassess whether the next browser
-slice should return to richer artifact/detail affordances or a different
-operator-visible gap.
+Choose the next bounded browser follow-up now that detail-pane navigation is
+shipped, and keep deeper runtime or desktop-client work explicitly deferred
+unless the new evidence changes that boundary.

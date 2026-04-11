@@ -197,6 +197,8 @@ The first browser foundation gives you:
 - artifact selection with `[` and `]`, plus `o` to open the selected artifact
 - bounded recent stdout/stderr visibility for the selected demo when runner-
   owned logs exist
+- bounded detail-pane navigation with `PgUp`/`PgDn` or `J`/`K`, plus
+  `Home`/`End` for longer selected-demo records
 
 It still deliberately stops short of terminal emulation, rich artifact
 rendering, and multi-attempt history. The current slice is about honest
@@ -317,6 +319,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement bounded detail-pane
-navigation, keeping broader runtime and desktop-client questions deferred
-unless the new evidence changes that boundary.
+Use the active `g02.003` ready card to decide the next bounded browser
+follow-up now that detail-pane navigation is shipped, while keeping broader
+runtime and desktop-client questions deferred.

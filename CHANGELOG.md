@@ -50,6 +50,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add bounded in-browser query controls to `effigy demo browser`, so operators
   can narrow proof inventory by search, owner, status, gap, and stale state
   without leaving the browser for `demo list`
+- Add bounded detail-pane navigation to `effigy demo browser`, so longer
+  selected-demo records with receipts, artifacts, and recent output remain
+  reachable from one interactive surface
 
 ### Changed
 - Route catalog discovery, doctor strict-parse checks, docs-policy loading, and
