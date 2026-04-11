@@ -193,10 +193,13 @@ The first browser foundation gives you:
 - a detail pane for the selected demo
 - in-browser `run`, `stop`, `rerun`, and refresh actions
 - artifact selection with `[` and `]`, plus `o` to open the selected artifact
+- bounded recent stdout/stderr visibility for the selected demo when runner-
+  owned logs exist
 
-It deliberately stops short of live log streaming or rich artifact rendering.
-The current slice is about honest navigation, lifecycle control, and opening
-the artifacts the runner already knows about.
+It still deliberately stops short of terminal emulation, rich artifact
+rendering, and multi-attempt history. The current slice is about honest
+navigation, lifecycle control, opening the artifacts the runner already knows
+about, and showing recent proof output without leaving the browser.
 
 This repo now self-hosts two realistic demos:
 - `browser-proof-report` generates a small HTML report plus text snapshots under
@@ -312,5 +315,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement bounded live log visibility in
-the demo browser now that artifact-opening affordances are shipped.
+Use the active `g02.003` ready card to choose the next bounded browser
+follow-up after live log visibility, keeping broader runtime and desktop-client
+questions deferred unless the new evidence changes that boundary.

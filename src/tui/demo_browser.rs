@@ -1,3 +1,4 @@
+use std::fs;
 use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -268,9 +269,8 @@ impl DemoBrowserApp {
             label: action_label.to_owned(),
             receiver,
         });
-        self.footer_message = format!(
-            "Started `{action_label}` for demo `{demo_id}` in the background."
-        );
+        self.footer_message =
+            format!("Started `{action_label}` for demo `{demo_id}` in the background.");
         Ok(())
     }
 
@@ -317,10 +317,8 @@ impl DemoBrowserApp {
         };
         let artifact_path = resolve_artifact_path(&self.repo_root, artifact);
         if !artifact_path.exists() {
-            self.footer_message = format!(
-                "Artifact path is missing: `{}`.",
-                artifact_path.display()
-            );
+            self.footer_message =
+                format!("Artifact path is missing: `{}`.", artifact_path.display());
             return Ok(());
         }
         open_artifact_path(&artifact_path)?;
@@ -341,13 +339,14 @@ impl DemoBrowserApp {
                     Ok(payload) => {
                         let _ = self.refresh_state();
                         self.footer_message = payload_message(&payload).unwrap_or_else(|| {
-                            format!("Demo `{demo_id}` {label} completed and browser state refreshed.")
+                            format!(
+                                "Demo `{demo_id}` {label} completed and browser state refreshed."
+                            )
                         });
                     }
                     Err(error) => {
                         let _ = self.refresh_state();
-                        self.footer_message =
-                            format!("Demo `{demo_id}` {label} failed: {error}");
+                        self.footer_message = format!("Demo `{demo_id}` {label} failed: {error}");
                     }
                 }
             }
@@ -417,10 +416,9 @@ impl DemoBrowserApp {
             }
             None => None,
         };
-        self.selected_artifact_index = self
-            .detail
-            .as_ref()
-            .map_or(0, |detail| clamp_artifact_index(self.selected_artifact_index, detail));
+        self.selected_artifact_index = self.detail.as_ref().map_or(0, |detail| {
+            clamp_artifact_index(self.selected_artifact_index, detail)
+        });
 
         self.last_refresh = Instant::now();
         Ok(())
@@ -430,7 +428,11 @@ impl DemoBrowserApp {
         let area = frame.area();
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(2), Constraint::Min(10), Constraint::Length(3)])
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(10),
+                Constraint::Length(3),
+            ])
             .split(area);
         self.render_header(frame, layout[0]);
         self.render_body(frame, layout[1]);
@@ -441,11 +443,17 @@ impl DemoBrowserApp {
     }
 
     fn render_header(&self, frame: &mut Frame<'_>, area: Rect) {
-        let pending = self.pending_action.as_ref().map_or("idle", |action| action.label.as_str());
+        let pending = self
+            .pending_action
+            .as_ref()
+            .map_or("idle", |action| action.label.as_str());
         let text = Line::from(vec![
             Span::styled(
                 " Demo Browser ",
-                Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw("  "),
             Span::styled("group:", Style::default().add_modifier(Modifier::BOLD)),
@@ -492,10 +500,7 @@ impl DemoBrowserApp {
                             Style::default().add_modifier(Modifier::BOLD),
                         ),
                         Span::raw(" "),
-                        Span::styled(
-                            format!("{:<10}", status),
-                            status_style(status),
-                        ),
+                        Span::styled(format!("{:<10}", status), status_style(status)),
                         Span::raw(" "),
                         Span::styled(
                             format!("[{}]", summary.action_summary()),
@@ -526,7 +531,7 @@ impl DemoBrowserApp {
 
     fn render_detail(&self, frame: &mut Frame<'_>, area: Rect) {
         let lines = if let Some(detail) = &self.detail {
-            detail_lines(detail, self.selected_artifact_index)
+            detail_lines(&self.repo_root, detail, self.selected_artifact_index)
         } else {
             vec![
                 Line::from("No demo selected."),
@@ -608,7 +613,10 @@ fn rows_from_payload(payload: &DemoListPayload) -> Vec<BrowserRow> {
     if let Some(groups) = &payload.groups {
         let mut rows = Vec::new();
         for group in groups {
-            rows.push(BrowserRow::Group(format!("{} ({})", group.label, group.count)));
+            rows.push(BrowserRow::Group(format!(
+                "{} ({})",
+                group.label, group.count
+            )));
             for demo in &group.demos {
                 rows.push(BrowserRow::Demo(demo.clone()));
             }
@@ -723,13 +731,17 @@ fn selected_artifact(detail: &DemoDetail, selected_index: usize) -> Option<&str>
         .map(String::as_str)
 }
 
-fn resolve_artifact_path(repo_root: &Path, artifact: &str) -> PathBuf {
-    let path = PathBuf::from(artifact);
+fn resolve_repo_relative_path(repo_root: &Path, value: &str) -> PathBuf {
+    let path = PathBuf::from(value);
     if path.is_absolute() {
         path
     } else {
         repo_root.join(path)
     }
+}
+
+fn resolve_artifact_path(repo_root: &Path, artifact: &str) -> PathBuf {
+    resolve_repo_relative_path(repo_root, artifact)
 }
 
 fn open_artifact_path(path: &Path) -> Result<(), RunnerError> {
@@ -771,7 +783,11 @@ fn build_open_command(path: &Path) -> ProcessCommand {
     command
 }
 
-fn detail_lines(detail: &DemoDetail, selected_artifact_index: usize) -> Vec<Line<'static>> {
+fn detail_lines(
+    repo_root: &Path,
+    detail: &DemoDetail,
+    selected_artifact_index: usize,
+) -> Vec<Line<'static>> {
     let mut lines = vec![
         kv_line("id", &detail.id),
         kv_line("title", &detail.title),
@@ -781,10 +797,7 @@ fn detail_lines(detail: &DemoDetail, selected_artifact_index: usize) -> Vec<Line
         kv_line("gap", &detail.gap_class),
         kv_line(
             "entrypoint",
-            &format!(
-                "{}:{}",
-                detail.entrypoint.kind, detail.entrypoint.value
-            ),
+            &format!("{}:{}", detail.entrypoint.kind, detail.entrypoint.value),
         ),
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -839,7 +852,75 @@ fn detail_lines(detail: &DemoDetail, selected_artifact_index: usize) -> Vec<Line
         lines.push(section_heading("Latest Receipt"));
         lines.push(Line::from(summary.clone()));
     }
+    lines.extend(recent_output_lines(repo_root, detail));
     lines
+}
+
+fn recent_output_lines(repo_root: &Path, detail: &DemoDetail) -> Vec<Line<'static>> {
+    let source = if detail.active_attempt.state != "not-active"
+        && (detail.active_attempt.stdout_log_path.is_some()
+            || detail.active_attempt.stderr_log_path.is_some())
+    {
+        Some((
+            "Recent Output (active attempt)",
+            detail.active_attempt.stdout_log_path.as_deref(),
+            detail.active_attempt.stderr_log_path.as_deref(),
+        ))
+    } else if detail.latest_attempt.stdout_log_path.is_some()
+        || detail.latest_attempt.stderr_log_path.is_some()
+    {
+        Some((
+            "Recent Output (latest attempt)",
+            detail.latest_attempt.stdout_log_path.as_deref(),
+            detail.latest_attempt.stderr_log_path.as_deref(),
+        ))
+    } else {
+        None
+    };
+
+    let Some((heading, stdout_log, stderr_log)) = source else {
+        return Vec::new();
+    };
+
+    let mut lines = vec![Line::from(""), section_heading(heading)];
+    lines.extend(render_recent_output_stream(repo_root, "stdout", stdout_log));
+    lines.extend(render_recent_output_stream(repo_root, "stderr", stderr_log));
+    lines
+}
+
+fn render_recent_output_stream(
+    repo_root: &Path,
+    label: &str,
+    log_path: Option<&str>,
+) -> Vec<Line<'static>> {
+    let Some(log_path) = log_path else {
+        return vec![kv_line(label, "<unavailable>")];
+    };
+    let mut lines = vec![kv_line(label, log_path)];
+    match read_recent_log_lines(&resolve_repo_relative_path(repo_root, log_path), 8) {
+        Ok(log_lines) if log_lines.is_empty() => {
+            lines.push(Line::from("  <no output yet>"));
+        }
+        Ok(log_lines) => {
+            for line in log_lines {
+                lines.push(Line::from(format!("  {line}")));
+            }
+        }
+        Err(message) => {
+            lines.push(Line::from(format!("  <{message}>")));
+        }
+    }
+    lines
+}
+
+fn read_recent_log_lines(path: &Path, limit: usize) -> Result<Vec<String>, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let mut lines = content.lines().map(str::to_owned).collect::<Vec<_>>();
+    if lines.len() > limit {
+        lines = lines.split_off(lines.len() - limit);
+    }
+    Ok(lines)
 }
 
 fn kv_line(label: &str, value: &str) -> Line<'static> {
@@ -866,10 +947,17 @@ fn bullet_line(value: &str) -> Line<'static> {
 fn artifact_line(value: &str, selected: bool) -> Line<'static> {
     if selected {
         Line::from(vec![
-            Span::styled("> ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "> ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 value.to_owned(),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ),
         ])
     } else {
@@ -878,7 +966,11 @@ fn artifact_line(value: &str, selected: bool) -> Line<'static> {
 }
 
 fn yes_no(value: bool) -> &'static str {
-    if value { "yes" } else { "no" }
+    if value {
+        "yes"
+    } else {
+        "no"
+    }
 }
 
 #[derive(Clone)]
@@ -975,6 +1067,8 @@ struct DemoActionState {
 #[derive(Debug, Clone, Deserialize)]
 struct DemoActiveAttempt {
     state: String,
+    stdout_log_path: Option<String>,
+    stderr_log_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -983,6 +1077,8 @@ struct DemoLatestAttempt {
     state: String,
     artifacts: Vec<String>,
     summary: Option<String>,
+    stdout_log_path: Option<String>,
+    stderr_log_path: Option<String>,
 }
 
 #[cfg(test)]
@@ -990,9 +1086,9 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        clamp_artifact_index, first_demo_id, next_group_by, resolve_artifact_path, row_contains_demo,
-        selected_artifact, BrowserRow, DemoDetail, DemoEntrypoint, DemoLatestAttempt, DemoListGroupBy,
-        DemoSummary,
+        clamp_artifact_index, first_demo_id, next_group_by, read_recent_log_lines,
+        resolve_artifact_path, resolve_repo_relative_path, row_contains_demo, selected_artifact,
+        BrowserRow, DemoDetail, DemoEntrypoint, DemoLatestAttempt, DemoListGroupBy, DemoSummary,
     };
 
     fn summary(id: &str) -> DemoSummary {
@@ -1048,12 +1144,16 @@ mod tests {
             },
             active_attempt: super::DemoActiveAttempt {
                 state: "idle".to_owned(),
+                stdout_log_path: None,
+                stderr_log_path: None,
             },
             latest_attempt: DemoLatestAttempt {
                 recorded: true,
                 state: "passed".to_owned(),
                 artifacts: artifacts.iter().map(|value| (*value).to_owned()).collect(),
                 summary: None,
+                stdout_log_path: None,
+                stderr_log_path: None,
             },
         }
     }
@@ -1099,5 +1199,30 @@ mod tests {
             resolve_artifact_path(repo_root, ".effigy/demo/report.html"),
             repo_root.join(".effigy/demo/report.html")
         );
+    }
+
+    #[test]
+    fn browser_resolves_generic_repo_relative_paths() {
+        let repo_root = Path::new("/tmp/demo-repo");
+        assert_eq!(
+            resolve_repo_relative_path(repo_root, ".effigy/demo/logs/demo.stdout.log"),
+            repo_root.join(".effigy/demo/logs/demo.stdout.log")
+        );
+    }
+
+    #[test]
+    fn browser_reads_only_recent_log_lines() {
+        let temp_path = std::env::temp_dir().join(format!(
+            "effigy-demo-browser-log-{}.txt",
+            std::process::id()
+        ));
+        std::fs::write(
+            &temp_path,
+            "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\n",
+        )
+        .expect("write log");
+        let lines = read_recent_log_lines(&temp_path, 4).expect("read log");
+        let _ = std::fs::remove_file(&temp_path);
+        assert_eq!(lines, vec!["six", "seven", "eight", "nine"]);
     }
 }

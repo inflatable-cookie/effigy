@@ -964,23 +964,45 @@ Still deferred:
 
 ### 10.15 Browser Live-Log Visibility Slice
 
-Batch `03.18` target:
+Batch `03.18` delivered:
 
 Implement bounded live log visibility inside `effigy demo browser`.
 
-In scope for the next implementation slice:
+What shipped:
 
-- show recent runner-owned output for the selected demo
-- surface active-attempt output when available
-- surface latest terminal output when available
-- keep the browser honest when no logs are available
+- recent stdout/stderr visibility in the detail pane for the selected demo
+- active-attempt output when runner-owned logs are available
+- latest terminal output when available for completed attempts
+- honest missing-log handling instead of fake empty panes
 
-Out of scope for the next implementation slice:
+What this proved:
+
+- the browser can consume runner-owned log paths without widening into terminal
+  emulation
+- recent-output visibility is the right next operator affordance after artifact
+  access
+- the next browser question should now be decided explicitly instead of assumed
+
+Still deferred:
 
 - terminal emulation
 - arbitrary stdin interaction
 - broader generic runtime cancellation
 - multi-attempt history or queueing
+
+### 10.16 Post-Live-Log Follow-Up Boundary
+
+Batch `03.19` target:
+
+Choose the next bounded browser follow-up after live log visibility.
+
+Scope for the next decision slice:
+
+- decide whether the next priority is richer log handling, artifact/detail
+  polish, or another tighter browser-facing proof affordance
+- keep the decision grounded in the shipped self-hosted demos and browser
+  behavior
+- keep broader runtime and desktop-client questions deferred
 
 ## 11) Acceptance Criteria
 
@@ -1003,5 +1025,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to implement bounded live log visibility
-in the demo browser without reopening broader runtime-cancellation scope.
+Use the active `g02.003` strict lane to choose the next bounded browser
+follow-up after live log visibility without reopening broader
+runtime-cancellation scope.

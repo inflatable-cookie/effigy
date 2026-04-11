@@ -44,6 +44,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add bounded artifact-opening support inside `effigy demo browser`, so
   operators can select a recorded artifact reference and open it without
   leaving the browser or depending on project-local glue
+- Add bounded recent-output visibility inside `effigy demo browser`, so
+  operators can inspect active or latest runner-owned stdout/stderr without
+  leaving the browser or dropping into a second terminal
 
 ### Changed
 - Route catalog discovery, doctor strict-parse checks, docs-policy loading, and

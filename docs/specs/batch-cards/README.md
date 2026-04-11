@@ -27,10 +27,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`021-decide-demo-browser-follow-up-slice.md`](./021-decide-demo-browser-follow-up-slice.md) (complete)
 - [`022-implement-demo-browser-artifact-affordances.md`](./022-implement-demo-browser-artifact-affordances.md) (complete)
 - [`023-decide-demo-post-artifact-follow-up-boundary.md`](./023-decide-demo-post-artifact-follow-up-boundary.md) (complete)
-- [`024-implement-demo-browser-live-log-visibility.md`](./024-implement-demo-browser-live-log-visibility.md)
+- [`024-implement-demo-browser-live-log-visibility.md`](./024-implement-demo-browser-live-log-visibility.md) (complete)
+- [`025-decide-demo-post-live-log-follow-up-boundary.md`](./025-decide-demo-post-live-log-follow-up-boundary.md)
 
 ## Next Task
 
-Execute the active ready card for bounded live log visibility in the demo
-browser, then reassess whether the next follow-up stays inside browser-state
-polish or widens into deeper runtime/log questions.
+Execute the active ready card to choose the next bounded browser follow-up
+after live log visibility, then keep wider runtime/log questions explicitly
+deferred unless the new evidence demands them.

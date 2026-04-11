@@ -1,9 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
@@ -21,8 +23,8 @@ use crate::runner::manifest::{
     load_task_manifest_with_inspection, LoadedTaskManifest, ManifestDemoConfig, ManifestDemoMode,
     ManifestDemoStatus,
 };
-use crate::tui::run_demo_browser_tui;
 use crate::runner::util::with_local_node_bin_path;
+use crate::tui::run_demo_browser_tui;
 use crate::ui::{KeyValue, NoticeLevel, Renderer, TableSpec};
 use crate::{
     DemoArgs, DemoListGroupBy, DemoListQuery, DemoListStatus, DemoSubcommand, TaskInvocation,
@@ -33,6 +35,7 @@ use super::render::{encode_json, render_utf8, text_renderer};
 
 const DEMO_RECEIPTS_DIR: &str = ".effigy/demo/receipts";
 const DEMO_ACTIVE_DIR: &str = ".effigy/demo/active";
+const DEMO_LOGS_DIR: &str = ".effigy/demo/logs";
 
 pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
     let cwd = current_working_dir()?;
@@ -256,6 +259,12 @@ fn render_demo_inspect(
     }
     if let Some(parse_error) = &record.latest_attempt.parse_error {
         latest_values.push(KeyValue::new("receipt-parse", parse_error.clone()));
+    }
+    if let Some(stdout_log_path) = &record.latest_attempt.stdout_log_path {
+        latest_values.push(KeyValue::new("stdout-log", stdout_log_path.clone()));
+    }
+    if let Some(stderr_log_path) = &record.latest_attempt.stderr_log_path {
+        latest_values.push(KeyValue::new("stderr-log", stderr_log_path.clone()));
     }
     renderer.key_values(&latest_values)?;
     if !record.latest_attempt.artifacts.is_empty() {
@@ -792,6 +801,8 @@ fn load_latest_attempt(
             summary: None,
             stale: false,
             artifacts,
+            stdout_log_path: None,
+            stderr_log_path: None,
             parse_error: None,
         });
     }
@@ -808,6 +819,8 @@ fn load_latest_attempt(
                 summary: None,
                 stale: false,
                 artifacts,
+                stdout_log_path: None,
+                stderr_log_path: None,
                 parse_error: Some(error.to_string()),
             });
         }
@@ -841,6 +854,14 @@ fn load_latest_attempt(
                 .and_then(JsonValue::as_str)
                 .is_some_and(|value| value.eq_ignore_ascii_case("stale")),
         artifacts,
+        stdout_log_path: parsed
+            .get("stdout_log_path")
+            .and_then(JsonValue::as_str)
+            .map(str::to_owned),
+        stderr_log_path: parsed
+            .get("stderr_log_path")
+            .and_then(JsonValue::as_str)
+            .map(str::to_owned),
         parse_error: None,
     })
 }
@@ -885,6 +906,8 @@ fn demo_active_attempt_from_record(
         entrypoint_kind: Some(record.entrypoint_kind.clone()),
         entrypoint_value: Some(record.entrypoint_value.clone()),
         command: Some(record.command.clone()),
+        stdout_log_path: record.stdout_log_path.clone(),
+        stderr_log_path: record.stderr_log_path.clone(),
         parse_error: None,
     }
 }
@@ -962,6 +985,8 @@ fn execute_task_backed_demo(
             entrypoint_kind: "task".to_owned(),
             entrypoint_value: task_name.to_owned(),
             command: task_name.to_owned(),
+            stdout_log_path: None,
+            stderr_log_path: None,
         },
     )?;
 
@@ -971,9 +996,11 @@ fn execute_task_backed_demo(
             args: vec!["--json".to_owned()],
         };
         return match run_manifest_task_with_cwd(&task, repo_root.to_path_buf()) {
-            Ok(rendered) => parse_task_backed_attempt_json(demo_id, task_name, &rendered),
+            Ok(rendered) => {
+                parse_task_backed_attempt_json(repo_root, demo_id, task_name, &rendered)
+            }
             Err(RunnerError::CommandJsonFailure { rendered }) => {
-                parse_task_backed_attempt_json(demo_id, task_name, &rendered)
+                parse_task_backed_attempt_json(repo_root, demo_id, task_name, &rendered)
             }
             Err(error) => Ok(failed_demo_attempt(
                 "task",
@@ -983,6 +1010,7 @@ fn execute_task_backed_demo(
                 format!("Demo `{demo_id}` failed to run task `{task_name}`: {error}"),
                 String::new(),
                 String::new(),
+                DemoLogPaths::none(),
             )),
         };
     }
@@ -1002,6 +1030,7 @@ fn execute_task_backed_demo(
             )),
             String::new(),
             String::new(),
+            DemoLogPaths::none(),
         )),
         Err(RunnerError::TaskCommandFailure { code, .. }) => Ok(failed_demo_attempt(
             "task",
@@ -1011,6 +1040,7 @@ fn execute_task_backed_demo(
             format!("Demo `{demo_id}` failed via task `{task_name}`."),
             String::new(),
             String::new(),
+            DemoLogPaths::none(),
         )),
         Err(error) => Ok(failed_demo_attempt(
             "task",
@@ -1020,11 +1050,13 @@ fn execute_task_backed_demo(
             format!("Demo `{demo_id}` failed to run task `{task_name}`: {error}"),
             String::new(),
             String::new(),
+            DemoLogPaths::none(),
         )),
     }
 }
 
 fn parse_task_backed_attempt_json(
+    repo_root: &Path,
     demo_id: &str,
     task_name: &str,
     rendered: &str,
@@ -1058,6 +1090,8 @@ fn parse_task_backed_attempt_json(
         .unwrap_or(task_name)
         .to_owned();
 
+    let log_paths = persist_demo_attempt_logs(repo_root, demo_id, &stdout, &stderr)?;
+
     Ok(DemoExecutionAttempt {
         ok,
         outcome: if ok {
@@ -1076,6 +1110,8 @@ fn parse_task_backed_attempt_json(
         }),
         stdout,
         stderr,
+        stdout_log_path: log_paths.stdout,
+        stderr_log_path: log_paths.stderr,
         recorded_at_epoch_ms: now_epoch_ms(),
     })
 }
@@ -1086,6 +1122,11 @@ fn execute_run_backed_demo(
     run_command: &str,
     output_json: bool,
 ) -> Result<DemoExecutionAttempt, RunnerError> {
+    let log_paths = if output_json {
+        DemoLogPaths::prepare(repo_root, demo_id)?
+    } else {
+        DemoLogPaths::none()
+    };
     let mut child = build_run_backed_process(repo_root, run_command, output_json)?
         .spawn()
         .map_err(|error| {
@@ -1111,24 +1152,41 @@ fn execute_run_backed_demo(
             entrypoint_kind: "run".to_owned(),
             entrypoint_value: run_command.to_owned(),
             command: run_command.to_owned(),
+            stdout_log_path: log_paths.stdout.clone(),
+            stderr_log_path: log_paths.stderr.clone(),
         },
     )?;
 
     if output_json {
-        let output = child.wait_with_output().map_err(|error| {
+        let stdout_reader = child.stdout.take().ok_or_else(|| {
+            RunnerError::task_invocation(format!(
+                "Demo `{demo_id}` launched without a stdout capture pipe."
+            ))
+        })?;
+        let stderr_reader = child.stderr.take().ok_or_else(|| {
+            RunnerError::task_invocation(format!(
+                "Demo `{demo_id}` launched without a stderr capture pipe."
+            ))
+        })?;
+        let stdout_handle = spawn_output_capture(stdout_reader, log_paths.stdout_absolute.clone());
+        let stderr_handle = spawn_output_capture(stderr_reader, log_paths.stderr_absolute.clone());
+        let status = child.wait().map_err(|error| {
             RunnerError::task_invocation(format!(
                 "Demo `{demo_id}` failed to wait for run entrypoint: {error}"
             ))
         })?;
+        let stdout = join_output_capture(stdout_handle, "stdout", demo_id)?;
+        let stderr = join_output_capture(stderr_handle, "stderr", demo_id)?;
         let stop_requested = active_attempt_is_stop_requested(repo_root, demo_id);
         return Ok(run_attempt_from_output(
             demo_id,
             run_command,
-            output.status.code(),
-            output.status.success(),
+            status.code(),
+            status.success(),
             stop_requested,
-            String::from_utf8_lossy(&output.stdout).to_string(),
-            String::from_utf8_lossy(&output.stderr).to_string(),
+            stdout,
+            stderr,
+            log_paths,
         ));
     }
 
@@ -1146,6 +1204,7 @@ fn execute_run_backed_demo(
         stop_requested,
         String::new(),
         String::new(),
+        DemoLogPaths::none(),
     ))
 }
 
@@ -1180,6 +1239,7 @@ fn run_attempt_from_output(
     stop_requested: bool,
     stdout: String,
     stderr: String,
+    log_paths: DemoLogPaths,
 ) -> DemoExecutionAttempt {
     if stop_requested {
         return terminated_demo_attempt(
@@ -1190,6 +1250,7 @@ fn run_attempt_from_output(
             format!("Demo `{demo_id}` was terminated after stop was requested."),
             stdout,
             stderr,
+            log_paths,
         );
     }
     if success {
@@ -1201,6 +1262,7 @@ fn run_attempt_from_output(
             Some(format!("Demo `{demo_id}` completed via run entrypoint.")),
             stdout,
             stderr,
+            log_paths,
         );
     }
     failed_demo_attempt(
@@ -1211,7 +1273,60 @@ fn run_attempt_from_output(
         format!("Demo `{demo_id}` failed via run entrypoint."),
         stdout,
         stderr,
+        log_paths,
     )
+}
+
+fn spawn_output_capture<R>(
+    mut reader: R,
+    log_path: Option<PathBuf>,
+) -> thread::JoinHandle<Result<String, RunnerError>>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut output = Vec::new();
+        let mut sink = match log_path {
+            Some(path) => Some(
+                fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                    .map_err(|error| RunnerError::task_invocation_failed_write(&path, error))?,
+            ),
+            None => None,
+        };
+        let mut buffer = [0u8; 4096];
+        loop {
+            let read = reader.read(&mut buffer).map_err(|error| {
+                RunnerError::task_invocation(format!("failed to read demo output: {error}"))
+            })?;
+            if read == 0 {
+                break;
+            }
+            output.extend_from_slice(&buffer[..read]);
+            if let Some(file) = sink.as_mut() {
+                file.write_all(&buffer[..read]).map_err(|error| {
+                    RunnerError::task_invocation(format!(
+                        "failed to write demo output log: {error}"
+                    ))
+                })?;
+            }
+        }
+        Ok(String::from_utf8_lossy(&output).to_string())
+    })
+}
+
+fn join_output_capture(
+    handle: thread::JoinHandle<Result<String, RunnerError>>,
+    stream_name: &str,
+    demo_id: &str,
+) -> Result<String, RunnerError> {
+    handle.join().map_err(|_| {
+        RunnerError::task_invocation(format!(
+            "demo `{demo_id}` {stream_name} capture thread panicked"
+        ))
+    })?
 }
 
 fn active_attempt_is_stop_requested(repo_root: &Path, demo_id: &str) -> bool {
@@ -1281,6 +1396,7 @@ fn successful_demo_attempt(
     summary: Option<String>,
     stdout: String,
     stderr: String,
+    log_paths: DemoLogPaths,
 ) -> DemoExecutionAttempt {
     DemoExecutionAttempt {
         ok: true,
@@ -1292,6 +1408,8 @@ fn successful_demo_attempt(
         summary,
         stdout,
         stderr,
+        stdout_log_path: log_paths.stdout,
+        stderr_log_path: log_paths.stderr,
         recorded_at_epoch_ms: now_epoch_ms(),
     }
 }
@@ -1304,6 +1422,7 @@ fn failed_demo_attempt(
     summary: String,
     stdout: String,
     stderr: String,
+    log_paths: DemoLogPaths,
 ) -> DemoExecutionAttempt {
     DemoExecutionAttempt {
         ok: false,
@@ -1315,6 +1434,8 @@ fn failed_demo_attempt(
         summary: Some(summary),
         stdout,
         stderr,
+        stdout_log_path: log_paths.stdout,
+        stderr_log_path: log_paths.stderr,
         recorded_at_epoch_ms: now_epoch_ms(),
     }
 }
@@ -1327,6 +1448,7 @@ fn terminated_demo_attempt(
     summary: String,
     stdout: String,
     stderr: String,
+    log_paths: DemoLogPaths,
 ) -> DemoExecutionAttempt {
     DemoExecutionAttempt {
         ok: false,
@@ -1338,6 +1460,8 @@ fn terminated_demo_attempt(
         summary: Some(summary),
         stdout,
         stderr,
+        stdout_log_path: log_paths.stdout,
+        stderr_log_path: log_paths.stderr,
         recorded_at_epoch_ms: now_epoch_ms(),
     }
 }
@@ -1369,6 +1493,8 @@ fn write_latest_attempt_receipt(
         },
         "command": attempt.command,
         "exit_code": attempt.exit_code,
+        "stdout_log_path": attempt.stdout_log_path,
+        "stderr_log_path": attempt.stderr_log_path,
         "artifacts": demo.artifacts,
     }))
     .map_err(|error| RunnerError::task_invocation_failed_render(&receipt_path, error))?;
@@ -1390,6 +1516,14 @@ fn effective_active_attempt_path(repo_root: &Path, demo_id: &str) -> PathBuf {
     repo_root
         .join(DEMO_ACTIVE_DIR)
         .join(format!("{}.json", sanitize_demo_id_for_filename(demo_id)))
+}
+
+fn effective_output_log_path(repo_root: &Path, demo_id: &str, stream: &str) -> PathBuf {
+    repo_root.join(DEMO_LOGS_DIR).join(format!(
+        "{}.{}.log",
+        sanitize_demo_id_for_filename(demo_id),
+        stream
+    ))
 }
 
 fn render_active_attempt_path(repo_root: &Path, demo_id: &str) -> String {
@@ -1422,6 +1556,27 @@ fn now_epoch_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or(0)
+}
+
+fn persist_demo_attempt_logs(
+    repo_root: &Path,
+    demo_id: &str,
+    stdout: &str,
+    stderr: &str,
+) -> Result<DemoLogPaths, RunnerError> {
+    if stdout.is_empty() && stderr.is_empty() {
+        return Ok(DemoLogPaths::none());
+    }
+    let log_paths = DemoLogPaths::prepare(repo_root, demo_id)?;
+    if let Some(path) = &log_paths.stdout_absolute {
+        fs::write(path, stdout)
+            .map_err(|error| RunnerError::task_invocation_failed_write(path, error))?;
+    }
+    if let Some(path) = &log_paths.stderr_absolute {
+        fs::write(path, stderr)
+            .map_err(|error| RunnerError::task_invocation_failed_write(path, error))?;
+    }
+    Ok(log_paths)
 }
 
 #[cfg(unix)]
@@ -1804,6 +1959,44 @@ impl DemoEntrypoint {
 }
 
 #[derive(Debug, Clone)]
+struct DemoLogPaths {
+    stdout: Option<String>,
+    stderr: Option<String>,
+    stdout_absolute: Option<PathBuf>,
+    stderr_absolute: Option<PathBuf>,
+}
+
+impl DemoLogPaths {
+    fn none() -> Self {
+        Self {
+            stdout: None,
+            stderr: None,
+            stdout_absolute: None,
+            stderr_absolute: None,
+        }
+    }
+
+    fn prepare(repo_root: &Path, demo_id: &str) -> Result<Self, RunnerError> {
+        let stdout_absolute = effective_output_log_path(repo_root, demo_id, "stdout");
+        let stderr_absolute = effective_output_log_path(repo_root, demo_id, "stderr");
+        if let Some(parent) = stdout_absolute.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| RunnerError::task_invocation_failed_write(parent, error))?;
+        }
+        fs::write(&stdout_absolute, "")
+            .map_err(|error| RunnerError::task_invocation_failed_write(&stdout_absolute, error))?;
+        fs::write(&stderr_absolute, "")
+            .map_err(|error| RunnerError::task_invocation_failed_write(&stderr_absolute, error))?;
+        Ok(Self {
+            stdout: Some(display_repo_path(&stdout_absolute, repo_root)),
+            stderr: Some(display_repo_path(&stderr_absolute, repo_root)),
+            stdout_absolute: Some(stdout_absolute),
+            stderr_absolute: Some(stderr_absolute),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 struct DemoActiveAttempt {
     active: bool,
     state: String,
@@ -1816,6 +2009,8 @@ struct DemoActiveAttempt {
     entrypoint_kind: Option<String>,
     entrypoint_value: Option<String>,
     command: Option<String>,
+    stdout_log_path: Option<String>,
+    stderr_log_path: Option<String>,
     parse_error: Option<String>,
 }
 
@@ -1833,6 +2028,8 @@ impl DemoActiveAttempt {
             entrypoint_kind: None,
             entrypoint_value: None,
             command: None,
+            stdout_log_path: None,
+            stderr_log_path: None,
             parse_error: None,
         }
     }
@@ -1880,6 +2077,12 @@ impl DemoActiveAttempt {
         if let Some(command) = &self.command {
             values.push(KeyValue::new("command", command.clone()));
         }
+        if let Some(stdout_log_path) = &self.stdout_log_path {
+            values.push(KeyValue::new("stdout-log", stdout_log_path.clone()));
+        }
+        if let Some(stderr_log_path) = &self.stderr_log_path {
+            values.push(KeyValue::new("stderr-log", stderr_log_path.clone()));
+        }
         if let Some(parse_error) = &self.parse_error {
             values.push(KeyValue::new("parse-error", parse_error.clone()));
         }
@@ -1901,6 +2104,9 @@ impl DemoActiveAttempt {
                 "value": self.entrypoint_value,
             },
             "command": self.command,
+            "stdout_log_path": self.stdout_log_path,
+            "stderr_log_path": self.stderr_log_path,
+            "output_available": self.stdout_log_path.is_some() || self.stderr_log_path.is_some(),
             "parse_error": self.parse_error,
         })
     }
@@ -1914,6 +2120,8 @@ struct DemoLatestAttempt {
     summary: Option<String>,
     stale: bool,
     artifacts: Vec<String>,
+    stdout_log_path: Option<String>,
+    stderr_log_path: Option<String>,
     parse_error: Option<String>,
 }
 
@@ -1938,6 +2146,9 @@ impl DemoLatestAttempt {
             "stale": self.stale,
             "artifact_count": self.artifacts.len(),
             "artifacts": self.artifacts,
+            "stdout_log_path": self.stdout_log_path,
+            "stderr_log_path": self.stderr_log_path,
+            "output_available": self.stdout_log_path.is_some() || self.stderr_log_path.is_some(),
             "parse_error": self.parse_error,
         })
     }
@@ -1954,6 +2165,8 @@ struct DemoExecutionAttempt {
     summary: Option<String>,
     stdout: String,
     stderr: String,
+    stdout_log_path: Option<String>,
+    stderr_log_path: Option<String>,
     recorded_at_epoch_ms: u128,
 }
 
@@ -1971,6 +2184,8 @@ impl DemoExecutionAttempt {
             "summary": self.summary,
             "stdout": self.stdout,
             "stderr": self.stderr,
+            "stdout_log_path": self.stdout_log_path,
+            "stderr_log_path": self.stderr_log_path,
             "recorded_at_epoch_ms": self.recorded_at_epoch_ms,
         })
     }
@@ -1990,6 +2205,8 @@ struct PersistedDemoActiveAttempt {
     entrypoint_kind: String,
     entrypoint_value: String,
     command: String,
+    stdout_log_path: Option<String>,
+    stderr_log_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
