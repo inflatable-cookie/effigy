@@ -188,6 +188,14 @@ config later through ordinary manifest composition.
 
 ## 6) Runner Contract
 
+Batch `03.2` decision:
+
+- runner surface: `effigy demo`
+- the runner owns discovery, selection, execution, stop/rerun, receipt writing,
+  and machine-readable state
+- the runner does not own rich artifact rendering, browser layout, or
+  project-specific interaction logic
+
 The runner must own:
 
 - discovery and listing
@@ -199,7 +207,7 @@ The runner must own:
 - coverage and gap reporting
 - machine-readable output for later clients
 
-Minimal status model to evaluate:
+Minimum lifecycle/status model:
 
 - `planned`
 - `ready`
@@ -208,6 +216,55 @@ Minimal status model to evaluate:
 - `failed`
 - `broken`
 - `missing`
+
+Semantics:
+
+- `planned`
+  - proof is intended but not yet runnable
+- `ready`
+  - runnable and expected to work, but not currently executing
+- `running`
+  - active execution is in progress
+- `passed`
+  - most recent execution produced a valid receipt and satisfied the proof goal
+- `failed`
+  - execution completed but the proof goal was not satisfied
+- `broken`
+  - the demo definition or prerequisite/runtime posture is invalid enough that
+    execution cannot honestly proceed
+- `missing`
+  - the proof area is known, but no runnable demo object exists yet
+
+Operator actions:
+
+- `list`
+- `inspect`
+- `run`
+- `stop`
+- `rerun`
+
+Lifecycle rules:
+
+- `run` starts a new execution from `ready`, `passed`, `failed`, or `broken`
+  once prerequisites allow it
+- `stop` applies only to `running` demos and should transition through a
+  terminated execution outcome rather than pretending the attempt never existed
+- `rerun` is an explicit fresh run with a new receipt, not a mutable reset of
+  the previous attempt
+
+Execution boundary:
+
+- each demo resolves to one runnable entrypoint
+- that entrypoint may be task-backed, command-backed, or later scenario-backed
+- the runner may reuse task execution primitives internally, but demo execution
+  remains a demo-owned surface rather than generic task dispatch
+
+Receipt and artifact boundary:
+
+- receipts are runner-normalized verification records for each attempt
+- artifacts are repo-produced outputs associated with the attempt
+- the runner tracks artifact references and receipt metadata; it does not own
+  rich artifact rendering formats in this lane
 
 ## 7) TUI Browser Contract
 
@@ -256,9 +313,9 @@ This lane should not invent its own external file loading model.
 
 ### Batch 03.2 - Runner Semantics
 
-- [ ] Define discovery, execution, stop/cancel, timeout, and rerun semantics
-- [ ] Define minimal lifecycle/state model
-- [ ] Define failure and broken-demo behavior
+- [x] Define discovery, execution, stop/cancel, timeout, and rerun semantics
+- [x] Define minimal lifecycle/state model
+- [x] Define failure and broken-demo behavior
 
 ### Batch 03.3 - Coverage and Gap Model
 
@@ -299,6 +356,5 @@ This lane should not invent its own external file loading model.
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the runner lifecycle and
-artifact boundary next, now that the demo object model and registry shape are
-explicit.
+Use the active `g02.003` strict lane to decide the coverage and gap model next,
+now that the demo object model and runner lifecycle boundary are explicit.
