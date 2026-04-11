@@ -28,7 +28,7 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.002` ready card to decide override/conflict semantics and
-effective-manifest explainability next. Keep `g02.003` planned but inactive
-until split-config and override rules are explicit enough that demos do not
-invent their own loading semantics.
+Use the active `g02.002` ready card to decide the first implementation slice
+and proof boundary next. Keep `g02.003` planned but inactive until split-config
+and override rules are explicit enough that demos do not invent their own
+loading semantics.

@@ -205,13 +205,13 @@ Preferred override direction for the next batch:
 [manifest]
 include = [
   "effigy.base.toml",
-  { path = "effigy.local.toml", override = true },
+  { path = "effigy.local.toml", override = ["tasks.dev", "release.sync_files"] },
 ]
 ```
 
 This lane has now settled the root contract direction. The next batch should
-define what `override = true` actually authorizes, what conflicts still fail,
-and how that is explained in tooling.
+define what path-scoped override authorizes, what conflicts still fail, and how
+that is explained in tooling.
 
 ## 7) Execution Plan
 
@@ -224,16 +224,16 @@ and how that is explained in tooling.
 
 ### Batch 02.2 - Override Model
 
-- [ ] Define explicit override semantics
-- [ ] Decide where override intent lives in config
-- [ ] Define additive vs replace behavior by structure class
-- [ ] Define diagnostics for invalid or ambiguous overrides
+- [x] Define explicit override semantics
+- [x] Decide where override intent lives in config
+- [x] Define additive vs replace behavior by structure class
+- [x] Define diagnostics for invalid or ambiguous overrides
 
 ### Batch 02.3 - Tooling and Explainability
 
-- [ ] Define how effective-manifest inspection should work
-- [ ] Define doctor/schema/help visibility for composed config
-- [ ] Define JSON/text output expectations for composed manifests
+- [x] Define how effective-manifest inspection should work
+- [x] Define doctor/schema/help visibility for composed config
+- [x] Define JSON/text output expectations for composed manifests
 
 ### Batch 02.4 - Feature Compatibility Proof
 
@@ -246,9 +246,9 @@ and how that is explained in tooling.
 
 - [x] Effigy has one documented root composition direction for arbitrary
       manifest content
-- [ ] Override behavior is explicit rather than implied
+- [x] Override behavior is explicit rather than implied
 - [ ] Split-file config does not require feature-specific semantics
-- [ ] The design is inspectable enough that operators and agents can understand
+- [x] The design is inspectable enough that operators and agents can understand
       the effective config shape
 
 ## 9) Risks and Mitigations
@@ -262,8 +262,75 @@ and how that is explained in tooling.
   - Mitigation: treat composition as a foundation lane and block feature-local
     import semantics
 
+## 10) Batch `02.2` / `02.3` Decisions
+
+### 10.1 Override Granularity
+
+The boolean `override = true` direction is too coarse for the common case where
+an included fragment only needs to replace one or two values.
+
+Decision:
+
+- keep override intent at the include-site
+- make override path-scoped, not whole-fragment scoped
+- initial override unit is a full config path, not an arbitrary inline patch
+
+Illustrative direction:
+
+```toml
+[manifest]
+include = [
+  "effigy.base.toml",
+  { path = "effigy.local.toml", override = ["tasks.dev", "release.sync_files"] },
+]
+```
+
+This preserves one clear ownership point for override intent while avoiding the
+awkwardness of replacing a whole included fragment just to change one value.
+
+### 10.2 Merge Posture
+
+Initial merge model:
+
+- additive merge by default for distinct keys in tables/maps
+- scalar conflicts fail unless the path is explicitly listed in `override`
+- array/list conflicts fail unless the full array-valued path is explicitly
+  listed in `override`
+- initial overrides replace the whole addressed value at that path
+
+Not in the first contract:
+
+- partial array element patching
+- deep inline patch expressions inside feature data
+- merge folklore where some conflicts silently replace and others silently
+  append without an explicit contract
+
+### 10.3 Illegal Conflict Classes
+
+These should still fail even when override exists:
+
+- type-shape conflicts (`string` vs table, array vs scalar, etc.)
+- override paths that do not resolve to a full manifest value boundary
+- override requests for paths not present in the including fragment
+- override requests that attempt array-element or mid-object patching rather
+  than whole-value replacement
+- nested include cycles or unreadable fragment paths
+
+### 10.4 Explainability Contract
+
+Minimum operator/tooling posture:
+
+- Effigy must expose the include graph and evaluation order
+- Effigy must expose the final source for each overridden path
+- conflicts must name the path, the earlier source, and the later source
+- text and JSON output should describe the same composition facts
+
+The likely product surface is an extension of `effigy config`, not a second
+manifest-specific app. Exact command spelling can remain implementation-batch
+work so long as the explainability requirements are fixed now.
+
 ## Next Task
 
-Use the active `g02.002` strict lane to decide the override/conflict model and
-effective-manifest explainability next, now that the root composition shape is
-explicit enough for later feature planning.
+Use the active `g02.002` strict lane to define the first implementation-shaping
+batch and feature-compatibility proof boundary now that composition shape,
+override posture, and explainability expectations are explicit.

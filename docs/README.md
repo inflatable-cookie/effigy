@@ -130,5 +130,5 @@ Reference:
 ## Next Task
 
 Use the active strict `g02.002` spec lane to decide the manifest composition
-override/conflict and explainability contract before more feature planning
-assumes split-config support.
+implementation slice and proof boundary before more feature planning assumes
+split-config support.

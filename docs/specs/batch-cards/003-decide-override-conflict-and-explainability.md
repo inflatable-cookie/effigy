@@ -1,6 +1,6 @@
 # 003 Decide Override, Conflict, And Explainability
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.002`
 Spec: `docs/specs/002-manifest-composition-and-override-strict-lane.md`
@@ -47,5 +47,30 @@ Turn the root composition direction into an operator-usable contract by deciding
 
 ## Next Task
 
-Complete this planning batch, then either open the next ready card for
-implementation-shaping work or return the lane to an explicit intent checkpoint.
+## Decision
+
+The contract now treats override as fine-grained include-site intent, not a
+whole-fragment hammer.
+
+Settled direction:
+
+- override remains declared on include entries
+- override should target explicit config paths such as `tasks.dev` or
+  `release.sync_files`
+- additive merge is the default for distinct table keys
+- conflicting scalar/list values fail unless the full path is explicitly listed
+  in `override`
+- the first contract only supports whole-value replacement at the addressed
+  path, not patch expressions or array-element surgery
+- explainability must show include order, effective sources, and conflict
+  origins in both text and JSON
+
+This addresses the practical concern that a boolean `override = true` is too
+coarse when a repo only wants to replace one value in a larger composed
+fragment.
+
+## Next Task
+
+Open the next ready card for implementation-shaping scope and feature
+compatibility proof, now that the contract shape is explicit enough to stop
+future feature-local loading semantics.
