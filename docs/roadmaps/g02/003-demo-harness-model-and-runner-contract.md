@@ -1121,22 +1121,54 @@ Still deferred:
 
 ### 10.20 Post-Detail-Navigation Follow-Up Boundary
 
-Batch `03.23` target:
+Batch `03.23` delivered:
 
 Choose the next bounded browser follow-up after detail-pane navigation.
 
-In scope for the next decision slice:
+What this settled:
 
-- reassessing the browser against the shipped self-hosted demos with scrolling
-  detail now in place
-- choosing the next bounded operator-visible gap to address
-- keeping deeper runtime cancellation, terminal emulation, and desktop-client
-  work explicitly deferred unless the evidence genuinely changes
+- the next honest browser gap is metadata-query parity, not richer rendering or
+  deeper runtime work
+- the browser already renders `tag`, `mode`, and `cover` information from the
+  demo registry, and the CLI query contract already supports those dimensions
+- the shipped self-hosted demos provide enough variation across `mode`,
+  `covers`, and `tags` to justify browser-side parity without waiting for more
+  demo fixtures
 
-Out of scope for the next decision slice:
+Why metadata-query parity next:
 
-- widening directly into terminal emulation
-- generic runtime cancellation expansion
+- `browser-proof-report` and `lifecycle-window` already expose distinct
+  `owner`, `mode`, `covers`, and `tags`, but only a subset of that query model
+  is reachable from inside the browser today
+- this is still a browser ergonomics gap, not a rendering or runtime gap
+- closing query parity reuses the shipped runner contract instead of inventing
+  new browser-only semantics
+
+Still deferred:
+
+- richer detail rendering or artifact preview
+- broader generic runtime cancellation
+- multi-attempt history or queueing
+- desktop-client foundation work
+
+### 10.21 Browser Metadata-Query Parity Slice
+
+Batch `03.24` target:
+
+Implement bounded metadata-query parity in the browser.
+
+In scope for the next implementation slice:
+
+- in-browser `tag`, `mode`, and `cover` filters
+- extending `group-by` controls to the full shipped grouping contract
+- honest query summary and no-match feedback for the added dimensions
+- proving the slice against the shipped self-hosted demos
+
+Out of scope for the next implementation slice:
+
+- richer rendering or artifact preview
+- broader generic runtime cancellation
+- multi-attempt history or queueing
 - desktop-client foundation work
 
 ## 11) Acceptance Criteria
@@ -1160,6 +1192,5 @@ Out of scope for the next decision slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the next bounded browser
-follow-up after detail-pane navigation without reopening broader
-runtime-cancellation scope.
+Use the active `g02.003` strict lane to implement bounded browser
+metadata-query parity without reopening broader runtime-cancellation scope.

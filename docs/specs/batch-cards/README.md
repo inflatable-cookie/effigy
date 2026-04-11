@@ -32,10 +32,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`026-implement-demo-browser-query-controls.md`](./026-implement-demo-browser-query-controls.md) (complete)
 - [`027-decide-demo-post-query-follow-up-boundary.md`](./027-decide-demo-post-query-follow-up-boundary.md) (complete)
 - [`028-implement-demo-browser-detail-navigation.md`](./028-implement-demo-browser-detail-navigation.md) (complete)
-- [`029-decide-demo-post-detail-navigation-follow-up-boundary.md`](./029-decide-demo-post-detail-navigation-follow-up-boundary.md)
+- [`029-decide-demo-post-detail-navigation-follow-up-boundary.md`](./029-decide-demo-post-detail-navigation-follow-up-boundary.md) (complete)
+- [`030-implement-demo-browser-metadata-query-parity.md`](./030-implement-demo-browser-metadata-query-parity.md)
 
 ## Next Task
 
-Execute the active ready card to decide the next bounded browser follow-up
-after detail-pane navigation, then keep wider runtime/log questions explicitly
-deferred unless the new evidence demands them.
+Execute the active ready card to implement bounded browser metadata-query
+parity, then keep wider runtime/log questions explicitly deferred unless the
+new evidence demands them.
