@@ -129,5 +129,5 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to define the demo browser/TUI
-contract before implementation starts relying on ad hoc assumptions.
+Use the active strict `g02.003` spec lane to reconcile the settled demo
+contract against Signal before implementation planning starts.

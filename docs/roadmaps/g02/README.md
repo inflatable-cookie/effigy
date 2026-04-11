@@ -18,7 +18,7 @@ Current milestones:
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/010-decide-demo-browser-and-tui-contract.md`](../specs/batch-cards/010-decide-demo-browser-and-tui-contract.md)
+- [`../specs/batch-cards/011-reconcile-demo-contract-against-signal-pilot.md`](../specs/batch-cards/011-reconcile-demo-contract-against-signal-pilot.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` planning batch to lock the browser/TUI contract next.
-Treat the object model, runner lifecycle, and coverage model as settled enough
-to build on.
+Use the active `g02.003` planning batch to reconcile the settled demo contract
+against Signal next, so the first implementation lane starts from a real pilot
+instead of abstract browser assumptions.

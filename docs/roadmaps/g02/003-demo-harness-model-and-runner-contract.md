@@ -325,18 +325,106 @@ That is enough for the browser to answer:
 
 ## 7) TUI Browser Contract
 
-The first client should likely be a TUI browser that can:
+Batch `03.4` decision:
 
-- list demos in a sidebar/browser
-- group and filter them
-- show status badges
-- show gaps and missing proof
-- run / stop / rerun demos
-- inspect logs, receipts, and artifacts
-- give clear operator feedback without command hunting
+- the first interactive client is a TUI browser, not a bespoke per-project app
+- its primary navigation surface is a sidebar/list of demo records driven by the
+  explicit `[demos.<id>]` registry
+- the browser consumes runner and coverage data directly; it must not infer core
+  identity, status, or gap meaning from naming conventions or file layout
+
+Primary browser responsibilities:
+
+- show the full known demo registry
+- make gap classes visible without requiring a run command first
+- support fast operator navigation between demos
+- expose the minimum run/stop/rerun actions without command hunting
+- let operators inspect the latest proof evidence attached to a demo
+
+Minimum list/sidebar model:
+
+- one row per demo id
+- stable ordering with support for grouped views
+- enough compact metadata to answer:
+  - what this demo is
+  - whether proof exists
+  - whether it is healthy now
+  - whether it is stale, broken, planned, or missing
+
+Minimum row fields:
+
+- `id`
+- `title`
+- base lifecycle status
+- stale overlay when present
+- gap class
+- owner
+- tags or category hints when present
+
+Minimum grouping dimensions:
+
+- owner
+- tag
+- mode
+- coverage area via `covers`
+- lifecycle/gap class
+
+Minimum filtering dimensions:
+
+- text search on id/title/summary
+- owner
+- tag
+- mode
+- coverage area
+- status
+- gap class
+- stale only
+
+Badge model:
+
+- one primary badge for base lifecycle status
+- one secondary gap/freshness indicator when needed
+- `stale` remains an overlay rather than replacing the base lifecycle state
+- `missing` and `planned` must be visually distinguishable from `broken`
+
+Minimum drilldown/inspect surface for the selected demo:
+
+- `title`
+- `summary`
+- proof intent
+- owner
+- `covers`
+- tags
+- mode
+- runnable entrypoint reference
+- prerequisites/dependencies
+- latest known receipt summary when available
+- latest execution outcome/state
+- artifact references
+- recent logs or log handle
+
+Minimum receipt/artifact drilldown expectations:
+
+- show whether a receipt exists for the latest attempt
+- show where the latest receipt came from
+- show the receipt outcome summary
+- list artifact references attached to that attempt
+- do not require the TUI to render rich artifact formats in this lane
+
+Minimum runner data the TUI depends on:
+
+- full demo registry with declared metadata
+- current base lifecycle status
+- stale overlay/freshness metadata when present
+- latest receipt summary and source
+- artifact references
+- runnable entrypoint/action availability
+- execution progress/state for running demos
+- coverage claims and derived gap class
 
 The TUI should not own project-specific semantics beyond what the runner model
-already exposes.
+already exposes, and this lane does not decide widget layout, palette, pane
+geometry, or desktop-client behavior.
 
 ## 8) Deferred Client Questions
 
@@ -382,9 +470,9 @@ This lane should not invent its own external file loading model.
 
 ### Batch 03.4 - TUI Contract
 
-- [ ] Define the browser/list contract for a first TUI client
-- [ ] Define logs/artifacts/receipts drilldown requirements
-- [ ] Define the minimum runner data the TUI needs
+- [x] Define the browser/list contract for a first TUI client
+- [x] Define logs/artifacts/receipts drilldown requirements
+- [x] Define the minimum runner data the TUI needs
 
 ### Batch 03.5 - Pilot Readiness
 
@@ -413,6 +501,6 @@ This lane should not invent its own external file loading model.
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the browser/TUI contract next,
-now that the demo object model, runner lifecycle, and coverage model are
-explicit.
+Use the active `g02.003` strict lane to reconcile the settled demo contract
+against Signal's existing demo surface next, so the first implementation lane
+starts from real proof-system pressure rather than abstract browser doctrine.

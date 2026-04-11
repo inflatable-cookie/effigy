@@ -42,7 +42,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g02.003` is the active roadmap milestone.
 - `docs/specs/003-demo-harness-model-and-runner-strict-lane.md` is the active
   strict planning lane around that roadmap.
-- `docs/specs/batch-cards/010-decide-demo-browser-and-tui-contract.md`
+- `docs/specs/batch-cards/011-reconcile-demo-contract-against-signal-pilot.md`
   is the current ready card.
 
 ## Research Program
@@ -65,10 +65,9 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute the active planning-ready card for `g02.003`, then leave the next move
-explicit as either pilot reconciliation against Signal or the first bounded
-implementation-planning lane on top of the now-settled object, runner, and
-coverage model.
+Execute the active Signal reconciliation card for `g02.003`, then leave the
+next move explicit as the first bounded implementation-planning lane on top of
+the now-settled object, runner, coverage, and browser contract.
 
 
 ## Historical language boundary
