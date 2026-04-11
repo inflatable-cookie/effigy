@@ -12,7 +12,7 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     render_info_notices(
         renderer,
         &[
-            "Use `effigy demo browser` for the first interactive proof browser, `effigy demo list` for direct CLI discovery, `effigy demo inspect <DEMO_ID>` to inspect one record in detail, and `effigy demo run <DEMO_ID>` to record a new normalized attempt before `stop` or `rerun` when lifecycle control exists for that demo. Inside the browser, the primary flow is arrow keys to move, Enter to open the action sheet, Esc to close or quit, `/` for direct search, and `f` for the filter sheet that now owns owner/tag/mode/cover/status/gap/stale/grouping controls.",
+            "Use `effigy demo browser` for the first interactive proof browser, `effigy demo list` for direct CLI discovery, `effigy demo inspect <DEMO_ID>` to inspect one record in detail, and `effigy demo run <DEMO_ID>` to record a new normalized attempt before `stop` or `rerun` when lifecycle control exists for that demo. Inside the browser, `←` and `→` switch between the demo list and the detail/artifact pane, `↑` and `↓` act inside the focused panel, `Enter` opens the action sheet from the list or opens the selected artifact from the detail side, `Esc` closes or quits, `/` edits search, and `f` opens the single filter sheet for owner/tag/mode/cover/status/gap/stale/grouping controls.",
         ],
     )?;
 

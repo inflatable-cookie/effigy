@@ -1,4 +1,3 @@
-use std::fs;
 use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -20,7 +19,7 @@ use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use crate::runner::{run_command, RunnerError};
-use crate::tui::core::{effigy_panel_block, next_index, prev_index};
+use crate::tui::core::{effigy_panel_block, next_index, prev_index, EFFIGY_ACCENT, EFFIGY_MUTED};
 use crate::{
     Command, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus,
     DemoSubcommand,
@@ -60,11 +59,10 @@ struct DemoBrowserApp {
     group_by: Option<DemoListGroupBy>,
     query: DemoListQuery,
     rows: Vec<BrowserRow>,
+    focus: BrowserFocus,
     selected_demo_id: Option<String>,
     selected_row_index: usize,
     selected_artifact_index: usize,
-    detail_scroll_line: usize,
-    detail_viewport_lines: usize,
     detail: Option<DemoDetail>,
     footer_message: String,
     pending_action: Option<PendingAction>,
@@ -83,11 +81,10 @@ impl DemoBrowserApp {
                 ..DemoListQuery::default()
             },
             rows: Vec::new(),
+            focus: BrowserFocus::List,
             selected_demo_id: None,
             selected_row_index: 0,
             selected_artifact_index: 0,
-            detail_scroll_line: 0,
-            detail_viewport_lines: 0,
             detail: None,
             footer_message: "Loading demo registry...".to_owned(),
             pending_action: None,
@@ -131,24 +128,44 @@ impl DemoBrowserApp {
         }
         match code {
             KeyCode::Esc | KeyCode::Char('q') => return Ok(true),
-            KeyCode::Down => self.select_next_demo(),
-            KeyCode::Up => self.select_previous_demo(),
-            KeyCode::Right => self.select_next_artifact(),
-            KeyCode::Left => self.select_previous_artifact(),
+            KeyCode::Down => self.handle_down_key(),
+            KeyCode::Up => self.handle_up_key(),
+            KeyCode::Right => self.focus_detail(),
+            KeyCode::Left => self.focus_list(),
             KeyCode::Char('/') => self.open_prompt(QueryPromptKind::Search),
             KeyCode::Char('f') => self.open_filter_overlay(),
-            KeyCode::Enter => self.open_action_overlay(),
+            KeyCode::Enter => self.handle_enter_key()?,
             KeyCode::Char('R') => {
                 self.refresh_state()?;
                 self.footer_message = "Refreshed demo browser state.".to_owned();
             }
-            KeyCode::PageDown | KeyCode::Char('J') => self.scroll_detail_page_down(),
-            KeyCode::PageUp | KeyCode::Char('K') => self.scroll_detail_page_up(),
-            KeyCode::Home => self.scroll_detail_to_top(),
-            KeyCode::End => self.scroll_detail_to_bottom(),
             _ => {}
         }
         Ok(false)
+    }
+
+    fn handle_down_key(&mut self) {
+        match self.focus {
+            BrowserFocus::List => self.select_next_demo(),
+            BrowserFocus::Detail => self.select_next_artifact(),
+        }
+    }
+
+    fn handle_up_key(&mut self) {
+        match self.focus {
+            BrowserFocus::List => self.select_previous_demo(),
+            BrowserFocus::Detail => self.select_previous_artifact(),
+        }
+    }
+
+    fn handle_enter_key(&mut self) -> Result<(), RunnerError> {
+        match self.focus {
+            BrowserFocus::List => {
+                self.open_action_overlay();
+                Ok(())
+            }
+            BrowserFocus::Detail => self.dispatch_open_artifact(),
+        }
     }
 
     fn handle_overlay_key(&mut self, code: KeyCode) -> Result<bool, RunnerError> {
@@ -437,45 +454,32 @@ impl DemoBrowserApp {
 
     fn detail_lines(&self) -> Vec<Line<'static>> {
         if let Some(detail) = &self.detail {
-            detail_lines(&self.repo_root, detail, self.selected_artifact_index)
+            detail_lines(
+                &self.repo_root,
+                detail,
+                self.selected_artifact_index,
+                matches!(self.focus, BrowserFocus::Detail),
+            )
         } else {
             vec![
                 Line::from("No demo selected."),
                 Line::from(""),
-                Line::from("Use ↑/↓ to move through the demo list."),
+                Line::from("Use ↑/↓ in the list to select a demo."),
             ]
         }
     }
 
-    fn detail_max_scroll(&self) -> usize {
-        max_detail_scroll(self.detail_lines().len(), self.detail_viewport_lines)
+    fn focus_list(&mut self) {
+        self.focus = BrowserFocus::List;
+        self.footer_message =
+            "List panel focused. ↑/↓ selects demos. Enter opens actions.".to_owned();
     }
 
-    fn clamp_detail_scroll(&mut self) {
-        self.detail_scroll_line = self.detail_scroll_line.min(self.detail_max_scroll());
-    }
-
-    fn reset_detail_scroll(&mut self) {
-        self.detail_scroll_line = 0;
-    }
-
-    fn scroll_detail_page_down(&mut self) {
-        let step = detail_scroll_step(self.detail_viewport_lines);
-        let next = self.detail_scroll_line.saturating_add(step);
-        self.detail_scroll_line = next.min(self.detail_max_scroll());
-    }
-
-    fn scroll_detail_page_up(&mut self) {
-        let step = detail_scroll_step(self.detail_viewport_lines);
-        self.detail_scroll_line = self.detail_scroll_line.saturating_sub(step);
-    }
-
-    fn scroll_detail_to_top(&mut self) {
-        self.detail_scroll_line = 0;
-    }
-
-    fn scroll_detail_to_bottom(&mut self) {
-        self.detail_scroll_line = self.detail_max_scroll();
+    fn focus_detail(&mut self) {
+        self.focus = BrowserFocus::Detail;
+        self.footer_message =
+            "Detail panel focused. ↑/↓ selects artifacts. Enter opens the selected artifact."
+                .to_owned();
     }
 
     fn select_next_artifact(&mut self) {
@@ -646,7 +650,6 @@ impl DemoBrowserApp {
     }
 
     fn refresh_state(&mut self) -> Result<(), RunnerError> {
-        let previous_selected_id = self.selected_demo_id.clone();
         let payload = invoke_demo_json(
             &self.repo_root,
             DemoArgs {
@@ -680,9 +683,6 @@ impl DemoBrowserApp {
                 })
             })
             .unwrap_or(0);
-        if self.selected_demo_id != previous_selected_id {
-            self.reset_detail_scroll();
-        }
 
         self.detail = match selected_id {
             Some(demo_id) => {
@@ -707,7 +707,6 @@ impl DemoBrowserApp {
         self.selected_artifact_index = self.detail.as_ref().map_or(0, |detail| {
             clamp_artifact_index(self.selected_artifact_index, detail)
         });
-        self.clamp_detail_scroll();
 
         self.last_refresh = Instant::now();
         Ok(())
@@ -718,7 +717,7 @@ impl DemoBrowserApp {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(5),
+                Constraint::Length(4),
                 Constraint::Min(10),
                 Constraint::Length(4),
             ])
@@ -744,36 +743,41 @@ impl DemoBrowserApp {
                 Span::styled(
                     " Demo Browser ",
                     Style::default()
-                        .fg(Color::Magenta)
+                        .fg(EFFIGY_MUTED)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
-                Span::styled("group:", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(format!(
-                    " {}",
-                    self.group_by.map_or("none", DemoListGroupBy::as_str)
-                )),
+                Span::styled("group:", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!(" {}", self.group_by.map_or("none", DemoListGroupBy::as_str)),
+                    Style::default().fg(Color::White),
+                ),
                 Span::raw("  "),
-                Span::styled("pending:", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(format!(" {pending}")),
+                Span::styled("pending:", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!(" {pending}"), Style::default().fg(Color::White)),
                 Span::raw("  "),
-                Span::styled("repo:", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(format!(" {}", self.repo_root.display())),
+                Span::styled("repo:", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!(" {}", self.repo_root.display()),
+                    Style::default().fg(EFFIGY_MUTED),
+                ),
             ]),
             Line::from(vec![
-                Span::styled("query:", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(format!(" {}", query_summary(&self.query))),
+                Span::styled("query:", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!(" {}", query_summary(&self.query)),
+                    Style::default().fg(Color::White),
+                ),
                 Span::raw("  "),
-                Span::styled("count:", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(format!(
-                    " {}/{}",
-                    self.rows_demo_count(),
-                    self.total_demo_count
-                )),
+                Span::styled("count:", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!(" {}/{}", self.rows_demo_count(), self.total_demo_count),
+                    Style::default().fg(Color::White),
+                ),
             ]),
         ];
         frame.render_widget(
-            Paragraph::new(lines).block(effigy_panel_block(Some(" EFFIGY "), true, Color::Magenta)),
+            Paragraph::new(lines).block(effigy_panel_block(Some(" EFFIGY "), true, EFFIGY_ACCENT)),
             area,
         );
     }
@@ -788,6 +792,7 @@ impl DemoBrowserApp {
     }
 
     fn render_list(&self, frame: &mut Frame<'_>, area: Rect) {
+        let list_focused = matches!(self.focus, BrowserFocus::List);
         let items = self
             .rows
             .iter()
@@ -795,7 +800,7 @@ impl DemoBrowserApp {
                 BrowserRow::Group(label) => ListItem::new(Line::from(vec![Span::styled(
                     format!("  {label}"),
                     Style::default()
-                        .fg(Color::LightMagenta)
+                        .fg(EFFIGY_ACCENT)
                         .add_modifier(Modifier::BOLD),
                 )])),
                 BrowserRow::Demo(summary) => {
@@ -811,7 +816,7 @@ impl DemoBrowserApp {
                         Span::raw(" "),
                         Span::styled(
                             format!("[{}]", summary.action_summary()),
-                            Style::default().fg(Color::Gray),
+                            Style::default().fg(EFFIGY_MUTED),
                         ),
                     ]);
                     ListItem::new(line)
@@ -824,45 +829,51 @@ impl DemoBrowserApp {
             state.select(Some(self.selected_row_index));
         }
         let list = List::new(items)
-            .block(effigy_panel_block(Some(" Demos "), false, Color::Magenta))
-            .highlight_style(
+            .block(effigy_panel_block(
+                Some(" Demos "),
+                false,
+                if list_focused {
+                    EFFIGY_ACCENT
+                } else {
+                    Color::DarkGray
+                },
+            ))
+            .highlight_style(if list_focused {
                 Style::default()
-                    .bg(Color::Magenta)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol("▌")
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            })
+            .highlight_symbol(if list_focused { "▌" } else { " " })
             .repeat_highlight_symbol(true);
         frame.render_stateful_widget(list, area, &mut state);
     }
 
     fn render_detail(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        self.detail_viewport_lines = detail_viewport_lines(area);
-        self.clamp_detail_scroll();
         let lines = self.detail_lines();
-        let title = format!(
-            "Detail ({})",
-            detail_position_label(
-                self.detail_scroll_line,
-                self.detail_viewport_lines,
-                lines.len()
-            )
-        );
         let detail = Paragraph::new(lines)
-            .block(effigy_panel_block(Some(&title), false, Color::DarkGray))
-            .wrap(Wrap { trim: false })
-            .scroll((paragraph_scroll_line(self.detail_scroll_line), 0));
+            .block(effigy_panel_block(
+                Some(" Detail "),
+                false,
+                if matches!(self.focus, BrowserFocus::Detail) {
+                    EFFIGY_ACCENT
+                } else {
+                    Color::DarkGray
+                },
+            ))
+            .wrap(Wrap { trim: false });
         frame.render_widget(detail, area);
     }
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
         let help = Line::from(vec![
             Span::styled(" ↑↓ ", key_style()),
-            Span::raw("demos  "),
+            Span::raw("move  "),
             Span::styled(" ←→ ", key_style()),
-            Span::raw("artifacts  "),
+            Span::raw("panel  "),
             Span::styled(" Enter ", key_style()),
-            Span::raw("actions  "),
+            Span::raw("act/open  "),
             Span::styled(" / ", key_style()),
             Span::raw("search  "),
             Span::styled(" f ", key_style()),
@@ -889,16 +900,14 @@ impl DemoBrowserApp {
                 Line::from("No demos match the current browser query."),
                 Line::from(""),
                 Line::from(format!("Active query: {}", query_summary(&self.query))),
-                Line::from(
-                    "Use c to clear filters or adjust search/owner/tag/mode/cover/status/gap/stale.",
-                ),
+                Line::from("Use / to search or f to adjust the current filter set."),
             ]
         };
         let notice = Paragraph::new(lines)
             .block(effigy_panel_block(
                 Some(" Demo Browser "),
                 false,
-                Color::Magenta,
+                EFFIGY_ACCENT,
             ))
             .wrap(Wrap { trim: true });
         frame.render_widget(notice, overlay);
@@ -930,7 +939,7 @@ impl DemoBrowserApp {
             Line::from(""),
             Line::from("Enter applies. Esc closes. Empty clears the filter."),
         ])
-        .block(effigy_panel_block(Some(" Query "), false, Color::Magenta))
+        .block(effigy_panel_block(Some(" Query "), false, EFFIGY_ACCENT))
         .wrap(Wrap { trim: true });
         frame.render_widget(prompt_widget, overlay);
     }
@@ -945,11 +954,11 @@ impl DemoBrowserApp {
             .map(|(index, item)| {
                 let line = if index == menu.selected_index {
                     Line::from(vec![
-                        Span::styled("▌ ", Style::default().fg(Color::Magenta)),
+                        Span::styled("▌ ", Style::default().fg(EFFIGY_ACCENT)),
                         Span::styled(
                             item.label(),
                             Style::default()
-                                .fg(Color::Magenta)
+                                .fg(EFFIGY_ACCENT)
                                 .add_modifier(Modifier::BOLD),
                         ),
                     ])
@@ -960,7 +969,7 @@ impl DemoBrowserApp {
             })
             .collect::<Vec<_>>();
         let widget =
-            List::new(items).block(effigy_panel_block(Some(" Actions "), false, Color::Magenta));
+            List::new(items).block(effigy_panel_block(Some(" Actions "), false, EFFIGY_ACCENT));
         frame.render_widget(widget, overlay);
     }
 
@@ -975,11 +984,11 @@ impl DemoBrowserApp {
                 let value = self.filter_menu_value(*item);
                 let line = if index == menu.selected_index {
                     Line::from(vec![
-                        Span::styled("▌ ", Style::default().fg(Color::Magenta)),
+                        Span::styled("▌ ", Style::default().fg(EFFIGY_ACCENT)),
                         Span::styled(
                             format!("{:<12}", item.label()),
                             Style::default()
-                                .fg(Color::Magenta)
+                                .fg(EFFIGY_ACCENT)
                                 .add_modifier(Modifier::BOLD),
                         ),
                         Span::raw(value),
@@ -991,7 +1000,7 @@ impl DemoBrowserApp {
             })
             .collect::<Vec<_>>();
         let widget =
-            List::new(items).block(effigy_panel_block(Some(" Filters "), false, Color::Magenta));
+            List::new(items).block(effigy_panel_block(Some(" Filters "), false, EFFIGY_ACCENT));
         frame.render_widget(widget, overlay);
     }
 
@@ -1150,8 +1159,7 @@ fn status_style(status: &str) -> Style {
 
 fn key_style() -> Style {
     Style::default()
-        .fg(Color::Black)
-        .bg(Color::LightMagenta)
+        .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD)
 }
 
@@ -1173,31 +1181,6 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         ])
         .split(vertical[1]);
     horizontal[1]
-}
-
-fn detail_viewport_lines(area: Rect) -> usize {
-    usize::from(area.height.saturating_sub(2)).max(1)
-}
-
-fn detail_scroll_step(viewport_lines: usize) -> usize {
-    viewport_lines.saturating_sub(1).max(1)
-}
-
-fn max_detail_scroll(total_lines: usize, viewport_lines: usize) -> usize {
-    total_lines.saturating_sub(viewport_lines.max(1))
-}
-
-fn detail_position_label(scroll_line: usize, viewport_lines: usize, total_lines: usize) -> String {
-    if total_lines == 0 {
-        return "empty".to_owned();
-    }
-    let top = scroll_line.min(total_lines.saturating_sub(1)) + 1;
-    let bottom = (scroll_line + viewport_lines.max(1)).min(total_lines);
-    format!("{top}-{bottom}/{total_lines}")
-}
-
-fn paragraph_scroll_line(scroll_line: usize) -> u16 {
-    scroll_line.min(u16::MAX as usize) as u16
 }
 
 fn next_group_by(current: Option<DemoListGroupBy>) -> Option<DemoListGroupBy> {
@@ -1290,135 +1273,61 @@ fn build_open_command(path: &Path) -> ProcessCommand {
 }
 
 fn detail_lines(
-    repo_root: &Path,
+    _repo_root: &Path,
     detail: &DemoDetail,
     selected_artifact_index: usize,
+    detail_focused: bool,
 ) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        kv_line("id", &detail.id),
-        kv_line("title", &detail.title),
-        kv_line("owner", &detail.owner),
-        kv_line("mode", &detail.mode),
-        kv_line("status", &detail.effective_status),
-        kv_line("gap", &detail.gap_class),
-        kv_line(
-            "entrypoint",
-            &format!("{}:{}", detail.entrypoint.kind, detail.entrypoint.value),
-        ),
+    let mut lines = vec![title_line(&detail.title)];
+
+    if !detail.tags.is_empty() {
+        lines.push(muted_line(format!("tags: {}", detail.tags.join(", "))));
+    }
+
+    lines.extend([
         Line::from(""),
-        Line::from(vec![Span::styled(
-            "Summary",
-            Style::default().add_modifier(Modifier::BOLD),
-        )]),
+        section_heading("Summary"),
         Line::from(detail.summary.clone()),
         Line::from(""),
-        Line::from(vec![Span::styled(
-            "Proof",
-            Style::default().add_modifier(Modifier::BOLD),
-        )]),
+        section_heading("Proof"),
         Line::from(detail.proof.clone()),
-        Line::from(""),
-        kv_line(
-            "actions",
-            &format!(
-                "run={} stop={} rerun={}",
-                yes_no(detail.actions.run.available),
-                yes_no(detail.actions.stop.available),
-                yes_no(detail.actions.rerun.available),
-            ),
-        ),
-        kv_line("active", &detail.active_attempt.state),
-        kv_line("latest", &detail.latest_attempt.state),
-    ];
+    ]);
 
     if !detail.covers.is_empty() {
         lines.push(Line::from(""));
-        lines.push(section_heading("Coverage"));
-        for cover in &detail.covers {
-            lines.push(bullet_line(cover));
+        lines.push(compact_kv_line("covers", &detail.covers.join(", ")));
+    }
+    if detail.latest_attempt.recorded {
+        lines.push(Line::from(""));
+        lines.push(section_heading("Result"));
+        lines.push(compact_kv_line("status", &detail.latest_attempt.state));
+        if let Some(summary) = &detail.latest_attempt.summary {
+            lines.push(Line::from(summary.clone()));
         }
     }
-    if !detail.tags.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(section_heading("Tags"));
-        for tag in &detail.tags {
-            lines.push(bullet_line(tag));
-        }
-    }
-    if !detail.latest_attempt.artifacts.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(section_heading("Artifacts (←/→ to select, Enter to open)"));
+    lines.push(Line::from(""));
+    lines.push(section_heading("Artifacts"));
+    if detail.latest_attempt.artifacts.is_empty() {
+        lines.push(muted_line("No recorded artifacts.".to_owned()));
+    } else {
         let selected_index = clamp_artifact_index(selected_artifact_index, detail);
         for (index, artifact) in detail.latest_attempt.artifacts.iter().enumerate() {
-            lines.push(artifact_line(artifact, index == selected_index));
+            let selected = index == selected_index;
+            lines.push(artifact_list_line(artifact, selected, detail_focused));
         }
-    }
-    if let Some(summary) = &detail.latest_attempt.summary {
-        lines.push(Line::from(""));
-        lines.push(section_heading("Latest Receipt"));
-        lines.push(Line::from(summary.clone()));
-    }
-    lines.extend(recent_output_lines(repo_root, detail));
-    lines
-}
-
-fn recent_output_lines(repo_root: &Path, detail: &DemoDetail) -> Vec<Line<'static>> {
-    let source = if detail.active_attempt.state != "not-active"
-        && (detail.active_attempt.stdout_log_path.is_some()
-            || detail.active_attempt.stderr_log_path.is_some())
-    {
-        Some((
-            "Recent Output (active attempt)",
-            detail.active_attempt.stdout_log_path.as_deref(),
-            detail.active_attempt.stderr_log_path.as_deref(),
-        ))
-    } else if detail.latest_attempt.stdout_log_path.is_some()
-        || detail.latest_attempt.stderr_log_path.is_some()
-    {
-        Some((
-            "Recent Output (latest attempt)",
-            detail.latest_attempt.stdout_log_path.as_deref(),
-            detail.latest_attempt.stderr_log_path.as_deref(),
-        ))
-    } else {
-        None
-    };
-
-    let Some((heading, stdout_log, stderr_log)) = source else {
-        return Vec::new();
-    };
-
-    let mut lines = vec![Line::from(""), section_heading(heading)];
-    lines.extend(render_recent_output_stream(repo_root, "stdout", stdout_log));
-    lines.extend(render_recent_output_stream(repo_root, "stderr", stderr_log));
-    lines
-}
-
-fn render_recent_output_stream(
-    repo_root: &Path,
-    label: &str,
-    log_path: Option<&str>,
-) -> Vec<Line<'static>> {
-    let Some(log_path) = log_path else {
-        return vec![kv_line(label, "<unavailable>")];
-    };
-    let mut lines = vec![kv_line(label, log_path)];
-    match read_recent_log_lines(&resolve_repo_relative_path(repo_root, log_path), 8) {
-        Ok(log_lines) if log_lines.is_empty() => {
-            lines.push(Line::from("  <no output yet>"));
-        }
-        Ok(log_lines) => {
-            for line in log_lines {
-                lines.push(Line::from(format!("  {line}")));
-            }
-        }
-        Err(message) => {
-            lines.push(Line::from(format!("  <{message}>")));
-        }
+        lines.push(muted_line(if detail_focused {
+            "↑/↓ selects artifact  •  Enter opens selection".to_owned()
+        } else {
+            "→ focuses artifacts".to_owned()
+        }));
     }
     lines
 }
 
+#[cfg(test)]
+use std::fs;
+
+#[cfg(test)]
 fn read_recent_log_lines(path: &Path, limit: usize) -> Result<Vec<String>, String> {
     let content = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
@@ -1429,11 +1338,13 @@ fn read_recent_log_lines(path: &Path, limit: usize) -> Result<Vec<String>, Strin
     Ok(lines)
 }
 
-fn kv_line(label: &str, value: &str) -> Line<'static> {
+fn compact_kv_line(label: &str, value: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             format!("{label}: "),
-            Style::default().add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(value.to_owned()),
     ])
@@ -1442,41 +1353,41 @@ fn kv_line(label: &str, value: &str) -> Line<'static> {
 fn section_heading(label: &str) -> Line<'static> {
     Line::from(vec![Span::styled(
         label.to_owned(),
-        Style::default().add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD),
     )])
 }
 
-fn bullet_line(value: &str) -> Line<'static> {
-    Line::from(format!("• {value}"))
+fn artifact_list_line(value: &str, selected: bool, focused: bool) -> Line<'static> {
+    let marker = if selected && focused { "› " } else { "  " };
+    let style = if selected && focused {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    Line::from(vec![
+        Span::styled(marker, style),
+        Span::styled(value.to_owned(), style),
+    ])
 }
 
-fn artifact_line(value: &str, selected: bool) -> Line<'static> {
-    if selected {
-        Line::from(vec![
-            Span::styled(
-                "> ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                value.to_owned(),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ])
-    } else {
-        bullet_line(value)
-    }
+fn title_line(value: &str) -> Line<'static> {
+    Line::from(vec![Span::styled(
+        value.to_owned(),
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    )])
 }
 
-fn yes_no(value: bool) -> &'static str {
-    if value {
-        "yes"
-    } else {
-        "no"
-    }
+fn muted_line(value: String) -> Line<'static> {
+    Line::from(vec![Span::styled(
+        value,
+        Style::default().fg(Color::DarkGray),
+    )])
 }
 
 fn next_status_filter(current: Option<DemoListStatus>) -> Option<DemoListStatus> {
@@ -1575,6 +1486,12 @@ enum BrowserOverlay {
     Prompt(QueryPromptState),
     Action(ActionMenuState),
     Filters(FilterMenuState),
+}
+
+#[derive(Clone, Copy)]
+enum BrowserFocus {
+    List,
+    Detail,
 }
 
 struct ActionMenuState {
@@ -1785,21 +1702,18 @@ struct DemoDetail {
     summary: String,
     proof: String,
     owner: String,
+    #[allow(dead_code)]
     mode: String,
+    #[allow(dead_code)]
     effective_status: String,
+    #[allow(dead_code)]
     gap_class: String,
     covers: Vec<String>,
     tags: Vec<String>,
-    entrypoint: DemoEntrypoint,
     actions: DemoActionAvailability,
+    #[allow(dead_code)]
     active_attempt: DemoActiveAttempt,
     latest_attempt: DemoLatestAttempt,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoEntrypoint {
-    kind: String,
-    value: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1817,9 +1731,8 @@ struct DemoActionState {
 
 #[derive(Debug, Clone, Deserialize)]
 struct DemoActiveAttempt {
+    #[allow(dead_code)]
     state: String,
-    stdout_log_path: Option<String>,
-    stderr_log_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1828,23 +1741,18 @@ struct DemoLatestAttempt {
     state: String,
     artifacts: Vec<String>,
     summary: Option<String>,
-    stdout_log_path: Option<String>,
-    stderr_log_path: Option<String>,
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
-    use ratatui::layout::Rect;
-
     use super::{
-        clamp_artifact_index, detail_position_label, detail_scroll_step, detail_viewport_lines,
-        first_demo_id, max_detail_scroll, next_gap_filter, next_group_by, next_mode_filter,
-        next_status_filter, paragraph_scroll_line, query_summary, read_recent_log_lines,
+        clamp_artifact_index, detail_lines, first_demo_id, next_gap_filter, next_group_by,
+        next_mode_filter, next_status_filter, query_summary, read_recent_log_lines,
         resolve_artifact_path, resolve_repo_relative_path, row_contains_demo, selected_artifact,
-        BrowserRow, DemoDetail, DemoEntrypoint, DemoLatestAttempt, DemoListGap, DemoListGroupBy,
-        DemoListMode, DemoListQuery, DemoListStatus, DemoSummary,
+        BrowserRow, DemoDetail, DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListMode,
+        DemoListQuery, DemoListStatus, DemoSummary,
     };
 
     fn summary(id: &str) -> DemoSummary {
@@ -1880,10 +1788,6 @@ mod tests {
             gap_class: "existing".to_owned(),
             covers: vec![],
             tags: vec![],
-            entrypoint: DemoEntrypoint {
-                kind: "task".to_owned(),
-                value: "demo:task".to_owned(),
-            },
             actions: super::DemoActionAvailability {
                 run: super::DemoActionState {
                     available: true,
@@ -1900,16 +1804,12 @@ mod tests {
             },
             active_attempt: super::DemoActiveAttempt {
                 state: "idle".to_owned(),
-                stdout_log_path: None,
-                stderr_log_path: None,
             },
             latest_attempt: DemoLatestAttempt {
                 recorded: true,
                 state: "passed".to_owned(),
                 artifacts: artifacts.iter().map(|value| (*value).to_owned()).collect(),
                 summary: None,
-                stdout_log_path: None,
-                stderr_log_path: None,
             },
         }
     }
@@ -2029,27 +1929,6 @@ mod tests {
     }
 
     #[test]
-    fn browser_detail_viewport_and_scroll_are_bounded() {
-        assert_eq!(detail_viewport_lines(Rect::new(0, 0, 80, 12)), 10);
-        assert_eq!(detail_scroll_step(10), 9);
-        assert_eq!(max_detail_scroll(30, 10), 20);
-        assert_eq!(max_detail_scroll(6, 10), 0);
-    }
-
-    #[test]
-    fn browser_detail_position_label_reports_visible_window() {
-        assert_eq!(detail_position_label(0, 10, 8), "1-8/8");
-        assert_eq!(detail_position_label(5, 10, 30), "6-15/30");
-        assert_eq!(detail_position_label(29, 10, 30), "30-30/30");
-    }
-
-    #[test]
-    fn browser_paragraph_scroll_line_clamps_large_offsets() {
-        assert_eq!(paragraph_scroll_line(12), 12);
-        assert_eq!(paragraph_scroll_line(usize::MAX), u16::MAX);
-    }
-
-    #[test]
     fn browser_query_summary_is_human_readable() {
         let query = DemoListQuery {
             search: Some("auth".to_owned()),
@@ -2067,5 +1946,53 @@ mod tests {
             "search=auth, owner=signal, tag=self-hosted, mode=interactive, cover=effigy.demo.lifecycle, status=ready, gap=existing, stale-only=true"
         );
         assert_eq!(query_summary(&DemoListQuery::default()), "none");
+    }
+
+    #[test]
+    fn browser_detail_lines_use_compact_sections() {
+        let mut detail =
+            detail_with_artifacts(&[".effigy/demo/artifacts/browser-proof-report/index.html"]);
+        detail.id = "browser-proof-report".to_owned();
+        detail.title = "Browser Proof Report".to_owned();
+        detail.summary = "Generate a human-checkable proof report.".to_owned();
+        detail.proof = "Verify the browser-facing proof path stays inspectable.".to_owned();
+        detail.owner = "effigy".to_owned();
+        detail.covers = vec!["effigy.demo.browser".to_owned()];
+        detail.tags = vec!["self-hosted".to_owned(), "proof".to_owned()];
+        detail.latest_attempt.summary = Some("Latest attempt wrote a proof report.".to_owned());
+
+        let rendered = detail_lines(Path::new("/tmp/effigy"), &detail, 0, true)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Browser Proof Report"));
+        assert!(rendered.contains("Summary"));
+        assert!(rendered.contains("Generate a human-checkable proof report."));
+        assert!(rendered.contains("tags: self-hosted, proof"));
+        assert!(rendered.contains("Result"));
+        assert!(rendered.contains("status: passed"));
+        assert!(rendered.contains("Latest attempt wrote a proof report."));
+        assert!(rendered.contains(".effigy/demo/artifacts/browser-proof-report/index.html"));
+        assert!(rendered.contains("covers: effigy.demo.browser"));
+        assert!(rendered.contains("↑/↓ selects artifact"));
+        assert!(!rendered.contains("Latest Receipt"));
+        assert!(!rendered.contains("actions:"));
+        assert!(!rendered.contains("attempts:"));
+    }
+
+    #[test]
+    fn browser_detail_lines_hide_pointer_when_inactive() {
+        let detail = detail_with_artifacts(&["one", "two"]);
+
+        let rendered = detail_lines(Path::new("/tmp/effigy"), &detail, 0, false)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("→ focuses artifacts"));
+        assert!(!rendered.contains("› one"));
     }
 }

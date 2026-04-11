@@ -62,6 +62,13 @@ During v0.x, MINOR bumps may include breaking changes.
   as the concurrent TUI and collapse the interaction model down to arrow-key
   browsing, enter-led action dispatch, escape-to-close, direct search, and one
   bounded filter sheet instead of a large exposed hotkey surface
+- Simplify the `effigy demo browser` detail pane into a shorter high-signal
+  structure, grouping run state and metadata more tightly and replacing the
+  old artifact dump with a selected-artifact summary
+- Reshape `effigy demo browser` around explicit list/detail panel focus so
+  `←`/`→` switches panes, `↑`/`↓` acts inside the focused pane, and the detail
+  side now opens directly into the selected artifact instead of acting like a
+  scrolling receipt wall
 - Route catalog discovery, doctor strict-parse checks, docs-policy loading, and
   scan manifest options through the same composed-manifest loader so split
   config behaves consistently across runtime, health, and validation surfaces

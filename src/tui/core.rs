@@ -25,6 +25,10 @@ pub(crate) enum ProcessExitState {
     Failure,
 }
 
+pub(crate) const EFFIGY_ACCENT: Color = Color::Indexed(212);
+pub(crate) const EFFIGY_ACCENT_SOFT: Color = Color::Indexed(218);
+pub(crate) const EFFIGY_MUTED: Color = Color::Indexed(244);
+
 #[derive(Debug, Clone)]
 pub(crate) struct LogEntry {
     pub(crate) kind: LogEntryKind,
@@ -63,7 +67,7 @@ pub(crate) fn effigy_panel_block<'a>(
             Line::from(Span::styled(
                 title.to_owned(),
                 Style::default()
-                    .fg(Color::Magenta)
+                    .fg(EFFIGY_ACCENT)
                     .add_modifier(Modifier::BOLD),
             ))
             .left_aligned(),
@@ -74,7 +78,7 @@ pub(crate) fn effigy_panel_block<'a>(
         block = block.title_bottom(
             Line::from(Span::styled(
                 version,
-                Style::default().fg(Color::LightMagenta),
+                Style::default().fg(EFFIGY_ACCENT_SOFT),
             ))
             .right_aligned(),
         );
