@@ -67,6 +67,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to implement browser-facing
-state/query polish, then reopen broader stoppability only as a separate
-runtime-boundary question.
+Execute the active `g02.003` ready card next to implement the first demo
+browser list/detail foundation with bounded in-browser action dispatch, then
+revisit live log or broader stoppability follow-ups separately.

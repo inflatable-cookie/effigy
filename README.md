@@ -157,6 +157,11 @@ of another pile of ad hoc runner scripts.
 
 ```bash
 effigy demo list
+effigy demo list --group-by gap
+effigy demo inspect browser-proof-report
+effigy demo run browser-proof-report
+effigy demo run lifecycle-window
+effigy demo stop lifecycle-window
 effigy demo list --owner auth --status ready
 effigy demo list --group-by owner --stale-only
 effigy demo inspect login-smoke
@@ -175,6 +180,12 @@ The shipped browser-facing query layer is intentionally small: filter by text,
 owner, tag, mode, cover, status, gap, or stale state, then group by owner,
 tag, mode, cover, status, or gap when you need a browser-like inventory view
 without starting UI work yet.
+
+This repo now self-hosts two realistic demos:
+- `browser-proof-report` generates a small HTML report plus text snapshots under
+  `.effigy/demo/artifacts/browser-proof-report/`
+- `lifecycle-window` stays active until stopped so `list`, `inspect`, `stop`,
+  and `rerun` can be pressure-tested against a real run-backed process
 
 ### Automate safely
 
@@ -284,6 +295,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement browser-facing demo
-state/query polish next, while broader stoppability stays deferred behind a
-runtime-boundary decision.
+Use the active `g02.003` ready card to implement the first demo browser
+list/detail foundation next, with in-browser `run`, `stop`, and `rerun`
+actions on top of the shipped runner state.

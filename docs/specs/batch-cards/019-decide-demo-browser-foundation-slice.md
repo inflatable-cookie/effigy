@@ -1,6 +1,6 @@
 # 019 Decide Demo Browser Foundation Slice
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -45,7 +45,17 @@ surface.
 - the batch re-opens already settled demo model or lifecycle decisions
 - the batch turns into generic runtime cancellation planning
 
+## Outcome
+
+- the first honest browser slice is now fixed as a read-mostly list/detail TUI
+  browser with in-browser `run`, `stop`, `rerun`, and refresh actions
+- the self-hosted demos proved that the shipped CLI query/state layer is
+  already sufficient for the browser foundation; the real missing capability is
+  single-surface interaction, not more list/query semantics
+- broader stoppability, generic runtime handles, live terminal streaming, and
+  rich artifact rendering remain explicitly deferred
+
 ## Next Task
 
-If the browser-foundation slice is clear, implement that slice next; otherwise
-return the lane to planning and narrow the TUI boundary further before coding.
+Implement the bounded browser foundation slice next through
+`020-implement-demo-browser-list-detail-foundation.md`.

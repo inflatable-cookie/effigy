@@ -170,6 +170,12 @@ effigy --json demo inspect login-smoke
 Use this when you need a stable proof inventory plus one operator-visible proof
 entrypoint now.
 
+The Effigy repo now self-hosts this surface with two concrete demos:
+- `browser-proof-report` is task-backed and generates a human-checkable HTML
+  artifact plus browser query snapshots
+- `lifecycle-window` is run-backed and stays active until `effigy demo stop
+  lifecycle-window` is used
+
 Lifecycle notes:
 - `demo list` now supports focused browser-style discovery with `--search`,
   `--owner`, `--tag`, `--mode`, `--cover`, `--status`, `--gap`,

@@ -811,31 +811,57 @@ Why this slice was the right follow-through:
   behavior in the CLI
 - it avoids blurring the demo lane back into generic runtime cancellation work
 
-### 10.9 Next Batch
+### 10.9 Self-Hosted Proof Demos
 
-Batch `03.12` target:
+Batch `03.12` delivered:
 
-Decide the first bounded browser/TUI foundation slice on top of the now-shipped
-demo query/state surface.
+Pressure-test the shipped demo runner surface against the Effigy repo itself.
+
+Shipped in the current repo:
+
+- `browser-proof-report` now gives the repo a task-backed proof demo that
+  generates a small HTML artifact plus concrete list/group/inspect snapshots
+- `lifecycle-window` now gives the repo a run-backed proof demo that stays
+  active until `demo stop`, making the active-attempt and terminal-receipt
+  contract observable without synthetic fixtures
+- both demos write normalized receipts and repo-local artifacts under
+  `.effigy/demo/`, which means the browser lane can now reason from live proof
+  surfaces instead of only abstract contract prose
+
+What this proved:
+
+- the shipped registry, query, inspect, run, stop, and rerun surface is now
+  strong enough to support one honest self-hosted proof flow
+- browser-proof browsing is already coherent in list/detail form
+- the real ergonomic gap is not more CLI query work; it is needing multiple
+  terminals to launch, inspect, and stop a live demo attempt
+
+### 10.10 Browser Foundation Slice Decision
+
+Batch `03.13` target:
+
+Decide the first bounded browser/TUI implementation slice on top of the
+now-shipped demo query/state surface and the new self-hosted proof demos.
 
 In scope for the next planning slice:
 
-- define the first honest browser/TUI implementation boundary
+- define the first honest browser/TUI implementation boundary around sidebar or
+  list browsing, detail inspection, and in-browser action dispatch
 - decide what the interactive client should consume directly from shipped demo
   runner outputs
 - keep the batch constrained to browser foundation rather than runtime
-  expansion
+  expansion or terminal emulation
 
 Out of scope for the next planning slice:
 
-- implementing the TUI/browser itself
+- implementing the TUI/browser itself beyond the bounded foundation choice
 - broadening generic task/runtime cancellation
 - multi-attempt history or queueing
 - consumer-repo migration work
 
 Follow-on sequence after that slice:
 
-- first browser/TUI implementation batch
+- first browser/TUI implementation batch focused on list/detail/actions
 - broader stoppability once the generic task/runtime surface can expose
   cancellable handles honestly
 - broad consumer-repo migration work
