@@ -129,6 +129,6 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to decide the next bounded demo
-browser follow-up slice now that list/detail browsing and in-browser action
-dispatch are shipped.
+Use the active strict `g02.003` spec lane to implement the next bounded demo
+browser slice around artifact-opening affordances now that list/detail browsing
+and in-browser action dispatch are shipped.

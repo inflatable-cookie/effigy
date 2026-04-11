@@ -69,6 +69,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide the first follow-up
-browser slice after the shipped list/detail foundation, then keep runtime
-expansion and desktop-client questions separate.
+Execute the active `g02.003` ready card next to implement browser artifact
+affordances, then revisit live log visibility separately from runtime
+expansion and desktop-client questions.

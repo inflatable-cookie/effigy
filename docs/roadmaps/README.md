@@ -35,14 +35,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01/028-script-surface-reduction-and-builtins.md` reduces repo shell logic into Effigy-native command surfaces and is complete.
 - `g02/001-bootstrap-command-and-clone-contract.md` started the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up, and is now complete: released plus live-pilot validated on `loophole` and `songsprout`.
 - `g02/002-manifest-composition-and-override-contract.md` defines the general split-manifest model so features do not invent their own file-loading semantics, and its foundation plus inspectability are already shipped.
-- `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy; registry loading, inspection, `demo run`, lifecycle control, browser-state/query polish, repo-self-hosted proof demos, and the first browser list/detail foundation are now shipped, and the next bounded slice is deciding the browser follow-up priority.
+- `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy; registry loading, inspection, `demo run`, lifecycle control, browser-state/query polish, repo-self-hosted proof demos, and the first browser list/detail foundation are now shipped, and the next bounded slice is browser artifact-opening affordances.
 
 ## Active Strict Lane
 
 - `g02.003` is the active roadmap milestone.
 - `docs/specs/003-demo-harness-model-and-runner-strict-lane.md` is the active
   strict planning lane around that roadmap.
-- `docs/specs/batch-cards/021-decide-demo-browser-follow-up-slice.md`
+- `docs/specs/batch-cards/022-implement-demo-browser-artifact-affordances.md`
   is the current ready card.
 
 ## Research Program
@@ -65,8 +65,8 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute the active ready card for `g02.003` to choose whether the next browser
-slice should prioritize live log visibility or artifact-opening affordances.
+Execute the active ready card for `g02.003` to implement browser
+artifact-opening affordances on top of the shipped list/detail foundation.
 
 
 ## Historical language boundary

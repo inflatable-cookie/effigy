@@ -895,22 +895,46 @@ What this proved:
 
 ### 10.12 Browser Follow-Up Slice Decision
 
-Batch `03.15` target:
+Batch `03.15` delivered:
 
 Choose the next bounded browser follow-up slice now that the foundation browser
 exists.
 
-In scope for the next planning slice:
+Decision:
 
-- decide whether the next browser batch should prioritize live log visibility
-  or artifact-opening affordances
-- define the minimum operator need that the next browser batch must satisfy
-- keep the decision grounded in the shipped self-hosted demos and browser
-  foundation instead of abstract future UI ambition
+- prioritize artifact-opening affordances next
+- defer live log visibility until after artifact inspection is usable from
+  inside the browser
 
-Out of scope for the next planning slice:
+Why this is the right next slice:
 
-- implementing the follow-up browser slice itself
+- `browser-proof-report` already proves the value of opening a real artifact
+  from the browser, because its HTML report is the most operator-meaningful
+  proof output in the current self-hosted set
+- `lifecycle-window` also benefits from direct access to `status.txt`,
+  `heartbeat.txt`, and `events.log` without forcing the next batch into log
+  streaming semantics
+- live log visibility pulls the lane toward tailing, stream refresh, and
+  terminal-shape questions that are materially broader than the current
+  browser-follow-up need
+
+### 10.13 Browser Artifact-Affordance Slice
+
+Batch `03.16` target:
+
+Implement bounded artifact-opening affordances in the demo browser.
+
+In scope for the next implementation slice:
+
+- surface artifact references as first-class browser actions
+- support one honest open or reveal action for the selected artifact path
+- report missing or unopenable artifact targets clearly
+- keep the implementation grounded in the existing runner-owned artifact state
+
+Out of scope for the next implementation slice:
+
+- live log streaming or log tailing
+- embedded terminal behavior
 - broadening generic runtime cancellation
 - desktop-client decisions
 - multi-attempt history or queueing
@@ -936,6 +960,6 @@ Out of scope for the next planning slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide whether the next browser slice
-should add live log visibility or artifact-opening affordances first, without
-reopening broader runtime-cancellation scope.
+Use the active `g02.003` strict lane to implement browser artifact-opening
+affordances next, then revisit live log visibility without reopening broader
+runtime-cancellation scope.

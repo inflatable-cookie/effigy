@@ -13,12 +13,12 @@ Current milestones:
 
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
 - [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
-- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, and the first browser list/detail foundation now shipped)
+- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, and the first browser list/detail foundation now shipped; the next slice is artifact-opening affordances)
 
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/021-decide-demo-browser-follow-up-slice.md`](../specs/batch-cards/021-decide-demo-browser-follow-up-slice.md)
+- [`../specs/batch-cards/022-implement-demo-browser-artifact-affordances.md`](../specs/batch-cards/022-implement-demo-browser-artifact-affordances.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` ready card to choose the next bounded browser slice
-now that list/detail browsing is shipped, while broader stoppability stays
-deferred behind a runtime-handle boundary.
+Use the active `g02.003` ready card to implement browser artifact-opening
+affordances next, while broader stoppability stays deferred behind a
+runtime-handle boundary.
