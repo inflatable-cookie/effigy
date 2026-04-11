@@ -19,5 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to control the next `g02.002` batch, then keep this
-surface trimmed so it reflects live planning rather than every historical plan.
+Use the active spec lane to control the next `g02.002` explainability batch,
+then keep this surface trimmed so it reflects live planning rather than every
+historical plan.

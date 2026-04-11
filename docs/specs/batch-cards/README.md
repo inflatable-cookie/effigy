@@ -10,7 +10,7 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Active Batch Cards
 
-- [`005-implement-composed-manifest-loading-and-inspection-foundation.md`](./005-implement-composed-manifest-loading-and-inspection-foundation.md)
+- [`006-harden-composition-explainability-and-operator-ux.md`](./006-harden-composition-explainability-and-operator-ux.md)
 
 ## Next Task
 

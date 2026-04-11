@@ -18,7 +18,7 @@ Current milestones:
 Active strict planning lane:
 
 - [`../specs/002-manifest-composition-and-override-strict-lane.md`](../specs/002-manifest-composition-and-override-strict-lane.md)
-- [`../specs/batch-cards/002-decide-composition-contract-shape.md`](../specs/batch-cards/002-decide-composition-contract-shape.md)
+- [`../specs/batch-cards/006-harden-composition-explainability-and-operator-ux.md`](../specs/batch-cards/006-harden-composition-explainability-and-operator-ux.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.002` implementation-ready card to build the composed
-manifest foundation next. Keep `g02.003` planned but inactive until split-config
-and override rules are real product surface instead of planning-only doctrine.
+Use the active `g02.002` explainability batch to harden the operator-facing
+composition surface next. Keep `g02.003` planned but inactive until split-config
+and inspection are both real product surface instead of planning-only doctrine.

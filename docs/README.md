@@ -129,6 +129,6 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.002` spec lane to decide the manifest composition
-implementation-ready batch before more feature planning assumes split-config
-support.
+Use the active strict `g02.002` spec lane to harden manifest composition
+explainability before more feature planning assumes the inspection surface is
+complete enough to depend on.

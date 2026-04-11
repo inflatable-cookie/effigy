@@ -237,20 +237,30 @@ that is explained in tooling.
 
 ### Batch 02.4 - Feature Compatibility Proof
 
-- [ ] Prove that at least tasks/docs/release or another cross-feature slice can
+- [x] Prove that at least tasks/docs/release or another cross-feature slice can
       use the same composition model cleanly
 - [ ] Prove that demo planning can rely on the contract without needing a
       demo-only loader
 
 ### Batch 02.5 - First Implementation Slice
 
-- [ ] Add root and nested manifest composition loading for `effigy.toml` plus
+- [x] Add root and nested manifest composition loading for `effigy.toml` plus
       included partial fragments
-- [ ] Enforce the decided conflict/override rules during composed-manifest load
-- [ ] Surface composition failures through normal manifest parse/doctor paths
-- [ ] Add one minimal effective-manifest inspection surface under `effigy config`
-- [ ] Prove the first implementation against at least one cross-feature split
+- [x] Enforce the decided conflict/override rules during composed-manifest load
+- [x] Surface composition failures through normal manifest parse/doctor paths
+- [x] Add one minimal effective-manifest inspection surface under `effigy config`
+- [x] Prove the first implementation against at least one cross-feature split
       such as `tasks + docs_policy` or `tasks + release`
+
+### Batch 02.6 - Explainability and Operator UX Hardening
+
+- [ ] Improve conflict diagnostics so they identify the path and competing
+      source fragments clearly
+- [ ] Improve inspection output so effective sources and overridden paths are
+      easier to trace quickly
+- [ ] Decide whether one narrower `effigy config` query surface is warranted
+      before `g02.003` depends on composition
+- [ ] Prove the explainability contract in both text and JSON output
 
 ## 8) Acceptance Criteria
 
@@ -393,6 +403,6 @@ depends on it. A real-repo migration can remain a later proof wave.
 
 ## Next Task
 
-Use the active `g02.002` strict lane to open the first implementation-ready
-batch around composed-manifest loading, conflict enforcement, and minimal config
-inspection, then prove it on one cross-feature split before demos depend on it.
+Use the active `g02.002` strict lane to harden composition explainability and
+operator UX next, then decide whether the surface is ready for `g02.003`
+planning to depend on directly.

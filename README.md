@@ -254,6 +254,6 @@ effigy/
 
 ## Next Task
 
-Complete the active `g02.002` implementation-ready batch so Effigy has a real
-composed-manifest foundation before demos or other features claim their own
-split-config semantics.
+Complete the active `g02.002` explainability batch so Effigy's composed-manifest
+surface is easier to inspect and debug before demos or other features depend on
+it directly.
