@@ -53,7 +53,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy contracts` | Validate reusable JSON contract artifacts such as selection payloads and schema-index contract coverage | `check-json`, `validate-selection`, `--repo`, `--index`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--contract`, `--artifact`, `--json` | `effigy.contracts.check-json.v1`, `effigy.contracts.selection-validation.v1` | `017-json-output-contracts.md` |
 | `effigy distribution` | Run non-publish distribution preflight checks, validate release/distribution metadata, write first-publish summary contracts, check artifact bundles, and generate acceptance closeout logs from captured artifacts | `preflight`, `validate-metadata`, `validate-artifacts`, `generate-closeout`, `write-summary`, `--repo`, `--tag`, `--skip-docs`, `--skip-smoke`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--output`, `--owner`, `--expect-homebrew`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.distribution.preflight.v1`, `effigy.distribution.metadata.v1`, `effigy.distribution.artifacts.v1`, `effigy.distribution.closeout.v1`, `effigy.distribution.summary.v1` | `044-distribution-first-publish-execution-runbook.md` |
 | `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, and optionally start the declared dev task | `<git-url>`, `--path`, `--branch`, `--start`, `--plan`, `--json` | `effigy.bootstrap.v1` | `057-bootstrap-repo-bringup.md` |
-| `effigy demo` | Discover repo-owned proof demos, inspect one demo's proof metadata and latest known state, or execute one normalized proof attempt | `list`, `inspect`, `run`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.run.v1` | `022-manifest-cookbook.md` |
+| `effigy demo` | Discover repo-owned proof demos, inspect active/latest state, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `inspect`, `run`, `stop`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.rerun.v1` | `022-manifest-cookbook.md` |
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--json`, `--markdown`, `--out`, `--fail-on-findings`, `--show-warnings` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
 | `effigy test` | Run built-in or explicit `tasks.test` test orchestration | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-foundation.md` |
@@ -111,6 +111,8 @@ effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--start] [--plan] [
 effigy demo list [--repo <PATH>] [--json]
 effigy demo inspect <DEMO_ID> [--repo <PATH>] [--json]
 effigy demo run <DEMO_ID> [--repo <PATH>] [--json]
+effigy demo stop <DEMO_ID> [--repo <PATH>] [--json]
+effigy demo rerun <DEMO_ID> [--repo <PATH>] [--json]
 effigy scan god-files [--threshold <N>] [--high <N>] [--critical <N>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
 effigy scan duplicate-blocks [--threshold <N>] [--high <N>] [--critical <N>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
 effigy scan comment-ratio [--threshold <RATIO>] [--high <RATIO>] [--critical <RATIO>] [--min-code-lines <N>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
@@ -157,10 +159,16 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
 - `bootstrap` runs `start` only when `--start` is supplied.
 - `bootstrap` fails fast on dirty existing checkouts or remote mismatches.
 - `demo inspect` reads declared or generated receipt/artifact references and
-  normalizes the latest known proof state without executing the demo.
+  normalizes the latest known proof state and any active in-flight attempt
+  without executing the demo.
 - `demo run` executes either a declared task-backed or run-backed entrypoint,
   writes a normalized receipt, and refreshes the latest-attempt state that
   `demo inspect` reports.
+- `demo stop` only works for demos whose active attempt is directly owned by
+  the runner; task-backed demos still report an explicit unstoppability
+  boundary.
+- `demo rerun` starts a fresh attempt and fails if the demo already has an
+  active attempt.
 - task execution locks on `task:<name>` by default; use `tasks.<name>.lock = "<shared-name>"` to opt multiple tasks into the same `shared:<name>` scope.
 - managed `mode = "tui"` tasks also acquire `profile:<task>/<profile>` in addition to the task or shared scope.
 - managed `concurrent` entries accept `shutdown_on_exit = true` when one

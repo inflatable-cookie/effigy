@@ -705,14 +705,14 @@ Delivered in this planning batch:
 - the next execution slice is constrained to runner-owned stoppable processes
   instead of pretending generic task cancellation already exists
 
-### 10.5 Next Batch
+### 10.5 Lifecycle Control Foundation
 
-Batch `03.9` target:
+Batch `03.9` delivered:
 
 Build the first honest lifecycle-control slice on top of the shipped registry,
 inspection, and run foundation.
 
-In scope for the next execution slice:
+Delivered in this execution slice:
 
 - add runner-owned active-attempt state for demos that are still executing
 - add `effigy demo rerun <id>` as a fresh-attempt command on top of the
@@ -721,7 +721,7 @@ In scope for the next execution slice:
   stoppable by the runner
 - surface the active-attempt state in `demo inspect`
 
-Out of scope for the next execution slice:
+Still out of scope in this execution slice:
 
 - generic cancellation support for every task-backed demo entrypoint
 - multi-attempt concurrency per demo
@@ -729,16 +729,38 @@ Out of scope for the next execution slice:
 - broad consumer-repo migration work
 - chaining stop-and-rerun as one implicit compound action
 
-Why this is the right next slice:
+Why this was the right lifecycle slice:
 
 - it turns lifecycle planning into real product surface without over-claiming
   generic process control that Effigy does not yet own
 - it gives the future browser a truthful notion of `running` beyond a terminal
   receipt
-- it keeps the next batch bounded to one active-attempt model instead of
+- it keeps the batch bounded to one active-attempt model instead of
   reopening CLI targeting later
 
-Follow-on sequence after this slice:
+### 10.6 Next Batch
+
+Batch `03.10` target:
+
+Decide the first bounded post-lifecycle follow-up so the lane does not blur
+browser-state polish together with broader runtime-control promises.
+
+In scope for the next planning batch:
+
+- decide whether the next execution slice should prioritize browser-facing
+  state polish or broader stoppability/runtime expansion
+- define the minimum runner-facing state or query additions the chosen slice
+  actually needs
+- keep the task-cancellation boundary explicit if generic stoppability still
+  depends on deeper runtime handle work
+
+Out of scope for the next planning batch:
+
+- implementing generic task cancellation
+- starting TUI/browser implementation
+- broad consumer-repo migration work
+
+Follow-on sequence after that decision:
 
 - broaden stoppability once the generic task/runtime surface can expose
   cancellable handles honestly
@@ -766,6 +788,6 @@ Follow-on sequence after this slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to implement the first bounded
-active-attempt, stop, and rerun slice next, without promising generic
-task-cancellation semantics the runtime does not yet support.
+Use the active `g02.003` strict lane to decide the first bounded
+post-lifecycle follow-up next, without promising generic task-cancellation
+semantics the runtime does not yet support.

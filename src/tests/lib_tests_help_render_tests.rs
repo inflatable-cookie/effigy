@@ -50,6 +50,8 @@ fn render_demo_help_shows_discovery_and_inspection_options() {
     assert!(rendered.contains("effigy demo list"));
     assert!(rendered.contains("effigy demo inspect <DEMO_ID>"));
     assert!(rendered.contains("effigy demo run <DEMO_ID>"));
+    assert!(rendered.contains("effigy demo stop <DEMO_ID>"));
+    assert!(rendered.contains("effigy demo rerun <DEMO_ID>"));
     assert!(rendered.contains("--repo <PATH>"));
     assert!(rendered.contains("--json"));
     assert!(rendered.contains("record a new normalized attempt"));

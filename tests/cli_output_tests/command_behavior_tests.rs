@@ -4,10 +4,11 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use super::support::{
     parse_stdout_json, run_json_cli_command, run_json_cli_command_with_manifest,
-    run_json_task_success, temp_workspace,
+    run_json_task_success, temp_workspace, wait_for_path_exists,
 };
 
 fn init_git_repo(root: &std::path::Path) {
@@ -318,6 +319,36 @@ dependencies = ["auth/session-baseline"]
     .expect("write demo receipt");
 }
 
+fn spawn_demo_run_process(root: &std::path::Path, demo_id: &str) -> std::process::Child {
+    Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("demo")
+        .arg("run")
+        .arg(demo_id)
+        .arg("--repo")
+        .arg(root)
+        .env("NO_COLOR", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn demo run process")
+}
+
+fn wait_for_child_exit(child: &mut std::process::Child, timeout: Duration, label: &str) {
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().expect("poll child exit") {
+            assert!(
+                !status.success(),
+                "{label} unexpectedly exited successfully: {status:?}"
+            );
+            return;
+        }
+        assert!(started.elapsed() < timeout, "{label} did not exit in time");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[test]
 fn cli_docs_check_links_json_reports_broken_relative_targets() {
     let root = temp_workspace("docs-check-links");
@@ -489,6 +520,162 @@ artifacts = ["artifacts/render-check.html"]
     assert_eq!(receipt["status"], "failed");
     assert_eq!(receipt["exit_code"], 9);
     assert_eq!(receipt["artifacts"][0], "artifacts/render-check.html");
+}
+
+#[test]
+fn cli_demo_inspect_json_reports_active_attempt_for_running_run_backed_demo() {
+    let root = temp_workspace("demo-inspect-active-json");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[demos.waiter]
+title = "Waiter"
+summary = "Keeps a demo process alive until stopped."
+proof = "Verify the runner reports active attempt state while a demo is still running."
+owner = "demo"
+mode = "interactive"
+status = "ready"
+covers = ["demo.lifecycle"]
+run = "sh -lc 'while true; do sleep 1; done'"
+"#,
+    )
+    .expect("write demo manifest");
+
+    let mut child = spawn_demo_run_process(&root, "waiter");
+    let active_path = root.join(".effigy/demo/active/waiter.json");
+    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+
+    let output = run_json_cli_command(&root, &["demo", "inspect", "waiter"]);
+    assert!(output.status.success(), "demo inspect failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.demo.inspect.v1");
+    assert_eq!(parsed["result"]["demo"]["active_attempt"]["active"], true);
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["state"],
+        "running"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["stoppable"],
+        true
+    );
+    assert_eq!(parsed["result"]["demo"]["effective_status"], "running");
+
+    let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
+    assert!(stop.status.success(), "demo stop failed: {stop:?}");
+    wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
+}
+
+#[test]
+fn cli_demo_stop_json_run_backed_attempt_requests_termination() {
+    let root = temp_workspace("demo-stop-json");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[demos.waiter]
+title = "Waiter"
+summary = "Keeps a demo process alive until stopped."
+proof = "Verify the runner can request termination for a run-backed demo."
+owner = "demo"
+mode = "interactive"
+status = "ready"
+covers = ["demo.stop"]
+run = "sh -lc 'while true; do sleep 1; done'"
+"#,
+    )
+    .expect("write demo manifest");
+
+    let mut child = spawn_demo_run_process(&root, "waiter");
+    let active_path = root.join(".effigy/demo/active/waiter.json");
+    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+
+    let output = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
+    assert!(output.status.success(), "demo stop failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.demo.stop.v1");
+    assert_eq!(parsed["result"]["active_attempt"]["active"], true);
+    assert_eq!(
+        parsed["result"]["active_attempt"]["state"],
+        "stop-requested"
+    );
+
+    wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
+    let receipt: Value = serde_json::from_str(
+        &fs::read_to_string(root.join(".effigy/demo/receipts/waiter.json"))
+            .expect("read demo receipt"),
+    )
+    .expect("parse demo receipt");
+    assert_eq!(receipt["status"], "terminated");
+}
+
+#[test]
+fn cli_demo_rerun_json_rejects_when_demo_is_already_active() {
+    let root = temp_workspace("demo-rerun-active-json");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[demos.waiter]
+title = "Waiter"
+summary = "Keeps a demo process alive until stopped."
+proof = "Verify rerun is rejected when an active attempt already exists."
+owner = "demo"
+mode = "interactive"
+status = "ready"
+covers = ["demo.rerun"]
+run = "sh -lc 'while true; do sleep 1; done'"
+"#,
+    )
+    .expect("write demo manifest");
+
+    let mut child = spawn_demo_run_process(&root, "waiter");
+    let active_path = root.join(".effigy/demo/active/waiter.json");
+    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+
+    let output = run_json_cli_command(&root, &["demo", "rerun", "waiter"]);
+    assert!(
+        !output.status.success(),
+        "demo rerun unexpectedly passed: {output:?}"
+    );
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["error"]["details"]["schema"], "effigy.demo.rerun.v1");
+    assert_eq!(parsed["error"]["details"]["demo_id"], "waiter");
+    assert_eq!(parsed["error"]["details"]["active_attempt"]["active"], true);
+
+    let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
+    assert!(stop.status.success(), "demo stop failed: {stop:?}");
+    wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
+}
+
+#[test]
+fn cli_demo_stop_json_reports_task_backed_demo_not_stoppable() {
+    let root = temp_workspace("demo-stop-task-json");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks]
+"demo:login-smoke" = "printf login-proof-ok"
+
+[demos.login-smoke]
+title = "Login Smoke"
+summary = "Proves the local login flow reaches an authenticated state."
+proof = "Verify the default local login journey succeeds end to end."
+owner = "auth"
+mode = "interactive"
+status = "ready"
+covers = ["auth.login"]
+task = "demo:login-smoke"
+"#,
+    )
+    .expect("write demo manifest");
+
+    let output = run_json_cli_command(&root, &["demo", "stop", "login-smoke"]);
+    assert!(
+        !output.status.success(),
+        "demo stop unexpectedly passed: {output:?}"
+    );
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["error"]["details"]["schema"], "effigy.demo.stop.v1");
+    assert_eq!(parsed["error"]["details"]["demo_id"], "login-smoke");
+    assert_eq!(parsed["error"]["details"]["entrypoint"]["kind"], "task");
 }
 
 #[test]

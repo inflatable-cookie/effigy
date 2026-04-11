@@ -1,9 +1,18 @@
 use std::collections::BTreeSet;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
+use std::process::{Command as ProcessCommand, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use nix::errno::Errno;
+#[cfg(unix)]
+use nix::sys::signal::{self, Signal};
+#[cfg(unix)]
+use nix::unistd::{setpgid, Pid};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
@@ -20,6 +29,7 @@ use super::error::RunnerError;
 use super::render::{encode_json, render_utf8, text_renderer};
 
 const DEMO_RECEIPTS_DIR: &str = ".effigy/demo/receipts";
+const DEMO_ACTIVE_DIR: &str = ".effigy/demo/active";
 
 pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
     let cwd = current_working_dir()?;
@@ -33,8 +43,22 @@ pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
         DemoSubcommand::Inspect { demo_id } => {
             render_demo_inspect(&repo_root, &loaded, &demo_id, args.output_json)
         }
-        DemoSubcommand::Run { demo_id } => {
-            render_demo_run(&repo_root, &loaded, &demo_id, args.output_json)
+        DemoSubcommand::Run { demo_id } => render_demo_execute(
+            &repo_root,
+            &loaded,
+            &demo_id,
+            args.output_json,
+            DemoInvocationKind::Run,
+        ),
+        DemoSubcommand::Rerun { demo_id } => render_demo_execute(
+            &repo_root,
+            &loaded,
+            &demo_id,
+            args.output_json,
+            DemoInvocationKind::Rerun,
+        ),
+        DemoSubcommand::Stop { demo_id } => {
+            render_demo_stop(&repo_root, &loaded, &demo_id, args.output_json)
         }
     }
 }
@@ -82,7 +106,7 @@ fn render_demo_list(
             vec![
                 demo.id.clone(),
                 demo.title.clone(),
-                display_status(demo.status, demo.latest_attempt.stale).to_owned(),
+                display_status(demo.status, demo.latest_attempt.stale, &demo.active_attempt),
                 demo.gap_class.to_owned(),
                 demo.owner.clone(),
                 demo.entrypoint.render_compact(),
@@ -103,7 +127,7 @@ fn render_demo_list(
     renderer.text("")?;
     renderer.notice(
         NoticeLevel::Info,
-        "Use `effigy demo inspect <DEMO_ID>` to inspect proof intent, coverage, sources, and latest attempt details.",
+        "Use `effigy demo inspect <DEMO_ID>` to inspect proof intent, coverage, sources, active state, and latest attempt details.",
     )?;
     renderer.text("")?;
     render_utf8(renderer.into_inner())
@@ -149,7 +173,11 @@ fn render_demo_inspect(
         KeyValue::new("mode", record.mode.as_str().to_owned()),
         KeyValue::new(
             "status",
-            display_status(record.status, record.latest_attempt.stale),
+            display_status(
+                record.status,
+                record.latest_attempt.stale,
+                &record.active_attempt,
+            ),
         ),
         KeyValue::new("gap", record.gap_class.to_owned()),
         KeyValue::new("entrypoint", record.entrypoint.render_full()),
@@ -177,6 +205,10 @@ fn render_demo_inspect(
         renderer.bullet_list("dependencies", &record.dependencies)?;
         renderer.text("")?;
     }
+
+    renderer.section("Active Attempt")?;
+    renderer.key_values(&record.active_attempt.to_key_values())?;
+    renderer.text("")?;
 
     renderer.section("Latest Attempt")?;
     let mut latest_values = vec![
@@ -208,20 +240,36 @@ fn render_demo_inspect(
     render_utf8(renderer.into_inner())
 }
 
-fn render_demo_run(
+fn render_demo_execute(
     repo_root: &Path,
     loaded: &LoadedTaskManifest,
     demo_id: &str,
     output_json: bool,
+    invocation: DemoInvocationKind,
 ) -> Result<String, RunnerError> {
     let Some(demo) = loaded.manifest.demos.get(demo_id) else {
         return demo_error(
             output_json,
-            "effigy.demo.run.v1",
+            invocation.schema(),
             format!("demo `{demo_id}` was not found"),
             json!({ "demo_id": demo_id }),
         );
     };
+
+    let active_attempt = load_active_attempt(repo_root, demo_id)?;
+    if active_attempt.active {
+        return demo_error(
+            output_json,
+            invocation.schema(),
+            format!(
+                "demo `{demo_id}` already has an active attempt; stop it before starting a fresh run"
+            ),
+            json!({
+                "demo_id": demo_id,
+                "active_attempt": active_attempt.to_json(),
+            }),
+        );
+    }
 
     let attempt = execute_demo_attempt(repo_root, demo_id, demo, output_json)?;
     write_latest_attempt_receipt(repo_root, demo_id, demo, &attempt)?;
@@ -230,7 +278,7 @@ fn render_demo_run(
     if output_json {
         let rendered = encode_json(
             &json!({
-                "schema": "effigy.demo.run.v1",
+                "schema": invocation.schema(),
                 "schema_version": 1,
                 "ok": attempt.ok,
                 "repo_root": repo_root.display().to_string(),
@@ -242,6 +290,7 @@ fn render_demo_run(
                     "defined_in": record.primary_source,
                 },
                 "execution": attempt.to_json(),
+                "active_attempt": record.active_attempt.to_json(),
                 "latest_attempt": record.latest_attempt.to_json(),
             }),
             true,
@@ -253,7 +302,7 @@ fn render_demo_run(
     }
 
     if attempt.ok {
-        return render_demo_run_text(&record, &attempt);
+        return render_demo_execute_text(&record, &attempt, invocation.title());
     }
 
     Err(RunnerError::task_invocation(format!(
@@ -266,12 +315,194 @@ fn render_demo_run(
     )))
 }
 
-fn render_demo_run_text(
+fn render_demo_stop(
+    repo_root: &Path,
+    loaded: &LoadedTaskManifest,
+    demo_id: &str,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let Some(demo) = loaded.manifest.demos.get(demo_id) else {
+        return demo_error(
+            output_json,
+            "effigy.demo.stop.v1",
+            format!("demo `{demo_id}` was not found"),
+            json!({ "demo_id": demo_id }),
+        );
+    };
+
+    let active_attempt = load_active_attempt(repo_root, demo_id)?;
+    match demo_entrypoint(demo) {
+        DemoEntrypoint::Task(task_name) => {
+            return demo_error(
+                output_json,
+                "effigy.demo.stop.v1",
+                format!(
+                    "demo `{demo_id}` uses task entrypoint `{task_name}`; stop is not supported until task execution exposes cancellable handles"
+                ),
+                json!({
+                    "demo_id": demo_id,
+                    "entrypoint": { "kind": "task", "value": task_name },
+                    "active_attempt": active_attempt.to_json(),
+                }),
+            );
+        }
+        DemoEntrypoint::Run(_) => {}
+    }
+
+    if !active_attempt.active {
+        return demo_error(
+            output_json,
+            "effigy.demo.stop.v1",
+            format!("demo `{demo_id}` has no active attempt to stop"),
+            json!({
+                "demo_id": demo_id,
+                "active_attempt": active_attempt.to_json(),
+            }),
+        );
+    }
+    if !active_attempt.stoppable {
+        return demo_error(
+            output_json,
+            "effigy.demo.stop.v1",
+            format!("demo `{demo_id}` is active but not stoppable through the current runtime"),
+            json!({
+                "demo_id": demo_id,
+                "active_attempt": active_attempt.to_json(),
+            }),
+        );
+    }
+
+    let mut persisted = read_active_attempt_record(repo_root, demo_id)?.ok_or_else(|| {
+        RunnerError::task_invocation(format!("demo `{demo_id}` has no active attempt to stop"))
+    })?;
+    if persisted.phase == PersistedDemoActivePhase::StopRequested {
+        return render_demo_stop_result(
+            repo_root,
+            loaded,
+            demo_id,
+            output_json,
+            "stop already requested",
+            demo_active_attempt_from_record(
+                repo_root,
+                demo_id,
+                &persisted,
+                render_active_attempt_path(repo_root, demo_id),
+            ),
+        );
+    }
+
+    let Some(target_pid) = persisted.target_pid else {
+        return demo_error(
+            output_json,
+            "effigy.demo.stop.v1",
+            format!("demo `{demo_id}` is active but has no stoppable process handle"),
+            json!({
+                "demo_id": demo_id,
+                "active_attempt": active_attempt.to_json(),
+            }),
+        );
+    };
+
+    if !pid_is_alive(target_pid) {
+        clear_active_attempt_state(repo_root, demo_id);
+        return demo_error(
+            output_json,
+            "effigy.demo.stop.v1",
+            format!("demo `{demo_id}` is no longer running"),
+            json!({
+                "demo_id": demo_id,
+                "active_attempt": DemoActiveAttempt::inactive(Some(render_active_attempt_path(repo_root, demo_id))).to_json(),
+            }),
+        );
+    }
+
+    request_demo_termination(target_pid)?;
+    persisted.phase = PersistedDemoActivePhase::StopRequested;
+    write_active_attempt_record(repo_root, demo_id, &persisted)?;
+    render_demo_stop_result(
+        repo_root,
+        loaded,
+        demo_id,
+        output_json,
+        "stop requested",
+        demo_active_attempt_from_record(
+            repo_root,
+            demo_id,
+            &persisted,
+            render_active_attempt_path(repo_root, demo_id),
+        ),
+    )
+}
+
+fn render_demo_stop_result(
+    repo_root: &Path,
+    loaded: &LoadedTaskManifest,
+    demo_id: &str,
+    output_json: bool,
+    summary: &str,
+    reported_active_attempt: DemoActiveAttempt,
+) -> Result<String, RunnerError> {
+    let Some(demo) = loaded.manifest.demos.get(demo_id) else {
+        return demo_error(
+            output_json,
+            "effigy.demo.stop.v1",
+            format!("demo `{demo_id}` was not found"),
+            json!({ "demo_id": demo_id }),
+        );
+    };
+    let record = build_demo_record(repo_root, loaded, demo_id, demo)?;
+    if output_json {
+        return encode_json(
+            &json!({
+                "schema": "effigy.demo.stop.v1",
+                "schema_version": 1,
+                "ok": true,
+                "repo_root": repo_root.display().to_string(),
+                "message": format!("demo `{demo_id}` {summary}"),
+                "demo": {
+                    "id": record.id,
+                    "title": record.title,
+                    "owner": record.owner,
+                    "entrypoint": record.entrypoint.to_json(),
+                    "defined_in": record.primary_source,
+                },
+                "active_attempt": reported_active_attempt.to_json(),
+                "latest_attempt": record.latest_attempt.to_json(),
+            }),
+            true,
+        );
+    }
+
+    let mut renderer = text_renderer();
+    renderer.section("Demo Stop")?;
+    renderer.key_values(&[
+        KeyValue::new("id", record.id.clone()),
+        KeyValue::new("title", record.title.clone()),
+        KeyValue::new("owner", record.owner.clone()),
+        KeyValue::new("state", reported_active_attempt.state_label().to_owned()),
+        KeyValue::new(
+            "stoppable",
+            if reported_active_attempt.stoppable {
+                "yes".to_owned()
+            } else {
+                "no".to_owned()
+            },
+        ),
+    ])?;
+    renderer.text("")?;
+    let message = format!("demo `{demo_id}` {summary}");
+    renderer.notice(NoticeLevel::Info, &message)?;
+    renderer.text("")?;
+    render_utf8(renderer.into_inner())
+}
+
+fn render_demo_execute_text(
     record: &DemoRecord,
     attempt: &DemoExecutionAttempt,
+    section_title: &str,
 ) -> Result<String, RunnerError> {
     let mut renderer = text_renderer();
-    renderer.section("Demo Run")?;
+    renderer.section(section_title)?;
     renderer.key_values(&[
         KeyValue::new("id", record.id.clone()),
         KeyValue::new("title", record.title.clone()),
@@ -294,7 +525,7 @@ fn render_demo_run_text(
     renderer.text("")?;
     renderer.notice(
         NoticeLevel::Info,
-        "Use `effigy demo inspect <DEMO_ID>` to review the recorded latest attempt.",
+        "Use `effigy demo inspect <DEMO_ID>` to review the recorded latest attempt and any active state.",
     )?;
     renderer.text("")?;
     render_utf8(renderer.into_inner())
@@ -312,6 +543,7 @@ fn build_demo_record(
         .cloned()
         .unwrap_or_else(|| "effigy.toml".to_owned());
     let latest_attempt = load_latest_attempt(repo_root, demo_id, demo)?;
+    let active_attempt = load_active_attempt(repo_root, demo_id)?;
     let gap_class = derive_gap_class(demo.status, latest_attempt.stale);
 
     Ok(DemoRecord {
@@ -330,6 +562,7 @@ fn build_demo_record(
         sources,
         primary_source,
         gap_class,
+        active_attempt,
         latest_attempt,
     })
 }
@@ -431,6 +664,65 @@ fn load_latest_attempt(
     })
 }
 
+fn load_active_attempt(repo_root: &Path, demo_id: &str) -> Result<DemoActiveAttempt, RunnerError> {
+    let path = effective_active_attempt_path(repo_root, demo_id);
+    let rendered_path = display_repo_path(&path, repo_root);
+    let Some(record) = read_active_attempt_record(repo_root, demo_id)? else {
+        return Ok(DemoActiveAttempt::inactive(Some(rendered_path)));
+    };
+
+    let target_alive = record.target_pid.is_none_or(pid_is_alive);
+    let owner_alive = pid_is_alive(record.owner_pid);
+    if !owner_alive || !target_alive {
+        clear_active_attempt_state(repo_root, demo_id);
+        return Ok(DemoActiveAttempt::inactive(Some(rendered_path)));
+    }
+
+    Ok(demo_active_attempt_from_record(
+        repo_root,
+        demo_id,
+        &record,
+        rendered_path,
+    ))
+}
+
+fn demo_active_attempt_from_record(
+    _repo_root: &Path,
+    _demo_id: &str,
+    record: &PersistedDemoActiveAttempt,
+    rendered_path: String,
+) -> DemoActiveAttempt {
+    DemoActiveAttempt {
+        active: true,
+        state: record.phase.rendered().to_owned(),
+        attempt_id: Some(record.attempt_id.clone()),
+        state_path: Some(rendered_path),
+        owner_pid: Some(record.owner_pid),
+        target_pid: record.target_pid,
+        stoppable: record.stoppable,
+        started_at_epoch_ms: Some(record.started_at_epoch_ms),
+        entrypoint_kind: Some(record.entrypoint_kind.clone()),
+        entrypoint_value: Some(record.entrypoint_value.clone()),
+        command: Some(record.command.clone()),
+        parse_error: None,
+    }
+}
+
+fn read_active_attempt_record(
+    repo_root: &Path,
+    demo_id: &str,
+) -> Result<Option<PersistedDemoActiveAttempt>, RunnerError> {
+    let path = effective_active_attempt_path(repo_root, demo_id);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|error| RunnerError::task_invocation_failed_read(&path, error))?;
+    let parsed = serde_json::from_str::<PersistedDemoActiveAttempt>(&content)
+        .map_err(|error| RunnerError::task_invocation_failed_parse(&path, error))?;
+    Ok(Some(parsed))
+}
+
 fn normalize_artifact_refs(value: &JsonValue) -> Option<Vec<String>> {
     let entries = value.as_array()?;
     let mut rendered = Vec::new();
@@ -472,6 +764,26 @@ fn execute_task_backed_demo(
     task_name: &str,
     output_json: bool,
 ) -> Result<DemoExecutionAttempt, RunnerError> {
+    let attempt_id = build_attempt_id(demo_id);
+    let _active_guard = register_active_attempt(
+        repo_root,
+        demo_id,
+        PersistedDemoActiveAttempt {
+            schema: "effigy.demo.active.v1".to_owned(),
+            schema_version: 1,
+            attempt_id,
+            demo_id: demo_id.to_owned(),
+            phase: PersistedDemoActivePhase::Running,
+            started_at_epoch_ms: now_epoch_ms(),
+            owner_pid: std::process::id(),
+            target_pid: None,
+            stoppable: false,
+            entrypoint_kind: "task".to_owned(),
+            entrypoint_value: task_name.to_owned(),
+            command: task_name.to_owned(),
+        },
+    )?;
+
     if output_json {
         let task = TaskInvocation {
             name: task_name.to_owned(),
@@ -593,74 +905,190 @@ fn execute_run_backed_demo(
     run_command: &str,
     output_json: bool,
 ) -> Result<DemoExecutionAttempt, RunnerError> {
-    let mut process = ProcessCommand::new("sh");
-    process.arg("-c").arg(run_command).current_dir(repo_root);
-    with_local_node_bin_path(&mut process, repo_root);
+    let mut child = build_run_backed_process(repo_root, run_command, output_json)?
+        .spawn()
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "Demo `{demo_id}` failed to launch run entrypoint: {error}"
+            ))
+        })?;
 
-    if output_json {
-        return match process.output() {
-            Ok(output) => Ok(DemoExecutionAttempt {
-                ok: output.status.success(),
-                outcome: if output.status.success() {
-                    "passed".to_owned()
-                } else {
-                    "failed".to_owned()
-                },
-                entrypoint_kind: "run".to_owned(),
-                entrypoint_value: run_command.to_owned(),
-                command: run_command.to_owned(),
-                exit_code: output.status.code(),
-                summary: Some(if output.status.success() {
-                    format!("Demo `{demo_id}` completed via run entrypoint.")
-                } else {
-                    format!("Demo `{demo_id}` failed via run entrypoint.")
-                }),
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                recorded_at_epoch_ms: now_epoch_ms(),
-            }),
-            Err(error) => Ok(failed_demo_attempt(
-                "run",
-                run_command,
-                run_command,
-                None,
-                format!("Demo `{demo_id}` failed to launch run entrypoint: {error}"),
-                String::new(),
-                String::new(),
-            )),
-        };
-    }
-
-    match process.status() {
-        Ok(status) => Ok(DemoExecutionAttempt {
-            ok: status.success(),
-            outcome: if status.success() {
-                "passed".to_owned()
-            } else {
-                "failed".to_owned()
-            },
+    let attempt_id = build_attempt_id(demo_id);
+    let _active_guard = register_active_attempt(
+        repo_root,
+        demo_id,
+        PersistedDemoActiveAttempt {
+            schema: "effigy.demo.active.v1".to_owned(),
+            schema_version: 1,
+            attempt_id,
+            demo_id: demo_id.to_owned(),
+            phase: PersistedDemoActivePhase::Running,
+            started_at_epoch_ms: now_epoch_ms(),
+            owner_pid: std::process::id(),
+            target_pid: Some(child.id()),
+            stoppable: true,
             entrypoint_kind: "run".to_owned(),
             entrypoint_value: run_command.to_owned(),
             command: run_command.to_owned(),
-            exit_code: status.code(),
-            summary: Some(if status.success() {
-                format!("Demo `{demo_id}` completed via run entrypoint.")
-            } else {
-                format!("Demo `{demo_id}` failed via run entrypoint.")
-            }),
-            stdout: String::new(),
-            stderr: String::new(),
-            recorded_at_epoch_ms: now_epoch_ms(),
-        }),
-        Err(error) => Ok(failed_demo_attempt(
+        },
+    )?;
+
+    if output_json {
+        let output = child.wait_with_output().map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "Demo `{demo_id}` failed to wait for run entrypoint: {error}"
+            ))
+        })?;
+        let stop_requested = active_attempt_is_stop_requested(repo_root, demo_id);
+        return Ok(run_attempt_from_output(
+            demo_id,
+            run_command,
+            output.status.code(),
+            output.status.success(),
+            stop_requested,
+            String::from_utf8_lossy(&output.stdout).to_string(),
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ));
+    }
+
+    let status = child.wait().map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "Demo `{demo_id}` failed to wait for run entrypoint: {error}"
+        ))
+    })?;
+    let stop_requested = active_attempt_is_stop_requested(repo_root, demo_id);
+    Ok(run_attempt_from_output(
+        demo_id,
+        run_command,
+        status.code(),
+        status.success(),
+        stop_requested,
+        String::new(),
+        String::new(),
+    ))
+}
+
+fn build_run_backed_process(
+    repo_root: &Path,
+    run_command: &str,
+    capture_output: bool,
+) -> Result<ProcessCommand, RunnerError> {
+    let mut process = ProcessCommand::new("sh");
+    process.arg("-c").arg(run_command).current_dir(repo_root);
+    if capture_output {
+        process.stdout(Stdio::piped()).stderr(Stdio::piped());
+    } else {
+        process.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    }
+    #[cfg(unix)]
+    unsafe {
+        process.pre_exec(|| {
+            setpgid(Pid::from_raw(0), Pid::from_raw(0))
+                .map_err(|error| std::io::Error::other(error.to_string()))
+        });
+    }
+    with_local_node_bin_path(&mut process, repo_root);
+    Ok(process)
+}
+
+fn run_attempt_from_output(
+    demo_id: &str,
+    run_command: &str,
+    exit_code: Option<i32>,
+    success: bool,
+    stop_requested: bool,
+    stdout: String,
+    stderr: String,
+) -> DemoExecutionAttempt {
+    if stop_requested {
+        return terminated_demo_attempt(
             "run",
             run_command,
             run_command,
-            None,
-            format!("Demo `{demo_id}` failed to launch run entrypoint: {error}"),
-            String::new(),
-            String::new(),
-        )),
+            exit_code,
+            format!("Demo `{demo_id}` was terminated after stop was requested."),
+            stdout,
+            stderr,
+        );
+    }
+    if success {
+        return successful_demo_attempt(
+            "run",
+            run_command,
+            run_command,
+            exit_code,
+            Some(format!("Demo `{demo_id}` completed via run entrypoint.")),
+            stdout,
+            stderr,
+        );
+    }
+    failed_demo_attempt(
+        "run",
+        run_command,
+        run_command,
+        exit_code,
+        format!("Demo `{demo_id}` failed via run entrypoint."),
+        stdout,
+        stderr,
+    )
+}
+
+fn active_attempt_is_stop_requested(repo_root: &Path, demo_id: &str) -> bool {
+    read_active_attempt_record(repo_root, demo_id)
+        .ok()
+        .flatten()
+        .is_some_and(|record| record.phase == PersistedDemoActivePhase::StopRequested)
+}
+
+fn register_active_attempt(
+    repo_root: &Path,
+    demo_id: &str,
+    record: PersistedDemoActiveAttempt,
+) -> Result<DemoActiveAttemptGuard, RunnerError> {
+    write_active_attempt_record(repo_root, demo_id, &record)?;
+    Ok(DemoActiveAttemptGuard {
+        path: effective_active_attempt_path(repo_root, demo_id),
+    })
+}
+
+fn write_active_attempt_record(
+    repo_root: &Path,
+    demo_id: &str,
+    record: &PersistedDemoActiveAttempt,
+) -> Result<(), RunnerError> {
+    let path = effective_active_attempt_path(repo_root, demo_id);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| RunnerError::task_invocation_failed_write(parent, error))?;
+    }
+    let rendered = serde_json::to_string_pretty(record)
+        .map_err(|error| RunnerError::task_invocation_failed_render(&path, error))?;
+    fs::write(&path, rendered)
+        .map_err(|error| RunnerError::task_invocation_failed_write(&path, error))
+}
+
+fn clear_active_attempt_state(repo_root: &Path, demo_id: &str) {
+    let path = effective_active_attempt_path(repo_root, demo_id);
+    let _ = fs::remove_file(path);
+}
+
+fn request_demo_termination(target_pid: u32) -> Result<(), RunnerError> {
+    #[cfg(unix)]
+    {
+        let raw = target_pid as i32;
+        match signal::kill(Pid::from_raw(-raw), Signal::SIGTERM) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(RunnerError::task_invocation(format!(
+                "failed to send stop signal to demo process group `{target_pid}`: {error}"
+            ))),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = target_pid;
+        Err(RunnerError::task_invocation(
+            "demo stop is not supported on this platform in the current runtime".to_owned(),
+        ))
     }
 }
 
@@ -699,6 +1127,29 @@ fn failed_demo_attempt(
     DemoExecutionAttempt {
         ok: false,
         outcome: "failed".to_owned(),
+        entrypoint_kind: entrypoint_kind.to_owned(),
+        entrypoint_value: entrypoint_value.to_owned(),
+        command: command.to_owned(),
+        exit_code,
+        summary: Some(summary),
+        stdout,
+        stderr,
+        recorded_at_epoch_ms: now_epoch_ms(),
+    }
+}
+
+fn terminated_demo_attempt(
+    entrypoint_kind: &str,
+    entrypoint_value: &str,
+    command: &str,
+    exit_code: Option<i32>,
+    summary: String,
+    stdout: String,
+    stderr: String,
+) -> DemoExecutionAttempt {
+    DemoExecutionAttempt {
+        ok: false,
+        outcome: "terminated".to_owned(),
         entrypoint_kind: entrypoint_kind.to_owned(),
         entrypoint_value: entrypoint_value.to_owned(),
         command: command.to_owned(),
@@ -754,6 +1205,27 @@ fn effective_receipt_path(repo_root: &Path, demo_id: &str, demo: &ManifestDemoCo
         .join(format!("{}.json", sanitize_demo_id_for_filename(demo_id)))
 }
 
+fn effective_active_attempt_path(repo_root: &Path, demo_id: &str) -> PathBuf {
+    repo_root
+        .join(DEMO_ACTIVE_DIR)
+        .join(format!("{}.json", sanitize_demo_id_for_filename(demo_id)))
+}
+
+fn render_active_attempt_path(repo_root: &Path, demo_id: &str) -> String {
+    display_repo_path(
+        &effective_active_attempt_path(repo_root, demo_id),
+        repo_root,
+    )
+}
+
+fn build_attempt_id(demo_id: &str) -> String {
+    format!(
+        "{}-{}",
+        sanitize_demo_id_for_filename(demo_id),
+        now_epoch_ms()
+    )
+}
+
 fn sanitize_demo_id_for_filename(demo_id: &str) -> String {
     demo_id
         .chars()
@@ -771,6 +1243,25 @@ fn now_epoch_ms() -> u128 {
         .unwrap_or(0)
 }
 
+#[cfg(unix)]
+fn pid_is_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    let raw = pid as i32;
+    match signal::kill(Pid::from_raw(raw), None) {
+        Ok(()) => true,
+        Err(Errno::EPERM) => true,
+        Err(Errno::ESRCH) => false,
+        Err(_) => true,
+    }
+}
+
+#[cfg(not(unix))]
+fn pid_is_alive(pid: u32) -> bool {
+    pid != 0
+}
+
 fn derive_gap_class(status: ManifestDemoStatus, stale: bool) -> &'static str {
     if stale {
         return "stale";
@@ -786,7 +1277,17 @@ fn derive_gap_class(status: ManifestDemoStatus, stale: bool) -> &'static str {
     }
 }
 
-fn display_status(status: ManifestDemoStatus, stale: bool) -> String {
+fn display_status(
+    status: ManifestDemoStatus,
+    stale: bool,
+    active_attempt: &DemoActiveAttempt,
+) -> String {
+    if active_attempt.active {
+        return match active_attempt.state.as_str() {
+            "stop-requested" => "running (stop-requested)".to_owned(),
+            _ => "running".to_owned(),
+        };
+    }
     if stale {
         format!("{} (stale)", status.as_str())
     } else {
@@ -822,6 +1323,28 @@ fn demo_error(
     Err(RunnerError::task_invocation(message))
 }
 
+#[derive(Debug, Clone, Copy)]
+enum DemoInvocationKind {
+    Run,
+    Rerun,
+}
+
+impl DemoInvocationKind {
+    fn schema(&self) -> &'static str {
+        match self {
+            Self::Run => "effigy.demo.run.v1",
+            Self::Rerun => "effigy.demo.rerun.v1",
+        }
+    }
+
+    fn title(&self) -> &'static str {
+        match self {
+            Self::Run => "Demo Run",
+            Self::Rerun => "Demo Rerun",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct DemoRecord {
     id: String,
@@ -839,6 +1362,7 @@ struct DemoRecord {
     sources: Vec<String>,
     primary_source: String,
     gap_class: &'static str,
+    active_attempt: DemoActiveAttempt,
     latest_attempt: DemoLatestAttempt,
 }
 
@@ -851,12 +1375,14 @@ impl DemoRecord {
             "owner": self.owner,
             "mode": self.mode.as_str(),
             "status": self.status.as_str(),
+            "effective_status": display_status(self.status, self.latest_attempt.stale, &self.active_attempt),
             "stale": self.latest_attempt.stale,
             "gap_class": self.gap_class,
             "covers": self.covers,
             "tags": self.tags,
             "entrypoint": self.entrypoint.to_json(),
             "defined_in": self.primary_source,
+            "active_attempt": self.active_attempt.to_json(),
             "latest_attempt": self.latest_attempt.to_json(),
         })
     }
@@ -870,6 +1396,7 @@ impl DemoRecord {
             "owner": self.owner,
             "mode": self.mode.as_str(),
             "status": self.status.as_str(),
+            "effective_status": display_status(self.status, self.latest_attempt.stale, &self.active_attempt),
             "stale": self.latest_attempt.stale,
             "gap_class": self.gap_class,
             "covers": self.covers,
@@ -879,6 +1406,7 @@ impl DemoRecord {
             "entrypoint": self.entrypoint.to_json(),
             "defined_in": self.primary_source,
             "sources": self.sources,
+            "active_attempt": self.active_attempt.to_json(),
             "latest_attempt": self.latest_attempt.to_json(),
         })
     }
@@ -910,6 +1438,109 @@ impl DemoEntrypoint {
             Self::Task(task) => json!({ "kind": "task", "value": task }),
             Self::Run(run) => json!({ "kind": "run", "value": run }),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DemoActiveAttempt {
+    active: bool,
+    state: String,
+    attempt_id: Option<String>,
+    state_path: Option<String>,
+    owner_pid: Option<u32>,
+    target_pid: Option<u32>,
+    stoppable: bool,
+    started_at_epoch_ms: Option<u128>,
+    entrypoint_kind: Option<String>,
+    entrypoint_value: Option<String>,
+    command: Option<String>,
+    parse_error: Option<String>,
+}
+
+impl DemoActiveAttempt {
+    fn inactive(state_path: Option<String>) -> Self {
+        Self {
+            active: false,
+            state: "not-active".to_owned(),
+            attempt_id: None,
+            state_path,
+            owner_pid: None,
+            target_pid: None,
+            stoppable: false,
+            started_at_epoch_ms: None,
+            entrypoint_kind: None,
+            entrypoint_value: None,
+            command: None,
+            parse_error: None,
+        }
+    }
+
+    fn state_label(&self) -> &str {
+        &self.state
+    }
+
+    fn to_key_values(&self) -> Vec<KeyValue> {
+        let mut values = vec![
+            KeyValue::new("state", self.state.clone()),
+            KeyValue::new(
+                "stoppable",
+                if self.stoppable {
+                    "yes".to_owned()
+                } else {
+                    "no".to_owned()
+                },
+            ),
+            KeyValue::new(
+                "state-path",
+                self.state_path
+                    .clone()
+                    .unwrap_or_else(|| "<none>".to_owned()),
+            ),
+        ];
+        if let Some(attempt_id) = &self.attempt_id {
+            values.push(KeyValue::new("attempt-id", attempt_id.clone()));
+        }
+        if let Some(owner_pid) = self.owner_pid {
+            values.push(KeyValue::new("owner-pid", owner_pid.to_string()));
+        }
+        if let Some(target_pid) = self.target_pid {
+            values.push(KeyValue::new("target-pid", target_pid.to_string()));
+        }
+        if let Some(started_at_epoch_ms) = self.started_at_epoch_ms {
+            values.push(KeyValue::new(
+                "started-at-epoch-ms",
+                started_at_epoch_ms.to_string(),
+            ));
+        }
+        if let (Some(kind), Some(value)) = (&self.entrypoint_kind, &self.entrypoint_value) {
+            values.push(KeyValue::new("entrypoint", format!("{kind}:{value}")));
+        }
+        if let Some(command) = &self.command {
+            values.push(KeyValue::new("command", command.clone()));
+        }
+        if let Some(parse_error) = &self.parse_error {
+            values.push(KeyValue::new("parse-error", parse_error.clone()));
+        }
+        values
+    }
+
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "active": self.active,
+            "state": self.state,
+            "attempt_id": self.attempt_id,
+            "state_path": self.state_path,
+            "owner_pid": self.owner_pid,
+            "target_pid": self.target_pid,
+            "stoppable": self.stoppable,
+            "started_at_epoch_ms": self.started_at_epoch_ms,
+            "entrypoint": {
+                "kind": self.entrypoint_kind,
+                "value": self.entrypoint_value,
+            },
+            "command": self.command,
+            "parse_error": self.parse_error,
+        })
     }
 }
 
@@ -977,5 +1608,47 @@ impl DemoExecutionAttempt {
             "stderr": self.stderr,
             "recorded_at_epoch_ms": self.recorded_at_epoch_ms,
         })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedDemoActiveAttempt {
+    schema: String,
+    schema_version: u8,
+    attempt_id: String,
+    demo_id: String,
+    phase: PersistedDemoActivePhase,
+    started_at_epoch_ms: u128,
+    owner_pid: u32,
+    target_pid: Option<u32>,
+    stoppable: bool,
+    entrypoint_kind: String,
+    entrypoint_value: String,
+    command: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum PersistedDemoActivePhase {
+    Running,
+    StopRequested,
+}
+
+impl PersistedDemoActivePhase {
+    fn rendered(&self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::StopRequested => "stop-requested",
+        }
+    }
+}
+
+struct DemoActiveAttemptGuard {
+    path: PathBuf,
+}
+
+impl Drop for DemoActiveAttemptGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
     }
 }

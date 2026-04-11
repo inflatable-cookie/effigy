@@ -25,6 +25,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add `effigy demo run <id>` so task-backed and run-backed demos can execute
   through a first-class CLI surface, write normalized latest-attempt receipts,
   and immediately refresh the state reported by `demo inspect`
+- Add runner-owned demo active-attempt state plus `effigy demo stop <id>` and
+  `effigy demo rerun <id>` so run-backed demos can expose honest lifecycle
+  control without pretending generic task cancellation already exists
 
 ### Changed
 - Route catalog discovery, doctor strict-parse checks, docs-policy loading, and
@@ -33,6 +36,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Make composition conflict errors and inspect output more actionable by naming
   both source fragments in conflict/override reporting and grouping effective
   value sources by fragment in text-mode inspection
+- Make `effigy demo inspect <id>` report active in-flight attempt state
+  separately from the latest terminal receipt, so operators can distinguish
+  `running now` from `last known proof result`
 
 ## [0.2.12] - 2026-03-24
 
