@@ -1,6 +1,6 @@
 # 029 Decide Demo Post-Detail-Navigation Follow-Up Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -47,4 +47,5 @@ runtime or desktop-client work.
 ## Next Task
 
 Choose the next bounded browser follow-up after detail-pane navigation, then
-open the corresponding ready card so the lane has a clean continuation point.
+open the metadata-query implementation card so the lane has a clean
+continuation point.

@@ -69,6 +69,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide the next bounded
-browser follow-up after detail-pane navigation, then keep runtime expansion
-and desktop-client questions separate.
+Execute the active `g02.003` ready card next to implement bounded
+browser metadata-query parity, then keep runtime expansion and desktop-client
+questions separate.

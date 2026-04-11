@@ -319,6 +319,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to decide the next bounded browser
-follow-up now that detail-pane navigation is shipped, while keeping broader
-runtime and desktop-client questions deferred.
+Use the active `g02.003` ready card to implement bounded browser
+metadata-query parity now that detail-pane navigation is shipped, while
+keeping broader runtime and desktop-client questions deferred.
