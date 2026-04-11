@@ -1,6 +1,6 @@
 # 010 Decide Demo Browser And TUI Contract
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -50,5 +50,6 @@ Lock the first bounded browser contract for demos:
 
 ## Next Task
 
-Complete this planning batch, then leave the next move explicit as either pilot
-reconciliation against Signal or the first bounded implementation-planning lane.
+Open the next explicit `g02.003` ready card for Signal reconciliation so the
+demo model is checked against the motivating pilot before implementation
+planning starts.

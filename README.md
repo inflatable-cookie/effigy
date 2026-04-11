@@ -254,5 +254,6 @@ effigy/
 
 ## Next Task
 
-Complete the active `g02.003` planning batch so Effigy has an explicit demo
-browser/TUI contract before any implementation work begins.
+Use the active `g02.003` ready card to reconcile the settled demo contract
+against Signal, then let that pilot define the first bounded implementation
+lane.

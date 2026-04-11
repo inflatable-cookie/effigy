@@ -63,6 +63,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` browser/TUI ready card next, then either
-leave another explicit ready card or return the lane to a real intent
-checkpoint.
+Execute the active `g02.003` Signal reconciliation ready card next, then either
+leave an implementation-planning card behind it or return the lane to a real
+intent checkpoint if the pilot exposes unresolved model drift.
