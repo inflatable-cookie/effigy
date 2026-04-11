@@ -249,6 +249,6 @@ effigy/
 
 ## Next Task
 
-Complete the active strict `g02.002` planning batch on implementation slice and
-proof boundary so Effigy can start composition work without demos or other
-features claiming their own split-config semantics first.
+Complete the active `g02.002` implementation-ready batch so Effigy has a real
+composed-manifest foundation before demos or other features claim their own
+split-config semantics.

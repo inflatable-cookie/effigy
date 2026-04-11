@@ -65,10 +65,9 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute the active ready card for `g02.002`, then leave the first
-implementation/proof slice explicit enough that `g02.003` can design demo proof
-on top of one general config model instead of inventing feature-local file
-loading.
+Execute the active implementation-ready card for `g02.002`, then leave the next
+move explicit as either composition hardening or activation of `g02.003`
+planning on top of a real config-composition foundation.
 
 
 ## Historical language boundary

@@ -1,6 +1,6 @@
 # 004 Decide Composition Implementation Slice And Proof Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.002`
 Spec: `docs/specs/002-manifest-composition-and-override-strict-lane.md`
@@ -47,5 +47,31 @@ slice:
 
 ## Next Task
 
-Complete this planning batch, then either open the first implementation-ready
-card or return the lane to an explicit intent checkpoint.
+## Decision
+
+The first implementation batch should stay narrow and infrastructure-first.
+
+It must include:
+
+- composed-manifest loading from `effigy.toml` through nested included partial
+  fragments
+- enforcement of the decided conflict and path-scoped override rules
+- clear composition failures through normal manifest parse/doctor surfaces
+- one minimal `effigy config` inspection surface for include graph, evaluation
+  order, effective sources, and overridden paths
+
+It should not include:
+
+- manifest refactor helpers
+- broad real-repo migrations
+- demo-specific config support
+- wider UX polish beyond the minimum inspection contract
+
+The first proof boundary should be one cross-feature split, preferably `tasks`
+plus `docs_policy` or `release`, so composition is proven as a feature-agnostic
+model before `g02.003` relies on it.
+
+## Next Task
+
+Open the first implementation-ready card for composed-manifest loading,
+inspection, and one cross-feature proof slice.
