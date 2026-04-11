@@ -13,12 +13,12 @@ Current milestones:
 
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
 - [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
-- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, and browser artifact-opening affordances now shipped; the next slice is deciding the post-artifact follow-up)
+- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, and browser artifact-opening affordances now shipped; the next slice is bounded browser live log visibility)
 
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/023-decide-demo-post-artifact-follow-up-boundary.md`](../specs/batch-cards/023-decide-demo-post-artifact-follow-up-boundary.md)
+- [`../specs/batch-cards/024-implement-demo-browser-live-log-visibility.md`](../specs/batch-cards/024-implement-demo-browser-live-log-visibility.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` ready card to decide whether live log visibility is
-the next honest browser follow-up, while broader stoppability stays deferred
-behind a runtime-handle boundary.
+Use the active `g02.003` ready card to implement bounded live log visibility in
+the browser, while broader stoppability stays deferred behind a runtime-handle
+boundary.
