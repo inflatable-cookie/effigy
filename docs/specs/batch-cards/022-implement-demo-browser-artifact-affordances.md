@@ -1,6 +1,6 @@
 # 022 Implement Demo Browser Artifact Affordances
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -52,5 +52,5 @@ terminal behavior.
 
 ## Next Task
 
-Implement artifact-opening affordances in the demo browser, then decide whether
-live log visibility is still the next honest browser follow-up.
+Decide whether live log visibility is still the next honest browser follow-up
+now that artifact-opening affordances are shipped.

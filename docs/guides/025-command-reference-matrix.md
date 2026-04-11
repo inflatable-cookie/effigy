@@ -168,8 +168,8 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
   state.
 - `demo browser` is the first interactive browser client for that surface. It
   provides grouped list/detail browsing plus bounded `run`, `stop`, `rerun`,
-  and refresh actions, but it still defers live log streaming and rich artifact
-  rendering.
+  refresh, and artifact-opening actions, but it still defers live log
+  streaming and rich artifact rendering.
 - `demo run` executes either a declared task-backed or run-backed entrypoint,
   writes a normalized receipt, and refreshes the latest-attempt state that
   `demo inspect` reports.

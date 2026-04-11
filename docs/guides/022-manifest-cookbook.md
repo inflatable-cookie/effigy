@@ -183,6 +183,8 @@ Lifecycle notes:
   `--stale-only`, and `--group-by`.
 - `demo browser` now provides the first live list/detail TUI on top of the
   shipped registry, query, inspect, run, stop, and rerun surfaces.
+- inside `demo browser`, use `[` and `]` to select a recorded artifact and
+  `o` to open it with the platform default handler.
 - `demo inspect` now shows both the latest terminal receipt and any active
   in-flight attempt, plus explicit action availability and receipt freshness.
 - `demo stop <id>` works for directly runner-owned run-backed demos.
@@ -190,9 +192,9 @@ Lifecycle notes:
   already active.
 - task-backed demos remain runnable, but stop is still an explicit
   `not supported through the current runtime` boundary.
-- the browser currently focuses on honest navigation and bounded action
-  dispatch; live log streaming and rich artifact affordances are intentionally
-  deferred to later browser slices.
+- the browser currently focuses on honest navigation, bounded action dispatch,
+  and artifact-opening; live log streaming remains deferred to a later browser
+  slice.
 
 ## 3) Full Task Table with Runtime Controls
 

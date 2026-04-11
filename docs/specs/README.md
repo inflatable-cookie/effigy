@@ -19,6 +19,7 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to implement the next bounded demo browser slice
-around artifact-opening affordances, then keep this surface trimmed so it
-reflects live planning rather than every historical plan.
+Use the active spec lane to decide whether live log visibility is the next
+honest browser follow-up now that artifact-opening affordances are shipped,
+then keep this surface trimmed so it reflects live planning rather than every
+historical plan.

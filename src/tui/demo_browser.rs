@@ -1,5 +1,6 @@
 use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
+use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
@@ -55,6 +56,7 @@ struct DemoBrowserApp {
     rows: Vec<BrowserRow>,
     selected_demo_id: Option<String>,
     selected_row_index: usize,
+    selected_artifact_index: usize,
     detail: Option<DemoDetail>,
     footer_message: String,
     pending_action: Option<PendingAction>,
@@ -69,6 +71,7 @@ impl DemoBrowserApp {
             rows: Vec::new(),
             selected_demo_id: None,
             selected_row_index: 0,
+            selected_artifact_index: 0,
             detail: None,
             footer_message: "Loading demo registry...".to_owned(),
             pending_action: None,
@@ -121,6 +124,9 @@ impl DemoBrowserApp {
                 self.refresh_state()?;
                 self.footer_message = "Refreshed demo browser state.".to_owned();
             }
+            KeyCode::Char('[') => self.select_previous_artifact(),
+            KeyCode::Char(']') => self.select_next_artifact(),
+            KeyCode::Char('o') => self.dispatch_open_artifact()?,
             KeyCode::Enter | KeyCode::Char('r') => self.dispatch_run_or_rerun()?,
             KeyCode::Char('s') => self.dispatch_stop()?,
             _ => {}
@@ -178,6 +184,46 @@ impl DemoBrowserApp {
             BrowserRow::Group(_) => false,
             BrowserRow::Demo(summary) => summary.id == selected,
         })
+    }
+
+    fn selected_artifact(&self) -> Option<&str> {
+        let detail = self.selected_detail()?;
+        selected_artifact(detail, self.selected_artifact_index)
+    }
+
+    fn select_next_artifact(&mut self) {
+        let Some(detail) = self.selected_detail() else {
+            self.footer_message = "No demo is currently selected.".to_owned();
+            return;
+        };
+        if detail.latest_attempt.artifacts.is_empty() {
+            self.footer_message = "The selected demo has no recorded artifacts.".to_owned();
+            return;
+        }
+        self.selected_artifact_index =
+            (self.selected_artifact_index + 1) % detail.latest_attempt.artifacts.len();
+        if let Some(artifact) = self.selected_artifact() {
+            self.footer_message = format!("Selected artifact `{artifact}`.");
+        }
+    }
+
+    fn select_previous_artifact(&mut self) {
+        let Some(detail) = self.selected_detail() else {
+            self.footer_message = "No demo is currently selected.".to_owned();
+            return;
+        };
+        if detail.latest_attempt.artifacts.is_empty() {
+            self.footer_message = "The selected demo has no recorded artifacts.".to_owned();
+            return;
+        }
+        if self.selected_artifact_index == 0 {
+            self.selected_artifact_index = detail.latest_attempt.artifacts.len() - 1;
+        } else {
+            self.selected_artifact_index -= 1;
+        }
+        if let Some(artifact) = self.selected_artifact() {
+            self.footer_message = format!("Selected artifact `{artifact}`.");
+        }
     }
 
     fn dispatch_run_or_rerun(&mut self) -> Result<(), RunnerError> {
@@ -257,6 +303,28 @@ impl DemoBrowserApp {
         self.refresh_state()?;
         self.footer_message = payload_message(&payload)
             .unwrap_or_else(|| format!("Stop requested for demo `{demo_id}`."));
+        Ok(())
+    }
+
+    fn dispatch_open_artifact(&mut self) -> Result<(), RunnerError> {
+        let Some(detail) = self.selected_detail() else {
+            self.footer_message = "No demo is currently selected.".to_owned();
+            return Ok(());
+        };
+        let Some(artifact) = selected_artifact(detail, self.selected_artifact_index) else {
+            self.footer_message = "The selected demo has no recorded artifacts to open.".to_owned();
+            return Ok(());
+        };
+        let artifact_path = resolve_artifact_path(&self.repo_root, artifact);
+        if !artifact_path.exists() {
+            self.footer_message = format!(
+                "Artifact path is missing: `{}`.",
+                artifact_path.display()
+            );
+            return Ok(());
+        }
+        open_artifact_path(&artifact_path)?;
+        self.footer_message = format!("Opened artifact `{}`.", artifact_path.display());
         Ok(())
     }
 
@@ -349,6 +417,10 @@ impl DemoBrowserApp {
             }
             None => None,
         };
+        self.selected_artifact_index = self
+            .detail
+            .as_ref()
+            .map_or(0, |detail| clamp_artifact_index(self.selected_artifact_index, detail));
 
         self.last_refresh = Instant::now();
         Ok(())
@@ -454,7 +526,7 @@ impl DemoBrowserApp {
 
     fn render_detail(&self, frame: &mut Frame<'_>, area: Rect) {
         let lines = if let Some(detail) = &self.detail {
-            detail_lines(detail)
+            detail_lines(detail, self.selected_artifact_index)
         } else {
             vec![
                 Line::from("No demo selected."),
@@ -478,6 +550,10 @@ impl DemoBrowserApp {
             Span::raw("run/rerun  "),
             Span::styled(" s ", key_style()),
             Span::raw("stop  "),
+            Span::styled(" [ ] ", key_style()),
+            Span::raw("artifact  "),
+            Span::styled(" o ", key_style()),
+            Span::raw("open  "),
             Span::styled(" R ", key_style()),
             Span::raw("refresh  "),
             Span::styled(" q ", key_style()),
@@ -631,7 +707,71 @@ fn next_group_by(current: Option<DemoListGroupBy>) -> Option<DemoListGroupBy> {
     }
 }
 
-fn detail_lines(detail: &DemoDetail) -> Vec<Line<'static>> {
+fn clamp_artifact_index(current: usize, detail: &DemoDetail) -> usize {
+    if detail.latest_attempt.artifacts.is_empty() {
+        0
+    } else {
+        current.min(detail.latest_attempt.artifacts.len() - 1)
+    }
+}
+
+fn selected_artifact(detail: &DemoDetail, selected_index: usize) -> Option<&str> {
+    detail
+        .latest_attempt
+        .artifacts
+        .get(clamp_artifact_index(selected_index, detail))
+        .map(String::as_str)
+}
+
+fn resolve_artifact_path(repo_root: &Path, artifact: &str) -> PathBuf {
+    let path = PathBuf::from(artifact);
+    if path.is_absolute() {
+        path
+    } else {
+        repo_root.join(path)
+    }
+}
+
+fn open_artifact_path(path: &Path) -> Result<(), RunnerError> {
+    let mut command = build_open_command(path);
+    command.stdout(Stdio::null()).stderr(Stdio::null());
+    let status = command.status().map_err(|error| {
+        RunnerError::Ui(format!(
+            "failed to launch artifact opener for `{}`: {error}",
+            path.display()
+        ))
+    })?;
+    if !status.success() {
+        return Err(RunnerError::Ui(format!(
+            "artifact opener exited unsuccessfully for `{}` with status {status}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn build_open_command(path: &Path) -> ProcessCommand {
+    let mut command = ProcessCommand::new("open");
+    command.arg(path);
+    command
+}
+
+#[cfg(target_os = "windows")]
+fn build_open_command(path: &Path) -> ProcessCommand {
+    let mut command = ProcessCommand::new("cmd");
+    command.arg("/C").arg("start").arg("").arg(path);
+    command
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn build_open_command(path: &Path) -> ProcessCommand {
+    let mut command = ProcessCommand::new("xdg-open");
+    command.arg(path);
+    command
+}
+
+fn detail_lines(detail: &DemoDetail, selected_artifact_index: usize) -> Vec<Line<'static>> {
     let mut lines = vec![
         kv_line("id", &detail.id),
         kv_line("title", &detail.title),
@@ -688,9 +828,10 @@ fn detail_lines(detail: &DemoDetail) -> Vec<Line<'static>> {
     }
     if !detail.latest_attempt.artifacts.is_empty() {
         lines.push(Line::from(""));
-        lines.push(section_heading("Artifacts"));
-        for artifact in &detail.latest_attempt.artifacts {
-            lines.push(bullet_line(artifact));
+        lines.push(section_heading("Artifacts ([ / ] to select, o to open)"));
+        let selected_index = clamp_artifact_index(selected_artifact_index, detail);
+        for (index, artifact) in detail.latest_attempt.artifacts.iter().enumerate() {
+            lines.push(artifact_line(artifact, index == selected_index));
         }
     }
     if let Some(summary) = &detail.latest_attempt.summary {
@@ -720,6 +861,20 @@ fn section_heading(label: &str) -> Line<'static> {
 
 fn bullet_line(value: &str) -> Line<'static> {
     Line::from(format!("• {value}"))
+}
+
+fn artifact_line(value: &str, selected: bool) -> Line<'static> {
+    if selected {
+        Line::from(vec![
+            Span::styled("> ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                value.to_owned(),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ),
+        ])
+    } else {
+        bullet_line(value)
+    }
 }
 
 fn yes_no(value: bool) -> &'static str {
@@ -832,7 +987,13 @@ struct DemoLatestAttempt {
 
 #[cfg(test)]
 mod tests {
-    use super::{first_demo_id, next_group_by, row_contains_demo, BrowserRow, DemoListGroupBy, DemoSummary};
+    use std::path::Path;
+
+    use super::{
+        clamp_artifact_index, first_demo_id, next_group_by, resolve_artifact_path, row_contains_demo,
+        selected_artifact, BrowserRow, DemoDetail, DemoEntrypoint, DemoLatestAttempt, DemoListGroupBy,
+        DemoSummary,
+    };
 
     fn summary(id: &str) -> DemoSummary {
         DemoSummary {
@@ -851,6 +1012,48 @@ mod tests {
                     available: true,
                     reason: None,
                 },
+            },
+        }
+    }
+
+    fn detail_with_artifacts(artifacts: &[&str]) -> DemoDetail {
+        DemoDetail {
+            id: "demo".to_owned(),
+            title: "Demo".to_owned(),
+            summary: "summary".to_owned(),
+            proof: "proof".to_owned(),
+            owner: "owner".to_owned(),
+            mode: "headless".to_owned(),
+            effective_status: "ready".to_owned(),
+            gap_class: "existing".to_owned(),
+            covers: vec![],
+            tags: vec![],
+            entrypoint: DemoEntrypoint {
+                kind: "task".to_owned(),
+                value: "demo:task".to_owned(),
+            },
+            actions: super::DemoActionAvailability {
+                run: super::DemoActionState {
+                    available: true,
+                    reason: None,
+                },
+                stop: super::DemoActionState {
+                    available: false,
+                    reason: None,
+                },
+                rerun: super::DemoActionState {
+                    available: true,
+                    reason: None,
+                },
+            },
+            active_attempt: super::DemoActiveAttempt {
+                state: "idle".to_owned(),
+            },
+            latest_attempt: DemoLatestAttempt {
+                recorded: true,
+                state: "passed".to_owned(),
+                artifacts: artifacts.iter().map(|value| (*value).to_owned()).collect(),
+                summary: None,
             },
         }
     }
@@ -879,5 +1082,22 @@ mod tests {
         assert_eq!(first_demo_id(&rows).as_deref(), Some("alpha"));
         assert!(row_contains_demo(&rows, "beta"));
         assert!(!row_contains_demo(&rows, "missing"));
+    }
+
+    #[test]
+    fn browser_selected_artifact_clamps_to_available_range() {
+        let detail = detail_with_artifacts(&["one", "two"]);
+        assert_eq!(clamp_artifact_index(0, &detail), 0);
+        assert_eq!(clamp_artifact_index(5, &detail), 1);
+        assert_eq!(selected_artifact(&detail, 5), Some("two"));
+    }
+
+    #[test]
+    fn browser_resolves_relative_artifacts_against_repo_root() {
+        let repo_root = Path::new("/tmp/demo-repo");
+        assert_eq!(
+            resolve_artifact_path(repo_root, ".effigy/demo/report.html"),
+            repo_root.join(".effigy/demo/report.html")
+        );
     }
 }
