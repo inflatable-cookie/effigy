@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to choose the next bounded follow-up after the
-shipped `demo history` query surface, then keep this area trimmed so it
-reflects live planning rather than every historical plan.
+Use the active spec lane to deepen the dedicated `demo history` surface around
+stable attempt selection and one-attempt drilldown, then keep this area
+trimmed so it reflects live planning rather than every historical plan.

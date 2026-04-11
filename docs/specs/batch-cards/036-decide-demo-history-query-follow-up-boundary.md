@@ -1,6 +1,6 @@
 # 036 Decide Demo History Query Follow-Up Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -44,5 +44,6 @@ without reopening browser churn or widening into generic timeline tooling.
 
 ## Next Task
 
-Execute the active decision batch to choose the next bounded follow-up after
-`demo history`, then open one explicit ready card for that slice.
+Execute [`037-implement-demo-history-attempt-drilldown.md`](./037-implement-demo-history-attempt-drilldown.md)
+to deepen the dedicated `demo history` surface around stable attempt selection
+and one-attempt result inspection without widening `demo list` or the browser.

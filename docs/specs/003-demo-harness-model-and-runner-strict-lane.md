@@ -69,6 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide the next bounded
-follow-up after the shipped `demo history` query surface, then keep browser
-density, runtime expansion, and desktop-client questions separate.
+Execute the active `g02.003` ready card next to deepen the dedicated
+`demo history` surface around stable attempt selection and one-attempt
+drilldown, then keep browser density, runtime expansion, and desktop-client
+questions separate.
