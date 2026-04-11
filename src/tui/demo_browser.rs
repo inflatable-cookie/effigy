@@ -1701,6 +1701,7 @@ struct DemoDetail {
     title: String,
     summary: String,
     proof: String,
+    #[allow(dead_code)]
     owner: String,
     #[allow(dead_code)]
     mode: String,

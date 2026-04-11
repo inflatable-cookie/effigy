@@ -1,6 +1,6 @@
 # 031 Decide Demo Post-Metadata-Query Follow-Up Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -46,5 +46,5 @@ runtime or desktop-client work.
 
 ## Next Task
 
-Choose the next bounded browser follow-up after metadata-query parity, then
-open the corresponding ready card so the lane has a clean continuation point.
+Execute [`032-decide-demo-attempt-history-and-result-timeline-boundary.md`](./032-decide-demo-attempt-history-and-result-timeline-boundary.md)
+to move `g02.003` from browser cleanup into the next runner-side slice.
