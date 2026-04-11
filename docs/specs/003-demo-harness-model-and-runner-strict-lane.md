@@ -69,6 +69,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to implement bounded live log
-visibility in the demo browser, then keep runtime expansion and desktop-client
-questions separate.
+Execute the active `g02.003` ready card next to choose the post-live-log
+browser follow-up, then keep runtime expansion and desktop-client questions
+separate.

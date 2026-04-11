@@ -129,6 +129,6 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to implement bounded live log
-visibility for the demo browser now that artifact-opening affordances are
-shipped.
+Use the active strict `g02.003` spec lane to choose the next bounded browser
+follow-up after live log visibility, then keep the docs front doors aligned to
+that narrower decision.

@@ -1,6 +1,6 @@
 # 024 Implement Demo Browser Live Log Visibility
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -47,6 +47,5 @@ recent runner-owned output for the selected demo without leaving the browser.
 
 ## Next Task
 
-Ship bounded live log visibility in `effigy demo browser`, then reassess
-whether the next follow-up should stay inside browser-state polish or widen into
-deeper runtime/log concerns.
+Decide the next bounded browser follow-up through
+[`025-decide-demo-post-live-log-follow-up-boundary.md`](./025-decide-demo-post-live-log-follow-up-boundary.md).
