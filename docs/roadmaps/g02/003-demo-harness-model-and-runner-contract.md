@@ -1202,6 +1202,48 @@ Out of scope for the next decision slice:
 - terminal emulation or richer log streaming
 - desktop-client foundation work
 
+Batch `03.25` result:
+
+- the first browser is now sufficient as a bounded operator client and should
+  stop widening through more panel/detail ergonomics
+- the next honest product gap is no longer browser controls; it is
+  runner-owned attempt history beyond the single latest-attempt surface
+- the browser cleanup validated that operators need a compact "what happened"
+  result view, but that demand should now be answered through better runner
+  state rather than deeper browser-local rendering
+
+Why this is the right boundary now:
+
+- the browser already covers list/detail, lifecycle actions, search/filtering,
+  artifact opening, panel focus, and a compact result-oriented detail view
+- further browser-only slices would mostly churn presentation without improving
+  the underlying verification model
+- the runner still only exposes one active attempt and one latest terminal
+  attempt, which is too thin for meaningful result history, stale-proof review,
+  or future richer inspection across CLI and browser clients
+
+### 10.23 Attempt History And Result Timeline Boundary
+
+Batch `03.26` target:
+
+Decide the first bounded runner-side slice for persisted demo attempt history
+and result timelines now that the first browser baseline is shipped.
+
+In scope for the next decision slice:
+
+- defining whether Effigy should keep a bounded per-demo attempt history instead
+  of only active + latest state
+- deciding the minimum shape for recorded historical attempts and result
+  summaries
+- keeping the batch centered on runner and inspect/list semantics rather than
+  more browser work
+
+Out of scope for the next decision slice:
+
+- multi-attempt concurrent execution
+- terminal emulation or richer log streaming
+- repo migration or desktop-client work
+
 ## 11) Acceptance Criteria
 
 - [ ] Effigy has a clear first-class demo model that is not reducible to random
@@ -1223,6 +1265,6 @@ Out of scope for the next decision slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the next bounded browser
-follow-up after metadata-query parity without reopening broader
-runtime-cancellation scope.
+Use the active `g02.003` strict lane to decide the first bounded attempt-
+history and result-timeline slice now that the first demo browser baseline is
+shipped.
