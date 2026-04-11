@@ -129,7 +129,6 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to decide the first bounded
-attempt-history and result-timeline slice now that the first browser baseline
-is shipped, then keep the docs front doors aligned to that narrower runner-
-side decision.
+Use the active strict `g02.003` spec lane to implement the first bounded
+attempt-history foundation on top of `demo inspect`, then keep the docs front
+doors aligned to that narrower runner-side slice.
