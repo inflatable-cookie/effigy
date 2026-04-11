@@ -129,6 +129,6 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to decide the first bounded demo
-browser foundation slice on top of the shipped registry, inspection, run,
+Use the active strict `g02.003` spec lane to implement the first bounded demo
+browser list/detail foundation on top of the shipped registry, inspection, run,
 stop, rerun, and browser-state/query surfaces.

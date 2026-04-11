@@ -32,6 +32,11 @@ During v0.x, MINOR bumps may include breaking changes.
   grouping so operators and future TUI clients can browse proof inventory by
   owner, tag, mode, coverage, status, gap, and stale state without project-
   local script glue
+- Add self-hosted demo proofs in the Effigy repo itself, including a
+  task-backed browser proof report and a run-backed lifecycle window, so the
+  shipped demo registry, receipts, artifacts, and stop/rerun lifecycle can be
+  exercised against a real repo-local proof surface before browser/TUI work
+  hardens around them
 
 ### Changed
 - Route catalog discovery, doctor strict-parse checks, docs-policy loading, and
