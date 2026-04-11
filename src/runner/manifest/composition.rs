@@ -86,7 +86,7 @@ pub(in crate::runner) fn load_task_manifest_with_inspection(
 ) -> Result<LoadedTaskManifest, RunnerError> {
     let mut session = CompositionSession::default();
     let composed = load_composed_value(manifest_path, &mut session)?;
-    let manifest =
+    let manifest: TaskManifest =
         composed
             .value
             .clone()
@@ -95,6 +95,7 @@ pub(in crate::runner) fn load_task_manifest_with_inspection(
                 path: manifest_path.to_path_buf(),
                 error,
             })?;
+    manifest.validate(manifest_path)?;
     let effective_manifest = toml::to_string_pretty(&composed.value)
         .map_err(|error| RunnerError::task_invocation_failed_render(manifest_path, error))?;
     let value_sources = composed

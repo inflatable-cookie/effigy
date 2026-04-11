@@ -1,6 +1,6 @@
 use super::prelude::{
-    apply_global_json_flag, command_requests_json, BootstrapArgs, Command, DoctorArgs, ReleaseArgs,
-    ReleaseSubcommand, TaskInvocation, TasksArgs,
+    apply_global_json_flag, command_requests_json, BootstrapArgs, Command, DemoArgs,
+    DemoSubcommand, DoctorArgs, ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
 };
 
 #[test]
@@ -52,6 +52,11 @@ fn command_requests_json_checks_task_or_global_mode() {
         verbose: false,
         explain: None,
     });
+    let cmd_demo = Command::Demo(DemoArgs {
+        subcommand: DemoSubcommand::List,
+        repo_override: None,
+        output_json: true,
+    });
     let cmd_bootstrap = Command::Bootstrap(BootstrapArgs {
         repo_url: "git@github.com:inflatable-cookie/effigy.git".to_owned(),
         path: None,
@@ -66,6 +71,7 @@ fn command_requests_json_checks_task_or_global_mode() {
         output_json: true,
     });
     assert!(command_requests_json(&cmd_doctor, false));
+    assert!(command_requests_json(&cmd_demo, false));
     assert!(command_requests_json(&cmd_bootstrap, false));
     assert!(command_requests_json(&cmd_release, false));
 }
@@ -87,6 +93,11 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         verbose: false,
         explain: None,
     });
+    let demo_cmd = Command::Demo(DemoArgs {
+        subcommand: DemoSubcommand::List,
+        repo_override: None,
+        output_json: false,
+    });
     let bootstrap_cmd = Command::Bootstrap(BootstrapArgs {
         repo_url: "git@github.com:inflatable-cookie/effigy.git".to_owned(),
         path: None,
@@ -104,6 +115,7 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
     let version_applied = apply_global_json_flag(version_cmd, true);
     let tasks_applied = apply_global_json_flag(tasks_cmd, true);
     let doctor_applied = apply_global_json_flag(doctor_cmd, true);
+    let demo_applied = apply_global_json_flag(demo_cmd, true);
     let bootstrap_applied = apply_global_json_flag(bootstrap_cmd, true);
     let release_applied = apply_global_json_flag(release_cmd, true);
     assert_eq!(version_applied, Command::Version);
@@ -114,6 +126,10 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
     match doctor_applied {
         Command::Doctor(args) => assert!(args.output_json),
         other => panic!("expected doctor command, got: {other:?}"),
+    }
+    match demo_applied {
+        Command::Demo(args) => assert!(args.output_json),
+        other => panic!("expected demo command, got: {other:?}"),
     }
     match bootstrap_applied {
         Command::Bootstrap(args) => assert!(args.output_json),

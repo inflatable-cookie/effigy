@@ -16,9 +16,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`010-decide-demo-browser-and-tui-contract.md`](./010-decide-demo-browser-and-tui-contract.md) (complete)
 - [`011-reconcile-demo-contract-against-signal-pilot.md`](./011-reconcile-demo-contract-against-signal-pilot.md) (complete)
 - [`012-decide-demo-runner-foundation-implementation-slice.md`](./012-decide-demo-runner-foundation-implementation-slice.md) (complete)
-- [`013-implement-demo-registry-and-inspection-foundation.md`](./013-implement-demo-registry-and-inspection-foundation.md)
+- [`013-implement-demo-registry-and-inspection-foundation.md`](./013-implement-demo-registry-and-inspection-foundation.md) (complete)
+- [`014-implement-demo-run-and-attempt-foundation.md`](./014-implement-demo-run-and-attempt-foundation.md)
 
 ## Next Task
 
-Execute the active execution ready card if it is still honest;
-otherwise return the lane to planning and refresh the currentness surfaces.
+Execute the active execution ready card if it is still honest; otherwise return
+the lane to planning and refresh the currentness surfaces.

@@ -1,6 +1,6 @@
 # 013 Implement Demo Registry And Inspection Foundation
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -47,5 +47,5 @@ Implement the first demo-runner foundation slice in Effigy.
 
 ## Next Task
 
-Complete this execution batch, then open the next bounded runner card for demo
-run semantics and normalized attempt creation.
+Execute the next bounded runner card for demo run semantics and normalized
+attempt creation.

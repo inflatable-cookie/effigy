@@ -277,6 +277,44 @@ fn install_effigy_cargo_shim(root: &std::path::Path) -> (std::path::PathBuf, std
     (shim_bin, log_path)
 }
 
+fn write_demo_manifest_fixture(root: &std::path::Path) {
+    fs::create_dir_all(root.join("demos/receipts")).expect("mkdir demo receipts");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[demos.login-smoke]
+title = "Login Smoke"
+summary = "Proves the local login flow reaches an authenticated state."
+proof = "Verify the default local login journey succeeds end to end."
+owner = "auth"
+mode = "interactive"
+status = "ready"
+covers = ["auth.login"]
+tags = ["auth", "smoke"]
+receipt = "demos/receipts/login-smoke.receipt.json"
+artifacts = ["demos/receipts/login-smoke.view.html"]
+task = "demo:login-smoke"
+prerequisites = ["api", "db"]
+dependencies = ["auth/session-baseline"]
+"#,
+    )
+    .expect("write demo manifest");
+    fs::write(
+        root.join("demos/receipts/login-smoke.receipt.json"),
+        r#"{
+  "status": "passed",
+  "summary": "Interactive login proof passed.",
+  "stale": false,
+  "artifacts": [
+    "demos/receipts/login-smoke.view.html",
+    { "path": "demos/receipts/login-smoke.trace.json" }
+  ]
+}
+"#,
+    )
+    .expect("write demo receipt");
+}
+
 #[test]
 fn cli_docs_check_links_json_reports_broken_relative_targets() {
     let root = temp_workspace("docs-check-links");
@@ -301,6 +339,48 @@ fn cli_docs_check_links_json_reports_broken_relative_targets() {
     assert_eq!(details["schema"], "effigy.docs.link-check.v1");
     assert_eq!(details["ok"], false);
     assert_eq!(details["broken_links"][0]["target"], "./docs/missing.md");
+}
+
+#[test]
+fn cli_demo_list_json_reports_declared_demos() {
+    let root = temp_workspace("demo-list-json");
+    write_demo_manifest_fixture(&root);
+
+    let output = run_json_cli_command(&root, &["demo", "list"]);
+    assert!(output.status.success(), "demo list failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["command"]["kind"], "demo");
+    assert_eq!(parsed["result"]["schema"], "effigy.demo.list.v1");
+    assert_eq!(parsed["result"]["count"], 1);
+    assert_eq!(parsed["result"]["demos"][0]["id"], "login-smoke");
+    assert_eq!(parsed["result"]["demos"][0]["status"], "ready");
+    assert_eq!(parsed["result"]["demos"][0]["gap_class"], "existing");
+    assert_eq!(
+        parsed["result"]["demos"][0]["latest_attempt"]["outcome"],
+        "passed"
+    );
+}
+
+#[test]
+fn cli_demo_inspect_json_reports_latest_attempt_and_sources() {
+    let root = temp_workspace("demo-inspect-json");
+    write_demo_manifest_fixture(&root);
+
+    let output = run_json_cli_command(&root, &["demo", "inspect", "login-smoke"]);
+    assert!(output.status.success(), "demo inspect failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["command"]["kind"], "demo");
+    assert_eq!(parsed["result"]["schema"], "effigy.demo.inspect.v1");
+    assert_eq!(parsed["result"]["demo"]["id"], "login-smoke");
+    assert_eq!(parsed["result"]["demo"]["entrypoint"]["kind"], "task");
+    assert_eq!(
+        parsed["result"]["demo"]["latest_attempt"]["summary"],
+        "Interactive login proof passed."
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["latest_attempt"]["artifacts"][1],
+        "demos/receipts/login-smoke.trace.json"
+    );
 }
 
 #[test]

@@ -3,6 +3,7 @@ use crate::Command;
 use super::super::bootstrap_command::run_bootstrap;
 use super::super::changelog_command::run_changelog;
 use super::super::contracts_command::run_contracts;
+use super::super::demo_command::run_demo;
 use super::super::distribution_command::run_distribution;
 use super::super::docs_command::run_docs;
 use super::super::doctor::run_doctor;
@@ -16,6 +17,7 @@ pub(super) fn run_command(cmd: Command) -> Result<String, RunnerError> {
         Command::Version => Ok(String::new()),
         Command::Help(_) => Ok(String::new()),
         Command::Changelog(args) => run_changelog(args),
+        Command::Demo(args) => run_demo(args),
         Command::Docs(args) => run_docs(args),
         Command::Contracts(args) => run_contracts(args),
         Command::Distribution(args) => run_distribution(args),

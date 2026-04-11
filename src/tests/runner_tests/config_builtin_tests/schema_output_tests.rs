@@ -14,6 +14,9 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
             "Canonical strict-valid effigy.toml schema template",
             "[manifest]",
             "include = [",
+            "[demos.login-smoke]",
+            "proof = \"Verify the default local login journey succeeds end to end.\"",
+            "covers = [\"auth.login\"]",
             "[package_manager]",
             "cargo_env_match = \"prefix-aware\"",
             "[test.suites.managed]",
@@ -38,6 +41,7 @@ fn run_manifest_task_builtin_config_schema_minimal_prints_starter_template() {
         &[
             "Minimal strict-valid effigy.toml starter",
             "[manifest]",
+            "[demos.login-smoke]",
             "[package_manager]",
             "[test.runners]",
             "[tasks]",
@@ -76,6 +80,24 @@ fn run_manifest_task_builtin_config_schema_target_manifest_prints_composition_sn
             "[manifest]",
             "\"effigy.tasks.toml\"",
             "{ path = \"effigy.docs.toml\", override = [\"docs_policy.indexes.vision\"] }",
+        ],
+    );
+    assert_output_excludes_all(&out, &["[tasks]"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_config_schema_target_demos_prints_demo_registry_snippet() {
+    let root = workspace_with_empty_manifest("builtin-config-schema-target-demos");
+
+    let out = run_config_ok(root, &["--schema", "--target", "demos"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "(demos target)",
+            "[demos.login-smoke]",
+            "mode = \"interactive\"",
+            "status = \"ready\"",
+            "task = \"demo:login-smoke\"",
         ],
     );
     assert_output_excludes_all(&out, &["[tasks]"]);

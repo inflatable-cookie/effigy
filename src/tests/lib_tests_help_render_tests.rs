@@ -7,6 +7,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy help"));
     assert!(rendered.contains("effigy version"));
     assert!(rendered.contains("effigy config"));
+    assert!(rendered.contains("effigy demo"));
     assert!(rendered.contains("effigy doctor"));
     assert!(rendered.contains("effigy docs"));
     assert!(rendered.contains("effigy contracts"));
@@ -40,6 +41,17 @@ fn render_doctor_help_shows_fix_and_json_options() {
     assert!(rendered.contains("effigy doctor --verbose"));
     assert!(rendered.contains("effigy doctor <task> <args>"));
     assert!(rendered.contains("effigy doctor frontend/build -- --watch"));
+}
+
+#[test]
+fn render_demo_help_shows_discovery_and_inspection_options() {
+    let rendered = render_help_text(HelpTopic::Demo);
+    assert!(rendered.contains("demo Help"));
+    assert!(rendered.contains("effigy demo list"));
+    assert!(rendered.contains("effigy demo inspect <DEMO_ID>"));
+    assert!(rendered.contains("--repo <PATH>"));
+    assert!(rendered.contains("--json"));
+    assert!(rendered.contains("discovery and inspection only"));
 }
 
 #[test]

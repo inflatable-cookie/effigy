@@ -4,6 +4,7 @@ pub fn help_topic_label(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::General => "general",
         HelpTopic::Changelog => "changelog",
+        HelpTopic::Demo => "demo",
         HelpTopic::Docs => "docs",
         HelpTopic::Contracts => "contracts",
         HelpTopic::Distribution => "distribution",
@@ -23,6 +24,7 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
         Command::Version => ("version", "version".to_owned()),
         Command::Help(topic) => ("help", help_topic_label(*topic).to_owned()),
         Command::Changelog(_) => ("changelog", "changelog".to_owned()),
+        Command::Demo(_) => ("demo", "demo".to_owned()),
         Command::Docs(_) => ("docs", "docs".to_owned()),
         Command::Contracts(_) => ("contracts", "contracts".to_owned()),
         Command::Distribution(_) => ("distribution", "distribution".to_owned()),
@@ -38,15 +40,16 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
 mod tests {
     use super::{command_kind_and_name, help_topic_label};
     use crate::{
-        BootstrapArgs, Command, ContractsArgs, ContractsSubcommand, DistributionArgs,
-        DistributionSubcommand, DoctorArgs, HelpTopic, ReleaseArgs, ReleaseSubcommand,
-        TaskInvocation, TasksArgs,
+        BootstrapArgs, Command, ContractsArgs, ContractsSubcommand, DemoArgs, DemoSubcommand,
+        DistributionArgs, DistributionSubcommand, DoctorArgs, HelpTopic, ReleaseArgs,
+        ReleaseSubcommand, TaskInvocation, TasksArgs,
     };
 
     #[test]
     fn help_topic_label_maps_all_topics() {
         assert_eq!(help_topic_label(HelpTopic::General), "general");
         assert_eq!(help_topic_label(HelpTopic::Changelog), "changelog");
+        assert_eq!(help_topic_label(HelpTopic::Demo), "demo");
         assert_eq!(help_topic_label(HelpTopic::Docs), "docs");
         assert_eq!(help_topic_label(HelpTopic::Contracts), "contracts");
         assert_eq!(help_topic_label(HelpTopic::Distribution), "distribution");
@@ -70,6 +73,11 @@ mod tests {
             fix: false,
             verbose: false,
             explain: None,
+        });
+        let demo = Command::Demo(DemoArgs {
+            subcommand: DemoSubcommand::List,
+            repo_override: None,
+            output_json: false,
         });
         let contracts = Command::Contracts(ContractsArgs {
             subcommand: ContractsSubcommand::ValidateSelection {
@@ -114,6 +122,7 @@ mod tests {
             ("version", "version".to_owned())
         );
         assert_eq!(command_kind_and_name(&help), ("help", "doctor".to_owned()));
+        assert_eq!(command_kind_and_name(&demo), ("demo", "demo".to_owned()));
         assert_eq!(
             command_kind_and_name(&release),
             ("release", "release".to_owned())

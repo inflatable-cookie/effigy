@@ -10,6 +10,7 @@ pub(super) fn validate_top_level_keys(
         "manifest",
         "catalog",
         "defer",
+        "demos",
         "docs_policy",
         "bootstrap",
         "env",

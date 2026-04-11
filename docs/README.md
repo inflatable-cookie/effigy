@@ -129,5 +129,6 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to implement the demo registry and
-inspection foundation before runner execution semantics are added.
+Use the active strict `g02.003` spec lane to add demo run semantics and
+normalized attempt creation on top of the shipped registry and inspection
+foundation.

@@ -32,6 +32,10 @@ pub(super) fn package_manager_lines(profile: ConfigDocProfile) -> Vec<&'static s
     tasks::package_manager_lines(profile)
 }
 
+pub(super) fn demos_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
+    tasks::demos_lines(profile)
+}
+
 pub(super) fn tasks_canonical_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     tasks::tasks_canonical_lines(profile)
 }

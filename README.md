@@ -16,6 +16,8 @@ manifest, not to teach people more wrapper scripts.
 - Run local or nested tasks with `effigy <task>` or `effigy <catalog>/<task>`.
 - Standardize everyday workflows with built-ins such as `effigy doctor`,
   `effigy test`, `effigy watch`, `effigy init`, and `effigy migrate`.
+- Discover repo-owned proof demos with `effigy demo list` and inspect the
+  latest known proof state with `effigy demo inspect <id>`.
 - Move CI and agent automation onto stable JSON with `effigy --json <command>`.
 - Replace scattered release and validation scripts with built-in command
   surfaces as adoption grows.
@@ -146,6 +148,22 @@ When one `effigy.toml` starts carrying too many unrelated concerns, split it
 with `[manifest].include = [...]` and use `effigy config --inspect` to verify
 the effective merged result before relying on it in CI or docs-policy flows.
 
+### Inspect proof demos
+
+Use the demo surface when a repo needs operator-visible proof inventory instead
+of another pile of ad hoc runner scripts.
+
+```bash
+effigy demo list
+effigy demo inspect login-smoke
+effigy --json demo list
+```
+
+Details:
+- [`022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
+- [`025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
+- [`docs/roadmaps/g02/003-demo-harness-model-and-runner-contract.md`](./docs/roadmaps/g02/003-demo-harness-model-and-runner-contract.md)
+
 ### Automate safely
 
 Use JSON mode and contract docs when Effigy is feeding CI, agents, or other
@@ -232,7 +250,7 @@ Effigy's active product lane is `g02.003`.
 Use these surfaces before continuing manifest-composition or demo-harness work:
 
 - [`docs/roadmaps/README.md`](./docs/roadmaps/README.md)
-- [`docs/roadmaps/g02/002-manifest-composition-and-override-contract.md`](./docs/roadmaps/g02/002-manifest-composition-and-override-contract.md)
+- [`docs/roadmaps/g02/003-demo-harness-model-and-runner-contract.md`](./docs/roadmaps/g02/003-demo-harness-model-and-runner-contract.md)
 - [`docs/specs/README.md`](./docs/specs/README.md)
 - [`docs/contracts/001-working-rules.md`](./docs/contracts/001-working-rules.md)
 
@@ -254,6 +272,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement the demo registry and
-inspection foundation, using the settled Signal reconciliation and
-implementation-slice decision as the boundary.
+Use the active `g02.003` ready card to implement demo run semantics and
+normalized attempt creation on top of the shipped registry and inspection
+foundation.

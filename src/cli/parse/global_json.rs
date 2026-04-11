@@ -32,6 +32,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
             }
         }
         Command::Changelog(args) => args.output_json = true,
+        Command::Demo(args) => args.output_json = true,
         Command::Docs(args) => args.output_json = true,
         Command::Contracts(args) => args.output_json = true,
         Command::Distribution(args) => args.output_json = true,
@@ -51,6 +52,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
     match cmd {
         Command::Version => false,
         Command::Changelog(args) => args.output_json,
+        Command::Demo(args) => args.output_json,
         Command::Docs(args) => args.output_json,
         Command::Contracts(args) => args.output_json,
         Command::Distribution(args) => args.output_json,

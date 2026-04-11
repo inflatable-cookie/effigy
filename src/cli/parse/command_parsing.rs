@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use crate::{
     BootstrapArgs, ChangelogArgs, ChangelogSubcommand, Command, ContractsArgs, ContractsCheckMode,
-    ContractsSelectionPrintMode, ContractsSubcommand, DistributionArgs, DistributionSubcommand,
-    DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, HelpTopic, ReleaseArgs,
-    ReleaseSubcommand, TaskInvocation, TasksArgs,
+    ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs, DemoSubcommand, DistributionArgs,
+    DistributionSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, HelpTopic,
+    ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
 };
 
 use super::value_parsing::{next_required_value, parse_pretty_bool, parse_repo_path};
@@ -23,6 +23,7 @@ where
         "--version" | "version" => parse_version_command(args),
         "--help" | "-h" | "help" => Ok(Command::Help(HelpTopic::General)),
         "changelog" => parse_changelog_command(args),
+        "demo" => parse_demo_command(args),
         "docs" => parse_docs_command(args),
         "contracts" => parse_contracts_command(args),
         "distribution" => parse_distribution_command(args),
@@ -56,6 +57,7 @@ fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
         "watch" => Some(HelpTopic::Watch),
         "init" => Some(HelpTopic::Init),
         "migrate" => Some(HelpTopic::Migrate),
+        "demo" => Some(HelpTopic::Demo),
         "docs" => Some(HelpTopic::Docs),
         "contracts" => Some(HelpTopic::Contracts),
         "distribution" => Some(HelpTopic::Distribution),
@@ -63,6 +65,81 @@ fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
         "release" => Some(HelpTopic::Release),
         _ => None,
     }
+}
+
+fn parse_demo_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcmd) = args.next() else {
+        return Ok(Command::Help(HelpTopic::Demo));
+    };
+
+    match subcmd.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::Demo)),
+        "list" => parse_demo_list(args),
+        "inspect" => parse_demo_inspect(args),
+        other => Err(unknown_argument(other)),
+    }
+}
+
+fn parse_demo_list<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Demo)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => return Err(unknown_argument(arg)),
+        }
+    }
+
+    Ok(Command::Demo(DemoArgs {
+        subcommand: DemoSubcommand::List,
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_demo_inspect<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut demo_id: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Demo)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ if demo_id.is_none() => demo_id = Some(arg),
+            _ => return Err(unknown_argument(arg)),
+        }
+    }
+
+    let Some(demo_id) = demo_id else {
+        return Err(CliParseError::MissingFlagValue {
+            flag: "<DEMO_ID>".to_owned(),
+        });
+    };
+
+    Ok(Command::Demo(DemoArgs {
+        subcommand: DemoSubcommand::Inspect { demo_id },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_bootstrap<I>(args: I) -> Result<Command, CliParseError>
