@@ -113,10 +113,15 @@ Inspection:
 
 ```sh
 effigy config --inspect
+effigy config --inspect --path tasks.dev
 ```
 
 Use this to confirm include order, overridden paths, effective sources, and the
 final merged manifest before treating composition as settled.
+
+Use `--path <dotted.path>` when the full composed view is too broad and the real
+question is “where did this one effective value come from?” or “which override
+replaced it?”
 
 ## 3) Full Task Table with Runtime Controls
 

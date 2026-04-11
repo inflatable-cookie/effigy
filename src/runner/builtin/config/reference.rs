@@ -16,6 +16,10 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Run
         NoticeLevel::Info,
         "Use `effigy config --inspect` to inspect the effective composed manifest for the current repo.",
     )?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Add `--path <dotted.path>` to focus inspect output on one effective value, its source, and any override history.",
+    )?;
     renderer.text("")?;
 
     renderer.section("Global")?;

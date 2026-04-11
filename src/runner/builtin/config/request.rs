@@ -6,6 +6,7 @@ use crate::runner::error::RunnerError;
 #[derive(Debug, Clone)]
 pub(super) struct ConfigRequest {
     pub(super) inspect: bool,
+    pub(super) inspect_path: Option<String>,
     pub(super) schema: bool,
     pub(super) minimal: bool,
     pub(super) output_json: bool,
@@ -78,6 +79,7 @@ pub(super) fn parse_config_request(
 ) -> Result<ConfigRequest, RunnerError> {
     let mut parser = BuiltinArgParser::new(args);
     let mut inspect = false;
+    let mut inspect_path: Option<String> = None;
     let mut schema = false;
     let mut minimal = false;
     let mut output_json = false;
@@ -104,6 +106,14 @@ pub(super) fn parse_config_request(
             )?);
             return Ok(ParseLoopAction::Handled);
         }
+        if arg == "--path" {
+            inspect_path = Some(parser.mapped_flag_value(
+                "`--path` requires a value",
+                |value| Some(value.to_owned()),
+                |_| "invalid `--path` value".to_owned(),
+            )?);
+            return Ok(ParseLoopAction::Handled);
+        }
         if arg == "--runner" {
             runner = Some(parser.builtin_choice_flag_value(
                 "config",
@@ -118,6 +128,11 @@ pub(super) fn parse_config_request(
     if inspect && schema {
         return Err(RunnerError::task_invocation(
             "`--inspect` cannot be combined with `--schema` for built-in `config`",
+        ));
+    }
+    if inspect_path.is_some() && !inspect {
+        return Err(RunnerError::task_invocation(
+            "`--path` requires `--inspect` for built-in `config`",
         ));
     }
     if minimal && !schema {
@@ -143,6 +158,7 @@ pub(super) fn parse_config_request(
 
     Ok(ConfigRequest {
         inspect,
+        inspect_path,
         schema,
         minimal,
         output_json,
@@ -155,6 +171,7 @@ pub(super) fn parse_config_request(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct ConfigParseContract {
     pub(in crate::runner) inspect: bool,
+    pub(in crate::runner) inspect_path: Option<String>,
     pub(in crate::runner) schema: bool,
     pub(in crate::runner) minimal: bool,
     pub(in crate::runner) output_json: bool,
@@ -170,6 +187,7 @@ pub(in crate::runner) fn parse_config_contract_request(
     let parsed = parse_config_request(task, args)?;
     Ok(ConfigParseContract {
         inspect: parsed.inspect,
+        inspect_path: parsed.inspect_path,
         schema: parsed.schema,
         minimal: parsed.minimal,
         output_json: parsed.output_json,

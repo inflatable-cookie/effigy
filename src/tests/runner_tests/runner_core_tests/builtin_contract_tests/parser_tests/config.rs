@@ -25,6 +25,7 @@ fn builtin_config_parser_contracts_are_stable() {
         parsed,
         ConfigParseContract {
             inspect: false,
+            inspect_path: None,
             schema: true,
             minimal: true,
             output_json: true,
@@ -38,6 +39,7 @@ fn builtin_config_parser_contracts_are_stable() {
         parsed,
         ConfigParseContract {
             inspect: false,
+            inspect_path: None,
             schema: false,
             minimal: false,
             output_json: false,
@@ -46,12 +48,21 @@ fn builtin_config_parser_contracts_are_stable() {
         }
     );
 
-    let parsed = parse_config_contract_request(&task, &string_args(&["--inspect", "--json"]))
-        .expect("config parse");
+    let parsed = parse_config_contract_request(
+        &task,
+        &string_args(&[
+            "--inspect",
+            "--path",
+            "docs_policy.indexes.vision",
+            "--json",
+        ]),
+    )
+    .expect("config parse");
     assert_eq!(
         parsed,
         ConfigParseContract {
             inspect: true,
+            inspect_path: Some("docs_policy.indexes.vision".to_owned()),
             schema: false,
             minimal: false,
             output_json: true,
