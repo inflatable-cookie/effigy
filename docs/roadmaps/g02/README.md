@@ -13,12 +13,12 @@ Current milestones:
 
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
 - [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
-- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection and run foundation now shipped)
+- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, and lifecycle targeting now settled)
 
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/015-decide-demo-active-attempt-stop-and-rerun-contract.md`](../specs/batch-cards/015-decide-demo-active-attempt-stop-and-rerun-contract.md)
+- [`../specs/batch-cards/016-implement-demo-active-attempt-stop-and-rerun-foundation.md`](../specs/batch-cards/016-implement-demo-active-attempt-stop-and-rerun-foundation.md)
 
 Rules:
 
@@ -28,5 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` ready card to lock active-attempt, stop, and rerun
-semantics before the next demo-runner lifecycle batch starts.
+Use the active `g02.003` ready card to implement the first bounded
+active-attempt, stop, and rerun slice without over-claiming generic task
+cancellation.

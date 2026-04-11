@@ -129,6 +129,6 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to lock active-attempt, stop, and
-rerun semantics on top of the shipped demo registry, inspection, and run
-surfaces.
+Use the active strict `g02.003` spec lane to implement the first bounded
+active-attempt, stop, and rerun slice on top of the shipped demo registry,
+inspection, and run surfaces.

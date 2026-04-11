@@ -274,5 +274,5 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to decide active-attempt, stop, and rerun
-semantics now that demo registry, inspection, and run foundations are shipped.
+Use the active `g02.003` ready card to implement the first bounded
+active-attempt, stop, and rerun slice now that the lifecycle model is settled.

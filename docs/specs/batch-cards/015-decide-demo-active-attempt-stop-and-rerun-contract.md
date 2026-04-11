@@ -1,6 +1,6 @@
 # 015 Decide Demo Active-Attempt, Stop, And Rerun Contract
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -47,5 +47,5 @@ surface is implemented.
 
 ## Next Task
 
-If the lifecycle contract is coherent, open the next bounded execution card for
-`demo stop` and `demo rerun`; otherwise leave an explicit intent checkpoint.
+Execute the next bounded runner card for active-attempt state plus the first
+honest `demo stop` and `demo rerun` slice.
