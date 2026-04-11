@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04-11-g02-post-bootstrap-roadmap-split.md`](./2026-04/11-g02-post-bootstrap-roadmap-split.md)
 - [`2026-03-18-bootstrap-live-pilot-cohort-loophole-songsprout.md`](./2026-03/18-110000-bootstrap-live-pilot-cohort-loophole-songsprout.md)
 - [`2026-04-09-effigy-full-strict-lane-install.md`](./2026-04/09-effigy-full-strict-lane-install.md)
 - [`2026-03-12-contract-drift-path-check-layer.md`](./2026-03/12-233000-contract-drift-path-check-layer.md)
