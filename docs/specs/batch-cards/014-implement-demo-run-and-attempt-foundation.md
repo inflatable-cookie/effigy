@@ -1,6 +1,6 @@
 # 014 Implement Demo Run And Attempt Foundation
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -47,6 +47,5 @@ Implement the next bounded demo-runner slice in Effigy.
 
 ## Next Task
 
-Complete this execution batch, then open the next bounded runner card for
-stop/rerun lifecycle semantics or return the lane to planning if attempt
-recording exposes model drift.
+Use the next bounded `g02.003` ready card to decide active-attempt, stop, and
+rerun semantics before more lifecycle control is implemented.

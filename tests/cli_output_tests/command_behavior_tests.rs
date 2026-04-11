@@ -282,6 +282,9 @@ fn write_demo_manifest_fixture(root: &std::path::Path) {
     fs::write(
         root.join("effigy.toml"),
         r#"
+[tasks]
+"demo:login-smoke" = "printf login-proof-ok"
+
 [demos.login-smoke]
 title = "Login Smoke"
 summary = "Proves the local login flow reaches an authenticated state."
@@ -381,6 +384,111 @@ fn cli_demo_inspect_json_reports_latest_attempt_and_sources() {
         parsed["result"]["demo"]["latest_attempt"]["artifacts"][1],
         "demos/receipts/login-smoke.trace.json"
     );
+}
+
+#[test]
+fn cli_demo_run_json_task_backed_writes_default_receipt_and_reports_success() {
+    let root = temp_workspace("demo-run-task-json");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks]
+"demo:login-smoke" = "printf login-proof-ok"
+
+[demos.login-smoke]
+title = "Login Smoke"
+summary = "Proves the local login flow reaches an authenticated state."
+proof = "Verify the default local login journey succeeds end to end."
+owner = "auth"
+mode = "interactive"
+status = "ready"
+covers = ["auth.login"]
+task = "demo:login-smoke"
+"#,
+    )
+    .expect("write demo manifest");
+
+    let output = run_json_cli_command(&root, &["demo", "run", "login-smoke"]);
+    assert!(output.status.success(), "demo run failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["command"]["kind"], "demo");
+    assert_eq!(parsed["result"]["schema"], "effigy.demo.run.v1");
+    assert_eq!(parsed["result"]["ok"], true);
+    assert_eq!(parsed["result"]["demo"]["id"], "login-smoke");
+    assert_eq!(parsed["result"]["execution"]["outcome"], "passed");
+    assert_eq!(parsed["result"]["execution"]["entrypoint"]["kind"], "task");
+    assert_eq!(
+        parsed["result"]["latest_attempt"]["receipt_path"],
+        ".effigy/demo/receipts/login-smoke.json"
+    );
+    assert_eq!(parsed["result"]["latest_attempt"]["outcome"], "passed");
+
+    let receipt: Value = serde_json::from_str(
+        &fs::read_to_string(root.join(".effigy/demo/receipts/login-smoke.json"))
+            .expect("read default demo receipt"),
+    )
+    .expect("parse demo receipt");
+    assert_eq!(receipt["schema"], "effigy.demo.receipt.v1");
+    assert_eq!(receipt["status"], "passed");
+    assert_eq!(receipt["entrypoint"]["kind"], "task");
+}
+
+#[test]
+fn cli_demo_run_json_run_backed_failure_writes_receipt_and_reports_failure() {
+    let root = temp_workspace("demo-run-shell-json");
+    fs::create_dir_all(root.join("receipts")).expect("mkdir receipts");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[demos.render-check]
+title = "Render Check"
+summary = "Checks that the renderer produces a proof artifact."
+proof = "Verify the renderer can complete its command successfully."
+owner = "ui"
+mode = "headless"
+status = "ready"
+covers = ["ui.render"]
+run = "sh -lc 'printf fail-out; printf fail-err >&2; exit 9'"
+receipt = "receipts/render-check.json"
+artifacts = ["artifacts/render-check.html"]
+"#,
+    )
+    .expect("write demo manifest");
+
+    let output = run_json_cli_command(&root, &["demo", "run", "render-check"]);
+    assert!(
+        !output.status.success(),
+        "demo run unexpectedly passed: {output:?}"
+    );
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["command"]["kind"], "demo");
+    assert_eq!(parsed["error"]["details"]["schema"], "effigy.demo.run.v1");
+    assert_eq!(parsed["error"]["details"]["ok"], false);
+    assert_eq!(parsed["error"]["details"]["demo"]["id"], "render-check");
+    assert_eq!(parsed["error"]["details"]["execution"]["outcome"], "failed");
+    assert_eq!(
+        parsed["error"]["details"]["execution"]["entrypoint"]["kind"],
+        "run"
+    );
+    assert_eq!(parsed["error"]["details"]["execution"]["exit_code"], 9);
+    assert_eq!(
+        parsed["error"]["details"]["latest_attempt"]["receipt_path"],
+        "receipts/render-check.json"
+    );
+    assert_eq!(
+        parsed["error"]["details"]["latest_attempt"]["outcome"],
+        "failed"
+    );
+
+    let receipt: Value = serde_json::from_str(
+        &fs::read_to_string(root.join("receipts/render-check.json"))
+            .expect("read configured demo receipt"),
+    )
+    .expect("parse configured demo receipt");
+    assert_eq!(receipt["schema"], "effigy.demo.receipt.v1");
+    assert_eq!(receipt["status"], "failed");
+    assert_eq!(receipt["exit_code"], 9);
+    assert_eq!(receipt["artifacts"][0], "artifacts/render-check.html");
 }
 
 #[test]

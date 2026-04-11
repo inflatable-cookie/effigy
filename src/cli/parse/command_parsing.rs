@@ -80,6 +80,7 @@ where
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Demo)),
         "list" => parse_demo_list(args),
         "inspect" => parse_demo_inspect(args),
+        "run" => parse_demo_run(args),
         other => Err(unknown_argument(other)),
     }
 }
@@ -137,6 +138,39 @@ where
 
     Ok(Command::Demo(DemoArgs {
         subcommand: DemoSubcommand::Inspect { demo_id },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_demo_run<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut demo_id: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Demo)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ if demo_id.is_none() => demo_id = Some(arg),
+            _ => return Err(unknown_argument(arg)),
+        }
+    }
+
+    let Some(demo_id) = demo_id else {
+        return Err(CliParseError::MissingFlagValue {
+            flag: "<DEMO_ID>".to_owned(),
+        });
+    };
+
+    Ok(Command::Demo(DemoArgs {
+        subcommand: DemoSubcommand::Run { demo_id },
         repo_override,
         output_json,
     }))

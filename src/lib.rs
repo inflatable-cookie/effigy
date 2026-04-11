@@ -159,6 +159,11 @@ pub enum DemoSubcommand {
         /// Stable demo id carried by the `[demos.<id>]` map key.
         demo_id: String,
     },
+    /// Execute one declared demo and record a normalized latest attempt.
+    Run {
+        /// Stable demo id carried by the `[demos.<id>]` map key.
+        demo_id: String,
+    },
 }
 
 /// Reusable docs QA subcommands.

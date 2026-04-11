@@ -44,3 +44,27 @@ fn parse_demo_inspect_with_repo_and_json() {
         })
     );
 }
+
+#[test]
+fn parse_demo_run_with_repo_and_json() {
+    let cmd = parse_command(vec![
+        "demo".to_owned(),
+        "run".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "login-smoke".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Demo(DemoArgs {
+            subcommand: DemoSubcommand::Run {
+                demo_id: "login-smoke".to_owned(),
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
