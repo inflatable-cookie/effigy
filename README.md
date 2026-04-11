@@ -324,7 +324,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to decide whether demo history should
-widen next through `demo list`, the browser, or a separate result-timeline
-query surface, while keeping broader runtime and desktop-client questions
-deferred.
+Use the active `g02.003` ready card to ship a separate result-history query
+surface before widening `demo list` or the browser again, while keeping
+broader runtime and desktop-client questions deferred.

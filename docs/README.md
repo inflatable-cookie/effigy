@@ -129,6 +129,6 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to decide where demo history should
-widen next after the runner-side foundation, then keep the docs front doors
+Use the active strict `g02.003` spec lane to ship a separate result-history
+query surface after the runner-side foundation, then keep the docs front doors
 aligned to that narrower follow-up slice.

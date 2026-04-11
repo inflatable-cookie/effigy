@@ -1,6 +1,6 @@
 # 034 Decide Demo History Surface Follow-Up Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -46,6 +46,6 @@ runner-side attempt history through `demo inspect`.
 
 ## Next Task
 
-Execute the active decision batch to choose whether the next bounded
-demo-history slice belongs in `demo list`, the browser, or a separate
-result-timeline query surface.
+Execute [`035-implement-demo-history-query-foundation.md`](./035-implement-demo-history-query-foundation.md)
+to ship a separate result-history query surface for one demo without widening
+`demo list` or the browser prematurely.

@@ -85,6 +85,12 @@ During v0.x, MINOR bumps may include breaking changes.
   freshness, receipt presence, grouped discovery output, and action
   availability so the next browser/TUI slice can build on honest runner state
 
+### Fixed
+- Make stop-requested run-backed demos persist `stop-requested` state before
+  sending the termination signal, so fast-exiting demo processes are recorded
+  as `terminated` instead of racing into `failed` receipts on CI or other
+  fast hosts
+
 ## [0.2.12] - 2026-03-24
 
 ### Added
