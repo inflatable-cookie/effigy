@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04-11-demo-runner-lifecycle-and-artifact-boundary-decision.md`](./2026-04/11-demo-runner-lifecycle-and-artifact-boundary-decision.md)
 - [`2026-04-11-demo-model-boundary-and-registry-decision.md`](./2026-04/11-demo-model-boundary-and-registry-decision.md)
 - [`2026-04-11-composition-explainability-closeout-and-g02-003-activation.md`](./2026-04/11-composition-explainability-closeout-and-g02-003-activation.md)
 - [`2026-04-11-manifest-composition-foundation-implementation.md`](./2026-04/11-manifest-composition-foundation-implementation.md)

@@ -11,7 +11,8 @@ Batch cards are the execution units for active Effigy strict-lane work.
 ## Active Batch Cards
 
 - [`007-decide-demo-model-boundaries-and-registry-shape.md`](./007-decide-demo-model-boundaries-and-registry-shape.md) (complete)
-- [`008-decide-demo-runner-lifecycle-and-artifact-boundaries.md`](./008-decide-demo-runner-lifecycle-and-artifact-boundaries.md)
+- [`008-decide-demo-runner-lifecycle-and-artifact-boundaries.md`](./008-decide-demo-runner-lifecycle-and-artifact-boundaries.md) (complete)
+- [`009-decide-demo-coverage-and-gap-model.md`](./009-decide-demo-coverage-and-gap-model.md)
 
 ## Next Task
 

@@ -18,7 +18,7 @@ Current milestones:
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/008-decide-demo-runner-lifecycle-and-artifact-boundaries.md`](../specs/batch-cards/008-decide-demo-runner-lifecycle-and-artifact-boundaries.md)
+- [`../specs/batch-cards/009-decide-demo-coverage-and-gap-model.md`](../specs/batch-cards/009-decide-demo-coverage-and-gap-model.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` planning batch to lock the demo runner lifecycle and
-artifact boundary next. Treat the object model and registry boundary as settled
-enough to build on.
+Use the active `g02.003` planning batch to lock the demo coverage and gap model
+next. Treat the object model and runner lifecycle boundary as settled enough to
+build on.
