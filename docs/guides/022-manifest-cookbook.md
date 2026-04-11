@@ -163,6 +163,7 @@ effigy demo list --owner signal --status ready
 effigy demo list --group-by owner --stale-only
 effigy demo inspect login-smoke
 effigy demo history login-smoke --limit 5
+effigy demo history login-smoke --attempt login-smoke-1775944053944
 effigy demo run login-smoke
 effigy demo stop login-smoke
 effigy demo rerun login-smoke
@@ -199,6 +200,9 @@ Lifecycle notes:
 - `demo history <id>` gives that retained result history a dedicated query
   surface, with optional `--limit <N>` trimming, so operators can inspect one
   demo's recent terminal outcomes without overloading the broader inspect view.
+- `demo history <id> --attempt <ATTEMPT_ID>` drills into one retained
+  historical attempt so the prior receipt, artifacts, and log references are
+  visible without widening `demo list` or the browser.
 - `demo stop <id>` works for directly runner-owned run-backed demos.
 - `demo rerun <id>` starts a fresh attempt and fails fast if the demo is
   already active.

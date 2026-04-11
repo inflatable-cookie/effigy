@@ -162,6 +162,7 @@ effigy demo browser
 effigy demo list --group-by gap
 effigy demo inspect browser-proof-report
 effigy demo history browser-proof-report
+effigy demo history lifecycle-window --attempt lifecycle-window-1775944067106
 effigy demo run browser-proof-report
 effigy demo run lifecycle-window
 effigy demo stop lifecycle-window
@@ -221,6 +222,9 @@ This repo now self-hosts two realistic demos:
 - `demo history <id>` now gives that retained result timeline its own
   dedicated query surface, with optional `--limit <N>` trimming, so one demo's
   history no longer has to live only inside the broader inspect payload
+- `demo history <id> --attempt <ATTEMPT_ID>` drills into one retained
+  historical result so operators can inspect a prior receipt, artifacts, and
+  log references directly from that dedicated history surface
 
 ### Automate safely
 
@@ -330,6 +334,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to deepen the dedicated `demo history`
-surface around stable attempt selection and one-attempt drilldown, while
-keeping broader runtime and desktop-client questions deferred.
+Use the active `g02.003` ready card to choose the next bounded follow-up after
+historical-attempt drilldown, while keeping broader runtime and
+desktop-client questions deferred.

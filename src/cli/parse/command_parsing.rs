@@ -323,6 +323,7 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut limit: Option<usize> = None;
+    let mut attempt_id: Option<String> = None;
     let mut demo_id: Option<String> = None;
 
     while let Some(arg) = args.next() {
@@ -353,6 +354,14 @@ where
                 }
                 limit = Some(parsed);
             }
+            "--attempt" => {
+                attempt_id = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--attempt".to_owned(),
+                    },
+                )?);
+            }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Demo)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ if demo_id.is_none() => demo_id = Some(arg),
@@ -367,7 +376,11 @@ where
     };
 
     Ok(Command::Demo(DemoArgs {
-        subcommand: DemoSubcommand::History { demo_id, limit },
+        subcommand: DemoSubcommand::History {
+            demo_id,
+            limit,
+            attempt_id,
+        },
         repo_override,
         output_json,
     }))

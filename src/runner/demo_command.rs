@@ -25,7 +25,7 @@ use crate::runner::manifest::{
 };
 use crate::runner::util::with_local_node_bin_path;
 use crate::tui::run_demo_browser_tui;
-use crate::ui::{KeyValue, NoticeLevel, Renderer, TableSpec};
+use crate::ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer, TableSpec};
 use crate::{
     DemoArgs, DemoListGroupBy, DemoListQuery, DemoListStatus, DemoSubcommand, TaskInvocation,
 };
@@ -65,9 +65,18 @@ pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
         DemoSubcommand::Inspect { demo_id } => {
             render_demo_inspect(&repo_root, &loaded, &demo_id, args.output_json)
         }
-        DemoSubcommand::History { demo_id, limit } => {
-            render_demo_history(&repo_root, &loaded, &demo_id, limit, args.output_json)
-        }
+        DemoSubcommand::History {
+            demo_id,
+            limit,
+            attempt_id,
+        } => render_demo_history(
+            &repo_root,
+            &loaded,
+            &demo_id,
+            limit,
+            attempt_id.as_deref(),
+            args.output_json,
+        ),
         DemoSubcommand::Run { demo_id } => render_demo_execute(
             &repo_root,
             &loaded,
@@ -297,6 +306,7 @@ fn render_demo_history(
     loaded: &LoadedTaskManifest,
     demo_id: &str,
     limit: Option<usize>,
+    selected_attempt_id: Option<&str>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let Some(demo) = loaded.manifest.demos.get(demo_id) else {
@@ -312,6 +322,23 @@ fn render_demo_history(
     let displayed_attempts = history_attempts_with_limit(&record.attempt_history, limit);
     let displayed_count = displayed_attempts.len();
     let stored_count = record.attempt_history.attempts.len();
+    let selected_attempt = match selected_attempt_id {
+        Some(attempt_id) => {
+            let Some(attempt) = find_historical_attempt(&record.attempt_history, attempt_id) else {
+                return demo_error(
+                    output_json,
+                    "effigy.demo.history.v1",
+                    format!("retained attempt `{attempt_id}` was not found for demo `{demo_id}`"),
+                    json!({
+                        "demo_id": demo_id,
+                        "attempt_id": attempt_id,
+                    }),
+                );
+            };
+            Some(attempt)
+        }
+        None => None,
+    };
 
     if output_json {
         return encode_json(
@@ -323,6 +350,7 @@ fn render_demo_history(
                 "query": {
                     "demo_id": demo_id,
                     "limit": limit,
+                    "attempt_id": selected_attempt_id,
                 },
                 "demo": {
                     "id": record.id,
@@ -342,6 +370,7 @@ fn render_demo_history(
                     "parse_error": record.attempt_history.parse_error,
                     "attempts": displayed_attempts.iter().map(DemoHistoricalAttempt::to_json).collect::<Vec<_>>(),
                 },
+                "selected_attempt": selected_attempt.map(DemoHistoricalAttempt::to_json),
             }),
             true,
         );
@@ -369,6 +398,10 @@ fn render_demo_history(
             limit
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "all".to_owned()),
+        ),
+        KeyValue::new(
+            "selected-attempt",
+            selected_attempt_id.unwrap_or("none").to_owned(),
         ),
     ])?;
     renderer.text("")?;
@@ -407,8 +440,56 @@ fn render_demo_history(
     } else {
         renderer.table(&recent_attempts_table_spec(displayed_attempts))?;
     }
+    if let Some(attempt) = selected_attempt {
+        renderer.text("")?;
+        render_selected_historical_attempt(&mut renderer, attempt)?;
+    }
     renderer.text("")?;
     render_utf8(renderer.into_inner())
+}
+
+fn render_selected_historical_attempt(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    attempt: &DemoHistoricalAttempt,
+) -> Result<(), RunnerError> {
+    renderer.section("Selected Attempt")?;
+    let mut values = vec![
+        KeyValue::new("attempt-id", attempt.attempt_id.clone()),
+        KeyValue::new(
+            "recorded-at-epoch-ms",
+            attempt.recorded_at_epoch_ms.to_string(),
+        ),
+        KeyValue::new("outcome", attempt.outcome.clone()),
+    ];
+    if let Some(exit_code) = attempt.exit_code {
+        values.push(KeyValue::new("exit-code", exit_code.to_string()));
+    }
+    if let Some(receipt_path) = &attempt.receipt_path {
+        values.push(KeyValue::new("receipt", receipt_path.clone()));
+    }
+    if let Some(stdout_log_path) = &attempt.stdout_log_path {
+        values.push(KeyValue::new("stdout-log", stdout_log_path.clone()));
+    }
+    if let Some(stderr_log_path) = &attempt.stderr_log_path {
+        values.push(KeyValue::new("stderr-log", stderr_log_path.clone()));
+    }
+    renderer.key_values(&values)?;
+    if let Some(summary) = &attempt.summary {
+        renderer.text("")?;
+        renderer.section("Result Summary")?;
+        renderer.text(summary)?;
+    }
+    renderer.text("")?;
+    renderer.section("Artifacts")?;
+    if attempt.artifacts.is_empty() {
+        renderer.notice(
+            NoticeLevel::Info,
+            "No artifacts were recorded for the selected historical attempt.",
+        )?;
+    } else {
+        renderer.bullet_list("", &attempt.artifacts)?;
+    }
+    Ok(())
 }
 
 fn render_demo_execute(
@@ -796,6 +877,7 @@ fn demo_table_spec(demos: &[&DemoRecord]) -> TableSpec {
 fn recent_attempts_table_spec(attempts: &[DemoHistoricalAttempt]) -> TableSpec {
     TableSpec::new(
         vec![
+            "Attempt ID".to_owned(),
             "Recorded".to_owned(),
             "Status".to_owned(),
             "Summary".to_owned(),
@@ -805,6 +887,7 @@ fn recent_attempts_table_spec(attempts: &[DemoHistoricalAttempt]) -> TableSpec {
             .iter()
             .map(|attempt| {
                 vec![
+                    attempt.attempt_id.clone(),
                     attempt.recorded_at_epoch_ms.to_string(),
                     attempt.outcome.clone(),
                     attempt
@@ -829,6 +912,16 @@ fn history_attempts_with_limit(
         .map(|value| value.min(history.attempts.len()))
         .unwrap_or(history.attempts.len());
     &history.attempts[..end]
+}
+
+fn find_historical_attempt<'a>(
+    history: &'a DemoAttemptHistory,
+    attempt_id: &str,
+) -> Option<&'a DemoHistoricalAttempt> {
+    history
+        .attempts
+        .iter()
+        .find(|attempt| attempt.attempt_id == attempt_id)
 }
 
 fn build_demo_groups<'a>(demos: &'a [DemoRecord], group_by: DemoListGroupBy) -> Vec<DemoGroup<'a>> {

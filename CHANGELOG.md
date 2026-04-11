@@ -62,6 +62,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add `effigy demo history <id>` so one demo's retained terminal-attempt
   history can be queried directly, with optional `--limit <N>` trimming,
   without widening `demo list` or the browser
+- Add `effigy demo history <id> --attempt <ATTEMPT_ID>` so operators can
+  select one retained historical attempt and inspect its receipt, artifacts,
+  and log references directly from the dedicated history surface
 
 ### Changed
 - Rework `effigy demo browser` around the same magenta-framed visual language

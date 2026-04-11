@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04-12-demo-history-attempt-drilldown-implementation.md`](./2026-04/12-demo-history-attempt-drilldown-implementation.md)
 - [`2026-04-11-demo-history-query-follow-up-boundary-decision.md`](./2026-04/11-demo-history-query-follow-up-boundary-decision.md)
 - [`2026-04-11-demo-history-query-foundation-implementation.md`](./2026-04/11-demo-history-query-foundation-implementation.md)
 - [`2026-04-11-demo-history-surface-follow-up-boundary-decision.md`](./2026-04/11-demo-history-surface-follow-up-boundary-decision.md)

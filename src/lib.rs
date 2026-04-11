@@ -272,6 +272,8 @@ pub enum DemoSubcommand {
         demo_id: String,
         /// Optional maximum number of recent attempts to render.
         limit: Option<usize>,
+        /// Optional stable retained attempt id to inspect in detail.
+        attempt_id: Option<String>,
     },
     /// Execute one declared demo and record a normalized latest attempt.
     Run {

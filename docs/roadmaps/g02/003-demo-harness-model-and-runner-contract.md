@@ -1463,6 +1463,47 @@ Why this is the right implementation slice:
   do premature contract design
 - it gives later UI work one stable historical-attempt contract to consume
 
+Batch `03.31` result:
+
+- `effigy demo history <id>` now exposes stable retained attempt ids directly
+  in the visible history output
+- `effigy demo history <id> --attempt <ATTEMPT_ID>` now drills into one
+  retained historical result in both text and JSON
+- one selected historical attempt now exposes bounded result detail including
+  outcome, summary, receipt reference, artifact references, and stdout/stderr
+  log references without widening `demo list` or the browser
+
+Why this batch was the right implementation slice:
+
+- the dedicated history surface can now answer both `what recent results exist`
+  and `show me one prior result properly`
+- the result-review contract stayed one-demo and query-first instead of
+  pushing new density into list or browser surfaces
+- later browser/list work can now consume a stable historical-attempt contract
+  rather than inventing one through presentation
+
+### 10.29 Post-History-Drilldown Boundary
+
+Batch `03.32` target:
+
+Choose the next bounded follow-up after shipped historical-attempt drilldown
+without reopening browser churn or widening into generic timeline tooling.
+
+In scope for the next decision slice:
+
+- assess the shipped `demo history` summary-plus-drilldown surface against the
+  self-hosted demos
+- decide whether the next bounded value belongs in `demo list`, the browser,
+  or a deeper query/history contract
+- keep the next slice focused on result-review usefulness rather than generic
+  analytics or UI expansion
+
+Out of scope for the next decision slice:
+
+- implementing browser timelines or list history badges immediately
+- multi-demo history aggregation, queueing, or generic analytics
+- broader runtime cancellation or desktop-client work
+
 ### 10.27 Demo History Query Follow-Up Boundary
 
 Batch `03.30` target:
