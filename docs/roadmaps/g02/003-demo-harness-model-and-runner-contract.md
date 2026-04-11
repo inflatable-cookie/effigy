@@ -476,9 +476,63 @@ This lane should not invent its own external file loading model.
 
 ### Batch 03.5 - Pilot Readiness
 
-- [ ] Reconcile the contract against Signal's existing demo surface
-- [ ] Decide what can migrate directly vs what is script-harness debt
-- [ ] Leave a bounded implementation lane only after the model is coherent
+- [x] Reconcile the contract against Signal's existing demo surface
+- [x] Decide what can migrate directly vs what is script-harness debt
+- [x] Leave a bounded implementation lane only after the model is coherent
+
+### 10.1 Signal Pilot Reconciliation
+
+Batch `03.5` decision:
+
+Signal's existing `demos/` surface validates the core Effigy direction, but it
+also makes the implementation boundary obvious.
+
+What maps directly into Effigy's first-class demo model:
+
+- manifest-backed demo identity with stable ids and explicit titles/summaries
+- repo-owned runnable entrypoints instead of operator-memory commands
+- explicit scenario/operator-notes references for human checks that matter
+- machine-readable receipts attached to each proof attempt
+- artifact companions such as rendered HTML views referenced from the proof
+  record
+- explicit proof coverage claims, even though Signal currently expresses some
+  of them through `covered_crates` and the standalone coverage matrix
+- repo-owned status posture instead of implicit “this probably works”
+
+What should become runner-owned normalization rather than staying
+project-specific:
+
+- status vocabulary translation from Signal's local `active`/`planned`/
+  `deferred` posture into Effigy's shared lifecycle/gap model
+- receipt normalization so the runner emits one Effigy demo receipt contract
+  even when projects currently have local receipt families
+- artifact attachment and latest-attempt summary as runner state instead of ad
+  hoc pairing of `*.receipt.json` and `*.view.html`
+- coverage/gap reporting as a registry-driven runner view rather than a
+  separate handwritten matrix as the source of truth
+- inspection output that joins manifest metadata, latest receipt outcome,
+  artifact references, and runnable entrypoint posture in one browser-friendly
+  shape
+
+What Signal exposes as current harness debt rather than model truth:
+
+- one flat per-demo script runner for nearly every official demo
+- duplicated launch/render/receipt plumbing across Python files
+- project-local temporary web serving and HTML generation inside the runner
+  layer
+- a separate coverage-matrix maintenance surface that can drift from manifests
+- script-owned orchestration decisions that should eventually live in Effigy
+  runner semantics
+
+Implementation boundary implied by the pilot:
+
+- the first Effigy implementation slice should own registry loading, demo
+  listing/inspection, and a normalized receipt/artifact state model
+- runner execution can start with task-backed and command-backed launch support
+  instead of solving every Signal-specific script concern immediately
+- the pilot does not justify building a desktop client or bespoke visual shell
+  first
+- Signal migration should follow the runner foundation rather than defining it
 
 ## 11) Acceptance Criteria
 
@@ -501,6 +555,6 @@ This lane should not invent its own external file loading model.
 
 ## Next Task
 
-Use the active `g02.003` strict lane to reconcile the settled demo contract
-against Signal's existing demo surface next, so the first implementation lane
-starts from real proof-system pressure rather than abstract browser doctrine.
+Use the active `g02.003` strict lane to plan the first bounded implementation
+slice for the demo runner foundation next, now that Signal has confirmed which
+parts are model truth and which parts are harness debt.

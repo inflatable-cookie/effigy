@@ -63,6 +63,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` Signal reconciliation ready card next, then either
-leave an implementation-planning card behind it or return the lane to a real
-intent checkpoint if the pilot exposes unresolved model drift.
+Execute the active `g02.003` implementation-planning card next, then either
+leave a first execution batch behind it or return the lane to a real intent
+checkpoint if the runner foundation still lacks a bounded slice.

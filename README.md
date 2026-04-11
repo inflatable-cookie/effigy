@@ -254,6 +254,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to reconcile the settled demo contract
-against Signal, then let that pilot define the first bounded implementation
-lane.
+Use the active `g02.003` ready card to define the first bounded demo-runner
+implementation slice, using the settled Signal reconciliation as the calibration
+point.

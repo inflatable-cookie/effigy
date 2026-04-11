@@ -1,6 +1,6 @@
 # 011 Reconcile Demo Contract Against Signal Pilot
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -45,5 +45,5 @@ against Signal's existing demo proof surface.
 
 ## Next Task
 
-Complete this Signal reconciliation batch, then open the first bounded
-implementation-planning card for the demo runner foundation.
+Use this reconciliation result to open the first bounded implementation-planning
+card for the demo runner foundation.

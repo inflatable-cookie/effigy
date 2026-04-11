@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to reconcile the settled `g02.003` demo contract
-against Signal next, then keep this surface trimmed so it reflects live
-planning rather than every historical plan.
+Use the active spec lane to define the first bounded `g02.003` implementation
+slice next, then keep this surface trimmed so it reflects live planning rather
+than every historical plan.
