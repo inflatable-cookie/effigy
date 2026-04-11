@@ -63,6 +63,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` implementation-planning card next, then either
-leave a first execution batch behind it or return the lane to a real intent
-checkpoint if the runner foundation still lacks a bounded slice.
+Execute the active `g02.003` execution card next, then either leave the next
+runner-execution batch behind it or return the lane to a real intent checkpoint
+if the registry/inspection foundation exposes model drift.

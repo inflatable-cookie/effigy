@@ -534,6 +534,62 @@ Implementation boundary implied by the pilot:
   first
 - Signal migration should follow the runner foundation rather than defining it
 
+### Batch 03.6 - Implementation Slice
+
+- [x] Decide the first bounded runner foundation slice
+- [x] Keep execution actions and browser work out of that first slice
+- [x] Leave a concrete execution card for registry loading and inspection
+
+### 10.2 First Implementation Slice
+
+Batch `03.6` decision:
+
+The first implementation slice stays deliberately foundation-only. It should
+prove that Effigy can own the demo registry and inspection surface before it
+owns execution orchestration or browser interaction.
+
+In scope for the first execution slice:
+
+- manifest-backed demo registry loading from `[demos.<id>]`
+- schema and doctor support for the demo registry
+- `effigy demo list` as a text and JSON discovery surface
+- `effigy demo inspect <id>` as a text and JSON inspection surface
+- normalized latest-attempt state when a receipt or artifact reference already
+  exists
+- path and provenance reporting for the selected demo record
+
+Out of scope for the first execution slice:
+
+- `effigy demo run`
+- `effigy demo stop`
+- `effigy demo rerun`
+- TUI/browser implementation
+- consumer-repo migration work
+
+Minimum normalized latest-attempt shape for the first slice:
+
+- latest outcome/status
+- receipt source/path
+- artifact references
+- latest-attempt summary text when available
+- enough state to distinguish `no recorded attempt yet` from `recorded attempt
+  failed` or `recorded attempt passed`
+
+Why this is the right first slice:
+
+- it exercises the new registry as real product surface
+- it proves the inspection contract the future TUI depends on
+- it forces receipt/artifact normalization before execution work hides the data
+  model problem
+- it avoids pulling Signal's script orchestration debt into the first batch
+
+Follow-on sequence after the first slice:
+
+- runner execution foundation (`run` and normalized attempt creation)
+- then stop/rerun semantics
+- then the first TUI/browser client on top of the now-real discovery and
+  inspection surface
+
 ## 11) Acceptance Criteria
 
 - [ ] Effigy has a clear first-class demo model that is not reducible to random
@@ -555,6 +611,6 @@ Implementation boundary implied by the pilot:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to plan the first bounded implementation
-slice for the demo runner foundation next, now that Signal has confirmed which
-parts are model truth and which parts are harness debt.
+Use the active `g02.003` strict lane to implement the first demo runner
+foundation batch next: registry loading, `effigy demo list`, `effigy demo
+inspect`, and normalized latest-attempt state.

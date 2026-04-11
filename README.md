@@ -254,6 +254,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to define the first bounded demo-runner
-implementation slice, using the settled Signal reconciliation as the calibration
-point.
+Use the active `g02.003` ready card to implement the demo registry and
+inspection foundation, using the settled Signal reconciliation and
+implementation-slice decision as the boundary.
