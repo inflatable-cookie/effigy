@@ -112,7 +112,14 @@ planned, missing, broken, or stale.
 
 ### 5.1 Demo declaration shape
 
-Minimum likely fields:
+Batch `03.1` decision:
+
+- demo registry root: `[demos]`
+- each demo is declared as `[demos.<id>]`
+- ids are stable map keys, not anonymous array entries
+- demos are repo-owned manifest objects, not external registry items
+
+Minimum first-class fields:
 
 - id
 - title/summary
@@ -125,19 +132,59 @@ Minimum likely fields:
 - status posture (`planned`, `ready`, `broken`, `missing`, etc.)
 - tags/grouping fields for browser navigation
 
+Illustrative direction:
+
+```toml
+[demos.login-smoke]
+title = "Login Smoke"
+summary = "Proves the local login flow reaches a successful authenticated state."
+owner = "auth"
+proof = "Verify that the default local login journey works end to end."
+mode = "interactive"
+status = "ready"
+tags = ["auth", "smoke"]
+artifacts = ["receipts/login-smoke.json", "artifacts/login-smoke.png"]
+task = "demo:login"
+```
+
+Notes:
+
+- `id` remains the stable demo identity, but it is carried by the map key
+  (`login-smoke`) rather than duplicated as a required inner field.
+- `task = "..."` is illustrative of reuse, not a decision that demos collapse
+  into generic task routing.
+- inline config must work immediately; future split-file config uses
+  `[manifest].include`, not a demo-only loader.
+
 ### 5.2 Task-backed vs distinct
 
-The likely answer is task-adjacent:
+Batch `03.1` decision:
 
 - demos stay distinct verification objects
 - demos may reference tasks or reuse execution primitives
 - demos get richer semantics than generic tasks
+- demo discovery and later execution should live under a dedicated Effigy demo
+  surface, not generic `effigy <task>` routing
+
+Practical boundary:
+
+- tasks remain generic execution units
+- demos wrap proof intent, status, artifacts, and browser identity around one
+  runnable entrypoint
+- a demo may point at a task, command, scenario, or later richer runner-owned
+  execution shape, but the registry and semantics stay demo-specific
 
 ### 5.3 Inline vs split config
 
-The model should work inline in `effigy.toml` immediately. It should also be
-designed so future manifest composition can split demos cleanly without demo-only
-loader semantics.
+Batch `03.1` decision:
+
+- inline demo config in `effigy.toml` is mandatory for the first contract
+- future split-file config must use the shipped general composition model from
+  `g02.002`
+- this lane must not invent demo-local import/include semantics
+
+That keeps the registry Effigy-owned while still letting larger repos split
+config later through ordinary manifest composition.
 
 ## 6) Runner Contract
 
@@ -202,9 +249,10 @@ This lane should not invent its own external file loading model.
 
 ### Batch 03.1 - Model Contract
 
-- [ ] Define demo identity, metadata, proof intent, and ownership fields
-- [ ] Define runnable entrypoint and dependency model
-- [ ] Define artifact/receipt expectations
+- [x] Define demo identity, metadata, proof intent, and ownership fields
+- [x] Define runnable entrypoint and dependency model boundary at the model
+      level
+- [x] Define the registry shape as repo-owned `[demos.<id>]` data
 
 ### Batch 03.2 - Runner Semantics
 
@@ -251,6 +299,6 @@ This lane should not invent its own external file loading model.
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the demo object model and
-registry boundary first, then move to runner semantics before any TUI or
-desktop client work begins.
+Use the active `g02.003` strict lane to decide the runner lifecycle and
+artifact boundary next, now that the demo object model and registry shape are
+explicit.

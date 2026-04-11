@@ -1,6 +1,6 @@
 # 007 Decide Demo Model Boundaries And Registry Shape
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -36,6 +36,24 @@ Lock the first bounded demo-harness model decision:
 - task reuse is allowed without collapsing the model into generic tasks
 - the next batch can move onto runner semantics instead of relitigating object
   identity
+
+## Outcome
+
+Closed with these decisions:
+
+- demo registry root: `[demos]`
+- demo identity shape: `[demos.<id>]` with stable map-key ids instead of an
+  anonymous array
+- demo boundary: task-adjacent but semantically distinct from normal tasks
+- registry ownership: repo-owned Effigy manifest data, not a second external
+  registry
+- config posture: inline-first and future composition-compatible, with no
+  demo-local include semantics
+
+## Next Task
+
+Move to runner semantics next: discovery, run/stop lifecycle, artifact/receipt
+boundaries, and the minimum status model the TUI/browser layer will depend on.
 
 ## Validation
 
