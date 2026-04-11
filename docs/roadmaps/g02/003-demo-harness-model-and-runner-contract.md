@@ -866,6 +866,55 @@ Follow-on sequence after that slice:
   cancellable handles honestly
 - broad consumer-repo migration work
 
+### 10.11 Browser List/Detail Foundation
+
+Batch `03.14` delivered:
+
+Ship the first honest interactive browser client on top of the already-shipped
+demo runner surface.
+
+Shipped in the current repo:
+
+- `effigy demo browser` now opens a bounded TUI browser for repo-owned demos
+- the browser renders grouped list browsing on the left and detail inspection
+  for the selected demo on the right
+- the browser delegates `run`, `stop`, and `rerun` through the shipped demo
+  runner instead of inventing a second execution model
+- the browser is already proven against the repo's self-hosted
+  `browser-proof-report` and `lifecycle-window` demos
+
+What this proved:
+
+- the shipped query/state surface was strong enough to support a real browser
+  without reopening the registry or lifecycle contracts
+- the biggest remaining browser question is no longer list/detail structure; it
+  is which follow-up affordance matters more next: live log visibility or
+  artifact-opening
+- broader runtime cancellation is still a separate runtime problem and should
+  not be smuggled back in through browser follow-up work
+
+### 10.12 Browser Follow-Up Slice Decision
+
+Batch `03.15` target:
+
+Choose the next bounded browser follow-up slice now that the foundation browser
+exists.
+
+In scope for the next planning slice:
+
+- decide whether the next browser batch should prioritize live log visibility
+  or artifact-opening affordances
+- define the minimum operator need that the next browser batch must satisfy
+- keep the decision grounded in the shipped self-hosted demos and browser
+  foundation instead of abstract future UI ambition
+
+Out of scope for the next planning slice:
+
+- implementing the follow-up browser slice itself
+- broadening generic runtime cancellation
+- desktop-client decisions
+- multi-attempt history or queueing
+
 ## 11) Acceptance Criteria
 
 - [ ] Effigy has a clear first-class demo model that is not reducible to random
@@ -887,6 +936,6 @@ Follow-on sequence after that slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the first bounded
-browser-foundation slice next, then implement that slice without reopening
-runtime-cancellation scope.
+Use the active `g02.003` strict lane to decide whether the next browser slice
+should add live log visibility or artifact-opening affordances first, without
+reopening broader runtime-cancellation scope.

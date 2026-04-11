@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to implement the first bounded demo browser
-list/detail foundation next, then keep this surface trimmed so it reflects live
-planning rather than every historical plan.
+Use the active spec lane to choose the next bounded demo browser follow-up
+slice now that the first list/detail foundation is shipped, then keep this
+surface trimmed so it reflects live planning rather than every historical plan.

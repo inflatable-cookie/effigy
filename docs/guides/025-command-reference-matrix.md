@@ -53,7 +53,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy contracts` | Validate reusable JSON contract artifacts such as selection payloads and schema-index contract coverage | `check-json`, `validate-selection`, `--repo`, `--index`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--contract`, `--artifact`, `--json` | `effigy.contracts.check-json.v1`, `effigy.contracts.selection-validation.v1` | `017-json-output-contracts.md` |
 | `effigy distribution` | Run non-publish distribution preflight checks, validate release/distribution metadata, write first-publish summary contracts, check artifact bundles, and generate acceptance closeout logs from captured artifacts | `preflight`, `validate-metadata`, `validate-artifacts`, `generate-closeout`, `write-summary`, `--repo`, `--tag`, `--skip-docs`, `--skip-smoke`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--output`, `--owner`, `--expect-homebrew`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.distribution.preflight.v1`, `effigy.distribution.metadata.v1`, `effigy.distribution.artifacts.v1`, `effigy.distribution.closeout.v1`, `effigy.distribution.summary.v1` | `044-distribution-first-publish-execution-runbook.md` |
 | `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, and optionally start the declared dev task | `<git-url>`, `--path`, `--branch`, `--start`, `--plan`, `--json` | `effigy.bootstrap.v1` | `057-bootstrap-repo-bringup.md` |
-| `effigy demo` | Discover repo-owned proof demos, inspect active/latest state, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `inspect`, `run`, `stop`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.rerun.v1` | `022-manifest-cookbook.md` |
+| `effigy demo` | Discover repo-owned proof demos, browse them in the first list/detail TUI, inspect active/latest state, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `run`, `stop`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.rerun.v1` | `022-manifest-cookbook.md` |
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--json`, `--markdown`, `--out`, `--fail-on-findings`, `--show-warnings` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
 | `effigy test` | Run built-in or explicit `tasks.test` test orchestration | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-foundation.md` |
@@ -109,6 +109,7 @@ effigy distribution generate-closeout [--repo <PATH>] --tag <TAG> --artifacts-di
 effigy distribution write-summary [--repo <PATH>] --tag <TAG> --artifacts-dir <DIR> [--crate-version <VER>] [--repo-url <URL>] [--brew-formula <NAME>] [--homebrew-executed] [--log-file <NAME>]... [--json]
 effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--start] [--plan] [--json]
 effigy demo list [--search <TEXT>] [--owner <NAME>] [--tag <TAG>] [--mode <MODE>] [--cover <AREA>] [--status <STATUS>] [--gap <GAP>] [--stale-only] [--group-by <FIELD>] [--repo <PATH>] [--json]
+effigy demo browser [--group-by <FIELD>] [--repo <PATH>]
 effigy demo inspect <DEMO_ID> [--repo <PATH>] [--json]
 effigy demo run <DEMO_ID> [--repo <PATH>] [--json]
 effigy demo stop <DEMO_ID> [--repo <PATH>] [--json]
@@ -165,6 +166,10 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
 - `demo list` supports bounded browser-style discovery with focused filters and
   grouping, but it deliberately stops short of UI behavior or rich browsing
   state.
+- `demo browser` is the first interactive browser client for that surface. It
+  provides grouped list/detail browsing plus bounded `run`, `stop`, `rerun`,
+  and refresh actions, but it still defers live log streaming and rich artifact
+  rendering.
 - `demo run` executes either a declared task-backed or run-backed entrypoint,
   writes a normalized receipt, and refreshes the latest-attempt state that
   `demo inspect` reports.

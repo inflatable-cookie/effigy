@@ -47,6 +47,7 @@ fn render_doctor_help_shows_fix_and_json_options() {
 fn render_demo_help_shows_discovery_and_inspection_options() {
     let rendered = render_help_text(HelpTopic::Demo);
     assert!(rendered.contains("demo Help"));
+    assert!(rendered.contains("effigy demo browser"));
     assert!(rendered.contains("effigy demo list"));
     assert!(rendered.contains("effigy demo inspect <DEMO_ID>"));
     assert!(rendered.contains("effigy demo run <DEMO_ID>"));

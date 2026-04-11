@@ -4,6 +4,30 @@ use super::prelude::{
 };
 
 #[test]
+fn parse_demo_browser_with_grouping_and_repo() {
+    let cmd = parse_command(vec![
+        "demo".to_owned(),
+        "browser".to_owned(),
+        "--group-by".to_owned(),
+        "status".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Demo(DemoArgs {
+            subcommand: DemoSubcommand::Browser {
+                group_by: Some(DemoListGroupBy::Status),
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: false,
+        })
+    );
+}
+
+#[test]
 fn parse_demo_list_with_repo_and_json() {
     let cmd = parse_command(vec![
         "demo".to_owned(),
