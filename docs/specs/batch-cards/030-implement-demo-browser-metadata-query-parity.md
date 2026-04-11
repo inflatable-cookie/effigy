@@ -1,6 +1,6 @@
 # 030 Implement Demo Browser Metadata Query Parity
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -51,6 +51,6 @@ expose: `tag`, `mode`, `cover`, and the fuller `group-by` set.
 
 ## Next Task
 
-Ship bounded metadata-query parity in the browser, then reassess whether the
-next browser gap is richer detail affordances or another query/display
-boundary.
+Choose the next bounded browser follow-up after metadata-query parity, then
+open the corresponding ready card so the lane keeps one explicit continuation
+point.

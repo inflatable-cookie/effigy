@@ -1153,22 +1153,53 @@ Still deferred:
 
 ### 10.21 Browser Metadata-Query Parity Slice
 
-Batch `03.24` target:
+Batch `03.24` delivered:
 
 Implement bounded metadata-query parity in the browser.
 
-In scope for the next implementation slice:
+What shipped:
 
 - in-browser `tag`, `mode`, and `cover` filters
 - extending `group-by` controls to the full shipped grouping contract
 - honest query summary and no-match feedback for the added dimensions
 - proving the slice against the shipped self-hosted demos
 
-Out of scope for the next implementation slice:
+What this exposed next:
+
+- the browser now reaches practical query parity with the shipped `demo list`
+  contract instead of leaving metadata-only filters to the non-interactive CLI
+- the next honest browser question is no longer missing metadata filters, but
+  which remaining display or interaction gap matters most after parity is in
+  place
+- that next slice should still stay bounded inside browser ergonomics instead
+  of widening into deeper runtime control or desktop-client work
+
+Still deferred:
 
 - richer rendering or artifact preview
 - broader generic runtime cancellation
 - multi-attempt history or queueing
+- desktop-client foundation work
+
+### 10.22 Post-Metadata-Query Follow-Up Boundary
+
+Batch `03.25` target:
+
+Choose the next bounded browser follow-up after metadata-query parity.
+
+In scope for the next decision slice:
+
+- reassessing the browser now that list/detail, lifecycle, artifact opening,
+  recent output, detail navigation, and metadata-query parity are all shipped
+- identifying the next tight operator-visible gap from that fuller browser
+  baseline
+- keeping deeper runtime, terminal, and desktop-client work explicitly
+  deferred unless the evidence genuinely changes
+
+Out of scope for the next decision slice:
+
+- generic runtime cancellation expansion
+- terminal emulation or richer log streaming
 - desktop-client foundation work
 
 ## 11) Acceptance Criteria
@@ -1192,5 +1223,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to implement bounded browser
-metadata-query parity without reopening broader runtime-cancellation scope.
+Use the active `g02.003` strict lane to decide the next bounded browser
+follow-up after metadata-query parity without reopening broader
+runtime-cancellation scope.

@@ -21,7 +21,8 @@ use serde_json::Value as JsonValue;
 
 use crate::runner::{run_command, RunnerError};
 use crate::{
-    Command, DemoArgs, DemoListGap, DemoListGroupBy, DemoListQuery, DemoListStatus, DemoSubcommand,
+    Command, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus,
+    DemoSubcommand,
 };
 
 type BrowserTerminal = Terminal<CrosstermBackend<Stdout>>;
@@ -142,6 +143,14 @@ impl DemoBrowserApp {
             }
             KeyCode::Char('/') => self.open_prompt(QueryPromptKind::Search),
             KeyCode::Char('O') => self.open_prompt(QueryPromptKind::Owner),
+            KeyCode::Char('T') => self.open_prompt(QueryPromptKind::Tag),
+            KeyCode::Char('C') => self.open_prompt(QueryPromptKind::Cover),
+            KeyCode::Char('M') => {
+                self.query.mode = next_mode_filter(self.query.mode);
+                self.refresh_state()?;
+                self.footer_message =
+                    filter_change_message("mode", self.query.mode.map(DemoListMode::as_str));
+            }
             KeyCode::Char('S') => {
                 self.query.status = next_status_filter(self.query.status);
                 self.refresh_state()?;
@@ -214,6 +223,18 @@ impl DemoBrowserApp {
                         self.footer_message =
                             prompt_apply_message("owner", self.query.owner.as_deref());
                     }
+                    QueryPromptKind::Tag => {
+                        self.query.tag = normalized_prompt_value(&prompt.value);
+                        self.refresh_state()?;
+                        self.footer_message =
+                            prompt_apply_message("tag", self.query.tag.as_deref());
+                    }
+                    QueryPromptKind::Cover => {
+                        self.query.cover = normalized_prompt_value(&prompt.value);
+                        self.refresh_state()?;
+                        self.footer_message =
+                            prompt_apply_message("cover", self.query.cover.as_deref());
+                    }
                 }
                 Ok(true)
             }
@@ -235,6 +256,8 @@ impl DemoBrowserApp {
         let current = match kind {
             QueryPromptKind::Search => self.query.search.clone(),
             QueryPromptKind::Owner => self.query.owner.clone(),
+            QueryPromptKind::Tag => self.query.tag.clone(),
+            QueryPromptKind::Cover => self.query.cover.clone(),
         }
         .unwrap_or_default();
         self.prompt = Some(QueryPromptState {
@@ -247,6 +270,10 @@ impl DemoBrowserApp {
             }
             QueryPromptKind::Owner => {
                 "Editing owner filter. Enter applies, Esc cancels.".to_owned()
+            }
+            QueryPromptKind::Tag => "Editing tag filter. Enter applies, Esc cancels.".to_owned(),
+            QueryPromptKind::Cover => {
+                "Editing cover filter. Enter applies, Esc cancels.".to_owned()
             }
         };
     }
@@ -736,6 +763,12 @@ impl DemoBrowserApp {
             Span::raw("search  "),
             Span::styled(" O ", key_style()),
             Span::raw("owner  "),
+            Span::styled(" T ", key_style()),
+            Span::raw("tag  "),
+            Span::styled(" M ", key_style()),
+            Span::raw("mode  "),
+            Span::styled(" C ", key_style()),
+            Span::raw("cover  "),
             Span::styled(" S ", key_style()),
             Span::raw("status  "),
             Span::styled(" G ", key_style()),
@@ -780,7 +813,9 @@ impl DemoBrowserApp {
                 Line::from("No demos match the current browser query."),
                 Line::from(""),
                 Line::from(format!("Active query: {}", query_summary(&self.query))),
-                Line::from("Use c to clear filters or adjust search/owner/status/gap/stale."),
+                Line::from(
+                    "Use c to clear filters or adjust search/owner/tag/mode/cover/status/gap/stale.",
+                ),
             ]
         };
         let notice = Paragraph::new(lines)
@@ -972,12 +1007,21 @@ fn paragraph_scroll_line(scroll_line: usize) -> u16 {
 fn next_group_by(current: Option<DemoListGroupBy>) -> Option<DemoListGroupBy> {
     match current {
         None => Some(DemoListGroupBy::Owner),
-        Some(DemoListGroupBy::Owner) => Some(DemoListGroupBy::Status),
+        Some(DemoListGroupBy::Owner) => Some(DemoListGroupBy::Tag),
+        Some(DemoListGroupBy::Tag) => Some(DemoListGroupBy::Mode),
+        Some(DemoListGroupBy::Mode) => Some(DemoListGroupBy::Cover),
+        Some(DemoListGroupBy::Cover) => Some(DemoListGroupBy::Status),
         Some(DemoListGroupBy::Status) => Some(DemoListGroupBy::Gap),
         Some(DemoListGroupBy::Gap) => None,
-        Some(DemoListGroupBy::Tag) | Some(DemoListGroupBy::Mode) | Some(DemoListGroupBy::Cover) => {
-            Some(DemoListGroupBy::Owner)
-        }
+    }
+}
+
+fn next_mode_filter(current: Option<DemoListMode>) -> Option<DemoListMode> {
+    match current {
+        None => Some(DemoListMode::Headless),
+        Some(DemoListMode::Headless) => Some(DemoListMode::Interactive),
+        Some(DemoListMode::Interactive) => Some(DemoListMode::Hybrid),
+        Some(DemoListMode::Hybrid) => None,
     }
 }
 
@@ -1280,6 +1324,15 @@ fn query_summary(query: &DemoListQuery) -> String {
     if let Some(owner) = &query.owner {
         parts.push(format!("owner={owner}"));
     }
+    if let Some(tag) = &query.tag {
+        parts.push(format!("tag={tag}"));
+    }
+    if let Some(mode) = query.mode {
+        parts.push(format!("mode={}", mode.as_str()));
+    }
+    if let Some(cover) = &query.cover {
+        parts.push(format!("cover={cover}"));
+    }
     if let Some(status) = query.status {
         parts.push(format!("status={}", status.as_str()));
     }
@@ -1341,6 +1394,8 @@ impl QueryPromptState {
 enum QueryPromptKind {
     Search,
     Owner,
+    Tag,
+    Cover,
 }
 
 impl QueryPromptKind {
@@ -1348,6 +1403,8 @@ impl QueryPromptKind {
         match self {
             Self::Search => "Edit Search Filter",
             Self::Owner => "Edit Owner Filter",
+            Self::Tag => "Edit Tag Filter",
+            Self::Cover => "Edit Cover Filter",
         }
     }
 
@@ -1355,6 +1412,8 @@ impl QueryPromptKind {
         match self {
             Self::Search => "Match demo id, title, or summary text.",
             Self::Owner => "Match one exact demo owner.",
+            Self::Tag => "Match one exact declared tag.",
+            Self::Cover => "Match one declared coverage key.",
         }
     }
 }
@@ -1465,11 +1524,11 @@ mod tests {
 
     use super::{
         clamp_artifact_index, detail_position_label, detail_scroll_step, detail_viewport_lines,
-        first_demo_id, max_detail_scroll, next_gap_filter, next_group_by, next_status_filter,
-        paragraph_scroll_line, query_summary, read_recent_log_lines, resolve_artifact_path,
-        resolve_repo_relative_path, row_contains_demo, selected_artifact, BrowserRow, DemoDetail,
-        DemoEntrypoint, DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListQuery,
-        DemoListStatus, DemoSummary,
+        first_demo_id, max_detail_scroll, next_gap_filter, next_group_by, next_mode_filter,
+        next_status_filter, paragraph_scroll_line, query_summary, read_recent_log_lines,
+        resolve_artifact_path, resolve_repo_relative_path, row_contains_demo, selected_artifact,
+        BrowserRow, DemoDetail, DemoEntrypoint, DemoLatestAttempt, DemoListGap, DemoListGroupBy,
+        DemoListMode, DemoListQuery, DemoListStatus, DemoSummary,
     };
 
     fn summary(id: &str) -> DemoSummary {
@@ -1544,6 +1603,18 @@ mod tests {
         assert_eq!(next_group_by(None), Some(DemoListGroupBy::Owner));
         assert_eq!(
             next_group_by(Some(DemoListGroupBy::Owner)),
+            Some(DemoListGroupBy::Tag)
+        );
+        assert_eq!(
+            next_group_by(Some(DemoListGroupBy::Tag)),
+            Some(DemoListGroupBy::Mode)
+        );
+        assert_eq!(
+            next_group_by(Some(DemoListGroupBy::Mode)),
+            Some(DemoListGroupBy::Cover)
+        );
+        assert_eq!(
+            next_group_by(Some(DemoListGroupBy::Cover)),
             Some(DemoListGroupBy::Status)
         );
         assert_eq!(
@@ -1551,6 +1622,20 @@ mod tests {
             Some(DemoListGroupBy::Gap)
         );
         assert_eq!(next_group_by(Some(DemoListGroupBy::Gap)), None);
+    }
+
+    #[test]
+    fn browser_mode_filter_cycle_is_bounded() {
+        assert_eq!(next_mode_filter(None), Some(DemoListMode::Headless));
+        assert_eq!(
+            next_mode_filter(Some(DemoListMode::Headless)),
+            Some(DemoListMode::Interactive)
+        );
+        assert_eq!(
+            next_mode_filter(Some(DemoListMode::Interactive)),
+            Some(DemoListMode::Hybrid)
+        );
+        assert_eq!(next_mode_filter(Some(DemoListMode::Hybrid)), None);
     }
 
     #[test]
@@ -1653,6 +1738,9 @@ mod tests {
         let query = DemoListQuery {
             search: Some("auth".to_owned()),
             owner: Some("signal".to_owned()),
+            tag: Some("self-hosted".to_owned()),
+            mode: Some(DemoListMode::Interactive),
+            cover: Some("effigy.demo.lifecycle".to_owned()),
             status: Some(DemoListStatus::Ready),
             gap: Some(DemoListGap::Existing),
             stale_only: true,
@@ -1660,7 +1748,7 @@ mod tests {
         };
         assert_eq!(
             query_summary(&query),
-            "search=auth, owner=signal, status=ready, gap=existing, stale-only=true"
+            "search=auth, owner=signal, tag=self-hosted, mode=interactive, cover=effigy.demo.lifecycle, status=ready, gap=existing, stale-only=true"
         );
         assert_eq!(query_summary(&DemoListQuery::default()), "none");
     }
