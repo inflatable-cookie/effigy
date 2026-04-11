@@ -34,6 +34,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01/029-northstar-effigy-consumer-adoption-kit.md` is the consumer-adoption and product-boundary consolidation roadmap.
 - `g01/028-script-surface-reduction-and-builtins.md` reduces repo shell logic into Effigy-native command surfaces and is complete.
 - `g02/001-bootstrap-command-and-clone-contract.md` starts the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up, and is now implemented plus live-pilot validated on `loophole` and `songsprout`.
+- `g02/002-manifest-composition-and-override-contract.md` defines the general split-manifest model so features do not invent their own file-loading semantics.
+- `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy.
 
 ## Active Strict Lane
 
@@ -66,6 +68,13 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 Execute the active ready card for `g02.001`, then leave the next bootstrap move
 explicit as release preparation, one narrower proof wave, or a real intent
 checkpoint.
+
+Once `g02.001` is honestly closed, advance the next product cycle in two
+separate lanes:
+
+- `g02.002` for manifest composition plus explicit override behavior
+- `g02.003` for demo harness model/runner planning, without feature-specific
+  config loading
 
 
 ## Historical language boundary

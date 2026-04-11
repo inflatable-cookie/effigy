@@ -12,6 +12,8 @@ Generation theme:
 Current milestones:
 
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (in progress; built-in implemented and live-pilot validated on `loophole` and `songsprout`, but not yet released)
+- [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (planned; defines general include/require/import composition plus explicit override semantics for split manifest fragments)
+- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (planned; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract)
 
 Active strict planning lane:
 
@@ -30,3 +32,8 @@ Roadmap `g02.001` is now past initial implementation: use the active ready
 card and the live `loophole` / `songsprout` pilots to decide whether bootstrap
 needs one more workspace proof or whether the next meaningful step is release
 preparation so `[bootstrap]` stops being a dev-build-only manifest surface.
+
+After `g02.001`, open the next planning split explicitly:
+
+- `g02.002` for general manifest composition and override semantics
+- `g02.003` for the demo harness model and runner/browser contract
