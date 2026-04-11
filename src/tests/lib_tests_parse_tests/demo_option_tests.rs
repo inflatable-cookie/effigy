@@ -1,4 +1,7 @@
-use super::prelude::{parse_command, Command, DemoArgs, DemoSubcommand, PathBuf};
+use super::prelude::{
+    parse_command, Command, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery,
+    DemoListStatus, DemoSubcommand, PathBuf,
+};
 
 #[test]
 fn parse_demo_list_with_repo_and_json() {
@@ -14,9 +17,58 @@ fn parse_demo_list_with_repo_and_json() {
     assert_eq!(
         cmd,
         Command::Demo(DemoArgs {
-            subcommand: DemoSubcommand::List,
+            subcommand: DemoSubcommand::List {
+                query: DemoListQuery::default(),
+            },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_demo_list_with_filters_and_grouping() {
+    let cmd = parse_command(vec![
+        "demo".to_owned(),
+        "list".to_owned(),
+        "--search".to_owned(),
+        "login".to_owned(),
+        "--owner".to_owned(),
+        "auth".to_owned(),
+        "--tag".to_owned(),
+        "smoke".to_owned(),
+        "--mode".to_owned(),
+        "interactive".to_owned(),
+        "--cover".to_owned(),
+        "auth.login".to_owned(),
+        "--status".to_owned(),
+        "ready".to_owned(),
+        "--gap".to_owned(),
+        "existing".to_owned(),
+        "--stale-only".to_owned(),
+        "--group-by".to_owned(),
+        "owner".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Demo(DemoArgs {
+            subcommand: DemoSubcommand::List {
+                query: DemoListQuery {
+                    search: Some("login".to_owned()),
+                    owner: Some("auth".to_owned()),
+                    tag: Some("smoke".to_owned()),
+                    mode: Some(DemoListMode::Interactive),
+                    cover: Some("auth.login".to_owned()),
+                    status: Some(DemoListStatus::Ready),
+                    gap: Some(DemoListGap::Existing),
+                    stale_only: true,
+                    group_by: Some(DemoListGroupBy::Owner),
+                },
+            },
+            repo_override: None,
+            output_json: false,
         })
     );
 }

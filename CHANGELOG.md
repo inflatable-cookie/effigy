@@ -28,6 +28,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add runner-owned demo active-attempt state plus `effigy demo stop <id>` and
   `effigy demo rerun <id>` so run-backed demos can expose honest lifecycle
   control without pretending generic task cancellation already exists
+- Add focused browser-facing demo discovery via `effigy demo list` filters and
+  grouping so operators and future TUI clients can browse proof inventory by
+  owner, tag, mode, coverage, status, gap, and stale state without project-
+  local script glue
 
 ### Changed
 - Route catalog discovery, doctor strict-parse checks, docs-policy loading, and
@@ -39,6 +43,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Make `effigy demo inspect <id>` report active in-flight attempt state
   separately from the latest terminal receipt, so operators can distinguish
   `running now` from `last known proof result`
+- Make `effigy demo inspect <id>` and `demo list` expose browser-facing
+  freshness, receipt presence, grouped discovery output, and action
+  availability so the next browser/TUI slice can build on honest runner state
 
 ## [0.2.12] - 2026-03-24
 

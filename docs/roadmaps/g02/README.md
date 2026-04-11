@@ -13,12 +13,12 @@ Current milestones:
 
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
 - [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
-- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, and the first lifecycle-control slice now shipped)
+- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, and browser-state/query polish now shipped)
 
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/018-implement-demo-browser-state-and-query-polish.md`](../specs/batch-cards/018-implement-demo-browser-state-and-query-polish.md)
+- [`../specs/batch-cards/019-decide-demo-browser-foundation-slice.md`](../specs/batch-cards/019-decide-demo-browser-foundation-slice.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement browser-facing state/query
-polish next, while broader stoppability stays deferred behind a runtime-handle
-boundary.
+Use the active `g02.003` ready card to decide the first bounded browser/TUI
+foundation slice next, while broader stoppability stays deferred behind a
+runtime-handle boundary.

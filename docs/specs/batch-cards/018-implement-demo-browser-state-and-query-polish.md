@@ -1,6 +1,6 @@
 # 018 Implement Demo Browser State And Query Polish
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -49,5 +49,5 @@ operators to consume without starting UI implementation.
 ## Next Task
 
 If browser-state polish lands cleanly, open the next bounded planning card for
-broader stoppability/runtime handles; otherwise return the lane to a runtime
+the first TUI/browser foundation slice; otherwise return the lane to a runtime
 boundary checkpoint.

@@ -21,9 +21,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`015-decide-demo-active-attempt-stop-and-rerun-contract.md`](./015-decide-demo-active-attempt-stop-and-rerun-contract.md) (complete)
 - [`016-implement-demo-active-attempt-stop-and-rerun-foundation.md`](./016-implement-demo-active-attempt-stop-and-rerun-foundation.md) (complete)
 - [`017-decide-demo-post-lifecycle-follow-up-boundary.md`](./017-decide-demo-post-lifecycle-follow-up-boundary.md) (complete)
-- [`018-implement-demo-browser-state-and-query-polish.md`](./018-implement-demo-browser-state-and-query-polish.md)
+- [`018-implement-demo-browser-state-and-query-polish.md`](./018-implement-demo-browser-state-and-query-polish.md) (complete)
+- [`019-decide-demo-browser-foundation-slice.md`](./019-decide-demo-browser-foundation-slice.md)
 
 ## Next Task
 
 Execute the active ready card if it is still honest; otherwise return the lane
-to planning and refresh the currentness surfaces.
+to planning and refresh the currentness surfaces before opening another demo
+implementation batch.

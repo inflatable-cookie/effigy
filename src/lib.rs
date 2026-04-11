@@ -149,11 +149,113 @@ pub struct DemoArgs {
     pub output_json: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DemoListQuery {
+    pub search: Option<String>,
+    pub owner: Option<String>,
+    pub tag: Option<String>,
+    pub mode: Option<DemoListMode>,
+    pub cover: Option<String>,
+    pub status: Option<DemoListStatus>,
+    pub gap: Option<DemoListGap>,
+    pub stale_only: bool,
+    pub group_by: Option<DemoListGroupBy>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DemoListMode {
+    Headless,
+    Interactive,
+    Hybrid,
+}
+
+impl DemoListMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Headless => "headless",
+            Self::Interactive => "interactive",
+            Self::Hybrid => "hybrid",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DemoListStatus {
+    Planned,
+    Ready,
+    Running,
+    Passed,
+    Failed,
+    Broken,
+    Missing,
+}
+
+impl DemoListStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::Ready => "ready",
+            Self::Running => "running",
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+            Self::Broken => "broken",
+            Self::Missing => "missing",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DemoListGap {
+    Existing,
+    Planned,
+    Missing,
+    Broken,
+    Stale,
+}
+
+impl DemoListGap {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Existing => "existing",
+            Self::Planned => "planned",
+            Self::Missing => "missing",
+            Self::Broken => "broken",
+            Self::Stale => "stale",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DemoListGroupBy {
+    Owner,
+    Tag,
+    Mode,
+    Cover,
+    Status,
+    Gap,
+}
+
+impl DemoListGroupBy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Tag => "tag",
+            Self::Mode => "mode",
+            Self::Cover => "cover",
+            Self::Status => "status",
+            Self::Gap => "gap",
+        }
+    }
+}
+
 /// Reusable demo subcommands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DemoSubcommand {
     /// List declared demos and their latest known proof posture.
-    List,
+    List {
+        /// Optional query filters and grouping for browser-style discovery.
+        query: DemoListQuery,
+    },
     /// Inspect one declared demo in detail.
     Inspect {
         /// Stable demo id carried by the `[demos.<id>]` map key.

@@ -1,5 +1,5 @@
 use super::prelude::{
-    apply_global_json_flag, command_requests_json, BootstrapArgs, Command, DemoArgs,
+    apply_global_json_flag, command_requests_json, BootstrapArgs, Command, DemoArgs, DemoListQuery,
     DemoSubcommand, DoctorArgs, ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
 };
 
@@ -53,7 +53,9 @@ fn command_requests_json_checks_task_or_global_mode() {
         explain: None,
     });
     let cmd_demo = Command::Demo(DemoArgs {
-        subcommand: DemoSubcommand::List,
+        subcommand: DemoSubcommand::List {
+            query: DemoListQuery::default(),
+        },
         repo_override: None,
         output_json: true,
     });
@@ -94,7 +96,9 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         explain: None,
     });
     let demo_cmd = Command::Demo(DemoArgs {
-        subcommand: DemoSubcommand::List,
+        subcommand: DemoSubcommand::List {
+            query: DemoListQuery::default(),
+        },
         repo_override: None,
         output_json: false,
     });

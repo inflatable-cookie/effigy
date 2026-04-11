@@ -784,33 +784,60 @@ Why this is the right next slice:
 - broader stoppability now turns into a runtime-handle problem, not a small
   demo-surface refinement
 
-### 10.8 Next Batch
+### 10.8 Browser State And Query Polish
 
-Batch `03.11` target:
+Batch `03.11` delivered:
 
 Tighten browser-facing state and query polish without starting UI
 implementation.
 
-In scope for the next execution slice:
+Shipped in the current repo:
 
-- make `demo list` and `demo inspect` more directly aligned with the browser
-  row and drilldown contract
-- add the minimum focused query surface needed for operator/browser-style
-  discovery without inventing UI behavior in the CLI
-- keep active/base/freshness/gap state explicit in runner output
+- `demo list` now supports focused discovery filters for search, owner, tag,
+  mode, cover, status, gap, and stale state
+- `demo list` now supports bounded grouping by owner, tag, mode, cover,
+  status, or gap
+- `demo list` JSON now exposes the applied query, total count, grouped results,
+  action availability, and browser-facing freshness/gap state
+- `demo inspect` now reports base status, effective status, freshness, and
+  explicit action availability alongside active/latest attempt state
+- latest-attempt inspection now makes receipt presence and freshness explicit
 
-Out of scope for the next execution slice:
+Why this slice was the right follow-through:
 
-- generic task-backed cancellation
-- widening stop support beyond directly runner-owned attempts
-- TUI/browser implementation
+- it gives the later browser/TUI a concrete runner surface to consume before UI
+  work starts
+- it improves operator-visible proof browsing immediately without promising UI
+  behavior in the CLI
+- it avoids blurring the demo lane back into generic runtime cancellation work
+
+### 10.9 Next Batch
+
+Batch `03.12` target:
+
+Decide the first bounded browser/TUI foundation slice on top of the now-shipped
+demo query/state surface.
+
+In scope for the next planning slice:
+
+- define the first honest browser/TUI implementation boundary
+- decide what the interactive client should consume directly from shipped demo
+  runner outputs
+- keep the batch constrained to browser foundation rather than runtime
+  expansion
+
+Out of scope for the next planning slice:
+
+- implementing the TUI/browser itself
+- broadening generic task/runtime cancellation
 - multi-attempt history or queueing
+- consumer-repo migration work
 
 Follow-on sequence after that slice:
 
+- first browser/TUI implementation batch
 - broader stoppability once the generic task/runtime surface can expose
   cancellable handles honestly
-- TUI/browser implementation
 - broad consumer-repo migration work
 
 ## 11) Acceptance Criteria
@@ -834,6 +861,6 @@ Follow-on sequence after that slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to implement browser-facing state/query
-polish next, while keeping broader stoppability deferred until the runtime can
-expose cancellable handles honestly.
+Use the active `g02.003` strict lane to decide the first bounded
+browser-foundation slice next, then implement that slice without reopening
+runtime-cancellation scope.

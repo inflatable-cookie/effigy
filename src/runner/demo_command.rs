@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -23,7 +23,9 @@ use crate::runner::manifest::{
 };
 use crate::runner::util::with_local_node_bin_path;
 use crate::ui::{KeyValue, NoticeLevel, Renderer, TableSpec};
-use crate::{DemoArgs, DemoSubcommand, TaskInvocation};
+use crate::{
+    DemoArgs, DemoListGroupBy, DemoListQuery, DemoListStatus, DemoSubcommand, TaskInvocation,
+};
 
 use super::error::RunnerError;
 use super::render::{encode_json, render_utf8, text_renderer};
@@ -39,7 +41,9 @@ pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
 
     match args.subcommand {
-        DemoSubcommand::List => render_demo_list(&repo_root, &loaded, args.output_json),
+        DemoSubcommand::List { query } => {
+            render_demo_list(&repo_root, &loaded, &query, args.output_json)
+        }
         DemoSubcommand::Inspect { demo_id } => {
             render_demo_inspect(&repo_root, &loaded, &demo_id, args.output_json)
         }
@@ -66,14 +70,22 @@ pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
 fn render_demo_list(
     repo_root: &Path,
     loaded: &LoadedTaskManifest,
+    query: &DemoListQuery,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let demos = loaded
+    let all_demos = loaded
         .manifest
         .demos
         .iter()
         .map(|(demo_id, demo)| build_demo_record(repo_root, loaded, demo_id, demo))
         .collect::<Result<Vec<_>, _>>()?;
+    let demos = all_demos
+        .into_iter()
+        .filter(|demo| demo.matches_query(query))
+        .collect::<Vec<_>>();
+    let groups = query
+        .group_by
+        .map(|group_by| build_demo_groups(&demos, group_by));
 
     if output_json {
         return encode_json(
@@ -82,7 +94,11 @@ fn render_demo_list(
                 "schema_version": 1,
                 "ok": true,
                 "repo_root": repo_root.display().to_string(),
+                "query": demo_list_query_to_json(query),
+                "group_by": query.group_by.map(|value| value.as_str()),
                 "count": demos.len(),
+                "total_count": loaded.manifest.demos.len(),
+                "groups": groups.as_ref().map(|groups| groups.iter().map(DemoGroup::to_json).collect::<Vec<_>>()),
                 "demos": demos.iter().map(DemoRecord::to_json_summary).collect::<Vec<_>>(),
             }),
             true,
@@ -92,42 +108,40 @@ fn render_demo_list(
     let mut renderer = text_renderer();
     renderer.section("Demo Registry")?;
     if demos.is_empty() {
-        renderer.notice(
-            NoticeLevel::Info,
-            "No demos are declared in the current effigy.toml manifest.",
-        )?;
+        if query_is_empty(query) {
+            renderer.notice(
+                NoticeLevel::Info,
+                "No demos are declared in the current effigy.toml manifest.",
+            )?;
+        } else {
+            renderer.notice(
+                NoticeLevel::Info,
+                "No demos matched the current discovery query.",
+            )?;
+        }
         renderer.text("")?;
         return render_utf8(renderer.into_inner());
     }
 
-    let rows = demos
-        .iter()
-        .map(|demo| {
-            vec![
-                demo.id.clone(),
-                demo.title.clone(),
-                display_status(demo.status, demo.latest_attempt.stale, &demo.active_attempt),
-                demo.gap_class.to_owned(),
-                demo.owner.clone(),
-                demo.entrypoint.render_compact(),
-            ]
-        })
-        .collect::<Vec<_>>();
-    renderer.table(&TableSpec::new(
-        vec![
-            "ID".to_owned(),
-            "Title".to_owned(),
-            "Status".to_owned(),
-            "Gap".to_owned(),
-            "Owner".to_owned(),
-            "Entrypoint".to_owned(),
-        ],
-        rows,
-    ))?;
+    if !query_is_empty(query) {
+        renderer.key_values(&demo_list_query_to_key_values(query))?;
+        renderer.text("")?;
+    }
+
+    if let Some(groups) = groups {
+        for group in groups {
+            renderer.section(&format!("Group: {}", group.label))?;
+            renderer.table(&demo_table_spec(&group.demos))?;
+            renderer.text("")?;
+        }
+    } else {
+        let demo_refs = demos.iter().collect::<Vec<_>>();
+        renderer.table(&demo_table_spec(&demo_refs))?;
+    }
     renderer.text("")?;
     renderer.notice(
         NoticeLevel::Info,
-        "Use `effigy demo inspect <DEMO_ID>` to inspect proof intent, coverage, sources, active state, and latest attempt details.",
+        "Use `effigy demo inspect <DEMO_ID>` to inspect proof intent, coverage, action availability, active state, and latest attempt details.",
     )?;
     renderer.text("")?;
     render_utf8(renderer.into_inner())
@@ -171,14 +185,9 @@ fn render_demo_inspect(
         KeyValue::new("proof", record.proof.clone()),
         KeyValue::new("owner", record.owner.clone()),
         KeyValue::new("mode", record.mode.as_str().to_owned()),
-        KeyValue::new(
-            "status",
-            display_status(
-                record.status,
-                record.latest_attempt.stale,
-                &record.active_attempt,
-            ),
-        ),
+        KeyValue::new("base-status", record.status.as_str().to_owned()),
+        KeyValue::new("effective-status", record.effective_status()),
+        KeyValue::new("freshness", record.freshness_label().to_owned()),
         KeyValue::new("gap", record.gap_class.to_owned()),
         KeyValue::new("entrypoint", record.entrypoint.render_full()),
         KeyValue::new("defined-in", record.primary_source.clone()),
@@ -205,6 +214,10 @@ fn render_demo_inspect(
         renderer.bullet_list("dependencies", &record.dependencies)?;
         renderer.text("")?;
     }
+
+    renderer.section("Actions")?;
+    renderer.key_values(&record.actions().to_key_values())?;
+    renderer.text("")?;
 
     renderer.section("Active Attempt")?;
     renderer.key_values(&record.active_attempt.to_key_values())?;
@@ -529,6 +542,161 @@ fn render_demo_execute_text(
     )?;
     renderer.text("")?;
     render_utf8(renderer.into_inner())
+}
+
+fn query_is_empty(query: &DemoListQuery) -> bool {
+    query.search.is_none()
+        && query.owner.is_none()
+        && query.tag.is_none()
+        && query.mode.is_none()
+        && query.cover.is_none()
+        && query.status.is_none()
+        && query.gap.is_none()
+        && !query.stale_only
+}
+
+fn demo_list_query_to_json(query: &DemoListQuery) -> JsonValue {
+    json!({
+        "search": query.search,
+        "owner": query.owner,
+        "tag": query.tag,
+        "mode": query.mode.map(|value| value.as_str()),
+        "cover": query.cover,
+        "status": query.status.map(|value| value.as_str()),
+        "gap": query.gap.map(|value| value.as_str()),
+        "stale_only": query.stale_only,
+        "group_by": query.group_by.map(|value| value.as_str()),
+    })
+}
+
+fn demo_list_query_to_key_values(query: &DemoListQuery) -> Vec<KeyValue> {
+    let mut values = Vec::new();
+    if let Some(search) = &query.search {
+        values.push(KeyValue::new("search", search.clone()));
+    }
+    if let Some(owner) = &query.owner {
+        values.push(KeyValue::new("owner", owner.clone()));
+    }
+    if let Some(tag) = &query.tag {
+        values.push(KeyValue::new("tag", tag.clone()));
+    }
+    if let Some(mode) = query.mode {
+        values.push(KeyValue::new("mode", mode.as_str().to_owned()));
+    }
+    if let Some(cover) = &query.cover {
+        values.push(KeyValue::new("cover", cover.clone()));
+    }
+    if let Some(status) = query.status {
+        values.push(KeyValue::new("status", status.as_str().to_owned()));
+    }
+    if let Some(gap) = query.gap {
+        values.push(KeyValue::new("gap", gap.as_str().to_owned()));
+    }
+    if query.stale_only {
+        values.push(KeyValue::new("stale-only", "yes".to_owned()));
+    }
+    if let Some(group_by) = query.group_by {
+        values.push(KeyValue::new("group-by", group_by.as_str().to_owned()));
+    }
+    values
+}
+
+fn demo_table_spec(demos: &[&DemoRecord]) -> TableSpec {
+    TableSpec::new(
+        vec![
+            "ID".to_owned(),
+            "Title".to_owned(),
+            "Owner".to_owned(),
+            "Mode".to_owned(),
+            "Status".to_owned(),
+            "Gap".to_owned(),
+            "Actions".to_owned(),
+            "Entrypoint".to_owned(),
+        ],
+        demos
+            .iter()
+            .map(|demo| {
+                vec![
+                    demo.id.clone(),
+                    demo.title.clone(),
+                    demo.owner.clone(),
+                    demo.mode.as_str().to_owned(),
+                    demo.effective_status(),
+                    demo.gap_class.to_owned(),
+                    demo.actions().summary_label(),
+                    demo.entrypoint.render_compact(),
+                ]
+            })
+            .collect(),
+    )
+}
+
+fn build_demo_groups<'a>(demos: &'a [DemoRecord], group_by: DemoListGroupBy) -> Vec<DemoGroup<'a>> {
+    let mut groups: BTreeMap<String, Vec<&DemoRecord>> = BTreeMap::new();
+    for demo in demos {
+        match group_by {
+            DemoListGroupBy::Owner => {
+                groups.entry(demo.owner.clone()).or_default().push(demo);
+            }
+            DemoListGroupBy::Tag => {
+                if demo.tags.is_empty() {
+                    groups
+                        .entry("(untagged)".to_owned())
+                        .or_default()
+                        .push(demo);
+                } else {
+                    for tag in &demo.tags {
+                        groups.entry(tag.clone()).or_default().push(demo);
+                    }
+                }
+            }
+            DemoListGroupBy::Mode => {
+                groups
+                    .entry(demo.mode.as_str().to_owned())
+                    .or_default()
+                    .push(demo);
+            }
+            DemoListGroupBy::Cover => {
+                if demo.covers.is_empty() {
+                    groups
+                        .entry("(unmapped)".to_owned())
+                        .or_default()
+                        .push(demo);
+                } else {
+                    for cover in &demo.covers {
+                        groups.entry(cover.clone()).or_default().push(demo);
+                    }
+                }
+            }
+            DemoListGroupBy::Status => {
+                groups
+                    .entry(demo.effective_status())
+                    .or_default()
+                    .push(demo);
+            }
+            DemoListGroupBy::Gap => {
+                groups
+                    .entry(demo.gap_class.to_owned())
+                    .or_default()
+                    .push(demo);
+            }
+        }
+    }
+
+    groups
+        .into_iter()
+        .map(|(label, demos)| DemoGroup { label, demos })
+        .collect()
+}
+
+fn availability_label(available: bool, reason: Option<&str>) -> String {
+    if available {
+        "yes".to_owned()
+    } else if let Some(reason) = reason {
+        format!("no ({reason})")
+    } else {
+        "no".to_owned()
+    }
 }
 
 fn build_demo_record(
@@ -1367,6 +1535,41 @@ struct DemoRecord {
 }
 
 impl DemoRecord {
+    fn effective_status(&self) -> String {
+        display_status(self.status, self.latest_attempt.stale, &self.active_attempt)
+    }
+
+    fn freshness_label(&self) -> &'static str {
+        if self.latest_attempt.stale {
+            "stale"
+        } else {
+            "current"
+        }
+    }
+
+    fn actions(&self) -> DemoActionAvailability {
+        let can_run = !self.active_attempt.active;
+        let can_rerun = !self.active_attempt.active;
+        let can_stop = self.active_attempt.active && self.active_attempt.stoppable;
+        DemoActionAvailability {
+            run_available: can_run,
+            run_reason: (!can_run).then(|| {
+                "an active attempt already exists; stop it before starting a fresh run".to_owned()
+            }),
+            stop_available: can_stop,
+            stop_reason: if can_stop {
+                None
+            } else if self.active_attempt.active {
+                Some("the active attempt is not stoppable through the current runtime".to_owned())
+            } else {
+                Some("no active attempt is currently running".to_owned())
+            },
+            rerun_available: can_rerun,
+            rerun_reason: (!can_rerun)
+                .then(|| "an active attempt already exists; stop it before rerunning".to_owned()),
+        }
+    }
+
     fn to_json_summary(&self) -> JsonValue {
         json!({
             "id": self.id,
@@ -1375,13 +1578,15 @@ impl DemoRecord {
             "owner": self.owner,
             "mode": self.mode.as_str(),
             "status": self.status.as_str(),
-            "effective_status": display_status(self.status, self.latest_attempt.stale, &self.active_attempt),
+            "effective_status": self.effective_status(),
+            "freshness": self.freshness_label(),
             "stale": self.latest_attempt.stale,
             "gap_class": self.gap_class,
             "covers": self.covers,
             "tags": self.tags,
             "entrypoint": self.entrypoint.to_json(),
             "defined_in": self.primary_source,
+            "actions": self.actions().to_json(),
             "active_attempt": self.active_attempt.to_json(),
             "latest_attempt": self.latest_attempt.to_json(),
         })
@@ -1396,7 +1601,8 @@ impl DemoRecord {
             "owner": self.owner,
             "mode": self.mode.as_str(),
             "status": self.status.as_str(),
-            "effective_status": display_status(self.status, self.latest_attempt.stale, &self.active_attempt),
+            "effective_status": self.effective_status(),
+            "freshness": self.freshness_label(),
             "stale": self.latest_attempt.stale,
             "gap_class": self.gap_class,
             "covers": self.covers,
@@ -1406,8 +1612,151 @@ impl DemoRecord {
             "entrypoint": self.entrypoint.to_json(),
             "defined_in": self.primary_source,
             "sources": self.sources,
+            "actions": self.actions().to_json(),
             "active_attempt": self.active_attempt.to_json(),
             "latest_attempt": self.latest_attempt.to_json(),
+        })
+    }
+
+    fn matches_query(&self, query: &DemoListQuery) -> bool {
+        if let Some(search) = &query.search {
+            let needle = search.to_ascii_lowercase();
+            let haystacks = [&self.id, &self.title, &self.summary];
+            if !haystacks
+                .iter()
+                .any(|value| value.to_ascii_lowercase().contains(&needle))
+            {
+                return false;
+            }
+        }
+        if let Some(owner) = &query.owner {
+            if &self.owner != owner {
+                return false;
+            }
+        }
+        if let Some(tag) = &query.tag {
+            if !self.tags.iter().any(|value| value == tag) {
+                return false;
+            }
+        }
+        if let Some(mode) = query.mode {
+            if self.mode.as_str() != mode.as_str() {
+                return false;
+            }
+        }
+        if let Some(cover) = &query.cover {
+            if !self.covers.iter().any(|value| value == cover) {
+                return false;
+            }
+        }
+        if let Some(status) = query.status {
+            if self.browser_status() != status {
+                return false;
+            }
+        }
+        if let Some(gap) = query.gap {
+            if self.gap_class != gap.as_str() {
+                return false;
+            }
+        }
+        if query.stale_only && !self.latest_attempt.stale {
+            return false;
+        }
+        true
+    }
+
+    fn browser_status(&self) -> DemoListStatus {
+        if self.active_attempt.active {
+            return DemoListStatus::Running;
+        }
+        match self.status {
+            ManifestDemoStatus::Planned => DemoListStatus::Planned,
+            ManifestDemoStatus::Ready => DemoListStatus::Ready,
+            ManifestDemoStatus::Running => DemoListStatus::Running,
+            ManifestDemoStatus::Passed => DemoListStatus::Passed,
+            ManifestDemoStatus::Failed => DemoListStatus::Failed,
+            ManifestDemoStatus::Broken => DemoListStatus::Broken,
+            ManifestDemoStatus::Missing => DemoListStatus::Missing,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DemoActionAvailability {
+    run_available: bool,
+    run_reason: Option<String>,
+    stop_available: bool,
+    stop_reason: Option<String>,
+    rerun_available: bool,
+    rerun_reason: Option<String>,
+}
+
+impl DemoActionAvailability {
+    fn summary_label(&self) -> String {
+        let mut actions = Vec::new();
+        if self.run_available {
+            actions.push("run");
+        }
+        if self.stop_available {
+            actions.push("stop");
+        }
+        if self.rerun_available {
+            actions.push("rerun");
+        }
+        if actions.is_empty() {
+            "none".to_owned()
+        } else {
+            actions.join(", ")
+        }
+    }
+
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "run": {
+                "available": self.run_available,
+                "reason": self.run_reason,
+            },
+            "stop": {
+                "available": self.stop_available,
+                "reason": self.stop_reason,
+            },
+            "rerun": {
+                "available": self.rerun_available,
+                "reason": self.rerun_reason,
+            },
+        })
+    }
+
+    fn to_key_values(&self) -> Vec<KeyValue> {
+        vec![
+            KeyValue::new(
+                "run",
+                availability_label(self.run_available, self.run_reason.as_deref()),
+            ),
+            KeyValue::new(
+                "stop",
+                availability_label(self.stop_available, self.stop_reason.as_deref()),
+            ),
+            KeyValue::new(
+                "rerun",
+                availability_label(self.rerun_available, self.rerun_reason.as_deref()),
+            ),
+        ]
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DemoGroup<'a> {
+    label: String,
+    demos: Vec<&'a DemoRecord>,
+}
+
+impl DemoGroup<'_> {
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "label": self.label,
+            "count": self.demos.len(),
+            "demos": self.demos.iter().map(|demo| demo.to_json_summary()).collect::<Vec<_>>(),
         })
     }
 }
@@ -1569,9 +1918,12 @@ impl DemoLatestAttempt {
             "recorded": self.recorded,
             "state": self.state_label(),
             "receipt_path": self.receipt_path,
+            "receipt_present": self.receipt_path.is_some(),
             "outcome": self.outcome,
             "summary": self.summary,
+            "freshness": if self.stale { "stale" } else { "current" },
             "stale": self.stale,
+            "artifact_count": self.artifacts.len(),
             "artifacts": self.artifacts,
             "parse_error": self.parse_error,
         })
