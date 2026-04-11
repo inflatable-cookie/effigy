@@ -1,6 +1,6 @@
 # 037 Implement Demo History Attempt Drilldown
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -52,6 +52,6 @@ the browser.
 
 ## Next Task
 
-Use the next active ready card to implement bounded historical-attempt
-drilldown inside `demo history`, then decide whether any later history density
-belongs in the browser or should remain query-first.
+Execute [`038-decide-demo-post-history-drilldown-boundary.md`](./038-decide-demo-post-history-drilldown-boundary.md)
+to choose the next bounded follow-up after historical-attempt drilldown without
+reopening browser churn or widening into generic timeline tooling.

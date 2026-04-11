@@ -131,6 +131,8 @@ fn parse_demo_history_with_limit_repo_and_json() {
         "login-smoke".to_owned(),
         "--limit".to_owned(),
         "5".to_owned(),
+        "--attempt".to_owned(),
+        "login-smoke-123".to_owned(),
         "--json".to_owned(),
     ])
     .expect("parse should succeed");
@@ -141,6 +143,7 @@ fn parse_demo_history_with_limit_repo_and_json() {
             subcommand: DemoSubcommand::History {
                 demo_id: "login-smoke".to_owned(),
                 limit: Some(5),
+                attempt_id: Some("login-smoke-123".to_owned()),
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,

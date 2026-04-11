@@ -692,6 +692,7 @@ task = "demo:login-smoke"
     assert_eq!(parsed["result"]["demo"]["id"], "login-smoke");
     assert_eq!(parsed["result"]["query"]["demo_id"], "login-smoke");
     assert_eq!(parsed["result"]["query"]["limit"], 1);
+    assert_eq!(parsed["result"]["query"]["attempt_id"], Value::Null);
     assert_eq!(parsed["result"]["attempt_history"]["stored_count"], 2);
     assert_eq!(parsed["result"]["attempt_history"]["displayed_count"], 1);
     assert_eq!(parsed["result"]["attempt_history"]["count"], 1);
@@ -708,6 +709,80 @@ task = "demo:login-smoke"
         "passed"
     );
     assert_eq!(parsed["result"]["latest_attempt"]["outcome"], "passed");
+    assert_eq!(parsed["result"]["selected_attempt"], Value::Null);
+}
+
+#[test]
+fn cli_demo_history_json_can_drill_into_selected_attempt() {
+    let root = temp_workspace("demo-history-drilldown-json");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks]
+"demo:login-smoke" = "printf login-proof-ok"
+
+[demos.login-smoke]
+title = "Login Smoke"
+summary = "Proves the local login flow reaches an authenticated state."
+proof = "Verify the default local login journey succeeds end to end."
+owner = "auth"
+mode = "interactive"
+status = "ready"
+tags = ["auth", "smoke"]
+covers = ["auth.login"]
+task = "demo:login-smoke"
+"#,
+    )
+    .expect("write demo manifest");
+
+    let first = run_json_cli_command(&root, &["demo", "run", "login-smoke"]);
+    assert!(first.status.success(), "first demo run failed: {first:?}");
+    std::thread::sleep(Duration::from_millis(2));
+    let second = run_json_cli_command(&root, &["demo", "rerun", "login-smoke"]);
+    assert!(
+        second.status.success(),
+        "second demo run failed: {second:?}"
+    );
+
+    let history = run_json_cli_command(&root, &["demo", "history", "login-smoke"]);
+    assert!(history.status.success(), "demo history failed: {history:?}");
+    let parsed_history = parse_stdout_json(&history);
+    let selected_attempt_id = parsed_history["result"]["attempt_history"]["attempts"][1]
+        ["attempt_id"]
+        .as_str()
+        .expect("selected attempt id")
+        .to_owned();
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "demo",
+            "history",
+            "login-smoke",
+            "--attempt",
+            &selected_attempt_id,
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "drilldown history failed: {output:?}"
+    );
+    let parsed = parse_stdout_json(&output);
+
+    assert_eq!(parsed["result"]["schema"], "effigy.demo.history.v1");
+    assert_eq!(parsed["result"]["query"]["attempt_id"], selected_attempt_id);
+    assert_eq!(
+        parsed["result"]["selected_attempt"]["attempt_id"],
+        parsed["result"]["attempt_history"]["attempts"][1]["attempt_id"]
+    );
+    assert_eq!(
+        parsed["result"]["selected_attempt"]["outcome"],
+        parsed["result"]["attempt_history"]["attempts"][1]["outcome"]
+    );
+    assert!(parsed["result"]["selected_attempt"]["receipt_path"]
+        .as_str()
+        .expect("receipt path")
+        .contains("login-smoke"));
 }
 
 #[test]
