@@ -18,8 +18,9 @@ manifest, not to teach people more wrapper scripts.
   `effigy test`, `effigy watch`, `effigy init`, and `effigy migrate`.
 - Discover repo-owned proof demos with `effigy demo list`, inspect the latest
   known or currently running proof state with `effigy demo inspect <id>`,
-  record a normalized proof attempt with `effigy demo run <id>`, and use
-  `demo stop` / `demo rerun` for runner-owned lifecycle control.
+  query retained attempt history with `effigy demo history <id>`, record a
+  normalized proof attempt with `effigy demo run <id>`, and use `demo stop` /
+  `demo rerun` for runner-owned lifecycle control.
 - Move CI and agent automation onto stable JSON with `effigy --json <command>`.
 - Replace scattered release and validation scripts with built-in command
   surfaces as adoption grows.
@@ -160,12 +161,14 @@ effigy demo list
 effigy demo browser
 effigy demo list --group-by gap
 effigy demo inspect browser-proof-report
+effigy demo history browser-proof-report
 effigy demo run browser-proof-report
 effigy demo run lifecycle-window
 effigy demo stop lifecycle-window
 effigy demo list --owner auth --status ready
 effigy demo list --group-by owner --stale-only
 effigy demo inspect login-smoke
+effigy demo history login-smoke --limit 5
 effigy demo run login-smoke
 effigy demo stop login-smoke
 effigy demo rerun login-smoke
@@ -215,6 +218,9 @@ This repo now self-hosts two realistic demos:
 - `demo inspect <id>` now shows the latest terminal receipt plus a bounded
   recent-attempt history so operators can review what happened before the most
   recent run without widening into full timeline UI yet
+- `demo history <id>` now gives that retained result timeline its own
+  dedicated query surface, with optional `--limit <N>` trimming, so one demo's
+  history no longer has to live only inside the broader inspect payload
 
 ### Automate safely
 
@@ -324,6 +330,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to ship a separate result-history query
-surface before widening `demo list` or the browser again, while keeping
-broader runtime and desktop-client questions deferred.
+Use the active `g02.003` ready card to decide the next bounded follow-up after
+the shipped `demo history` query surface, while keeping broader runtime and
+desktop-client questions deferred.

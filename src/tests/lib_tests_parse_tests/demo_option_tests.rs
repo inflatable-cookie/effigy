@@ -122,6 +122,33 @@ fn parse_demo_inspect_with_repo_and_json() {
 }
 
 #[test]
+fn parse_demo_history_with_limit_repo_and_json() {
+    let cmd = parse_command(vec![
+        "demo".to_owned(),
+        "history".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "login-smoke".to_owned(),
+        "--limit".to_owned(),
+        "5".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Demo(DemoArgs {
+            subcommand: DemoSubcommand::History {
+                demo_id: "login-smoke".to_owned(),
+                limit: Some(5),
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_demo_run_with_repo_and_json() {
     let cmd = parse_command(vec![
         "demo".to_owned(),

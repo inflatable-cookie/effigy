@@ -162,6 +162,7 @@ effigy demo browser
 effigy demo list --owner signal --status ready
 effigy demo list --group-by owner --stale-only
 effigy demo inspect login-smoke
+effigy demo history login-smoke --limit 5
 effigy demo run login-smoke
 effigy demo stop login-smoke
 effigy demo rerun login-smoke
@@ -195,6 +196,9 @@ Lifecycle notes:
 - `demo inspect` now shows both the latest terminal receipt and any active
   in-flight attempt, plus explicit action availability, receipt freshness, and
   a bounded recent-attempt history for older terminal outcomes.
+- `demo history <id>` gives that retained result history a dedicated query
+  surface, with optional `--limit <N>` trimming, so operators can inspect one
+  demo's recent terminal outcomes without overloading the broader inspect view.
 - `demo stop <id>` works for directly runner-owned run-backed demos.
 - `demo rerun <id>` starts a fresh attempt and fails fast if the demo is
   already active.

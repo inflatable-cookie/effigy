@@ -653,6 +653,64 @@ task = "demo:login-smoke"
 }
 
 #[test]
+fn cli_demo_history_json_reports_recent_attempts_with_limit() {
+    let root = temp_workspace("demo-history-json");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks]
+"demo:login-smoke" = "printf login-proof-ok"
+
+[demos.login-smoke]
+title = "Login Smoke"
+summary = "Proves the local login flow reaches an authenticated state."
+proof = "Verify the default local login journey succeeds end to end."
+owner = "auth"
+mode = "interactive"
+status = "ready"
+tags = ["auth", "smoke"]
+covers = ["auth.login"]
+task = "demo:login-smoke"
+"#,
+    )
+    .expect("write demo manifest");
+
+    let first = run_json_cli_command(&root, &["demo", "run", "login-smoke"]);
+    assert!(first.status.success(), "first demo run failed: {first:?}");
+    std::thread::sleep(Duration::from_millis(2));
+    let second = run_json_cli_command(&root, &["demo", "rerun", "login-smoke"]);
+    assert!(
+        second.status.success(),
+        "second demo run failed: {second:?}"
+    );
+
+    let output = run_json_cli_command(&root, &["demo", "history", "login-smoke", "--limit", "1"]);
+    assert!(output.status.success(), "demo history failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+
+    assert_eq!(parsed["result"]["schema"], "effigy.demo.history.v1");
+    assert_eq!(parsed["result"]["demo"]["id"], "login-smoke");
+    assert_eq!(parsed["result"]["query"]["demo_id"], "login-smoke");
+    assert_eq!(parsed["result"]["query"]["limit"], 1);
+    assert_eq!(parsed["result"]["attempt_history"]["stored_count"], 2);
+    assert_eq!(parsed["result"]["attempt_history"]["displayed_count"], 1);
+    assert_eq!(parsed["result"]["attempt_history"]["count"], 1);
+    assert_eq!(parsed["result"]["attempt_history"]["limit"], 1);
+    assert_eq!(
+        parsed["result"]["attempt_history"]["attempts"]
+            .as_array()
+            .expect("attempt array")
+            .len(),
+        1
+    );
+    assert_eq!(
+        parsed["result"]["attempt_history"]["attempts"][0]["outcome"],
+        "passed"
+    );
+    assert_eq!(parsed["result"]["latest_attempt"]["outcome"], "passed");
+}
+
+#[test]
 fn cli_demo_run_json_run_backed_failure_writes_receipt_and_reports_failure() {
     let root = temp_workspace("demo-run-shell-json");
     fs::create_dir_all(root.join("receipts")).expect("mkdir receipts");

@@ -69,6 +69,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to ship a separate result-history
-query surface before widening list/browser density again, then keep runtime
-expansion and desktop-client questions separate.
+Execute the active `g02.003` ready card next to decide the next bounded
+follow-up after the shipped `demo history` query surface, then keep browser
+density, runtime expansion, and desktop-client questions separate.

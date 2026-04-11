@@ -266,6 +266,13 @@ pub enum DemoSubcommand {
         /// Stable demo id carried by the `[demos.<id>]` map key.
         demo_id: String,
     },
+    /// Query retained terminal-attempt history for one declared demo.
+    History {
+        /// Stable demo id carried by the `[demos.<id>]` map key.
+        demo_id: String,
+        /// Optional maximum number of recent attempts to render.
+        limit: Option<usize>,
+    },
     /// Execute one declared demo and record a normalized latest attempt.
     Run {
         /// Stable demo id carried by the `[demos.<id>]` map key.
