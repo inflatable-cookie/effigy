@@ -63,6 +63,5 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.002` ready card on implementation-slice and proof
-boundary next, then either leave another explicit ready card or return the lane
-to a real intent checkpoint.
+Execute the active `g02.002` implementation-ready card next, then either leave
+another explicit ready card or return the lane to a real intent checkpoint.

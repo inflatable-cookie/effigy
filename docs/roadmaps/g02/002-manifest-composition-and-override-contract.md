@@ -242,6 +242,16 @@ that is explained in tooling.
 - [ ] Prove that demo planning can rely on the contract without needing a
       demo-only loader
 
+### Batch 02.5 - First Implementation Slice
+
+- [ ] Add root and nested manifest composition loading for `effigy.toml` plus
+      included partial fragments
+- [ ] Enforce the decided conflict/override rules during composed-manifest load
+- [ ] Surface composition failures through normal manifest parse/doctor paths
+- [ ] Add one minimal effective-manifest inspection surface under `effigy config`
+- [ ] Prove the first implementation against at least one cross-feature split
+      such as `tasks + docs_policy` or `tasks + release`
+
 ## 8) Acceptance Criteria
 
 - [x] Effigy has one documented root composition direction for arbitrary
@@ -329,8 +339,60 @@ The likely product surface is an extension of `effigy config`, not a second
 manifest-specific app. Exact command spelling can remain implementation-batch
 work so long as the explainability requirements are fixed now.
 
+## 11) Batch `02.4` Decision: First Implementation Slice
+
+### 11.1 Narrowest Honest First Ship
+
+The first implementation slice should cover:
+
+- loading `effigy.toml`
+- recursively loading included partial fragments
+- composing the effective manifest with the agreed conflict/override model
+- failing clearly on unreadable fragments, cycles, invalid override paths, and
+  illegal conflicts
+- making the composed result inspectable enough that operators are not forced
+  to debug merge behavior from guesswork
+
+It should not try to ship:
+
+- fragment generation helpers
+- init/migrate support for composed manifests
+- automatic fragment refactors
+- broad repo migrations
+- demo-specific config support
+
+### 11.2 Minimum Inspection Surface
+
+The first implementation must ship with one minimal effective-manifest
+inspection surface under `effigy config`.
+
+Required capabilities:
+
+- show include graph and evaluation order
+- show effective source file for resolved values
+- show which paths were overridden and by which later fragment
+- expose the same facts in text and JSON
+
+The exact final command spelling can remain implementation work, but the first
+implementation is under-scoped if it only loads composed manifests without
+providing this inspection surface.
+
+### 11.3 First Proof Boundary
+
+The first proof boundary should be one synthetic or fixture-backed cross-feature
+slice that demonstrates the model is not task-only.
+
+Preferred proof:
+
+- split `tasks` and either `docs_policy` or `release` across included fragments
+- prove Effigy can load, route, and validate against the composed result
+- prove the inspection surface shows the include graph and effective sources
+
+That is enough to validate feature-agnostic composition before `g02.003`
+depends on it. A real-repo migration can remain a later proof wave.
+
 ## Next Task
 
-Use the active `g02.002` strict lane to define the first implementation-shaping
-batch and feature-compatibility proof boundary now that composition shape,
-override posture, and explainability expectations are explicit.
+Use the active `g02.002` strict lane to open the first implementation-ready
+batch around composed-manifest loading, conflict enforcement, and minimal config
+inspection, then prove it on one cross-feature split before demos depend on it.

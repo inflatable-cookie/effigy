@@ -28,7 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.002` ready card to decide the first implementation slice
-and proof boundary next. Keep `g02.003` planned but inactive until split-config
-and override rules are explicit enough that demos do not invent their own
-loading semantics.
+Use the active `g02.002` implementation-ready card to build the composed
+manifest foundation next. Keep `g02.003` planned but inactive until split-config
+and override rules are real product surface instead of planning-only doctrine.
