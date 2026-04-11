@@ -192,10 +192,11 @@ The first browser foundation gives you:
 - a grouped demo list on the left
 - a detail pane for the selected demo
 - in-browser `run`, `stop`, `rerun`, and refresh actions
+- artifact selection with `[` and `]`, plus `o` to open the selected artifact
 
-It deliberately stops short of embedded log streaming or rich artifact
-rendering. The current slice is about honest navigation and lifecycle control
-on top of the shipped runner surface.
+It deliberately stops short of live log streaming or rich artifact rendering.
+The current slice is about honest navigation, lifecycle control, and opening
+the artifacts the runner already knows about.
 
 This repo now self-hosts two realistic demos:
 - `browser-proof-report` generates a small HTML report plus text snapshots under
@@ -311,6 +312,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement artifact-opening affordances
-in the demo browser next, while live log visibility and broader runtime
-cancellation stay deferred.
+Use the active `g02.003` ready card to decide whether live log visibility is
+still the next honest browser follow-up now that artifact-opening affordances
+are shipped.

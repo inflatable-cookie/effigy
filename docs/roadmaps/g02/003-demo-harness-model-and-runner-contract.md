@@ -920,21 +920,41 @@ Why this is the right next slice:
 
 ### 10.13 Browser Artifact-Affordance Slice
 
-Batch `03.16` target:
+Batch `03.16` delivered:
 
 Implement bounded artifact-opening affordances in the demo browser.
 
-In scope for the next implementation slice:
+Shipped in the current repo:
 
-- surface artifact references as first-class browser actions
-- support one honest open or reveal action for the selected artifact path
-- report missing or unopenable artifact targets clearly
-- keep the implementation grounded in the existing runner-owned artifact state
+- artifact selection inside `demo browser` with `[` and `]`
+- one bounded open action with `o` for the selected artifact path
+- honest failure messaging when the artifact is missing or no opener can be
+  launched
+- no widening into live log streaming or terminal emulation
 
-Out of scope for the next implementation slice:
+What this proved:
 
-- live log streaming or log tailing
-- embedded terminal behavior
+- the browser can now act on runner-owned proof artifacts instead of only
+  listing them as inert strings
+- artifact access was the tighter post-foundation follow-up than log streaming
+- the next browser question is now whether live log visibility is still the
+  right next bounded slice after artifact access is usable
+
+### 10.14 Post-Artifact Follow-Up Boundary
+
+Batch `03.17` target:
+
+Decide the next bounded browser follow-up now that artifact-opening is shipped.
+
+In scope for the next planning slice:
+
+- decide whether live log visibility is the next honest browser slice
+- confirm whether any tighter follow-up is needed before log visibility
+- keep the decision grounded in the shipped browser and self-hosted demos
+
+Out of scope for the next planning slice:
+
+- implementing the next browser slice
 - broadening generic runtime cancellation
 - desktop-client decisions
 - multi-attempt history or queueing
@@ -960,6 +980,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to implement browser artifact-opening
-affordances next, then revisit live log visibility without reopening broader
-runtime-cancellation scope.
+Use the active `g02.003` strict lane to decide whether live log visibility is
+the next honest browser follow-up now that artifact-opening is shipped, without
+reopening broader runtime-cancellation scope.

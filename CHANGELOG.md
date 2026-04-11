@@ -41,6 +41,9 @@ During v0.x, MINOR bumps may include breaking changes.
   foundation, with grouped list/detail browsing plus bounded in-browser
   `run`, `stop`, `rerun`, and refresh actions on top of the shipped demo
   runner surface
+- Add bounded artifact-opening support inside `effigy demo browser`, so
+  operators can select a recorded artifact reference and open it without
+  leaving the browser or depending on project-local glue
 
 ### Changed
 - Route catalog discovery, doctor strict-parse checks, docs-policy loading, and

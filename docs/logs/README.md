@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04-11-demo-browser-artifact-affordances-implementation.md`](./2026-04/11-demo-browser-artifact-affordances-implementation.md)
 - [`2026-04-11-demo-browser-follow-up-slice-decision.md`](./2026-04/11-demo-browser-follow-up-slice-decision.md)
 - [`2026-04-11-demo-browser-list-detail-foundation-implementation.md`](./2026-04/11-demo-browser-list-detail-foundation-implementation.md)
 - [`2026-04-11-demo-browser-foundation-slice-decision.md`](./2026-04/11-demo-browser-foundation-slice-decision.md)
