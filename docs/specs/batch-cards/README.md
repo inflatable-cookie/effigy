@@ -24,7 +24,8 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`018-implement-demo-browser-state-and-query-polish.md`](./018-implement-demo-browser-state-and-query-polish.md) (complete)
 - [`019-decide-demo-browser-foundation-slice.md`](./019-decide-demo-browser-foundation-slice.md) (complete)
 - [`020-implement-demo-browser-list-detail-foundation.md`](./020-implement-demo-browser-list-detail-foundation.md) (complete)
-- [`021-decide-demo-browser-follow-up-slice.md`](./021-decide-demo-browser-follow-up-slice.md)
+- [`021-decide-demo-browser-follow-up-slice.md`](./021-decide-demo-browser-follow-up-slice.md) (complete)
+- [`022-implement-demo-browser-artifact-affordances.md`](./022-implement-demo-browser-artifact-affordances.md)
 
 ## Next Task
 

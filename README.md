@@ -311,6 +311,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to decide whether the next browser slice
-should prioritize live log visibility or artifact-opening affordances while
-broader runtime cancellation stays deferred.
+Use the active `g02.003` ready card to implement artifact-opening affordances
+in the demo browser next, while live log visibility and broader runtime
+cancellation stay deferred.

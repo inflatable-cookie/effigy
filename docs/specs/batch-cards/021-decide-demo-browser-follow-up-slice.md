@@ -1,6 +1,6 @@
 # 021 Decide Demo Browser Follow-Up Slice
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -49,5 +49,5 @@ demo browser with in-browser action dispatch.
 
 ## Next Task
 
-Use the shipped demo browser plus the self-hosted demos to decide whether
-Effigy should add live log visibility or artifact-opening affordances next.
+Implement the next bounded browser slice around artifact-opening affordances,
+then revisit live log visibility separately.
