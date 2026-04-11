@@ -191,23 +191,21 @@ cargo run --bin effigy -- demo browser
 The first browser foundation gives you:
 - a grouped demo list on the left
 - a detail pane for the selected demo
-- enter-led action dispatch for `run`, `stop`, `rerun`, open-artifact, and
-  refresh actions
-- a calmer interaction model built around arrow keys, `Enter`, `Esc`, `/`, and
-  `f`
+- panel focus with `←` / `→`, so the list and detail side behave as distinct
+  controls instead of one overloaded document
+- `Enter` opening the action sheet from the list or the selected artifact from
+  the detail side
+- a calmer interaction model built around arrow keys, `Enter`, `Esc`, `/`,
+  and `f`
 - a single filter sheet for search-adjacent controls over owner, tag, mode,
   cover, status, gap, stale-only, and grouping
-- artifact selection with `←` and `→`, plus artifact opening through the action
-  sheet
-- bounded recent stdout/stderr visibility for the selected demo when runner-
-  owned logs exist
-- bounded detail-pane navigation with `PgUp`/`PgDn` or `J`/`K`, plus
-  `Home`/`End` for longer selected-demo records
+- artifact selection as a simple list on the detail side, browsed with `↑` /
+  `↓` once that panel is focused
 
 It still deliberately stops short of terminal emulation, rich artifact
 rendering, and multi-attempt history. The current slice is about honest
-navigation, lifecycle control, opening the artifacts the runner already knows
-about, and showing recent proof output without leaving the browser.
+navigation, lifecycle control, and opening the artifacts the runner already
+knows about without leaving the browser.
 
 This repo now self-hosts two realistic demos:
 - `browser-proof-report` generates a small HTML report plus text snapshots under

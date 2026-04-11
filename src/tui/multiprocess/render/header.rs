@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::tui::core::{effigy_panel_block, ProcessExitState};
+use crate::tui::core::{effigy_panel_block, ProcessExitState, EFFIGY_ACCENT, EFFIGY_MUTED};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Tabs};
@@ -36,9 +36,9 @@ pub(super) fn render_tabs(
                             .fg(Color::Yellow)
                             .add_modifier(Modifier::BOLD)
                     } else if idx == active_index {
-                        Style::default().fg(Color::Magenta)
+                        Style::default().fg(EFFIGY_ACCENT)
                     } else {
-                        Style::default().fg(Color::DarkGray)
+                        Style::default().fg(EFFIGY_MUTED)
                     }
                 }
             };
@@ -48,7 +48,7 @@ pub(super) fn render_tabs(
 
     let tabs = Tabs::new(titles)
         .select(active_index)
-        .block(panel_block(Some(" EFFIGY "), true, Color::Magenta))
+        .block(panel_block(Some(" EFFIGY "), true, EFFIGY_ACCENT))
         .highlight_style(Style::default().add_modifier(Modifier::BOLD));
     frame.render_widget(tabs, area);
 }

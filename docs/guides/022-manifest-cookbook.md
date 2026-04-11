@@ -183,18 +183,15 @@ Lifecycle notes:
   `--stale-only`, and `--group-by`.
 - `demo browser` now provides the first live list/detail TUI on top of the
   shipped registry, query, inspect, run, stop, and rerun surfaces.
-- inside `demo browser`, the primary flow is `↑`/`↓` to move through demos,
-  `←`/`→` to move across recorded artifacts, `Enter` to open the action
-  sheet, and `Esc` to close a sheet or quit the browser.
+- inside `demo browser`, `←`/`→` switches focus between the demo list and the
+  detail/artifact pane; `↑`/`↓` acts inside the focused panel; `Enter` opens
+  the action sheet from the list or opens the selected artifact from the
+  detail side; `Esc` closes a sheet or quits the browser.
 - inside `demo browser`, use `/` for direct search and `f` for the filter
   sheet, which now owns owner/tag/mode/cover/status/gap/stale/grouping
   controls.
-- `demo browser` now also shows bounded recent stdout/stderr output for the
-  selected demo when runner-owned logs are available from an active or latest
-  attempt.
-- inside `demo browser`, use `PgUp`/`PgDn` or `J`/`K` to move through longer
-  detail content, and `Home`/`End` to jump to the top or bottom of the
-  selected-demo record.
+- the detail side is now intentionally short and artifact-oriented rather than
+  a scrolling receipt/log document.
 - `demo inspect` now shows both the latest terminal receipt and any active
   in-flight attempt, plus explicit action availability and receipt freshness.
 - `demo stop <id>` works for directly runner-owned run-backed demos.
@@ -203,10 +200,9 @@ Lifecycle notes:
 - task-backed demos remain runnable, but stop is still an explicit
   `not supported through the current runtime` boundary.
 - the browser currently focuses on honest navigation, bounded action dispatch,
-  artifact-opening, recent proof output, bounded detail navigation, and
-  metadata-query parity with the shipped `demo list` contract; terminal
-  emulation, rich artifact rendering, and multi-attempt history remain
-  deferred.
+  artifact-opening, and metadata-query parity with the shipped `demo list`
+  contract; terminal emulation, richer detail rendering, and multi-attempt
+  history remain deferred.
 
 ## 3) Full Task Table with Runtime Controls
 
