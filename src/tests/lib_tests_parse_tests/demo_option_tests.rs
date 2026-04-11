@@ -68,3 +68,51 @@ fn parse_demo_run_with_repo_and_json() {
         })
     );
 }
+
+#[test]
+fn parse_demo_stop_with_repo_and_json() {
+    let cmd = parse_command(vec![
+        "demo".to_owned(),
+        "stop".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "login-smoke".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Demo(DemoArgs {
+            subcommand: DemoSubcommand::Stop {
+                demo_id: "login-smoke".to_owned(),
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_demo_rerun_with_repo_and_json() {
+    let cmd = parse_command(vec![
+        "demo".to_owned(),
+        "rerun".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "login-smoke".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Demo(DemoArgs {
+            subcommand: DemoSubcommand::Rerun {
+                demo_id: "login-smoke".to_owned(),
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}

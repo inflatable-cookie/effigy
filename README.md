@@ -17,8 +17,9 @@ manifest, not to teach people more wrapper scripts.
 - Standardize everyday workflows with built-ins such as `effigy doctor`,
   `effigy test`, `effigy watch`, `effigy init`, and `effigy migrate`.
 - Discover repo-owned proof demos with `effigy demo list`, inspect the latest
-  known proof state with `effigy demo inspect <id>`, and record a normalized
-  proof attempt with `effigy demo run <id>`.
+  known or currently running proof state with `effigy demo inspect <id>`,
+  record a normalized proof attempt with `effigy demo run <id>`, and use
+  `demo stop` / `demo rerun` for runner-owned lifecycle control.
 - Move CI and agent automation onto stable JSON with `effigy --json <command>`.
 - Replace scattered release and validation scripts with built-in command
   surfaces as adoption grows.
@@ -158,6 +159,8 @@ of another pile of ad hoc runner scripts.
 effigy demo list
 effigy demo inspect login-smoke
 effigy demo run login-smoke
+effigy demo stop login-smoke
+effigy demo rerun login-smoke
 effigy --json demo list
 ```
 
@@ -274,5 +277,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement the first bounded
-active-attempt, stop, and rerun slice now that the lifecycle model is settled.
+Use the active `g02.003` ready card to decide the next bounded post-lifecycle
+slice: browser-facing state polish versus broader stoppability/runtime
+expansion.

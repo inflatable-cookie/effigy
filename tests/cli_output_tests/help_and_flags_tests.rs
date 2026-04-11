@@ -233,6 +233,8 @@ fn cli_demo_help_is_command_specific() {
     assert!(stdout.contains("effigy demo list [--repo <PATH>] [--json]"));
     assert!(stdout.contains("effigy demo inspect <DEMO_ID> [--repo <PATH>] [--json]"));
     assert!(stdout.contains("effigy demo run <DEMO_ID> [--repo <PATH>] [--json]"));
+    assert!(stdout.contains("effigy demo stop <DEMO_ID> [--repo <PATH>] [--json]"));
+    assert!(stdout.contains("effigy demo rerun <DEMO_ID> [--repo <PATH>] [--json]"));
     assert!(!stdout.contains("docs Help"));
 }
 

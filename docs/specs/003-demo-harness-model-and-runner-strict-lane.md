@@ -67,7 +67,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to implement the first bounded
-active-attempt, stop, and rerun slice, then either leave a broader
-stoppability/browser-state follow-up or return the lane to a real runtime
-boundary checkpoint.
+Execute the active `g02.003` ready card next to decide the first honest
+post-lifecycle follow-up: browser-facing state polish versus broader
+stoppability/runtime expansion, then keep the lane bounded around that choice.

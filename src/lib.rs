@@ -164,6 +164,16 @@ pub enum DemoSubcommand {
         /// Stable demo id carried by the `[demos.<id>]` map key.
         demo_id: String,
     },
+    /// Stop one active demo attempt when the runner owns a stoppable handle.
+    Stop {
+        /// Stable demo id carried by the `[demos.<id>]` map key.
+        demo_id: String,
+    },
+    /// Start a fresh demo attempt from the current manifest definition.
+    Rerun {
+        /// Stable demo id carried by the `[demos.<id>]` map key.
+        demo_id: String,
+    },
 }
 
 /// Reusable docs QA subcommands.

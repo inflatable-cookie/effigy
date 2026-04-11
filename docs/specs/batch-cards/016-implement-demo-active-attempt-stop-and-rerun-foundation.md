@@ -1,6 +1,6 @@
 # 016 Implement Demo Active-Attempt, Stop, And Rerun Foundation
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -54,6 +54,6 @@ Implement the first honest lifecycle-control slice for Effigy's demo runner.
 
 ## Next Task
 
-If lifecycle control lands cleanly, open the next bounded runner card for
-broader stoppability or browser-facing state polish; otherwise return the lane
-to planning with an explicit runtime-boundary checkpoint.
+Use the next bounded runner/planning card to decide whether the follow-up
+should prioritize browser-facing state polish or broader stoppability/runtime
+expansion, now that the first honest lifecycle-control slice is shipped.

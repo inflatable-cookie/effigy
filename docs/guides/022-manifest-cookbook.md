@@ -160,12 +160,22 @@ Discovery, inspection, and execution:
 effigy demo list
 effigy demo inspect login-smoke
 effigy demo run login-smoke
+effigy demo stop login-smoke
+effigy demo rerun login-smoke
 effigy --json demo inspect login-smoke
 ```
 
 Use this when you need a stable proof inventory plus one operator-visible proof
-entrypoint now. Leave stop/rerun semantics and the later browser/TUI work for
-the next bounded runner batches.
+entrypoint now.
+
+Lifecycle notes:
+- `demo inspect` now shows both the latest terminal receipt and any active
+  in-flight attempt.
+- `demo stop <id>` works for directly runner-owned run-backed demos.
+- `demo rerun <id>` starts a fresh attempt and fails fast if the demo is
+  already active.
+- task-backed demos remain runnable, but stop is still an explicit
+  `not supported through the current runtime` boundary.
 
 ## 3) Full Task Table with Runtime Controls
 

@@ -129,6 +129,6 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to implement the first bounded
-active-attempt, stop, and rerun slice on top of the shipped demo registry,
-inspection, and run surfaces.
+Use the active strict `g02.003` spec lane to decide the next bounded
+post-lifecycle slice on top of the shipped demo registry, inspection, run,
+stop, and rerun surfaces.
