@@ -63,5 +63,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.002` implementation-ready card next, then either leave
-another explicit ready card or return the lane to a real intent checkpoint.
+Execute the active `g02.002` explainability/UX hardening card next, then either
+leave one final composition-ready card or return the lane to a real intent
+checkpoint before `g02.003` starts depending on this surface.

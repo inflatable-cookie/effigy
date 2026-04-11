@@ -1,6 +1,6 @@
 # 005 Implement Composed-Manifest Loading And Inspection Foundation
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.002`
 Spec: `docs/specs/002-manifest-composition-and-override-strict-lane.md`
@@ -50,8 +50,18 @@ Ship the first narrow composition implementation slice:
 - composition touches more runtime surfaces than one bounded batch can support
 - the inspection surface proves materially broader than the minimum contract
 
+## Outcome
+
+Completed in commit `7e14179`:
+
+- shipped composed-manifest loading through `[manifest].include`
+- enforced path-scoped overrides and conflict failures
+- added `effigy config --inspect`
+- proved the feature against a split `tasks + docs_policy` fixture
+
 ## Next Task
 
-Implement this batch, then leave the next move explicit as either a follow-up
-composition hardening batch or activation of `g02.003` planning on top of the
-new foundation.
+Open the next follow-up batch around composition explainability and operator
+UX, especially conflict diagnostics, effective-source rendering, and whether
+`effigy config` needs narrower source/path inspection before `g02.003`
+depends on this surface.
