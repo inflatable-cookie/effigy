@@ -6,16 +6,13 @@ use super::shared::{
 
 pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     renderer.section("demo Help")?;
-    renderer.text(
-        "Inspect the repo-owned demo registry and latest known proof state without starting demo execution.",
-    )?;
+    renderer.text("Discover, inspect, and execute the repo-owned demo registry.")?;
     renderer.text("")?;
 
     render_info_notices(
         renderer,
         &[
-            "The first shipped `demo` slice is discovery and inspection only.",
-            "Use `effigy demo list` to browse declared demos and `effigy demo inspect <DEMO_ID>` to inspect one record in detail.",
+            "Use `effigy demo list` to browse declared demos, `effigy demo inspect <DEMO_ID>` to inspect one record in detail, and `effigy demo run <DEMO_ID>` to record a new normalized attempt.",
         ],
     )?;
 
@@ -24,8 +21,10 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         &[
             "effigy demo list [--repo <PATH>] [--json]",
             "effigy demo inspect <DEMO_ID> [--repo <PATH>] [--json]",
+            "effigy demo run <DEMO_ID> [--repo <PATH>] [--json]",
             "effigy --json demo list [--repo <PATH>]",
             "effigy --json demo inspect <DEMO_ID> [--repo <PATH>]",
+            "effigy --json demo run <DEMO_ID> [--repo <PATH>]",
         ],
     )?;
 
@@ -35,7 +34,7 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             ("--repo <PATH>", "Run against a different repo root"),
             (
                 "--json",
-                "Render machine-readable demo discovery/inspection payloads",
+                "Render machine-readable demo discovery, inspection, or run payloads",
             ),
             ("-h, --help", "Print demo command help"),
         ],
@@ -48,6 +47,7 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         &[
             "effigy demo list",
             "effigy demo inspect plugin-capability-browser",
+            "effigy demo run login-smoke",
             "effigy --json demo inspect login-smoke",
         ],
     )?;

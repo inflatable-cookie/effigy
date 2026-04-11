@@ -151,18 +151,21 @@ Registry rules:
 - declare exactly one runnable entrypoint with `task = "..."` or `run = "..."`
 - `receipt` and `artifacts` are optional, but they let `effigy demo inspect`
   show the latest known proof state instead of only static metadata
+- if `receipt` is omitted, `effigy demo run` writes a normalized receipt to
+  `.effigy/demo/receipts/<demo-id>.json`
 
-Discovery and inspection:
+Discovery, inspection, and execution:
 
 ```sh
 effigy demo list
 effigy demo inspect login-smoke
+effigy demo run login-smoke
 effigy --json demo inspect login-smoke
 ```
 
-Use this foundation when you need a stable proof inventory now. Leave
-`demo run`, stop/rerun semantics, and the later browser/TUI work for the next
-bounded runner batches.
+Use this when you need a stable proof inventory plus one operator-visible proof
+entrypoint now. Leave stop/rerun semantics and the later browser/TUI work for
+the next bounded runner batches.
 
 ## 3) Full Task Table with Runtime Controls
 

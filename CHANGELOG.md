@@ -22,6 +22,9 @@ During v0.x, MINOR bumps may include breaking changes.
   and `effigy demo inspect <id>` so repos can expose proof/demo inventory,
   coverage, source provenance, and the latest known receipt/artifact state
   without depending on project-local script catalogs
+- Add `effigy demo run <id>` so task-backed and run-backed demos can execute
+  through a first-class CLI surface, write normalized latest-attempt receipts,
+  and immediately refresh the state reported by `demo inspect`
 
 ### Changed
 - Route catalog discovery, doctor strict-parse checks, docs-policy loading, and

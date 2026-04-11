@@ -67,7 +67,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` execution card next to add demo run semantics and
-normalized attempt creation, then either leave the next bounded runner card
-behind it or return the lane to a real intent checkpoint if execution exposes
-model drift.
+Execute the active `g02.003` ready card next to decide active-attempt, stop,
+and rerun semantics, then leave one bounded lifecycle execution card or a real
+intent checkpoint if the model still does not support process control cleanly.

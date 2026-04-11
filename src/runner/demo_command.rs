@@ -1,18 +1,25 @@
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value as JsonValue};
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
+use crate::runner::execute::run_manifest_task_with_cwd;
 use crate::runner::manifest::{
     load_task_manifest_with_inspection, LoadedTaskManifest, ManifestDemoConfig, ManifestDemoMode,
     ManifestDemoStatus,
 };
+use crate::runner::util::with_local_node_bin_path;
 use crate::ui::{KeyValue, NoticeLevel, Renderer, TableSpec};
-use crate::{DemoArgs, DemoSubcommand};
+use crate::{DemoArgs, DemoSubcommand, TaskInvocation};
 
 use super::error::RunnerError;
 use super::render::{encode_json, render_utf8, text_renderer};
+
+const DEMO_RECEIPTS_DIR: &str = ".effigy/demo/receipts";
 
 pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
     let cwd = current_working_dir()?;
@@ -25,6 +32,9 @@ pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
         DemoSubcommand::List => render_demo_list(&repo_root, &loaded, args.output_json),
         DemoSubcommand::Inspect { demo_id } => {
             render_demo_inspect(&repo_root, &loaded, &demo_id, args.output_json)
+        }
+        DemoSubcommand::Run { demo_id } => {
+            render_demo_run(&repo_root, &loaded, &demo_id, args.output_json)
         }
     }
 }
@@ -198,6 +208,98 @@ fn render_demo_inspect(
     render_utf8(renderer.into_inner())
 }
 
+fn render_demo_run(
+    repo_root: &Path,
+    loaded: &LoadedTaskManifest,
+    demo_id: &str,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let Some(demo) = loaded.manifest.demos.get(demo_id) else {
+        return demo_error(
+            output_json,
+            "effigy.demo.run.v1",
+            format!("demo `{demo_id}` was not found"),
+            json!({ "demo_id": demo_id }),
+        );
+    };
+
+    let attempt = execute_demo_attempt(repo_root, demo_id, demo, output_json)?;
+    write_latest_attempt_receipt(repo_root, demo_id, demo, &attempt)?;
+    let record = build_demo_record(repo_root, loaded, demo_id, demo)?;
+
+    if output_json {
+        let rendered = encode_json(
+            &json!({
+                "schema": "effigy.demo.run.v1",
+                "schema_version": 1,
+                "ok": attempt.ok,
+                "repo_root": repo_root.display().to_string(),
+                "demo": {
+                    "id": record.id,
+                    "title": record.title,
+                    "owner": record.owner,
+                    "entrypoint": record.entrypoint.to_json(),
+                    "defined_in": record.primary_source,
+                },
+                "execution": attempt.to_json(),
+                "latest_attempt": record.latest_attempt.to_json(),
+            }),
+            true,
+        )?;
+        if attempt.ok {
+            return Ok(rendered);
+        }
+        return Err(RunnerError::CommandJsonFailure { rendered });
+    }
+
+    if attempt.ok {
+        return render_demo_run_text(&record, &attempt);
+    }
+
+    Err(RunnerError::task_invocation(format!(
+        "demo `{demo_id}` failed; latest attempt written to {}",
+        record
+            .latest_attempt
+            .receipt_path
+            .as_deref()
+            .unwrap_or("<none>")
+    )))
+}
+
+fn render_demo_run_text(
+    record: &DemoRecord,
+    attempt: &DemoExecutionAttempt,
+) -> Result<String, RunnerError> {
+    let mut renderer = text_renderer();
+    renderer.section("Demo Run")?;
+    renderer.key_values(&[
+        KeyValue::new("id", record.id.clone()),
+        KeyValue::new("title", record.title.clone()),
+        KeyValue::new("owner", record.owner.clone()),
+        KeyValue::new("entrypoint", record.entrypoint.render_full()),
+        KeyValue::new("outcome", attempt.outcome.clone()),
+        KeyValue::new(
+            "receipt",
+            record
+                .latest_attempt
+                .receipt_path
+                .clone()
+                .unwrap_or_else(|| "<none>".to_owned()),
+        ),
+    ])?;
+    if let Some(summary) = &attempt.summary {
+        renderer.text("")?;
+        renderer.notice(NoticeLevel::Info, summary)?;
+    }
+    renderer.text("")?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Use `effigy demo inspect <DEMO_ID>` to review the recorded latest attempt.",
+    )?;
+    renderer.text("")?;
+    render_utf8(renderer.into_inner())
+}
+
 fn build_demo_record(
     repo_root: &Path,
     loaded: &LoadedTaskManifest,
@@ -209,7 +311,7 @@ fn build_demo_record(
         .first()
         .cloned()
         .unwrap_or_else(|| "effigy.toml".to_owned());
-    let latest_attempt = load_latest_attempt(repo_root, demo)?;
+    let latest_attempt = load_latest_attempt(repo_root, demo_id, demo)?;
     let gap_class = derive_gap_class(demo.status, latest_attempt.stale);
 
     Ok(DemoRecord {
@@ -262,23 +364,11 @@ fn demo_entrypoint(demo: &ManifestDemoConfig) -> DemoEntrypoint {
 
 fn load_latest_attempt(
     repo_root: &Path,
+    demo_id: &str,
     demo: &ManifestDemoConfig,
 ) -> Result<DemoLatestAttempt, RunnerError> {
-    let configured_receipt = demo.receipt.as_ref().map(|path| repo_root.join(path));
+    let receipt_path = effective_receipt_path(repo_root, demo_id, demo);
     let mut artifacts = demo.artifacts.clone();
-
-    let Some(receipt_path) = configured_receipt else {
-        return Ok(DemoLatestAttempt {
-            recorded: false,
-            receipt_path: None,
-            outcome: None,
-            summary: None,
-            stale: false,
-            artifacts,
-            parse_error: None,
-        });
-    };
-
     let rendered_receipt_path = display_repo_path(&receipt_path, repo_root);
     if !receipt_path.exists() {
         return Ok(DemoLatestAttempt {
@@ -292,7 +382,7 @@ fn load_latest_attempt(
         });
     }
 
-    let content = std::fs::read_to_string(&receipt_path)
+    let content = fs::read_to_string(&receipt_path)
         .map_err(|error| RunnerError::task_invocation_failed_read(&receipt_path, error))?;
     let parsed = match serde_json::from_str::<JsonValue>(&content) {
         Ok(parsed) => parsed,
@@ -358,6 +448,327 @@ fn normalize_artifact_refs(value: &JsonValue) -> Option<Vec<String>> {
         }
     }
     Some(rendered)
+}
+
+fn execute_demo_attempt(
+    repo_root: &Path,
+    demo_id: &str,
+    demo: &ManifestDemoConfig,
+    output_json: bool,
+) -> Result<DemoExecutionAttempt, RunnerError> {
+    match demo_entrypoint(demo) {
+        DemoEntrypoint::Task(task_name) => {
+            execute_task_backed_demo(repo_root, demo_id, &task_name, output_json)
+        }
+        DemoEntrypoint::Run(run_command) => {
+            execute_run_backed_demo(repo_root, demo_id, &run_command, output_json)
+        }
+    }
+}
+
+fn execute_task_backed_demo(
+    repo_root: &Path,
+    demo_id: &str,
+    task_name: &str,
+    output_json: bool,
+) -> Result<DemoExecutionAttempt, RunnerError> {
+    if output_json {
+        let task = TaskInvocation {
+            name: task_name.to_owned(),
+            args: vec!["--json".to_owned()],
+        };
+        return match run_manifest_task_with_cwd(&task, repo_root.to_path_buf()) {
+            Ok(rendered) => parse_task_backed_attempt_json(demo_id, task_name, &rendered),
+            Err(RunnerError::CommandJsonFailure { rendered }) => {
+                parse_task_backed_attempt_json(demo_id, task_name, &rendered)
+            }
+            Err(error) => Ok(failed_demo_attempt(
+                "task",
+                task_name,
+                task_name,
+                None,
+                format!("Demo `{demo_id}` failed to run task `{task_name}`: {error}"),
+                String::new(),
+                String::new(),
+            )),
+        };
+    }
+
+    let task = TaskInvocation {
+        name: task_name.to_owned(),
+        args: Vec::new(),
+    };
+    match run_manifest_task_with_cwd(&task, repo_root.to_path_buf()) {
+        Ok(_) => Ok(successful_demo_attempt(
+            "task",
+            task_name,
+            task_name,
+            None,
+            Some(format!(
+                "Demo `{demo_id}` completed via task `{task_name}`."
+            )),
+            String::new(),
+            String::new(),
+        )),
+        Err(RunnerError::TaskCommandFailure { code, .. }) => Ok(failed_demo_attempt(
+            "task",
+            task_name,
+            task_name,
+            code,
+            format!("Demo `{demo_id}` failed via task `{task_name}`."),
+            String::new(),
+            String::new(),
+        )),
+        Err(error) => Ok(failed_demo_attempt(
+            "task",
+            task_name,
+            task_name,
+            None,
+            format!("Demo `{demo_id}` failed to run task `{task_name}`: {error}"),
+            String::new(),
+            String::new(),
+        )),
+    }
+}
+
+fn parse_task_backed_attempt_json(
+    demo_id: &str,
+    task_name: &str,
+    rendered: &str,
+) -> Result<DemoExecutionAttempt, RunnerError> {
+    let parsed: JsonValue = serde_json::from_str(rendered).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to parse json task payload for demo `{demo_id}` task `{task_name}`: {error}"
+        ))
+    })?;
+    let ok = parsed
+        .get("ok")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false);
+    let exit_code = parsed
+        .get("exit_code")
+        .and_then(JsonValue::as_i64)
+        .and_then(|value| i32::try_from(value).ok());
+    let stdout = parsed
+        .get("stdout")
+        .and_then(JsonValue::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let stderr = parsed
+        .get("stderr")
+        .and_then(JsonValue::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let command = parsed
+        .get("command")
+        .and_then(JsonValue::as_str)
+        .unwrap_or(task_name)
+        .to_owned();
+
+    Ok(DemoExecutionAttempt {
+        ok,
+        outcome: if ok {
+            "passed".to_owned()
+        } else {
+            "failed".to_owned()
+        },
+        entrypoint_kind: "task".to_owned(),
+        entrypoint_value: task_name.to_owned(),
+        command,
+        exit_code,
+        summary: Some(if ok {
+            format!("Demo `{demo_id}` completed via task `{task_name}`.")
+        } else {
+            format!("Demo `{demo_id}` failed via task `{task_name}`.")
+        }),
+        stdout,
+        stderr,
+        recorded_at_epoch_ms: now_epoch_ms(),
+    })
+}
+
+fn execute_run_backed_demo(
+    repo_root: &Path,
+    demo_id: &str,
+    run_command: &str,
+    output_json: bool,
+) -> Result<DemoExecutionAttempt, RunnerError> {
+    let mut process = ProcessCommand::new("sh");
+    process.arg("-c").arg(run_command).current_dir(repo_root);
+    with_local_node_bin_path(&mut process, repo_root);
+
+    if output_json {
+        return match process.output() {
+            Ok(output) => Ok(DemoExecutionAttempt {
+                ok: output.status.success(),
+                outcome: if output.status.success() {
+                    "passed".to_owned()
+                } else {
+                    "failed".to_owned()
+                },
+                entrypoint_kind: "run".to_owned(),
+                entrypoint_value: run_command.to_owned(),
+                command: run_command.to_owned(),
+                exit_code: output.status.code(),
+                summary: Some(if output.status.success() {
+                    format!("Demo `{demo_id}` completed via run entrypoint.")
+                } else {
+                    format!("Demo `{demo_id}` failed via run entrypoint.")
+                }),
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                recorded_at_epoch_ms: now_epoch_ms(),
+            }),
+            Err(error) => Ok(failed_demo_attempt(
+                "run",
+                run_command,
+                run_command,
+                None,
+                format!("Demo `{demo_id}` failed to launch run entrypoint: {error}"),
+                String::new(),
+                String::new(),
+            )),
+        };
+    }
+
+    match process.status() {
+        Ok(status) => Ok(DemoExecutionAttempt {
+            ok: status.success(),
+            outcome: if status.success() {
+                "passed".to_owned()
+            } else {
+                "failed".to_owned()
+            },
+            entrypoint_kind: "run".to_owned(),
+            entrypoint_value: run_command.to_owned(),
+            command: run_command.to_owned(),
+            exit_code: status.code(),
+            summary: Some(if status.success() {
+                format!("Demo `{demo_id}` completed via run entrypoint.")
+            } else {
+                format!("Demo `{demo_id}` failed via run entrypoint.")
+            }),
+            stdout: String::new(),
+            stderr: String::new(),
+            recorded_at_epoch_ms: now_epoch_ms(),
+        }),
+        Err(error) => Ok(failed_demo_attempt(
+            "run",
+            run_command,
+            run_command,
+            None,
+            format!("Demo `{demo_id}` failed to launch run entrypoint: {error}"),
+            String::new(),
+            String::new(),
+        )),
+    }
+}
+
+fn successful_demo_attempt(
+    entrypoint_kind: &str,
+    entrypoint_value: &str,
+    command: &str,
+    exit_code: Option<i32>,
+    summary: Option<String>,
+    stdout: String,
+    stderr: String,
+) -> DemoExecutionAttempt {
+    DemoExecutionAttempt {
+        ok: true,
+        outcome: "passed".to_owned(),
+        entrypoint_kind: entrypoint_kind.to_owned(),
+        entrypoint_value: entrypoint_value.to_owned(),
+        command: command.to_owned(),
+        exit_code,
+        summary,
+        stdout,
+        stderr,
+        recorded_at_epoch_ms: now_epoch_ms(),
+    }
+}
+
+fn failed_demo_attempt(
+    entrypoint_kind: &str,
+    entrypoint_value: &str,
+    command: &str,
+    exit_code: Option<i32>,
+    summary: String,
+    stdout: String,
+    stderr: String,
+) -> DemoExecutionAttempt {
+    DemoExecutionAttempt {
+        ok: false,
+        outcome: "failed".to_owned(),
+        entrypoint_kind: entrypoint_kind.to_owned(),
+        entrypoint_value: entrypoint_value.to_owned(),
+        command: command.to_owned(),
+        exit_code,
+        summary: Some(summary),
+        stdout,
+        stderr,
+        recorded_at_epoch_ms: now_epoch_ms(),
+    }
+}
+
+fn write_latest_attempt_receipt(
+    repo_root: &Path,
+    demo_id: &str,
+    demo: &ManifestDemoConfig,
+    attempt: &DemoExecutionAttempt,
+) -> Result<(), RunnerError> {
+    let receipt_path = effective_receipt_path(repo_root, demo_id, demo);
+    if let Some(parent) = receipt_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| RunnerError::task_invocation_failed_write(parent, error))?;
+    }
+
+    let rendered = serde_json::to_string_pretty(&json!({
+        "schema": "effigy.demo.receipt.v1",
+        "schema_version": 1,
+        "demo_id": demo_id,
+        "ok": attempt.ok,
+        "status": attempt.outcome,
+        "summary": attempt.summary,
+        "stale": false,
+        "recorded_at_epoch_ms": attempt.recorded_at_epoch_ms,
+        "entrypoint": {
+            "kind": attempt.entrypoint_kind,
+            "value": attempt.entrypoint_value,
+        },
+        "command": attempt.command,
+        "exit_code": attempt.exit_code,
+        "artifacts": demo.artifacts,
+    }))
+    .map_err(|error| RunnerError::task_invocation_failed_render(&receipt_path, error))?;
+
+    fs::write(&receipt_path, rendered)
+        .map_err(|error| RunnerError::task_invocation_failed_write(&receipt_path, error))
+}
+
+fn effective_receipt_path(repo_root: &Path, demo_id: &str, demo: &ManifestDemoConfig) -> PathBuf {
+    if let Some(path) = &demo.receipt {
+        return repo_root.join(path);
+    }
+    repo_root
+        .join(DEMO_RECEIPTS_DIR)
+        .join(format!("{}.json", sanitize_demo_id_for_filename(demo_id)))
+}
+
+fn sanitize_demo_id_for_filename(demo_id: &str) -> String {
+    demo_id
+        .chars()
+        .map(|ch| match ch {
+            '/' | '\\' | ':' => '_',
+            _ => ch,
+        })
+        .collect()
+}
+
+fn now_epoch_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0)
 }
 
 fn derive_gap_class(status: ManifestDemoStatus, stale: bool) -> &'static str {
@@ -524,6 +935,7 @@ impl DemoLatestAttempt {
 
     fn to_json(&self) -> JsonValue {
         json!({
+            "recorded": self.recorded,
             "state": self.state_label(),
             "receipt_path": self.receipt_path,
             "outcome": self.outcome,
@@ -531,6 +943,39 @@ impl DemoLatestAttempt {
             "stale": self.stale,
             "artifacts": self.artifacts,
             "parse_error": self.parse_error,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DemoExecutionAttempt {
+    ok: bool,
+    outcome: String,
+    entrypoint_kind: String,
+    entrypoint_value: String,
+    command: String,
+    exit_code: Option<i32>,
+    summary: Option<String>,
+    stdout: String,
+    stderr: String,
+    recorded_at_epoch_ms: u128,
+}
+
+impl DemoExecutionAttempt {
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "ok": self.ok,
+            "outcome": self.outcome,
+            "entrypoint": {
+                "kind": self.entrypoint_kind,
+                "value": self.entrypoint_value,
+            },
+            "command": self.command,
+            "exit_code": self.exit_code,
+            "summary": self.summary,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "recorded_at_epoch_ms": self.recorded_at_epoch_ms,
         })
     }
 }

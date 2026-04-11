@@ -129,6 +129,6 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to add demo run semantics and
-normalized attempt creation on top of the shipped registry and inspection
-foundation.
+Use the active strict `g02.003` spec lane to lock active-attempt, stop, and
+rerun semantics on top of the shipped demo registry, inspection, and run
+surfaces.

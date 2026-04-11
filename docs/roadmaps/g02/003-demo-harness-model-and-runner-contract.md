@@ -596,27 +596,61 @@ Implementation status:
 - `effigy demo list` now provides text and JSON discovery
 - `effigy demo inspect <id>` now provides text and JSON inspection with source
   provenance plus normalized latest-attempt state
+- `effigy demo run <id>` now provides text and JSON execution for task-backed
+  and run-backed demos
+- normalized latest-attempt receipts are now written during execution, using a
+  default `.effigy/demo/receipts/<demo-id>.json` path when the manifest does
+  not declare `receipt`
 - schema, doctor, and config-reference surfaces now understand the demo
   registry contract
 
-### 10.3 Next Execution Slice
+### 10.3 Run And Attempt Foundation
 
-Batch `03.7` target:
+Batch `03.7` delivered:
 
 Build runner execution on top of the shipped registry and inspection
 foundation.
 
-In scope for the next execution slice:
+Delivered in this execution slice:
 
 - `effigy demo run <id>` as a text and JSON execution surface
-- support both task-backed and run-backed demo entrypoints
+- support for both task-backed and run-backed demo entrypoints
 - normalized attempt creation so `demo inspect` reflects newly executed proof
 - baseline pass/fail outcome reporting and receipt writing
 
-Out of scope for the next execution slice:
+Still out of scope in this execution slice:
 
 - `effigy demo stop`
 - `effigy demo rerun`
+- TUI/browser implementation
+- broad consumer-repo migration work
+
+Why this was the right second slice:
+
+- it turned the registry foundation into a real proof-execution surface
+- it forced Effigy to own receipt writing instead of only parsing pre-existing
+  repo artifacts
+- it kept the lifecycle boundary honest by stopping short of process-control
+  behavior that still needs an explicit active-attempt model
+
+### 10.4 Next Batch
+
+Batch `03.8` target:
+
+Lock the lifecycle control model before stop/rerun runtime work starts.
+
+In scope for the next execution slice:
+
+- define what counts as an active demo attempt
+- decide the target shape for `demo stop` and `demo rerun`
+- decide the minimum persisted state/process handle model those commands need
+- leave one bounded implementation card for lifecycle control if the model is
+  coherent
+
+Out of scope for the next execution slice:
+
+- implementing `effigy demo stop`
+- implementing `effigy demo rerun`
 - TUI/browser implementation
 - broad consumer-repo migration work
 
@@ -641,6 +675,5 @@ Out of scope for the next execution slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to implement demo run semantics and
-normalized attempt creation next, building on the shipped registry and
-inspection foundation.
+Use the active `g02.003` strict lane to decide active-attempt, stop, and rerun
+semantics next, then leave one bounded lifecycle-control card behind it.

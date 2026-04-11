@@ -16,8 +16,9 @@ manifest, not to teach people more wrapper scripts.
 - Run local or nested tasks with `effigy <task>` or `effigy <catalog>/<task>`.
 - Standardize everyday workflows with built-ins such as `effigy doctor`,
   `effigy test`, `effigy watch`, `effigy init`, and `effigy migrate`.
-- Discover repo-owned proof demos with `effigy demo list` and inspect the
-  latest known proof state with `effigy demo inspect <id>`.
+- Discover repo-owned proof demos with `effigy demo list`, inspect the latest
+  known proof state with `effigy demo inspect <id>`, and record a normalized
+  proof attempt with `effigy demo run <id>`.
 - Move CI and agent automation onto stable JSON with `effigy --json <command>`.
 - Replace scattered release and validation scripts with built-in command
   surfaces as adoption grows.
@@ -156,6 +157,7 @@ of another pile of ad hoc runner scripts.
 ```bash
 effigy demo list
 effigy demo inspect login-smoke
+effigy demo run login-smoke
 effigy --json demo list
 ```
 
@@ -272,6 +274,5 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement demo run semantics and
-normalized attempt creation on top of the shipped registry and inspection
-foundation.
+Use the active `g02.003` ready card to decide active-attempt, stop, and rerun
+semantics now that demo registry, inspection, and run foundations are shipped.
