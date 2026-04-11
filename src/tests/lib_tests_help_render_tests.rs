@@ -52,6 +52,15 @@ fn render_demo_help_shows_discovery_and_inspection_options() {
     assert!(rendered.contains("effigy demo run <DEMO_ID>"));
     assert!(rendered.contains("effigy demo stop <DEMO_ID>"));
     assert!(rendered.contains("effigy demo rerun <DEMO_ID>"));
+    assert!(rendered.contains("--search <TEXT>"));
+    assert!(rendered.contains("--owner <NAME>"));
+    assert!(rendered.contains("--tag <TAG>"));
+    assert!(rendered.contains("--mode <MODE>"));
+    assert!(rendered.contains("--cover <AREA>"));
+    assert!(rendered.contains("--status <STATUS>"));
+    assert!(rendered.contains("--gap <GAP>"));
+    assert!(rendered.contains("--stale-only"));
+    assert!(rendered.contains("--group-by <FIELD>"));
     assert!(rendered.contains("--repo <PATH>"));
     assert!(rendered.contains("--json"));
     assert!(rendered.contains("record a new normalized attempt"));

@@ -40,9 +40,9 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
 mod tests {
     use super::{command_kind_and_name, help_topic_label};
     use crate::{
-        BootstrapArgs, Command, ContractsArgs, ContractsSubcommand, DemoArgs, DemoSubcommand,
-        DistributionArgs, DistributionSubcommand, DoctorArgs, HelpTopic, ReleaseArgs,
-        ReleaseSubcommand, TaskInvocation, TasksArgs,
+        BootstrapArgs, Command, ContractsArgs, ContractsSubcommand, DemoArgs, DemoListQuery,
+        DemoSubcommand, DistributionArgs, DistributionSubcommand, DoctorArgs, HelpTopic,
+        ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
     };
 
     #[test]
@@ -75,7 +75,9 @@ mod tests {
             explain: None,
         });
         let demo = Command::Demo(DemoArgs {
-            subcommand: DemoSubcommand::List,
+            subcommand: DemoSubcommand::List {
+                query: DemoListQuery::default(),
+            },
             repo_override: None,
             output_json: false,
         });

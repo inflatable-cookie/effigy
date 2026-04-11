@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use crate::{
     BootstrapArgs, ChangelogArgs, ChangelogSubcommand, Command, ContractsArgs, ContractsCheckMode,
-    ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs, DemoSubcommand, DistributionArgs,
+    ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs, DemoListGap, DemoListGroupBy,
+    DemoListMode, DemoListQuery, DemoListStatus, DemoSubcommand, DistributionArgs,
     DistributionSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, HelpTopic,
     ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
 };
@@ -94,11 +95,81 @@ where
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
+    let mut query = DemoListQuery::default();
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
+            "--search" => {
+                query.search = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--search".to_owned(),
+                    },
+                )?);
+            }
+            "--owner" => {
+                query.owner = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--owner".to_owned(),
+                    },
+                )?);
+            }
+            "--tag" => {
+                query.tag = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--tag".to_owned(),
+                    },
+                )?);
+            }
+            "--mode" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--mode".to_owned(),
+                    },
+                )?;
+                query.mode = Some(parse_demo_list_mode(value)?);
+            }
+            "--cover" => {
+                query.cover = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--cover".to_owned(),
+                    },
+                )?);
+            }
+            "--status" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--status".to_owned(),
+                    },
+                )?;
+                query.status = Some(parse_demo_list_status(value)?);
+            }
+            "--gap" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--gap".to_owned(),
+                    },
+                )?;
+                query.gap = Some(parse_demo_list_gap(value)?);
+            }
+            "--stale-only" => query.stale_only = true,
+            "--group-by" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--group-by".to_owned(),
+                    },
+                )?;
+                query.group_by = Some(parse_demo_list_group_by(value)?);
+            }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Demo)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ => return Err(unknown_argument(arg)),
@@ -106,10 +177,72 @@ where
     }
 
     Ok(Command::Demo(DemoArgs {
-        subcommand: DemoSubcommand::List,
+        subcommand: DemoSubcommand::List { query },
         repo_override,
         output_json,
     }))
+}
+
+fn parse_demo_list_mode(value: String) -> Result<DemoListMode, CliParseError> {
+    match value.as_str() {
+        "headless" => Ok(DemoListMode::Headless),
+        "interactive" => Ok(DemoListMode::Interactive),
+        "hybrid" => Ok(DemoListMode::Hybrid),
+        _ => Err(CliParseError::InvalidFlagValue {
+            flag: "--mode".to_owned(),
+            value,
+            expected: "`headless`, `interactive`, or `hybrid`".to_owned(),
+        }),
+    }
+}
+
+fn parse_demo_list_status(value: String) -> Result<DemoListStatus, CliParseError> {
+    match value.as_str() {
+        "planned" => Ok(DemoListStatus::Planned),
+        "ready" => Ok(DemoListStatus::Ready),
+        "running" => Ok(DemoListStatus::Running),
+        "passed" => Ok(DemoListStatus::Passed),
+        "failed" => Ok(DemoListStatus::Failed),
+        "broken" => Ok(DemoListStatus::Broken),
+        "missing" => Ok(DemoListStatus::Missing),
+        _ => Err(CliParseError::InvalidFlagValue {
+            flag: "--status".to_owned(),
+            value,
+            expected: "`planned`, `ready`, `running`, `passed`, `failed`, `broken`, or `missing`"
+                .to_owned(),
+        }),
+    }
+}
+
+fn parse_demo_list_gap(value: String) -> Result<DemoListGap, CliParseError> {
+    match value.as_str() {
+        "existing" => Ok(DemoListGap::Existing),
+        "planned" => Ok(DemoListGap::Planned),
+        "missing" => Ok(DemoListGap::Missing),
+        "broken" => Ok(DemoListGap::Broken),
+        "stale" => Ok(DemoListGap::Stale),
+        _ => Err(CliParseError::InvalidFlagValue {
+            flag: "--gap".to_owned(),
+            value,
+            expected: "`existing`, `planned`, `missing`, `broken`, or `stale`".to_owned(),
+        }),
+    }
+}
+
+fn parse_demo_list_group_by(value: String) -> Result<DemoListGroupBy, CliParseError> {
+    match value.as_str() {
+        "owner" => Ok(DemoListGroupBy::Owner),
+        "tag" => Ok(DemoListGroupBy::Tag),
+        "mode" => Ok(DemoListGroupBy::Mode),
+        "cover" => Ok(DemoListGroupBy::Cover),
+        "status" => Ok(DemoListGroupBy::Status),
+        "gap" => Ok(DemoListGroupBy::Gap),
+        _ => Err(CliParseError::InvalidFlagValue {
+            flag: "--group-by".to_owned(),
+            value,
+            expected: "`owner`, `tag`, `mode`, `cover`, `status`, or `gap`".to_owned(),
+        }),
+    }
 }
 
 fn parse_demo_inspect<I>(args: I) -> Result<Command, CliParseError>

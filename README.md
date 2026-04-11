@@ -157,6 +157,8 @@ of another pile of ad hoc runner scripts.
 
 ```bash
 effigy demo list
+effigy demo list --owner auth --status ready
+effigy demo list --group-by owner --stale-only
 effigy demo inspect login-smoke
 effigy demo run login-smoke
 effigy demo stop login-smoke
@@ -168,6 +170,11 @@ Details:
 - [`022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
 - [`025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
 - [`docs/roadmaps/g02/003-demo-harness-model-and-runner-contract.md`](./docs/roadmaps/g02/003-demo-harness-model-and-runner-contract.md)
+
+The shipped browser-facing query layer is intentionally small: filter by text,
+owner, tag, mode, cover, status, gap, or stale state, then group by owner,
+tag, mode, cover, status, or gap when you need a browser-like inventory view
+without starting UI work yet.
 
 ### Automate safely
 

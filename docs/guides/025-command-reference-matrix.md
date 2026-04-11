@@ -108,7 +108,7 @@ effigy distribution validate-artifacts [--repo <PATH>] --artifacts-dir <DIR> [--
 effigy distribution generate-closeout [--repo <PATH>] --tag <TAG> --artifacts-dir <DIR> [--output <PATH>] [--owner <NAME>] [--expect-homebrew] [--json]
 effigy distribution write-summary [--repo <PATH>] --tag <TAG> --artifacts-dir <DIR> [--crate-version <VER>] [--repo-url <URL>] [--brew-formula <NAME>] [--homebrew-executed] [--log-file <NAME>]... [--json]
 effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--start] [--plan] [--json]
-effigy demo list [--repo <PATH>] [--json]
+effigy demo list [--search <TEXT>] [--owner <NAME>] [--tag <TAG>] [--mode <MODE>] [--cover <AREA>] [--status <STATUS>] [--gap <GAP>] [--stale-only] [--group-by <FIELD>] [--repo <PATH>] [--json]
 effigy demo inspect <DEMO_ID> [--repo <PATH>] [--json]
 effigy demo run <DEMO_ID> [--repo <PATH>] [--json]
 effigy demo stop <DEMO_ID> [--repo <PATH>] [--json]
@@ -160,7 +160,11 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
 - `bootstrap` fails fast on dirty existing checkouts or remote mismatches.
 - `demo inspect` reads declared or generated receipt/artifact references and
   normalizes the latest known proof state and any active in-flight attempt
-  without executing the demo.
+  without executing the demo. It also reports action availability, receipt
+  freshness, and whether a recorded receipt is currently present.
+- `demo list` supports bounded browser-style discovery with focused filters and
+  grouping, but it deliberately stops short of UI behavior or rich browsing
+  state.
 - `demo run` executes either a declared task-backed or run-backed entrypoint,
   writes a normalized receipt, and refreshes the latest-attempt state that
   `demo inspect` reports.

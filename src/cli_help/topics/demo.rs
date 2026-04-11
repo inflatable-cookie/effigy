@@ -19,12 +19,12 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     render_usage_section(
         renderer,
         &[
-            "effigy demo list [--repo <PATH>] [--json]",
+            "effigy demo list [--search <TEXT>] [--owner <NAME>] [--tag <TAG>] [--mode <MODE>] [--cover <AREA>] [--status <STATUS>] [--gap <GAP>] [--stale-only] [--group-by <FIELD>] [--repo <PATH>] [--json]",
             "effigy demo inspect <DEMO_ID> [--repo <PATH>] [--json]",
             "effigy demo run <DEMO_ID> [--repo <PATH>] [--json]",
             "effigy demo stop <DEMO_ID> [--repo <PATH>] [--json]",
             "effigy demo rerun <DEMO_ID> [--repo <PATH>] [--json]",
-            "effigy --json demo list [--repo <PATH>]",
+            "effigy --json demo list [--search <TEXT>] [--owner <NAME>] [--tag <TAG>] [--mode <MODE>] [--cover <AREA>] [--status <STATUS>] [--gap <GAP>] [--stale-only] [--group-by <FIELD>] [--repo <PATH>]",
             "effigy --json demo inspect <DEMO_ID> [--repo <PATH>]",
             "effigy --json demo run <DEMO_ID> [--repo <PATH>]",
             "effigy --json demo stop <DEMO_ID> [--repo <PATH>]",
@@ -36,6 +36,30 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         renderer,
         &[
             ("--repo <PATH>", "Run against a different repo root"),
+            ("--search <TEXT>", "Filter demos by id, title, or summary text"),
+            ("--owner <NAME>", "Filter demos by owner"),
+            ("--tag <TAG>", "Filter demos by tag"),
+            (
+                "--mode <MODE>",
+                "Filter demos by mode: headless, interactive, or hybrid",
+            ),
+            ("--cover <AREA>", "Filter demos by a declared coverage key"),
+            (
+                "--status <STATUS>",
+                "Filter demos by current browser status: planned, ready, running, passed, failed, broken, or missing",
+            ),
+            (
+                "--gap <GAP>",
+                "Filter demos by gap class: existing, planned, missing, broken, or stale",
+            ),
+            (
+                "--stale-only",
+                "Show only demos whose latest recorded proof is stale",
+            ),
+            (
+                "--group-by <FIELD>",
+                "Group list output by owner, tag, mode, cover, status, or gap",
+            ),
             (
                 "--json",
                 "Render machine-readable demo discovery, inspection, or run payloads",
@@ -50,6 +74,8 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         "example",
         &[
             "effigy demo list",
+            "effigy demo list --owner auth --status ready",
+            "effigy demo list --group-by owner --stale-only",
             "effigy demo inspect plugin-capability-browser",
             "effigy demo run login-smoke",
             "effigy demo stop login-smoke",

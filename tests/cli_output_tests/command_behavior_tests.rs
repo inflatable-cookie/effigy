@@ -319,6 +319,75 @@ dependencies = ["auth/session-baseline"]
     .expect("write demo receipt");
 }
 
+fn write_demo_browser_fixture(root: &std::path::Path) {
+    fs::create_dir_all(root.join("demos/receipts")).expect("mkdir demo receipts");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks]
+"demo:login-smoke" = "printf login-proof-ok"
+
+[demos.login-smoke]
+title = "Login Smoke"
+summary = "Interactive login proof."
+proof = "Verify the default login journey succeeds."
+owner = "auth"
+mode = "interactive"
+status = "ready"
+covers = ["auth.login"]
+tags = ["auth", "smoke"]
+receipt = "demos/receipts/login-smoke.json"
+task = "demo:login-smoke"
+
+[demos.render-regression]
+title = "Render Regression"
+summary = "Renderer fallback proof."
+proof = "Verify the renderer still emits an artifact."
+owner = "ui"
+mode = "headless"
+status = "broken"
+covers = ["ui.render"]
+tags = ["ui"]
+receipt = "demos/receipts/render-regression.json"
+run = "printf render"
+
+[demos.capture-gap]
+title = "Capture Gap"
+summary = "Planned capture verification."
+proof = "Verify capture flow once the harness exists."
+owner = "media"
+mode = "hybrid"
+status = "planned"
+covers = ["media.capture"]
+tags = ["planned"]
+run = "printf pending"
+"#,
+    )
+    .expect("write demo browser manifest");
+    fs::write(
+        root.join("demos/receipts/login-smoke.json"),
+        r#"{
+  "status": "passed",
+  "summary": "Interactive login proof passed.",
+  "stale": true,
+  "artifacts": ["demos/receipts/login-smoke.view.html"]
+}
+"#,
+    )
+    .expect("write stale login receipt");
+    fs::write(
+        root.join("demos/receipts/render-regression.json"),
+        r#"{
+  "status": "failed",
+  "summary": "Renderer proof is broken.",
+  "stale": false,
+  "artifacts": ["demos/receipts/render-regression.html"]
+}
+"#,
+    )
+    .expect("write render receipt");
+}
+
 fn spawn_demo_run_process(root: &std::path::Path, demo_id: &str) -> std::process::Child {
     Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")
@@ -393,6 +462,50 @@ fn cli_demo_list_json_reports_declared_demos() {
         parsed["result"]["demos"][0]["latest_attempt"]["outcome"],
         "passed"
     );
+    assert_eq!(
+        parsed["result"]["demos"][0]["actions"]["run"]["available"],
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demos"][0]["latest_attempt"]["freshness"],
+        "current"
+    );
+}
+
+#[test]
+fn cli_demo_list_json_filters_and_groups_browser_state() {
+    let root = temp_workspace("demo-list-filter-group-json");
+    write_demo_browser_fixture(&root);
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "demo",
+            "list",
+            "--owner",
+            "auth",
+            "--tag",
+            "smoke",
+            "--status",
+            "ready",
+            "--gap",
+            "stale",
+            "--stale-only",
+            "--group-by",
+            "owner",
+        ],
+    );
+    assert!(output.status.success(), "demo list failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.demo.list.v1");
+    assert_eq!(parsed["result"]["count"], 1);
+    assert_eq!(parsed["result"]["query"]["owner"], "auth");
+    assert_eq!(parsed["result"]["query"]["stale_only"], true);
+    assert_eq!(parsed["result"]["group_by"], "owner");
+    assert_eq!(parsed["result"]["groups"][0]["label"], "auth");
+    assert_eq!(parsed["result"]["demos"][0]["id"], "login-smoke");
+    assert_eq!(parsed["result"]["demos"][0]["gap_class"], "stale");
+    assert_eq!(parsed["result"]["demos"][0]["freshness"], "stale");
 }
 
 #[test]
@@ -414,6 +527,22 @@ fn cli_demo_inspect_json_reports_latest_attempt_and_sources() {
     assert_eq!(
         parsed["result"]["demo"]["latest_attempt"]["artifacts"][1],
         "demos/receipts/login-smoke.trace.json"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["actions"]["run"]["available"],
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["actions"]["stop"]["available"],
+        false
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["latest_attempt"]["receipt_present"],
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["latest_attempt"]["freshness"],
+        "current"
     );
 }
 
@@ -559,6 +688,14 @@ run = "sh -lc 'while true; do sleep 1; done'"
         true
     );
     assert_eq!(parsed["result"]["demo"]["effective_status"], "running");
+    assert_eq!(
+        parsed["result"]["demo"]["actions"]["stop"]["available"],
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["actions"]["run"]["available"],
+        false
+    );
 
     let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
     assert!(stop.status.success(), "demo stop failed: {stop:?}");

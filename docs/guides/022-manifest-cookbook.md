@@ -158,6 +158,8 @@ Discovery, inspection, and execution:
 
 ```sh
 effigy demo list
+effigy demo list --owner signal --status ready
+effigy demo list --group-by owner --stale-only
 effigy demo inspect login-smoke
 effigy demo run login-smoke
 effigy demo stop login-smoke
@@ -169,8 +171,11 @@ Use this when you need a stable proof inventory plus one operator-visible proof
 entrypoint now.
 
 Lifecycle notes:
+- `demo list` now supports focused browser-style discovery with `--search`,
+  `--owner`, `--tag`, `--mode`, `--cover`, `--status`, `--gap`,
+  `--stale-only`, and `--group-by`.
 - `demo inspect` now shows both the latest terminal receipt and any active
-  in-flight attempt.
+  in-flight attempt, plus explicit action availability and receipt freshness.
 - `demo stop <id>` works for directly runner-owned run-backed demos.
 - `demo rerun <id>` starts a fresh attempt and fails fast if the demo is
   already active.
