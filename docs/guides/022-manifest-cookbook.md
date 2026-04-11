@@ -193,7 +193,8 @@ Lifecycle notes:
 - the detail side is now intentionally short and artifact-oriented rather than
   a scrolling receipt/log document.
 - `demo inspect` now shows both the latest terminal receipt and any active
-  in-flight attempt, plus explicit action availability and receipt freshness.
+  in-flight attempt, plus explicit action availability, receipt freshness, and
+  a bounded recent-attempt history for older terminal outcomes.
 - `demo stop <id>` works for directly runner-owned run-backed demos.
 - `demo rerun <id>` starts a fresh attempt and fails fast if the demo is
   already active.
@@ -201,8 +202,9 @@ Lifecycle notes:
   `not supported through the current runtime` boundary.
 - the browser currently focuses on honest navigation, bounded action dispatch,
   artifact-opening, and metadata-query parity with the shipped `demo list`
-  contract; terminal emulation, richer detail rendering, and multi-attempt
-  history remain deferred.
+  contract; terminal emulation, richer detail rendering, and list/browser
+  history rendering remain deferred while the runner-side history surface
+  settles first.
 
 ## 3) Full Task Table with Runtime Controls
 

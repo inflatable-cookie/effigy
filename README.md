@@ -202,16 +202,19 @@ The first browser foundation gives you:
 - artifact selection as a simple list on the detail side, browsed with `↑` /
   `↓` once that panel is focused
 
-It still deliberately stops short of terminal emulation, rich artifact
-rendering, and multi-attempt history. The current slice is about honest
-navigation, lifecycle control, and opening the artifacts the runner already
-knows about without leaving the browser.
+It still deliberately stops short of terminal emulation and rich artifact
+rendering. The current runner/browser baseline is about honest navigation,
+lifecycle control, opening recorded artifacts, and inspecting bounded recent
+attempt state without leaving Effigy.
 
 This repo now self-hosts two realistic demos:
 - `browser-proof-report` generates a small HTML report plus text snapshots under
   `.effigy/demo/artifacts/browser-proof-report/`
 - `lifecycle-window` stays active until stopped so `list`, `inspect`, `stop`,
   and `rerun` can be pressure-tested against a real run-backed process
+- `demo inspect <id>` now shows the latest terminal receipt plus a bounded
+  recent-attempt history so operators can review what happened before the most
+  recent run without widening into full timeline UI yet
 
 ### Automate safely
 
@@ -321,6 +324,7 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement bounded persisted attempt
-history through `demo inspect` now that the first browser baseline is shipped,
-while keeping broader runtime and desktop-client questions deferred.
+Use the active `g02.003` ready card to decide whether demo history should
+widen next through `demo list`, the browser, or a separate result-timeline
+query surface, while keeping broader runtime and desktop-client questions
+deferred.

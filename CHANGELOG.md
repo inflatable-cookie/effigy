@@ -56,6 +56,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add metadata-query parity to `effigy demo browser`, so operators can filter
   by tag, mode, and cover and cycle through the full shipped grouping
   contract without dropping back to `demo list`
+- Add bounded persisted attempt history for `effigy demo inspect <id>`, so
+  repos can retain and review recent terminal demo outcomes beyond the single
+  latest-attempt summary while keeping the first history slice runner-side
 
 ### Changed
 - Rework `effigy demo browser` around the same magenta-framed visual language

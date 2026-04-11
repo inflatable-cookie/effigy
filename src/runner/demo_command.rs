@@ -36,6 +36,8 @@ use super::render::{encode_json, render_utf8, text_renderer};
 const DEMO_RECEIPTS_DIR: &str = ".effigy/demo/receipts";
 const DEMO_ACTIVE_DIR: &str = ".effigy/demo/active";
 const DEMO_LOGS_DIR: &str = ".effigy/demo/logs";
+const DEMO_HISTORY_DIR: &str = ".effigy/demo/history";
+const DEMO_ATTEMPT_HISTORY_LIMIT: usize = 10;
 
 pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
     let cwd = current_working_dir()?;
@@ -270,6 +272,16 @@ fn render_demo_inspect(
     if !record.latest_attempt.artifacts.is_empty() {
         renderer.text("")?;
         renderer.bullet_list("artifacts", &record.latest_attempt.artifacts)?;
+    }
+    if record.attempt_history.parse_error.is_some() || !record.attempt_history.attempts.is_empty() {
+        renderer.text("")?;
+        renderer.section("Recent Attempts")?;
+        if let Some(parse_error) = &record.attempt_history.parse_error {
+            renderer.key_values(&[KeyValue::new("history-parse", parse_error.clone())])?;
+        }
+        if !record.attempt_history.attempts.is_empty() {
+            renderer.table(&recent_attempts_table_spec(&record.attempt_history.attempts))?;
+        }
     }
     renderer.text("")?;
     render_utf8(renderer.into_inner())
@@ -560,7 +572,7 @@ fn render_demo_execute_text(
     renderer.text("")?;
     renderer.notice(
         NoticeLevel::Info,
-        "Use `effigy demo inspect <DEMO_ID>` to review the recorded latest attempt and any active state.",
+        "Use `effigy demo inspect <DEMO_ID>` to review the recorded latest attempt, recent attempt history, and any active state.",
     )?;
     renderer.text("")?;
     render_utf8(renderer.into_inner())
@@ -653,6 +665,34 @@ fn demo_table_spec(demos: &[&DemoRecord]) -> TableSpec {
     )
 }
 
+fn recent_attempts_table_spec(attempts: &[DemoHistoricalAttempt]) -> TableSpec {
+    TableSpec::new(
+        vec![
+            "Recorded".to_owned(),
+            "Status".to_owned(),
+            "Summary".to_owned(),
+            "Receipt".to_owned(),
+        ],
+        attempts
+            .iter()
+            .map(|attempt| {
+                vec![
+                    attempt.recorded_at_epoch_ms.to_string(),
+                    attempt.outcome.clone(),
+                    attempt
+                        .summary
+                        .clone()
+                        .unwrap_or_else(|| "<none>".to_owned()),
+                    attempt
+                        .receipt_path
+                        .clone()
+                        .unwrap_or_else(|| "<none>".to_owned()),
+                ]
+            })
+            .collect(),
+    )
+}
+
 fn build_demo_groups<'a>(demos: &'a [DemoRecord], group_by: DemoListGroupBy) -> Vec<DemoGroup<'a>> {
     let mut groups: BTreeMap<String, Vec<&DemoRecord>> = BTreeMap::new();
     for demo in demos {
@@ -734,6 +774,7 @@ fn build_demo_record(
         .unwrap_or_else(|| "effigy.toml".to_owned());
     let latest_attempt = load_latest_attempt(repo_root, demo_id, demo)?;
     let active_attempt = load_active_attempt(repo_root, demo_id)?;
+    let attempt_history = load_attempt_history(repo_root, demo_id)?;
     let gap_class = derive_gap_class(demo.status, latest_attempt.stale);
 
     Ok(DemoRecord {
@@ -754,6 +795,7 @@ fn build_demo_record(
         gap_class,
         active_attempt,
         latest_attempt,
+        attempt_history,
     })
 }
 
@@ -862,6 +904,44 @@ fn load_latest_attempt(
             .get("stderr_log_path")
             .and_then(JsonValue::as_str)
             .map(str::to_owned),
+        parse_error: None,
+    })
+}
+
+fn load_attempt_history(
+    repo_root: &Path,
+    demo_id: &str,
+) -> Result<DemoAttemptHistory, RunnerError> {
+    let path = effective_attempt_history_path(repo_root, demo_id);
+    let rendered_path = display_repo_path(&path, repo_root);
+    if !path.exists() {
+        return Ok(DemoAttemptHistory {
+            path: Some(rendered_path),
+            attempts: Vec::new(),
+            parse_error: None,
+        });
+    }
+
+    let content = fs::read_to_string(&path)
+        .map_err(|error| RunnerError::task_invocation_failed_read(&path, error))?;
+    let parsed = match serde_json::from_str::<PersistedDemoAttemptHistory>(&content) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            return Ok(DemoAttemptHistory {
+                path: Some(rendered_path),
+                attempts: Vec::new(),
+                parse_error: Some(error.to_string()),
+            });
+        }
+    };
+
+    Ok(DemoAttemptHistory {
+        path: Some(rendered_path),
+        attempts: parsed
+            .attempts
+            .into_iter()
+            .map(DemoHistoricalAttempt::from_persisted)
+            .collect(),
         parse_error: None,
     })
 }
@@ -1500,7 +1580,9 @@ fn write_latest_attempt_receipt(
     .map_err(|error| RunnerError::task_invocation_failed_render(&receipt_path, error))?;
 
     fs::write(&receipt_path, rendered)
-        .map_err(|error| RunnerError::task_invocation_failed_write(&receipt_path, error))
+        .map_err(|error| RunnerError::task_invocation_failed_write(&receipt_path, error))?;
+    append_attempt_history(repo_root, demo_id, demo, attempt)?;
+    Ok(())
 }
 
 fn effective_receipt_path(repo_root: &Path, demo_id: &str, demo: &ManifestDemoConfig) -> PathBuf {
@@ -1518,6 +1600,12 @@ fn effective_active_attempt_path(repo_root: &Path, demo_id: &str) -> PathBuf {
         .join(format!("{}.json", sanitize_demo_id_for_filename(demo_id)))
 }
 
+fn effective_attempt_history_path(repo_root: &Path, demo_id: &str) -> PathBuf {
+    repo_root
+        .join(DEMO_HISTORY_DIR)
+        .join(format!("{}.json", sanitize_demo_id_for_filename(demo_id)))
+}
+
 fn effective_output_log_path(repo_root: &Path, demo_id: &str, stream: &str) -> PathBuf {
     repo_root.join(DEMO_LOGS_DIR).join(format!(
         "{}.{}.log",
@@ -1531,6 +1619,39 @@ fn render_active_attempt_path(repo_root: &Path, demo_id: &str) -> String {
         &effective_active_attempt_path(repo_root, demo_id),
         repo_root,
     )
+}
+
+fn append_attempt_history(
+    repo_root: &Path,
+    demo_id: &str,
+    demo: &ManifestDemoConfig,
+    attempt: &DemoExecutionAttempt,
+) -> Result<(), RunnerError> {
+    let path = effective_attempt_history_path(repo_root, demo_id);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| RunnerError::task_invocation_failed_write(parent, error))?;
+    }
+
+    let mut history = if path.exists() {
+        let content = fs::read_to_string(&path)
+            .map_err(|error| RunnerError::task_invocation_failed_read(&path, error))?;
+        serde_json::from_str::<PersistedDemoAttemptHistory>(&content)
+            .map_err(|error| RunnerError::task_invocation_failed_parse(&path, error))?
+    } else {
+        PersistedDemoAttemptHistory::new(demo_id)
+    };
+
+    history.push(PersistedDemoHistoricalAttempt::from_execution(
+        demo_id,
+        demo,
+        attempt,
+        display_repo_path(&effective_receipt_path(repo_root, demo_id, demo), repo_root),
+    ));
+
+    let rendered = serde_json::to_string_pretty(&history)
+        .map_err(|error| RunnerError::task_invocation_failed_render(&path, error))?;
+    fs::write(&path, rendered).map_err(|error| RunnerError::task_invocation_failed_write(&path, error))
 }
 
 fn build_attempt_id(demo_id: &str) -> String {
@@ -1700,6 +1821,7 @@ struct DemoRecord {
     gap_class: &'static str,
     active_attempt: DemoActiveAttempt,
     latest_attempt: DemoLatestAttempt,
+    attempt_history: DemoAttemptHistory,
 }
 
 impl DemoRecord {
@@ -1783,6 +1905,7 @@ impl DemoRecord {
             "actions": self.actions().to_json(),
             "active_attempt": self.active_attempt.to_json(),
             "latest_attempt": self.latest_attempt.to_json(),
+            "attempt_history": self.attempt_history.to_json(),
         })
     }
 
@@ -2155,6 +2278,68 @@ impl DemoLatestAttempt {
 }
 
 #[derive(Debug, Clone)]
+struct DemoAttemptHistory {
+    path: Option<String>,
+    attempts: Vec<DemoHistoricalAttempt>,
+    parse_error: Option<String>,
+}
+
+impl DemoAttemptHistory {
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "path": self.path,
+            "count": self.attempts.len(),
+            "attempts": self.attempts.iter().map(DemoHistoricalAttempt::to_json).collect::<Vec<_>>(),
+            "parse_error": self.parse_error,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DemoHistoricalAttempt {
+    attempt_id: String,
+    recorded_at_epoch_ms: u128,
+    outcome: String,
+    summary: Option<String>,
+    receipt_path: Option<String>,
+    artifacts: Vec<String>,
+    stdout_log_path: Option<String>,
+    stderr_log_path: Option<String>,
+    exit_code: Option<i32>,
+}
+
+impl DemoHistoricalAttempt {
+    fn from_persisted(value: PersistedDemoHistoricalAttempt) -> Self {
+        Self {
+            attempt_id: value.attempt_id,
+            recorded_at_epoch_ms: value.recorded_at_epoch_ms,
+            outcome: value.outcome,
+            summary: value.summary,
+            receipt_path: value.receipt_path,
+            artifacts: value.artifacts,
+            stdout_log_path: value.stdout_log_path,
+            stderr_log_path: value.stderr_log_path,
+            exit_code: value.exit_code,
+        }
+    }
+
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "attempt_id": self.attempt_id,
+            "recorded_at_epoch_ms": self.recorded_at_epoch_ms,
+            "outcome": self.outcome,
+            "summary": self.summary,
+            "receipt_path": self.receipt_path,
+            "artifact_count": self.artifacts.len(),
+            "artifacts": self.artifacts,
+            "stdout_log_path": self.stdout_log_path,
+            "stderr_log_path": self.stderr_log_path,
+            "exit_code": self.exit_code,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 struct DemoExecutionAttempt {
     ok: bool,
     outcome: String,
@@ -2188,6 +2373,68 @@ impl DemoExecutionAttempt {
             "stderr_log_path": self.stderr_log_path,
             "recorded_at_epoch_ms": self.recorded_at_epoch_ms,
         })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedDemoAttemptHistory {
+    schema: String,
+    schema_version: u8,
+    demo_id: String,
+    attempts: Vec<PersistedDemoHistoricalAttempt>,
+}
+
+impl PersistedDemoAttemptHistory {
+    fn new(demo_id: &str) -> Self {
+        Self {
+            schema: "effigy.demo.attempt-history.v1".to_owned(),
+            schema_version: 1,
+            demo_id: demo_id.to_owned(),
+            attempts: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, attempt: PersistedDemoHistoricalAttempt) {
+        self.attempts.insert(0, attempt);
+        self.attempts.truncate(DEMO_ATTEMPT_HISTORY_LIMIT);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedDemoHistoricalAttempt {
+    attempt_id: String,
+    recorded_at_epoch_ms: u128,
+    outcome: String,
+    summary: Option<String>,
+    receipt_path: Option<String>,
+    artifacts: Vec<String>,
+    stdout_log_path: Option<String>,
+    stderr_log_path: Option<String>,
+    exit_code: Option<i32>,
+}
+
+impl PersistedDemoHistoricalAttempt {
+    fn from_execution(
+        demo_id: &str,
+        demo: &ManifestDemoConfig,
+        attempt: &DemoExecutionAttempt,
+        receipt_path: String,
+    ) -> Self {
+        Self {
+            attempt_id: format!(
+                "{}-{}",
+                sanitize_demo_id_for_filename(demo_id),
+                attempt.recorded_at_epoch_ms
+            ),
+            recorded_at_epoch_ms: attempt.recorded_at_epoch_ms,
+            outcome: attempt.outcome.clone(),
+            summary: attempt.summary.clone(),
+            receipt_path: Some(receipt_path),
+            artifacts: demo.artifacts.clone(),
+            stdout_log_path: attempt.stdout_log_path.clone(),
+            stderr_log_path: attempt.stderr_log_path.clone(),
+            exit_code: attempt.exit_code,
+        }
     }
 }
 
@@ -2232,5 +2479,37 @@ struct DemoActiveAttemptGuard {
 impl Drop for DemoActiveAttemptGuard {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        PersistedDemoAttemptHistory, PersistedDemoHistoricalAttempt, DEMO_ATTEMPT_HISTORY_LIMIT,
+    };
+
+    #[test]
+    fn demo_attempt_history_push_keeps_newest_entries_within_limit() {
+        let mut history = PersistedDemoAttemptHistory::new("demo");
+        for index in 0..(DEMO_ATTEMPT_HISTORY_LIMIT + 2) {
+            history.push(PersistedDemoHistoricalAttempt {
+                attempt_id: format!("attempt-{index}"),
+                recorded_at_epoch_ms: index as u128,
+                outcome: "passed".to_owned(),
+                summary: None,
+                receipt_path: None,
+                artifacts: Vec::new(),
+                stdout_log_path: None,
+                stderr_log_path: None,
+                exit_code: Some(0),
+            });
+        }
+
+        assert_eq!(history.attempts.len(), DEMO_ATTEMPT_HISTORY_LIMIT);
+        assert_eq!(history.attempts[0].attempt_id, "attempt-11");
+        assert_eq!(
+            history.attempts[DEMO_ATTEMPT_HISTORY_LIMIT - 1].attempt_id,
+            "attempt-2"
+        );
     }
 }

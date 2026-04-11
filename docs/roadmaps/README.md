@@ -35,14 +35,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01/028-script-surface-reduction-and-builtins.md` reduces repo shell logic into Effigy-native command surfaces and is complete.
 - `g02/001-bootstrap-command-and-clone-contract.md` started the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up, and is now complete: released plus live-pilot validated on `loophole` and `songsprout`.
 - `g02/002-manifest-composition-and-override-contract.md` defines the general split-manifest model so features do not invent their own file-loading semantics, and its foundation plus inspectability are already shipped.
-- `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy; registry loading, inspection, `demo run`, lifecycle control, browser-state/query polish, repo-self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, metadata-query parity, and first-browser cleanup are now shipped, and the next bounded slice is persisted attempt history through the runner and `demo inspect` rather than more browser churn.
+- `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy; registry loading, inspection, `demo run`, lifecycle control, browser-state/query polish, repo-self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, metadata-query parity, first-browser cleanup, and bounded persisted attempt history are now shipped, and the next bounded slice is choosing where demo history should widen next rather than more browser churn.
 
 ## Active Strict Lane
 
 - `g02.003` is the active roadmap milestone.
 - `docs/specs/003-demo-harness-model-and-runner-strict-lane.md` is the active
   strict planning lane around that roadmap.
-- `docs/specs/batch-cards/033-implement-demo-attempt-history-foundation.md`
+- `docs/specs/batch-cards/034-decide-demo-history-surface-follow-up-boundary.md`
   is the current ready card.
 
 ## Research Program
@@ -65,9 +65,9 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute the active ready card for `g02.003` to implement bounded persisted
-attempt history through `demo inspect` now that the first browser baseline is
-shipped.
+Execute the active ready card for `g02.003` to decide whether demo history
+should widen next in `demo list`, the browser, or a separate result-timeline
+query surface now that the runner-side history foundation is shipped.
 
 
 ## Historical language boundary

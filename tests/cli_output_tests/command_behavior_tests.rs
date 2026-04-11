@@ -544,6 +544,7 @@ fn cli_demo_inspect_json_reports_latest_attempt_and_sources() {
         parsed["result"]["demo"]["latest_attempt"]["freshness"],
         "current"
     );
+    assert_eq!(parsed["result"]["demo"]["attempt_history"]["count"], 0);
 }
 
 #[test]
@@ -591,6 +592,61 @@ task = "demo:login-smoke"
     assert_eq!(receipt["schema"], "effigy.demo.receipt.v1");
     assert_eq!(receipt["status"], "passed");
     assert_eq!(receipt["entrypoint"]["kind"], "task");
+}
+
+#[test]
+fn cli_demo_inspect_json_reports_bounded_recent_attempt_history() {
+    let root = temp_workspace("demo-inspect-history-json");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks]
+"demo:login-smoke" = "printf login-proof-ok"
+
+[demos.login-smoke]
+title = "Login Smoke"
+summary = "Proves the local login flow reaches an authenticated state."
+proof = "Verify the default local login journey succeeds end to end."
+owner = "auth"
+mode = "interactive"
+status = "ready"
+covers = ["auth.login"]
+task = "demo:login-smoke"
+"#,
+    )
+    .expect("write demo manifest");
+
+    let first = run_json_cli_command(&root, &["demo", "run", "login-smoke"]);
+    assert!(first.status.success(), "first demo run failed: {first:?}");
+    std::thread::sleep(Duration::from_millis(2));
+    let second = run_json_cli_command(&root, &["demo", "rerun", "login-smoke"]);
+    assert!(second.status.success(), "second demo run failed: {second:?}");
+
+    let output = run_json_cli_command(&root, &["demo", "inspect", "login-smoke"]);
+    assert!(output.status.success(), "demo inspect failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+
+    assert_eq!(parsed["result"]["demo"]["attempt_history"]["count"], 2);
+    assert_eq!(
+        parsed["result"]["demo"]["attempt_history"]["attempts"][0]["outcome"],
+        "passed"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["attempt_history"]["attempts"][1]["outcome"],
+        "passed"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["attempt_history"]["attempts"][0]["receipt_path"],
+        ".effigy/demo/receipts/login-smoke.json"
+    );
+    assert!(
+        parsed["result"]["demo"]["attempt_history"]["attempts"][0]["recorded_at_epoch_ms"]
+            .as_u64()
+            .expect("recent attempt timestamp")
+            >= parsed["result"]["demo"]["attempt_history"]["attempts"][1]["recorded_at_epoch_ms"]
+                .as_u64()
+                .expect("older attempt timestamp")
+    );
 }
 
 #[test]

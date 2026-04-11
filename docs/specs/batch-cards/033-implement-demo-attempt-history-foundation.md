@@ -1,6 +1,6 @@
 # 033 Implement Demo Attempt History Foundation
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -53,6 +53,6 @@ attempt.
 
 ## Next Task
 
-Ship bounded terminal-attempt history and enriched `demo inspect`, then decide
-whether the next slice should expose history in `demo list`, the browser, or a
-separate result-timeline query surface.
+Execute [`034-decide-demo-history-surface-follow-up-boundary.md`](./034-decide-demo-history-surface-follow-up-boundary.md)
+to choose whether the next bounded demo-history slice belongs in `demo list`,
+the browser, or a separate result-timeline query surface.

@@ -14,8 +14,8 @@ further.
 
 This spec wraps `g02.003` in the strict execution grammar so the demo model and
 runner can keep moving in bounded batches now that registry loading,
-inspection, lifecycle control, query polish, and the first browser foundation
-are real shipped surface.
+inspection, lifecycle control, query polish, the first browser foundation, and
+bounded runner-side attempt history are real shipped surface.
 
 ## Governing Refs
 
@@ -69,6 +69,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to implement the first bounded
-attempt-history foundation on top of `demo inspect`, then keep runtime
+Execute the active `g02.003` ready card next to decide where demo history
+should widen next after the runner-side foundation, then keep runtime
 expansion and desktop-client questions separate.
