@@ -624,11 +624,7 @@ mod tests {
     }
 
     fn init_git_repo(root: &Path) {
-        let init = ProcessCommand::new("git")
-            .arg("init")
-            .arg(root)
-            .output()
-            .expect("git init");
+        let init = run_git_init(root);
         assert!(init.status.success(), "git init failed: {init:?}");
         let _ = ProcessCommand::new("git")
             .arg("-C")
@@ -642,6 +638,33 @@ mod tests {
             .args(["config", "user.name", "Effigy Tests"])
             .output()
             .expect("git config name");
+    }
+
+    fn run_git_init(root: &Path) -> std::process::Output {
+        let init = ProcessCommand::new("git")
+            .arg("init")
+            .arg(root)
+            .output()
+            .expect("git init");
+        if init.status.success() {
+            return init;
+        }
+
+        let stderr = String::from_utf8_lossy(&init.stderr);
+        let git_dir = root.join(".git");
+        let template_collision = stderr.contains("cannot copy")
+            && stderr.contains(".git/description")
+            && stderr.contains("File exists");
+        if template_collision && git_dir.exists() {
+            let _ = fs::remove_dir_all(&git_dir);
+            return ProcessCommand::new("git")
+                .arg("init")
+                .arg(root)
+                .output()
+                .expect("git init retry");
+        }
+
+        init
     }
 
     fn commit_all(root: &Path, message: &str) {
