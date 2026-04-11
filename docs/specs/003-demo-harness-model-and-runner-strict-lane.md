@@ -69,5 +69,5 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to choose the post-query browser
-follow-up, then keep runtime expansion and desktop-client questions separate.
+Execute the active `g02.003` ready card next to implement bounded detail-pane
+navigation, then keep runtime expansion and desktop-client questions separate.
