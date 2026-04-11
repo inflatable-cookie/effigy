@@ -1,6 +1,6 @@
 # 006 Harden Composition Explainability And Operator UX
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.002`
 Spec: `docs/specs/002-manifest-composition-and-override-strict-lane.md`
@@ -45,8 +45,19 @@ improving explainability, diagnostics, and focused inspection.
 - explainability needs imply a much broader config-debugging tool than this
   bounded batch can honestly support
 
+## Outcome
+
+Completed in the `g02.002` follow-up implementation batch:
+
+- conflict diagnostics now name both source fragments and include explicit
+  override hints
+- `effigy config --inspect` groups effective sources by fragment in text mode
+- `effigy config --inspect --path <dotted.path>` provides a bounded source and
+  override-history query surface in both text and JSON mode
+- the narrower inspection surface stayed bounded instead of turning into a
+  config editor
+
 ## Next Task
 
-Implement this batch, then leave the next move explicit as either one final
-composition polish/proof wave or activation of `g02.003` planning on top of a
-more legible composition surface.
+Activate `g02.003` planning next and use the now-real composition surface as a
+dependency the demo-harness lane can rely on.

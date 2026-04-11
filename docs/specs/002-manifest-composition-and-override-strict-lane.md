@@ -1,6 +1,6 @@
 # 002 Manifest Composition And Override Strict Lane
 
-Status: active
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.002`
 
@@ -63,6 +63,5 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.002` explainability/UX hardening card next, then either
-leave one final composition-ready card or return the lane to a real intent
-checkpoint before `g02.003` starts depending on this surface.
+Use `g02.003` as the active strict lane next. This lane no longer needs to
+block downstream planning.

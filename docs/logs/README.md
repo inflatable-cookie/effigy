@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04-11-composition-explainability-closeout-and-g02-003-activation.md`](./2026-04/11-composition-explainability-closeout-and-g02-003-activation.md)
 - [`2026-04-11-manifest-composition-foundation-implementation.md`](./2026-04/11-manifest-composition-foundation-implementation.md)
 - [`2026-04-11-manifest-composition-implementation-slice-decision.md`](./2026-04/11-manifest-composition-implementation-slice-decision.md)
 - [`2026-04-11-manifest-composition-override-and-explainability-decision.md`](./2026-04/11-manifest-composition-override-and-explainability-decision.md)

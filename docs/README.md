@@ -129,6 +129,5 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.002` spec lane to harden manifest composition
-explainability before more feature planning assumes the inspection surface is
-complete enough to depend on.
+Use the active strict `g02.003` spec lane to define the demo-harness model
+before TUI or desktop planning starts relying on ad hoc assumptions.

@@ -27,8 +27,8 @@ Updated: 2026-04-11
 - `g02`
   - Starts a new product cycle after the implementation/consolidation-heavy `g01` sequence.
   - `001` captures the stateless bootstrap command and clone contract milestone, now complete: released and live-pilot validated on `loophole` and `songsprout`.
-  - `002` captures the active manifest composition and override contract so split config remains feature-agnostic.
-  - `003` captures the planned demo harness model and runner/browser contract so proof verification becomes a first-class Effigy surface.
+  - `002` captures the manifest composition and override contract; the foundation and inspectability surface are now shipped strongly enough for downstream planning to depend on.
+  - `003` captures the active demo harness model and runner/browser contract so proof verification becomes a first-class Effigy surface.
 
 ## Research Roadmaps
 

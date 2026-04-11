@@ -39,10 +39,10 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-- `g02.002` is the active roadmap milestone.
-- `docs/specs/002-manifest-composition-and-override-strict-lane.md` is the active
+- `g02.003` is the active roadmap milestone.
+- `docs/specs/003-demo-harness-model-and-runner-strict-lane.md` is the active
   strict planning lane around that roadmap.
-- `docs/specs/batch-cards/006-harden-composition-explainability-and-operator-ux.md`
+- `docs/specs/batch-cards/007-decide-demo-model-boundaries-and-registry-shape.md`
   is the current ready card.
 
 ## Research Program
@@ -65,10 +65,9 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute the active explainability-ready card for `g02.002`, then leave the next
-move explicit as either one final composition hardening/proof batch or
-activation of `g02.003` planning on top of a real config-composition
-foundation.
+Execute the active planning-ready card for `g02.003`, then leave the next move
+explicit as either runner/lifecycle semantics or coverage/gap modeling on top
+of the now-real composition foundation.
 
 
 ## Historical language boundary

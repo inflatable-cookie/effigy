@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Planned
+Status: In Progress
 Owner: Platform
 Created: 2026-04-11
 Depends on: 002, 027, 028
@@ -251,5 +251,6 @@ This lane should not invent its own external file loading model.
 
 ## Next Task
 
-Close `g02.001` first, then use this roadmap to design the demo model and
-runner contract before any TUI or desktop client work begins.
+Use the active `g02.003` strict lane to decide the demo object model and
+registry boundary first, then move to runner semantics before any TUI or
+desktop client work begins.
