@@ -21,8 +21,7 @@ use serde_json::Value as JsonValue;
 
 use crate::runner::{run_command, RunnerError};
 use crate::{
-    Command, DemoArgs, DemoListGap, DemoListGroupBy, DemoListQuery, DemoListStatus,
-    DemoSubcommand,
+    Command, DemoArgs, DemoListGap, DemoListGroupBy, DemoListQuery, DemoListStatus, DemoSubcommand,
 };
 
 type BrowserTerminal = Terminal<CrosstermBackend<Stdout>>;
@@ -62,6 +61,8 @@ struct DemoBrowserApp {
     selected_demo_id: Option<String>,
     selected_row_index: usize,
     selected_artifact_index: usize,
+    detail_scroll_line: usize,
+    detail_viewport_lines: usize,
     detail: Option<DemoDetail>,
     footer_message: String,
     pending_action: Option<PendingAction>,
@@ -83,6 +84,8 @@ impl DemoBrowserApp {
             selected_demo_id: None,
             selected_row_index: 0,
             selected_artifact_index: 0,
+            detail_scroll_line: 0,
+            detail_viewport_lines: 0,
             detail: None,
             footer_message: "Loading demo registry...".to_owned(),
             pending_action: None,
@@ -174,6 +177,10 @@ impl DemoBrowserApp {
             }
             KeyCode::Char('[') => self.select_previous_artifact(),
             KeyCode::Char(']') => self.select_next_artifact(),
+            KeyCode::PageDown | KeyCode::Char('J') => self.scroll_detail_page_down(),
+            KeyCode::PageUp | KeyCode::Char('K') => self.scroll_detail_page_up(),
+            KeyCode::Home => self.scroll_detail_to_top(),
+            KeyCode::End => self.scroll_detail_to_bottom(),
             KeyCode::Char('o') => self.dispatch_open_artifact()?,
             KeyCode::Enter | KeyCode::Char('r') => self.dispatch_run_or_rerun()?,
             KeyCode::Char('s') => self.dispatch_stop()?,
@@ -299,6 +306,49 @@ impl DemoBrowserApp {
     fn selected_artifact(&self) -> Option<&str> {
         let detail = self.selected_detail()?;
         selected_artifact(detail, self.selected_artifact_index)
+    }
+
+    fn detail_lines(&self) -> Vec<Line<'static>> {
+        if let Some(detail) = &self.detail {
+            detail_lines(&self.repo_root, detail, self.selected_artifact_index)
+        } else {
+            vec![
+                Line::from("No demo selected."),
+                Line::from(""),
+                Line::from("Use j/k or arrow keys to move through the demo list."),
+            ]
+        }
+    }
+
+    fn detail_max_scroll(&self) -> usize {
+        max_detail_scroll(self.detail_lines().len(), self.detail_viewport_lines)
+    }
+
+    fn clamp_detail_scroll(&mut self) {
+        self.detail_scroll_line = self.detail_scroll_line.min(self.detail_max_scroll());
+    }
+
+    fn reset_detail_scroll(&mut self) {
+        self.detail_scroll_line = 0;
+    }
+
+    fn scroll_detail_page_down(&mut self) {
+        let step = detail_scroll_step(self.detail_viewport_lines);
+        let next = self.detail_scroll_line.saturating_add(step);
+        self.detail_scroll_line = next.min(self.detail_max_scroll());
+    }
+
+    fn scroll_detail_page_up(&mut self) {
+        let step = detail_scroll_step(self.detail_viewport_lines);
+        self.detail_scroll_line = self.detail_scroll_line.saturating_sub(step);
+    }
+
+    fn scroll_detail_to_top(&mut self) {
+        self.detail_scroll_line = 0;
+    }
+
+    fn scroll_detail_to_bottom(&mut self) {
+        self.detail_scroll_line = self.detail_max_scroll();
     }
 
     fn select_next_artifact(&mut self) {
@@ -469,6 +519,7 @@ impl DemoBrowserApp {
     }
 
     fn refresh_state(&mut self) -> Result<(), RunnerError> {
+        let previous_selected_id = self.selected_demo_id.clone();
         let payload = invoke_demo_json(
             &self.repo_root,
             DemoArgs {
@@ -502,6 +553,9 @@ impl DemoBrowserApp {
                 })
             })
             .unwrap_or(0);
+        if self.selected_demo_id != previous_selected_id {
+            self.reset_detail_scroll();
+        }
 
         self.detail = match selected_id {
             Some(demo_id) => {
@@ -526,12 +580,13 @@ impl DemoBrowserApp {
         self.selected_artifact_index = self.detail.as_ref().map_or(0, |detail| {
             clamp_artifact_index(self.selected_artifact_index, detail)
         });
+        self.clamp_detail_scroll();
 
         self.last_refresh = Instant::now();
         Ok(())
     }
 
-    fn render(&self, frame: &mut Frame<'_>) {
+    fn render(&mut self, frame: &mut Frame<'_>) {
         let area = frame.area();
         let layout = Layout::default()
             .direction(Direction::Vertical)
@@ -584,13 +639,17 @@ impl DemoBrowserApp {
                 Span::raw(format!(" {}", query_summary(&self.query))),
                 Span::raw("  "),
                 Span::styled("count:", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(format!(" {}/{}", self.rows_demo_count(), self.total_demo_count)),
+                Span::raw(format!(
+                    " {}/{}",
+                    self.rows_demo_count(),
+                    self.total_demo_count
+                )),
             ]),
         ];
         frame.render_widget(Paragraph::new(lines), area);
     }
 
-    fn render_body(&self, frame: &mut Frame<'_>, area: Rect) {
+    fn render_body(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
@@ -648,19 +707,22 @@ impl DemoBrowserApp {
         frame.render_stateful_widget(list, area, &mut state);
     }
 
-    fn render_detail(&self, frame: &mut Frame<'_>, area: Rect) {
-        let lines = if let Some(detail) = &self.detail {
-            detail_lines(&self.repo_root, detail, self.selected_artifact_index)
-        } else {
-            vec![
-                Line::from("No demo selected."),
-                Line::from(""),
-                Line::from("Use j/k or arrow keys to move through the demo list."),
-            ]
-        };
+    fn render_detail(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        self.detail_viewport_lines = detail_viewport_lines(area);
+        self.clamp_detail_scroll();
+        let lines = self.detail_lines();
+        let title = format!(
+            "Detail ({})",
+            detail_position_label(
+                self.detail_scroll_line,
+                self.detail_viewport_lines,
+                lines.len()
+            )
+        );
         let detail = Paragraph::new(lines)
-            .block(Block::default().title("Detail").borders(Borders::ALL))
-            .wrap(Wrap { trim: false });
+            .block(Block::default().title(title).borders(Borders::ALL))
+            .wrap(Wrap { trim: false })
+            .scroll((paragraph_scroll_line(self.detail_scroll_line), 0));
         frame.render_widget(detail, area);
     }
 
@@ -688,6 +750,10 @@ impl DemoBrowserApp {
             Span::raw("stop  "),
             Span::styled(" [ ] ", key_style()),
             Span::raw("artifact  "),
+            Span::styled(" PgUp/PgDn ", key_style()),
+            Span::raw("detail  "),
+            Span::styled(" Home/End ", key_style()),
+            Span::raw("ends  "),
             Span::styled(" o ", key_style()),
             Span::raw("open  "),
             Span::styled(" R ", key_style()),
@@ -718,8 +784,8 @@ impl DemoBrowserApp {
             ]
         };
         let notice = Paragraph::new(lines)
-        .block(Block::default().title("Demo Browser").borders(Borders::ALL))
-        .wrap(Wrap { trim: true });
+            .block(Block::default().title("Demo Browser").borders(Borders::ALL))
+            .wrap(Wrap { trim: true });
         frame.render_widget(notice, overlay);
     }
 
@@ -741,7 +807,11 @@ impl DemoBrowserApp {
             Line::from(""),
             Line::from("Enter applies. Esc cancels. Empty clears the filter."),
         ])
-        .block(Block::default().title("Query Control").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title("Query Control")
+                .borders(Borders::ALL),
+        )
         .wrap(Wrap { trim: true });
         frame.render_widget(prompt_widget, overlay);
     }
@@ -872,6 +942,31 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         ])
         .split(vertical[1]);
     horizontal[1]
+}
+
+fn detail_viewport_lines(area: Rect) -> usize {
+    usize::from(area.height.saturating_sub(2)).max(1)
+}
+
+fn detail_scroll_step(viewport_lines: usize) -> usize {
+    viewport_lines.saturating_sub(1).max(1)
+}
+
+fn max_detail_scroll(total_lines: usize, viewport_lines: usize) -> usize {
+    total_lines.saturating_sub(viewport_lines.max(1))
+}
+
+fn detail_position_label(scroll_line: usize, viewport_lines: usize, total_lines: usize) -> String {
+    if total_lines == 0 {
+        return "empty".to_owned();
+    }
+    let top = scroll_line.min(total_lines.saturating_sub(1)) + 1;
+    let bottom = (scroll_line + viewport_lines.max(1)).min(total_lines);
+    format!("{top}-{bottom}/{total_lines}")
+}
+
+fn paragraph_scroll_line(scroll_line: usize) -> u16 {
+    scroll_line.min(u16::MAX as usize) as u16
 }
 
 fn next_group_by(current: Option<DemoListGroupBy>) -> Option<DemoListGroupBy> {
@@ -1366,12 +1461,15 @@ struct DemoLatestAttempt {
 mod tests {
     use std::path::Path;
 
+    use ratatui::layout::Rect;
+
     use super::{
-        clamp_artifact_index, first_demo_id, next_gap_filter, next_group_by, next_status_filter,
-        query_summary, read_recent_log_lines, resolve_artifact_path, resolve_repo_relative_path,
-        row_contains_demo, selected_artifact, BrowserRow, DemoDetail, DemoEntrypoint,
-        DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListQuery, DemoListStatus,
-        DemoSummary,
+        clamp_artifact_index, detail_position_label, detail_scroll_step, detail_viewport_lines,
+        first_demo_id, max_detail_scroll, next_gap_filter, next_group_by, next_status_filter,
+        paragraph_scroll_line, query_summary, read_recent_log_lines, resolve_artifact_path,
+        resolve_repo_relative_path, row_contains_demo, selected_artifact, BrowserRow, DemoDetail,
+        DemoEntrypoint, DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListQuery,
+        DemoListStatus, DemoSummary,
     };
 
     fn summary(id: &str) -> DemoSummary {
@@ -1527,6 +1625,27 @@ mod tests {
             Some(DemoListGap::Stale)
         );
         assert_eq!(next_gap_filter(Some(DemoListGap::Stale)), None);
+    }
+
+    #[test]
+    fn browser_detail_viewport_and_scroll_are_bounded() {
+        assert_eq!(detail_viewport_lines(Rect::new(0, 0, 80, 12)), 10);
+        assert_eq!(detail_scroll_step(10), 9);
+        assert_eq!(max_detail_scroll(30, 10), 20);
+        assert_eq!(max_detail_scroll(6, 10), 0);
+    }
+
+    #[test]
+    fn browser_detail_position_label_reports_visible_window() {
+        assert_eq!(detail_position_label(0, 10, 8), "1-8/8");
+        assert_eq!(detail_position_label(5, 10, 30), "6-15/30");
+        assert_eq!(detail_position_label(29, 10, 30), "30-30/30");
+    }
+
+    #[test]
+    fn browser_paragraph_scroll_line_clamps_large_offsets() {
+        assert_eq!(paragraph_scroll_line(12), 12);
+        assert_eq!(paragraph_scroll_line(usize::MAX), u16::MAX);
     }
 
     #[test]

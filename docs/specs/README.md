@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to implement bounded detail-pane navigation on top of
-the shipped demo browser, then keep this surface trimmed so it reflects live
+Use the active spec lane to decide the next bounded browser follow-up after
+detail-pane navigation, then keep this surface trimmed so it reflects live
 planning rather than every historical plan.

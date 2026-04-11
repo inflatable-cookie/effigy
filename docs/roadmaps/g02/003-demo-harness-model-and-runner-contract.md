@@ -1091,23 +1091,53 @@ Still deferred:
 
 ### 10.19 Browser Detail-Navigation Slice
 
-Batch `03.22` target:
+Batch `03.22` delivered:
 
 Implement bounded detail-pane navigation for long selected-demo records.
 
-In scope for the next implementation slice:
+What shipped:
 
 - bounded vertical navigation in the detail pane
-- visible operator feedback about detail position when needed
+- visible operator feedback about detail position in the detail title
 - keeping artifact selection coherent while the pane scrolls
+- keyboard affordances for `PgUp`/`PgDn`, `J`/`K`, and `Home`/`End`
 - proving the change against the shipped self-hosted demos
 
-Out of scope for the next implementation slice:
+What this exposed next:
+
+- the browser can now reach the full selected-demo record without leaving the
+  TUI
+- the next honest question is no longer basic navigation but which bounded
+  follow-up closes the next operator-visible gap
+- that follow-up should still stay inside browser ergonomics rather than widen
+  immediately into deeper runtime or desktop-client work
+
+Still deferred:
 
 - richer live-log streaming
 - artifact preview or richer rendering
 - multi-attempt history or queueing
 - broader generic runtime cancellation
+
+### 10.20 Post-Detail-Navigation Follow-Up Boundary
+
+Batch `03.23` target:
+
+Choose the next bounded browser follow-up after detail-pane navigation.
+
+In scope for the next decision slice:
+
+- reassessing the browser against the shipped self-hosted demos with scrolling
+  detail now in place
+- choosing the next bounded operator-visible gap to address
+- keeping deeper runtime cancellation, terminal emulation, and desktop-client
+  work explicitly deferred unless the evidence genuinely changes
+
+Out of scope for the next decision slice:
+
+- widening directly into terminal emulation
+- generic runtime cancellation expansion
+- desktop-client foundation work
 
 ## 11) Acceptance Criteria
 
@@ -1130,5 +1160,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to implement bounded detail-pane
-navigation without reopening broader runtime-cancellation scope.
+Use the active `g02.003` strict lane to decide the next bounded browser
+follow-up after detail-pane navigation without reopening broader
+runtime-cancellation scope.

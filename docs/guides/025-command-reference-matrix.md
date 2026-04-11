@@ -170,8 +170,9 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
   provides grouped list/detail browsing plus bounded `run`, `stop`, `rerun`,
   refresh, in-browser query controls over the shipped `demo list` filter
   dimensions, artifact-opening actions, and bounded recent-output visibility
-  from runner-owned logs, but it still defers terminal emulation, rich
-  artifact rendering, and multi-attempt history.
+  from runner-owned logs, plus bounded detail-pane navigation through longer
+  selected-demo records, but it still defers terminal emulation, rich artifact
+  rendering, and multi-attempt history.
 - `demo run` executes either a declared task-backed or run-backed entrypoint,
   writes a normalized receipt, and refreshes the latest-attempt state that
   `demo inspect` reports.

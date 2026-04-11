@@ -190,6 +190,9 @@ Lifecycle notes:
 - `demo browser` now also shows bounded recent stdout/stderr output for the
   selected demo when runner-owned logs are available from an active or latest
   attempt.
+- inside `demo browser`, use `PgUp`/`PgDn` or `J`/`K` to move through longer
+  detail content, and `Home`/`End` to jump to the top or bottom of the
+  selected-demo record.
 - `demo inspect` now shows both the latest terminal receipt and any active
   in-flight attempt, plus explicit action availability and receipt freshness.
 - `demo stop <id>` works for directly runner-owned run-backed demos.
@@ -198,8 +201,9 @@ Lifecycle notes:
 - task-backed demos remain runnable, but stop is still an explicit
   `not supported through the current runtime` boundary.
 - the browser currently focuses on honest navigation, bounded action dispatch,
-  artifact-opening, and recent proof output; terminal emulation, rich artifact
-  rendering, and multi-attempt history remain deferred.
+  artifact-opening, recent proof output, and bounded detail navigation;
+  terminal emulation, rich artifact rendering, and multi-attempt history
+  remain deferred.
 
 ## 3) Full Task Table with Runtime Controls
 
