@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to control the next `g02.003` coverage/gap planning
+Use the active spec lane to control the next `g02.003` browser/TUI planning
 batch, then keep this surface trimmed so it reflects live planning rather than
 every historical plan.

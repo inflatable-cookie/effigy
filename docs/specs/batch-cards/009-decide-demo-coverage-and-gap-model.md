@@ -1,6 +1,6 @@
 # 009 Decide Demo Coverage And Gap Model
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -37,6 +37,26 @@ Lock the first bounded coverage model for demos:
   inference from whatever demos happen to exist
 - the next batch can move to browser/TUI contract shaping without reopening
   proof coverage semantics
+
+## Outcome
+
+Closed with these decisions:
+
+- all known proof obligations stay explicit in the same `[demos.<id>]` registry
+- `planned` and `missing` are explicit gap states, not absence inferred from
+  missing files
+- `broken` is an existing proof surface that currently cannot be trusted or run
+  honestly
+- `stale` is a freshness overlay on otherwise existing proof, not a new base
+  lifecycle state
+- demos must carry explicit coverage claims through `covers = ["area.key"]` so
+  the browser can group proof and gaps by covered area without guessing
+
+## Next Task
+
+Move to the browser/TUI contract next so the operator-facing sidebar/list view,
+filters, badges, and drilldown model can be designed on top of the now-settled
+object, runner, and coverage semantics.
 
 ## Validation
 

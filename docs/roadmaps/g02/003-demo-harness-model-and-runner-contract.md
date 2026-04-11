@@ -155,6 +155,9 @@ Notes:
   into generic task routing.
 - inline config must work immediately; future split-file config uses
   `[manifest].include`, not a demo-only loader.
+- `covers = ["..."]` is part of the first-class metadata because proof
+  discovery and gap reporting need explicit coverage claims rather than
+  inference from titles or tags alone.
 
 ### 5.2 Task-backed vs distinct
 
@@ -266,6 +269,60 @@ Receipt and artifact boundary:
 - the runner tracks artifact references and receipt metadata; it does not own
   rich artifact rendering formats in this lane
 
+## 6.1 Coverage And Gap Model
+
+Batch `03.3` decision:
+
+- all known proof obligations live explicitly in the `[demos.<id>]` registry
+- the browser must not infer missing proof from silence alone
+- demos carry explicit coverage claims through `covers = ["area.key"]`
+- `stale` is a freshness overlay, not a new lifecycle status
+
+Coverage interpretation by base status:
+
+- `planned`
+  - known proof obligation, not runnable yet
+- `missing`
+  - known proof obligation, no runnable proof surface exists yet
+- `broken`
+  - runnable proof surface exists in principle, but it is not currently
+    trustworthy or executable enough to count as healthy proof
+- `ready`, `running`, `passed`, `failed`
+  - proof surface exists
+
+Freshness overlay:
+
+- `stale` marks an existing proof surface whose latest receipt can no longer be
+  trusted as current enough
+- stale does not replace the base lifecycle state; it decorates it
+- the exact freshness algorithm can remain implementation work, but the browser
+  must be able to surface stale proof separately from broken or missing proof
+
+Minimum browser-facing gap classes:
+
+- existing proof
+- planned proof
+- missing proof
+- broken proof
+- stale proof
+
+Minimum metadata needed for gap visibility:
+
+- `covers`
+- `status`
+- `title`
+- `summary`
+- `owner`
+- latest receipt/freshness info when available
+
+That is enough for the browser to answer:
+
+- what proof exists
+- what proof is planned
+- what proof is missing
+- what proof is broken
+- what proof is stale
+
 ## 7) TUI Browser Contract
 
 The first client should likely be a TUI browser that can:
@@ -319,9 +376,9 @@ This lane should not invent its own external file loading model.
 
 ### Batch 03.3 - Coverage and Gap Model
 
-- [ ] Define how repos express covered vs planned vs missing proof
-- [ ] Define operator-visible gap reporting
-- [ ] Define how stale or broken proof is surfaced
+- [x] Define how repos express covered vs planned vs missing proof
+- [x] Define operator-visible gap reporting
+- [x] Define how stale or broken proof is surfaced
 
 ### Batch 03.4 - TUI Contract
 
@@ -356,5 +413,6 @@ This lane should not invent its own external file loading model.
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the coverage and gap model next,
-now that the demo object model and runner lifecycle boundary are explicit.
+Use the active `g02.003` strict lane to decide the browser/TUI contract next,
+now that the demo object model, runner lifecycle, and coverage model are
+explicit.
