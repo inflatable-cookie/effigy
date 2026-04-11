@@ -1,6 +1,6 @@
 # 025 Decide Demo Post-Live-Log Follow-Up Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -47,5 +47,5 @@ visibility inside `effigy demo browser`.
 
 ## Next Task
 
-Choose the next bounded browser follow-up after live log visibility, then open
-one explicit ready card for that narrower slice.
+Implement bounded browser query controls through
+[`026-implement-demo-browser-query-controls.md`](./026-implement-demo-browser-query-controls.md).

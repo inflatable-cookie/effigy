@@ -992,17 +992,57 @@ Still deferred:
 
 ### 10.16 Post-Live-Log Follow-Up Boundary
 
-Batch `03.19` target:
+Batch `03.19` delivered:
 
 Choose the next bounded browser follow-up after live log visibility.
 
-Scope for the next decision slice:
+What this settled:
 
-- decide whether the next priority is richer log handling, artifact/detail
-  polish, or another tighter browser-facing proof affordance
-- keep the decision grounded in the shipped self-hosted demos and browser
-  behavior
-- keep broader runtime and desktop-client questions deferred
+- the next honest browser gap is in-browser registry narrowing, not richer log
+  handling
+- the browser should consume the already-shipped `demo list` query contract
+  instead of inventing browser-only filtering semantics
+- richer log handling and artifact/detail polish remain possible later, but
+  they are not the next bounded slice exposed by the self-hosted demos
+
+Why query controls next:
+
+- the browser already exposes grouping, lifecycle actions, artifact access, and
+  recent output for a selected demo
+- the current TUI still cannot narrow the registry by search, owner, status,
+  gap, or stale state without leaving the browser
+- the shipped `demo list` surface already defines those query semantics, so the
+  browser can adopt them without widening the runner contract
+
+Still deferred:
+
+- richer live-log handling beyond bounded recent output
+- artifact preview or richer detail rendering
+- terminal emulation
+- broader generic runtime cancellation
+- multi-attempt history or queueing
+- desktop-client decisions
+
+### 10.17 Browser Query Controls Slice
+
+Batch `03.20` target:
+
+Implement bounded browser query controls on top of the shipped `demo list`
+contract.
+
+In scope for the next implementation slice:
+
+- in-browser query state for the highest-signal existing filters
+- visible operator feedback about active query constraints
+- honest empty-state handling when filters narrow the registry to no results
+- reuse of existing runner query semantics rather than browser-only logic
+
+Out of scope for the next implementation slice:
+
+- new query semantics not already shipped through `demo list`
+- richer log streaming or terminal emulation
+- artifact preview or richer rendering
+- multi-attempt history or queueing
 
 ## 11) Acceptance Criteria
 
@@ -1025,6 +1065,5 @@ Scope for the next decision slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to choose the next bounded browser
-follow-up after live log visibility without reopening broader
-runtime-cancellation scope.
+Use the active `g02.003` strict lane to implement bounded browser query
+controls without reopening broader runtime-cancellation scope.
