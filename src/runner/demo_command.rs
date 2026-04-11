@@ -280,7 +280,9 @@ fn render_demo_inspect(
             renderer.key_values(&[KeyValue::new("history-parse", parse_error.clone())])?;
         }
         if !record.attempt_history.attempts.is_empty() {
-            renderer.table(&recent_attempts_table_spec(&record.attempt_history.attempts))?;
+            renderer.table(&recent_attempts_table_spec(
+                &record.attempt_history.attempts,
+            ))?;
         }
     }
     renderer.text("")?;
@@ -463,9 +465,13 @@ fn render_demo_stop(
         );
     }
 
-    request_demo_termination(target_pid)?;
     persisted.phase = PersistedDemoActivePhase::StopRequested;
     write_active_attempt_record(repo_root, demo_id, &persisted)?;
+    if let Err(error) = request_demo_termination(target_pid) {
+        persisted.phase = PersistedDemoActivePhase::Running;
+        write_active_attempt_record(repo_root, demo_id, &persisted)?;
+        return Err(error);
+    }
     render_demo_stop_result(
         repo_root,
         loaded,
@@ -955,6 +961,14 @@ fn load_active_attempt(repo_root: &Path, demo_id: &str) -> Result<DemoActiveAtte
 
     let target_alive = record.target_pid.is_none_or(pid_is_alive);
     let owner_alive = pid_is_alive(record.owner_pid);
+    if record.phase == PersistedDemoActivePhase::StopRequested && (!owner_alive || !target_alive) {
+        return Ok(demo_active_attempt_from_record(
+            repo_root,
+            demo_id,
+            &record,
+            rendered_path,
+        ));
+    }
     if !owner_alive || !target_alive {
         clear_active_attempt_state(repo_root, demo_id);
         return Ok(DemoActiveAttempt::inactive(Some(rendered_path)));
@@ -1439,13 +1453,31 @@ fn write_active_attempt_record(
     }
     let rendered = serde_json::to_string_pretty(record)
         .map_err(|error| RunnerError::task_invocation_failed_render(&path, error))?;
-    fs::write(&path, rendered)
-        .map_err(|error| RunnerError::task_invocation_failed_write(&path, error))
+    write_atomic_text_file(&path, &rendered)
 }
 
 fn clear_active_attempt_state(repo_root: &Path, demo_id: &str) {
     let path = effective_active_attempt_path(repo_root, demo_id);
     let _ = fs::remove_file(path);
+}
+
+fn write_atomic_text_file(path: &Path, contents: &str) -> Result<(), RunnerError> {
+    let Some(parent) = path.parent() else {
+        return fs::write(path, contents)
+            .map_err(|error| RunnerError::task_invocation_failed_write(path, error));
+    };
+    let temp_path = parent.join(format!(
+        ".{}.tmp-{}-{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("effigy-temp"),
+        std::process::id(),
+        now_epoch_ms()
+    ));
+    fs::write(&temp_path, contents)
+        .map_err(|error| RunnerError::task_invocation_failed_write(&temp_path, error))?;
+    fs::rename(&temp_path, path)
+        .map_err(|error| RunnerError::task_invocation_failed_write(path, error))
 }
 
 fn request_demo_termination(target_pid: u32) -> Result<(), RunnerError> {
@@ -1651,7 +1683,8 @@ fn append_attempt_history(
 
     let rendered = serde_json::to_string_pretty(&history)
         .map_err(|error| RunnerError::task_invocation_failed_render(&path, error))?;
-    fs::write(&path, rendered).map_err(|error| RunnerError::task_invocation_failed_write(&path, error))
+    fs::write(&path, rendered)
+        .map_err(|error| RunnerError::task_invocation_failed_write(&path, error))
 }
 
 fn build_attempt_id(demo_id: &str) -> String {
@@ -2485,7 +2518,13 @@ impl Drop for DemoActiveAttemptGuard {
 #[cfg(test)]
 mod tests {
     use super::{
-        PersistedDemoAttemptHistory, PersistedDemoHistoricalAttempt, DEMO_ATTEMPT_HISTORY_LIMIT,
+        load_active_attempt, write_active_attempt_record, DemoActiveAttempt,
+        PersistedDemoActiveAttempt, PersistedDemoActivePhase, PersistedDemoAttemptHistory,
+        PersistedDemoHistoricalAttempt, DEMO_ATTEMPT_HISTORY_LIMIT,
+    };
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
     };
 
     #[test]
@@ -2511,5 +2550,55 @@ mod tests {
             history.attempts[DEMO_ATTEMPT_HISTORY_LIMIT - 1].attempt_id,
             "attempt-2"
         );
+    }
+
+    #[test]
+    fn load_active_attempt_preserves_stop_requested_record_until_owner_clears_it() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "effigy-demo-active-stop-requested-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be monotonic enough for test ids")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&repo_root).expect("create temp repo root");
+        let demo_id = "demo";
+        write_active_attempt_record(
+            &repo_root,
+            demo_id,
+            &PersistedDemoActiveAttempt {
+                schema: "effigy.demo.active.v1".to_owned(),
+                schema_version: 1,
+                attempt_id: "attempt-1".to_owned(),
+                demo_id: demo_id.to_owned(),
+                phase: PersistedDemoActivePhase::StopRequested,
+                started_at_epoch_ms: 1,
+                owner_pid: u32::MAX,
+                target_pid: Some(u32::MAX),
+                stoppable: true,
+                entrypoint_kind: "run".to_owned(),
+                entrypoint_value: "sleep 1".to_owned(),
+                command: "sleep 1".to_owned(),
+                stdout_log_path: None,
+                stderr_log_path: None,
+            },
+        )
+        .expect("write active attempt");
+
+        let active = load_active_attempt(&repo_root, demo_id).expect("load active attempt");
+        assert!(active.active);
+        assert_eq!(active.state_label(), "stop-requested");
+        assert!(matches!(
+            active,
+            DemoActiveAttempt {
+                stoppable: true,
+                ..
+            }
+        ));
+        assert!(
+            repo_root.join(".effigy/demo/active/demo.json").exists(),
+            "stop-requested active record should survive until the owner process clears it"
+        );
+        let _ = fs::remove_dir_all(&repo_root);
     }
 }

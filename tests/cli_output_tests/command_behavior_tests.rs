@@ -620,7 +620,10 @@ task = "demo:login-smoke"
     assert!(first.status.success(), "first demo run failed: {first:?}");
     std::thread::sleep(Duration::from_millis(2));
     let second = run_json_cli_command(&root, &["demo", "rerun", "login-smoke"]);
-    assert!(second.status.success(), "second demo run failed: {second:?}");
+    assert!(
+        second.status.success(),
+        "second demo run failed: {second:?}"
+    );
 
     let output = run_json_cli_command(&root, &["demo", "inspect", "login-smoke"]);
     assert!(output.status.success(), "demo inspect failed: {output:?}");
