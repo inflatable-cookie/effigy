@@ -41,10 +41,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`035-implement-demo-history-query-foundation.md`](./035-implement-demo-history-query-foundation.md) (complete)
 - [`036-decide-demo-history-query-follow-up-boundary.md`](./036-decide-demo-history-query-follow-up-boundary.md) (complete)
 - [`037-implement-demo-history-attempt-drilldown.md`](./037-implement-demo-history-attempt-drilldown.md) (complete)
-- [`038-decide-demo-post-history-drilldown-boundary.md`](./038-decide-demo-post-history-drilldown-boundary.md)
+- [`038-decide-demo-post-history-drilldown-boundary.md`](./038-decide-demo-post-history-drilldown-boundary.md) (complete)
+- [`039-implement-demo-history-query-controls.md`](./039-implement-demo-history-query-controls.md)
 
 ## Next Task
 
-Execute the active ready card to choose the next bounded follow-up after
-historical-attempt drilldown before widening `demo list` or browser rendering
-again.
+Execute the active ready card to add bounded history-query narrowing and
+selection ergonomics before widening `demo list` or browser rendering again.

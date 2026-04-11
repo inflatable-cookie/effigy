@@ -1504,6 +1504,51 @@ Out of scope for the next decision slice:
 - multi-demo history aggregation, queueing, or generic analytics
 - broader runtime cancellation or desktop-client work
 
+Batch `03.32` result:
+
+- the next bounded value should still not go into `demo list`, because history
+  density there would make a deliberately compact discovery surface carry too
+  much result-review state
+- it should still not go into the browser next, because the browser would need
+  another density pass before the history contract is fully settled
+- the next honest product slice is a deeper one-demo history/query contract:
+  bounded history-query narrowing plus human-friendly selection ergonomics on
+  top of the shipped stable `--attempt <ATTEMPT_ID>` path
+
+Why this is the right follow-up:
+
+- the current `demo history` surface now answers `show me one prior result
+  properly`, but operators still have to scan the retained table and copy long
+  attempt ids for common drilldown flows
+- that ergonomic gap belongs in the dedicated history query surface rather than
+  in `demo list` or browser presentation
+- once one-demo query controls are real, later UI work can consume a more
+  settled history contract instead of inventing selection/narrowing behavior
+  through presentation
+
+### 10.30 Demo History Query Controls
+
+Batch `03.33` target:
+
+Implement bounded history-query narrowing and human-friendly selection
+ergonomics on top of the shipped `demo history` summary-plus-drilldown
+surface.
+
+In scope for the next implementation slice:
+
+- add one-demo history narrowing controls such as outcome-focused filtering
+- add a human-friendly retained-attempt selection path in addition to stable
+  `--attempt <ATTEMPT_ID>`
+- keep text and JSON output aligned around the new query controls
+- prove the controls against retained history behavior without requiring
+  browser rendering changes
+
+Out of scope for the next implementation slice:
+
+- browser-side history panes, badges, or timelines
+- `demo list` history summaries or grouping changes
+- multi-demo history aggregation, analytics, queueing, or broader runtime work
+
 ### 10.27 Demo History Query Follow-Up Boundary
 
 Batch `03.30` target:

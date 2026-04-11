@@ -334,6 +334,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to choose the next bounded follow-up after
-historical-attempt drilldown, while keeping broader runtime and
-desktop-client questions deferred.
+Use the active `g02.003` ready card to add bounded history-query narrowing and
+selection ergonomics, while keeping broader runtime and desktop-client
+questions deferred.

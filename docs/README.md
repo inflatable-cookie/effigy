@@ -129,6 +129,6 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to choose the next bounded follow-up
-after historical-attempt drilldown, then keep the docs front doors aligned to
+Use the active strict `g02.003` spec lane to add bounded history-query
+narrowing and selection ergonomics, then keep the docs front doors aligned to
 that narrower slice.
