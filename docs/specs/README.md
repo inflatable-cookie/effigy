@@ -14,11 +14,11 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Active Spec Set
 
-- [`002-manifest-composition-and-override-strict-lane.md`](./002-manifest-composition-and-override-strict-lane.md)
+- [`003-demo-harness-model-and-runner-strict-lane.md`](./003-demo-harness-model-and-runner-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 ## Next Task
 
-Use the active spec lane to control the next `g02.002` explainability batch,
-then keep this surface trimmed so it reflects live planning rather than every
+Use the active spec lane to control the next `g02.003` planning batch, then
+keep this surface trimmed so it reflects live planning rather than every
 historical plan.

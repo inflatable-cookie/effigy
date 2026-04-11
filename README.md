@@ -227,7 +227,7 @@ cargo qa-release
 
 ## Current Planning Posture
 
-Effigy's active product lane is `g02.002`.
+Effigy's active product lane is `g02.003`.
 
 Use these surfaces before continuing manifest-composition or demo-harness work:
 
@@ -254,6 +254,6 @@ effigy/
 
 ## Next Task
 
-Complete the active `g02.002` explainability batch so Effigy's composed-manifest
-surface is easier to inspect and debug before demos or other features depend on
-it directly.
+Complete the active `g02.003` planning batch so Effigy has a first-class demo
+object model and registry boundary before any TUI or desktop client work
+begins.

@@ -12,13 +12,13 @@ Generation theme:
 Current milestones:
 
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
-- [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; defines general include/require/import composition plus explicit override semantics for split manifest fragments)
-- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (planned; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract)
+- [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
+- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract)
 
 Active strict planning lane:
 
-- [`../specs/002-manifest-composition-and-override-strict-lane.md`](../specs/002-manifest-composition-and-override-strict-lane.md)
-- [`../specs/batch-cards/006-harden-composition-explainability-and-operator-ux.md`](../specs/batch-cards/006-harden-composition-explainability-and-operator-ux.md)
+- [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
+- [`../specs/batch-cards/007-decide-demo-model-boundaries-and-registry-shape.md`](../specs/batch-cards/007-decide-demo-model-boundaries-and-registry-shape.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.002` explainability batch to harden the operator-facing
-composition surface next. Keep `g02.003` planned but inactive until split-config
-and inspection are both real product surface instead of planning-only doctrine.
+Use the active `g02.003` planning batch to lock the demo object model and
+registry boundary next. Treat `g02.002` as a usable dependency rather than the
+active blocker.
