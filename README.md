@@ -315,6 +315,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to choose the next bounded browser
-follow-up after live log visibility, keeping broader runtime and desktop-client
-questions deferred unless the new evidence changes that boundary.
+Use the active `g02.003` ready card to implement bounded browser query
+controls, keeping broader runtime and desktop-client questions deferred unless
+the new evidence changes that boundary.

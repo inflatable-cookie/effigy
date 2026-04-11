@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04-11-demo-post-live-log-follow-up-boundary-decision.md`](./2026-04/11-demo-post-live-log-follow-up-boundary-decision.md)
 - [`2026-04-11-demo-browser-live-log-visibility-implementation.md`](./2026-04/11-demo-browser-live-log-visibility-implementation.md)
 - [`2026-04-11-demo-post-artifact-follow-up-boundary-decision.md`](./2026-04/11-demo-post-artifact-follow-up-boundary-decision.md)
 - [`2026-04-11-demo-browser-artifact-affordances-implementation.md`](./2026-04/11-demo-browser-artifact-affordances-implementation.md)
