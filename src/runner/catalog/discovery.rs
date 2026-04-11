@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, FileType};
 use std::path::{Path, PathBuf};
 
+use super::super::manifest::load_task_manifest;
 use super::super::model::catalog::LoadedCatalog;
 use super::super::model::constants::TASK_MANIFEST_FILE;
 use super::super::{RunnerError, TaskManifest};
@@ -131,15 +132,7 @@ pub(in crate::runner) fn default_alias(catalog_root: &Path, workspace_root: &Pat
 }
 
 fn load_catalog_manifest(manifest_path: &Path) -> Result<TaskManifest, RunnerError> {
-    let manifest_src =
-        fs::read_to_string(manifest_path).map_err(|error| RunnerError::TaskManifestRead {
-            path: manifest_path.to_path_buf(),
-            error,
-        })?;
-    toml::from_str(&manifest_src).map_err(|error| RunnerError::TaskManifestParse {
-        path: manifest_path.to_path_buf(),
-        error,
-    })
+    load_task_manifest(manifest_path)
 }
 
 fn catalog_depth(workspace_root: &Path, catalog_root: &Path) -> usize {

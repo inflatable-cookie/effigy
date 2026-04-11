@@ -3,7 +3,9 @@ use std::path::Path;
 use toml::Value;
 
 use super::super::super::catalog::{default_alias, discover_manifest_paths};
-use super::super::super::manifest::config_sections::ManifestJsPackageManager;
+use super::super::super::manifest::{
+    config_sections::ManifestJsPackageManager, load_task_manifest_with_inspection,
+};
 use super::super::super::model::catalog::LoadedCatalog;
 use super::super::super::{RunnerError, TaskManifest};
 use super::super::finding_templates::ManifestParseFinding;
@@ -50,7 +52,7 @@ impl<'a, 'b> ScanContext<'a, 'b> {
         if !self.validate_manifest_syntax_and_schema(manifest_path, &source) {
             return;
         }
-        let Some(manifest) = self.parse_manifest_strict(manifest_path, &source) else {
+        let Some(manifest) = self.parse_manifest_strict(manifest_path) else {
             return;
         };
         self.capture_manifest_catalog(manifest_path, manifest);
@@ -85,13 +87,9 @@ impl<'a, 'b> ScanContext<'a, 'b> {
         }
     }
 
-    fn parse_manifest_strict(
-        &mut self,
-        manifest_path: &Path,
-        source: &str,
-    ) -> Option<TaskManifest> {
-        match parse_toml::<TaskManifest>(source) {
-            Ok(manifest) => Some(manifest),
+    fn parse_manifest_strict(&mut self, manifest_path: &Path) -> Option<TaskManifest> {
+        match load_task_manifest_with_inspection(manifest_path) {
+            Ok(loaded) => Some(loaded.manifest),
             Err(error) => {
                 self.push_manifest_parse_error(ManifestParseFinding::strict_parse_failure(
                     manifest_path,

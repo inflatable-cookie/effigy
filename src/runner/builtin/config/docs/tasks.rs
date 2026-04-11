@@ -88,6 +88,29 @@ fn js_package_manager_line(profile: ConfigDocProfile) -> &'static str {
     }
 }
 
+fn manifest_include_comment(profile: ConfigDocProfile) -> &'static str {
+    match profile {
+        ConfigDocProfile::Reference => {
+            "# Ordered partial-manifest fragments resolved relative to the including file."
+        }
+        ConfigDocProfile::Schema => {
+            "# Ordered partial-manifest fragments resolved relative to the including file."
+        }
+    }
+}
+
+pub(super) fn manifest_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
+    vec![
+        "[manifest]",
+        manifest_include_comment(profile),
+        "include = [",
+        "  \"effigy.tasks.toml\",",
+        "  { path = \"effigy.docs.toml\", override = [\"docs_policy.indexes.vision\"] },",
+        "]",
+        "",
+    ]
+}
+
 pub(super) fn package_manager_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     vec![
         "[package_manager]",

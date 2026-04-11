@@ -27,6 +27,7 @@ Useful companion commands while editing:
 ```sh
 effigy init
 effigy config --schema --minimal
+effigy config --inspect
 effigy tasks
 effigy test --plan
 ```
@@ -67,6 +68,55 @@ worker = "cargo run -p worker {args}"
 ```
 
 Use compact syntax for straightforward run commands and lightweight chains.
+
+## 2b) Split One Manifest Into Focused Fragments
+
+```toml
+[manifest]
+include = [
+  "effigy.tasks.toml",
+  "effigy.docs.toml",
+  { path = "effigy.local.toml", override = ["tasks.dev", "release.sync-files"] },
+]
+```
+
+`effigy.tasks.toml`
+
+```toml
+[tasks]
+dev = "bun run dev"
+build = "bun run build"
+```
+
+`effigy.docs.toml`
+
+```toml
+[docs_policy.indexes.vision]
+file = "docs/vision/README.md"
+dir = "docs/vision"
+section = "Vision Artifacts"
+```
+
+Use this when one `effigy.toml` has become a dumping ground and the better fix
+is separation by concern instead of more comments or wrapper scripts.
+
+Composition rules:
+- `effigy.toml` stays the canonical entrypoint.
+- included paths are resolved relative to the file that declares them.
+- fragments are partial manifests, not standalone alternate roots.
+- distinct keys merge additively by default.
+- conflicting values fail unless the include entry explicitly names the path in
+  `override = [...]`.
+- override is path-scoped and replaces the whole addressed value.
+
+Inspection:
+
+```sh
+effigy config --inspect
+```
+
+Use this to confirm include order, overridden paths, effective sources, and the
+final merged manifest before treating composition as settled.
 
 ## 3) Full Task Table with Runtime Controls
 

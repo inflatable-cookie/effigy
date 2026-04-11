@@ -8,6 +8,7 @@ mod bootstrap_section;
 mod diagnostics;
 mod docs_policy_section;
 mod env_section;
+mod manifest_section;
 mod package_manager;
 mod release_section;
 mod scan_section;
@@ -24,6 +25,7 @@ use bootstrap_section::validate_bootstrap_section;
 use diagnostics::SchemaContext;
 use docs_policy_section::validate_docs_policy_section;
 use env_section::validate_env_section;
+use manifest_section::validate_manifest_section;
 use package_manager::validate_package_manager_section;
 use release_section::validate_release_section;
 use scan_section::validate_scan_section;
@@ -45,6 +47,9 @@ pub(super) fn validate_manifest_schema(
 
     validate_top_level_keys(&mut context, table);
 
+    if let Some(manifest) = table.get("manifest") {
+        validate_manifest_section(&mut context, manifest);
+    }
     if let Some(catalog) = table.get("catalog") {
         validate_known_table(&mut context, "catalog", catalog, &["alias"]);
     }

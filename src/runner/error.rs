@@ -35,6 +35,10 @@ pub enum RunnerError {
         path: PathBuf,
         error: toml::de::Error,
     },
+    TaskManifestCompose {
+        path: PathBuf,
+        detail: String,
+    },
     TaskCatalogAliasConflict {
         alias: String,
         first_path: PathBuf,

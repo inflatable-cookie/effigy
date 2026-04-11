@@ -11,10 +11,10 @@ Task Matches: dev
 ─────────────────
 - dev : effigy.toml
       <managed:tui>
-- dev front : effigy.toml
-      <managed:tui profile:front>
 - dev admin : effigy.toml
       <managed:tui profile:admin>
+- dev front : effigy.toml
+      <managed:tui profile:front>
 
 ";
     assert_eq!(
@@ -40,10 +40,10 @@ Tasks
 ─────
 - dev : effigy.toml
       <managed:tui>
-- dev front : effigy.toml
-      <managed:tui profile:front>
 - dev admin : effigy.toml
       <managed:tui profile:admin>
+- dev front : effigy.toml
+      <managed:tui profile:front>
 
 {}",
         BUILTIN_TASKS_SECTION

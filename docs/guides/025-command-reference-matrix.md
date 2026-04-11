@@ -56,7 +56,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-foundation.md` |
 | `effigy init` | Scaffold baseline `effigy.toml` | `--dry-run`, `--force`, `--json` | `effigy.init.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy migrate` | Import `package.json` scripts into `[tasks]` | `--from`, `--script`, `--apply`, `--json` | `effigy.migrate.v1` | `019-watch-init-migrate-foundation.md` |
-| `effigy config` | Render config reference or schema snippets | `--schema`, `--minimal`, `--target`, `--runner`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md` |
+| `effigy config` | Render config reference/schema snippets or inspect the effective composed manifest | `--inspect`, `--schema`, `--minimal`, `--target`, `--runner`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy unlock` | Clear lock scopes manually | `--all`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
 | `effigy cache` | Inspect and invalidate phase-1 cache metadata | `inspect`, `invalidate`, `--all`, `--json` | `effigy.cache.v1` | `022-manifest-cookbook.md` |
 | `effigy completion` | Generate shell completion scripts and selector candidates | `bash\|zsh\|fish`, `candidates`, `--repo`, `--prefix`, `--json` | `effigy.completion.v1`, `effigy.completion.candidates.v1` | `021-quick-start-and-command-cookbook.md` |
@@ -117,7 +117,8 @@ effigy watch --owner <effigy|external> [--debounce-ms <MS>] [--include <GLOB>] [
 effigy watch --owner effigy --once <task> [task args]
 effigy init [--dry-run] [--force] [--json]
 effigy migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]
-effigy config [--schema] [--minimal] [--target <section>] [--runner <runner>] [--json]
+effigy config [--inspect] [--json]
+effigy config [--schema] [--minimal] [--target <manifest|section>] [--runner <runner>] [--json]
 effigy unlock [--all | <scope>...] [--json]
 effigy cache inspect [<selector>] [--json]
 effigy cache invalidate [<selector>...] [--all] [--json]
@@ -187,7 +188,10 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
 - `scan stale-suppressions` does not accept threshold flags; suppression families come from defaults or `[scan.stale_suppressions]`.
 - `scan.stale_suppressions` config can set defaults for marker families, output format/path, traversal globs, and doctor participation.
 - `config --minimal` requires `--schema`.
+- `config --inspect` cannot be combined with `--schema`.
 - `config --runner` requires `--schema --target test`.
+- `config --inspect` is the native way to inspect include order, override
+  results, and effective value sources for `[manifest].include`.
 - `unlock` accepts either explicit scopes or `--all` (not both).
 - `cache` phase-1 works only for tasks with explicit `[tasks.<name>.cache]` opt-in.
 - `cache invalidate` accepts selectors or `--all` (not both).

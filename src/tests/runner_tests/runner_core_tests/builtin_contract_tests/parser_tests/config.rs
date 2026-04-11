@@ -24,6 +24,7 @@ fn builtin_config_parser_contracts_are_stable() {
     assert_eq!(
         parsed,
         ConfigParseContract {
+            inspect: false,
             schema: true,
             minimal: true,
             output_json: true,
@@ -36,9 +37,24 @@ fn builtin_config_parser_contracts_are_stable() {
     assert_eq!(
         parsed,
         ConfigParseContract {
+            inspect: false,
             schema: false,
             minimal: false,
             output_json: false,
+            target: None,
+            runner: None,
+        }
+    );
+
+    let parsed = parse_config_contract_request(&task, &string_args(&["--inspect", "--json"]))
+        .expect("config parse");
+    assert_eq!(
+        parsed,
+        ConfigParseContract {
+            inspect: true,
+            schema: false,
+            minimal: false,
+            output_json: true,
             target: None,
             runner: None,
         }

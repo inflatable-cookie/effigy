@@ -12,9 +12,18 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Run
         NoticeLevel::Info,
         "Supported project-level configuration keys for task execution and built-in test behavior",
     )?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Use `effigy config --inspect` to inspect the effective composed manifest for the current repo.",
+    )?;
     renderer.text("")?;
 
     renderer.section("Global")?;
+    emit_doc_lines(
+        &mut renderer,
+        color_enabled,
+        docs::manifest_lines(ConfigDocProfile::Reference),
+    )?;
     emit_doc_lines(
         &mut renderer,
         color_enabled,

@@ -1,5 +1,7 @@
 use super::RunnerError;
-use crate::path_error_text::{failed_to_parse_path, failed_to_read_path};
+use crate::path_error_text::{
+    failed_to_parse_path, failed_to_read_path, strict_manifest_parse_failed_in_path,
+};
 use crate::runner::model::constants::TASK_MANIFEST_FILE;
 
 #[path = "display/builtin.rs"]
@@ -40,6 +42,9 @@ pub(super) fn fmt_runner_error(
         }
         RunnerError::TaskManifestParse { path, error } => {
             write!(f, "{}", failed_to_parse_path(path, error))
+        }
+        RunnerError::TaskManifestCompose { path, detail } => {
+            write!(f, "{}", strict_manifest_parse_failed_in_path(path, detail))
         }
         RunnerError::TaskCatalogAliasConflict {
             alias,

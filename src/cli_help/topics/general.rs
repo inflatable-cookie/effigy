@@ -20,7 +20,7 @@ pub(crate) fn render_general_help<R: Renderer>(
         ),
         (
             "effigy config",
-            "Show supported effigy.toml configuration keys and examples",
+            "Show config keys/examples or inspect the effective composed manifest",
             None,
         ),
         (
