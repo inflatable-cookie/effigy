@@ -10,7 +10,7 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Active Batch Cards
 
-- [`002-decide-composition-contract-shape.md`](./002-decide-composition-contract-shape.md)
+- [`003-decide-override-conflict-and-explainability.md`](./003-decide-override-conflict-and-explainability.md)
 
 ## Next Task
 

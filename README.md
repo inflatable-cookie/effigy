@@ -249,6 +249,6 @@ effigy/
 
 ## Next Task
 
-Complete the active strict `g02.002` planning batch so Effigy has one explicit
-manifest composition and override contract before demos or other features claim
-their own split-config semantics.
+Complete the active strict `g02.002` planning batch on override/conflict and
+effective-manifest explainability so Effigy has one explicit composition
+contract before demos or other features claim their own split-config semantics.
