@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 
-use crate::tui::core::ProcessExitState;
+use crate::tui::core::{effigy_panel_block, ProcessExitState};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Tabs};
+use ratatui::widgets::{Block, Tabs};
 use ratatui::Frame;
 
 pub(super) fn render_tabs(
@@ -59,30 +58,5 @@ pub(super) fn panel_block<'a>(
     show_version: bool,
     border_color: Color,
 ) -> Block<'a> {
-    let mut block = Block::default()
-        .borders(Borders::ALL)
-        .border_set(border::ROUNDED)
-        .border_style(Style::default().fg(border_color));
-    if let Some(title) = title {
-        block = block.title_top(
-            Line::from(Span::styled(
-                title.to_owned(),
-                Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
-            ))
-            .left_aligned(),
-        );
-    }
-    if show_version {
-        let version = format!(" v{} ", env!("CARGO_PKG_VERSION"));
-        block = block.title_bottom(
-            Line::from(Span::styled(
-                version,
-                Style::default().fg(Color::LightMagenta),
-            ))
-            .right_aligned(),
-        );
-    }
-    block
+    effigy_panel_block(title, show_version, border_color)
 }

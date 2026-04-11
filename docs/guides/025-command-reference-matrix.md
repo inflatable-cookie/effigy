@@ -167,13 +167,13 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
   grouping, but it deliberately stops short of UI behavior or rich browsing
   state.
 - `demo browser` is the first interactive browser client for that surface. It
-  provides grouped list/detail browsing plus bounded `run`, `stop`, `rerun`,
-  refresh, in-browser query controls over the shipped `demo list` filter
-  dimensions including tag, mode, and cover, artifact-opening actions, and
-  bounded recent-output visibility from runner-owned logs, plus bounded
-  detail-pane navigation through longer selected-demo records, but it still
-  defers terminal emulation, rich artifact rendering, and multi-attempt
-  history.
+  now uses an arrow/enter/escape-first interaction model, with an action sheet
+  for bounded `run`/`stop`/`rerun`/open/refresh behavior, a single filter
+  sheet for the shipped `demo list` metadata dimensions including tag, mode,
+  and cover, bounded recent-output visibility from runner-owned logs, and
+  bounded detail-pane navigation through longer selected-demo records, while
+  still deferring terminal emulation, rich artifact rendering, and multi-
+  attempt history.
 - `demo run` executes either a declared task-backed or run-backed entrypoint,
   writes a normalized receipt, and refreshes the latest-attempt state that
   `demo inspect` reports.

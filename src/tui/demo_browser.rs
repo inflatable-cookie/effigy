@@ -14,12 +14,13 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use crate::runner::{run_command, RunnerError};
+use crate::tui::core::{effigy_panel_block, next_index, prev_index};
 use crate::{
     Command, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus,
     DemoSubcommand,
@@ -69,7 +70,7 @@ struct DemoBrowserApp {
     pending_action: Option<PendingAction>,
     last_refresh: Instant,
     total_demo_count: usize,
-    prompt: Option<QueryPromptState>,
+    overlay: Option<BrowserOverlay>,
 }
 
 impl DemoBrowserApp {
@@ -92,7 +93,7 @@ impl DemoBrowserApp {
             pending_action: None,
             last_refresh: Instant::now() - Duration::from_secs(5),
             total_demo_count: 0,
-            prompt: None,
+            overlay: None,
         }
     }
 
@@ -125,92 +126,42 @@ impl DemoBrowserApp {
     }
 
     fn handle_key(&mut self, code: KeyCode) -> Result<bool, RunnerError> {
-        if self.handle_prompt_key(code)? {
+        if self.handle_overlay_key(code)? {
             return Ok(false);
         }
         match code {
             KeyCode::Esc | KeyCode::Char('q') => return Ok(true),
-            KeyCode::Down | KeyCode::Char('j') => self.select_next_demo(),
-            KeyCode::Up | KeyCode::Char('k') => self.select_previous_demo(),
-            KeyCode::Char('g') => {
-                self.group_by = next_group_by(self.group_by);
-                self.query.group_by = self.group_by;
-                self.refresh_state()?;
-                self.footer_message = format!(
-                    "Grouping demos by {}",
-                    self.group_by.map_or("none", DemoListGroupBy::as_str)
-                );
-            }
+            KeyCode::Down => self.select_next_demo(),
+            KeyCode::Up => self.select_previous_demo(),
+            KeyCode::Right => self.select_next_artifact(),
+            KeyCode::Left => self.select_previous_artifact(),
             KeyCode::Char('/') => self.open_prompt(QueryPromptKind::Search),
-            KeyCode::Char('O') => self.open_prompt(QueryPromptKind::Owner),
-            KeyCode::Char('T') => self.open_prompt(QueryPromptKind::Tag),
-            KeyCode::Char('C') => self.open_prompt(QueryPromptKind::Cover),
-            KeyCode::Char('M') => {
-                self.query.mode = next_mode_filter(self.query.mode);
-                self.refresh_state()?;
-                self.footer_message =
-                    filter_change_message("mode", self.query.mode.map(DemoListMode::as_str));
-            }
-            KeyCode::Char('S') => {
-                self.query.status = next_status_filter(self.query.status);
-                self.refresh_state()?;
-                self.footer_message =
-                    filter_change_message("status", self.query.status.map(DemoListStatus::as_str));
-            }
-            KeyCode::Char('G') => {
-                self.query.gap = next_gap_filter(self.query.gap);
-                self.refresh_state()?;
-                self.footer_message =
-                    filter_change_message("gap", self.query.gap.map(DemoListGap::as_str));
-            }
-            KeyCode::Char('f') => {
-                self.query.stale_only = !self.query.stale_only;
-                self.refresh_state()?;
-                self.footer_message = if self.query.stale_only {
-                    "Enabled stale-only demo filtering.".to_owned()
-                } else {
-                    "Disabled stale-only demo filtering.".to_owned()
-                };
-            }
-            KeyCode::Char('c') => {
-                self.query = DemoListQuery {
-                    group_by: self.group_by,
-                    ..DemoListQuery::default()
-                };
-                self.refresh_state()?;
-                self.footer_message = "Cleared demo browser query filters.".to_owned();
-            }
+            KeyCode::Char('f') => self.open_filter_overlay(),
+            KeyCode::Enter => self.open_action_overlay(),
             KeyCode::Char('R') => {
                 self.refresh_state()?;
                 self.footer_message = "Refreshed demo browser state.".to_owned();
             }
-            KeyCode::Char('[') => self.select_previous_artifact(),
-            KeyCode::Char(']') => self.select_next_artifact(),
             KeyCode::PageDown | KeyCode::Char('J') => self.scroll_detail_page_down(),
             KeyCode::PageUp | KeyCode::Char('K') => self.scroll_detail_page_up(),
             KeyCode::Home => self.scroll_detail_to_top(),
             KeyCode::End => self.scroll_detail_to_bottom(),
-            KeyCode::Char('o') => self.dispatch_open_artifact()?,
-            KeyCode::Enter | KeyCode::Char('r') => self.dispatch_run_or_rerun()?,
-            KeyCode::Char('s') => self.dispatch_stop()?,
             _ => {}
         }
         Ok(false)
     }
 
-    fn handle_prompt_key(&mut self, code: KeyCode) -> Result<bool, RunnerError> {
-        let Some(prompt) = self.prompt.as_mut() else {
+    fn handle_overlay_key(&mut self, code: KeyCode) -> Result<bool, RunnerError> {
+        let Some(mut overlay) = self.overlay.take() else {
             return Ok(false);
         };
-        match code {
-            KeyCode::Esc => {
-                self.prompt = None;
-                self.footer_message = "Cancelled browser query prompt.".to_owned();
-                Ok(true)
-            }
-            KeyCode::Enter => {
-                let prompt = self.prompt.take().expect("prompt exists");
-                match prompt.kind {
+        let mut keep_open = false;
+        match &mut overlay {
+            BrowserOverlay::Prompt(prompt) => match code {
+                KeyCode::Esc => {
+                    self.footer_message = "Closed browser prompt.".to_owned();
+                }
+                KeyCode::Enter => match prompt.kind {
                     QueryPromptKind::Search => {
                         self.query.search = normalized_prompt_value(&prompt.value);
                         self.refresh_state()?;
@@ -235,21 +186,69 @@ impl DemoBrowserApp {
                         self.footer_message =
                             prompt_apply_message("cover", self.query.cover.as_deref());
                     }
+                },
+                KeyCode::Backspace => {
+                    prompt.value.pop();
+                    keep_open = true;
                 }
-                Ok(true)
-            }
-            KeyCode::Backspace => {
-                prompt.value.pop();
-                Ok(true)
-            }
-            KeyCode::Char(ch) => {
-                if !ch.is_control() {
-                    prompt.value.push(ch);
+                KeyCode::Char(ch) => {
+                    if !ch.is_control() {
+                        prompt.value.push(ch);
+                    }
+                    keep_open = true;
                 }
-                Ok(true)
-            }
-            _ => Ok(true),
+                _ => keep_open = true,
+            },
+            BrowserOverlay::Action(menu) => match code {
+                KeyCode::Esc => {
+                    self.footer_message = "Closed browser action menu.".to_owned();
+                }
+                KeyCode::Down => {
+                    menu.select_next();
+                    keep_open = true;
+                }
+                KeyCode::Up => {
+                    menu.select_previous();
+                    keep_open = true;
+                }
+                KeyCode::Enter => {
+                    if let Some(item) = menu.selected_item() {
+                        self.run_action_menu_item(item)?;
+                    }
+                }
+                _ => keep_open = true,
+            },
+            BrowserOverlay::Filters(menu) => match code {
+                KeyCode::Esc => {
+                    self.footer_message = "Closed browser filter menu.".to_owned();
+                }
+                KeyCode::Down => {
+                    menu.select_next();
+                    keep_open = true;
+                }
+                KeyCode::Up => {
+                    menu.select_previous();
+                    keep_open = true;
+                }
+                KeyCode::Enter => {
+                    let item = menu.selected_item();
+                    self.apply_filter_menu_item(item)?;
+                    keep_open = self.overlay.is_none()
+                        && !matches!(
+                            item,
+                            FilterMenuItem::Search
+                                | FilterMenuItem::Owner
+                                | FilterMenuItem::Tag
+                                | FilterMenuItem::Cover
+                        );
+                }
+                _ => keep_open = true,
+            },
         }
+        if keep_open && self.overlay.is_none() {
+            self.overlay = Some(overlay);
+        }
+        Ok(true)
     }
 
     fn open_prompt(&mut self, kind: QueryPromptKind) {
@@ -260,10 +259,10 @@ impl DemoBrowserApp {
             QueryPromptKind::Cover => self.query.cover.clone(),
         }
         .unwrap_or_default();
-        self.prompt = Some(QueryPromptState {
+        self.overlay = Some(BrowserOverlay::Prompt(QueryPromptState {
             kind,
             value: current,
-        });
+        }));
         self.footer_message = match kind {
             QueryPromptKind::Search => {
                 "Editing search filter. Enter applies, Esc cancels.".to_owned()
@@ -276,6 +275,107 @@ impl DemoBrowserApp {
                 "Editing cover filter. Enter applies, Esc cancels.".to_owned()
             }
         };
+    }
+
+    fn open_action_overlay(&mut self) {
+        let items = self.action_menu_items();
+        self.overlay = Some(BrowserOverlay::Action(ActionMenuState::new(items)));
+        self.footer_message = "Use ↑/↓ to choose an action. Enter applies. Esc closes.".to_owned();
+    }
+
+    fn open_filter_overlay(&mut self) {
+        self.overlay = Some(BrowserOverlay::Filters(FilterMenuState::default()));
+        self.footer_message =
+            "Use ↑/↓ to choose a filter. Enter edits or cycles. Esc closes.".to_owned();
+    }
+
+    fn action_menu_items(&self) -> Vec<ActionMenuItem> {
+        let Some(detail) = self.selected_detail() else {
+            return vec![ActionMenuItem::Refresh];
+        };
+        let mut items = Vec::new();
+        if let Some(subcommand) = preferred_run_action(detail) {
+            items.push(match subcommand {
+                DemoSubcommand::Run { .. } => ActionMenuItem::Run,
+                DemoSubcommand::Rerun { .. } => ActionMenuItem::Rerun,
+                _ => unreachable!(),
+            });
+        }
+        if detail.actions.stop.available {
+            items.push(ActionMenuItem::Stop);
+        }
+        if !detail.latest_attempt.artifacts.is_empty() {
+            items.push(ActionMenuItem::OpenArtifact);
+        }
+        items.push(ActionMenuItem::Refresh);
+        items
+    }
+
+    fn run_action_menu_item(&mut self, item: ActionMenuItem) -> Result<(), RunnerError> {
+        match item {
+            ActionMenuItem::Run | ActionMenuItem::Rerun => self.dispatch_run_or_rerun(),
+            ActionMenuItem::Stop => self.dispatch_stop(),
+            ActionMenuItem::OpenArtifact => self.dispatch_open_artifact(),
+            ActionMenuItem::Refresh => {
+                self.refresh_state()?;
+                self.footer_message = "Refreshed demo browser state.".to_owned();
+                Ok(())
+            }
+        }
+    }
+
+    fn apply_filter_menu_item(&mut self, item: FilterMenuItem) -> Result<(), RunnerError> {
+        match item {
+            FilterMenuItem::Search => self.open_prompt(QueryPromptKind::Search),
+            FilterMenuItem::Owner => self.open_prompt(QueryPromptKind::Owner),
+            FilterMenuItem::Tag => self.open_prompt(QueryPromptKind::Tag),
+            FilterMenuItem::Mode => {
+                self.query.mode = next_mode_filter(self.query.mode);
+                self.refresh_state()?;
+                self.footer_message =
+                    filter_change_message("mode", self.query.mode.map(DemoListMode::as_str));
+            }
+            FilterMenuItem::Cover => self.open_prompt(QueryPromptKind::Cover),
+            FilterMenuItem::Status => {
+                self.query.status = next_status_filter(self.query.status);
+                self.refresh_state()?;
+                self.footer_message =
+                    filter_change_message("status", self.query.status.map(DemoListStatus::as_str));
+            }
+            FilterMenuItem::Gap => {
+                self.query.gap = next_gap_filter(self.query.gap);
+                self.refresh_state()?;
+                self.footer_message =
+                    filter_change_message("gap", self.query.gap.map(DemoListGap::as_str));
+            }
+            FilterMenuItem::StaleOnly => {
+                self.query.stale_only = !self.query.stale_only;
+                self.refresh_state()?;
+                self.footer_message = if self.query.stale_only {
+                    "Enabled stale-only demo filtering.".to_owned()
+                } else {
+                    "Disabled stale-only demo filtering.".to_owned()
+                };
+            }
+            FilterMenuItem::GroupBy => {
+                self.group_by = next_group_by(self.group_by);
+                self.query.group_by = self.group_by;
+                self.refresh_state()?;
+                self.footer_message = format!(
+                    "Grouping demos by {}",
+                    self.group_by.map_or("none", DemoListGroupBy::as_str)
+                );
+            }
+            FilterMenuItem::ClearAll => {
+                self.query = DemoListQuery {
+                    group_by: self.group_by,
+                    ..DemoListQuery::default()
+                };
+                self.refresh_state()?;
+                self.footer_message = "Cleared browser filters.".to_owned();
+            }
+        }
+        Ok(())
     }
 
     fn selected_detail(&self) -> Option<&DemoDetail> {
@@ -342,7 +442,7 @@ impl DemoBrowserApp {
             vec![
                 Line::from("No demo selected."),
                 Line::from(""),
-                Line::from("Use j/k or arrow keys to move through the demo list."),
+                Line::from("Use ↑/↓ to move through the demo list."),
             ]
         }
     }
@@ -618,9 +718,9 @@ impl DemoBrowserApp {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(2),
+                Constraint::Length(5),
                 Constraint::Min(10),
-                Constraint::Length(3),
+                Constraint::Length(4),
             ])
             .split(area);
         self.render_header(frame, layout[0]);
@@ -629,8 +729,8 @@ impl DemoBrowserApp {
         if self.rows.is_empty() {
             self.render_empty_overlay(frame, area);
         }
-        if self.prompt.is_some() {
-            self.render_prompt_overlay(frame, area);
+        if self.overlay.is_some() {
+            self.render_overlay(frame, area);
         }
     }
 
@@ -644,8 +744,7 @@ impl DemoBrowserApp {
                 Span::styled(
                     " Demo Browser ",
                     Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
+                        .fg(Color::Magenta)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
@@ -673,7 +772,10 @@ impl DemoBrowserApp {
                 )),
             ]),
         ];
-        frame.render_widget(Paragraph::new(lines), area);
+        frame.render_widget(
+            Paragraph::new(lines).block(effigy_panel_block(Some(" EFFIGY "), true, Color::Magenta)),
+            area,
+        );
     }
 
     fn render_body(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -693,7 +795,7 @@ impl DemoBrowserApp {
                 BrowserRow::Group(label) => ListItem::new(Line::from(vec![Span::styled(
                     format!("  {label}"),
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(Color::LightMagenta)
                         .add_modifier(Modifier::BOLD),
                 )])),
                 BrowserRow::Demo(summary) => {
@@ -722,14 +824,14 @@ impl DemoBrowserApp {
             state.select(Some(self.selected_row_index));
         }
         let list = List::new(items)
-            .block(Block::default().title("Demos").borders(Borders::ALL))
+            .block(effigy_panel_block(Some(" Demos "), false, Color::Magenta))
             .highlight_style(
                 Style::default()
-                    .bg(Color::Blue)
-                    .fg(Color::White)
+                    .bg(Color::Magenta)
+                    .fg(Color::Black)
                     .add_modifier(Modifier::BOLD),
             )
-            .highlight_symbol(">")
+            .highlight_symbol("▌")
             .repeat_highlight_symbol(true);
         frame.render_stateful_widget(list, area, &mut state);
     }
@@ -747,7 +849,7 @@ impl DemoBrowserApp {
             )
         );
         let detail = Paragraph::new(lines)
-            .block(Block::default().title(title).borders(Borders::ALL))
+            .block(effigy_panel_block(Some(&title), false, Color::DarkGray))
             .wrap(Wrap { trim: false })
             .scroll((paragraph_scroll_line(self.detail_scroll_line), 0));
         frame.render_widget(detail, area);
@@ -755,47 +857,21 @@ impl DemoBrowserApp {
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
         let help = Line::from(vec![
-            Span::styled(" j/k ", key_style()),
-            Span::raw("move  "),
-            Span::styled(" g ", key_style()),
-            Span::raw("group  "),
+            Span::styled(" ↑↓ ", key_style()),
+            Span::raw("demos  "),
+            Span::styled(" ←→ ", key_style()),
+            Span::raw("artifacts  "),
+            Span::styled(" Enter ", key_style()),
+            Span::raw("actions  "),
             Span::styled(" / ", key_style()),
             Span::raw("search  "),
-            Span::styled(" O ", key_style()),
-            Span::raw("owner  "),
-            Span::styled(" T ", key_style()),
-            Span::raw("tag  "),
-            Span::styled(" M ", key_style()),
-            Span::raw("mode  "),
-            Span::styled(" C ", key_style()),
-            Span::raw("cover  "),
-            Span::styled(" S ", key_style()),
-            Span::raw("status  "),
-            Span::styled(" G ", key_style()),
-            Span::raw("gap  "),
             Span::styled(" f ", key_style()),
-            Span::raw("stale  "),
-            Span::styled(" c ", key_style()),
-            Span::raw("clear  "),
-            Span::styled(" r ", key_style()),
-            Span::raw("run/rerun  "),
-            Span::styled(" s ", key_style()),
-            Span::raw("stop  "),
-            Span::styled(" [ ] ", key_style()),
-            Span::raw("artifact  "),
-            Span::styled(" PgUp/PgDn ", key_style()),
-            Span::raw("detail  "),
-            Span::styled(" Home/End ", key_style()),
-            Span::raw("ends  "),
-            Span::styled(" o ", key_style()),
-            Span::raw("open  "),
-            Span::styled(" R ", key_style()),
-            Span::raw("refresh  "),
-            Span::styled(" q ", key_style()),
-            Span::raw("quit"),
+            Span::raw("filters  "),
+            Span::styled(" Esc ", key_style()),
+            Span::raw("back/quit"),
         ]);
         let footer = Paragraph::new(vec![help, Line::from(self.footer_message.clone())])
-            .block(Block::default().borders(Borders::TOP));
+            .block(effigy_panel_block(None, false, Color::DarkGray));
         frame.render_widget(footer, area);
     }
 
@@ -819,15 +895,27 @@ impl DemoBrowserApp {
             ]
         };
         let notice = Paragraph::new(lines)
-            .block(Block::default().title("Demo Browser").borders(Borders::ALL))
+            .block(effigy_panel_block(
+                Some(" Demo Browser "),
+                false,
+                Color::Magenta,
+            ))
             .wrap(Wrap { trim: true });
         frame.render_widget(notice, overlay);
     }
 
-    fn render_prompt_overlay(&self, frame: &mut Frame<'_>, area: Rect) {
-        let Some(prompt) = &self.prompt else {
+    fn render_overlay(&self, frame: &mut Frame<'_>, area: Rect) {
+        let Some(overlay_state) = &self.overlay else {
             return;
         };
+        match overlay_state {
+            BrowserOverlay::Prompt(prompt) => self.render_prompt_overlay(frame, area, prompt),
+            BrowserOverlay::Action(menu) => self.render_action_overlay(frame, area, menu),
+            BrowserOverlay::Filters(menu) => self.render_filter_overlay(frame, area, menu),
+        }
+    }
+
+    fn render_prompt_overlay(&self, frame: &mut Frame<'_>, area: Rect, prompt: &QueryPromptState) {
         let overlay = centered_rect(68, 22, area);
         frame.render_widget(Clear, overlay);
         let prompt_widget = Paragraph::new(vec![
@@ -840,15 +928,71 @@ impl DemoBrowserApp {
                 Span::raw(prompt.render_value()),
             ]),
             Line::from(""),
-            Line::from("Enter applies. Esc cancels. Empty clears the filter."),
+            Line::from("Enter applies. Esc closes. Empty clears the filter."),
         ])
-        .block(
-            Block::default()
-                .title("Query Control")
-                .borders(Borders::ALL),
-        )
+        .block(effigy_panel_block(Some(" Query "), false, Color::Magenta))
         .wrap(Wrap { trim: true });
         frame.render_widget(prompt_widget, overlay);
+    }
+
+    fn render_action_overlay(&self, frame: &mut Frame<'_>, area: Rect, menu: &ActionMenuState) {
+        let overlay = centered_rect(42, 28, area);
+        frame.render_widget(Clear, overlay);
+        let items = menu
+            .items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let line = if index == menu.selected_index {
+                    Line::from(vec![
+                        Span::styled("▌ ", Style::default().fg(Color::Magenta)),
+                        Span::styled(
+                            item.label(),
+                            Style::default()
+                                .fg(Color::Magenta)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ])
+                } else {
+                    Line::from(format!("  {}", item.label()))
+                };
+                ListItem::new(line)
+            })
+            .collect::<Vec<_>>();
+        let widget =
+            List::new(items).block(effigy_panel_block(Some(" Actions "), false, Color::Magenta));
+        frame.render_widget(widget, overlay);
+    }
+
+    fn render_filter_overlay(&self, frame: &mut Frame<'_>, area: Rect, menu: &FilterMenuState) {
+        let overlay = centered_rect(62, 40, area);
+        frame.render_widget(Clear, overlay);
+        let items = menu
+            .items()
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let value = self.filter_menu_value(*item);
+                let line = if index == menu.selected_index {
+                    Line::from(vec![
+                        Span::styled("▌ ", Style::default().fg(Color::Magenta)),
+                        Span::styled(
+                            format!("{:<12}", item.label()),
+                            Style::default()
+                                .fg(Color::Magenta)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(value),
+                    ])
+                } else {
+                    Line::from(format!("  {:<12}{}", item.label(), value))
+                };
+                ListItem::new(line)
+            })
+            .collect::<Vec<_>>();
+        let widget =
+            List::new(items).block(effigy_panel_block(Some(" Filters "), false, Color::Magenta));
+        frame.render_widget(widget, overlay);
     }
 
     fn rows_demo_count(&self) -> usize {
@@ -856,6 +1000,58 @@ impl DemoBrowserApp {
             .iter()
             .filter(|row| matches!(row, BrowserRow::Demo(_)))
             .count()
+    }
+
+    fn filter_menu_value(&self, item: FilterMenuItem) -> String {
+        match item {
+            FilterMenuItem::Search => self
+                .query
+                .search
+                .clone()
+                .unwrap_or_else(|| "none".to_owned()),
+            FilterMenuItem::Owner => self
+                .query
+                .owner
+                .clone()
+                .unwrap_or_else(|| "none".to_owned()),
+            FilterMenuItem::Tag => self.query.tag.clone().unwrap_or_else(|| "none".to_owned()),
+            FilterMenuItem::Mode => self
+                .query
+                .mode
+                .map(DemoListMode::as_str)
+                .unwrap_or("none")
+                .to_owned(),
+            FilterMenuItem::Cover => self
+                .query
+                .cover
+                .clone()
+                .unwrap_or_else(|| "none".to_owned()),
+            FilterMenuItem::Status => self
+                .query
+                .status
+                .map(DemoListStatus::as_str)
+                .unwrap_or("none")
+                .to_owned(),
+            FilterMenuItem::Gap => self
+                .query
+                .gap
+                .map(DemoListGap::as_str)
+                .unwrap_or("none")
+                .to_owned(),
+            FilterMenuItem::StaleOnly => {
+                if self.query.stale_only {
+                    "on".to_owned()
+                } else {
+                    "off".to_owned()
+                }
+            }
+            FilterMenuItem::GroupBy => self
+                .group_by
+                .map(DemoListGroupBy::as_str)
+                .unwrap_or("none")
+                .to_owned(),
+            FilterMenuItem::ClearAll => "reset all filters".to_owned(),
+        }
     }
 }
 
@@ -955,7 +1151,7 @@ fn status_style(status: &str) -> Style {
 fn key_style() -> Style {
     Style::default()
         .fg(Color::Black)
-        .bg(Color::Gray)
+        .bg(Color::LightMagenta)
         .add_modifier(Modifier::BOLD)
 }
 
@@ -1151,7 +1347,7 @@ fn detail_lines(
     }
     if !detail.latest_attempt.artifacts.is_empty() {
         lines.push(Line::from(""));
-        lines.push(section_heading("Artifacts ([ / ] to select, o to open)"));
+        lines.push(section_heading("Artifacts (←/→ to select, Enter to open)"));
         let selected_index = clamp_artifact_index(selected_artifact_index, detail);
         for (index, artifact) in detail.latest_attempt.artifacts.iter().enumerate() {
             lines.push(artifact_line(artifact, index == selected_index));
@@ -1373,6 +1569,126 @@ struct PendingAction {
     demo_id: String,
     label: String,
     receiver: Receiver<Result<JsonValue, RunnerError>>,
+}
+
+enum BrowserOverlay {
+    Prompt(QueryPromptState),
+    Action(ActionMenuState),
+    Filters(FilterMenuState),
+}
+
+struct ActionMenuState {
+    items: Vec<ActionMenuItem>,
+    selected_index: usize,
+}
+
+impl ActionMenuState {
+    fn new(items: Vec<ActionMenuItem>) -> Self {
+        Self {
+            items,
+            selected_index: 0,
+        }
+    }
+
+    fn select_next(&mut self) {
+        self.selected_index = next_index(self.selected_index, self.items.len());
+    }
+
+    fn select_previous(&mut self) {
+        self.selected_index = prev_index(self.selected_index, self.items.len());
+    }
+
+    fn selected_item(&self) -> Option<ActionMenuItem> {
+        self.items.get(self.selected_index).copied()
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ActionMenuItem {
+    Run,
+    Rerun,
+    Stop,
+    OpenArtifact,
+    Refresh,
+}
+
+impl ActionMenuItem {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Run => "Run demo",
+            Self::Rerun => "Rerun demo",
+            Self::Stop => "Stop demo",
+            Self::OpenArtifact => "Open artifact",
+            Self::Refresh => "Refresh state",
+        }
+    }
+}
+
+#[derive(Default)]
+struct FilterMenuState {
+    selected_index: usize,
+}
+
+impl FilterMenuState {
+    const ITEMS: [FilterMenuItem; 10] = [
+        FilterMenuItem::Search,
+        FilterMenuItem::Owner,
+        FilterMenuItem::Tag,
+        FilterMenuItem::Mode,
+        FilterMenuItem::Cover,
+        FilterMenuItem::Status,
+        FilterMenuItem::Gap,
+        FilterMenuItem::StaleOnly,
+        FilterMenuItem::GroupBy,
+        FilterMenuItem::ClearAll,
+    ];
+
+    fn items(&self) -> &'static [FilterMenuItem] {
+        &Self::ITEMS
+    }
+
+    fn select_next(&mut self) {
+        self.selected_index = next_index(self.selected_index, Self::ITEMS.len());
+    }
+
+    fn select_previous(&mut self) {
+        self.selected_index = prev_index(self.selected_index, Self::ITEMS.len());
+    }
+
+    fn selected_item(&self) -> FilterMenuItem {
+        Self::ITEMS[self.selected_index]
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FilterMenuItem {
+    Search,
+    Owner,
+    Tag,
+    Mode,
+    Cover,
+    Status,
+    Gap,
+    StaleOnly,
+    GroupBy,
+    ClearAll,
+}
+
+impl FilterMenuItem {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Search => "Search",
+            Self::Owner => "Owner",
+            Self::Tag => "Tag",
+            Self::Mode => "Mode",
+            Self::Cover => "Cover",
+            Self::Status => "Status",
+            Self::Gap => "Gap",
+            Self::StaleOnly => "Stale",
+            Self::GroupBy => "Group by",
+            Self::ClearAll => "Clear all",
+        }
+    }
 }
 
 struct QueryPromptState {

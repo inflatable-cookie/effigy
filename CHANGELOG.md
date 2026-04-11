@@ -58,6 +58,10 @@ During v0.x, MINOR bumps may include breaking changes.
   contract without dropping back to `demo list`
 
 ### Changed
+- Rework `effigy demo browser` around the same magenta-framed visual language
+  as the concurrent TUI and collapse the interaction model down to arrow-key
+  browsing, enter-led action dispatch, escape-to-close, direct search, and one
+  bounded filter sheet instead of a large exposed hotkey surface
 - Route catalog discovery, doctor strict-parse checks, docs-policy loading, and
   scan manifest options through the same composed-manifest loader so split
   config behaves consistently across runtime, health, and validation surfaces

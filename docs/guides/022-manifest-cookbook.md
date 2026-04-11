@@ -183,13 +183,12 @@ Lifecycle notes:
   `--stale-only`, and `--group-by`.
 - `demo browser` now provides the first live list/detail TUI on top of the
   shipped registry, query, inspect, run, stop, and rerun surfaces.
-- inside `demo browser`, use `/` for search, `O` for owner, `T` for tag,
-  `M` for mode, `C` for cover, `S` for status, `G` for gap, `f` for
-  stale-only, and `c` to clear the active query.
-- inside `demo browser`, use `g` to cycle grouping across owner, tag, mode,
-  cover, status, and gap.
-- inside `demo browser`, use `[` and `]` to select a recorded artifact and
-  `o` to open it with the platform default handler.
+- inside `demo browser`, the primary flow is `↑`/`↓` to move through demos,
+  `←`/`→` to move across recorded artifacts, `Enter` to open the action
+  sheet, and `Esc` to close a sheet or quit the browser.
+- inside `demo browser`, use `/` for direct search and `f` for the filter
+  sheet, which now owns owner/tag/mode/cover/status/gap/stale/grouping
+  controls.
 - `demo browser` now also shows bounded recent stdout/stderr output for the
   selected demo when runner-owned logs are available from an active or latest
   attempt.

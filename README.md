@@ -191,11 +191,14 @@ cargo run --bin effigy -- demo browser
 The first browser foundation gives you:
 - a grouped demo list on the left
 - a detail pane for the selected demo
-- in-browser `run`, `stop`, `rerun`, and refresh actions
-- in-browser query controls for search, owner, tag, mode, cover, status, gap,
-  and stale-only filtering
-- grouping parity across owner, tag, mode, cover, status, and gap
-- artifact selection with `[` and `]`, plus `o` to open the selected artifact
+- enter-led action dispatch for `run`, `stop`, `rerun`, open-artifact, and
+  refresh actions
+- a calmer interaction model built around arrow keys, `Enter`, `Esc`, `/`, and
+  `f`
+- a single filter sheet for search-adjacent controls over owner, tag, mode,
+  cover, status, gap, stale-only, and grouping
+- artifact selection with `←` and `→`, plus artifact opening through the action
+  sheet
 - bounded recent stdout/stderr visibility for the selected demo when runner-
   owned logs exist
 - bounded detail-pane navigation with `PgUp`/`PgDn` or `J`/`K`, plus
