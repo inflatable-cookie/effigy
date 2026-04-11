@@ -13,8 +13,9 @@ browser-facing runner semantics before any UI or project-local harness grows
 further.
 
 This spec wraps `g02.003` in the strict execution grammar so the demo model and
-runner can keep moving in bounded batches now that the registry and inspection
-foundation exists.
+runner can keep moving in bounded batches now that registry loading,
+inspection, lifecycle control, query polish, and the first browser foundation
+are real shipped surface.
 
 ## Governing Refs
 
@@ -33,12 +34,13 @@ The active strict lane is:
   implementation starts
 - land runner execution in bounded slices on top of the shipped registry and
   inspection foundation
-- keep browser and coverage requirements explicit
-- defer TUI/browser implementation and desktop-client decisions until the
-  runner surface is real enough to support them
+- keep browser and coverage requirements explicit as the first TUI surface
+  starts to exist
+- defer desktop-client decisions and generic runtime cancellation expansion
+  until the runner/runtime surface is honest enough to support them
 
-This lane does not start TUI implementation, desktop-client decisions, or repo
-migration work.
+This lane does not start desktop-client decisions, generic runtime cancellation,
+or repo migration work.
 
 ## Batch Model
 
@@ -67,6 +69,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to implement the first demo
-browser list/detail foundation with bounded in-browser action dispatch, then
-revisit live log or broader stoppability follow-ups separately.
+Execute the active `g02.003` ready card next to decide the first follow-up
+browser slice after the shipped list/detail foundation, then keep runtime
+expansion and desktop-client questions separate.

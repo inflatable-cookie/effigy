@@ -158,6 +158,7 @@ Discovery, inspection, and execution:
 
 ```sh
 effigy demo list
+effigy demo browser
 effigy demo list --owner signal --status ready
 effigy demo list --group-by owner --stale-only
 effigy demo inspect login-smoke
@@ -180,6 +181,8 @@ Lifecycle notes:
 - `demo list` now supports focused browser-style discovery with `--search`,
   `--owner`, `--tag`, `--mode`, `--cover`, `--status`, `--gap`,
   `--stale-only`, and `--group-by`.
+- `demo browser` now provides the first live list/detail TUI on top of the
+  shipped registry, query, inspect, run, stop, and rerun surfaces.
 - `demo inspect` now shows both the latest terminal receipt and any active
   in-flight attempt, plus explicit action availability and receipt freshness.
 - `demo stop <id>` works for directly runner-owned run-backed demos.
@@ -187,6 +190,9 @@ Lifecycle notes:
   already active.
 - task-backed demos remain runnable, but stop is still an explicit
   `not supported through the current runtime` boundary.
+- the browser currently focuses on honest navigation and bounded action
+  dispatch; live log streaming and rich artifact affordances are intentionally
+  deferred to later browser slices.
 
 ## 3) Full Task Table with Runtime Controls
 

@@ -21,6 +21,7 @@ use crate::runner::manifest::{
     load_task_manifest_with_inspection, LoadedTaskManifest, ManifestDemoConfig, ManifestDemoMode,
     ManifestDemoStatus,
 };
+use crate::tui::run_demo_browser_tui;
 use crate::runner::util::with_local_node_bin_path;
 use crate::ui::{KeyValue, NoticeLevel, Renderer, TableSpec};
 use crate::{
@@ -41,6 +42,18 @@ pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
 
     match args.subcommand {
+        DemoSubcommand::Browser { group_by } => {
+            if args.output_json {
+                return demo_error(
+                    true,
+                    "effigy.demo.browser.v1",
+                    "demo browser does not support json mode".to_owned(),
+                    json!({ "repo_root": repo_root.display().to_string() }),
+                );
+            }
+            run_demo_browser_tui(repo_root, group_by)?;
+            Ok(String::new())
+        }
         DemoSubcommand::List { query } => {
             render_demo_list(&repo_root, &loaded, &query, args.output_json)
         }

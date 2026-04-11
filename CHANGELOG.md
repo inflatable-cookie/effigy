@@ -37,6 +37,10 @@ During v0.x, MINOR bumps may include breaking changes.
   shipped demo registry, receipts, artifacts, and stop/rerun lifecycle can be
   exercised against a real repo-local proof surface before browser/TUI work
   hardens around them
+- Add `effigy demo browser` as the first interactive demo browser/TUI
+  foundation, with grouped list/detail browsing plus bounded in-browser
+  `run`, `stop`, `rerun`, and refresh actions on top of the shipped demo
+  runner surface
 
 ### Changed
 - Route catalog discovery, doctor strict-parse checks, docs-policy loading, and

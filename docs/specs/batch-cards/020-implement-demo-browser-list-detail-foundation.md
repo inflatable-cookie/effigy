@@ -1,6 +1,6 @@
 # 020 Implement Demo Browser List/Detail Foundation
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -54,6 +54,5 @@ registry, query, inspect, run, and lifecycle surface.
 
 ## Next Task
 
-Implement the first demo browser foundation with list/detail browsing and
-bounded in-browser action dispatch, then decide whether the next slice should
-add live log visibility or artifact-opening affordances.
+Decide whether the next browser slice should prioritize live log visibility or
+artifact-opening affordances now that the list/detail foundation is shipped.

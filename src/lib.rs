@@ -251,6 +251,11 @@ impl DemoListGroupBy {
 /// Reusable demo subcommands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DemoSubcommand {
+    /// Open the interactive demo browser.
+    Browser {
+        /// Optional initial grouping for the browser list.
+        group_by: Option<DemoListGroupBy>,
+    },
     /// List declared demos and their latest known proof posture.
     List {
         /// Optional query filters and grouping for browser-style discovery.

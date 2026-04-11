@@ -157,6 +157,7 @@ of another pile of ad hoc runner scripts.
 
 ```bash
 effigy demo list
+effigy demo browser
 effigy demo list --group-by gap
 effigy demo inspect browser-proof-report
 effigy demo run browser-proof-report
@@ -180,6 +181,21 @@ The shipped browser-facing query layer is intentionally small: filter by text,
 owner, tag, mode, cover, status, gap, or stale state, then group by owner,
 tag, mode, cover, status, or gap when you need a browser-like inventory view
 without starting UI work yet.
+
+When you want one interactive surface instead of multiple terminals, use:
+
+```bash
+cargo run --bin effigy -- demo browser
+```
+
+The first browser foundation gives you:
+- a grouped demo list on the left
+- a detail pane for the selected demo
+- in-browser `run`, `stop`, `rerun`, and refresh actions
+
+It deliberately stops short of embedded log streaming or rich artifact
+rendering. The current slice is about honest navigation and lifecycle control
+on top of the shipped runner surface.
 
 This repo now self-hosts two realistic demos:
 - `browser-proof-report` generates a small HTML report plus text snapshots under
@@ -295,6 +311,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement the first demo browser
-list/detail foundation next, with in-browser `run`, `stop`, and `rerun`
-actions on top of the shipped runner state.
+Use the active `g02.003` ready card to decide whether the next browser slice
+should prioritize live log visibility or artifact-opening affordances while
+broader runtime cancellation stays deferred.

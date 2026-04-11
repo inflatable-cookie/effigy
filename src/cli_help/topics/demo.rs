@@ -12,13 +12,14 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     render_info_notices(
         renderer,
         &[
-            "Use `effigy demo list` to browse declared demos, `effigy demo inspect <DEMO_ID>` to inspect one record in detail, `effigy demo run <DEMO_ID>` to record a new normalized attempt, and `stop` or `rerun` when lifecycle control exists for that demo.",
+            "Use `effigy demo browser` for the first interactive proof browser, `effigy demo list` for direct CLI discovery, `effigy demo inspect <DEMO_ID>` to inspect one record in detail, and `effigy demo run <DEMO_ID>` to record a new normalized attempt before `stop` or `rerun` when lifecycle control exists for that demo.",
         ],
     )?;
 
     render_usage_section(
         renderer,
         &[
+            "effigy demo browser [--group-by <FIELD>] [--repo <PATH>]",
             "effigy demo list [--search <TEXT>] [--owner <NAME>] [--tag <TAG>] [--mode <MODE>] [--cover <AREA>] [--status <STATUS>] [--gap <GAP>] [--stale-only] [--group-by <FIELD>] [--repo <PATH>] [--json]",
             "effigy demo inspect <DEMO_ID> [--repo <PATH>] [--json]",
             "effigy demo run <DEMO_ID> [--repo <PATH>] [--json]",
@@ -36,6 +37,10 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         renderer,
         &[
             ("--repo <PATH>", "Run against a different repo root"),
+            (
+                "--group-by <FIELD>",
+                "Open the browser with list grouping by owner, tag, mode, cover, status, or gap",
+            ),
             ("--search <TEXT>", "Filter demos by id, title, or summary text"),
             ("--owner <NAME>", "Filter demos by owner"),
             ("--tag <TAG>", "Filter demos by tag"),
@@ -73,6 +78,8 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
         "Examples",
         "example",
         &[
+            "effigy demo browser",
+            "effigy demo browser --group-by status",
             "effigy demo list",
             "effigy demo list --owner auth --status ready",
             "effigy demo list --group-by owner --stale-only",

@@ -79,6 +79,7 @@ where
 
     match subcmd.as_str() {
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Demo)),
+        "browser" => parse_demo_browser(args),
         "list" => parse_demo_list(args),
         "inspect" => parse_demo_inspect(args),
         "run" => parse_demo_run(args),
@@ -86,6 +87,41 @@ where
         "rerun" => parse_demo_rerun(args),
         other => Err(unknown_argument(other)),
     }
+}
+
+fn parse_demo_browser<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut group_by: Option<DemoListGroupBy> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--group-by" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--group-by".to_owned(),
+                    },
+                )?;
+                group_by = Some(parse_demo_list_group_by(value)?);
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Demo)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => return Err(unknown_argument(arg)),
+        }
+    }
+
+    Ok(Command::Demo(DemoArgs {
+        subcommand: DemoSubcommand::Browser { group_by },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_demo_list<I>(args: I) -> Result<Command, CliParseError>
