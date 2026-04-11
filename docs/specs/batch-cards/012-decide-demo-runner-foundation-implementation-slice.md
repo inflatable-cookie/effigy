@@ -1,6 +1,6 @@
 # 012 Decide Demo Runner Foundation Implementation Slice
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -45,6 +45,5 @@ foundation.
 
 ## Next Task
 
-Complete this implementation-planning batch, then open the first execution card
-for demo registry loading, list/inspect surfaces, and normalized latest-attempt
-state.
+Open the first execution card for demo registry loading, list/inspect surfaces,
+and normalized latest-attempt state.

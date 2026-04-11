@@ -42,7 +42,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g02.003` is the active roadmap milestone.
 - `docs/specs/003-demo-harness-model-and-runner-strict-lane.md` is the active
   strict planning lane around that roadmap.
-- `docs/specs/batch-cards/012-decide-demo-runner-foundation-implementation-slice.md`
+- `docs/specs/batch-cards/013-implement-demo-registry-and-inspection-foundation.md`
   is the current ready card.
 
 ## Research Program
@@ -65,9 +65,9 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute the active implementation-planning card for `g02.003`, then leave the
-next move explicit as the first execution batch on top of the now-settled
-object, runner, coverage, browser, and Signal reconciliation work.
+Execute the active execution card for `g02.003`, then leave the next move
+explicit as the runner-execution batch on top of the registry and inspection
+foundation.
 
 
 ## Historical language boundary

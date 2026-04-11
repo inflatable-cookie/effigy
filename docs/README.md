@@ -129,5 +129,5 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to define the first bounded
-demo-runner implementation slice before code execution starts.
+Use the active strict `g02.003` spec lane to implement the demo registry and
+inspection foundation before runner execution semantics are added.
