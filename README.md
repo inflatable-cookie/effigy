@@ -330,6 +330,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to decide the next bounded follow-up after
-the shipped `demo history` query surface, while keeping broader runtime and
-desktop-client questions deferred.
+Use the active `g02.003` ready card to deepen the dedicated `demo history`
+surface around stable attempt selection and one-attempt drilldown, while
+keeping broader runtime and desktop-client questions deferred.

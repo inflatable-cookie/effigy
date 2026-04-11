@@ -1397,6 +1397,76 @@ Why this was the right implementation slice:
 
 Batch `03.30` target:
 
+Choose the next bounded slice after the shipped `demo history` query surface
+without reopening browser churn or widening into generic timeline tooling.
+
+In scope for the next decision slice:
+
+- assess the shipped `demo history` surface against the self-hosted demos
+- decide whether the next bounded slice belongs in `demo list`, the browser,
+  or a deeper history/query contract
+- keep the next slice focused on one-demo result review rather than generic
+  analytics or UI density
+
+Out of scope for the next decision slice:
+
+- implementing browser timeline rendering
+- widening into multi-demo history aggregation
+- broader runtime cancellation or desktop-client work
+
+Batch `03.30` result:
+
+- the next bounded history slice should still not go into `demo list`, because
+  that would make a deliberately compact discovery surface carry result-review
+  density
+- it should still not go into the browser next, because the browser has only
+  just stabilized and history rendering there would reopen presentation churn
+  before the result contract settles
+- the next honest product slice is a deeper one-demo history/query contract:
+  stable attempt selection plus drilldown into one retained historical result
+
+Why this is the right follow-up:
+
+- the current `demo history` surface answers "what recent results exist?" but
+  not yet "show me one prior result properly"
+- operators need a stable way to select one retained attempt and review its
+  receipt, artifact, and log references without filesystem hunting
+- once that drilldown contract is real, later browser/list work can consume a
+  settled one-attempt history surface instead of inventing it through UI
+
+### 10.28 Demo History Attempt Drilldown
+
+Batch `03.31` target:
+
+Implement bounded historical-attempt drilldown on top of the shipped
+`demo history` surface.
+
+In scope for the next implementation slice:
+
+- expose stable attempt identifiers clearly in `demo history`
+- add one-attempt drilldown for a selected retained history entry
+- render that attempt's outcome, summary, receipt, artifact, and log
+  references in text and JSON
+- prove the slice against the self-hosted demos and retained attempt history
+
+Out of scope for the next implementation slice:
+
+- browser timeline rendering or history panes
+- `demo list` history summaries or density changes
+- multi-demo history aggregation, queueing, or broader runtime cancellation
+
+Why this is the right implementation slice:
+
+- it deepens the dedicated history surface where the current operator gap
+  actually lives
+- it keeps result review query-first instead of making list or browser density
+  do premature contract design
+- it gives later UI work one stable historical-attempt contract to consume
+
+### 10.27 Demo History Query Follow-Up Boundary
+
+Batch `03.30` target:
+
 Decide the next bounded slice after the shipped `demo history` query surface.
 
 In scope for the next decision slice:

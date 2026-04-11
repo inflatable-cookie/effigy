@@ -129,6 +129,6 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to choose the next bounded
-follow-up after the shipped `demo history` query surface, then keep the docs
-front doors aligned to that narrower slice.
+Use the active strict `g02.003` spec lane to deepen the dedicated
+`demo history` surface around stable attempt selection and one-attempt
+drilldown, then keep the docs front doors aligned to that narrower slice.
