@@ -18,7 +18,7 @@ Current milestones:
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/017-decide-demo-post-lifecycle-follow-up-boundary.md`](../specs/batch-cards/017-decide-demo-post-lifecycle-follow-up-boundary.md)
+- [`../specs/batch-cards/018-implement-demo-browser-state-and-query-polish.md`](../specs/batch-cards/018-implement-demo-browser-state-and-query-polish.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` ready card to decide whether the next bounded slice
-should prioritize browser-facing state polish or broader stoppability/runtime
-expansion.
+Use the active `g02.003` ready card to implement browser-facing state/query
+polish next, while broader stoppability stays deferred behind a runtime-handle
+boundary.

@@ -762,7 +762,53 @@ Out of scope for the next planning batch:
 
 Follow-on sequence after that decision:
 
-- broaden stoppability once the generic task/runtime surface can expose
+### 10.7 Post-Lifecycle Boundary Decision
+
+Batch `03.10` delivered:
+
+Choose the first bounded post-lifecycle follow-up so the lane does not blur
+browser-state polish together with broader runtime-control promises.
+
+Decision:
+
+- prioritize browser-facing state/query polish next
+- defer broader stoppability until the runtime can expose cancellable handles
+  honestly beyond directly runner-owned demo attempts
+
+Why this is the right next slice:
+
+- the browser/TUI contract already depends on clearer list/inspect/query data
+  than the current CLI exposes cleanly
+- that work builds directly on the shipped demo registry, inspection, run, and
+  lifecycle surfaces
+- broader stoppability now turns into a runtime-handle problem, not a small
+  demo-surface refinement
+
+### 10.8 Next Batch
+
+Batch `03.11` target:
+
+Tighten browser-facing state and query polish without starting UI
+implementation.
+
+In scope for the next execution slice:
+
+- make `demo list` and `demo inspect` more directly aligned with the browser
+  row and drilldown contract
+- add the minimum focused query surface needed for operator/browser-style
+  discovery without inventing UI behavior in the CLI
+- keep active/base/freshness/gap state explicit in runner output
+
+Out of scope for the next execution slice:
+
+- generic task-backed cancellation
+- widening stop support beyond directly runner-owned attempts
+- TUI/browser implementation
+- multi-attempt history or queueing
+
+Follow-on sequence after that slice:
+
+- broader stoppability once the generic task/runtime surface can expose
   cancellable handles honestly
 - TUI/browser implementation
 - broad consumer-repo migration work
@@ -788,6 +834,6 @@ Follow-on sequence after that decision:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the first bounded
-post-lifecycle follow-up next, without promising generic task-cancellation
-semantics the runtime does not yet support.
+Use the active `g02.003` strict lane to implement browser-facing state/query
+polish next, while keeping broader stoppability deferred until the runtime can
+expose cancellable handles honestly.

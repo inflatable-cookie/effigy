@@ -277,6 +277,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to decide the next bounded post-lifecycle
-slice: browser-facing state polish versus broader stoppability/runtime
-expansion.
+Use the active `g02.003` ready card to implement browser-facing demo
+state/query polish next, while broader stoppability stays deferred behind a
+runtime-boundary decision.

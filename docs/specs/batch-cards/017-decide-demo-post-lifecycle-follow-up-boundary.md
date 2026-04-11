@@ -1,6 +1,6 @@
 # 017 Decide Demo Post-Lifecycle Follow-Up Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -45,5 +45,6 @@ foundation.
 
 ## Next Task
 
-If the decision stays clean, open the next bounded execution card for the
-chosen follow-up; otherwise return the lane to a runtime-boundary checkpoint.
+Open the next bounded execution card for browser-facing state/query polish and
+keep broader stoppability deferred until the runtime can expose cancellable
+handles honestly.
