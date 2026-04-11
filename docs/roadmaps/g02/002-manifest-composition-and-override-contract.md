@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Planned
+Status: In Progress
 Owner: Platform
 Created: 2026-04-11
 Depends on: 027, 028
@@ -229,5 +229,6 @@ This roadmap should decide the real syntax and semantics, not just the idea.
 
 ## Next Task
 
-Close `g02.001` first, then use this roadmap to decide the general composition
-contract before any feature claims its own external config semantics.
+Use the active `g02.002` strict lane to decide the root composition section,
+fragment shape, file-resolution rules, and explicit override model before demo
+or any other feature claims its own external config semantics.

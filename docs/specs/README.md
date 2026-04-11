@@ -14,10 +14,10 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Active Spec Set
 
-- [`001-bootstrap-release-and-adoption-strict-lane.md`](./001-bootstrap-release-and-adoption-strict-lane.md)
+- [`002-manifest-composition-and-override-strict-lane.md`](./002-manifest-composition-and-override-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 ## Next Task
 
-Use the active spec lane to control the next `g02.001` batch, then keep this
+Use the active spec lane to control the next `g02.002` batch, then keep this
 surface trimmed so it reflects live planning rather than every historical plan.

@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress
+Status: Complete
 Owner: Platform
 Created: 2026-03-17
 Depends on: 011, 015, 019, 027, 028
@@ -478,11 +478,10 @@ Acceptance:
 
 Current decision pressure:
 
-- the next blocker is not command viability; it is the unreleased parser/runtime
-  surface for `[bootstrap]`
-- one more pilot may still be useful, but only after deciding whether the
-  current implementation should be released first so consuming repos are not
-  pinned to `target/debug/effigy`
+- released Effigy now includes the `bootstrap` command and `[bootstrap]`
+  manifest surface, so the original dev-build-only release blocker is closed
+- the next open work is no longer bootstrap viability; it is what product lane
+  should follow bootstrap in `g02`
 
 ## Related Guides
 
@@ -493,6 +492,6 @@ Current decision pressure:
 
 ## Next Task
 
-Use the live pilot cohort to make the next release-boundary decision:
-either run one more real workspace pilot or prepare bootstrap for release so
-`[bootstrap]` stops being a dev-build-only surface.
+Bootstrap is now a released and live-pilot-validated surface. Move the active
+strict lane to `g02.002` so manifest composition and override semantics are
+designed before another feature claims its own split-config model.

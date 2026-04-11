@@ -1,7 +1,7 @@
 # 001 Bootstrap Release And Adoption Strict Lane
 
-Status: active
-Updated: 2026-04-09
+Status: complete
+Updated: 2026-04-11
 Roadmap: `g02.001`
 
 ## Context
@@ -64,5 +64,5 @@ doors.
 
 ## Next Task
 
-Execute the active ready batch card, then either leave another explicit ready
-card or return the lane to a real intent checkpoint.
+This lane is complete. Use `g02.002` as the active strict lane for manifest
+composition and override planning.
