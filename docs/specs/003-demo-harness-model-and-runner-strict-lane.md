@@ -67,6 +67,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide the first honest
-post-lifecycle follow-up: browser-facing state polish versus broader
-stoppability/runtime expansion, then keep the lane bounded around that choice.
+Execute the active `g02.003` ready card next to implement browser-facing
+state/query polish, then reopen broader stoppability only as a separate
+runtime-boundary question.

@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to decide the next bounded post-lifecycle demo slice,
-then keep this surface trimmed so it reflects live planning rather than every
-historical plan.
+Use the active spec lane to implement the browser-facing demo state/query
+polish slice next, then keep this surface trimmed so it reflects live planning
+rather than every historical plan.

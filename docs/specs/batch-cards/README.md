@@ -20,7 +20,8 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`014-implement-demo-run-and-attempt-foundation.md`](./014-implement-demo-run-and-attempt-foundation.md) (complete)
 - [`015-decide-demo-active-attempt-stop-and-rerun-contract.md`](./015-decide-demo-active-attempt-stop-and-rerun-contract.md) (complete)
 - [`016-implement-demo-active-attempt-stop-and-rerun-foundation.md`](./016-implement-demo-active-attempt-stop-and-rerun-foundation.md) (complete)
-- [`017-decide-demo-post-lifecycle-follow-up-boundary.md`](./017-decide-demo-post-lifecycle-follow-up-boundary.md)
+- [`017-decide-demo-post-lifecycle-follow-up-boundary.md`](./017-decide-demo-post-lifecycle-follow-up-boundary.md) (complete)
+- [`018-implement-demo-browser-state-and-query-polish.md`](./018-implement-demo-browser-state-and-query-polish.md)
 
 ## Next Task
 

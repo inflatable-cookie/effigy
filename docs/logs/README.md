@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04-11-demo-post-lifecycle-follow-up-boundary-decision.md`](./2026-04/11-demo-post-lifecycle-follow-up-boundary-decision.md)
 - [`2026-04-11-demo-lifecycle-control-foundation-implementation.md`](./2026-04/11-demo-lifecycle-control-foundation-implementation.md)
 - [`2026-04-11-demo-active-attempt-stop-and-rerun-contract-decision.md`](./2026-04/11-demo-active-attempt-stop-and-rerun-contract-decision.md)
 - [`2026-04-11-demo-run-and-attempt-foundation-implementation.md`](./2026-04/11-demo-run-and-attempt-foundation-implementation.md)

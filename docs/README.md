@@ -129,6 +129,6 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to decide the next bounded
-post-lifecycle slice on top of the shipped demo registry, inspection, run,
-stop, and rerun surfaces.
+Use the active strict `g02.003` spec lane to implement browser-facing demo
+state/query polish on top of the shipped registry, inspection, run, stop, and
+rerun surfaces.
