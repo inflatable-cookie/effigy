@@ -63,6 +63,48 @@ dir = "docs/vision"
     assert!(parsed["effective_manifest"]
         .as_str()
         .is_some_and(|text| text.contains("[docs_policy.indexes.vision]")));
+    assert!(parsed["selected_path"].is_null());
+    assert!(parsed["selected_value"].is_null());
+}
+
+#[test]
+fn builtin_config_inspect_path_json_contract_has_versioned_shape() {
+    let root = temp_workspace("config-inspect-path-json-contract");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"
+[manifest]
+include = ["effigy.tasks.toml", { path = "effigy.override.toml", override = ["tasks.qa"] }]
+"#,
+    );
+    write_manifest(
+        &root.join("effigy.tasks.toml"),
+        r#"
+[tasks.qa]
+run = "printf tasks"
+"#,
+    );
+    write_manifest(
+        &root.join("effigy.override.toml"),
+        r#"
+[tasks.qa]
+run = "printf docs"
+"#,
+    );
+
+    let parsed = run_invocation_json(
+        root,
+        "config",
+        &["--inspect", "--path", "tasks.qa.run", "--json"],
+    );
+    assert_schema_v1(&parsed, "effigy.config.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["mode"], "inspect");
+    assert_eq!(parsed["selected_path"], "tasks.qa.run");
+    assert_eq!(parsed["selected_value"]["path"], "tasks.qa.run");
+    assert_eq!(parsed["selected_value"]["source"], "effigy.override.toml");
+    assert_eq!(parsed["selected_value"]["value"], "printf docs");
+    assert!(parsed["selected_value"]["overrides"].is_array());
 }
 
 #[test]

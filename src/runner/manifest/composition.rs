@@ -10,6 +10,7 @@ use crate::runner::error::RunnerError;
 #[derive(Debug)]
 pub(in crate::runner) struct LoadedTaskManifest {
     pub(in crate::runner) manifest: TaskManifest,
+    pub(in crate::runner) effective_value: Value,
     pub(in crate::runner) manifest_path: PathBuf,
     pub(in crate::runner) evaluation_order: Vec<PathBuf>,
     pub(in crate::runner) include_graph: Vec<ManifestCompositionEdge>,
@@ -28,6 +29,7 @@ pub(in crate::runner) struct ManifestCompositionEdge {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(in crate::runner) struct ManifestCompositionOverride {
     pub(in crate::runner) path: String,
+    pub(in crate::runner) replaced_source: PathBuf,
     pub(in crate::runner) by_fragment: PathBuf,
 }
 
@@ -103,6 +105,7 @@ pub(in crate::runner) fn load_task_manifest_with_inspection(
 
     Ok(LoadedTaskManifest {
         manifest,
+        effective_value: composed.value,
         manifest_path: manifest_path.to_path_buf(),
         evaluation_order: session.evaluation_order,
         include_graph: session.include_graph,
@@ -274,12 +277,15 @@ fn merge_value_inner(
     root_manifest_path: &Path,
 ) -> Result<(), RunnerError> {
     if !path.is_empty() && override_set.contains(path) {
+        let existing_source =
+            current_value_source(path, current_sources, root_manifest_path).to_path_buf();
         if value_kind(current) != value_kind(incoming) {
             return Err(RunnerError::TaskManifestCompose {
                 path: root_manifest_path.to_path_buf(),
                 detail: format!(
-                    "override path `{path}` cannot replace {} with {} from {}",
+                    "override path `{path}` cannot replace {} from {} with {} from {}",
                     value_kind(current),
+                    existing_source.display(),
                     value_kind(incoming),
                     incoming_fragment.display()
                 ),
@@ -296,6 +302,7 @@ fn merge_value_inner(
         );
         overridden_paths.push(ManifestCompositionOverride {
             path: path.to_owned(),
+            replaced_source: existing_source,
             by_fragment: incoming_fragment.to_path_buf(),
         });
         used_overrides.insert(path.to_owned());
@@ -334,12 +341,15 @@ fn merge_value_inner(
             return Ok(());
         }
         (Some(_), None) | (None, Some(_)) => {
+            let existing_source =
+                current_value_source(path, current_sources, root_manifest_path).to_path_buf();
             return Err(RunnerError::TaskManifestCompose {
                 path: root_manifest_path.to_path_buf(),
                 detail: format!(
-                    "manifest conflict at `{}` between {} and {} from {}",
+                    "manifest conflict at `{}` between {} from {} and {} from {}",
                     display_path(path),
                     value_kind(current),
+                    existing_source.display(),
                     value_kind(incoming),
                     incoming_fragment.display()
                 ),
@@ -352,12 +362,17 @@ fn merge_value_inner(
         return Ok(());
     }
 
+    let existing_source =
+        current_value_source(path, current_sources, root_manifest_path).to_path_buf();
     Err(RunnerError::TaskManifestCompose {
         path: root_manifest_path.to_path_buf(),
         detail: format!(
-            "manifest conflict at `{}` requires an override from {}",
+            "manifest conflict at `{}` between {} and {}; add override = [\"{}\"] to the include entry for {}",
             display_path(path),
-            incoming_fragment.display()
+            existing_source.display(),
+            incoming_fragment.display(),
+            path,
+            incoming_fragment.display(),
         ),
     })
 }
@@ -433,4 +448,18 @@ fn copy_source_entries(
     if !copied_any {
         record_value_sources(path, incoming_value, fallback_source, current_sources);
     }
+}
+
+fn current_value_source<'a>(
+    path: &str,
+    current_sources: &'a BTreeMap<String, PathBuf>,
+    root_manifest_path: &'a Path,
+) -> &'a Path {
+    if path.is_empty() {
+        return root_manifest_path;
+    }
+    current_sources
+        .get(path)
+        .map(PathBuf::as_path)
+        .unwrap_or(root_manifest_path)
 }

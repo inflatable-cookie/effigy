@@ -1,5 +1,7 @@
 use serde_json::json;
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use toml::Value;
 
 use super::super::render_builtin_help_text;
 use super::super::response::{
@@ -22,7 +24,7 @@ pub(super) fn render_config_request(
     target_root: &Path,
 ) -> Result<Option<String>, RunnerError> {
     if request.inspect {
-        return render_inspect_payload(request.output_json, target_root);
+        return render_inspect_payload(request, target_root);
     }
     if request.schema {
         return render_schema_payload(request);
@@ -64,12 +66,17 @@ fn render_reference_payload(output_json: bool) -> Result<Option<String>, RunnerE
 }
 
 fn render_inspect_payload(
-    output_json: bool,
+    request: ConfigRequest,
     target_root: &Path,
 ) -> Result<Option<String>, RunnerError> {
     let manifest_path = target_root.join("effigy.toml");
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
-    let text = render_manifest_inspection(target_root, &loaded)?;
+    let selected_path = request.inspect_path.clone();
+    let selected = selected_path
+        .as_deref()
+        .map(|path| inspect_selected_path(&loaded, path, &manifest_path))
+        .transpose()?;
+    let text = render_manifest_inspection(target_root, &loaded, selected.as_ref())?;
     let evaluation_order = loaded
         .evaluation_order
         .iter()
@@ -92,6 +99,7 @@ fn render_inspect_payload(
         .map(|entry| {
             json!({
                 "path": entry.path,
+                "replaced_source": display_path(&entry.replaced_source, target_root),
                 "by_fragment": display_path(&entry.by_fragment, target_root),
             })
         })
@@ -108,7 +116,7 @@ fn render_inspect_payload(
         .collect::<Vec<_>>();
 
     render_config_payload(
-        output_json,
+        request.output_json,
         ConfigPayload::inspect(
             text,
             display_path(&loaded.manifest_path, target_root),
@@ -117,6 +125,27 @@ fn render_inspect_payload(
             overridden_paths,
             value_sources,
             loaded.effective_manifest,
+            selected_path,
+            selected.map(|entry| {
+                json!({
+                    "path": entry.path,
+                    "source": display_path(&entry.source, target_root),
+                    "value": toml_value_to_json(&entry.value),
+                    "rendered": render_selected_value(&entry.path, &entry.value)
+                        .unwrap_or_else(|_| "<render failed>".to_owned()),
+                    "overrides": entry
+                        .overrides
+                        .iter()
+                        .map(|override_entry| {
+                            json!({
+                                "path": override_entry.path,
+                                "replaced_source": display_path(&override_entry.replaced_source, target_root),
+                                "by_fragment": display_path(&override_entry.by_fragment, target_root),
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                })
+            }),
         ),
     )
 }
@@ -135,6 +164,8 @@ fn render_config_payload(
     let overridden_paths = payload.overridden_paths;
     let value_sources = payload.value_sources;
     let effective_manifest = payload.effective_manifest;
+    let selected_path = payload.selected_path;
+    let selected_value = payload.selected_value;
     render_optional_text_with_schema_text_fields_lazy(
         output_json,
         "effigy.config.v1",
@@ -151,6 +182,8 @@ fn render_config_payload(
                 "overridden_paths": overridden_paths,
                 "value_sources": value_sources,
                 "effective_manifest": effective_manifest,
+                "selected_path": selected_path,
+                "selected_value": selected_value,
             })
         },
     )
@@ -167,6 +200,8 @@ struct ConfigPayload {
     overridden_paths: Option<Vec<serde_json::Value>>,
     value_sources: Option<Vec<serde_json::Value>>,
     effective_manifest: Option<String>,
+    selected_path: Option<String>,
+    selected_value: Option<serde_json::Value>,
     text: String,
 }
 
@@ -183,6 +218,8 @@ impl ConfigPayload {
             overridden_paths: None,
             value_sources: None,
             effective_manifest: None,
+            selected_path: None,
+            selected_value: None,
             text,
         }
     }
@@ -204,6 +241,8 @@ impl ConfigPayload {
             overridden_paths: None,
             value_sources: None,
             effective_manifest: None,
+            selected_path: None,
+            selected_value: None,
             text,
         }
     }
@@ -216,6 +255,8 @@ impl ConfigPayload {
         overridden_paths: Vec<serde_json::Value>,
         value_sources: Vec<serde_json::Value>,
         effective_manifest: String,
+        selected_path: Option<String>,
+        selected_value: Option<serde_json::Value>,
     ) -> Self {
         Self {
             mode: "inspect",
@@ -228,6 +269,8 @@ impl ConfigPayload {
             overridden_paths: Some(overridden_paths),
             value_sources: Some(value_sources),
             effective_manifest: Some(effective_manifest),
+            selected_path,
+            selected_value,
             text,
         }
     }
@@ -236,6 +279,7 @@ impl ConfigPayload {
 fn render_manifest_inspection(
     target_root: &Path,
     loaded: &crate::runner::manifest::LoadedTaskManifest,
+    selected: Option<&SelectedInspectValue>,
 ) -> Result<String, RunnerError> {
     let mut out = String::new();
     out.push_str("Manifest Composition\n");
@@ -280,11 +324,42 @@ fn render_manifest_inspection(
     }
     out.push('\n');
 
-    out.push_str("Effective Value Sources\n");
-    out.push_str("-----------------------\n");
-    for entry in &loaded.value_sources {
-        out.push_str(&render_value_source(target_root, entry));
+    if let Some(selected) = selected {
+        out.push_str("Selected Path\n");
+        out.push_str("-------------\n");
+        out.push_str(&format!("Path: {}\n", selected.path));
+        out.push_str(&format!(
+            "Source: {}\n",
+            display_path(&selected.source, target_root)
+        ));
+        if selected.overrides.is_empty() {
+            out.push_str("Overrides: (none)\n");
+        } else {
+            out.push_str("Overrides:\n");
+            for entry in &selected.overrides {
+                out.push_str(&format!(
+                    "- {}: {} -> {}\n",
+                    entry.path,
+                    display_path(&entry.replaced_source, target_root),
+                    display_path(&entry.by_fragment, target_root)
+                ));
+            }
+        }
         out.push('\n');
+
+        out.push_str("Selected Value\n");
+        out.push_str("--------------\n");
+        out.push_str(&render_selected_value(&selected.path, &selected.value)?);
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+    } else {
+        out.push_str("Effective Value Sources\n");
+        out.push_str("-----------------------\n");
+        for line in render_grouped_value_sources(target_root, &loaded.value_sources) {
+            out.push_str(&line);
+            out.push('\n');
+        }
     }
     out.push('\n');
 
@@ -312,17 +387,10 @@ fn render_edge(target_root: &Path, edge: &ManifestCompositionEdge) -> String {
 
 fn render_override(target_root: &Path, entry: &ManifestCompositionOverride) -> String {
     format!(
-        "- {} <- {}",
+        "- {}: {} -> {}",
         entry.path,
+        display_path(&entry.replaced_source, target_root),
         display_path(&entry.by_fragment, target_root)
-    )
-}
-
-fn render_value_source(target_root: &Path, entry: &ManifestCompositionValueSource) -> String {
-    format!(
-        "- {} <- {}",
-        entry.path,
-        display_path(&entry.source, target_root)
     )
 }
 
@@ -330,4 +398,117 @@ fn display_path(path: &Path, target_root: &Path) -> String {
     path.strip_prefix(target_root)
         .map(|relative| relative.display().to_string())
         .unwrap_or_else(|_| path.display().to_string())
+}
+
+#[derive(Debug, Clone)]
+struct SelectedInspectValue {
+    path: String,
+    source: PathBuf,
+    value: Value,
+    overrides: Vec<ManifestCompositionOverride>,
+}
+
+fn inspect_selected_path(
+    loaded: &crate::runner::manifest::LoadedTaskManifest,
+    path: &str,
+    manifest_path: &Path,
+) -> Result<SelectedInspectValue, RunnerError> {
+    let value = lookup_value_at_path(&loaded.effective_value, path).ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "config path `{path}` was not found in the effective manifest"
+        ))
+    })?;
+    let source = loaded
+        .value_sources
+        .iter()
+        .find(|entry| entry.path == path)
+        .map(|entry| entry.source.clone())
+        .ok_or_else(|| RunnerError::TaskManifestCompose {
+            path: manifest_path.to_path_buf(),
+            detail: format!(
+                "selected config path `{path}` exists in the effective manifest but has no source record"
+            ),
+        })?;
+    let overrides = loaded
+        .overridden_paths
+        .iter()
+        .filter(|entry| path == entry.path || path.starts_with(&format!("{}.", entry.path)))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    Ok(SelectedInspectValue {
+        path: path.to_owned(),
+        source,
+        value: value.clone(),
+        overrides,
+    })
+}
+
+fn lookup_value_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    if path.is_empty() {
+        return Some(value);
+    }
+    let mut current = value;
+    for segment in path.split('.') {
+        let table = current.as_table()?;
+        current = table.get(segment)?;
+    }
+    Some(current)
+}
+
+fn render_grouped_value_sources(
+    target_root: &Path,
+    entries: &[ManifestCompositionValueSource],
+) -> Vec<String> {
+    if entries.is_empty() {
+        return vec!["(none)".to_owned()];
+    }
+    let mut grouped: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for entry in entries {
+        grouped
+            .entry(display_path(&entry.source, target_root))
+            .or_default()
+            .push(entry.path.clone());
+    }
+
+    let mut out = Vec::new();
+    for (source, mut paths) in grouped {
+        paths.sort();
+        out.push(format!("{source}:"));
+        for path in paths {
+            out.push(format!("- {path}"));
+        }
+    }
+    out
+}
+
+fn render_selected_value(path: &str, value: &Value) -> Result<String, RunnerError> {
+    let mut wrapper = toml::map::Map::new();
+    insert_value_at_path(&mut wrapper, path, value.clone());
+    toml::to_string_pretty(&Value::Table(wrapper)).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to render selected config value `{path}`: {error}"
+        ))
+    })
+}
+
+fn insert_value_at_path(table: &mut toml::map::Map<String, Value>, path: &str, value: Value) {
+    let mut segments = path.split('.').collect::<Vec<_>>();
+    let last = segments
+        .pop()
+        .expect("selected config path should not be empty");
+    let mut current = table;
+    for segment in segments {
+        let entry = current
+            .entry(segment.to_owned())
+            .or_insert_with(|| Value::Table(toml::map::Map::new()));
+        current = entry
+            .as_table_mut()
+            .expect("generated inspect wrapper should stay table-shaped");
+    }
+    current.insert(last.to_owned(), value);
+}
+
+fn toml_value_to_json(value: &Value) -> serde_json::Value {
+    serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
 }

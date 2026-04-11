@@ -15,11 +15,17 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add `effigy config --inspect` so operators can inspect the effective composed
   manifest, include graph, evaluation order, overridden paths, effective value
   sources, and rendered merged TOML in both text and JSON mode
+- Add focused manifest inspection via `effigy config --inspect --path <dotted.path>`
+  so operators can inspect one effective value, its source file, and any
+  matching override history without scanning the full manifest dump
 
 ### Changed
 - Route catalog discovery, doctor strict-parse checks, docs-policy loading, and
   scan manifest options through the same composed-manifest loader so split
   config behaves consistently across runtime, health, and validation surfaces
+- Make composition conflict errors and inspect output more actionable by naming
+  both source fragments in conflict/override reporting and grouping effective
+  value sources by fragment in text-mode inspection
 
 ## [0.2.12] - 2026-03-24
 

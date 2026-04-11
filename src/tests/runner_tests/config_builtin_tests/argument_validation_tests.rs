@@ -46,6 +46,16 @@ fn run_manifest_task_builtin_config_rejects_invalid_flag_combinations() {
             expected: &["`--inspect` cannot be combined with `--schema`"],
         },
         BuiltinInvocationCase {
+            workspace: "builtin-config-path-requires-inspect",
+            args: &["--path", "tasks.dev"],
+            expected: &["`--path` requires `--inspect`"],
+        },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-path-requires-value",
+            args: &["--inspect", "--path"],
+            expected: &["`--path` requires a value"],
+        },
+        BuiltinInvocationCase {
             workspace: "builtin-config-unknown-args",
             args: &["--wat"],
             expected: &["unknown argument(s) for built-in `config`: --wat"],

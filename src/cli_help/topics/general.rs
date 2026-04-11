@@ -20,7 +20,7 @@ pub(crate) fn render_general_help<R: Renderer>(
         ),
         (
             "effigy config",
-            "Show config keys/examples or inspect the effective composed manifest",
+            "Show config keys/examples or inspect the effective composed manifest and focused path sources",
             None,
         ),
         (
