@@ -183,8 +183,11 @@ Lifecycle notes:
   `--stale-only`, and `--group-by`.
 - `demo browser` now provides the first live list/detail TUI on top of the
   shipped registry, query, inspect, run, stop, and rerun surfaces.
-- inside `demo browser`, use `/` for search, `O` for owner, `S` for status,
-  `G` for gap, `f` for stale-only, and `c` to clear the active query.
+- inside `demo browser`, use `/` for search, `O` for owner, `T` for tag,
+  `M` for mode, `C` for cover, `S` for status, `G` for gap, `f` for
+  stale-only, and `c` to clear the active query.
+- inside `demo browser`, use `g` to cycle grouping across owner, tag, mode,
+  cover, status, and gap.
 - inside `demo browser`, use `[` and `]` to select a recorded artifact and
   `o` to open it with the platform default handler.
 - `demo browser` now also shows bounded recent stdout/stderr output for the
@@ -201,9 +204,10 @@ Lifecycle notes:
 - task-backed demos remain runnable, but stop is still an explicit
   `not supported through the current runtime` boundary.
 - the browser currently focuses on honest navigation, bounded action dispatch,
-  artifact-opening, recent proof output, and bounded detail navigation;
-  terminal emulation, rich artifact rendering, and multi-attempt history
-  remain deferred.
+  artifact-opening, recent proof output, bounded detail navigation, and
+  metadata-query parity with the shipped `demo list` contract; terminal
+  emulation, rich artifact rendering, and multi-attempt history remain
+  deferred.
 
 ## 3) Full Task Table with Runtime Controls
 

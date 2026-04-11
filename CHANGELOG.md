@@ -53,6 +53,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add bounded detail-pane navigation to `effigy demo browser`, so longer
   selected-demo records with receipts, artifacts, and recent output remain
   reachable from one interactive surface
+- Add metadata-query parity to `effigy demo browser`, so operators can filter
+  by tag, mode, and cover and cycle through the full shipped grouping
+  contract without dropping back to `demo list`
 
 ### Changed
 - Route catalog discovery, doctor strict-parse checks, docs-policy loading, and

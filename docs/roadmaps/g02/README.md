@@ -13,12 +13,12 @@ Current milestones:
 
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
 - [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
-- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, and detail-pane navigation now shipped; the next slice is bounded browser metadata-query parity)
+- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, and metadata-query parity now shipped; the next slice is a fresh bounded browser follow-up decision)
 
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/030-implement-demo-browser-metadata-query-parity.md`](../specs/batch-cards/030-implement-demo-browser-metadata-query-parity.md)
+- [`../specs/batch-cards/031-decide-demo-post-metadata-query-follow-up-boundary.md`](../specs/batch-cards/031-decide-demo-post-metadata-query-follow-up-boundary.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement bounded browser
-metadata-query parity, while broader stoppability stays deferred behind a
-runtime-handle boundary.
+Use the active `g02.003` ready card to decide the next bounded browser
+follow-up after metadata-query parity, while broader stoppability stays
+deferred behind a runtime-handle boundary.

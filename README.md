@@ -192,8 +192,9 @@ The first browser foundation gives you:
 - a grouped demo list on the left
 - a detail pane for the selected demo
 - in-browser `run`, `stop`, `rerun`, and refresh actions
-- in-browser query controls for search, owner, status, gap, and stale-only
-  filtering
+- in-browser query controls for search, owner, tag, mode, cover, status, gap,
+  and stale-only filtering
+- grouping parity across owner, tag, mode, cover, status, and gap
 - artifact selection with `[` and `]`, plus `o` to open the selected artifact
 - bounded recent stdout/stderr visibility for the selected demo when runner-
   owned logs exist
@@ -319,6 +320,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement bounded browser
-metadata-query parity now that detail-pane navigation is shipped, while
-keeping broader runtime and desktop-client questions deferred.
+Use the active `g02.003` ready card to decide the next bounded browser
+follow-up now that metadata-query parity is shipped, while keeping broader
+runtime and desktop-client questions deferred.
