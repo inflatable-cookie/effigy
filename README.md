@@ -254,6 +254,5 @@ effigy/
 
 ## Next Task
 
-Complete the active `g02.003` planning batch so Effigy has a first-class demo
-object model and registry boundary before any TUI or desktop client work
-begins.
+Complete the active `g02.003` planning batch so Effigy has a runner lifecycle
+and artifact boundary for demos before any TUI or desktop client work begins.

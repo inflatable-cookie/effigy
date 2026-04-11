@@ -63,5 +63,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next, then either leave another
-explicit ready card or return the lane to a real intent checkpoint.
+Execute the active `g02.003` runner-semantics ready card next, then either
+leave another explicit ready card or return the lane to a real intent
+checkpoint.

@@ -129,5 +129,5 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to define the demo-harness model
+Use the active strict `g02.003` spec lane to define the demo runner lifecycle
 before TUI or desktop planning starts relying on ad hoc assumptions.
