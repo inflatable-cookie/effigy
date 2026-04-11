@@ -1295,6 +1295,46 @@ Out of scope for the next implementation slice:
 - multi-attempt concurrency, queueing, or generic runtime cancellation
 - richer artifact preview or log streaming
 
+Batch `03.27` result:
+
+- Effigy now persists a bounded terminal-attempt history per demo alongside the
+  latest-attempt summary instead of replacing prior outcomes completely
+- `effigy demo inspect <id>` now exposes recent attempt history in both text
+  and JSON while keeping latest-attempt compatibility intact
+- the first history slice remained runner-side; it did not widen into `demo
+  list` history summaries or browser-side history rendering
+
+Why this batch was the right foundation:
+
+- operators can now answer "what happened before the latest run?" from one
+  runner-owned inspection surface instead of only one terminal receipt
+- the history contract is useful to both CLI and future UI work without forcing
+  timeline rendering decisions early
+- keeping the first slice inspect-first avoids turning result history into
+  another browser-only presentation problem
+
+### 10.25 Demo History Surface Follow-Up Boundary
+
+Batch `03.28` target:
+
+Decide where demo history should widen next now that the bounded runner-side
+history foundation is real product surface.
+
+In scope for the next decision slice:
+
+- deciding whether the next bounded history value belongs in `demo list`, the
+  browser, or a separate result-timeline query surface
+- using the self-hosted demos and the shipped browser baseline as the reality
+  check for that decision
+- keeping the next slice focused on history visibility rather than generic
+  runtime or UI expansion
+
+Out of scope for the next decision slice:
+
+- implementing browser timelines or list history immediately
+- multi-attempt concurrency or queueing
+- broader runtime cancellation or desktop-client work
+
 ## 11) Acceptance Criteria
 
 - [ ] Effigy has a clear first-class demo model that is not reducible to random
@@ -1316,6 +1356,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to implement the first bounded attempt-
-history foundation on top of `demo inspect`, then keep wider browser/list
-history rendering explicitly deferred.
+Use the active `g02.003` strict lane to decide whether the next bounded
+demo-history slice belongs in `demo list`, the browser, or a separate result-
+timeline query surface, while wider runtime expansion remains deferred.

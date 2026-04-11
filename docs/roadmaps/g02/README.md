@@ -13,12 +13,12 @@ Current milestones:
 
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
 - [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
-- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, metadata-query parity, and first-browser cleanup now shipped; the next slice is bounded persisted attempt history through the runner and `demo inspect`)
+- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, metadata-query parity, first-browser cleanup, and bounded persisted attempt history now shipped; the next slice is deciding where demo history should widen next)
 
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/033-implement-demo-attempt-history-foundation.md`](../specs/batch-cards/033-implement-demo-attempt-history-foundation.md)
+- [`../specs/batch-cards/034-decide-demo-history-surface-follow-up-boundary.md`](../specs/batch-cards/034-decide-demo-history-surface-follow-up-boundary.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` ready card to implement bounded persisted attempt
-history through `demo inspect`, while broader stoppability stays deferred
-behind a runtime-handle boundary.
+Use the active `g02.003` ready card to decide whether demo history should
+widen next through `demo list`, the browser, or a separate result-timeline
+query surface, while broader runtime expansion stays deferred.

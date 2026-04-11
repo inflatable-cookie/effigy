@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to implement the first bounded attempt-history
-foundation on top of `demo inspect`, then keep this surface trimmed so it
+Use the active spec lane to decide the next bounded follow-up after the
+runner-side attempt-history foundation, then keep this surface trimmed so it
 reflects live planning rather than every historical plan.
