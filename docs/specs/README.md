@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to decide demo active-attempt, stop, and rerun
-semantics next, then keep this surface trimmed so it reflects live planning
-rather than every historical plan.
+Use the active spec lane to implement the first bounded demo
+active-attempt/stop/rerun slice next, then keep this surface trimmed so it
+reflects live planning rather than every historical plan.

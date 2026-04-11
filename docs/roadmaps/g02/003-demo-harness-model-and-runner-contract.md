@@ -269,6 +269,62 @@ Receipt and artifact boundary:
 - the runner tracks artifact references and receipt metadata; it does not own
   rich artifact rendering formats in this lane
 
+### 6.0 Active-Attempt Lifecycle Model
+
+Batch `03.8` decision:
+
+- terminal receipts and latest-attempt summaries are not enough to support
+  lifecycle control honestly
+- the runner needs a separate active-attempt state layer for in-flight demo
+  executions
+- the first lifecycle contract allows at most one active attempt per demo
+- user-facing lifecycle commands target demo ids first, not raw attempt ids
+
+Why this split is required:
+
+- `demo run` is synchronous today and can already write a terminal receipt
+- `demo stop` and later browser status need to know about work that is still in
+  flight, not only the last completed receipt
+- a receipt is immutable proof evidence; it should not double as a mutable
+  process-control record
+
+Minimum active-attempt state:
+
+- stable `attempt_id`
+- `demo_id`
+- current lifecycle phase (`running`, `stop-requested`, terminalized by the
+  runner)
+- started-at timestamp
+- runnable entrypoint snapshot (`task` or `run`)
+- runner-owned handle metadata when available
+- latest log/receipt location pointers when known
+
+Lifecycle targeting rules:
+
+- `demo stop <id>` targets a demo id and resolves to that demo's single active
+  attempt
+- `demo rerun <id>` targets a demo id and always means `start a fresh attempt
+  from the current manifest definition`
+- attempt ids are still required in runner state and inspection payloads for
+  provenance, but they are not part of the first CLI grammar
+
+First-slice lifecycle constraint:
+
+- stop support in the next implementation slice is limited to demos whose
+  active process is directly runner-owned and stoppable
+- task-backed demos may be runnable and rerunnable without being honestly
+  stoppable yet if the generic task/runtime surface does not expose cancellable
+  handles
+- the contract must surface that distinction instead of pretending every demo
+  entrypoint is equally controllable
+
+Rerun rule for the first lifecycle slice:
+
+- `demo rerun <id>` requires that no active attempt currently exists for that
+  demo
+- if a demo is still running, rerun fails fast and points the operator at
+  `demo stop <id>` instead of implicitly chaining stop-and-start behavior
+
 ## 6.1 Coverage And Gap Model
 
 Batch `03.3` decision:
@@ -633,24 +689,59 @@ Why this was the right second slice:
 - it kept the lifecycle boundary honest by stopping short of process-control
   behavior that still needs an explicit active-attempt model
 
-### 10.4 Next Batch
+### 10.4 Lifecycle Contract Decision
 
-Batch `03.8` target:
+Batch `03.8` delivered:
 
-Lock the lifecycle control model before stop/rerun runtime work starts.
+Lock the active-attempt model before stop/rerun runtime work starts.
+
+Delivered in this planning batch:
+
+- active attempts are now explicitly separate from terminal receipts
+- the first lifecycle contract allows one active attempt per demo
+- stop and rerun target demo ids in the first CLI grammar
+- attempt ids are required in runner state and inspection data, but not yet in
+  the top-level command shape
+- the next execution slice is constrained to runner-owned stoppable processes
+  instead of pretending generic task cancellation already exists
+
+### 10.5 Next Batch
+
+Batch `03.9` target:
+
+Build the first honest lifecycle-control slice on top of the shipped registry,
+inspection, and run foundation.
 
 In scope for the next execution slice:
 
-- define what counts as an active demo attempt
-- decide the target shape for `demo stop` and `demo rerun`
-- decide the minimum persisted state/process handle model those commands need
-- leave one bounded implementation card for lifecycle control if the model is
-  coherent
+- add runner-owned active-attempt state for demos that are still executing
+- add `effigy demo rerun <id>` as a fresh-attempt command on top of the
+  existing run surface
+- add `effigy demo stop <id>` for demos whose active attempt is directly
+  stoppable by the runner
+- surface the active-attempt state in `demo inspect`
 
 Out of scope for the next execution slice:
 
-- implementing `effigy demo stop`
-- implementing `effigy demo rerun`
+- generic cancellation support for every task-backed demo entrypoint
+- multi-attempt concurrency per demo
+- TUI/browser implementation
+- broad consumer-repo migration work
+- chaining stop-and-rerun as one implicit compound action
+
+Why this is the right next slice:
+
+- it turns lifecycle planning into real product surface without over-claiming
+  generic process control that Effigy does not yet own
+- it gives the future browser a truthful notion of `running` beyond a terminal
+  receipt
+- it keeps the next batch bounded to one active-attempt model instead of
+  reopening CLI targeting later
+
+Follow-on sequence after this slice:
+
+- broaden stoppability once the generic task/runtime surface can expose
+  cancellable handles honestly
 - TUI/browser implementation
 - broad consumer-repo migration work
 
@@ -675,5 +766,6 @@ Out of scope for the next execution slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide active-attempt, stop, and rerun
-semantics next, then leave one bounded lifecycle-control card behind it.
+Use the active `g02.003` strict lane to implement the first bounded
+active-attempt, stop, and rerun slice next, without promising generic
+task-cancellation semantics the runtime does not yet support.

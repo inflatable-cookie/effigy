@@ -67,6 +67,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide active-attempt, stop,
-and rerun semantics, then leave one bounded lifecycle execution card or a real
-intent checkpoint if the model still does not support process control cleanly.
+Execute the active `g02.003` ready card next to implement the first bounded
+active-attempt, stop, and rerun slice, then either leave a broader
+stoppability/browser-state follow-up or return the lane to a real runtime
+boundary checkpoint.
