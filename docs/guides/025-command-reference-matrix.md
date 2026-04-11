@@ -111,6 +111,7 @@ effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--start] [--plan] [
 effigy demo list [--search <TEXT>] [--owner <NAME>] [--tag <TAG>] [--mode <MODE>] [--cover <AREA>] [--status <STATUS>] [--gap <GAP>] [--stale-only] [--group-by <FIELD>] [--repo <PATH>] [--json]
 effigy demo browser [--group-by <FIELD>] [--repo <PATH>]
 effigy demo inspect <DEMO_ID> [--repo <PATH>] [--json]
+effigy demo history <DEMO_ID> [--limit <N>] [--repo <PATH>] [--json]
 effigy demo run <DEMO_ID> [--repo <PATH>] [--json]
 effigy demo stop <DEMO_ID> [--repo <PATH>] [--json]
 effigy demo rerun <DEMO_ID> [--repo <PATH>] [--json]
@@ -164,6 +165,9 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
   without executing the demo. It also reports action availability, receipt
   freshness, whether a recorded receipt is currently present, and a bounded
   recent-attempt history for terminal demo outcomes.
+- `demo history` gives one demo's retained terminal-attempt history a separate
+  query surface, with optional `--limit <N>` trimming, so operators can focus
+  on result timeline review without widening `demo list` or the browser.
 - `demo list` supports bounded browser-style discovery with focused filters and
   grouping, but it deliberately stops short of UI behavior or rich browsing
   state.

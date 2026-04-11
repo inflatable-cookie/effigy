@@ -65,6 +65,9 @@ pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
         DemoSubcommand::Inspect { demo_id } => {
             render_demo_inspect(&repo_root, &loaded, &demo_id, args.output_json)
         }
+        DemoSubcommand::History { demo_id, limit } => {
+            render_demo_history(&repo_root, &loaded, &demo_id, limit, args.output_json)
+        }
         DemoSubcommand::Run { demo_id } => render_demo_execute(
             &repo_root,
             &loaded,
@@ -284,6 +287,125 @@ fn render_demo_inspect(
                 &record.attempt_history.attempts,
             ))?;
         }
+    }
+    renderer.text("")?;
+    render_utf8(renderer.into_inner())
+}
+
+fn render_demo_history(
+    repo_root: &Path,
+    loaded: &LoadedTaskManifest,
+    demo_id: &str,
+    limit: Option<usize>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let Some(demo) = loaded.manifest.demos.get(demo_id) else {
+        return demo_error(
+            output_json,
+            "effigy.demo.history.v1",
+            format!("demo `{demo_id}` was not found"),
+            json!({ "demo_id": demo_id }),
+        );
+    };
+
+    let record = build_demo_record(repo_root, loaded, demo_id, demo)?;
+    let displayed_attempts = history_attempts_with_limit(&record.attempt_history, limit);
+    let displayed_count = displayed_attempts.len();
+    let stored_count = record.attempt_history.attempts.len();
+
+    if output_json {
+        return encode_json(
+            &json!({
+                "schema": "effigy.demo.history.v1",
+                "schema_version": 1,
+                "ok": true,
+                "repo_root": repo_root.display().to_string(),
+                "query": {
+                    "demo_id": demo_id,
+                    "limit": limit,
+                },
+                "demo": {
+                    "id": record.id,
+                    "title": record.title,
+                    "owner": record.owner,
+                    "entrypoint": record.entrypoint.to_json(),
+                    "defined_in": record.primary_source,
+                },
+                "active_attempt": record.active_attempt.to_json(),
+                "latest_attempt": record.latest_attempt.to_json(),
+                "attempt_history": {
+                    "path": record.attempt_history.path,
+                    "stored_count": stored_count,
+                    "displayed_count": displayed_count,
+                    "count": displayed_count,
+                    "limit": limit,
+                    "parse_error": record.attempt_history.parse_error,
+                    "attempts": displayed_attempts.iter().map(DemoHistoricalAttempt::to_json).collect::<Vec<_>>(),
+                },
+            }),
+            true,
+        );
+    }
+
+    let mut renderer = text_renderer();
+    renderer.section("Demo History")?;
+    renderer.key_values(&[
+        KeyValue::new("id", record.id.clone()),
+        KeyValue::new("title", record.title.clone()),
+        KeyValue::new("owner", record.owner.clone()),
+        KeyValue::new("entrypoint", record.entrypoint.render_full()),
+        KeyValue::new(
+            "history-path",
+            record
+                .attempt_history
+                .path
+                .clone()
+                .unwrap_or_else(|| "<none>".to_owned()),
+        ),
+        KeyValue::new("stored-attempts", stored_count.to_string()),
+        KeyValue::new("showing", displayed_count.to_string()),
+        KeyValue::new(
+            "limit",
+            limit
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "all".to_owned()),
+        ),
+    ])?;
+    renderer.text("")?;
+
+    renderer.section("Latest Result")?;
+    let mut latest_values = vec![KeyValue::new(
+        "state",
+        record.latest_attempt.state_label().to_owned(),
+    )];
+    if let Some(outcome) = &record.latest_attempt.outcome {
+        latest_values.push(KeyValue::new("outcome", outcome.clone()));
+    }
+    if let Some(summary) = &record.latest_attempt.summary {
+        latest_values.push(KeyValue::new("summary", summary.clone()));
+    }
+    if let Some(receipt_path) = &record.latest_attempt.receipt_path {
+        latest_values.push(KeyValue::new("receipt", receipt_path.clone()));
+    }
+    renderer.key_values(&latest_values)?;
+    renderer.text("")?;
+
+    renderer.section("Active Attempt")?;
+    renderer.key_values(&record.active_attempt.to_key_values())?;
+    renderer.text("")?;
+
+    renderer.section("Recent Attempts")?;
+    if let Some(parse_error) = &record.attempt_history.parse_error {
+        renderer.key_values(&[KeyValue::new("history-parse", parse_error.clone())])?;
+        renderer.text("")?;
+    }
+    if displayed_attempts.is_empty() {
+        renderer.notice(
+            NoticeLevel::Info,
+            "No retained terminal attempts are recorded for this demo yet.",
+        )?;
+    } else {
+        renderer.table(&recent_attempts_table_spec(displayed_attempts))?;
     }
     renderer.text("")?;
     render_utf8(renderer.into_inner())
@@ -697,6 +819,16 @@ fn recent_attempts_table_spec(attempts: &[DemoHistoricalAttempt]) -> TableSpec {
             })
             .collect(),
     )
+}
+
+fn history_attempts_with_limit(
+    history: &DemoAttemptHistory,
+    limit: Option<usize>,
+) -> &[DemoHistoricalAttempt] {
+    let end = limit
+        .map(|value| value.min(history.attempts.len()))
+        .unwrap_or(history.attempts.len());
+    &history.attempts[..end]
 }
 
 fn build_demo_groups<'a>(demos: &'a [DemoRecord], group_by: DemoListGroupBy) -> Vec<DemoGroup<'a>> {

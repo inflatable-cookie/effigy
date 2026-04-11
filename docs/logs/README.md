@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04-11-demo-history-query-foundation-implementation.md`](./2026-04/11-demo-history-query-foundation-implementation.md)
 - [`2026-04-11-demo-history-surface-follow-up-boundary-decision.md`](./2026-04/11-demo-history-surface-follow-up-boundary-decision.md)
 - [`2026-04-11-demo-attempt-history-foundation-implementation.md`](./2026-04/11-demo-attempt-history-foundation-implementation.md)
 - [`2026-04-11-demo-attempt-history-boundary-decision.md`](./2026-04/11-demo-attempt-history-boundary-decision.md)
@@ -351,5 +352,5 @@ Batch: <batch-slug>
 ## Next Task
 
 Keep the active evidence window aligned to the current strict lane so the next
-product decision stays anchored on the shipped browser foundation and its live
-log follow-up rather than broad historical log lists alone.
+product decision stays anchored on the shipped `demo history` query surface
+rather than widening browser or list density by habit.

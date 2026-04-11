@@ -1,6 +1,6 @@
 # 035 Implement Demo History Query Foundation
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -46,5 +46,5 @@ without widening `demo list` or the browser yet.
 
 ## Next Task
 
-Execute the active implementation batch to ship a separate demo-history query
-surface before widening list or browser rendering.
+Use the next active ready card to decide where the shipped demo-history query
+surface should grow next before widening list or browser rendering.

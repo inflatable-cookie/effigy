@@ -59,6 +59,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add bounded persisted attempt history for `effigy demo inspect <id>`, so
   repos can retain and review recent terminal demo outcomes beyond the single
   latest-attempt summary while keeping the first history slice runner-side
+- Add `effigy demo history <id>` so one demo's retained terminal-attempt
+  history can be queried directly, with optional `--limit <N>` trimming,
+  without widening `demo list` or the browser
 
 ### Changed
 - Rework `effigy demo browser` around the same magenta-framed visual language

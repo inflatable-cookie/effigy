@@ -1375,6 +1375,45 @@ Out of scope for the next implementation slice:
 - `demo list` history summaries or grouping
 - multi-attempt concurrency, queueing, or broader runtime cancellation
 
+Batch `03.29` result:
+
+- Effigy now ships `effigy demo history <id>` as a separate one-demo query
+  surface for retained terminal-attempt history and result summaries
+- the first delivery stayed runner/query-side, with optional `--limit <N>`
+  trimming, rather than widening `demo list` or the browser
+- `demo inspect` remains stable as the broader one-demo detail surface while
+  retained history now has a dedicated query contract in both text and JSON
+
+Why this was the right implementation slice:
+
+- operators can review one demo's retained outcomes directly without reopening
+  browser density or forcing `demo inspect` to carry every result-review need
+- the new history contract is now concrete enough for later list/browser work
+  to consume, instead of inventing history behavior through presentation first
+- keeping the first delivery query-side preserves the lane boundary around
+  runner semantics rather than UI churn
+
+### 10.27 Demo History Query Follow-Up Boundary
+
+Batch `03.30` target:
+
+Decide the next bounded slice after the shipped `demo history` query surface.
+
+In scope for the next decision slice:
+
+- assess whether the next history-related value belongs in `demo list`, the
+  browser, or a deeper dedicated history/timeline query contract
+- use the self-hosted demos and the shipped `demo history` output as the
+  reality check for that decision
+- keep the next follow-up focused on history surfaces rather than broader
+  runtime or desktop-client work
+
+Out of scope for the next decision slice:
+
+- implementing browser timeline rendering
+- widening into multi-demo history analytics
+- broader runtime queueing, cancellation, or desktop-client work
+
 ## 11) Acceptance Criteria
 
 - [ ] Effigy has a clear first-class demo model that is not reducible to random
@@ -1396,6 +1435,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to ship a separate demo-history query
-surface before widening list/browser density again, while wider runtime
-expansion remains deferred.
+Use the active `g02.003` strict lane to choose the next bounded follow-up
+after the shipped `demo history` query surface, while wider runtime expansion
+remains deferred.

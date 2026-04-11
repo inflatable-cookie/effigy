@@ -82,6 +82,7 @@ where
         "browser" => parse_demo_browser(args),
         "list" => parse_demo_list(args),
         "inspect" => parse_demo_inspect(args),
+        "history" => parse_demo_history(args),
         "run" => parse_demo_run(args),
         "stop" => parse_demo_stop(args),
         "rerun" => parse_demo_rerun(args),
@@ -309,6 +310,64 @@ where
 
     Ok(Command::Demo(DemoArgs {
         subcommand: DemoSubcommand::Inspect { demo_id },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_demo_history<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut limit: Option<usize> = None;
+    let mut demo_id: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--limit" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--limit".to_owned(),
+                    },
+                )?;
+                let parsed =
+                    value
+                        .parse::<usize>()
+                        .map_err(|_| CliParseError::InvalidFlagValue {
+                            flag: "--limit".to_owned(),
+                            value: value.clone(),
+                            expected: "a positive integer".to_owned(),
+                        })?;
+                if parsed == 0 {
+                    return Err(CliParseError::InvalidFlagValue {
+                        flag: "--limit".to_owned(),
+                        value,
+                        expected: "a positive integer".to_owned(),
+                    });
+                }
+                limit = Some(parsed);
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Demo)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ if demo_id.is_none() => demo_id = Some(arg),
+            _ => return Err(unknown_argument(arg)),
+        }
+    }
+
+    let Some(demo_id) = demo_id else {
+        return Err(CliParseError::MissingFlagValue {
+            flag: "<DEMO_ID>".to_owned(),
+        });
+    };
+
+    Ok(Command::Demo(DemoArgs {
+        subcommand: DemoSubcommand::History { demo_id, limit },
         repo_override,
         output_json,
     }))
