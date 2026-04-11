@@ -63,6 +63,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` coverage/gap ready card next, then either
+Execute the active `g02.003` browser/TUI ready card next, then either
 leave another explicit ready card or return the lane to a real intent
 checkpoint.

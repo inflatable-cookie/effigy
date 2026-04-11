@@ -255,4 +255,4 @@ effigy/
 ## Next Task
 
 Complete the active `g02.003` planning batch so Effigy has an explicit demo
-coverage and gap model before any TUI or desktop client work begins.
+browser/TUI contract before any implementation work begins.
