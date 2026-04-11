@@ -321,6 +321,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to decide the first bounded attempt-
-history and result-timeline slice now that the first browser baseline is
-shipped, while keeping broader runtime and desktop-client questions deferred.
+Use the active `g02.003` ready card to implement bounded persisted attempt
+history through `demo inspect` now that the first browser baseline is shipped,
+while keeping broader runtime and desktop-client questions deferred.

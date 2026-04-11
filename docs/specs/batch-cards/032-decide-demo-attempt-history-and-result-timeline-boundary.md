@@ -1,6 +1,6 @@
 # 032 Decide Demo Attempt History And Result Timeline Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -49,6 +49,6 @@ active-plus-latest model.
 
 ## Next Task
 
-Decide the first bounded attempt-history and result-timeline slice, then open
-the corresponding ready card so `g02.003` moves on from browser cleanup into
-runner-state substance.
+Execute [`033-implement-demo-attempt-history-foundation.md`](./033-implement-demo-attempt-history-foundation.md)
+to deliver bounded persisted terminal-attempt history through the runner and
+`demo inspect` before widening list or browser rendering.

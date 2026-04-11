@@ -69,6 +69,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide the first bounded
-attempt-history and result-timeline slice now that the first browser baseline
-is shipped, then keep runtime expansion and desktop-client questions separate.
+Execute the active `g02.003` ready card next to implement the first bounded
+attempt-history foundation on top of `demo inspect`, then keep runtime
+expansion and desktop-client questions separate.

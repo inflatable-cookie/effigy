@@ -1244,6 +1244,57 @@ Out of scope for the next decision slice:
 - terminal emulation or richer log streaming
 - repo migration or desktop-client work
 
+Batch `03.26` result:
+
+- Effigy should keep a bounded persisted history of terminal demo attempts per
+  demo instead of only one latest attempt
+- the first history slice should stay inspect-first: enrich `demo inspect`
+  around recent attempt results before widening list or browser rendering
+- active-attempt handling remains separate; this is about retained terminal
+  attempt records, not concurrent execution or background process queues
+
+Bounded history posture:
+
+- record only terminal attempts in history (`passed`, `failed`, stopped, or
+  otherwise ended), not every intermediate runtime heartbeat
+- keep history bounded per demo with a simple cap so state does not grow
+  unboundedly
+- preserve latest-attempt as the primary summary surface, with recent history as
+  an additional runner-owned inspection layer
+- keep attempt records compact: timestamp/ordinal, terminal status, summary,
+  and artifact/receipt references when present
+
+Why this boundary is right:
+
+- operators now need "what happened before the most recent run?" more than they
+  need more browser chrome
+- inspect-first delivery keeps the next slice useful to both CLI and future UI
+  clients without prematurely redesigning the browser again
+- list output does not yet need history density; the next honest product value
+  is deeper single-demo result inspection
+
+### 10.24 Attempt History Foundation Slice
+
+Batch `03.27` target:
+
+Implement the first bounded runner-side attempt-history foundation on top of
+the existing active-plus-latest model.
+
+In scope for the next implementation slice:
+
+- persist a bounded terminal-attempt history per demo
+- extend `demo inspect` text and JSON output with recent attempt history
+- keep latest-attempt fields for summary compatibility while adding a recent
+  history block behind them
+- prove the slice against the self-hosted demos and normalized receipt flow
+
+Out of scope for the next implementation slice:
+
+- browser rendering changes beyond consuming existing inspect output later
+- `demo list` history summaries or timeline groupings
+- multi-attempt concurrency, queueing, or generic runtime cancellation
+- richer artifact preview or log streaming
+
 ## 11) Acceptance Criteria
 
 - [ ] Effigy has a clear first-class demo model that is not reducible to random
@@ -1265,6 +1316,6 @@ Out of scope for the next decision slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the first bounded attempt-
-history and result-timeline slice now that the first demo browser baseline is
-shipped.
+Use the active `g02.003` strict lane to implement the first bounded attempt-
+history foundation on top of `demo inspect`, then keep wider browser/list
+history rendering explicitly deferred.

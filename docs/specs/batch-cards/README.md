@@ -35,11 +35,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`029-decide-demo-post-detail-navigation-follow-up-boundary.md`](./029-decide-demo-post-detail-navigation-follow-up-boundary.md) (complete)
 - [`030-implement-demo-browser-metadata-query-parity.md`](./030-implement-demo-browser-metadata-query-parity.md) (complete)
 - [`031-decide-demo-post-metadata-query-follow-up-boundary.md`](./031-decide-demo-post-metadata-query-follow-up-boundary.md) (complete)
-- [`032-decide-demo-attempt-history-and-result-timeline-boundary.md`](./032-decide-demo-attempt-history-and-result-timeline-boundary.md)
+- [`032-decide-demo-attempt-history-and-result-timeline-boundary.md`](./032-decide-demo-attempt-history-and-result-timeline-boundary.md) (complete)
+- [`033-implement-demo-attempt-history-foundation.md`](./033-implement-demo-attempt-history-foundation.md)
 
 ## Next Task
 
-Execute the active ready card to decide the first bounded attempt-history and
-result-timeline slice now that the first browser baseline is shipped, then
-keep wider runtime/log questions explicitly deferred unless the new evidence
-demands them.
+Execute the active ready card to implement the first bounded attempt-history
+foundation on top of `demo inspect`, then keep wider runtime/log questions
+explicitly deferred unless the new evidence demands them.

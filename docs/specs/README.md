@@ -19,7 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to decide the first bounded attempt-history and
-result-timeline slice now that the first browser baseline is shipped, then
-keep this surface trimmed so it reflects live planning rather than every
-historical plan.
+Use the active spec lane to implement the first bounded attempt-history
+foundation on top of `demo inspect`, then keep this surface trimmed so it
+reflects live planning rather than every historical plan.
