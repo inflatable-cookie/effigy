@@ -123,6 +123,47 @@ Use `--path <dotted.path>` when the full composed view is too broad and the real
 question is “where did this one effective value come from?” or “which override
 replaced it?”
 
+## 2c) Demo Registry Foundation
+
+```toml
+[demos.login-smoke]
+title = "Login smoke"
+summary = "Checks that the login flow still produces a working session."
+proof = "Operator-visible smoke proof for login."
+owner = "signal"
+mode = "interactive"
+status = "ready"
+covers = ["auth.login"]
+tags = ["smoke", "ui"]
+task = "demo:login"
+receipt = "demos/receipts/login-smoke.json"
+artifacts = ["demos/artifacts/login-smoke/index.html"]
+prerequisites = ["api.dev", "ui.dev"]
+dependencies = ["seed.auth"]
+```
+
+Use this when proof/demo work should become first-class repo contract instead
+of another flat script directory.
+
+Registry rules:
+- each demo lives at `[demos.<id>]`
+- `title`, `summary`, `proof`, `owner`, `status`, `mode`, and `covers` are required
+- declare exactly one runnable entrypoint with `task = "..."` or `run = "..."`
+- `receipt` and `artifacts` are optional, but they let `effigy demo inspect`
+  show the latest known proof state instead of only static metadata
+
+Discovery and inspection:
+
+```sh
+effigy demo list
+effigy demo inspect login-smoke
+effigy --json demo inspect login-smoke
+```
+
+Use this foundation when you need a stable proof inventory now. Leave
+`demo run`, stop/rerun semantics, and the later browser/TUI work for the next
+bounded runner batches.
+
 ## 3) Full Task Table with Runtime Controls
 
 ```toml

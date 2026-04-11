@@ -18,7 +18,7 @@ Current milestones:
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/013-implement-demo-registry-and-inspection-foundation.md`](../specs/batch-cards/013-implement-demo-registry-and-inspection-foundation.md)
+- [`../specs/batch-cards/014-implement-demo-run-and-attempt-foundation.md`](../specs/batch-cards/014-implement-demo-run-and-attempt-foundation.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` execution batch to build the demo registry and
-inspection foundation next, using the settled implementation slice as the
-boundary.
+Use the active `g02.003` execution batch to add demo run semantics and
+normalized attempt creation on top of the shipped registry and inspection
+foundation.

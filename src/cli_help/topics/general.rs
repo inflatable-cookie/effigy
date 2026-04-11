@@ -24,6 +24,11 @@ pub(crate) fn render_general_help<R: Renderer>(
             None,
         ),
         (
+            "effigy demo",
+            "List declared demos and inspect the latest known proof state without starting execution",
+            None,
+        ),
+        (
             "effigy doctor",
             "Run remedial-first health checks for environment, manifests, and task references",
             Some("doctor"),

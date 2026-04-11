@@ -48,6 +48,7 @@ pub fn run_cli(raw_args: Vec<String>) {
         Command::Version => crate::run_version_command(&context),
         Command::Help(topic) => run_help_command(&context, topic),
         command @ (Command::Changelog(_)
+        | Command::Demo(_)
         | Command::Docs(_)
         | Command::Contracts(_)
         | Command::Distribution(_)

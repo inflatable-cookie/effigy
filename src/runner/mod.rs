@@ -9,6 +9,7 @@ mod changelog_command;
 mod command_context;
 mod contracts_command;
 mod deferral;
+mod demo_command;
 mod distribution_command;
 mod docs_command;
 mod doctor;

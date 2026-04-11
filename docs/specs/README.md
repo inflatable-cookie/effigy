@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to execute the first bounded `g02.003` runner
-foundation batch next, then keep this surface trimmed so it reflects live planning rather
-than every historical plan.
+Use the active spec lane to execute the next bounded `g02.003` runner batch,
+then keep this surface trimmed so it reflects live planning rather than every
+historical plan.

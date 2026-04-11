@@ -12,8 +12,9 @@ how Effigy should model verification demos, discovery, receipts, coverage, and
 browser-facing runner semantics before any UI or project-local harness grows
 further.
 
-This spec wraps `g02.003` in the strict execution grammar so the demo model is
-designed deliberately before implementation starts.
+This spec wraps `g02.003` in the strict execution grammar so the demo model and
+runner can keep moving in bounded batches now that the registry and inspection
+foundation exists.
 
 ## Governing Refs
 
@@ -28,10 +29,13 @@ designed deliberately before implementation starts.
 
 The active strict lane is:
 
-- define the first-class demo object model
-- define runner responsibilities separate from UI responsibilities
+- keep the first-class demo object model and runner boundaries coherent as
+  implementation starts
+- land runner execution in bounded slices on top of the shipped registry and
+  inspection foundation
 - keep browser and coverage requirements explicit
-- defer implementation until the model and boundaries are coherent
+- defer TUI/browser implementation and desktop-client decisions until the
+  runner surface is real enough to support them
 
 This lane does not start TUI implementation, desktop-client decisions, or repo
 migration work.
@@ -63,6 +67,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` execution card next, then either leave the next
-runner-execution batch behind it or return the lane to a real intent checkpoint
-if the registry/inspection foundation exposes model drift.
+Execute the active `g02.003` execution card next to add demo run semantics and
+normalized attempt creation, then either leave the next bounded runner card
+behind it or return the lane to a real intent checkpoint if execution exposes
+model drift.

@@ -18,6 +18,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add focused manifest inspection via `effigy config --inspect --path <dotted.path>`
   so operators can inspect one effective value, its source file, and any
   matching override history without scanning the full manifest dump
+- Add first-class demo registry loading through `[demos.<id>]` plus `effigy demo list`
+  and `effigy demo inspect <id>` so repos can expose proof/demo inventory,
+  coverage, source provenance, and the latest known receipt/artifact state
+  without depending on project-local script catalogs
 
 ### Changed
 - Route catalog discovery, doctor strict-parse checks, docs-policy loading, and

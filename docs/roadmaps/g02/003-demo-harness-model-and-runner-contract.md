@@ -590,6 +590,36 @@ Follow-on sequence after the first slice:
 - then the first TUI/browser client on top of the now-real discovery and
   inspection surface
 
+Implementation status:
+
+- shipped in the current repo through manifest-backed `[demos.<id>]` loading
+- `effigy demo list` now provides text and JSON discovery
+- `effigy demo inspect <id>` now provides text and JSON inspection with source
+  provenance plus normalized latest-attempt state
+- schema, doctor, and config-reference surfaces now understand the demo
+  registry contract
+
+### 10.3 Next Execution Slice
+
+Batch `03.7` target:
+
+Build runner execution on top of the shipped registry and inspection
+foundation.
+
+In scope for the next execution slice:
+
+- `effigy demo run <id>` as a text and JSON execution surface
+- support both task-backed and run-backed demo entrypoints
+- normalized attempt creation so `demo inspect` reflects newly executed proof
+- baseline pass/fail outcome reporting and receipt writing
+
+Out of scope for the next execution slice:
+
+- `effigy demo stop`
+- `effigy demo rerun`
+- TUI/browser implementation
+- broad consumer-repo migration work
+
 ## 11) Acceptance Criteria
 
 - [ ] Effigy has a clear first-class demo model that is not reducible to random
@@ -611,6 +641,6 @@ Follow-on sequence after the first slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to implement the first demo runner
-foundation batch next: registry loading, `effigy demo list`, `effigy demo
-inspect`, and normalized latest-attempt state.
+Use the active `g02.003` strict lane to implement demo run semantics and
+normalized attempt creation next, building on the shipped registry and
+inspection foundation.

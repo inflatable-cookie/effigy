@@ -61,6 +61,8 @@ pub enum Command {
     Version,
     /// Built-in changelog command family.
     Changelog(ChangelogArgs),
+    /// Built-in demo registry and inspection command family.
+    Demo(DemoArgs),
     /// Built-in docs QA command family.
     Docs(DocsArgs),
     /// Built-in JSON contract command family.
@@ -88,6 +90,8 @@ pub enum HelpTopic {
     General,
     /// Changelog help.
     Changelog,
+    /// Demo help.
+    Demo,
     /// Docs help.
     Docs,
     /// Contracts help.
@@ -132,6 +136,29 @@ pub struct DocsArgs {
     pub repo_override: Option<PathBuf>,
     /// Whether the command should render JSON-compatible output.
     pub output_json: bool,
+}
+
+/// Parsed arguments for the built-in demo command family.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DemoArgs {
+    /// Which demo subcommand should run.
+    pub subcommand: DemoSubcommand,
+    /// Optional repository root override.
+    pub repo_override: Option<PathBuf>,
+    /// Whether the command should render JSON-compatible output.
+    pub output_json: bool,
+}
+
+/// Reusable demo subcommands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DemoSubcommand {
+    /// List declared demos and their latest known proof posture.
+    List,
+    /// Inspect one declared demo in detail.
+    Inspect {
+        /// Stable demo id carried by the `[demos.<id>]` map key.
+        demo_id: String,
+    },
 }
 
 /// Reusable docs QA subcommands.

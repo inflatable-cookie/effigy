@@ -19,6 +19,7 @@ pub fn render_help_with_deferred_builtins<R: Renderer>(
     match topic {
         HelpTopic::General => topics::render_general_help(renderer, deferred_builtins),
         HelpTopic::Changelog => topics::render_changelog_help(renderer),
+        HelpTopic::Demo => topics::render_demo_help(renderer),
         HelpTopic::Docs => topics::render_docs_help(renderer),
         HelpTopic::Contracts => topics::render_contracts_help(renderer),
         HelpTopic::Distribution => topics::render_distribution_help(renderer),

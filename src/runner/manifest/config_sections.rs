@@ -1,4 +1,7 @@
 use std::collections::BTreeMap;
+use std::path::Path;
+
+use crate::runner::error::RunnerError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -257,6 +260,161 @@ pub(in crate::runner) struct ManifestDocsPolicyConfig {
     pub(in crate::runner) indexes: BTreeMap<String, ManifestDocsPolicyIndexConfig>,
     #[serde(default, alias = "next_actions")]
     pub(in crate::runner) next_actions: BTreeMap<String, ManifestDocsPolicyNextActionConfig>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(in crate::runner) enum ManifestDemoMode {
+    Headless,
+    Interactive,
+    Hybrid,
+}
+
+impl ManifestDemoMode {
+    pub(in crate::runner) fn as_str(self) -> &'static str {
+        match self {
+            Self::Headless => "headless",
+            Self::Interactive => "interactive",
+            Self::Hybrid => "hybrid",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(in crate::runner) enum ManifestDemoStatus {
+    Planned,
+    Ready,
+    Running,
+    Passed,
+    Failed,
+    Broken,
+    Missing,
+}
+
+impl ManifestDemoStatus {
+    pub(in crate::runner) fn as_str(self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::Ready => "ready",
+            Self::Running => "running",
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+            Self::Broken => "broken",
+            Self::Missing => "missing",
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestDemoConfig {
+    pub(in crate::runner) title: String,
+    pub(in crate::runner) summary: String,
+    pub(in crate::runner) proof: String,
+    pub(in crate::runner) owner: String,
+    pub(in crate::runner) mode: ManifestDemoMode,
+    pub(in crate::runner) status: ManifestDemoStatus,
+    pub(in crate::runner) covers: Vec<String>,
+    #[serde(default)]
+    pub(in crate::runner) tags: Vec<String>,
+    #[serde(default)]
+    pub(in crate::runner) artifacts: Vec<String>,
+    #[serde(default)]
+    pub(in crate::runner) receipt: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) task: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) run: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) prerequisites: Vec<String>,
+    #[serde(default, alias = "depends_on")]
+    pub(in crate::runner) dependencies: Vec<String>,
+}
+
+impl ManifestDemoConfig {
+    pub(in crate::runner) fn validate(
+        &self,
+        manifest_path: &Path,
+        demo_id: &str,
+    ) -> Result<(), RunnerError> {
+        validate_non_empty_demo_string(manifest_path, demo_id, "title", &self.title)?;
+        validate_non_empty_demo_string(manifest_path, demo_id, "summary", &self.summary)?;
+        validate_non_empty_demo_string(manifest_path, demo_id, "proof", &self.proof)?;
+        validate_non_empty_demo_string(manifest_path, demo_id, "owner", &self.owner)?;
+
+        if self.covers.is_empty() {
+            return Err(RunnerError::TaskManifestCompose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "invalid `[demos.{demo_id}]`: `covers` must contain at least one coverage key"
+                ),
+            });
+        }
+
+        validate_demo_string_list(manifest_path, demo_id, "covers", &self.covers)?;
+        validate_demo_string_list(manifest_path, demo_id, "tags", &self.tags)?;
+        validate_demo_string_list(manifest_path, demo_id, "artifacts", &self.artifacts)?;
+        validate_demo_string_list(manifest_path, demo_id, "prerequisites", &self.prerequisites)?;
+        validate_demo_string_list(manifest_path, demo_id, "dependencies", &self.dependencies)?;
+
+        if let Some(receipt) = &self.receipt {
+            validate_non_empty_demo_string(manifest_path, demo_id, "receipt", receipt)?;
+        }
+
+        match (&self.task, &self.run) {
+            (Some(task), None) => {
+                validate_non_empty_demo_string(manifest_path, demo_id, "task", task)?;
+            }
+            (None, Some(run)) => {
+                validate_non_empty_demo_string(manifest_path, demo_id, "run", run)?;
+            }
+            (Some(_), Some(_)) | (None, None) => {
+                return Err(RunnerError::TaskManifestCompose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "invalid `[demos.{demo_id}]`: declare exactly one runnable entrypoint via `task` or `run`"
+                    ),
+                });
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn validate_non_empty_demo_string(
+    manifest_path: &Path,
+    demo_id: &str,
+    field: &str,
+    value: &str,
+) -> Result<(), RunnerError> {
+    if value.trim().is_empty() {
+        return Err(RunnerError::TaskManifestCompose {
+            path: manifest_path.to_path_buf(),
+            detail: format!("invalid `[demos.{demo_id}]`: `{field}` must be a non-empty string"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_demo_string_list(
+    manifest_path: &Path,
+    demo_id: &str,
+    field: &str,
+    values: &[String],
+) -> Result<(), RunnerError> {
+    for (index, value) in values.iter().enumerate() {
+        if value.trim().is_empty() {
+            return Err(RunnerError::TaskManifestCompose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "invalid `[demos.{demo_id}]`: `{field}[{index}]` must be a non-empty string"
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, serde::Deserialize, Default)]

@@ -18,9 +18,9 @@ pub(in crate::runner) use composition::{
     ManifestCompositionOverride, ManifestCompositionValueSource,
 };
 pub(super) use config_sections::{
-    ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy, ManifestDocsPolicyConfig,
-    ManifestEnvSchemaConfig, ManifestPackageManagerConfig, ManifestReleaseConfig,
-    ManifestScanConfig, ManifestShellConfig,
+    ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy, ManifestDemoConfig,
+    ManifestDemoMode, ManifestDemoStatus, ManifestDocsPolicyConfig, ManifestEnvSchemaConfig,
+    ManifestPackageManagerConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
 };
 use task_defs::deserialize_tasks;
 pub(super) use task_runtime::{
@@ -55,6 +55,8 @@ pub(super) struct TaskManifest {
     pub(super) bootstrap: Option<ManifestBootstrapConfig>,
     #[serde(default)]
     pub(super) release: Option<ManifestReleaseConfig>,
+    #[serde(default)]
+    pub(super) demos: BTreeMap<String, ManifestDemoConfig>,
     #[serde(default, deserialize_with = "deserialize_tasks")]
     pub(super) tasks: BTreeMap<String, ManifestTask>,
 }
@@ -77,6 +79,18 @@ pub(in crate::runner) fn load_task_manifest(
     manifest_path: &Path,
 ) -> Result<TaskManifest, super::RunnerError> {
     Ok(load_task_manifest_with_inspection(manifest_path)?.manifest)
+}
+
+impl TaskManifest {
+    pub(in crate::runner) fn validate(
+        &self,
+        manifest_path: &Path,
+    ) -> Result<(), super::RunnerError> {
+        for (demo_id, demo) in &self.demos {
+            demo.validate(manifest_path, demo_id)?;
+        }
+        Ok(())
+    }
 }
 
 impl ManifestDefer {
