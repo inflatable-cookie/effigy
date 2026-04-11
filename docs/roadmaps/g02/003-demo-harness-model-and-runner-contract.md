@@ -942,21 +942,44 @@ What this proved:
 
 ### 10.14 Post-Artifact Follow-Up Boundary
 
-Batch `03.17` target:
+Batch `03.17` delivered:
 
-Decide the next bounded browser follow-up now that artifact-opening is shipped.
+Choose live log visibility as the next honest browser slice after
+artifact-opening.
 
-In scope for the next planning slice:
+What this settled:
 
-- decide whether live log visibility is the next honest browser slice
-- confirm whether any tighter follow-up is needed before log visibility
-- keep the decision grounded in the shipped browser and self-hosted demos
+- artifact access was the right tighter follow-up immediately after the first
+  browser foundation
+- with artifact opening shipped, the next real operator gap is current output
+  visibility for the selected demo
+- no tighter browser-only affordance remains ahead of logs
 
-Out of scope for the next planning slice:
+Still deferred:
 
-- implementing the next browser slice
-- broadening generic runtime cancellation
+- terminal emulation
+- broader generic runtime cancellation
+- multi-attempt history or queueing
 - desktop-client decisions
+
+### 10.15 Browser Live-Log Visibility Slice
+
+Batch `03.18` target:
+
+Implement bounded live log visibility inside `effigy demo browser`.
+
+In scope for the next implementation slice:
+
+- show recent runner-owned output for the selected demo
+- surface active-attempt output when available
+- surface latest terminal output when available
+- keep the browser honest when no logs are available
+
+Out of scope for the next implementation slice:
+
+- terminal emulation
+- arbitrary stdin interaction
+- broader generic runtime cancellation
 - multi-attempt history or queueing
 
 ## 11) Acceptance Criteria
@@ -980,6 +1003,5 @@ Out of scope for the next planning slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide whether live log visibility is
-the next honest browser follow-up now that artifact-opening is shipped, without
-reopening broader runtime-cancellation scope.
+Use the active `g02.003` strict lane to implement bounded live log visibility
+in the demo browser without reopening broader runtime-cancellation scope.

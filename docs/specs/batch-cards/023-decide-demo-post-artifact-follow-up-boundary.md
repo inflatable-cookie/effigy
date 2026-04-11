@@ -1,6 +1,6 @@
 # 023 Decide Demo Post-Artifact Follow-Up Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-11
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -43,7 +43,27 @@ affordances.
 - the batch reopens settled demo model, lifecycle, or browser contracts
 - the batch uses log visibility as a backdoor for terminal emulation scope
 
+## Decision
+
+Live log visibility is now the next honest browser slice.
+
+Why:
+
+- the shipped browser already covers list/detail navigation, lifecycle actions,
+  and artifact opening
+- the self-hosted demos exposed the next real operator gap as "what is the demo
+  doing right now?" rather than another navigation affordance
+- a bounded recent-output view stays inside browser-facing proof inspection
+  without widening into terminal emulation or generic runtime cancellation
+
+Still deferred:
+
+- terminal emulation
+- generic task/runtime cancellation expansion
+- multi-attempt history and queueing
+- desktop-client decisions
+
 ## Next Task
 
-Use the shipped browser and self-hosted demos to decide whether live log
-visibility is the next honest browser follow-up.
+Implement bounded demo-browser live log visibility through
+[`024-implement-demo-browser-live-log-visibility.md`](./024-implement-demo-browser-live-log-visibility.md).

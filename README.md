@@ -312,6 +312,5 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to decide whether live log visibility is
-still the next honest browser follow-up now that artifact-opening affordances
-are shipped.
+Use the active `g02.003` ready card to implement bounded live log visibility in
+the demo browser now that artifact-opening affordances are shipped.
