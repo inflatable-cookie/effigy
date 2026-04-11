@@ -12,6 +12,8 @@ fn run_manifest_task_builtin_config_prints_reference() {
         &out,
         &[
             "effigy.toml Reference",
+            "Use `effigy config --inspect` to inspect the effective composed manifest",
+            "[manifest]",
             "cargo_env_match = \"prefix-aware\"",
             "[test.runners]",
             "[tasks]",

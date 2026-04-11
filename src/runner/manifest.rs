@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
 
+#[path = "manifest/composition.rs"]
+mod composition;
 #[path = "manifest/config_sections.rs"]
 pub(in crate::runner) mod config_sections;
 #[path = "manifest/task_defs.rs"]
@@ -11,6 +13,10 @@ pub(in crate::runner) mod task_runtime;
 #[path = "manifest/test_config.rs"]
 mod test_config;
 
+pub(in crate::runner) use composition::{
+    load_task_manifest_with_inspection, LoadedTaskManifest, ManifestCompositionEdge,
+    ManifestCompositionOverride, ManifestCompositionValueSource,
+};
 pub(super) use config_sections::{
     ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy, ManifestDocsPolicyConfig,
     ManifestEnvSchemaConfig, ManifestPackageManagerConfig, ManifestReleaseConfig,
@@ -70,16 +76,7 @@ pub(super) struct ManifestDefer {
 pub(in crate::runner) fn load_task_manifest(
     manifest_path: &Path,
 ) -> Result<TaskManifest, super::RunnerError> {
-    let manifest_src = std::fs::read_to_string(manifest_path).map_err(|error| {
-        super::RunnerError::TaskManifestRead {
-            path: manifest_path.to_path_buf(),
-            error,
-        }
-    })?;
-    toml::from_str(&manifest_src).map_err(|error| super::RunnerError::TaskManifestParse {
-        path: manifest_path.to_path_buf(),
-        error,
-    })
+    Ok(load_task_manifest_with_inspection(manifest_path)?.manifest)
 }
 
 impl ManifestDefer {

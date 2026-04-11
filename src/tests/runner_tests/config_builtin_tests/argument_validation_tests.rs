@@ -41,6 +41,11 @@ fn run_manifest_task_builtin_config_rejects_invalid_flag_combinations() {
             expected: &["`--minimal` requires `--schema`"],
         },
         BuiltinInvocationCase {
+            workspace: "builtin-config-inspect-conflicts-with-schema",
+            args: &["--inspect", "--schema"],
+            expected: &["`--inspect` cannot be combined with `--schema`"],
+        },
+        BuiltinInvocationCase {
             workspace: "builtin-config-unknown-args",
             args: &["--wat"],
             expected: &["unknown argument(s) for built-in `config`: --wat"],

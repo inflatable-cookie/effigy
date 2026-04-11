@@ -76,3 +76,29 @@ fn validate_manifest_schema_accepts_current_repo_manifest() {
         state.findings
     );
 }
+
+#[test]
+fn validate_manifest_schema_accepts_manifest_include_section() {
+    let manifest: Value = toml::from_str(
+        r#"
+[manifest]
+include = [
+  "effigy.tasks.toml",
+  { path = "effigy.docs.toml", override = ["docs_policy.indexes.vision"] },
+]
+
+[tasks.dev]
+run = "printf dev"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut state = DoctorState::new();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut state);
+
+    assert!(
+        state.findings.is_empty(),
+        "expected no schema findings, got: {:?}",
+        state.findings
+    );
+}

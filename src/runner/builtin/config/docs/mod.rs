@@ -12,6 +12,10 @@ pub(super) fn defer_lines() -> &'static [&'static str] {
     sections::defer_lines()
 }
 
+pub(super) fn manifest_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
+    tasks::manifest_lines(profile)
+}
+
 pub(super) fn shell_lines() -> &'static [&'static str] {
     sections::shell_lines()
 }

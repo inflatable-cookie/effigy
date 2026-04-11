@@ -27,6 +27,45 @@ fn builtin_config_json_contract_has_versioned_shape() {
 }
 
 #[test]
+fn builtin_config_inspect_json_contract_has_versioned_shape() {
+    let root = temp_workspace("config-inspect-json-contract");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"
+[manifest]
+include = ["effigy.tasks.toml", "effigy.docs.toml"]
+"#,
+    );
+    write_manifest(
+        &root.join("effigy.tasks.toml"),
+        r#"
+[tasks.dev]
+run = "printf dev"
+"#,
+    );
+    write_manifest(
+        &root.join("effigy.docs.toml"),
+        r#"
+[docs_policy.indexes.vision]
+file = "docs/vision/README.md"
+dir = "docs/vision"
+"#,
+    );
+
+    let parsed = run_invocation_json(root, "config", &["--inspect", "--json"]);
+    assert_schema_v1(&parsed, "effigy.config.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["mode"], "inspect");
+    assert_eq!(parsed["manifest_path"], "effigy.toml");
+    assert!(parsed["evaluation_order"].is_array());
+    assert!(parsed["include_graph"].is_array());
+    assert!(parsed["value_sources"].is_array());
+    assert!(parsed["effective_manifest"]
+        .as_str()
+        .is_some_and(|text| text.contains("[docs_policy.indexes.vision]")));
+}
+
+#[test]
 fn builtin_init_json_contract_has_versioned_shape() {
     let parsed = run_invocation_json(temp_workspace("init-json-contract"), "init", &["--json"]);
     assert_schema_v1(&parsed, "effigy.init.v1");

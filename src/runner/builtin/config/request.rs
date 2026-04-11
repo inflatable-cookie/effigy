@@ -5,6 +5,7 @@ use crate::runner::error::RunnerError;
 
 #[derive(Debug, Clone)]
 pub(super) struct ConfigRequest {
+    pub(super) inspect: bool,
     pub(super) schema: bool,
     pub(super) minimal: bool,
     pub(super) output_json: bool,
@@ -14,6 +15,7 @@ pub(super) struct ConfigRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ConfigSchemaTarget {
+    Manifest,
     PackageManager,
     Test,
     Tasks,
@@ -25,6 +27,7 @@ pub(super) enum ConfigSchemaTarget {
 impl ConfigSchemaTarget {
     pub(super) fn as_str(self) -> &'static str {
         match self {
+            Self::Manifest => "manifest",
             Self::PackageManager => "package_manager",
             Self::Test => "test",
             Self::Tasks => "tasks",
@@ -52,7 +55,8 @@ impl ConfigTestRunner {
     }
 }
 
-const CONFIG_TARGET_CHOICES: [(&str, ConfigSchemaTarget); 6] = [
+const CONFIG_TARGET_CHOICES: [(&str, ConfigSchemaTarget); 7] = [
+    ("manifest", ConfigSchemaTarget::Manifest),
     ("package_manager", ConfigSchemaTarget::PackageManager),
     ("test", ConfigSchemaTarget::Test),
     ("tasks", ConfigSchemaTarget::Tasks),
@@ -73,6 +77,7 @@ pub(super) fn parse_config_request(
     args: &[String],
 ) -> Result<ConfigRequest, RunnerError> {
     let mut parser = BuiltinArgParser::new(args);
+    let mut inspect = false;
     let mut schema = false;
     let mut minimal = false;
     let mut output_json = false;
@@ -83,6 +88,7 @@ pub(super) fn parse_config_request(
             arg,
             &mut [
                 ("--schema", &mut schema),
+                ("--inspect", &mut inspect),
                 ("--minimal", &mut minimal),
                 ("--json", &mut output_json),
             ],
@@ -93,7 +99,7 @@ pub(super) fn parse_config_request(
             target = Some(parser.builtin_choice_flag_value(
                 "config",
                 "--target",
-                "package_manager, test, tasks, defer, scan, shell",
+                "manifest, package_manager, test, tasks, defer, scan, shell",
                 |value| BuiltinArgParser::choice_ignore_ascii_case(value, &CONFIG_TARGET_CHOICES),
             )?);
             return Ok(ParseLoopAction::Handled);
@@ -109,6 +115,11 @@ pub(super) fn parse_config_request(
         }
         Ok(ParseLoopAction::Unknown)
     })?;
+    if inspect && schema {
+        return Err(RunnerError::task_invocation(
+            "`--inspect` cannot be combined with `--schema` for built-in `config`",
+        ));
+    }
     if minimal && !schema {
         return Err(RunnerError::task_invocation(
             "`--minimal` requires `--schema` for built-in `config`",
@@ -131,6 +142,7 @@ pub(super) fn parse_config_request(
     }
 
     Ok(ConfigRequest {
+        inspect,
         schema,
         minimal,
         output_json,
@@ -142,6 +154,7 @@ pub(super) fn parse_config_request(
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct ConfigParseContract {
+    pub(in crate::runner) inspect: bool,
     pub(in crate::runner) schema: bool,
     pub(in crate::runner) minimal: bool,
     pub(in crate::runner) output_json: bool,
@@ -156,6 +169,7 @@ pub(in crate::runner) fn parse_config_contract_request(
 ) -> Result<ConfigParseContract, RunnerError> {
     let parsed = parse_config_request(task, args)?;
     Ok(ConfigParseContract {
+        inspect: parsed.inspect,
         schema: parsed.schema,
         minimal: parsed.minimal,
         output_json: parsed.output_json,

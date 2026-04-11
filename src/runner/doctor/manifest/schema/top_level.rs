@@ -7,6 +7,7 @@ pub(super) fn validate_top_level_keys(
     table: &toml::map::Map<String, Value>,
 ) {
     let allowed_top = [
+        "manifest",
         "catalog",
         "defer",
         "docs_policy",

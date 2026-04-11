@@ -41,7 +41,7 @@ older, use `cargo install` instead.
 From source:
 
 ```bash
-cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.2.7
+cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.2.12
 ```
 
 ## Start In 5 Minutes
@@ -129,6 +129,7 @@ Use `effigy.toml` to make common setup, env, test, and task routing explicit.
 effigy init
 effigy migrate --from package.json
 effigy config --schema --minimal
+effigy config --inspect
 ```
 
 Details:
@@ -140,6 +141,10 @@ For managed multi-process stacks, `concurrent` entries can also declare
 `shutdown_on_exit = true` when one process should act as the lifecycle root for
 the whole session, such as an Electron main window closing the rest of the dev
 stack.
+
+When one `effigy.toml` starts carrying too many unrelated concerns, split it
+with `[manifest].include = [...]` and use `effigy config --inspect` to verify
+the effective merged result before relying on it in CI or docs-policy flows.
 
 ### Automate safely
 

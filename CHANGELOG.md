@@ -6,6 +6,21 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- Add general manifest composition through `[manifest].include`, including
+  nested partial-fragment loading, path-scoped override enforcement, and
+  deterministic conflict failures so features like `tasks`, `docs_policy`, and
+  `release` can share one config-splitting model instead of growing
+  feature-local file-loading semantics
+- Add `effigy config --inspect` so operators can inspect the effective composed
+  manifest, include graph, evaluation order, overridden paths, effective value
+  sources, and rendered merged TOML in both text and JSON mode
+
+### Changed
+- Route catalog discovery, doctor strict-parse checks, docs-policy loading, and
+  scan manifest options through the same composed-manifest loader so split
+  config behaves consistently across runtime, health, and validation surfaces
+
 ## [0.2.12] - 2026-03-24
 
 ### Added

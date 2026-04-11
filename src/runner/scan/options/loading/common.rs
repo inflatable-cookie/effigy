@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::runner::error::RunnerError;
-use crate::runner::manifest::TaskManifest;
+use crate::runner::manifest::{load_task_manifest, TaskManifest};
 use crate::runner::model::{catalog::LoadedCatalog, constants::TASK_MANIFEST_FILE};
 
 use super::traits::{CommonManifestOptions, CommonScanOptionsMut, ManifestBackedScanOptions};
@@ -93,13 +93,5 @@ fn catalog_scan_manifest<'a>(
 }
 
 fn load_scan_manifest(manifest_path: &Path) -> Result<TaskManifest, RunnerError> {
-    let manifest_text =
-        std::fs::read_to_string(manifest_path).map_err(|error| RunnerError::TaskManifestRead {
-            path: manifest_path.to_path_buf(),
-            error,
-        })?;
-    toml::from_str::<TaskManifest>(&manifest_text).map_err(|error| RunnerError::TaskManifestParse {
-        path: manifest_path.to_path_buf(),
-        error,
-    })
+    load_task_manifest(manifest_path)
 }
