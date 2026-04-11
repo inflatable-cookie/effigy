@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04-11-bootstrap-closeout-and-g02-002-activation.md`](./2026-04/11-bootstrap-closeout-and-g02-002-activation.md)
 - [`2026-04-11-g02-post-bootstrap-roadmap-split.md`](./2026-04/11-g02-post-bootstrap-roadmap-split.md)
 - [`2026-03-18-bootstrap-live-pilot-cohort-loophole-songsprout.md`](./2026-03/18-110000-bootstrap-live-pilot-cohort-loophole-songsprout.md)
 - [`2026-04-09-effigy-full-strict-lane-install.md`](./2026-04/09-effigy-full-strict-lane-install.md)
@@ -316,5 +317,5 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Keep the active evidence window aligned to `g02.001` and its strict lane so
-the next bootstrap decision does not rely on broad historical log lists alone.
+Keep the active evidence window aligned to the current strict lane so the next
+product decision does not rely on broad historical log lists alone.

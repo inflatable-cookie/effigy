@@ -129,5 +129,5 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.001` spec lane to decide whether bootstrap now
-needs release preparation or one narrower proof wave.
+Use the active strict `g02.002` spec lane to decide the manifest composition
+and override contract before more feature planning assumes split-config support.

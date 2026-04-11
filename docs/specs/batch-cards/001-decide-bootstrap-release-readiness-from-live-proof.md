@@ -1,7 +1,7 @@
 # 001 Decide Bootstrap Release Readiness From Live Proof
 
-Status: ready
-Updated: 2026-04-09
+Status: complete
+Updated: 2026-04-11
 Roadmap: `g02.001`
 Spec: `docs/specs/001-bootstrap-release-and-adoption-strict-lane.md`
 
@@ -40,7 +40,22 @@ Turn the existing live bootstrap pilot evidence into one explicit next move for
 - the pilot evidence is ambiguous enough that human intent is required
 - the next honest move is broader than one bounded batch
 
+## Decision
+
+The existing live proof already showed that the remaining bootstrap question was
+release-surface availability, not product viability.
+
+That gap is now closed:
+
+- `effigy bootstrap` is present in the released binary surface
+- the changelog shows bootstrap shipped in `v0.2.10`
+- current release gates are green with no unreleased bootstrap work pending
+
+So the honest next move is not another proof wave and not release preparation.
+`g02.001` can close, and the next active planning lane becomes manifest
+composition plus explicit override semantics in `g02.002`.
+
 ## Next Task
 
-Complete this planning batch, then either open the next ready card or return
-the lane to an explicit intent checkpoint.
+Close the bootstrap strict lane and activate the `g02.002` composition lane
+with a new ready card.

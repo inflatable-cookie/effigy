@@ -26,8 +26,8 @@ Updated: 2026-04-11
 - `029` captures the active Northstar + Effigy consumer adoption and product-boundary milestone.
 - `g02`
   - Starts a new product cycle after the implementation/consolidation-heavy `g01` sequence.
-  - `001` captures the active stateless bootstrap command and clone contract milestone, now implemented and live-pilot validated on `loophole` and `songsprout`, but not yet released.
-  - `002` captures the planned manifest composition and override contract so split config remains feature-agnostic.
+  - `001` captures the stateless bootstrap command and clone contract milestone, now complete: released and live-pilot validated on `loophole` and `songsprout`.
+  - `002` captures the active manifest composition and override contract so split config remains feature-agnostic.
   - `003` captures the planned demo harness model and runner/browser contract so proof verification becomes a first-class Effigy surface.
 
 ## Research Roadmaps

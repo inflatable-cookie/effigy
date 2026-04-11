@@ -11,14 +11,14 @@ Generation theme:
 
 Current milestones:
 
-- [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (in progress; built-in implemented and live-pilot validated on `loophole` and `songsprout`, but not yet released)
-- [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (planned; defines general include/require/import composition plus explicit override semantics for split manifest fragments)
+- [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
+- [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; defines general include/require/import composition plus explicit override semantics for split manifest fragments)
 - [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (planned; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract)
 
 Active strict planning lane:
 
-- [`../specs/001-bootstrap-release-and-adoption-strict-lane.md`](../specs/001-bootstrap-release-and-adoption-strict-lane.md)
-- [`../specs/batch-cards/001-decide-bootstrap-release-readiness-from-live-proof.md`](../specs/batch-cards/001-decide-bootstrap-release-readiness-from-live-proof.md)
+- [`../specs/002-manifest-composition-and-override-strict-lane.md`](../specs/002-manifest-composition-and-override-strict-lane.md)
+- [`../specs/batch-cards/002-decide-composition-contract-shape.md`](../specs/batch-cards/002-decide-composition-contract-shape.md)
 
 Rules:
 
@@ -28,12 +28,7 @@ Rules:
 
 ## Next Task
 
-Roadmap `g02.001` is now past initial implementation: use the active ready
-card and the live `loophole` / `songsprout` pilots to decide whether bootstrap
-needs one more workspace proof or whether the next meaningful step is release
-preparation so `[bootstrap]` stops being a dev-build-only manifest surface.
-
-After `g02.001`, open the next planning split explicitly:
-
-- `g02.002` for general manifest composition and override semantics
-- `g02.003` for the demo harness model and runner/browser contract
+Use the active `g02.002` ready card to lock the general manifest composition
+contract first. Keep `g02.003` planned but inactive until split-config and
+override rules are explicit enough that demos do not invent their own loading
+semantics.

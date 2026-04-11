@@ -222,12 +222,12 @@ cargo qa-release
 
 ## Current Planning Posture
 
-Effigy's active product lane is `g02.001`.
+Effigy's active product lane is `g02.002`.
 
-Use these surfaces before continuing bootstrap or release-boundary work:
+Use these surfaces before continuing manifest-composition or demo-harness work:
 
 - [`docs/roadmaps/README.md`](./docs/roadmaps/README.md)
-- [`docs/roadmaps/g02/001-bootstrap-command-and-clone-contract.md`](./docs/roadmaps/g02/001-bootstrap-command-and-clone-contract.md)
+- [`docs/roadmaps/g02/002-manifest-composition-and-override-contract.md`](./docs/roadmaps/g02/002-manifest-composition-and-override-contract.md)
 - [`docs/specs/README.md`](./docs/specs/README.md)
 - [`docs/contracts/001-working-rules.md`](./docs/contracts/001-working-rules.md)
 
@@ -249,5 +249,6 @@ effigy/
 
 ## Next Task
 
-Complete the active strict `g02.001` planning batch so the next bootstrap move
-is explicitly release preparation or one narrower proof wave.
+Complete the active strict `g02.002` planning batch so Effigy has one explicit
+manifest composition and override contract before demos or other features claim
+their own split-config semantics.
