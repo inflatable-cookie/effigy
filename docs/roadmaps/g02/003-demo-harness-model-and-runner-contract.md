@@ -2451,6 +2451,47 @@ Decision focus:
   facts are explicit
 - whether terminal/runtime work is coherent enough to pause again
 
+Batch `03.58` result:
+
+- do not take a browser consumer follow-up next
+- do not pause terminal/runtime work yet
+- the next bounded slice is one richer runner backend implementation:
+  flatten concurrent-runner-backed demos behind the shipped demo session
+  contract without nested TUI launch
+
+Why this decision is the right boundary:
+
+- backend/capability reporting now exists specifically to support one richer
+  runtime slice, so stopping here would strand the new contract
+- the earlier roadmap rule about concurrent-runner-backed demos still has no
+  implementation behind it
+- browser consumers already have enough surface; the sharper gap is making one
+  richer backend honest through the same runner-owned contract
+
+### 10.56 Demo Concurrent-Runner Session Projection
+
+Batch `03.59` target:
+
+Implement one richer demo runtime backend slice by projecting
+concurrent-runner-backed demos through the existing demo session contract so
+they can report honest active session facts without nested TUI launch.
+
+In scope for the next implementation slice:
+
+- add one bounded concurrent-runner-backed demo runtime projection behind the
+  shipped demo runner surfaces
+- map backend identity, active session facts, and capability reporting through
+  the existing demo-scoped contract
+- preserve the no-nested-TUI rule in both text/json CLI and browser consumers
+- keep the implementation bounded to one demo-facing session projection shape
+
+Out of scope for the next implementation slice:
+
+- browser layout or control redesign
+- generic process-manager UI or multi-process demo sub-tabs
+- broad managed-runtime expansion outside the demo contract
+- desktop-client work
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -2520,6 +2561,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the next bounded slice after
-runtime backend and capability reporting landed while nested TUI embedding and
+Use the active `g02.003` strict lane to project concurrent-runner-backed demos
+through the existing demo session contract while nested TUI embedding and
 wider runtime drift stay explicitly bounded.

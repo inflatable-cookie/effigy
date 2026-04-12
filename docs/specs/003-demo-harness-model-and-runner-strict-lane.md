@@ -69,7 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide the post-runtime-
-backend-capability boundary, so the lane can choose the next bounded
-runner/client slice without reopening browser churn, nested TUI embedding, or
-generic runtime-manager drift.
+Execute the active `g02.003` ready card next to project concurrent-runner-
+backed demos through the existing demo session contract, so the lane can land
+one richer backend slice without reopening browser churn, nested TUI
+embedding, or generic runtime-manager drift.
