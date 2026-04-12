@@ -2703,6 +2703,56 @@ Decision focus:
   browser
 - whether browser-terminal work is coherent enough to pause again
 
+Batch `03.64` result:
+
+- do not spend the next slot on more browser chrome or control remapping
+- do not pause browser-terminal work yet
+- the next bounded slice is backend parity: browser-owned live attached
+  terminal sessions for browser-launched single-process
+  concurrent-runner-backed interactive demos
+- preserve the no-nested-TUI rule by keeping multi-process
+  concurrent-runner-backed demos on the existing flattened projected terminal
+  path
+
+Why this decision is the right boundary:
+
+- the run-backed browser live-session path is now honest enough that more
+  browser chrome would be churn rather than product progress
+- the main remaining mismatch is backend parity inside the same browser
+  terminal model
+- single-process concurrent-runner demos are the smallest honest expansion
+  that still stays demo-scoped
+- widening directly to multi-process live embedding would collapse back into
+  process-manager semantics and violate the bounded-slice rule
+
+### 10.62 Demo Browser Live Concurrent-Runner Session Parity
+
+Batch `03.65` target:
+
+Extend browser-owned live attached terminal sessions to browser-launched
+single-process concurrent-runner-backed interactive demos, while keeping
+multi-process and nested-TUI shapes on the existing flattened projected path.
+
+In scope for the next implementation slice:
+
+- add one bounded browser-owned live attached terminal path for
+  single-process concurrent-runner-backed demos
+- preserve runner-owned stop, input, resize, logs, receipts, latest-attempt
+  state, and retained history semantics
+- keep projected terminal/session fallback for multi-process
+  concurrent-runner-backed demos and any runtime facts that imply nested TUI or
+  broader manager semantics
+- keep the browser demo-scoped rather than process-manager-scoped
+
+Out of scope for the next implementation slice:
+
+- embedding the concurrent TUI
+- generic process-manager tabs, panes, or sub-tabs
+- redesigning browser layout or controls again
+- broad backend unification beyond the bounded single-process
+  concurrent-runner case
+- desktop-client work
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -2772,7 +2822,7 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the next bounded slice after
-browser-owned live attached terminal sessions landed for browser-launched
-run-backed interactive demos while nested TUI embedding and wider runtime
-drift stay explicitly bounded.
+Use the active `g02.003` strict lane to add browser-owned live attached
+terminal-session parity for browser-launched single-process
+concurrent-runner-backed interactive demos while nested TUI embedding and
+multi-process browser-manager drift stay explicitly bounded.

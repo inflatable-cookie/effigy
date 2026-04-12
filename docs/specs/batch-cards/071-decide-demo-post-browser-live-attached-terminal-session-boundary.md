@@ -1,6 +1,6 @@
 # 071 Decide Demo Post-Browser-Live-Attached-Terminal-Session Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -37,6 +37,29 @@ the next slot.
 - the decision stays demo-scoped rather than process-manager-scoped
 - the lane remains anchored in one active ready card
 
+## Decision
+
+- do not spend the next slot on more browser chrome or control remapping
+- do not pause browser-terminal work yet
+- do not widen immediately to generic multi-process demo tabs or nested TUI
+  embedding
+- the next bounded slice is backend parity: browser-owned live attached
+  terminal sessions for browser-launched single-process
+  concurrent-runner-backed interactive demos
+- multi-process concurrent-runner demos stay on the existing flattened
+  projected terminal path until a later boundary says otherwise
+
+## Why
+
+- the new live attached terminal path fixed the main browser truth gap, but
+  only for run-backed demos
+- the next real product mismatch is backend parity inside the same browser
+  terminal contract, not more tab or layout churn
+- single-process concurrent-runner demos are the smallest honest expansion
+  that preserves the no-nested-TUI rule
+- widening directly to multi-process live embedding would collapse back into
+  process-manager semantics and violate the bounded-slice rule
+
 ## Validation
 
 - `cargo run --bin effigy -- qa:docs`
@@ -50,6 +73,8 @@ the next slot.
 
 ## Next Task
 
-Execute this card to choose the next bounded slice after browser-owned live
-attached terminal sessions landed for browser-launched run-backed interactive
-demos.
+Execute
+`072-implement-demo-browser-live-concurrent-runner-session-parity.md` to add
+browser-owned live attached terminal sessions for browser-launched
+single-process concurrent-runner-backed interactive demos while keeping
+multi-process and nested-TUI cases on the existing projected path.
