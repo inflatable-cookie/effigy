@@ -1,6 +1,6 @@
 # 065 Decide Demo Post-Runtime-Backend-Capability Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -34,6 +34,14 @@ work.
 - the decision stays demo-scoped rather than process-manager-scoped
 - the lane remains anchored in one active ready card
 
+## Result
+
+- do not take a browser consumer follow-up next
+- do not pause terminal/runtime work yet
+- the next bounded slice is one richer runner backend implementation:
+  flatten concurrent-runner-backed demos behind the shipped demo session
+  contract without nested TUI launch
+
 ## Validation
 
 - `cargo run --bin effigy -- qa:docs`
@@ -48,5 +56,6 @@ work.
 
 ## Next Task
 
-Execute this card to choose the next bounded slice after runtime backend and
-capability reporting landed.
+Execute [`066-implement-demo-concurrent-runner-session-projection.md`](./066-implement-demo-concurrent-runner-session-projection.md)
+to project concurrent-runner-backed demos through the existing demo session
+contract without launching a nested TUI.
