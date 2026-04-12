@@ -1,7 +1,7 @@
 # 003 Demo Harness Model And Runner Strict Lane
 
 Status: active
-Updated: 2026-04-11
+Updated: 2026-04-12
 Roadmap: `g02.003`
 
 ## Context
@@ -69,7 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to let the browser consume the
-runner-owned active demo terminal/session contract through a bounded terminal
-view, then keep broader runtime expansion and desktop-client questions
-separate.
+Execute the active `g02.003` ready card next to decide whether the next
+terminal/demo slice should prioritize browser tab convergence or deeper
+runner-owned active-session input work, while broader runtime expansion and
+desktop-client questions stay separate.

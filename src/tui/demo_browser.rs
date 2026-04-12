@@ -163,6 +163,10 @@ impl DemoBrowserApp {
                 self.exit_history_mode();
                 false
             }
+            DetailMode::Terminal => {
+                self.exit_terminal_mode();
+                false
+            }
         }
     }
 
@@ -340,6 +344,10 @@ impl DemoBrowserApp {
             ActionMenuItem::Run | ActionMenuItem::Rerun => self.dispatch_run_or_rerun(),
             ActionMenuItem::Stop => self.dispatch_stop(),
             ActionMenuItem::OpenHistory => self.enter_history_mode(),
+            ActionMenuItem::OpenTerminal => {
+                self.enter_terminal_mode();
+                Ok(())
+            }
             ActionMenuItem::Refresh => {
                 self.refresh_state()?;
                 self.footer_message = "Refreshed demo browser state.".to_owned();
@@ -479,6 +487,9 @@ impl DemoBrowserApp {
             (Some(detail), DetailMode::History) => {
                 history_detail_render(detail, self.history.as_ref(), selected_item, detail_focused)
             }
+            (Some(detail), DetailMode::Terminal) => {
+                terminal_detail_render(detail, selected_item, detail_focused)
+            }
             (None, _) => DetailRender {
                 lines: vec![
                     Line::from("No demo selected."),
@@ -528,6 +539,10 @@ impl DemoBrowserApp {
                 }
                 items
             }
+            DetailMode::Terminal => vec![
+                DetailSelectableItem::TerminalBack,
+                DetailSelectableItem::TerminalRefresh,
+            ],
         }
     }
 
@@ -547,7 +562,7 @@ impl DemoBrowserApp {
     fn focus_detail(&mut self) {
         self.focus = BrowserFocus::Detail;
         self.footer_message =
-            "Detail panel focused. ↑/↓ selects actions, history, and artifacts. Enter activates the selected option.".to_owned();
+            "Detail panel focused. ↑/↓ selects visible actions and entries. Enter activates the selected option.".to_owned();
     }
 
     fn select_next_detail_entry(&mut self) {
@@ -701,6 +716,19 @@ impl DemoBrowserApp {
         self.footer_message = "Returned to demo overview in the detail pane.".to_owned();
     }
 
+    fn enter_terminal_mode(&mut self) {
+        self.detail_mode = DetailMode::Terminal;
+        self.selected_detail_entry_index = 0;
+        self.sync_selected_detail_entry();
+    }
+
+    fn exit_terminal_mode(&mut self) {
+        self.detail_mode = DetailMode::Overview;
+        self.selected_detail_entry_index = 0;
+        self.sync_selected_detail_entry();
+        self.footer_message = "Returned to demo overview in the detail pane.".to_owned();
+    }
+
     fn history_attempt_count(&self) -> usize {
         self.history
             .as_ref()
@@ -741,6 +769,15 @@ impl DemoBrowserApp {
                     format!("Viewing retained attempt #{ordinal} in the detail pane.");
                 Ok(())
             }
+            DetailSelectableItem::TerminalBack => {
+                self.exit_terminal_mode();
+                Ok(())
+            }
+            DetailSelectableItem::TerminalRefresh => {
+                self.refresh_state()?;
+                self.footer_message = "Refreshed terminal session in the detail pane.".to_owned();
+                Ok(())
+            }
         }
     }
 
@@ -771,6 +808,12 @@ impl DemoBrowserApp {
                 self.selected_history_attempt_ordinal = Some(ordinal);
                 self.footer_message =
                     format!("Selected retained attempt #{ordinal} in the detail pane.");
+            }
+            DetailSelectableItem::TerminalBack => {
+                self.footer_message = "Selected terminal action `Back to overview`.".to_owned();
+            }
+            DetailSelectableItem::TerminalRefresh => {
+                self.footer_message = "Selected terminal action `Refresh terminal`.".to_owned();
             }
         }
     }
@@ -1661,6 +1704,124 @@ fn history_detail_render(
     }
 }
 
+fn terminal_detail_render(
+    detail: &DemoDetail,
+    selected_item: Option<DetailSelectableItem>,
+    detail_focused: bool,
+) -> DetailRender {
+    let mut lines = vec![title_line(&detail.title)];
+    let mut selected_line_index = None;
+
+    if !detail.tags.is_empty() {
+        lines.push(muted_line(format!("tags: {}", detail.tags.join(", "))));
+    }
+    if !detail.covers.is_empty() {
+        lines.push(compact_kv_line("covers", &detail.covers.join(", ")));
+    }
+
+    lines.extend([
+        Line::from(""),
+        section_heading("Terminal View"),
+        muted_line(format!(
+            "Active terminal session for `effigy demo inspect {}` inside the browser.",
+            detail.id
+        )),
+        Line::from(""),
+        section_heading("Actions"),
+    ]);
+
+    for (label, item) in [
+        ("Back to overview", DetailSelectableItem::TerminalBack),
+        ("Refresh terminal", DetailSelectableItem::TerminalRefresh),
+    ] {
+        if selected_item == Some(item) {
+            selected_line_index = Some(lines.len());
+        }
+        lines.push(selectable_detail_line(label, selected_item == Some(item), detail_focused));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(section_heading("Session"));
+    let session = &detail.active_terminal_session;
+    if !session.available {
+        lines.push(muted_line(
+            "No active terminal session is available for this demo.".to_owned(),
+        ));
+        return DetailRender {
+            lines,
+            selected_line_index,
+        };
+    }
+
+    lines.push(compact_kv_line("state", &session.state));
+    if let Some(attempt_id) = &session.attempt_id {
+        lines.push(compact_kv_line("attempt", attempt_id));
+    }
+    lines.push(compact_kv_line("transport", &session.transport));
+    lines.push(compact_kv_line("pty", yes_no(session.pty)));
+    lines.push(compact_kv_line(
+        "input",
+        if session.supports_input_forwarding {
+            "forwarding available"
+        } else {
+            session
+                .input_forwarding_reason
+                .as_deref()
+                .unwrap_or("forwarding unavailable")
+        },
+    ));
+    lines.push(compact_kv_line("nested-tui", yes_no(session.nested_tui)));
+    if let Some(stdout_log_path) = &session.stdout_log_path {
+        lines.push(compact_kv_line("stdout", stdout_log_path));
+    }
+    if let Some(stderr_log_path) = &session.stderr_log_path {
+        lines.push(compact_kv_line("stderr", stderr_log_path));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(section_heading("Recent Output"));
+    if !session.output_available {
+        lines.push(muted_line("No terminal output is available yet.".to_owned()));
+        return DetailRender {
+            lines,
+            selected_line_index,
+        };
+    }
+
+    if session.recent_output.stdout_lines.is_empty() && session.recent_output.stderr_lines.is_empty()
+    {
+        lines.push(muted_line(
+            "Terminal output logs exist, but no recent lines were captured.".to_owned(),
+        ));
+        return DetailRender {
+            lines,
+            selected_line_index,
+        };
+    }
+
+    if !session.recent_output.stdout_lines.is_empty() {
+        lines.push(compact_kv_line("stream", "stdout"));
+        for line in &session.recent_output.stdout_lines {
+            lines.push(Line::from(line.clone()));
+        }
+    }
+
+    if !session.recent_output.stderr_lines.is_empty() {
+        if !session.recent_output.stdout_lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+        lines.push(compact_kv_line("stream", "stderr"));
+        for line in &session.recent_output.stderr_lines {
+            lines.push(Line::from(line.clone()));
+        }
+    }
+
+    DetailRender {
+        lines,
+        selected_line_index,
+    }
+}
+
 #[cfg(test)]
 use std::fs;
 
@@ -1749,6 +1910,7 @@ fn action_menu_items_for_detail(detail: &DemoDetail) -> Vec<ActionMenuItem> {
         items.push(ActionMenuItem::Stop);
     }
     items.push(ActionMenuItem::OpenHistory);
+    items.push(ActionMenuItem::OpenTerminal);
     items.push(ActionMenuItem::Refresh);
     items
 }
@@ -1767,6 +1929,10 @@ fn muted_line(value: String) -> Line<'static> {
         value,
         Style::default().fg(Color::DarkGray),
     )])
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
 }
 
 fn next_status_filter(current: Option<DemoListStatus>) -> Option<DemoListStatus> {
@@ -1905,6 +2071,7 @@ enum ActionMenuItem {
     Rerun,
     Stop,
     OpenHistory,
+    OpenTerminal,
     Refresh,
 }
 
@@ -1915,6 +2082,7 @@ impl ActionMenuItem {
             Self::Rerun => "Rerun demo",
             Self::Stop => "Stop demo",
             Self::OpenHistory => "View history",
+            Self::OpenTerminal => "View terminal",
             Self::Refresh => "Refresh state",
         }
     }
@@ -1924,6 +2092,7 @@ impl ActionMenuItem {
 enum DetailMode {
     Overview,
     History,
+    Terminal,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1933,6 +2102,8 @@ enum DetailSelectableItem {
     HistoryBack,
     HistoryRefresh,
     HistoryAttempt(usize),
+    TerminalBack,
+    TerminalRefresh,
 }
 
 struct DetailRender {
@@ -2134,6 +2305,7 @@ struct DemoDetail {
     actions: DemoActionAvailability,
     #[allow(dead_code)]
     active_attempt: DemoActiveAttempt,
+    active_terminal_session: DemoActiveTerminalSession,
     latest_attempt: DemoLatestAttempt,
 }
 
@@ -2154,6 +2326,28 @@ struct DemoActionState {
 struct DemoActiveAttempt {
     #[allow(dead_code)]
     state: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DemoActiveTerminalSession {
+    available: bool,
+    state: String,
+    attempt_id: Option<String>,
+    transport: String,
+    pty: bool,
+    supports_input_forwarding: bool,
+    input_forwarding_reason: Option<String>,
+    nested_tui: bool,
+    stdout_log_path: Option<String>,
+    stderr_log_path: Option<String>,
+    output_available: bool,
+    recent_output: DemoTerminalRecentOutput,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DemoTerminalRecentOutput {
+    stdout_lines: Vec<String>,
+    stderr_lines: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -2179,7 +2373,7 @@ mod tests {
         history_detail_render, next_gap_filter, next_group_by, next_mode_filter,
         next_status_filter, overview_detail_render, query_summary, read_recent_log_lines,
         resolve_artifact_path, resolve_repo_relative_path, row_contains_demo, selected_artifact,
-        status_style, ActionMenuItem, BrowserRow, DemoBrowserApp, DemoDetail,
+        status_style, terminal_detail_render, ActionMenuItem, BrowserRow, DemoBrowserApp, DemoDetail,
         DemoHistoryAttempt, DetailMode,
         DemoHistoryAttemptHistoryPayload, DemoHistoryPayload, DemoLatestAttempt, DemoListGap,
         DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSummary,
@@ -2221,6 +2415,25 @@ mod tests {
             },
             active_attempt: super::DemoActiveAttempt {
                 state: "idle".to_owned(),
+            },
+            active_terminal_session: super::DemoActiveTerminalSession {
+                available: false,
+                state: "idle".to_owned(),
+                attempt_id: None,
+                transport: "none".to_owned(),
+                pty: false,
+                supports_input_forwarding: false,
+                input_forwarding_reason: Some(
+                    "Input forwarding is not available for this active demo.".to_owned(),
+                ),
+                nested_tui: false,
+                stdout_log_path: None,
+                stderr_log_path: None,
+                output_available: false,
+                recent_output: super::DemoTerminalRecentOutput {
+                    stdout_lines: vec![],
+                    stderr_lines: vec![],
+                },
             },
             latest_attempt: DemoLatestAttempt {
                 recorded: true,
@@ -2458,6 +2671,11 @@ mod tests {
     }
 
     #[test]
+    fn browser_action_menu_exposes_terminal_label() {
+        assert_eq!(ActionMenuItem::OpenTerminal.label(), "View terminal");
+    }
+
+    #[test]
     fn browser_detail_lines_show_result_only_after_session_run_visibility() {
         let mut detail = detail_with_artifacts(&["one"]);
         detail.latest_attempt.summary = Some("Latest attempt wrote a proof report.".to_owned());
@@ -2500,7 +2718,81 @@ mod tests {
             .map(ActionMenuItem::label)
             .collect::<Vec<_>>();
 
-        assert_eq!(items, vec!["Rerun demo", "View history", "Refresh state"]);
+        assert_eq!(
+            items,
+            vec!["Rerun demo", "View history", "View terminal", "Refresh state"]
+        );
+    }
+
+    #[test]
+    fn browser_terminal_view_renders_active_session_output() {
+        let mut detail = detail_with_artifacts(&[]);
+        detail.id = "browser-proof-report".to_owned();
+        detail.active_terminal_session = super::DemoActiveTerminalSession {
+            available: true,
+            state: "running".to_owned(),
+            attempt_id: Some("demo-123".to_owned()),
+            transport: "stream".to_owned(),
+            pty: false,
+            supports_input_forwarding: false,
+            input_forwarding_reason: Some(
+                "Input forwarding is not available for this active demo.".to_owned(),
+            ),
+            nested_tui: false,
+            stdout_log_path: Some(".effigy/demo/logs/demo-123.stdout.log".to_owned()),
+            stderr_log_path: Some(".effigy/demo/logs/demo-123.stderr.log".to_owned()),
+            output_available: true,
+            recent_output: super::DemoTerminalRecentOutput {
+                stdout_lines: vec!["boot".to_owned(), "serve".to_owned()],
+                stderr_lines: vec!["warn".to_owned()],
+            },
+        };
+
+        let rendered = terminal_detail_render(
+            &detail,
+            Some(DetailSelectableItem::TerminalRefresh),
+            true,
+        )
+        .lines
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        assert!(rendered.contains("Terminal View"));
+        assert!(rendered.contains("Back to overview"));
+        assert!(rendered.contains("Refresh terminal"));
+        assert!(rendered.contains("state: running"));
+        assert!(rendered.contains("attempt: demo-123"));
+        assert!(rendered.contains("transport: stream"));
+        assert!(rendered.contains("nested-tui: no"));
+        assert!(rendered.contains("stdout: .effigy/demo/logs/demo-123.stdout.log"));
+        assert!(rendered.contains("stderr: .effigy/demo/logs/demo-123.stderr.log"));
+        assert!(rendered.contains("stream: stdout"));
+        assert!(rendered.contains("boot"));
+        assert!(rendered.contains("serve"));
+        assert!(rendered.contains("stream: stderr"));
+        assert!(rendered.contains("warn"));
+    }
+
+    #[test]
+    fn browser_terminal_view_reports_unavailable_session_honestly() {
+        let detail = detail_with_artifacts(&[]);
+
+        let rendered = terminal_detail_render(
+            &detail,
+            Some(DetailSelectableItem::TerminalBack),
+            true,
+        )
+        .lines
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        assert!(rendered.contains("Terminal View"));
+        assert!(rendered.contains("No active terminal session is available for this demo."));
+        assert!(!rendered.contains("Recent Output"));
     }
 
     #[test]
@@ -2578,6 +2870,23 @@ mod tests {
         assert!(!should_exit);
         assert!(matches!(app.detail_mode, DetailMode::Overview));
         assert!(app.history.is_none());
+        assert_eq!(
+            app.footer_message,
+            "Returned to demo overview in the detail pane."
+        );
+    }
+
+    #[test]
+    fn browser_escape_returns_from_terminal_before_exiting() {
+        let mut app = DemoBrowserApp::new(PathBuf::from("/tmp/demo-repo"), None);
+        app.detail = Some(detail_with_artifacts(&[]));
+        app.selected_demo_id = Some("demo".to_owned());
+        app.detail_mode = DetailMode::Terminal;
+
+        let should_exit = app.handle_key(KeyCode::Esc).expect("escape should succeed");
+
+        assert!(!should_exit);
+        assert!(matches!(app.detail_mode, DetailMode::Overview));
         assert_eq!(
             app.footer_message,
             "Returned to demo overview in the detail pane."

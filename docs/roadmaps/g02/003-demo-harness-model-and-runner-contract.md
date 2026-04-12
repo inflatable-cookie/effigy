@@ -1806,26 +1806,49 @@ Out of scope for the next implementation slice:
   it unavailable
 - broader runtime cancellation or desktop-client work
 
-### 10.27 Demo History Query Follow-Up Boundary
+Batch `03.39` result:
 
-Batch `03.30` target:
+- `effigy demo browser` now exposes a bounded `View terminal` action for the
+  selected demo
+- the browser detail pane now has a terminal mode that renders active
+  terminal/session metadata, log references, and recent stdout/stderr lines
+  directly from the runner-owned handoff contract
+- unavailable terminal sessions now render honestly in-place without leaving
+  the browser or launching nested TUIs
 
-Decide the next bounded slice after the shipped `demo history` query surface.
+Why this batch was the right implementation slice:
+
+- it proves the browser can consume the settled runner-owned terminal/session
+  contract directly instead of inventing process-manager semantics
+- it keeps the terminal experience demo-scoped and coherent with the selected
+  demo rather than widening into multiprocess management
+- it surfaces the remaining product question cleanly: presentation convergence
+  versus deeper runner-owned terminal input/session capability
+
+### 10.37 Demo Post-Browser-Terminal-View Boundary
+
+Batch `03.40` target:
+
+Choose the next bounded slice after the shipped browser terminal view without
+widening into nested TUI embedding or ad-hoc browser churn.
 
 In scope for the next decision slice:
 
-- assess whether the next history-related value belongs in `demo list`, the
-  browser, or a deeper dedicated history/timeline query contract
-- use the self-hosted demos and the shipped `demo history` output as the
-  reality check for that decision
-- keep the next follow-up focused on history surfaces rather than broader
-  runtime or desktop-client work
+- assess whether the next terminal-related value belongs in:
+  - demo-scoped browser presentation convergence such as `Overview`,
+    `History`, `Terminal`, and `Artifacts` tabs
+  - deeper runner-owned active-terminal input/session contract work
+  - another tightly bounded one-demo browser follow-up
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+- leave the lane with one explicit ready card
 
 Out of scope for the next decision slice:
 
-- implementing browser timeline rendering
-- widening into multi-demo history analytics
-- broader runtime queueing, cancellation, or desktop-client work
+- implementing tabs or terminal input in the decision batch
+- embedding the concurrent TUI inside `effigy demo browser`
+- multi-process demo sub-tabs or generic managed-process UI
+- retained-history replay as an interactive terminal
+- broader runtime cancellation or desktop-client work
 
 ## 11) Acceptance Criteria
 
@@ -1848,7 +1871,7 @@ Out of scope for the next decision slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide whether any later
-history/browser follow-up should deepen one-demo browser activation from
-retained attempts or return to query-first runner work, while wider runtime
-expansion remains deferred.
+Use the active `g02.003` strict lane to decide whether the next bounded
+terminal/demo slice should prioritize browser tab convergence or deeper
+runner-owned active-session input work, while nested TUI embedding and wider
+runtime expansion remain deferred.

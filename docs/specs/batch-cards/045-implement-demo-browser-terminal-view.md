@@ -1,6 +1,6 @@
 # 045 Implement Demo Browser Terminal View
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -52,5 +52,6 @@ contract through a bounded demo-scoped terminal view.
 
 ## Next Task
 
-Implement the next ready follow-up selected after this browser terminal view
-lands.
+Execute [`046-decide-demo-post-browser-terminal-view-boundary.md`](./046-decide-demo-post-browser-terminal-view-boundary.md)
+to choose whether the next bounded slice should prioritize demo-scoped browser
+tab convergence or a deeper runner-owned active-terminal input contract.
