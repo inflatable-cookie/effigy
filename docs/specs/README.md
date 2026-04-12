@@ -19,6 +19,5 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to decide the next bounded slice after browser-owned
-live attached terminal sessions reached bounded parity for run-backed and
-single-process concurrent-runner-backed demos.
+Use the active spec lane to add runner-owned projection-shape truth for richer
+concurrent-runner demos before reopening any multi-process browser follow-up.
