@@ -1,6 +1,6 @@
 # 049 Implement Demo Attached Terminal Run Mode
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -54,5 +54,5 @@ surface as secondary automation/client infrastructure.
 
 ## Next Task
 
-Implement the next ready follow-up selected after this attached terminal slice
-lands.
+Execute [`050-decide-demo-post-attached-terminal-run-boundary.md`](./050-decide-demo-post-attached-terminal-run-boundary.md)
+to choose the next bounded follow-up after attached terminal run mode lands.

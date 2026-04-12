@@ -52,10 +52,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`046-decide-demo-post-browser-terminal-view-boundary.md`](./046-decide-demo-post-browser-terminal-view-boundary.md) (complete)
 - [`047-implement-demo-active-terminal-input-contract.md`](./047-implement-demo-active-terminal-input-contract.md) (complete)
 - [`048-implement-demo-browser-terminal-input-affordance.md`](./048-implement-demo-browser-terminal-input-affordance.md) (superseded)
-- [`049-implement-demo-attached-terminal-run-mode.md`](./049-implement-demo-attached-terminal-run-mode.md)
+- [`049-implement-demo-attached-terminal-run-mode.md`](./049-implement-demo-attached-terminal-run-mode.md) (complete)
+- [`050-decide-demo-post-attached-terminal-run-boundary.md`](./050-decide-demo-post-attached-terminal-run-boundary.md)
 
 ## Next Task
 
-Execute the active ready card to make direct attached terminal sessions the
-default human path for demos that need interactive terminal IO, while keeping
-`demo input` as secondary automation/client infrastructure.
+Execute the active ready card to decide the next bounded follow-up after direct
+attached terminal sessions landed for human interactive demo runs, while
+keeping `demo input` as secondary automation/client infrastructure.

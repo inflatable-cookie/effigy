@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -1566,7 +1566,7 @@ fn execute_demo_attempt(
             execute_task_backed_demo(repo_root, demo_id, &task_name, output_json)
         }
         DemoEntrypoint::Run(run_command) => {
-            execute_run_backed_demo(repo_root, demo_id, &run_command, output_json)
+            execute_run_backed_demo(repo_root, demo_id, demo.mode, &run_command, output_json)
         }
     }
 }
@@ -1731,15 +1731,17 @@ fn parse_task_backed_attempt_json(
 fn execute_run_backed_demo(
     repo_root: &Path,
     demo_id: &str,
+    mode: ManifestDemoMode,
     run_command: &str,
     output_json: bool,
 ) -> Result<DemoExecutionAttempt, RunnerError> {
-    let log_paths = if output_json {
+    let attached_terminal = !output_json && demo_mode_prefers_attached_terminal(mode);
+    let log_paths = if output_json || attached_terminal {
         DemoLogPaths::prepare(repo_root, demo_id)?
     } else {
         DemoLogPaths::none()
     };
-    let mut child = build_run_backed_process(repo_root, run_command, output_json)?
+    let mut child = build_run_backed_process(repo_root, run_command, output_json || attached_terminal)?
         .spawn()
         .map_err(|error| {
             RunnerError::task_invocation(format!(
@@ -1772,7 +1774,7 @@ fn execute_run_backed_demo(
         },
     )?;
 
-    if output_json {
+    if output_json || attached_terminal {
         let stdout_reader = child.stdout.take().ok_or_else(|| {
             RunnerError::task_invocation(format!(
                 "Demo `{demo_id}` launched without a stdout capture pipe."
@@ -1783,8 +1785,16 @@ fn execute_run_backed_demo(
                 "Demo `{demo_id}` launched without a stderr capture pipe."
             ))
         })?;
-        let stdout_handle = spawn_output_capture(stdout_reader, log_paths.stdout_absolute.clone());
-        let stderr_handle = spawn_output_capture(stderr_reader, log_paths.stderr_absolute.clone());
+        let stdout_handle = spawn_output_capture(
+            stdout_reader,
+            log_paths.stdout_absolute.clone(),
+            attached_terminal.then_some(OutputMirror::Stdout),
+        );
+        let stderr_handle = spawn_output_capture(
+            stderr_reader,
+            log_paths.stderr_absolute.clone(),
+            attached_terminal.then_some(OutputMirror::Stderr),
+        );
         let status = child.wait().map_err(|error| {
             RunnerError::task_invocation(format!(
                 "Demo `{demo_id}` failed to wait for run entrypoint: {error}"
@@ -1821,6 +1831,10 @@ fn execute_run_backed_demo(
         String::new(),
         DemoLogPaths::none(),
     ))
+}
+
+fn demo_mode_prefers_attached_terminal(mode: ManifestDemoMode) -> bool {
+    matches!(mode, ManifestDemoMode::Interactive | ManifestDemoMode::Hybrid)
 }
 
 fn build_run_backed_process(
@@ -1892,9 +1906,16 @@ fn run_attempt_from_output(
     )
 }
 
+#[derive(Clone, Copy)]
+enum OutputMirror {
+    Stdout,
+    Stderr,
+}
+
 fn spawn_output_capture<R>(
     mut reader: R,
     log_path: Option<PathBuf>,
+    mirror: Option<OutputMirror>,
 ) -> thread::JoinHandle<Result<String, RunnerError>>
 where
     R: Read + Send + 'static,
@@ -1926,6 +1947,36 @@ where
                         "failed to write demo output log: {error}"
                     ))
                 })?;
+            }
+            if let Some(mirror) = mirror {
+                match mirror {
+                    OutputMirror::Stdout => {
+                        let mut stream = io::stdout().lock();
+                        stream.write_all(&buffer[..read]).map_err(|error| {
+                            RunnerError::task_invocation(format!(
+                                "failed to mirror demo stdout: {error}"
+                            ))
+                        })?;
+                        stream.flush().map_err(|error| {
+                            RunnerError::task_invocation(format!(
+                                "failed to flush demo stdout: {error}"
+                            ))
+                        })?;
+                    }
+                    OutputMirror::Stderr => {
+                        let mut stream = io::stderr().lock();
+                        stream.write_all(&buffer[..read]).map_err(|error| {
+                            RunnerError::task_invocation(format!(
+                                "failed to mirror demo stderr: {error}"
+                            ))
+                        })?;
+                        stream.flush().map_err(|error| {
+                            RunnerError::task_invocation(format!(
+                                "failed to flush demo stderr: {error}"
+                            ))
+                        })?;
+                    }
+                }
             }
         }
         Ok(String::from_utf8_lossy(&output).to_string())
