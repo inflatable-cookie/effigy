@@ -1721,9 +1721,8 @@ fn detail_prefers_live_browser_terminal(detail: &DemoDetail, subcommand: &DemoSu
         DemoSubcommand::Run { .. } | DemoSubcommand::Rerun { .. }
     ) && detail
         .runtime_backend
-        .capabilities
-        .iter()
-        .any(|capability| capability == "browser-live-attach")
+        .projection_shape
+        .live_terminal_eligible
         && !detail.active_terminal_session.nested_tui
         && matches!(detail.mode.as_str(), "interactive" | "hybrid")
 }
@@ -3325,8 +3324,22 @@ struct DemoRuntimeBackend {
     label: String,
     #[allow(dead_code)]
     flattened_projection: bool,
+    #[serde(default)]
+    projection_shape: DemoRuntimeProjectionShape,
     #[allow(dead_code)]
     capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct DemoRuntimeProjectionShape {
+    #[allow(dead_code)]
+    kind: String,
+    #[allow(dead_code)]
+    live_terminal_eligible: bool,
+    #[allow(dead_code)]
+    projected_multi_process: bool,
+    #[allow(dead_code)]
+    managed_process_count: Option<usize>,
 }
 
 impl DemoTerminalSize {
@@ -3403,6 +3416,7 @@ mod tests {
                 kind: "task".to_owned(),
                 label: "task-backed".to_owned(),
                 flattened_projection: false,
+                projection_shape: super::DemoRuntimeProjectionShape::default(),
                 capabilities: vec![],
             },
             actions: super::DemoActionAvailability {
@@ -3779,6 +3793,12 @@ mod tests {
                 kind: "run".to_owned(),
                 label: "run-backed".to_owned(),
                 flattened_projection: false,
+                projection_shape: super::DemoRuntimeProjectionShape {
+                    kind: "single-terminal".to_owned(),
+                    live_terminal_eligible: true,
+                    projected_multi_process: false,
+                    managed_process_count: None,
+                },
                 capabilities: vec![
                     "active-terminal-session".to_owned(),
                     "live-terminal-output".to_owned(),
@@ -3909,6 +3929,12 @@ mod tests {
                 kind: "run".to_owned(),
                 label: "run-backed".to_owned(),
                 flattened_projection: false,
+                projection_shape: super::DemoRuntimeProjectionShape {
+                    kind: "single-terminal".to_owned(),
+                    live_terminal_eligible: true,
+                    projected_multi_process: false,
+                    managed_process_count: None,
+                },
                 capabilities: vec![
                     "active-terminal-session".to_owned(),
                     "live-terminal-output".to_owned(),
@@ -4106,6 +4132,12 @@ mod tests {
         detail.mode = "interactive".to_owned();
         detail.runtime_backend.kind = "run".to_owned();
         detail.runtime_backend.capabilities = vec!["browser-live-attach".to_owned()];
+        detail.runtime_backend.projection_shape = super::DemoRuntimeProjectionShape {
+            kind: "single-terminal".to_owned(),
+            live_terminal_eligible: true,
+            projected_multi_process: false,
+            managed_process_count: None,
+        };
 
         assert!(detail_prefers_live_browser_terminal(
             &detail,
@@ -4127,6 +4159,12 @@ mod tests {
         detail.mode = "interactive".to_owned();
         detail.runtime_backend.kind = "concurrent-runner".to_owned();
         detail.runtime_backend.capabilities = vec!["browser-live-attach".to_owned()];
+        detail.runtime_backend.projection_shape = super::DemoRuntimeProjectionShape {
+            kind: "single-terminal".to_owned(),
+            live_terminal_eligible: true,
+            projected_multi_process: false,
+            managed_process_count: Some(1),
+        };
 
         assert!(detail_prefers_live_browser_terminal(
             &detail,
@@ -4141,6 +4179,12 @@ mod tests {
         let mut detail = detail_with_artifacts(&[]);
         detail.mode = "interactive".to_owned();
         detail.runtime_backend.kind = "concurrent-runner".to_owned();
+        detail.runtime_backend.projection_shape = super::DemoRuntimeProjectionShape {
+            kind: "projected-multi-process".to_owned(),
+            live_terminal_eligible: false,
+            projected_multi_process: true,
+            managed_process_count: Some(2),
+        };
 
         assert!(!detail_prefers_live_browser_terminal(
             &detail,

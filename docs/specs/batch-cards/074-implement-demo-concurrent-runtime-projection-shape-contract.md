@@ -1,6 +1,6 @@
 # 074 Implement Demo Concurrent Runtime Projection-Shape Contract
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -58,6 +58,7 @@ path.
 
 ## Next Task
 
-Implement this runner-owned concurrent-runtime shape slice, then leave one new
-explicit boundary card instead of widening straight into multi-process browser
-controls.
+Execute
+`075-decide-demo-post-concurrent-runtime-projection-shape-boundary.md` to make
+the next bounded boundary call after runner-owned projection-shape truth
+landed.

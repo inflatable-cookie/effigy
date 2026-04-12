@@ -2836,6 +2836,51 @@ Out of scope for the next implementation slice:
 - redesigning browser layout again
 - desktop-client work
 
+Batch `03.67` result:
+
+- concurrent-runner-backed demo payloads now expose a runner-owned
+  `projection_shape` object through `runtime_backend` on demo detail, active
+  attempt, and active terminal/session surfaces
+- the shape is now explicit instead of inferred:
+  - `single-terminal` for bounded live-attach-eligible cases
+  - `projected-multi-process` when multiple managed processes sit behind one
+    demo-facing projection
+- the payload also says whether one live terminal is eligible and reports the
+  managed process count when that count is known
+- browser consumers now read `projection_shape.live_terminal_eligible`
+  directly instead of inferring from backend kind alone
+
+Why this implementation is the right boundary:
+
+- it keeps multi-process meaning runner-owned
+- it stops browser logic from guessing concurrent shape through backend kind or
+  ad hoc capability combinations
+- it leaves multi-process browser UI questions deferred until the contract is
+  explicit enough to support them honestly
+
+### 10.65 Demo Post-Concurrent-Runtime-Projection-Shape Boundary
+
+Batch `03.68` target:
+
+Decide the next bounded slice after runner-owned concurrent-runtime
+projection-shape truth landed.
+
+In scope for the next decision slice:
+
+- decide whether the next value belongs in:
+  - one more runner-owned concurrent-runtime truth slice
+  - a bounded browser follow-up that consumes the richer shape honestly
+  - a pause from this branch of demo work
+- keep the lane demo-scoped
+- preserve the no-nested-TUI rule
+
+Out of scope for the next decision slice:
+
+- implementing the next slice
+- generic process-manager UI
+- multi-process browser tabs or panes by default
+- embedding the concurrent TUI
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
