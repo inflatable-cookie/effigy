@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/12-123800-demo-browser-panel-first-navigation-implementation.md`](./2026-04/12-123800-demo-browser-panel-first-navigation-implementation.md)
 - [`2026-04/12-122200-demo-post-browser-tab-convergence-boundary-decision.md`](./2026-04/12-122200-demo-post-browser-tab-convergence-boundary-decision.md)
 - [`2026-04/12-121200-demo-browser-demo-scoped-tabs-implementation.md`](./2026-04/12-121200-demo-browser-demo-scoped-tabs-implementation.md)
 - [`2026-04/12-113900-demo-post-browser-live-terminal-view-boundary-decision.md`](./2026-04/12-113900-demo-post-browser-live-terminal-view-boundary-decision.md)

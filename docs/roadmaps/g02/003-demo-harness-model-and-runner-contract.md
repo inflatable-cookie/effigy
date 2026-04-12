@@ -2150,15 +2150,15 @@ Why this batch was the right decision slice:
 Batch `03.50` target:
 
 Make the converged demo browser controls panel-first: `Tab` moves focus between
-major panels, and left/right/up/down navigate inside the active panel.
+the list and detail panels, and arrow keys navigate inside the active panel.
 
 In scope for the next implementation slice:
 
 - make `Tab` and `Shift+Tab` switch browser panel focus instead of detail tabs
 - keep arrow-key navigation owned by the active panel:
   - list panel: up/down move demos
-  - tab strip: left/right move tabs
-  - detail content: up/down move items inside the active tab content
+  - detail panel: left/right switch views and up/down move items inside the
+    selected view
 - preserve the shipped demo-scoped tabs (`Overview`, `History`, `Terminal`,
   `Artifacts`)
 - keep `Esc` hierarchical and non-root-safe
@@ -2169,6 +2169,39 @@ Out of scope for the next implementation slice:
 - browser terminal text input or other new interactive terminal controls
 - nested TUI embedding or process-manager-shaped sub-tabs
 - new runner/query contracts
+- desktop-client work
+
+Shipped result:
+
+- `Tab` and `Shift+Tab` now switch between the demo list and detail pane
+- `←` and `→` now switch the selected detail view between `Overview`,
+  `History`, `Terminal`, and `Artifacts` when the detail pane is focused
+- `↑` and `↓` now stay inside the focused panel, so list navigation and
+  detail-side action/history/artifact selection no longer fight the old tab
+  switching path
+
+### 10.48 Demo Post-Panel-First-Navigation Boundary
+
+Batch `03.51` target:
+
+Choose the next bounded slice after panel-first demo-browser navigation lands
+without widening into browser churn, nested TUI embedding, or generic runtime
+work.
+
+In scope for the next decision slice:
+
+- assess whether the next substantial value belongs in:
+  - another bounded browser follow-up now that controls match the browser shape
+  - a return to runner/query work because browser structure is coherent enough
+  - a narrow cross-surface cleanup that sharpens the shipped browser contract
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+- leave the lane with one explicit ready card
+
+Out of scope for the next decision slice:
+
+- implementing browser terminal input or richer terminal transport controls
+- embedding the concurrent TUI inside `effigy demo browser`
+- generic managed-process UI or multi-process demo sub-tabs
 - desktop-client work
 
 Batch `03.41` result:
@@ -2259,7 +2292,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to make demo-browser navigation
-panel-first now that operator feedback showed the converged tab surface still
-has the wrong control model, while nested TUI embedding and wider runtime
-expansion stay explicitly bounded.
+Use the active `g02.003` strict lane to choose the bounded follow-up after
+panel-first demo-browser navigation landed, while nested TUI embedding and
+wider runtime expansion stay explicitly bounded.
