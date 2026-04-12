@@ -334,6 +334,7 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to add bounded concurrent-runner terminal
-interaction projection through the demo session contract, while broader
-runtime and desktop-client questions stay deferred.
+Use the active `g02.003` ready card to decide the next bounded slice after
+concurrent-runner terminal interaction projection landed through the demo
+session contract, while broader runtime and desktop-client questions stay
+deferred.

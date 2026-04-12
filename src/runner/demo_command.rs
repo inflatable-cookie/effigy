@@ -2055,6 +2055,19 @@ fn execute_concurrent_runner_backed_demo(
             "demo `{demo_id}` task `{task_name}` does not resolve to a managed concurrent runtime"
         ))
     })?;
+    let detached_interaction_projection = output_json;
+    let input_target_process = if detached_interaction_projection {
+        concurrent_runner_input_target_process(&plan)
+    } else {
+        None
+    };
+    let input_handoff_path = input_target_process
+        .as_ref()
+        .map(|_| prepare_demo_input_handoff(repo_root, demo_id))
+        .transpose()?;
+    let resize_handoff_path = detached_interaction_projection
+        .then(|| prepare_demo_resize_handoff(repo_root, demo_id))
+        .transpose()?;
     let log_paths = DemoLogPaths::prepare_split(repo_root, demo_id)?;
     let initial_terminal_size = if demo_mode_prefers_attached_terminal(demo_mode) {
         current_terminal_size()
@@ -2081,19 +2094,33 @@ fn execute_concurrent_runner_backed_demo(
             runtime_backend_kind: Some("concurrent-runner".to_owned()),
             flattened_runtime_projection: true,
             terminal_transport: PersistedDemoTerminalTransport::Stream,
-            supports_input_forwarding: false,
-            supports_resize: false,
+            supports_input_forwarding: input_handoff_path.is_some(),
+            supports_resize: resize_handoff_path.is_some(),
             nested_tui: false,
             terminal_cols: initial_terminal_size.map(|(cols, _)| cols),
             terminal_rows: initial_terminal_size.map(|(_, rows)| rows),
-            resize_handoff_path: None,
-            stdin_input_path: None,
+            resize_handoff_path: resize_handoff_path
+                .as_ref()
+                .map(|path| display_repo_path(path, repo_root)),
+            stdin_input_path: input_handoff_path
+                .as_ref()
+                .map(|path| display_repo_path(path, repo_root)),
             stdout_log_path: log_paths.stdout.clone(),
             stderr_log_path: log_paths.stderr.clone(),
         },
     )?;
 
-    run_concurrent_runner_demo_runtime(repo_root, demo_id, task_name, plan, log_paths, output_json)
+    run_concurrent_runner_demo_runtime(
+        repo_root,
+        demo_id,
+        task_name,
+        plan,
+        log_paths,
+        input_target_process,
+        input_handoff_path,
+        resize_handoff_path,
+        output_json,
+    )
 }
 
 fn run_concurrent_runner_demo_runtime(
@@ -2102,6 +2129,9 @@ fn run_concurrent_runner_demo_runtime(
     task_name: &str,
     plan: crate::runner::model::managed::ManagedTaskPlan,
     log_paths: DemoLogPaths,
+    input_target_process: Option<String>,
+    input_handoff_path: Option<PathBuf>,
+    resize_handoff_path: Option<PathBuf>,
     output_json: bool,
 ) -> Result<DemoExecutionAttempt, RunnerError> {
     let shutdown_on_exit_processes = plan
@@ -2130,6 +2160,8 @@ fn run_concurrent_runner_demo_runtime(
         log_paths.stdout_absolute.as_deref(),
         log_paths.stderr_absolute.as_deref(),
         shutdown_on_exit_processes,
+        input_target_process,
+        input_handoff_path.clone(),
         !output_json,
     )?;
 
@@ -2139,6 +2171,7 @@ fn run_concurrent_runner_demo_runtime(
             state.stop_requested = true;
             supervisor.terminate_all();
         }
+        state.forward_pending_input(&supervisor)?;
         if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(
             DEMO_MANAGED_EVENT_POLL_INTERVAL_MS,
         )) {
@@ -2149,6 +2182,10 @@ fn run_concurrent_runner_demo_runtime(
     }
 
     supervisor.terminate_all();
+    if let Some(path) = input_handoff_path.as_deref() {
+        let _ = fs::remove_file(path);
+    }
+    clear_resize_handoff(resize_handoff_path.as_deref());
 
     let command = format!("<managed:{task_name} profile:{}>", plan.profile);
     let summary = if state.stop_requested {
@@ -2212,6 +2249,9 @@ struct DemoConcurrentRuntimeState {
     drained_after_exit: usize,
     non_zero_exits: Vec<(String, String)>,
     shutdown_on_exit_processes: BTreeSet<String>,
+    input_target_process: Option<String>,
+    input_handoff_path: Option<PathBuf>,
+    input_forwarded_bytes: usize,
     stop_requested: bool,
     mirror_output: bool,
 }
@@ -2221,6 +2261,8 @@ impl DemoConcurrentRuntimeState {
         stdout_log_path: Option<&Path>,
         stderr_log_path: Option<&Path>,
         shutdown_on_exit_processes: BTreeSet<String>,
+        input_target_process: Option<String>,
+        input_handoff_path: Option<PathBuf>,
         mirror_output: bool,
     ) -> Result<Self, RunnerError> {
         Ok(Self {
@@ -2232,6 +2274,9 @@ impl DemoConcurrentRuntimeState {
             drained_after_exit: 0,
             non_zero_exits: Vec::new(),
             shutdown_on_exit_processes,
+            input_target_process,
+            input_handoff_path,
+            input_forwarded_bytes: 0,
             stop_requested: false,
             mirror_output,
         })
@@ -2309,6 +2354,32 @@ impl DemoConcurrentRuntimeState {
             self.drained_after_exit += 1;
         }
     }
+
+    fn forward_pending_input(&mut self, supervisor: &ProcessSupervisor) -> Result<(), RunnerError> {
+        let Some(path) = self.input_handoff_path.as_deref() else {
+            return Ok(());
+        };
+        let Some(process) = self.input_target_process.as_deref() else {
+            return Ok(());
+        };
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(_) => return Ok(()),
+        };
+        if bytes.len() < self.input_forwarded_bytes {
+            self.input_forwarded_bytes = 0;
+        }
+        if bytes.len() == self.input_forwarded_bytes {
+            return Ok(());
+        }
+        let chunk = &bytes[self.input_forwarded_bytes..];
+        let rendered = String::from_utf8_lossy(chunk).into_owned();
+        supervisor
+            .send_input(process, &rendered)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        self.input_forwarded_bytes = bytes.len();
+        Ok(())
+    }
 }
 
 fn open_append_file(path: Option<&Path>) -> Result<Option<fs::File>, RunnerError> {
@@ -2330,6 +2401,15 @@ fn render_non_zero_exits(processes: &[(String, String)]) -> String {
         .map(|(process, payload)| format!("{process} {payload}"))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn concurrent_runner_input_target_process(
+    plan: &crate::runner::model::managed::ManagedTaskPlan,
+) -> Option<String> {
+    if plan.processes.len() == 1 {
+        return plan.processes.first().map(|process| process.name.clone());
+    }
+    None
 }
 
 fn parse_task_backed_attempt_json(

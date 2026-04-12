@@ -2574,6 +2574,43 @@ Out of scope for the next implementation slice:
 - broader concurrent-runner UX outside the demo contract
 - desktop-client work
 
+Batch `03.61` result:
+
+- concurrent-runner-backed detached demo sessions now expose demo-owned stdin
+  and resize handoff paths through the active attempt and active terminal
+  session contract
+- the managed concurrent runtime now forwards appended input from the demo
+  handoff file into one flattened target process when the projected demo
+  resolves to a single process
+- `demo input` and `demo resize` now work for eligible concurrent-runner-
+  backed detached demo sessions through the same demo-scoped contract used by
+  browser consumers
+
+Why this implementation matters:
+
+- it keeps concurrent-runner-backed demos on the same demo-owned interaction
+  surface as run-backed demos instead of forcing client-specific branching
+- it proves the flattened concurrent-runner path can carry bounded operator
+  interaction without leaking process-manager semantics
+- it keeps browser and CLI consumers downstream of a stronger runner contract
+
+### 10.59 Demo Post-Concurrent-Runner Terminal Interaction Boundary
+
+Batch `03.62` target:
+
+Choose the next bounded slice after concurrent-runner-backed demos can expose
+bounded terminal interaction through the demo session contract, while keeping
+the lane demo-scoped and bounded away from browser churn, nested TUI
+embedding, and generic process-manager work.
+
+Decision focus:
+
+- whether the next value belongs in one more runner-owned concurrent-runtime
+  fidelity slice
+- whether one narrow browser/client consumer follow-up is justified now that
+  concurrent-runner interaction projection is real
+- whether terminal/runtime work is coherent enough to pause again
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -2643,6 +2680,7 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to add bounded concurrent-runner
-terminal interaction projection through the demo session contract while
-nested TUI embedding and wider runtime drift stay explicitly bounded.
+Use the active `g02.003` strict lane to decide the next bounded slice after
+concurrent-runner terminal interaction projection landed through the demo
+session contract while nested TUI embedding and wider runtime drift stay
+explicitly bounded.

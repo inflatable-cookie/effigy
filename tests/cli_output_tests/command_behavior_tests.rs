@@ -412,6 +412,30 @@ task = "dev"
     .expect("write concurrent demo manifest");
 }
 
+fn write_demo_concurrent_runner_input_fixture(root: &std::path::Path) {
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks.console]
+mode = "tui"
+concurrent = [
+  { name = "console", run = "printf ready\n; IFS= read line; printf got:$line\n; while true; do sleep 1; done" }
+]
+
+[demos.console]
+title = "Console"
+summary = "Projects concurrent-runner terminal interaction through demo surfaces."
+proof = "Verify concurrent-runner-backed demos can forward detached input and resize through the demo contract."
+owner = "demo"
+mode = "interactive"
+status = "ready"
+covers = ["demo.concurrent-input"]
+task = "console"
+"#,
+    )
+    .expect("write concurrent input demo manifest");
+}
+
 fn spawn_demo_run_process(root: &std::path::Path, demo_id: &str) -> std::process::Child {
     Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")
@@ -1308,7 +1332,19 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
     );
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["supports_input_forwarding"],
-        false
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["resize"]["available"],
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["stdin_input_path"],
+        ".effigy/demo/active/stack.stdin.log"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["resize_handoff_path"],
+        ".effigy/demo/active/stack.resize.jsonl"
     );
     assert!(
         parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stdout_lines"]
@@ -1325,6 +1361,83 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
         parsed["result"]["demo"]["active_terminal_session"]["stderr_log_path"],
         ".effigy/demo/logs/stack.stderr.log"
     );
+
+    let stop = run_json_cli_command(&root, &["demo", "stop", "stack"]);
+    assert!(stop.status.success(), "demo stop failed: {stop:?}");
+    wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
+}
+
+#[test]
+fn cli_demo_input_json_forwards_to_running_concurrent_runner_demo_session() {
+    let root = temp_workspace("demo-concurrent-input-json");
+    write_demo_concurrent_runner_input_fixture(&root);
+
+    let mut child = spawn_demo_run_process(&root, "console");
+    let active_path = root.join(".effigy/demo/active/console.json");
+    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "demo",
+            "input",
+            "console",
+            "--text",
+            "hello",
+            "--append-newline",
+        ],
+    );
+    assert!(output.status.success(), "demo input failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.demo.input.v1");
+    assert_eq!(parsed["result"]["demo_id"], "console");
+    assert_eq!(parsed["result"]["input"]["forwarded_bytes"], 6);
+    assert_eq!(
+        parsed["result"]["active_terminal_session"]["input_forwarding"]["available"],
+        true
+    );
+
+    let handoff = fs::read_to_string(root.join(".effigy/demo/active/console.stdin.log"))
+        .expect("read concurrent terminal input handoff");
+    assert_eq!(handoff, "hello\n");
+
+    let stop = run_json_cli_command(&root, &["demo", "stop", "console"]);
+    assert!(stop.status.success(), "demo stop failed: {stop:?}");
+    wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
+}
+
+#[test]
+fn cli_demo_resize_json_updates_concurrent_runner_terminal_session_geometry() {
+    let root = temp_workspace("demo-concurrent-resize-json");
+    write_demo_concurrent_runner_fixture(&root);
+
+    let mut child = spawn_demo_run_process(&root, "stack");
+    let active_path = root.join(".effigy/demo/active/stack.json");
+    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+
+    let output = run_json_cli_command(
+        &root,
+        &["demo", "resize", "stack", "--cols", "144", "--rows", "41"],
+    );
+    assert!(output.status.success(), "demo resize failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.demo.resize.v1");
+    assert_eq!(parsed["result"]["demo_id"], "stack");
+    assert_eq!(parsed["result"]["terminal_size"]["cols"], 144);
+    assert_eq!(parsed["result"]["terminal_size"]["rows"], 41);
+    assert_eq!(
+        parsed["result"]["active_terminal_session"]["terminal_size"]["cols"],
+        144
+    );
+    assert_eq!(
+        parsed["result"]["active_terminal_session"]["terminal_size"]["rows"],
+        41
+    );
+
+    let handoff = fs::read_to_string(root.join(".effigy/demo/active/stack.resize.jsonl"))
+        .expect("read concurrent resize handoff");
+    assert!(handoff.contains("\"cols\":144"));
+    assert!(handoff.contains("\"rows\":41"));
 
     let stop = run_json_cli_command(&root, &["demo", "stop", "stack"]);
     assert!(stop.status.success(), "demo stop failed: {stop:?}");

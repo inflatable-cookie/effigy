@@ -69,7 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to add bounded concurrent-runner
-terminal interaction projection through the demo session contract, while
-browser churn, nested TUI embedding, and generic runtime-manager drift stay
-out of bounds.
+Execute the active `g02.003` ready card next to decide the next bounded slice
+after concurrent-runner terminal interaction projection landed through the
+demo session contract, while browser churn, nested TUI embedding, and generic
+runtime-manager drift stay out of bounds.

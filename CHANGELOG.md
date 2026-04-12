@@ -105,6 +105,10 @@ During v0.x, MINOR bumps may include breaking changes.
   contract so `demo inspect`, active terminal/session reporting, and `demo stop`
   expose honest flattened concurrent-runner facts without launching a nested
   TUI
+- Deepen concurrent-runner-backed demo sessions with bounded input-forwarding
+  and resize projection so detached browser and CLI consumers can use the same
+  demo-owned interaction contract already exposed by run-backed demos without
+  nested TUI launch
 - Deepen active demo terminal/session reporting with explicit terminal size,
   resize posture, and detached-session resize handoff metadata, and have
   `effigy demo browser` auto-sync the terminal tab viewport through that
