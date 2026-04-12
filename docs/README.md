@@ -129,6 +129,7 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to add bounded history-query
-narrowing and selection ergonomics, then keep the docs front doors aligned to
-that narrower slice.
+Use the active strict `g02.003` spec lane to decide whether any later
+demo-history density should remain query-first or can safely move into a
+client/browser consumer, then keep the docs front doors aligned to that
+bounded slice.

@@ -272,8 +272,12 @@ pub enum DemoSubcommand {
         demo_id: String,
         /// Optional maximum number of recent attempts to render.
         limit: Option<usize>,
+        /// Optional retained-outcome filter for one demo's history.
+        outcome: Option<DemoHistoryOutcome>,
         /// Optional stable retained attempt id to inspect in detail.
         attempt_id: Option<String>,
+        /// Optional 1-based displayed ordinal to inspect in detail.
+        attempt_ordinal: Option<usize>,
     },
     /// Execute one declared demo and record a normalized latest attempt.
     Run {
@@ -290,6 +294,24 @@ pub enum DemoSubcommand {
         /// Stable demo id carried by the `[demos.<id>]` map key.
         demo_id: String,
     },
+}
+
+/// Reusable retained demo-history outcomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DemoHistoryOutcome {
+    Passed,
+    Failed,
+    Terminated,
+}
+
+impl DemoHistoryOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+            Self::Terminated => "terminated",
+        }
+    }
 }
 
 /// Reusable docs QA subcommands.

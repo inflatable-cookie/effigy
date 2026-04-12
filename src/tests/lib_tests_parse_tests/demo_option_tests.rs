@@ -1,3 +1,5 @@
+use crate::DemoHistoryOutcome;
+
 use super::prelude::{
     parse_command, Command, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery,
     DemoListStatus, DemoSubcommand, PathBuf,
@@ -131,8 +133,12 @@ fn parse_demo_history_with_limit_repo_and_json() {
         "login-smoke".to_owned(),
         "--limit".to_owned(),
         "5".to_owned(),
+        "--outcome".to_owned(),
+        "failed".to_owned(),
         "--attempt".to_owned(),
         "login-smoke-123".to_owned(),
+        "--ordinal".to_owned(),
+        "2".to_owned(),
         "--json".to_owned(),
     ])
     .expect("parse should succeed");
@@ -143,7 +149,9 @@ fn parse_demo_history_with_limit_repo_and_json() {
             subcommand: DemoSubcommand::History {
                 demo_id: "login-smoke".to_owned(),
                 limit: Some(5),
+                outcome: Some(DemoHistoryOutcome::Failed),
                 attempt_id: Some("login-smoke-123".to_owned()),
+                attempt_ordinal: Some(2),
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,

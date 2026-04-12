@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use crate::{
     BootstrapArgs, ChangelogArgs, ChangelogSubcommand, Command, ContractsArgs, ContractsCheckMode,
-    ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs, DemoListGap, DemoListGroupBy,
-    DemoListMode, DemoListQuery, DemoListStatus, DemoSubcommand, DistributionArgs,
+    ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs, DemoHistoryOutcome, DemoListGap,
+    DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSubcommand, DistributionArgs,
     DistributionSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, HelpTopic,
     ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
 };
@@ -323,7 +323,9 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut limit: Option<usize> = None;
+    let mut outcome: Option<DemoHistoryOutcome> = None;
     let mut attempt_id: Option<String> = None;
+    let mut attempt_ordinal: Option<usize> = None;
     let mut demo_id: Option<String> = None;
 
     while let Some(arg) = args.next() {
@@ -331,28 +333,16 @@ where
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
             "--limit" => {
+                limit = Some(parse_positive_integer(&mut args, "--limit")?);
+            }
+            "--outcome" => {
                 let value = next_required_value(
                     &mut args,
                     CliParseError::MissingFlagValue {
-                        flag: "--limit".to_owned(),
+                        flag: "--outcome".to_owned(),
                     },
                 )?;
-                let parsed =
-                    value
-                        .parse::<usize>()
-                        .map_err(|_| CliParseError::InvalidFlagValue {
-                            flag: "--limit".to_owned(),
-                            value: value.clone(),
-                            expected: "a positive integer".to_owned(),
-                        })?;
-                if parsed == 0 {
-                    return Err(CliParseError::InvalidFlagValue {
-                        flag: "--limit".to_owned(),
-                        value,
-                        expected: "a positive integer".to_owned(),
-                    });
-                }
-                limit = Some(parsed);
+                outcome = Some(parse_demo_history_outcome(value)?);
             }
             "--attempt" => {
                 attempt_id = Some(next_required_value(
@@ -361,6 +351,9 @@ where
                         flag: "--attempt".to_owned(),
                     },
                 )?);
+            }
+            "--ordinal" => {
+                attempt_ordinal = Some(parse_positive_integer(&mut args, "--ordinal")?);
             }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Demo)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
@@ -379,7 +372,9 @@ where
         subcommand: DemoSubcommand::History {
             demo_id,
             limit,
+            outcome,
             attempt_id,
+            attempt_ordinal,
         },
         repo_override,
         output_json,
@@ -417,6 +412,46 @@ where
         repo_override,
         output_json,
     }))
+}
+
+fn parse_demo_history_outcome(value: String) -> Result<DemoHistoryOutcome, CliParseError> {
+    match value.as_str() {
+        "passed" => Ok(DemoHistoryOutcome::Passed),
+        "failed" => Ok(DemoHistoryOutcome::Failed),
+        "terminated" => Ok(DemoHistoryOutcome::Terminated),
+        _ => Err(CliParseError::InvalidFlagValue {
+            flag: "--outcome".to_owned(),
+            value,
+            expected: "`passed`, `failed`, or `terminated`".to_owned(),
+        }),
+    }
+}
+
+fn parse_positive_integer<I>(args: &mut I, flag: &str) -> Result<usize, CliParseError>
+where
+    I: Iterator<Item = String>,
+{
+    let value = next_required_value(
+        args,
+        CliParseError::MissingFlagValue {
+            flag: flag.to_owned(),
+        },
+    )?;
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| CliParseError::InvalidFlagValue {
+            flag: flag.to_owned(),
+            value: value.clone(),
+            expected: "a positive integer".to_owned(),
+        })?;
+    if parsed == 0 {
+        return Err(CliParseError::InvalidFlagValue {
+            flag: flag.to_owned(),
+            value,
+            expected: "a positive integer".to_owned(),
+        });
+    }
+    Ok(parsed)
 }
 
 fn parse_demo_stop<I>(args: I) -> Result<Command, CliParseError>

@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to add bounded history-query narrowing and selection
-ergonomics, then keep this area trimmed so it reflects live planning rather
-than every historical plan.
+Use the active spec lane to decide whether any later demo-history density
+should remain query-first or can safely move into a client, then keep this
+area trimmed so it reflects live planning rather than every historical plan.

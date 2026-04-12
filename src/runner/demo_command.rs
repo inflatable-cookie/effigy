@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Read, Write};
@@ -27,7 +28,8 @@ use crate::runner::util::with_local_node_bin_path;
 use crate::tui::run_demo_browser_tui;
 use crate::ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer, TableSpec};
 use crate::{
-    DemoArgs, DemoListGroupBy, DemoListQuery, DemoListStatus, DemoSubcommand, TaskInvocation,
+    DemoArgs, DemoHistoryOutcome, DemoListGroupBy, DemoListQuery, DemoListStatus, DemoSubcommand,
+    TaskInvocation,
 };
 
 use super::error::RunnerError;
@@ -68,13 +70,17 @@ pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
         DemoSubcommand::History {
             demo_id,
             limit,
+            outcome,
             attempt_id,
+            attempt_ordinal,
         } => render_demo_history(
             &repo_root,
             &loaded,
             &demo_id,
             limit,
+            outcome,
             attempt_id.as_deref(),
+            attempt_ordinal,
             args.output_json,
         ),
         DemoSubcommand::Run { demo_id } => render_demo_execute(
@@ -306,7 +312,9 @@ fn render_demo_history(
     loaded: &LoadedTaskManifest,
     demo_id: &str,
     limit: Option<usize>,
+    outcome: Option<DemoHistoryOutcome>,
     selected_attempt_id: Option<&str>,
+    selected_attempt_ordinal: Option<usize>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let Some(demo) = loaded.manifest.demos.get(demo_id) else {
@@ -319,12 +327,29 @@ fn render_demo_history(
     };
 
     let record = build_demo_record(repo_root, loaded, demo_id, demo)?;
-    let displayed_attempts = history_attempts_with_limit(&record.attempt_history, limit);
+    if selected_attempt_id.is_some() && selected_attempt_ordinal.is_some() {
+        return demo_error(
+            output_json,
+            "effigy.demo.history.v1",
+            "choose either `--attempt <ATTEMPT_ID>` or `--ordinal <N>`, not both".to_owned(),
+            json!({
+                "demo_id": demo_id,
+                "attempt_id": selected_attempt_id,
+                "ordinal": selected_attempt_ordinal,
+            }),
+        );
+    }
+
+    let filtered_attempts = history_attempts_with_outcome(&record.attempt_history, outcome);
+    let displayed_attempts = history_attempts_with_limit(&filtered_attempts, limit);
+    let filtered_count = filtered_attempts.len();
     let displayed_count = displayed_attempts.len();
     let stored_count = record.attempt_history.attempts.len();
-    let selected_attempt = match selected_attempt_id {
-        Some(attempt_id) => {
-            let Some(attempt) = find_historical_attempt(&record.attempt_history, attempt_id) else {
+    let selected_attempt = match (selected_attempt_id, selected_attempt_ordinal) {
+        (Some(attempt_id), None) => {
+            let Some(attempt) =
+                find_historical_attempt(&record.attempt_history.attempts, attempt_id)
+            else {
                 return demo_error(
                     output_json,
                     "effigy.demo.history.v1",
@@ -337,7 +362,25 @@ fn render_demo_history(
             };
             Some(attempt)
         }
-        None => None,
+        (None, Some(ordinal)) => {
+            let Some(attempt) = displayed_attempts.get(ordinal - 1).copied() else {
+                return demo_error(
+                    output_json,
+                    "effigy.demo.history.v1",
+                    format!(
+                        "retained attempt ordinal `{ordinal}` was not found in the current history result for demo `{demo_id}`"
+                    ),
+                    json!({
+                        "demo_id": demo_id,
+                        "ordinal": ordinal,
+                        "displayed_count": displayed_count,
+                    }),
+                );
+            };
+            Some(attempt)
+        }
+        (Some(_), Some(_)) => unreachable!("selection flags are mutually exclusive"),
+        (None, None) => None,
     };
 
     if output_json {
@@ -350,7 +393,9 @@ fn render_demo_history(
                 "query": {
                     "demo_id": demo_id,
                     "limit": limit,
+                    "outcome": outcome.map(DemoHistoryOutcome::as_str),
                     "attempt_id": selected_attempt_id,
+                    "ordinal": selected_attempt_ordinal,
                 },
                 "demo": {
                     "id": record.id,
@@ -364,11 +409,15 @@ fn render_demo_history(
                 "attempt_history": {
                     "path": record.attempt_history.path,
                     "stored_count": stored_count,
+                    "filtered_count": filtered_count,
                     "displayed_count": displayed_count,
                     "count": displayed_count,
                     "limit": limit,
+                    "outcome": outcome.map(DemoHistoryOutcome::as_str),
                     "parse_error": record.attempt_history.parse_error,
-                    "attempts": displayed_attempts.iter().map(DemoHistoricalAttempt::to_json).collect::<Vec<_>>(),
+                    "attempts": displayed_attempts.iter().enumerate().map(|(index, attempt)| {
+                        history_attempt_to_json(index + 1, attempt)
+                    }).collect::<Vec<_>>(),
                 },
                 "selected_attempt": selected_attempt.map(DemoHistoricalAttempt::to_json),
             }),
@@ -392,6 +441,7 @@ fn render_demo_history(
                 .unwrap_or_else(|| "<none>".to_owned()),
         ),
         KeyValue::new("stored-attempts", stored_count.to_string()),
+        KeyValue::new("matching-attempts", filtered_count.to_string()),
         KeyValue::new("showing", displayed_count.to_string()),
         KeyValue::new(
             "limit",
@@ -400,8 +450,20 @@ fn render_demo_history(
                 .unwrap_or_else(|| "all".to_owned()),
         ),
         KeyValue::new(
+            "outcome",
+            outcome
+                .map(|value| value.as_str().to_owned())
+                .unwrap_or_else(|| "all".to_owned()),
+        ),
+        KeyValue::new(
             "selected-attempt",
             selected_attempt_id.unwrap_or("none").to_owned(),
+        ),
+        KeyValue::new(
+            "selected-ordinal",
+            selected_attempt_ordinal
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_owned()),
         ),
     ])?;
     renderer.text("")?;
@@ -433,10 +495,14 @@ fn render_demo_history(
         renderer.text("")?;
     }
     if displayed_attempts.is_empty() {
-        renderer.notice(
-            NoticeLevel::Info,
-            "No retained terminal attempts are recorded for this demo yet.",
-        )?;
+        let message = if stored_count == 0 {
+            "No retained terminal attempts are recorded for this demo yet."
+        } else if outcome.is_some() {
+            "No retained terminal attempts matched the current history query."
+        } else {
+            "No retained terminal attempts are available in the current history window."
+        };
+        renderer.notice(NoticeLevel::Info, message)?;
     } else {
         renderer.table(&recent_attempts_table_spec(displayed_attempts))?;
     }
@@ -874,9 +940,13 @@ fn demo_table_spec(demos: &[&DemoRecord]) -> TableSpec {
     )
 }
 
-fn recent_attempts_table_spec(attempts: &[DemoHistoricalAttempt]) -> TableSpec {
+fn recent_attempts_table_spec<T>(attempts: &[T]) -> TableSpec
+where
+    T: Borrow<DemoHistoricalAttempt>,
+{
     TableSpec::new(
         vec![
+            "#".to_owned(),
             "Attempt ID".to_owned(),
             "Recorded".to_owned(),
             "Status".to_owned(),
@@ -885,8 +955,12 @@ fn recent_attempts_table_spec(attempts: &[DemoHistoricalAttempt]) -> TableSpec {
         ],
         attempts
             .iter()
+            .enumerate()
             .map(|attempt| {
+                let (index, attempt) = attempt;
+                let attempt = attempt.borrow();
                 vec![
+                    (index + 1).to_string(),
                     attempt.attempt_id.clone(),
                     attempt.recorded_at_epoch_ms.to_string(),
                     attempt.outcome.clone(),
@@ -904,22 +978,44 @@ fn recent_attempts_table_spec(attempts: &[DemoHistoricalAttempt]) -> TableSpec {
     )
 }
 
-fn history_attempts_with_limit(
+fn history_attempt_to_json(ordinal: usize, attempt: &DemoHistoricalAttempt) -> JsonValue {
+    let mut value = attempt.to_json();
+    if let Some(object) = value.as_object_mut() {
+        object.insert("ordinal".to_owned(), json!(ordinal));
+    }
+    value
+}
+
+fn history_attempts_with_outcome(
     history: &DemoAttemptHistory,
+    outcome: Option<DemoHistoryOutcome>,
+) -> Vec<&DemoHistoricalAttempt> {
+    history
+        .attempts
+        .iter()
+        .filter(|attempt| {
+            outcome
+                .map(|value| attempt.outcome == value.as_str())
+                .unwrap_or(true)
+        })
+        .collect()
+}
+
+fn history_attempts_with_limit<'a>(
+    attempts: &'a [&'a DemoHistoricalAttempt],
     limit: Option<usize>,
-) -> &[DemoHistoricalAttempt] {
+) -> &'a [&'a DemoHistoricalAttempt] {
     let end = limit
-        .map(|value| value.min(history.attempts.len()))
-        .unwrap_or(history.attempts.len());
-    &history.attempts[..end]
+        .map(|value| value.min(attempts.len()))
+        .unwrap_or(attempts.len());
+    &attempts[..end]
 }
 
 fn find_historical_attempt<'a>(
-    history: &'a DemoAttemptHistory,
+    attempts: &'a [DemoHistoricalAttempt],
     attempt_id: &str,
 ) -> Option<&'a DemoHistoricalAttempt> {
-    history
-        .attempts
+    attempts
         .iter()
         .find(|attempt| attempt.attempt_id == attempt_id)
 }

@@ -1549,6 +1549,49 @@ Out of scope for the next implementation slice:
 - `demo list` history summaries or grouping changes
 - multi-demo history aggregation, analytics, queueing, or broader runtime work
 
+Batch `03.33` result:
+
+- `effigy demo history <id>` now supports `--outcome <OUTCOME>` filtering for
+  retained `passed`, `failed`, and `terminated` outcomes
+- `effigy demo history <id> --ordinal <N>` now selects the Nth retained
+  attempt from the current narrowed history result set without requiring a long
+  attempt id copy/paste flow
+- text and JSON history output now expose visible ordinals and filtered-count
+  metadata while keeping the stable `--attempt <ATTEMPT_ID>` drilldown path
+  intact
+
+Why this batch was the right implementation slice:
+
+- it deepened the dedicated history query contract where the real ergonomic gap
+  still lived instead of reopening browser or list density churn
+- it kept history review one-demo and query-first rather than widening into
+  generic timeline tooling
+- later browser/client work can now consume a more settled narrowing and
+  selection contract instead of inventing one through presentation
+
+### 10.31 Post-History-Query-Controls Boundary
+
+Batch `03.34` target:
+
+Choose the next bounded follow-up after shipped one-demo history query
+controls without reopening browser churn or widening into generic timeline
+tooling.
+
+In scope for the next decision slice:
+
+- assess the shipped `demo history` outcome-filtering and ordinal-selection
+  surface against the self-hosted demos
+- decide whether any later history density should remain query-first or can
+  safely move into a client/browser consumer
+- leave the lane with one explicit ready card instead of free-continuing into
+  UI density or generic analytics
+
+Out of scope for the next decision slice:
+
+- implementing browser-side history panes, badges, or timelines immediately
+- widening into multi-demo history aggregation, analytics, or queueing
+- broader runtime cancellation or desktop-client work
+
 ### 10.27 Demo History Query Follow-Up Boundary
 
 Batch `03.30` target:
@@ -1591,6 +1634,6 @@ Out of scope for the next decision slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to choose the next bounded follow-up
-after the shipped `demo history` query surface, while wider runtime expansion
-remains deferred.
+Use the active `g02.003` strict lane to decide whether any later history
+density should remain query-first or can safely move into a client/browser
+consumer, while wider runtime expansion remains deferred.
