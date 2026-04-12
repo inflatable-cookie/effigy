@@ -107,6 +107,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Remove the redundant bracketed action summary from `effigy demo browser`
   list rows now that run/history/artifact affordances are owned by the detail
   pane instead of the left-hand list
+- Make `Esc` in `effigy demo browser` return from nested detail-pane history
+  back to the demo overview before quitting, so `Esc` only exits the browser
+  from the root overview surface
 
 ### Fixed
 - Make stop-requested run-backed demos persist `stop-requested` state before
