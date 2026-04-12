@@ -78,9 +78,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`072-implement-demo-browser-live-concurrent-runner-session-parity.md`](./072-implement-demo-browser-live-concurrent-runner-session-parity.md) (complete)
 - [`073-decide-demo-post-browser-live-concurrent-runner-session-parity-boundary.md`](./073-decide-demo-post-browser-live-concurrent-runner-session-parity-boundary.md) (complete)
 - [`074-implement-demo-concurrent-runtime-projection-shape-contract.md`](./074-implement-demo-concurrent-runtime-projection-shape-contract.md) (complete)
-- [`075-decide-demo-post-concurrent-runtime-projection-shape-boundary.md`](./075-decide-demo-post-concurrent-runtime-projection-shape-boundary.md)
+- [`075-decide-demo-post-concurrent-runtime-projection-shape-boundary.md`](./075-decide-demo-post-concurrent-runtime-projection-shape-boundary.md) (complete)
+- [`076-implement-demo-concurrent-runtime-projected-process-summary-contract.md`](./076-implement-demo-concurrent-runtime-projected-process-summary-contract.md)
 
 ## Next Task
 
-Execute the active ready card to decide the next bounded slice after
-runner-owned concurrent-runtime projection-shape truth landed.
+Execute the active ready card to add bounded runner-owned projected-process
+summary facts for projected concurrent demos.

@@ -69,7 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide the next bounded slice
-after runner-owned concurrent-runtime projection-shape truth landed, while
-nested TUI embedding and multi-process browser-manager drift stay out of
-bounds.
+Execute the active `g02.003` ready card next to add bounded runner-owned
+projected-process summary facts for concurrent-runner demos that stay on the
+flattened session path, while nested TUI embedding and multi-process
+browser-manager drift stay out of bounds.
