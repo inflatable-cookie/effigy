@@ -1,6 +1,6 @@
 # 046 Decide Demo Post-Browser-Terminal-View Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -48,4 +48,6 @@ widening into nested TUI embedding or ad-hoc browser churn.
 
 ## Next Task
 
-Execute the ready follow-up selected after this boundary decision lands.
+Execute [`047-implement-demo-active-terminal-input-contract.md`](./047-implement-demo-active-terminal-input-contract.md)
+to deepen the runner-owned active demo terminal/session contract with bounded
+input-forwarding semantics before any browser tab convergence work.

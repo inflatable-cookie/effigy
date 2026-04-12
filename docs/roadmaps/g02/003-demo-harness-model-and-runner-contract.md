@@ -1850,6 +1850,51 @@ Out of scope for the next decision slice:
 - retained-history replay as an interactive terminal
 - broader runtime cancellation or desktop-client work
 
+Batch `03.40` result:
+
+- the next bounded slice is deeper runner-owned active-terminal input/session
+  contract work, not browser tab convergence
+- demo-scoped tabs such as `Overview`, `History`, `Terminal`, and `Artifacts`
+  remain a plausible later presentation move, but they are now explicitly
+  deferred behind the interaction contract
+- the no-nested-TUI rule remains intact for demos backed by the concurrent
+  runner
+
+Why this batch was the right decision slice:
+
+- operator feedback made live terminal interaction the real missing capability,
+  not another browser presentation pass
+- tabs are presentation polish until the runner exposes honest interaction
+  semantics that later clients can consume
+- keeping input semantics runner-owned prevents the browser from inventing
+  transport and ownership rules client-side
+
+### 10.38 Demo Active Terminal Input Contract
+
+Batch `03.41` target:
+
+Deepen the runner-owned active demo terminal/session contract with bounded
+input-forwarding semantics so later browser terminal work can support live demo
+interaction without nested TUIs.
+
+In scope for the next implementation slice:
+
+- extend the one-demo active terminal/session contract with explicit
+  input-forwarding capability and invocation shape
+- keep the contract active-attempt scoped rather than turning into generic
+  process-manager control
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+- expose enough runner-owned surface that a later browser terminal view can
+  send bounded input honestly
+
+Out of scope for the next implementation slice:
+
+- browser tab convergence or broader browser layout changes
+- embedding the concurrent TUI inside `effigy demo browser`
+- multi-process demo sub-tabs or generic managed-process controls
+- retained-history replay as an interactive terminal
+- broad runtime cancellation or desktop-client work
+
 ## 11) Acceptance Criteria
 
 - [ ] Effigy has a clear first-class demo model that is not reducible to random
@@ -1871,7 +1916,7 @@ Out of scope for the next decision slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide whether the next bounded
-terminal/demo slice should prioritize browser tab convergence or deeper
-runner-owned active-session input work, while nested TUI embedding and wider
-runtime expansion remain deferred.
+Use the active `g02.003` strict lane to deepen the runner-owned active demo
+terminal/session contract with bounded input-forwarding semantics, while
+browser tab convergence, nested TUI embedding, and wider runtime expansion
+remain deferred.

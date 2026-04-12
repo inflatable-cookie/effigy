@@ -49,10 +49,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`043-decide-demo-post-integrated-browser-history-boundary.md`](./043-decide-demo-post-integrated-browser-history-boundary.md) (complete)
 - [`044-implement-demo-active-terminal-session-handoff.md`](./044-implement-demo-active-terminal-session-handoff.md) (complete)
 - [`045-implement-demo-browser-terminal-view.md`](./045-implement-demo-browser-terminal-view.md) (complete)
-- [`046-decide-demo-post-browser-terminal-view-boundary.md`](./046-decide-demo-post-browser-terminal-view-boundary.md)
+- [`046-decide-demo-post-browser-terminal-view-boundary.md`](./046-decide-demo-post-browser-terminal-view-boundary.md) (complete)
+- [`047-implement-demo-active-terminal-input-contract.md`](./047-implement-demo-active-terminal-input-contract.md)
 
 ## Next Task
 
-Execute the active ready card to decide whether the next bounded terminal/demo
-slice should prioritize browser tab convergence or deeper runner-owned
-active-session input work.
+Execute the active ready card to deepen the runner-owned active demo terminal
+session contract with bounded input-forwarding semantics before any browser tab
+convergence work.

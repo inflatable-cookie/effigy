@@ -69,7 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide whether the next
-terminal/demo slice should prioritize browser tab convergence or deeper
-runner-owned active-session input work, while broader runtime expansion and
+Execute the active `g02.003` ready card next to deepen the runner-owned active
+demo terminal/session contract with bounded input-forwarding semantics, while
+browser tab convergence, nested TUI embedding, broader runtime expansion, and
 desktop-client questions stay separate.
