@@ -2791,6 +2791,51 @@ Decision focus:
   truth slice
 - whether browser-terminal work is coherent enough to pause again
 
+Batch `03.66` result:
+
+- do not spend the next slot on more browser chrome or controls
+- do not widen into multi-process browser tabs or nested TUI embedding
+- do not pause the lane yet
+- the next bounded slice is runner-owned concurrent-runtime projection-shape
+  truth for richer concurrent-runner demos
+
+Why this decision is the right boundary:
+
+- browser parity is now good enough for the honest single-terminal cases
+- the main remaining gap is runner truth about why richer concurrent demos stay
+  projected
+- more browser work now would force semantics through UI again
+- a projection-shape contract is the smallest slice that protects later UI work
+  from inventing multi-process semantics
+
+### 10.64 Demo Concurrent Runtime Projection-Shape Contract
+
+Batch `03.67` target:
+
+Add runner-owned projection-shape facts for concurrent-runner-backed demos so
+clients can tell when a demo is a single-terminal live-attach candidate versus
+a projected multi-process runtime that should stay on the flattened session
+path.
+
+In scope for the next implementation slice:
+
+- add bounded demo/runtime facts for concurrent-runner-backed demos:
+  - single-process vs multi-process projection shape
+  - whether the runtime still fits one demo-owned live terminal
+  - whether the session is projected because multiple managed processes sit
+    behind it
+- expose those facts through inspect and active terminal/session payloads
+- keep browser and future clients consuming runner truth instead of inventing
+  multi-process heuristics
+
+Out of scope for the next implementation slice:
+
+- multi-process browser tabs or panes
+- embedding the concurrent TUI
+- generic process-manager controls
+- redesigning browser layout again
+- desktop-client work
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -2860,7 +2905,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the next bounded slice after
-browser-owned live attached terminal sessions reached bounded parity for
-run-backed and single-process concurrent-runner-backed demos while nested TUI
+Use the active `g02.003` strict lane to add runner-owned concurrent-runtime
+projection-shape truth for richer concurrent-runner demos while nested TUI
 embedding and multi-process browser-manager drift stay explicitly bounded.

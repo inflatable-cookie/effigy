@@ -69,8 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide the next bounded slice
-after browser-owned live attached terminal sessions reached bounded parity for
-run-backed and single-process concurrent-runner-backed interactive demos, while
-nested TUI embedding and multi-process browser-manager drift stay out of
+Execute the active `g02.003` ready card next to add runner-owned
+concurrent-runtime projection-shape facts for richer concurrent-runner demos,
+while nested TUI embedding and multi-process browser-manager drift stay out of
 bounds.
