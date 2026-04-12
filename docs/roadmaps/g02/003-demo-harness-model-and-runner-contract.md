@@ -2664,6 +2664,45 @@ Out of scope for the next implementation slice:
 - broad backend unification beyond the bounded run-backed browser-attached path
 - desktop-client work
 
+Batch `03.63` result:
+
+- browser-launched run-backed interactive demos now run through a browser-owned
+  live attached terminal session instead of the terminal tab replaying logs
+- the `Terminal` tab now renders live subprocess output and sends typed keys
+  directly to that live session while it is active
+- browser-owned live sessions still execute through the normal `effigy demo
+  run|rerun` runner path, so runner-owned receipts, logs, latest-attempt
+  state, and retained history remain authoritative
+- concurrent-runner-backed demos stay on the existing flattened projected path
+  and still do not launch nested TUI
+
+Why this implementation matters:
+
+- it closes the real operator-facing gap: the demo now actually runs in the
+  browser terminal pane for the bounded run-backed interactive path
+- it preserves runner ownership of proof artifacts instead of copying run
+  semantics into the browser
+- it keeps the no-nested-TUI rule intact while still making the browser a real
+  live interaction surface
+
+### 10.61 Demo Post-Browser-Live-Attached-Terminal-Session Boundary
+
+Batch `03.64` target:
+
+Choose the next bounded slice after browser-owned live attached terminal
+sessions landed for browser-launched run-backed interactive demos, while
+keeping the lane demo-scoped and bounded away from nested TUI embedding,
+generic process-manager work, and fresh browser churn unless it clearly earns
+the next slot.
+
+Decision focus:
+
+- whether the next value belongs in one more bounded browser terminal follow-up
+  on the new live attached path
+- whether a runner-owned follow-up should broaden backend parity behind the
+  browser
+- whether browser-terminal work is coherent enough to pause again
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -2733,7 +2772,7 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to replace browser terminal replay with a
-browser-owned live attached terminal session for browser-launched run-backed
-interactive demos while nested TUI embedding and wider runtime drift stay
-explicitly bounded.
+Use the active `g02.003` strict lane to decide the next bounded slice after
+browser-owned live attached terminal sessions landed for browser-launched
+run-backed interactive demos while nested TUI embedding and wider runtime
+drift stay explicitly bounded.

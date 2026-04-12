@@ -69,7 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to replace browser terminal replay
-with a browser-owned live attached terminal session for browser-launched
+Execute the active `g02.003` ready card next to decide the next bounded slice
+after browser-owned live attached terminal sessions landed for browser-launched
 run-backed interactive demos, while nested TUI embedding and generic
 runtime-manager drift stay out of bounds.

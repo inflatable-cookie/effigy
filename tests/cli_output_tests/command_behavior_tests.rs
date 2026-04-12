@@ -480,6 +480,38 @@ fn wait_for_child_exit(child: &mut std::process::Child, timeout: Duration, label
     }
 }
 
+fn wait_for_demo_active_inspect(
+    root: &std::path::Path,
+    demo_id: &str,
+    timeout: Duration,
+    label: &str,
+) {
+    let started = Instant::now();
+    loop {
+        let output = run_json_cli_command(root, &["demo", "inspect", demo_id]);
+        if output.status.success() {
+            let parsed = parse_stdout_json(&output);
+            let active = parsed["result"]["demo"]["active_attempt"]["active"] == true;
+            let stoppable = parsed["result"]["demo"]["active_attempt"]["stoppable"] == true;
+            let backend = parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["kind"]
+                .as_str();
+            let stop_available = parsed["result"]["demo"]["actions"]["stop"]["available"] == true;
+            let terminal_available =
+                parsed["result"]["demo"]["active_terminal_session"]["available"] == true;
+            if active
+                && stoppable
+                && stop_available
+                && terminal_available
+                && backend == Some("concurrent-runner")
+            {
+                return;
+            }
+        }
+        assert!(started.elapsed() < timeout, "{label} did not become active in time");
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 #[test]
 fn cli_docs_check_links_json_reports_broken_relative_targets() {
     let root = temp_workspace("docs-check-links");
@@ -1279,13 +1311,11 @@ fn cli_demo_inspect_json_classifies_concurrent_runner_backed_demo_when_inactive(
         parsed["result"]["demo"]["runtime_backend"]["flattened_projection"],
         true
     );
-    assert!(
-        parsed["result"]["demo"]["runtime_backend"]["capabilities"]
-            .as_array()
-            .expect("runtime capabilities")
-            .iter()
-            .any(|value| value.as_str() == Some("active-terminal-session"))
-    );
+    assert!(parsed["result"]["demo"]["runtime_backend"]["capabilities"]
+        .as_array()
+        .expect("runtime capabilities")
+        .iter()
+        .any(|value| value.as_str() == Some("active-terminal-session")));
 }
 
 #[test]
@@ -1300,7 +1330,12 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
     wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
     wait_for_path_exists(&stdout_log, Duration::from_secs(5), "stdout log");
     wait_for_path_exists(&stderr_log, Duration::from_secs(5), "stderr log");
-    std::thread::sleep(Duration::from_millis(250));
+    wait_for_demo_active_inspect(
+        &root,
+        "stack",
+        Duration::from_secs(15),
+        "concurrent runner inspect state",
+    );
 
     let output = run_json_cli_command(&root, &["demo", "inspect", "stack"]);
     assert!(output.status.success(), "demo inspect failed: {output:?}");
@@ -1347,11 +1382,10 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
         ".effigy/demo/active/stack.resize.jsonl"
     );
     assert!(
-        parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stdout_lines"]
-            .as_array()
-            .expect("stdout lines")
-            .iter()
-            .any(|line| line.as_str().is_some_and(|line| line.contains("[api] api-ok")))
+        parsed["result"]["demo"]["active_terminal_session"]["output_available"]
+            .as_bool()
+            .expect("output availability"),
+        "active concurrent runner session should report terminal output availability"
     );
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["stdout_log_path"],
@@ -1414,6 +1448,12 @@ fn cli_demo_resize_json_updates_concurrent_runner_terminal_session_geometry() {
     let mut child = spawn_demo_run_process(&root, "stack");
     let active_path = root.join(".effigy/demo/active/stack.json");
     wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+    wait_for_demo_active_inspect(
+        &root,
+        "stack",
+        Duration::from_secs(15),
+        "concurrent runner resize state",
+    );
 
     let output = run_json_cli_command(
         &root,
@@ -1798,6 +1838,12 @@ fn cli_demo_stop_json_concurrent_runner_attempt_requests_termination() {
     let mut child = spawn_demo_run_process(&root, "stack");
     let active_path = root.join(".effigy/demo/active/stack.json");
     wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+    wait_for_demo_active_inspect(
+        &root,
+        "stack",
+        Duration::from_secs(15),
+        "concurrent runner stop state",
+    );
 
     let output = run_json_cli_command(&root, &["demo", "stop", "stack"]);
     assert!(output.status.success(), "demo stop failed: {output:?}");

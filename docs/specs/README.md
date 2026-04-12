@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to implement the browser-owned live attached terminal
-session slice next, then keep this area trimmed so it reflects live planning
-rather than stale lane history.
+Use the active spec lane to decide the next bounded slice after browser-owned
+live attached terminal sessions landed, then keep this area trimmed so it
+reflects live planning rather than stale lane history.

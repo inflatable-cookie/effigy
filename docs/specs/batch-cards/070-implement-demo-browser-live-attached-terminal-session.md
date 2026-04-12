@@ -1,6 +1,6 @@
 # 070 Implement Demo Browser Live Attached Terminal Session
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -54,7 +54,20 @@ the browser replaying runner logs after the fact.
 - the batch widens into concurrent-runner live embedding instead of the bounded
   run-backed browser-attached path
 
+## Outcome
+
+- browser-launched run-backed interactive demos now run through a browser-owned
+  live attached terminal session instead of the terminal tab replaying logs
+- the `Terminal` tab now renders live subprocess output and sends typed keys
+  directly to that live session while it is active
+- the browser still relies on normal `effigy demo run|rerun` subprocesses, so
+  runner-owned receipts, logs, latest-attempt state, and retained history stay
+  populated without duplicating runner semantics in the TUI
+- concurrent-runner-backed demos remain on the existing flattened projected
+  path and still do not launch nested TUI
+
 ## Next Task
 
-Execute this card to replace browser terminal replay with a browser-owned live
-attached terminal session for browser-launched run-backed interactive demos.
+Execute [`071-decide-demo-post-browser-live-attached-terminal-session-boundary.md`](./071-decide-demo-post-browser-live-attached-terminal-session-boundary.md)
+to decide the next bounded slice after browser-owned live attached terminal
+sessions landed for browser-launched run-backed interactive demos.

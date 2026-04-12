@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Make `effigy demo browser` launch browser-owned live attached terminal
+  sessions for browser-launched run-backed interactive demos, so the `Terminal`
+  tab can host the actual running demo with direct input while runner-owned
+  logs, receipts, and history still populate behind it
 - Add general manifest composition through `[manifest].include`, including
   nested partial-fragment loading, path-scoped override enforcement, and
   deterministic conflict failures so features like `tasks`, `docs_policy`, and
