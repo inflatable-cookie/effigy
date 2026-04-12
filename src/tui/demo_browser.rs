@@ -6,20 +6,21 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::symbols::line;
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::symbols::line;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
+use vt100::Parser as VtParser;
 
 use crate::runner::{run_command, RunnerError};
 use crate::tui::core::{
@@ -70,6 +71,8 @@ struct DemoBrowserApp {
     selected_detail_entry_index: usize,
     selected_artifact_index: usize,
     selected_history_attempt_ordinal: Option<usize>,
+    terminal_scroll_offset: usize,
+    terminal_input_mode: bool,
     detail_tab: DetailTab,
     detail: Option<DemoDetail>,
     history: Option<DemoHistoryPayload>,
@@ -97,6 +100,8 @@ impl DemoBrowserApp {
             selected_detail_entry_index: 0,
             selected_artifact_index: 0,
             selected_history_attempt_ordinal: None,
+            terminal_scroll_offset: 0,
+            terminal_input_mode: false,
             detail_tab: DetailTab::Overview,
             detail: None,
             history: None,
@@ -126,7 +131,7 @@ impl DemoBrowserApp {
                     if key.kind != KeyEventKind::Press {
                         continue;
                     }
-                    if self.handle_key(key.code)? {
+                    if self.handle_key(key)? {
                         break;
                     }
                 }
@@ -137,11 +142,14 @@ impl DemoBrowserApp {
         Ok(())
     }
 
-    fn handle_key(&mut self, code: KeyCode) -> Result<bool, RunnerError> {
-        if self.handle_overlay_key(code)? {
+    fn handle_key(&mut self, key: KeyEvent) -> Result<bool, RunnerError> {
+        if self.handle_overlay_key(key.code)? {
             return Ok(false);
         }
-        match code {
+        if self.handle_terminal_input_key(&key)? {
+            return Ok(false);
+        }
+        match key.code {
             KeyCode::Esc => return Ok(self.handle_escape_key()),
             KeyCode::Char('q') => return Ok(true),
             KeyCode::Down => self.handle_down_key(),
@@ -162,6 +170,11 @@ impl DemoBrowserApp {
     }
 
     fn handle_escape_key(&mut self) -> bool {
+        if self.terminal_input_mode {
+            self.terminal_input_mode = false;
+            self.footer_message = "Terminal input capture disabled.".to_owned();
+            return false;
+        }
         if matches!(self.detail_tab, DetailTab::Overview) {
             true
         } else {
@@ -173,14 +186,30 @@ impl DemoBrowserApp {
     fn handle_down_key(&mut self) {
         match self.focus {
             BrowserFocus::List => self.select_next_demo(),
-            BrowserFocus::Detail => self.select_next_detail_entry(),
+            BrowserFocus::Detail => {
+                if matches!(self.detail_tab, DetailTab::Terminal) {
+                    self.terminal_scroll_offset = self.terminal_scroll_offset.saturating_add(1);
+                    self.footer_message =
+                        format!("Terminal scroll offset: {}.", self.terminal_scroll_offset);
+                } else {
+                    self.select_next_detail_entry();
+                }
+            }
         }
     }
 
     fn handle_up_key(&mut self) {
         match self.focus {
             BrowserFocus::List => self.select_previous_demo(),
-            BrowserFocus::Detail => self.select_previous_detail_entry(),
+            BrowserFocus::Detail => {
+                if matches!(self.detail_tab, DetailTab::Terminal) {
+                    self.terminal_scroll_offset = self.terminal_scroll_offset.saturating_sub(1);
+                    self.footer_message =
+                        format!("Terminal scroll offset: {}.", self.terminal_scroll_offset);
+                } else {
+                    self.select_previous_detail_entry();
+                }
+            }
         }
     }
 
@@ -190,8 +219,31 @@ impl DemoBrowserApp {
                 self.open_action_overlay();
                 Ok(())
             }
-            BrowserFocus::Detail => self.dispatch_selected_detail_entry(),
+            BrowserFocus::Detail => {
+                if matches!(self.detail_tab, DetailTab::Terminal) {
+                    self.toggle_terminal_input_mode()
+                } else {
+                    self.dispatch_selected_detail_entry()
+                }
+            }
         }
+    }
+
+    fn handle_terminal_input_key(&mut self, key: &KeyEvent) -> Result<bool, RunnerError> {
+        if !self.terminal_input_mode {
+            return Ok(false);
+        }
+        if key.code == KeyCode::Esc {
+            self.terminal_input_mode = false;
+            self.footer_message = "Terminal input capture disabled.".to_owned();
+            return Ok(true);
+        }
+        let Some(payload) = browser_terminal_key_input(key) else {
+            self.footer_message = "That key is not forwarded in terminal input mode.".to_owned();
+            return Ok(true);
+        };
+        self.forward_terminal_input(&payload)?;
+        Ok(true)
     }
 
     fn handle_right_key(&mut self) -> Result<(), RunnerError> {
@@ -543,7 +595,7 @@ impl DemoBrowserApp {
                 }
                 items
             }
-            DetailTab::Terminal => vec![DetailSelectableItem::TerminalRefresh],
+            DetailTab::Terminal => Vec::new(),
             DetailTab::Artifacts => detail
                 .latest_attempt
                 .artifacts
@@ -597,6 +649,8 @@ impl DemoBrowserApp {
     }
 
     fn set_detail_tab(&mut self, next_tab: DetailTab) -> Result<(), RunnerError> {
+        self.terminal_input_mode = false;
+        self.terminal_scroll_offset = 0;
         self.detail_tab = next_tab;
         self.selected_detail_entry_index = 0;
         if matches!(self.detail_tab, DetailTab::History) {
@@ -751,6 +805,56 @@ impl DemoBrowserApp {
         Ok(())
     }
 
+    fn toggle_terminal_input_mode(&mut self) -> Result<(), RunnerError> {
+        let Some(detail) = self.selected_detail() else {
+            self.footer_message = "No demo is currently selected.".to_owned();
+            return Ok(());
+        };
+        let session = &detail.active_terminal_session;
+        if !session.available {
+            self.footer_message = "No active terminal session is available for input.".to_owned();
+            return Ok(());
+        }
+        if !session.supports_input_forwarding {
+            self.footer_message = session
+                .input_forwarding_reason
+                .clone()
+                .unwrap_or_else(|| "Terminal input forwarding is unavailable.".to_owned());
+            return Ok(());
+        }
+        self.terminal_input_mode = !self.terminal_input_mode;
+        self.footer_message = if self.terminal_input_mode {
+            "Terminal input capture enabled. Typed keys go to the demo. Esc exits input mode."
+                .to_owned()
+        } else {
+            "Terminal input capture disabled.".to_owned()
+        };
+        Ok(())
+    }
+
+    fn forward_terminal_input(&mut self, text: &str) -> Result<(), RunnerError> {
+        let Some(detail) = self.selected_detail() else {
+            self.footer_message = "No demo is currently selected.".to_owned();
+            return Ok(());
+        };
+        let demo_id = detail.id.clone();
+        let _ = invoke_demo_json(
+            &self.repo_root,
+            DemoArgs {
+                subcommand: DemoSubcommand::Input {
+                    demo_id: demo_id.clone(),
+                    text: text.to_owned(),
+                    append_newline: false,
+                },
+                repo_override: Some(self.repo_root.clone()),
+                output_json: true,
+            },
+        )?;
+        self.footer_message = format!("Forwarded terminal input to demo `{demo_id}`.");
+        self.last_refresh = Instant::now() - Duration::from_secs(5);
+        Ok(())
+    }
+
     fn dispatch_selected_detail_entry(&mut self) -> Result<(), RunnerError> {
         let Some(item) = self.selected_detail_item() else {
             self.footer_message = "No detail action is available for the selected demo.".to_owned();
@@ -767,11 +871,6 @@ impl DemoBrowserApp {
                 self.selected_history_attempt_ordinal = Some(ordinal);
                 self.footer_message =
                     format!("Viewing retained attempt #{ordinal} in the detail pane.");
-                Ok(())
-            }
-            DetailSelectableItem::TerminalRefresh => {
-                self.refresh_state()?;
-                self.footer_message = "Refreshed terminal session in the detail pane.".to_owned();
                 Ok(())
             }
         }
@@ -801,9 +900,6 @@ impl DemoBrowserApp {
                 self.selected_history_attempt_ordinal = Some(ordinal);
                 self.footer_message =
                     format!("Selected retained attempt #{ordinal} in the detail pane.");
-            }
-            DetailSelectableItem::TerminalRefresh => {
-                self.footer_message = "Selected terminal action `Refresh terminal`.".to_owned();
             }
         }
     }
@@ -901,6 +997,8 @@ impl DemoBrowserApp {
             self.detail_tab = DetailTab::Overview;
             self.selected_detail_entry_index = 0;
             self.selected_history_attempt_ordinal = None;
+            self.terminal_scroll_offset = 0;
+            self.terminal_input_mode = false;
             self.history = None;
         } else if matches!(self.detail_tab, DetailTab::History) && self.selected_demo_id.is_some() {
             self.history = Some(fetch_demo_history(
@@ -1047,6 +1145,10 @@ impl DemoBrowserApp {
     }
 
     fn render_detail(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        if matches!(self.detail_tab, DetailTab::Terminal) {
+            self.render_terminal_detail(frame, area);
+            return;
+        }
         let mut render = self.detail_render();
         if self.detail.is_some() {
             let tab_lines = detail_tab_lines(
@@ -1080,12 +1182,13 @@ impl DemoBrowserApp {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_set(ratatui::symbols::border::ROUNDED)
-                    .border_style(Style::default().fg(if matches!(self.focus, BrowserFocus::Detail)
-                    {
-                        EFFIGY_ACCENT
-                    } else {
-                        Color::DarkGray
-                    }))
+                    .border_style(Style::default().fg(
+                        if matches!(self.focus, BrowserFocus::Detail) {
+                            EFFIGY_ACCENT
+                        } else {
+                            Color::DarkGray
+                        },
+                    ))
                     .title_top(
                         Line::from(Span::styled(
                             panel_title,
@@ -1101,23 +1204,80 @@ impl DemoBrowserApp {
         frame.render_widget(detail, area);
     }
 
+    fn render_terminal_detail(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let panel_title = self
+            .selected_detail()
+            .map(|detail| format!(" {} ", detail.title))
+            .unwrap_or_else(|| " Demo ".to_owned());
+        let border_color = if matches!(self.focus, BrowserFocus::Detail) {
+            EFFIGY_ACCENT
+        } else {
+            Color::DarkGray
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_set(ratatui::symbols::border::ROUNDED)
+            .border_style(Style::default().fg(border_color))
+            .title_top(
+                Line::from(Span::styled(
+                    panel_title,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ))
+                .left_aligned(),
+            );
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let Some(detail) = self.selected_detail().cloned() else {
+            frame.render_widget(Paragraph::new(vec![Line::from("No demo selected.")]), inner);
+            return;
+        };
+
+        let tab_lines = detail_tab_lines(
+            self.detail_tab,
+            matches!(self.focus, BrowserFocus::Detail),
+            inner.width as usize,
+        );
+        let tab_height = tab_lines.len() as u16;
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(tab_height),
+                Constraint::Length(2),
+                Constraint::Min(1),
+            ])
+            .split(inner);
+
+        frame.render_widget(Paragraph::new(tab_lines), layout[0]);
+
+        let terminal_view = build_terminal_view(
+            &self.repo_root,
+            &detail,
+            layout[2].width as usize,
+            layout[2].height as usize,
+            self.terminal_scroll_offset,
+        );
+        self.terminal_scroll_offset = terminal_view.scroll_offset;
+
+        frame.render_widget(
+            Paragraph::new(terminal_status_lines(
+                &detail,
+                &terminal_view,
+                self.terminal_input_mode,
+            ))
+            .wrap(Wrap { trim: false }),
+            layout[1],
+        );
+        frame.render_widget(
+            Paragraph::new(terminal_view.lines).wrap(Wrap { trim: false }),
+            layout[2],
+        );
+    }
+
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
-        let help = Line::from(vec![
-            Span::styled(" ↑↓ ", key_style()),
-            Span::raw("move  "),
-            Span::styled(" ←→ ", key_style()),
-            Span::raw("view  "),
-            Span::styled(" Tab ", key_style()),
-            Span::raw("panel  "),
-            Span::styled(" Enter ", key_style()),
-            Span::raw("act/open  "),
-            Span::styled(" / ", key_style()),
-            Span::raw("search  "),
-            Span::styled(" f ", key_style()),
-            Span::raw("filters  "),
-            Span::styled(" Esc ", key_style()),
-            Span::raw("back/quit"),
-        ]);
+        let help = browser_help_line(self.focus, self.detail_tab, self.terminal_input_mode);
         let footer = Paragraph::new(vec![help, Line::from(self.footer_message.clone())])
             .block(effigy_panel_block(None, false, Color::DarkGray));
         frame.render_widget(footer, area);
@@ -1422,6 +1582,55 @@ fn key_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+fn browser_help_line(
+    focus: BrowserFocus,
+    detail_tab: DetailTab,
+    terminal_input_mode: bool,
+) -> Line<'static> {
+    if terminal_input_mode {
+        return Line::from(vec![
+            Span::styled(" type ", key_style()),
+            Span::raw("send keys  "),
+            Span::styled(" Enter ", key_style()),
+            Span::raw("newline  "),
+            Span::styled(" Esc ", key_style()),
+            Span::raw("leave input"),
+        ]);
+    }
+
+    if matches!(focus, BrowserFocus::Detail) && matches!(detail_tab, DetailTab::Terminal) {
+        return Line::from(vec![
+            Span::styled(" ↑↓ ", key_style()),
+            Span::raw("scroll  "),
+            Span::styled(" ←→ ", key_style()),
+            Span::raw("tab  "),
+            Span::styled(" Enter ", key_style()),
+            Span::raw("input mode  "),
+            Span::styled(" Tab ", key_style()),
+            Span::raw("panel  "),
+            Span::styled(" Esc ", key_style()),
+            Span::raw("back/quit"),
+        ]);
+    }
+
+    Line::from(vec![
+        Span::styled(" ↑↓ ", key_style()),
+        Span::raw("move  "),
+        Span::styled(" ←→ ", key_style()),
+        Span::raw("view  "),
+        Span::styled(" Tab ", key_style()),
+        Span::raw("panel  "),
+        Span::styled(" Enter ", key_style()),
+        Span::raw("act/open  "),
+        Span::styled(" / ", key_style()),
+        Span::raw("search  "),
+        Span::styled(" f ", key_style()),
+        Span::raw("filters  "),
+        Span::styled(" Esc ", key_style()),
+        Span::raw("back/quit"),
+    ])
+}
+
 fn selected_list_highlight_style(list_focused: bool) -> Style {
     if list_focused {
         Style::default()
@@ -1701,91 +1910,15 @@ fn history_detail_render(
 fn terminal_detail_render(
     repo_root: &Path,
     detail: &DemoDetail,
-    selected_item: Option<DetailSelectableItem>,
-    detail_focused: bool,
+    _selected_item: Option<DetailSelectableItem>,
+    _detail_focused: bool,
 ) -> DetailRender {
-    let mut lines = Vec::new();
-    let mut selected_line_index = None;
-
-    lines.push(section_heading("Actions"));
-
-    {
-        let (label, item) = ("Refresh terminal", DetailSelectableItem::TerminalRefresh);
-        if selected_item == Some(item) {
-            selected_line_index = Some(lines.len());
-        }
-        lines.push(selectable_detail_line(
-            label,
-            selected_item == Some(item),
-            detail_focused,
-        ));
-    }
-
-    lines.push(Line::from(""));
-    lines.push(section_heading("Session"));
-    let session = &detail.active_terminal_session;
-    if !session.available {
-        lines.push(muted_line(
-            "No active terminal session is available for this demo.".to_owned(),
-        ));
-        if let Some(terminal_output) = resolve_latest_attempt_view_output(repo_root, &detail.latest_attempt)
-        {
-            lines.push(Line::from(""));
-            lines.push(section_heading("Latest Output"));
-            lines.push(compact_kv_line("source", terminal_output.source_label()));
-            append_terminal_output_lines(&mut lines, &terminal_output);
-        }
-        return DetailRender {
-            lines,
-            selected_line_index,
-        };
-    }
-
-    lines.push(compact_kv_line("state", &session.state));
-    if let Some(attempt_id) = &session.attempt_id {
-        lines.push(compact_kv_line("attempt", attempt_id));
-    }
-    lines.push(compact_kv_line("transport", &session.transport));
-    lines.push(compact_kv_line("pty", yes_no(session.pty)));
-    lines.push(compact_kv_line(
-        "input",
-        if session.supports_input_forwarding {
-            "forwarding available"
-        } else {
-            session
-                .input_forwarding_reason
-                .as_deref()
-                .unwrap_or("forwarding unavailable")
-        },
-    ));
-    lines.push(compact_kv_line("nested-tui", yes_no(session.nested_tui)));
-    if let Some(stdout_log_path) = &session.stdout_log_path {
-        lines.push(compact_kv_line("stdout", stdout_log_path));
-    }
-    if let Some(stderr_log_path) = &session.stderr_log_path {
-        lines.push(compact_kv_line("stderr", stderr_log_path));
-    }
-    lines.push(compact_kv_line("refresh", "auto every 750ms"));
-
-    lines.push(Line::from(""));
-    lines.push(section_heading("Live Output"));
-    if !session.output_available {
-        lines.push(muted_line(
-            "No terminal output is available yet.".to_owned(),
-        ));
-        return DetailRender {
-            lines,
-            selected_line_index,
-        };
-    }
-
-    let terminal_output = resolve_terminal_view_output(repo_root, session);
-    lines.push(compact_kv_line("source", terminal_output.source_label()));
-    append_terminal_output_lines(&mut lines, &terminal_output);
-
+    let terminal_view = build_terminal_view(repo_root, detail, 80, 18, 0);
+    let mut lines = terminal_status_lines(detail, &terminal_view, false);
+    lines.extend(terminal_view.lines);
     DetailRender {
         lines,
-        selected_line_index,
+        selected_line_index: None,
     }
 }
 
@@ -1836,117 +1969,255 @@ fn read_recent_log_lines(path: &Path, limit: usize) -> Result<Vec<String>, Strin
     Ok(lines)
 }
 
-const DEMO_BROWSER_TERMINAL_LIVE_LINE_LIMIT: usize = 24;
+const DEMO_BROWSER_TERMINAL_PARSER_SCROLLBACK: usize = 2000;
+const DEMO_BROWSER_TERMINAL_RECENT_LINE_LIMIT: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct TerminalViewOutput {
-    stdout_lines: Vec<String>,
+struct TerminalView {
+    lines: Vec<Line<'static>>,
+    source: TerminalViewSource,
+    scroll_offset: usize,
     stderr_lines: Vec<String>,
-    source: TerminalViewOutputSource,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TerminalViewOutputSource {
-    LiveLogs,
+enum TerminalViewSource {
+    ActiveLogs,
     InspectSnapshot,
     LatestAttemptLogs,
+    Empty,
 }
 
-impl TerminalViewOutput {
-    fn source_label(&self) -> &'static str {
-        match self.source {
-            TerminalViewOutputSource::LiveLogs => "live tail",
-            TerminalViewOutputSource::InspectSnapshot => "inspect snapshot",
-            TerminalViewOutputSource::LatestAttemptLogs => "latest attempt logs",
+impl TerminalViewSource {
+    fn label(self) -> &'static str {
+        match self {
+            TerminalViewSource::ActiveLogs => "live terminal",
+            TerminalViewSource::InspectSnapshot => "inspect snapshot",
+            TerminalViewSource::LatestAttemptLogs => "latest attempt logs",
+            TerminalViewSource::Empty => "none",
         }
     }
 }
 
-fn resolve_terminal_view_output(
+fn build_terminal_view(
     repo_root: &Path,
-    session: &DemoActiveTerminalSession,
-) -> TerminalViewOutput {
-    let stdout_lines = session.stdout_log_path.as_deref().and_then(|path| {
-        read_recent_log_lines(
-            &resolve_repo_relative_path(repo_root, path),
-            DEMO_BROWSER_TERMINAL_LIVE_LINE_LIMIT,
-        )
-        .ok()
-    });
-    let stderr_lines = session.stderr_log_path.as_deref().and_then(|path| {
-        read_recent_log_lines(
-            &resolve_repo_relative_path(repo_root, path),
-            DEMO_BROWSER_TERMINAL_LIVE_LINE_LIMIT,
-        )
-        .ok()
-    });
+    detail: &DemoDetail,
+    width: usize,
+    height: usize,
+    scroll_offset: usize,
+) -> TerminalView {
+    let width = width.max(1);
+    let height = height.max(1);
 
-    let source = if stdout_lines.is_some() || stderr_lines.is_some() {
-        TerminalViewOutputSource::LiveLogs
+    if detail.active_terminal_session.available {
+        let session = &detail.active_terminal_session;
+        let source = terminal_stream_source(
+            repo_root,
+            session.stdout_log_path.as_deref(),
+            session.stderr_log_path.as_deref(),
+            session.recent_output.stdout_lines.clone(),
+            session.recent_output.stderr_lines.clone(),
+            TerminalViewSource::ActiveLogs,
+        );
+        return render_terminal_view_from_source(source, width, height, scroll_offset);
+    }
+
+    if detail.latest_attempt.output_available {
+        let source = terminal_stream_source(
+            repo_root,
+            detail.latest_attempt.stdout_log_path.as_deref(),
+            detail.latest_attempt.stderr_log_path.as_deref(),
+            Vec::new(),
+            Vec::new(),
+            TerminalViewSource::LatestAttemptLogs,
+        );
+        return render_terminal_view_from_source(source, width, height, scroll_offset);
+    }
+
+    TerminalView {
+        lines: vec![muted_line(
+            "No active or recorded terminal output is available.".to_owned(),
+        )],
+        source: TerminalViewSource::Empty,
+        scroll_offset: 0,
+        stderr_lines: Vec::new(),
+    }
+}
+
+struct TerminalStreamSource {
+    stdout_bytes: Vec<u8>,
+    stderr_lines: Vec<String>,
+    source: TerminalViewSource,
+}
+
+fn terminal_stream_source(
+    repo_root: &Path,
+    stdout_log_path: Option<&str>,
+    stderr_log_path: Option<&str>,
+    fallback_stdout_lines: Vec<String>,
+    fallback_stderr_lines: Vec<String>,
+    source: TerminalViewSource,
+) -> TerminalStreamSource {
+    let stdout_bytes = stdout_log_path
+        .map(|path| resolve_repo_relative_path(repo_root, path))
+        .and_then(|path| fs::read(path).ok())
+        .unwrap_or_default();
+    let stderr_lines = stderr_log_path
+        .map(|path| resolve_repo_relative_path(repo_root, path))
+        .and_then(|path| read_recent_log_lines(&path, DEMO_BROWSER_TERMINAL_RECENT_LINE_LIMIT).ok())
+        .unwrap_or_default();
+    let using_fallback = stdout_bytes.is_empty() && !fallback_stdout_lines.is_empty()
+        || stderr_lines.is_empty() && !fallback_stderr_lines.is_empty();
+    let resolved_source = if using_fallback {
+        TerminalViewSource::InspectSnapshot
+    } else if stdout_log_path.is_some() || stderr_log_path.is_some() {
+        source
     } else {
-        TerminalViewOutputSource::InspectSnapshot
+        TerminalViewSource::InspectSnapshot
     };
-
-    TerminalViewOutput {
-        stdout_lines: stdout_lines.unwrap_or_else(|| session.recent_output.stdout_lines.clone()),
-        stderr_lines: stderr_lines.unwrap_or_else(|| session.recent_output.stderr_lines.clone()),
-        source,
+    TerminalStreamSource {
+        stdout_bytes: if stdout_bytes.is_empty() {
+            fallback_stdout_lines.join("\n").into_bytes()
+        } else {
+            stdout_bytes
+        },
+        stderr_lines: if stderr_lines.is_empty() {
+            fallback_stderr_lines
+        } else {
+            stderr_lines
+        },
+        source: resolved_source,
     }
 }
 
-fn resolve_latest_attempt_view_output(
-    repo_root: &Path,
-    latest_attempt: &DemoLatestAttempt,
-) -> Option<TerminalViewOutput> {
-    if !latest_attempt.output_available {
-        return None;
+fn render_terminal_view_from_source(
+    source: TerminalStreamSource,
+    width: usize,
+    height: usize,
+    scroll_offset: usize,
+) -> TerminalView {
+    let mut parser = VtParser::new(
+        height as u16,
+        width as u16,
+        DEMO_BROWSER_TERMINAL_PARSER_SCROLLBACK,
+    );
+    if !source.stdout_bytes.is_empty() {
+        parser.process(&source.stdout_bytes);
     }
-    let stdout_lines = latest_attempt.stdout_log_path.as_deref().and_then(|path| {
-        read_recent_log_lines(
-            &resolve_repo_relative_path(repo_root, path),
-            DEMO_BROWSER_TERMINAL_LIVE_LINE_LIMIT,
-        )
-        .ok()
-    });
-    let stderr_lines = latest_attempt.stderr_log_path.as_deref().and_then(|path| {
-        read_recent_log_lines(
-            &resolve_repo_relative_path(repo_root, path),
-            DEMO_BROWSER_TERMINAL_LIVE_LINE_LIMIT,
-        )
-        .ok()
-    });
-
-    Some(TerminalViewOutput {
-        stdout_lines: stdout_lines.unwrap_or_default(),
-        stderr_lines: stderr_lines.unwrap_or_default(),
-        source: TerminalViewOutputSource::LatestAttemptLogs,
-    })
-}
-
-fn append_terminal_output_lines(lines: &mut Vec<Line<'static>>, terminal_output: &TerminalViewOutput) {
-    if terminal_output.stdout_lines.is_empty() && terminal_output.stderr_lines.is_empty() {
+    let max_scroll = parser.screen().scrollback();
+    let clamped_scroll = scroll_offset.min(max_scroll);
+    parser.set_size(height as u16, width as u16);
+    parser.set_scrollback(max_scroll.saturating_sub(clamped_scroll));
+    let mut lines = parser
+        .screen()
+        .rows_formatted(0, width as u16)
+        .map(|row| Line::from(String::from_utf8_lossy(&row).into_owned()))
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
         lines.push(muted_line(
-            "Terminal output logs exist, but no recent lines were captured.".to_owned(),
+            "Terminal output exists, but no visible screen content is available yet.".to_owned(),
         ));
-        return;
     }
-
-    if !terminal_output.stdout_lines.is_empty() {
-        lines.push(compact_kv_line("stream", "stdout"));
-        for line in &terminal_output.stdout_lines {
+    if !source.stderr_lines.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(compact_kv_line("stderr", "recent lines"));
+        for line in source
+            .stderr_lines
+            .iter()
+            .take(DEMO_BROWSER_TERMINAL_RECENT_LINE_LIMIT)
+        {
             lines.push(Line::from(line.clone()));
         }
     }
+    TerminalView {
+        lines,
+        source: source.source,
+        scroll_offset: clamped_scroll,
+        stderr_lines: source.stderr_lines,
+    }
+}
 
-    if !terminal_output.stderr_lines.is_empty() {
-        if !terminal_output.stdout_lines.is_empty() {
-            lines.push(Line::from(""));
-        }
-        lines.push(compact_kv_line("stream", "stderr"));
-        for line in &terminal_output.stderr_lines {
-            lines.push(Line::from(line.clone()));
+fn terminal_status_lines(
+    detail: &DemoDetail,
+    terminal_view: &TerminalView,
+    input_mode: bool,
+) -> Vec<Line<'static>> {
+    let session = &detail.active_terminal_session;
+    let transport = if session.available {
+        session.transport.as_str()
+    } else if detail.latest_attempt.output_available {
+        "recorded"
+    } else {
+        "none"
+    };
+    let input_label = if input_mode {
+        "capturing keys"
+    } else if session.available && session.supports_input_forwarding {
+        "available"
+    } else if session.available {
+        session
+            .input_forwarding_reason
+            .as_deref()
+            .unwrap_or("unavailable")
+    } else {
+        "inactive"
+    };
+    vec![
+        Line::from(vec![
+            Span::styled(
+                " source: ",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(terminal_view.source.label()),
+            Span::raw("   "),
+            Span::styled(
+                " transport: ",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(transport.to_owned()),
+            Span::raw("   "),
+            Span::styled(
+                " input: ",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(input_label.to_owned()),
+        ]),
+        Line::from(""),
+    ]
+}
+
+fn browser_terminal_key_input(key: &KeyEvent) -> Option<String> {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        if let KeyCode::Char(c) = key.code {
+            let lower = c.to_ascii_lowercase() as u8;
+            if lower.is_ascii_lowercase() {
+                let value = lower - b'a' + 1;
+                return Some((value as char).to_string());
+            }
         }
     }
+
+    let mapped = match key.code {
+        KeyCode::Enter => "\n",
+        KeyCode::Tab => "\t",
+        KeyCode::Backspace => "\u{7f}",
+        KeyCode::Left => "\u{1b}[D",
+        KeyCode::Right => "\u{1b}[C",
+        KeyCode::Up => "\u{1b}[A",
+        KeyCode::Down => "\u{1b}[B",
+        KeyCode::Home => "\u{1b}[H",
+        KeyCode::End => "\u{1b}[F",
+        KeyCode::Delete => "\u{1b}[3~",
+        KeyCode::Char(c) => return Some(c.to_string()),
+        _ => return None,
+    };
+    Some(mapped.to_owned())
 }
 
 fn compact_kv_line(label: &str, value: &str) -> Line<'static> {
@@ -2026,7 +2297,11 @@ fn action_menu_items_for_detail(detail: &DemoDetail) -> Vec<ActionMenuItem> {
     items
 }
 
-fn detail_tab_lines(current_tab: DetailTab, detail_focused: bool, width: usize) -> Vec<Line<'static>> {
+fn detail_tab_lines(
+    current_tab: DetailTab,
+    detail_focused: bool,
+    width: usize,
+) -> Vec<Line<'static>> {
     let mut spans = Vec::new();
     for (index, tab) in DetailTab::ALL.iter().enumerate() {
         if index > 0 {
@@ -2064,14 +2339,6 @@ fn muted_line(value: String) -> Line<'static> {
         value,
         Style::default().fg(Color::DarkGray),
     )])
-}
-
-fn yes_no(value: bool) -> &'static str {
-    if value {
-        "yes"
-    } else {
-        "no"
-    }
 }
 
 fn next_status_filter(current: Option<DemoListStatus>) -> Option<DemoListStatus> {
@@ -2271,7 +2538,6 @@ enum DetailSelectableItem {
     Artifact(usize),
     HistoryRefresh,
     HistoryAttempt(usize),
-    TerminalRefresh,
 }
 
 struct DetailRender {
@@ -2499,15 +2765,22 @@ struct DemoActiveAttempt {
 #[derive(Debug, Clone, Deserialize)]
 struct DemoActiveTerminalSession {
     available: bool,
+    #[allow(dead_code)]
     state: String,
+    #[allow(dead_code)]
     attempt_id: Option<String>,
     transport: String,
+    #[allow(dead_code)]
     pty: bool,
     supports_input_forwarding: bool,
     input_forwarding_reason: Option<String>,
+    #[allow(dead_code)]
     nested_tui: bool,
+    #[allow(dead_code)]
+    stdin_input_path: Option<String>,
     stdout_log_path: Option<String>,
     stderr_log_path: Option<String>,
+    #[allow(dead_code)]
     output_available: bool,
     recent_output: DemoTerminalRecentOutput,
 }
@@ -2533,23 +2806,23 @@ struct DemoLatestAttempt {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use crossterm::event::KeyCode;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{
         style::{Color, Modifier, Style},
         text::{Line, Span},
     };
 
     use super::{
-        action_menu_items_for_detail, artifacts_detail_render, clamp_artifact_index,
-        detail_tab_lines, first_demo_id, history_detail_render, next_gap_filter, next_group_by,
-        next_mode_filter, next_status_filter, overview_detail_render, query_summary,
-        read_recent_log_lines, resolve_artifact_path, resolve_repo_relative_path,
-        row_contains_demo, selected_artifact, selected_list_highlight_style,
-        selected_list_highlight_symbol, status_style, terminal_detail_render, ActionMenuItem,
-        BrowserRow, DemoBrowserApp, DemoDetail, DemoHistoryAttempt,
-        DemoHistoryAttemptHistoryPayload, DemoHistoryPayload, DemoLatestAttempt, DemoListGap,
-        DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSummary,
-        DetailSelectableItem, DetailTab,
+        action_menu_items_for_detail, artifacts_detail_render, browser_terminal_key_input,
+        clamp_artifact_index, detail_tab_lines, first_demo_id, history_detail_render,
+        next_gap_filter, next_group_by, next_mode_filter, next_status_filter,
+        overview_detail_render, query_summary, read_recent_log_lines, resolve_artifact_path,
+        resolve_repo_relative_path, row_contains_demo, selected_artifact,
+        selected_list_highlight_style, selected_list_highlight_symbol, status_style,
+        terminal_detail_render, ActionMenuItem, BrowserRow, DemoBrowserApp, DemoDetail,
+        DemoHistoryAttempt, DemoHistoryAttemptHistoryPayload, DemoHistoryPayload,
+        DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery,
+        DemoListStatus, DemoSummary, DetailSelectableItem, DetailTab,
     };
 
     fn summary(id: &str) -> DemoSummary {
@@ -2599,6 +2872,7 @@ mod tests {
                     "Input forwarding is not available for this active demo.".to_owned(),
                 ),
                 nested_tui: false,
+                stdin_input_path: None,
                 stdout_log_path: None,
                 stderr_log_path: None,
                 output_available: false,
@@ -2939,6 +3213,7 @@ mod tests {
                 "Input forwarding is not available for this active demo.".to_owned(),
             ),
             nested_tui: false,
+            stdin_input_path: None,
             stdout_log_path: Some(".effigy/demo/logs/demo-123.stdout.log".to_owned()),
             stderr_log_path: Some(".effigy/demo/logs/demo-123.stderr.log".to_owned()),
             output_available: true,
@@ -2964,64 +3239,47 @@ mod tests {
         )
         .expect("write stderr log");
 
-        let rendered = terminal_detail_render(
-            &repo_root,
-            &detail,
-            Some(DetailSelectableItem::TerminalRefresh),
-            true,
-        )
-        .lines
-        .into_iter()
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
+        let rendered = terminal_detail_render(&repo_root, &detail, None, true)
+            .lines
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let _ = std::fs::remove_dir_all(&repo_root);
 
-        assert!(rendered.contains("Refresh terminal"));
-        assert!(rendered.contains("state: running"));
-        assert!(rendered.contains("attempt: demo-123"));
+        assert!(rendered.contains("source: live terminal"));
         assert!(rendered.contains("transport: stream"));
-        assert!(rendered.contains("nested-tui: no"));
-        assert!(rendered.contains("stdout: .effigy/demo/logs/demo-123.stdout.log"));
-        assert!(rendered.contains("stderr: .effigy/demo/logs/demo-123.stderr.log"));
-        assert!(rendered.contains("refresh: auto every 750ms"));
-        assert!(rendered.contains("source: live tail"));
-        assert!(rendered.contains("stream: stdout"));
+        assert!(rendered.contains("input: Input forwarding is not available for this active demo."));
         assert!(rendered.contains("boot"));
         assert!(rendered.contains("serve-live"));
-        assert!(rendered.contains("stream: stderr"));
+        assert!(rendered.contains("stderr: recent lines"));
         assert!(rendered.contains("warn-live"));
         assert!(!rendered.contains("tags:"));
         assert!(!rendered.contains("covers:"));
-        assert!(!rendered.contains("Active terminal session for"));
     }
 
     #[test]
     fn browser_terminal_view_reports_unavailable_session_honestly() {
         let detail = detail_with_artifacts(&[]);
 
-        let rendered = terminal_detail_render(
-            Path::new("/tmp/demo-repo"),
-            &detail,
-            Some(DetailSelectableItem::TerminalRefresh),
-            true,
-        )
-        .lines
-        .into_iter()
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
+        let rendered = terminal_detail_render(Path::new("/tmp/demo-repo"), &detail, None, true)
+            .lines
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
 
-        assert!(rendered.contains("No active terminal session is available for this demo."));
-        assert!(!rendered.contains("Recent Output"));
+        assert!(rendered.contains("No active or recorded terminal output is available."));
     }
 
     #[test]
     fn browser_terminal_view_falls_back_to_latest_attempt_output_when_session_is_unavailable() {
         let mut detail = detail_with_artifacts(&[]);
-        detail.latest_attempt.stdout_log_path = Some(".effigy/demo/logs/demo-latest.stdout.log".to_owned());
-        detail.latest_attempt.stderr_log_path = Some(".effigy/demo/logs/demo-latest.stderr.log".to_owned());
+        detail.latest_attempt.stdout_log_path =
+            Some(".effigy/demo/logs/demo-latest.stdout.log".to_owned());
+        detail.latest_attempt.stderr_log_path =
+            Some(".effigy/demo/logs/demo-latest.stderr.log".to_owned());
         detail.latest_attempt.output_available = true;
 
         let repo_root = std::env::temp_dir().join(format!(
@@ -3040,22 +3298,16 @@ mod tests {
         )
         .expect("write stderr log");
 
-        let rendered = terminal_detail_render(
-            &repo_root,
-            &detail,
-            Some(DetailSelectableItem::TerminalRefresh),
-            true,
-        )
-        .lines
-        .into_iter()
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
+        let rendered = terminal_detail_render(&repo_root, &detail, None, true)
+            .lines
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let _ = std::fs::remove_dir_all(&repo_root);
 
-        assert!(rendered.contains("No active terminal session is available for this demo."));
-        assert!(rendered.contains("Latest Output"));
+        assert!(!rendered.contains("No active terminal session is available for this demo."));
         assert!(rendered.contains("source: latest attempt logs"));
         assert!(rendered.contains("latest-out"));
         assert!(rendered.contains("latest-err"));
@@ -3075,6 +3327,7 @@ mod tests {
                 "Input forwarding is not available for this active demo.".to_owned(),
             ),
             nested_tui: false,
+            stdin_input_path: None,
             stdout_log_path: Some(".effigy/demo/logs/missing.stdout.log".to_owned()),
             stderr_log_path: None,
             output_available: true,
@@ -3084,17 +3337,12 @@ mod tests {
             },
         };
 
-        let rendered = terminal_detail_render(
-            Path::new("/tmp/demo-repo"),
-            &detail,
-            Some(DetailSelectableItem::TerminalRefresh),
-            true,
-        )
-        .lines
-        .into_iter()
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
+        let rendered = terminal_detail_render(Path::new("/tmp/demo-repo"), &detail, None, true)
+            .lines
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
 
         assert!(rendered.contains("source: inspect snapshot"));
         assert!(rendered.contains("snapshot-line"));
@@ -3171,7 +3419,9 @@ mod tests {
             },
         });
 
-        let should_exit = app.handle_key(KeyCode::Esc).expect("escape should succeed");
+        let should_exit = app
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            .expect("escape should succeed");
 
         assert!(!should_exit);
         assert!(matches!(app.detail_tab, DetailTab::Overview));
@@ -3185,10 +3435,11 @@ mod tests {
         app.selected_demo_id = Some("demo".to_owned());
         assert!(matches!(app.focus, super::BrowserFocus::List));
 
-        app.handle_key(KeyCode::Tab).expect("tab should succeed");
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+            .expect("tab should succeed");
         assert!(matches!(app.focus, super::BrowserFocus::Detail));
 
-        app.handle_key(KeyCode::BackTab)
+        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT))
             .expect("shift-tab should succeed");
         assert!(matches!(app.focus, super::BrowserFocus::List));
     }
@@ -3201,11 +3452,66 @@ mod tests {
         app.focus = super::BrowserFocus::Detail;
         app.detail_tab = DetailTab::Terminal;
 
-        app.handle_key(KeyCode::Right).expect("right should succeed");
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+            .expect("right should succeed");
         assert!(matches!(app.detail_tab, DetailTab::Artifacts));
 
-        app.handle_key(KeyCode::Left).expect("left should succeed");
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+            .expect("left should succeed");
         assert!(matches!(app.detail_tab, DetailTab::Terminal));
+    }
+
+    #[test]
+    fn browser_terminal_key_input_maps_terminal_controls() {
+        assert_eq!(
+            browser_terminal_key_input(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Some("\n".to_owned())
+        );
+        assert_eq!(
+            browser_terminal_key_input(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)),
+            Some("\u{1b}[D".to_owned())
+        );
+        assert_eq!(
+            browser_terminal_key_input(&KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some("\u{3}".to_owned())
+        );
+    }
+
+    #[test]
+    fn browser_terminal_enter_toggles_input_mode_when_supported() {
+        let mut app = DemoBrowserApp::new(PathBuf::from("/tmp/demo-repo"), None);
+        let mut detail = detail_with_artifacts(&[]);
+        detail.active_terminal_session.available = true;
+        detail.active_terminal_session.supports_input_forwarding = true;
+        detail.active_terminal_session.input_forwarding_reason = None;
+        app.detail = Some(detail);
+        app.selected_demo_id = Some("demo".to_owned());
+        app.focus = super::BrowserFocus::Detail;
+        app.detail_tab = DetailTab::Terminal;
+
+        app.handle_enter_key()
+            .expect("enter should enable input mode");
+        assert!(app.terminal_input_mode);
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            .expect("escape should leave input mode");
+        assert!(!app.terminal_input_mode);
+    }
+
+    #[test]
+    fn browser_terminal_up_down_scroll_when_detail_panel_is_active() {
+        let mut app = DemoBrowserApp::new(PathBuf::from("/tmp/demo-repo"), None);
+        app.detail = Some(detail_with_artifacts(&[]));
+        app.selected_demo_id = Some("demo".to_owned());
+        app.focus = super::BrowserFocus::Detail;
+        app.detail_tab = DetailTab::Terminal;
+
+        app.handle_down_key();
+        app.handle_down_key();
+        assert_eq!(app.terminal_scroll_offset, 2);
+
+        app.handle_up_key();
+        assert_eq!(app.terminal_scroll_offset, 1);
     }
 
     #[test]
@@ -3243,12 +3549,13 @@ mod tests {
         assert!(!history_rendered.contains("Browser Proof Report"));
         assert!(!history_rendered.contains("History View"));
 
-        let terminal_rendered = terminal_detail_render(Path::new("/tmp/demo-repo"), &detail, None, true)
-            .lines
-            .into_iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let terminal_rendered =
+            terminal_detail_render(Path::new("/tmp/demo-repo"), &detail, None, true)
+                .lines
+                .into_iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
         assert!(!terminal_rendered.contains("Browser Proof Report"));
         assert!(!terminal_rendered.contains("Terminal View"));
 
@@ -3268,7 +3575,9 @@ mod tests {
         app.detail = Some(detail_with_artifacts(&[]));
         app.selected_demo_id = Some("demo".to_owned());
 
-        let should_exit = app.handle_key(KeyCode::Esc).expect("escape should succeed");
+        let should_exit = app
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            .expect("escape should succeed");
 
         assert!(should_exit);
     }

@@ -6,7 +6,12 @@ use std::io::{self, IsTerminal, Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command as ProcessCommand, Stdio};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread;
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
@@ -41,6 +46,7 @@ const DEMO_LOGS_DIR: &str = ".effigy/demo/logs";
 const DEMO_HISTORY_DIR: &str = ".effigy/demo/history";
 const DEMO_ATTEMPT_HISTORY_LIMIT: usize = 10;
 const DEMO_ACTIVE_TERMINAL_RECENT_LINES: usize = 8;
+const DEMO_INPUT_POLL_INTERVAL_MS: u64 = 40;
 
 pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
     let cwd = current_working_dir()?;
@@ -848,6 +854,25 @@ fn render_demo_input(
         );
     }
 
+    let Some(input_path) = record.active_terminal_session.stdin_input_path.as_deref() else {
+        return demo_error(
+            output_json,
+            "effigy.demo.input.v1",
+            format!("demo `{demo_id}` does not expose a writable terminal input handoff"),
+            json!({
+                "demo_id": demo_id,
+                "input": {
+                    "text": text,
+                    "append_newline": append_newline,
+                    "forwarded_bytes": forwarded_text.len(),
+                },
+                "active_terminal_session": record.active_terminal_session.to_json(),
+            }),
+        );
+    };
+
+    append_demo_terminal_input(repo_root, input_path, &forwarded_text)?;
+
     if output_json {
         return encode_json(
             &json!({
@@ -1458,6 +1483,7 @@ fn load_active_terminal_session(
             )
         },
         nested_tui: active_attempt.nested_tui,
+        stdin_input_path: active_attempt.stdin_input_path.clone(),
         stdout_log_path: stdout_log_path.clone(),
         stderr_log_path: stderr_log_path.clone(),
         output_available: stdout_log_path.is_some() || stderr_log_path.is_some(),
@@ -1474,6 +1500,26 @@ fn load_active_terminal_session(
             })
             .unwrap_or_default(),
     }
+}
+
+fn append_demo_terminal_input(
+    repo_root: &Path,
+    rendered_path: &str,
+    forwarded_text: &str,
+) -> Result<(), RunnerError> {
+    let absolute = resolve_repo_relative_path(repo_root, rendered_path);
+    if let Some(parent) = absolute.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| RunnerError::task_invocation_failed_write(parent, error))?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&absolute)
+        .map_err(|error| RunnerError::task_invocation_failed_write(&absolute, error))?;
+    file.write_all(forwarded_text.as_bytes())
+        .and_then(|_| file.flush())
+        .map_err(|error| RunnerError::task_invocation_failed_write(&absolute, error))
 }
 
 fn demo_active_attempt_from_record(
@@ -1500,6 +1546,7 @@ fn demo_active_attempt_from_record(
         },
         supports_input_forwarding: record.supports_input_forwarding,
         nested_tui: record.nested_tui,
+        stdin_input_path: record.stdin_input_path.clone(),
         stdout_log_path: record.stdout_log_path.clone(),
         stderr_log_path: record.stderr_log_path.clone(),
         parse_error: None,
@@ -1609,6 +1656,7 @@ fn execute_task_backed_demo(
             terminal_transport: PersistedDemoTerminalTransport::Stream,
             supports_input_forwarding: false,
             nested_tui: false,
+            stdin_input_path: None,
             stdout_log_path: None,
             stderr_log_path: None,
         },
@@ -1749,6 +1797,10 @@ fn execute_run_backed_demo(
 ) -> Result<DemoExecutionAttempt, RunnerError> {
     let launch_mode = resolve_demo_launch_mode(mode, output_json);
     let attached_terminal = launch_mode.attached_terminal();
+    let input_handoff_path = launch_mode
+        .supports_input_forwarding()
+        .then(|| prepare_demo_input_handoff(repo_root, demo_id))
+        .transpose()?;
     let log_paths = if output_json || attached_terminal {
         DemoLogPaths::prepare_for_launch_mode(repo_root, demo_id, launch_mode)?
     } else {
@@ -1780,8 +1832,11 @@ fn execute_run_backed_demo(
             entrypoint_value: run_command.to_owned(),
             command: run_command.to_owned(),
             terminal_transport: launch_mode.transport(),
-            supports_input_forwarding: false,
+            supports_input_forwarding: input_handoff_path.is_some(),
             nested_tui: false,
+            stdin_input_path: input_handoff_path
+                .as_ref()
+                .map(|path| display_repo_path(path, repo_root)),
             stdout_log_path: log_paths.stdout.clone(),
             stderr_log_path: log_paths.stderr.clone(),
         },
@@ -1793,6 +1848,11 @@ fn execute_run_backed_demo(
         } else {
             None
         };
+        let input_forward = child
+            .stdin
+            .take()
+            .zip(input_handoff_path.as_ref())
+            .map(|(stdin, path)| spawn_input_handoff_forward(path.clone(), stdin));
         let stdout_reader = child.stdout.take().ok_or_else(|| {
             RunnerError::task_invocation(format!(
                 "Demo `{demo_id}` launched without a stdout capture pipe."
@@ -1818,6 +1878,9 @@ fn execute_run_backed_demo(
                 "Demo `{demo_id}` failed to wait for run entrypoint: {error}"
             ))
         })?;
+        if let Some(forward) = input_forward {
+            stop_input_handoff_forward(forward, input_handoff_path.as_deref());
+        }
         let mut stdout = join_output_capture(stdout_handle, "stdout", demo_id)?;
         let mut stderr = join_output_capture(stderr_handle, "stderr", demo_id)?;
         if matches!(launch_mode, DemoLaunchMode::AttachedPty) {
@@ -1890,6 +1953,10 @@ impl DemoLaunchMode {
         matches!(self, Self::AttachedPty)
     }
 
+    fn supports_input_forwarding(self) -> bool {
+        matches!(self, Self::DetachedJson)
+    }
+
     fn transport(self) -> PersistedDemoTerminalTransport {
         match self {
             Self::AttachedPty => PersistedDemoTerminalTransport::Pty,
@@ -1937,11 +2004,13 @@ fn build_run_backed_process(
     };
     if launch_mode.capture_output() {
         process
-            .stdin(if launch_mode.forward_stdin() {
-                Stdio::piped()
-            } else {
-                Stdio::inherit()
-            })
+            .stdin(
+                if launch_mode.forward_stdin() || launch_mode.supports_input_forwarding() {
+                    Stdio::piped()
+                } else {
+                    Stdio::inherit()
+                },
+            )
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
     } else {
@@ -2118,6 +2187,62 @@ fn sanitize_pty_transcript(output: &str) -> String {
         .filter(|ch| matches!(ch, '\n' | '\r' | '\t') || !ch.is_control())
         .collect::<String>()
         .replace("^D", "")
+}
+
+struct DemoInputHandoffForward {
+    stop: Arc<AtomicBool>,
+    handle: thread::JoinHandle<()>,
+}
+
+fn prepare_demo_input_handoff(repo_root: &Path, demo_id: &str) -> Result<PathBuf, RunnerError> {
+    let path = effective_input_handoff_path(repo_root, demo_id);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| RunnerError::task_invocation_failed_write(parent, error))?;
+    }
+    fs::write(&path, "")
+        .map_err(|error| RunnerError::task_invocation_failed_write(&path, error))?;
+    Ok(path)
+}
+
+fn spawn_input_handoff_forward(
+    path: PathBuf,
+    mut child_stdin: ChildStdin,
+) -> DemoInputHandoffForward {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_flag = Arc::clone(&stop);
+    let handle = thread::spawn(move || {
+        let mut forwarded_bytes = 0usize;
+        while !stop_flag.load(Ordering::Relaxed) {
+            if let Ok(bytes) = fs::read(&path) {
+                if bytes.len() < forwarded_bytes {
+                    forwarded_bytes = 0;
+                }
+                if bytes.len() > forwarded_bytes {
+                    let chunk = &bytes[forwarded_bytes..];
+                    if child_stdin
+                        .write_all(chunk)
+                        .and_then(|_| child_stdin.flush())
+                        .is_err()
+                    {
+                        break;
+                    }
+                    forwarded_bytes = bytes.len();
+                }
+            }
+            thread::sleep(Duration::from_millis(DEMO_INPUT_POLL_INTERVAL_MS));
+        }
+        let _ = child_stdin.flush();
+    });
+    DemoInputHandoffForward { stop, handle }
+}
+
+fn stop_input_handoff_forward(forward: DemoInputHandoffForward, path: Option<&Path>) {
+    forward.stop.store(true, Ordering::Relaxed);
+    let _ = forward.handle.join();
+    if let Some(path) = path {
+        let _ = fs::remove_file(path);
+    }
 }
 
 fn join_output_capture(
@@ -2352,6 +2477,13 @@ fn effective_output_log_path(repo_root: &Path, demo_id: &str, stream: &str) -> P
         "{}.{}.log",
         sanitize_demo_id_for_filename(demo_id),
         stream
+    ))
+}
+
+fn effective_input_handoff_path(repo_root: &Path, demo_id: &str) -> PathBuf {
+    repo_root.join(DEMO_ACTIVE_DIR).join(format!(
+        "{}.stdin.log",
+        sanitize_demo_id_for_filename(demo_id)
     ))
 }
 
@@ -2909,6 +3041,7 @@ struct DemoActiveAttempt {
     terminal_transport: DemoTerminalTransport,
     supports_input_forwarding: bool,
     nested_tui: bool,
+    stdin_input_path: Option<String>,
     stdout_log_path: Option<String>,
     stderr_log_path: Option<String>,
     parse_error: Option<String>,
@@ -2931,6 +3064,7 @@ impl DemoActiveAttempt {
             terminal_transport: DemoTerminalTransport::None,
             supports_input_forwarding: false,
             nested_tui: false,
+            stdin_input_path: None,
             stdout_log_path: None,
             stderr_log_path: None,
             parse_error: None,
@@ -3010,6 +3144,7 @@ impl DemoActiveAttempt {
             "terminal_transport": self.terminal_transport.rendered(),
             "supports_input_forwarding": self.supports_input_forwarding,
             "nested_tui": self.nested_tui,
+            "stdin_input_path": self.stdin_input_path,
             "stdout_log_path": self.stdout_log_path,
             "stderr_log_path": self.stderr_log_path,
             "output_available": self.stdout_log_path.is_some() || self.stderr_log_path.is_some(),
@@ -3046,6 +3181,7 @@ struct DemoActiveTerminalSession {
     input_forwarding_reason: Option<String>,
     input_forwarding: DemoTerminalInputForwarding,
     nested_tui: bool,
+    stdin_input_path: Option<String>,
     stdout_log_path: Option<String>,
     stderr_log_path: Option<String>,
     output_available: bool,
@@ -3069,6 +3205,7 @@ impl DemoActiveTerminalSession {
                 "no active demo terminal session is currently available".to_owned(),
             ),
             nested_tui: false,
+            stdin_input_path: None,
             stdout_log_path: None,
             stderr_log_path: None,
             output_available: false,
@@ -3103,6 +3240,9 @@ impl DemoActiveTerminalSession {
         if let Some(attempt_id) = &self.attempt_id {
             values.push(KeyValue::new("attempt-id", attempt_id.clone()));
         }
+        if let Some(stdin_input_path) = &self.stdin_input_path {
+            values.push(KeyValue::new("stdin-input", stdin_input_path.clone()));
+        }
         if let Some(stdout_log_path) = &self.stdout_log_path {
             values.push(KeyValue::new("stdout-log", stdout_log_path.clone()));
         }
@@ -3123,6 +3263,7 @@ impl DemoActiveTerminalSession {
             "input_forwarding_reason": self.input_forwarding_reason,
             "input_forwarding": self.input_forwarding.to_json(),
             "nested_tui": self.nested_tui,
+            "stdin_input_path": self.stdin_input_path,
             "stdout_log_path": self.stdout_log_path,
             "stderr_log_path": self.stderr_log_path,
             "output_available": self.output_available,
@@ -3400,6 +3541,7 @@ struct PersistedDemoActiveAttempt {
     supports_input_forwarding: bool,
     #[serde(default)]
     nested_tui: bool,
+    stdin_input_path: Option<String>,
     stdout_log_path: Option<String>,
     stderr_log_path: Option<String>,
 }
@@ -3441,10 +3583,10 @@ impl Drop for DemoActiveAttemptGuard {
 #[cfg(test)]
 mod tests {
     use super::{
-        load_active_attempt, read_recent_output_lines, write_active_attempt_record,
-        DemoActiveAttempt, DemoTerminalTransport, PersistedDemoActiveAttempt,
-        PersistedDemoActivePhase, PersistedDemoAttemptHistory, PersistedDemoHistoricalAttempt,
-        PersistedDemoTerminalTransport, DEMO_ATTEMPT_HISTORY_LIMIT,
+        append_demo_terminal_input, load_active_attempt, read_recent_output_lines,
+        write_active_attempt_record, DemoActiveAttempt, DemoTerminalTransport,
+        PersistedDemoActiveAttempt, PersistedDemoActivePhase, PersistedDemoAttemptHistory,
+        PersistedDemoHistoricalAttempt, PersistedDemoTerminalTransport, DEMO_ATTEMPT_HISTORY_LIMIT,
     };
     use std::{
         fs,
@@ -3506,6 +3648,7 @@ mod tests {
                 terminal_transport: PersistedDemoTerminalTransport::Stream,
                 supports_input_forwarding: false,
                 nested_tui: false,
+                stdin_input_path: None,
                 stdout_log_path: None,
                 stderr_log_path: None,
             },
@@ -3587,6 +3730,28 @@ mod tests {
 
         let lines = read_recent_output_lines(&repo_root, ".effigy/demo/logs/demo.stdout.log", 2);
         assert_eq!(lines, vec!["three".to_owned(), "four".to_owned()]);
+
+        let _ = fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn append_demo_terminal_input_appends_text_to_repo_relative_handoff_file() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "effigy-demo-input-handoff-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be monotonic enough for test ids")
+                .as_nanos()
+        ));
+        fs::create_dir_all(repo_root.join(".effigy/demo/active")).expect("create input dir");
+        let rendered_path = ".effigy/demo/active/demo.stdin.log";
+
+        append_demo_terminal_input(&repo_root, rendered_path, "status")
+            .expect("append first payload");
+        append_demo_terminal_input(&repo_root, rendered_path, "\n").expect("append second payload");
+
+        let written = fs::read_to_string(repo_root.join(rendered_path)).expect("read input file");
+        assert_eq!(written, "status\n");
 
         let _ = fs::remove_dir_all(&repo_root);
     }

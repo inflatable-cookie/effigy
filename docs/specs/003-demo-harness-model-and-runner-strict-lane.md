@@ -69,7 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to replace the browser terminal
-log view with embedded demo-scoped terminal emulation and input, while nested
-TUI embedding, broader runtime expansion, and desktop-client questions stay
-separate.
+Execute the active `g02.003` ready card next to decide the post-terminal-
+emulator boundary, so the lane can choose whether terminal follow-up belongs in
+deeper runner-owned session fidelity or can safely pause browser work again
+without reopening nested TUI embedding or generic runtime drift.

@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-pub(super) fn shell_key_input(key: &KeyEvent) -> Option<String> {
+pub(crate) fn shell_key_input(key: &KeyEvent) -> Option<String> {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         if let KeyCode::Char(c) = key.code {
             let lower = c.to_ascii_lowercase() as u8;

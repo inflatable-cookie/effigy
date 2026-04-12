@@ -63,10 +63,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`057-implement-demo-browser-panel-first-navigation.md`](./057-implement-demo-browser-panel-first-navigation.md) (complete)
 - [`058-decide-demo-post-panel-first-navigation-boundary.md`](./058-decide-demo-post-panel-first-navigation-boundary.md) (complete)
 - [`059-implement-demo-runtime-backend-capability-contract.md`](./059-implement-demo-runtime-backend-capability-contract.md) (superseded)
-- [`060-implement-demo-browser-terminal-emulator.md`](./060-implement-demo-browser-terminal-emulator.md)
+- [`060-implement-demo-browser-terminal-emulator.md`](./060-implement-demo-browser-terminal-emulator.md) (complete)
+- [`061-decide-demo-post-browser-terminal-emulator-boundary.md`](./061-decide-demo-post-browser-terminal-emulator-boundary.md)
 
 ## Next Task
 
-Execute the active ready card to replace the browser terminal log view with
-embedded terminal emulation and input on top of the existing runner-owned demo
-session contract.
+Execute the active ready card to choose the next bounded slice after embedded
+browser terminal emulation and input landed.
