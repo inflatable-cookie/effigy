@@ -13,12 +13,12 @@ Current milestones:
 
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
 - [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
-- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, metadata-query parity, first-browser cleanup, bounded persisted attempt history, a dedicated `demo history` query surface, historical-attempt drilldown, bounded history-query controls, an integrated one-demo browser history view, a runner-owned active demo terminal/session handoff, a bounded browser terminal view, a bounded active-terminal input contract, direct attached terminal sessions for human-launched interactive demos, PTY-backed demo terminal/session semantics, bounded live browser terminal consumption, bounded demo-scoped browser tabs, and panel-first browser navigation now shipped; the next slice is richer-runtime backend capability reporting on the runner-owned session contract)
+- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, metadata-query parity, first-browser cleanup, bounded persisted attempt history, a dedicated `demo history` query surface, historical-attempt drilldown, bounded history-query controls, an integrated one-demo browser history view, a runner-owned active demo terminal/session handoff, a bounded browser terminal view, a bounded active-terminal input contract, direct attached terminal sessions for human-launched interactive demos, PTY-backed demo terminal/session semantics, bounded live browser terminal consumption, bounded demo-scoped browser tabs, and panel-first browser navigation now shipped; the next slice is embedded browser terminal emulation and input on top of the runner-owned demo session contract)
 
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/059-implement-demo-runtime-backend-capability-contract.md`](../specs/batch-cards/059-implement-demo-runtime-backend-capability-contract.md)
+- [`../specs/batch-cards/060-implement-demo-browser-terminal-emulator.md`](../specs/batch-cards/060-implement-demo-browser-terminal-emulator.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` ready card to deepen the runner-owned active session
-contract for richer demo runtimes now that panel-first demo-browser navigation
-landed while broader runtime expansion stays deferred.
+Use the active `g02.003` ready card to replace the browser terminal log view
+with embedded terminal emulation and input on top of the existing runner-owned
+demo session contract while broader runtime expansion stays deferred.
