@@ -1374,6 +1374,15 @@ fn cli_demo_inspect_json_classifies_concurrent_runner_backed_demo_when_inactive(
             ["merged_output_from_multiple_processes"],
         false
     );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projected_output_provenance"]["kind"],
+        "single-source"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projected_output_provenance"]
+            ["source_attributed"],
+        false
+    );
     assert!(parsed["result"]["demo"]["runtime_backend"]["capabilities"]
         .as_array()
         .expect("runtime capabilities")
@@ -1437,6 +1446,15 @@ fn cli_demo_inspect_json_keeps_multi_process_concurrent_runner_on_projected_path
             ["merged_output_from_multiple_processes"],
         true
     );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projected_output_provenance"]["kind"],
+        "flattened-unlabeled"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projected_output_provenance"]
+            ["source_attributed"],
+        false
+    );
     assert!(!parsed["result"]["demo"]["runtime_backend"]["capabilities"]
         .as_array()
         .expect("runtime capabilities")
@@ -1498,6 +1516,11 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
             ["merged_output_from_multiple_processes"],
         false
     );
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]
+            ["projected_output_provenance"]["kind"],
+        "single-source"
+    );
     assert!(
         parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["capabilities"]
             .as_array()
@@ -1554,6 +1577,11 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
         parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]
             ["projected_process_summary"]["managed_process_names"][0],
         "api"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]
+            ["projected_output_provenance"]["kind"],
+        "single-source"
     );
     assert!(
         parsed["result"]["demo"]["active_terminal_session"]["output_available"]
@@ -1629,6 +1657,11 @@ fn cli_demo_inspect_json_projects_multi_process_concurrent_runner_shape_when_act
         true
     );
     assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]
+            ["projected_output_provenance"]["kind"],
+        "flattened-unlabeled"
+    );
+    assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["projection_shape"]
             ["kind"],
         "projected-multi-process"
@@ -1658,6 +1691,11 @@ fn cli_demo_inspect_json_projects_multi_process_concurrent_runner_shape_when_act
             ["projected_process_summary"]["merged_output_from_multiple_processes"],
         true
     );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]
+            ["projected_output_provenance"]["kind"],
+        "flattened-unlabeled"
+    );
     assert!(
         !parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["capabilities"]
             .as_array()
@@ -1682,7 +1720,7 @@ fn cli_demo_input_json_forwards_to_running_concurrent_runner_demo_session() {
     wait_for_demo_active_inspect(
         &root,
         "console",
-        Duration::from_secs(60),
+        Duration::from_secs(120),
         "concurrent runner input state",
     );
 

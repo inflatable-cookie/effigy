@@ -1,6 +1,6 @@
 # 078 Implement Demo Concurrent Runtime Projected Output Provenance Contract
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -52,5 +52,6 @@ flattened behind one demo-owned terminal/session surface.
 
 ## Next Task
 
-Implement this batch, then leave one explicit ready card instead of widening
-into multi-process browser controls.
+Execute [`079-decide-demo-post-projected-output-provenance-boundary.md`](./079-decide-demo-post-projected-output-provenance-boundary.md)
+to decide whether projected concurrent demos now earn one bounded browser
+follow-up or should stay runner-side longer.

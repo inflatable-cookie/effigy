@@ -106,6 +106,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 - Deepen concurrent-runner-backed projected demo runtime reporting with
+  runner-owned `projected_output_provenance` facts so inspect and active
+  terminal/session payloads now say whether flattened concurrent output is
+  `single-source` or `flattened-unlabeled` instead of making browser
+  consumers guess how source attribution survives projection
+- Deepen concurrent-runner-backed projected demo runtime reporting with
   runner-owned `projected_process_summary` facts so inspect and active
   terminal/session payloads now expose the managed process names behind one
   flattened demo-owned terminal/session and whether that projected surface is

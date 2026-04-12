@@ -19,5 +19,5 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to add the next runner-owned truth layer after
-projected-runtime process summary landed: projected output provenance.
+Use the active spec lane to decide the next bounded slice after projected
+output provenance truth landed.

@@ -3012,6 +3012,48 @@ Out of scope for the next implementation slice:
 - browser layout redesign
 - desktop-client work
 
+Batch `03.71` result:
+
+- projected concurrent-runner demo payloads now expose
+  `projected_output_provenance` through `runtime_backend` on demo detail,
+  active attempt, and active terminal/session surfaces
+- projected provenance now says whether the flattened demo-owned output is:
+  - `single-source`
+  - `flattened-unlabeled`
+- browser consumers can now distinguish one-process projected output from
+  unlabeled merged multi-process output without inventing their own heuristics
+
+Why this implementation is the right boundary:
+
+- it adds one more layer of runner truth exactly where browser follow-up would
+  otherwise have to guess
+- it stays demo-owned instead of turning into generic process-manager log
+  metadata
+- it still avoids nested TUI launch and multi-process browser churn
+
+### 10.69 Demo Post-Projected-Output-Provenance Boundary
+
+Batch `03.72` target:
+
+Decide the next bounded slice after projected-output provenance truth landed.
+
+In scope for the next decision slice:
+
+- decide whether the next value belongs in:
+  - a bounded browser follow-up that consumes projected-output provenance
+    honestly
+  - one more runner-owned concurrent-runtime truth slice
+  - a pause from this branch of demo work
+- preserve the no-nested-TUI rule
+- leave one explicit ready card
+
+Out of scope for the next decision slice:
+
+- implementing the next slice
+- generic process-manager UI
+- multi-process browser panes by default
+- embedding the concurrent TUI
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -3081,6 +3123,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to add runner-owned projected
-output-provenance truth for flattened concurrent-runner demos while nested TUI
-embedding and multi-process browser-manager drift stay explicitly bounded.
+Use the active `g02.003` strict lane to decide the next bounded slice after
+projected-output provenance truth landed while nested TUI embedding and
+multi-process browser-manager drift stay explicitly bounded.

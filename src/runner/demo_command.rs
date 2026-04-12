@@ -1743,6 +1743,8 @@ fn demo_active_attempt_from_record(
         projection_shape_kind: infer_projection_shape_kind(record).to_owned(),
         managed_process_count: infer_managed_process_count(record),
         managed_process_names: record.managed_process_names.clone(),
+        projected_output_provenance_kind: infer_projected_output_provenance_kind(record)
+            .to_owned(),
         terminal_transport: match record.terminal_transport {
             PersistedDemoTerminalTransport::Stream => DemoTerminalTransport::Stream,
             PersistedDemoTerminalTransport::Pty => DemoTerminalTransport::Pty,
@@ -1838,6 +1840,34 @@ fn runtime_projected_process_summary_for_active_attempt(
         DemoRuntimeProjectedProcessSummary::none()
     } else {
         DemoRuntimeProjectedProcessSummary::from_names(active_attempt.managed_process_names.clone())
+    }
+}
+
+fn infer_projected_output_provenance_kind(record: &PersistedDemoActiveAttempt) -> &str {
+    if let Some(kind) = record.projected_output_provenance_kind.as_deref() {
+        return kind;
+    }
+    let runtime_backend_kind = infer_runtime_backend_kind(
+        record.runtime_backend_kind.as_deref(),
+        &record.entrypoint_kind,
+    );
+    if runtime_backend_kind != "concurrent-runner" {
+        return "none";
+    }
+    if infer_managed_process_count(record).unwrap_or(0) <= 1 {
+        return "single-source";
+    }
+    "flattened-unlabeled"
+}
+
+fn runtime_projected_output_provenance_for_active_attempt(
+    active_attempt: &DemoActiveAttempt,
+) -> DemoRuntimeProjectedOutputProvenance {
+    match active_attempt.projected_output_provenance_kind.as_str() {
+        "single-source" => DemoRuntimeProjectedOutputProvenance::single_source(),
+        "source-attributed" => DemoRuntimeProjectedOutputProvenance::source_attributed(),
+        "flattened-unlabeled" => DemoRuntimeProjectedOutputProvenance::flattened_unlabeled(),
+        _ => DemoRuntimeProjectedOutputProvenance::none(),
     }
 }
 
@@ -1971,6 +2001,7 @@ fn execute_task_backed_demo(
             projection_shape_kind: Some("none".to_owned()),
             managed_process_count: None,
             managed_process_names: Vec::new(),
+            projected_output_provenance_kind: Some("none".to_owned()),
             terminal_transport: PersistedDemoTerminalTransport::Stream,
             supports_input_forwarding: false,
             supports_resize: false,
@@ -2182,6 +2213,14 @@ fn execute_concurrent_runner_backed_demo(
                 .iter()
                 .map(|process| process.name.clone())
                 .collect(),
+            projected_output_provenance_kind: Some(
+                if plan.processes.len() <= 1 {
+                    "single-source"
+                } else {
+                    "flattened-unlabeled"
+                }
+                .to_owned(),
+            ),
             terminal_transport: PersistedDemoTerminalTransport::Stream,
             supports_input_forwarding: input_handoff_path.is_some(),
             supports_resize: resize_handoff_path.is_some(),
@@ -2702,6 +2741,7 @@ fn execute_run_backed_demo(
             projection_shape_kind: Some("single-terminal".to_owned()),
             managed_process_count: None,
             managed_process_names: Vec::new(),
+            projected_output_provenance_kind: Some("none".to_owned()),
             terminal_transport: launch_mode.transport(),
             supports_input_forwarding: input_handoff_path.is_some(),
             supports_resize: resize_handoff_path.is_some(),
@@ -3910,6 +3950,7 @@ struct DemoRuntimeBackend {
     flattened_projection: bool,
     projection_shape: DemoRuntimeProjectionShape,
     projected_process_summary: DemoRuntimeProjectedProcessSummary,
+    projected_output_provenance: DemoRuntimeProjectedOutputProvenance,
     capabilities: Vec<String>,
 }
 
@@ -3921,6 +3962,7 @@ impl DemoRuntimeBackend {
             flattened_projection: false,
             projection_shape: DemoRuntimeProjectionShape::none(),
             projected_process_summary: DemoRuntimeProjectedProcessSummary::none(),
+            projected_output_provenance: DemoRuntimeProjectedOutputProvenance::none(),
             capabilities: Vec::new(),
         }
     }
@@ -3933,6 +3975,7 @@ impl DemoRuntimeBackend {
                 flattened_projection: false,
                 projection_shape: DemoRuntimeProjectionShape::none(),
                 projected_process_summary: DemoRuntimeProjectedProcessSummary::none(),
+                projected_output_provenance: DemoRuntimeProjectedOutputProvenance::none(),
                 capabilities: Vec::new(),
             },
             DemoEntrypoint::Run(_) => Self {
@@ -3941,6 +3984,7 @@ impl DemoRuntimeBackend {
                 flattened_projection: false,
                 projection_shape: DemoRuntimeProjectionShape::single_terminal(None),
                 projected_process_summary: DemoRuntimeProjectedProcessSummary::none(),
+                projected_output_provenance: DemoRuntimeProjectedOutputProvenance::none(),
                 capabilities: vec![
                     "active-terminal-session".to_owned(),
                     "browser-live-attach".to_owned(),
@@ -3966,6 +4010,7 @@ impl DemoRuntimeBackend {
             "flattened_projection": self.flattened_projection,
             "projection_shape": self.projection_shape.to_json(),
             "projected_process_summary": self.projected_process_summary.to_json(),
+            "projected_output_provenance": self.projected_output_provenance.to_json(),
             "capabilities": self.capabilities,
         })
     }
@@ -4062,6 +4107,65 @@ impl DemoRuntimeProjectedProcessSummary {
     }
 }
 
+#[derive(Debug, Clone)]
+struct DemoRuntimeProjectedOutputProvenance {
+    present: bool,
+    kind: String,
+    label: String,
+    source_attributed: bool,
+}
+
+impl DemoRuntimeProjectedOutputProvenance {
+    fn none() -> Self {
+        Self {
+            present: false,
+            kind: "none".to_owned(),
+            label: "none".to_owned(),
+            source_attributed: false,
+        }
+    }
+
+    fn single_source() -> Self {
+        Self {
+            present: true,
+            kind: "single-source".to_owned(),
+            label: "single-source".to_owned(),
+            source_attributed: false,
+        }
+    }
+
+    fn flattened_unlabeled() -> Self {
+        Self {
+            present: true,
+            kind: "flattened-unlabeled".to_owned(),
+            label: "flattened-unlabeled".to_owned(),
+            source_attributed: false,
+        }
+    }
+
+    fn source_attributed() -> Self {
+        Self {
+            present: true,
+            kind: "source-attributed".to_owned(),
+            label: "source-attributed".to_owned(),
+            source_attributed: true,
+        }
+    }
+
+    fn rendered_label(&self) -> &str {
+        &self.label
+    }
+
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "present": self.present,
+            "kind": self.kind,
+            "label": self.label,
+            "source_attributed": self.source_attributed,
+        })
+    }
+}
+
 fn demo_runtime_backend(
     repo_root: &Path,
     loaded: &LoadedTaskManifest,
@@ -4106,6 +4210,14 @@ fn demo_runtime_backend_from_entrypoint(
                     concurrent_runner_task_process_names(repo_root, task_name)
                         .map(concurrent_runner_projected_process_summary)
                         .unwrap_or_else(DemoRuntimeProjectedProcessSummary::none);
+                let projected_output_provenance =
+                    match concurrent_runner_task_process_count(repo_root, task_name) {
+                        Some(1) => DemoRuntimeProjectedOutputProvenance::single_source(),
+                        Some(count) if count > 1 => {
+                            DemoRuntimeProjectedOutputProvenance::flattened_unlabeled()
+                        }
+                        _ => DemoRuntimeProjectedOutputProvenance::none(),
+                    };
                 let projection_shape = concurrent_runner_task_process_count(repo_root, task_name)
                     .map(concurrent_runner_projection_shape)
                     .unwrap_or_else(|| DemoRuntimeProjectionShape::projected_multi_process(None));
@@ -4115,6 +4227,7 @@ fn demo_runtime_backend_from_entrypoint(
                     flattened_projection: true,
                     projection_shape,
                     projected_process_summary,
+                    projected_output_provenance,
                     capabilities,
                 }
             } else {
@@ -4211,6 +4324,7 @@ struct DemoActiveAttempt {
     projection_shape_kind: String,
     managed_process_count: Option<usize>,
     managed_process_names: Vec<String>,
+    projected_output_provenance_kind: String,
     terminal_transport: DemoTerminalTransport,
     supports_input_forwarding: bool,
     supports_resize: bool,
@@ -4244,6 +4358,7 @@ impl DemoActiveAttempt {
             projection_shape_kind: "none".to_owned(),
             managed_process_count: None,
             managed_process_names: Vec::new(),
+            projected_output_provenance_kind: "none".to_owned(),
             terminal_transport: DemoTerminalTransport::None,
             supports_input_forwarding: false,
             supports_resize: false,
@@ -4295,6 +4410,9 @@ impl DemoActiveAttempt {
             flattened_projection: self.flattened_runtime_projection,
             projection_shape: runtime_projection_shape_for_active_attempt(self),
             projected_process_summary: runtime_projected_process_summary_for_active_attempt(self),
+            projected_output_provenance: runtime_projected_output_provenance_for_active_attempt(
+                self,
+            ),
             capabilities,
         }
     }
@@ -4396,6 +4514,13 @@ impl DemoActiveAttempt {
                 } else {
                     "no"
                 },
+            ));
+            values.push(KeyValue::new(
+                "runtime-output-provenance",
+                self.runtime_backend()
+                    .projected_output_provenance
+                    .rendered_label()
+                    .to_owned(),
             ));
         }
         if let Some(stdout_log_path) = &self.stdout_log_path {
@@ -4620,6 +4745,13 @@ impl DemoActiveTerminalSession {
                 } else {
                     "no"
                 },
+            ));
+            values.push(KeyValue::new(
+                "runtime-output-provenance",
+                self.runtime_backend
+                    .projected_output_provenance
+                    .rendered_label()
+                    .to_owned(),
             ));
         }
         values
@@ -4981,6 +5113,8 @@ struct PersistedDemoActiveAttempt {
     #[serde(default)]
     managed_process_names: Vec<String>,
     #[serde(default)]
+    projected_output_provenance_kind: Option<String>,
+    #[serde(default)]
     terminal_transport: PersistedDemoTerminalTransport,
     #[serde(default)]
     supports_input_forwarding: bool,
@@ -5102,6 +5236,7 @@ mod tests {
                 projection_shape_kind: Some("single-terminal".to_owned()),
                 managed_process_count: None,
                 managed_process_names: Vec::new(),
+                projected_output_provenance_kind: Some("none".to_owned()),
                 terminal_transport: PersistedDemoTerminalTransport::Stream,
                 supports_input_forwarding: false,
                 supports_resize: false,
