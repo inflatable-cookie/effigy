@@ -1869,30 +1869,30 @@ fn history_detail_render(
     if let Some(attempt) = history.and_then(|history| {
         selected_history_attempt(history, selected_history_ordinal_from_item(selected_item))
     }) {
-        lines.push(compact_kv_line("ordinal", &attempt.ordinal.to_string()));
-        lines.push(compact_kv_line("attempt", &attempt.attempt_id));
-        lines.push(compact_kv_line("outcome", &attempt.outcome));
+        lines.extend(stacked_kv_lines("ordinal", &attempt.ordinal.to_string()));
+        lines.extend(stacked_kv_lines("attempt", &attempt.attempt_id));
+        lines.extend(stacked_kv_lines("outcome", &attempt.outcome));
         if let Some(summary) = &attempt.summary {
             lines.push(Line::from(summary.clone()));
         }
         if let Some(receipt_path) = &attempt.receipt_path {
-            lines.push(compact_kv_line("receipt", receipt_path));
+            lines.extend(stacked_kv_lines("receipt", receipt_path));
         }
         if let Some(stdout_log_path) = &attempt.stdout_log_path {
-            lines.push(compact_kv_line("stdout", stdout_log_path));
+            lines.extend(stacked_kv_lines("stdout", stdout_log_path));
         }
         if let Some(stderr_log_path) = &attempt.stderr_log_path {
-            lines.push(compact_kv_line("stderr", stderr_log_path));
+            lines.extend(stacked_kv_lines("stderr", stderr_log_path));
         }
         if let Some(exit_code) = attempt.exit_code {
-            lines.push(compact_kv_line("exit", &exit_code.to_string()));
+            lines.extend(stacked_kv_lines("exit", &exit_code.to_string()));
         }
         if attempt.artifacts.is_empty() {
             lines.push(muted_line(
                 "No retained artifacts for the selected attempt.".to_owned(),
             ));
         } else {
-            lines.push(compact_kv_line("artifacts", &attempt.artifacts.join(", ")));
+            lines.extend(stacked_kv_lines("artifacts", &attempt.artifacts.join(", ")));
         }
     } else {
         lines.push(muted_line(
@@ -1930,8 +1930,6 @@ fn artifacts_detail_render(
     let mut lines = Vec::new();
     let mut selected_line_index = None;
 
-    lines.push(section_heading("Artifacts"));
-
     if detail.latest_attempt.artifacts.is_empty() {
         lines.push(muted_line("No recorded artifacts.".to_owned()));
     } else {
@@ -1946,11 +1944,6 @@ fn artifacts_detail_render(
                 detail_focused,
             ));
         }
-        lines.push(muted_line(if detail_focused {
-            "↑/↓ selects artifacts  •  Enter opens selection".to_owned()
-        } else {
-            "→ focuses artifacts".to_owned()
-        }));
     }
 
     DetailRender {
@@ -2230,6 +2223,18 @@ fn compact_kv_line(label: &str, value: &str) -> Line<'static> {
         ),
         Span::raw(value.to_owned()),
     ])
+}
+
+fn stacked_kv_lines(label: &str, value: &str) -> [Line<'static>; 2] {
+    [
+        Line::from(vec![Span::styled(
+            format!("{label}:"),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(format!("  {value}")),
+    ]
 }
 
 fn section_heading(label: &str) -> Line<'static> {
@@ -3391,10 +3396,10 @@ mod tests {
         assert!(rendered.contains("Refresh history"));
         assert!(rendered.contains("#01"));
         assert!(rendered.contains("Proof artifact was missing."));
-        assert!(rendered.contains("receipt: .effigy/demo/history/demo-123.json"));
-        assert!(rendered.contains("stdout: .effigy/demo/logs/demo-123.stdout.log"));
-        assert!(rendered.contains("stderr: .effigy/demo/logs/demo-123.stderr.log"));
-        assert!(rendered.contains("artifacts: .effigy/demo/artifacts/report.html"));
+        assert!(rendered.contains("receipt:\n  .effigy/demo/history/demo-123.json"));
+        assert!(rendered.contains("stdout:\n  .effigy/demo/logs/demo-123.stdout.log"));
+        assert!(rendered.contains("stderr:\n  .effigy/demo/logs/demo-123.stderr.log"));
+        assert!(rendered.contains("artifacts:\n  .effigy/demo/artifacts/report.html"));
         assert!(!rendered.contains("tags:"));
         assert!(!rendered.contains("Retained attempts for"));
     }
@@ -3529,7 +3534,9 @@ mod tests {
 
         assert!(rendered.contains("one"));
         assert!(rendered.contains("two"));
-        assert!(rendered.contains("↑/↓ selects artifacts"));
+        assert!(!rendered.contains("Artifacts"));
+        assert!(!rendered.contains("↑/↓ selects artifacts"));
+        assert!(!rendered.contains("Enter opens selection"));
         assert!(!rendered.contains("tags:"));
         assert!(!rendered.contains("covers:"));
         assert!(!rendered.contains("Recorded artifacts for"));
