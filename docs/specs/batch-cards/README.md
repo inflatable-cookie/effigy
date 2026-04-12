@@ -72,10 +72,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`066-implement-demo-concurrent-runner-session-projection.md`](./066-implement-demo-concurrent-runner-session-projection.md) (complete)
 - [`067-decide-demo-post-concurrent-runner-session-projection-boundary.md`](./067-decide-demo-post-concurrent-runner-session-projection-boundary.md) (complete)
 - [`068-implement-demo-concurrent-runner-terminal-interaction-projection.md`](./068-implement-demo-concurrent-runner-terminal-interaction-projection.md) (complete)
-- [`069-decide-demo-post-concurrent-runner-terminal-interaction-boundary.md`](./069-decide-demo-post-concurrent-runner-terminal-interaction-boundary.md)
+- [`069-decide-demo-post-concurrent-runner-terminal-interaction-boundary.md`](./069-decide-demo-post-concurrent-runner-terminal-interaction-boundary.md) (complete)
+- [`070-implement-demo-browser-live-attached-terminal-session.md`](./070-implement-demo-browser-live-attached-terminal-session.md)
 
 ## Next Task
 
-Execute the active ready card to choose the next bounded slice after
-concurrent-runner terminal interaction projection landed through the demo
-session contract.
+Execute the active ready card to replace browser terminal replay with a
+browser-owned live attached terminal session for browser-launched run-backed
+interactive demos.

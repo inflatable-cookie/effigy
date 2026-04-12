@@ -1,6 +1,6 @@
 # 069 Decide Demo Post-Concurrent-Runner Terminal Interaction Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -34,6 +34,18 @@ embedding, and generic process-manager work.
 - the decision stays demo-scoped rather than process-manager-scoped
 - the lane remains anchored in one active ready card
 
+## Result
+
+- recover the browser-terminal authority chain:
+  - shipped browser terminal behavior is a vt-backed replay/input surface
+  - it is not yet a browser-owned live attached terminal session
+- do not take more runner-only concurrent-runtime fidelity next
+- do not pause terminal/browser work yet
+- the next bounded slice is browser-owned live attached terminal attachment
+  for browser-launched run-backed interactive demos
+- preserve the no-nested-TUI rule by keeping concurrent-runner-backed demos
+  on the flattened projected path for now
+
 ## Validation
 
 - `cargo run --bin effigy -- qa:docs`
@@ -47,5 +59,6 @@ embedding, and generic process-manager work.
 
 ## Next Task
 
-Execute this card to choose the next bounded slice after concurrent-runner
-terminal interaction projection lands.
+Execute [`070-implement-demo-browser-live-attached-terminal-session.md`](./070-implement-demo-browser-live-attached-terminal-session.md)
+to replace browser terminal replay with a browser-owned live attached terminal
+session for browser-launched run-backed interactive demos.

@@ -20,7 +20,11 @@ manifest, not to teach people more wrapper scripts.
   known or currently running proof state with `effigy demo inspect <id>`,
   query retained attempt history with `effigy demo history <id>`, record a
   normalized proof attempt with `effigy demo run <id>`, and use `demo stop` /
-  `demo rerun` for runner-owned lifecycle control.
+  `demo rerun` for runner-owned lifecycle control. The demo lane also now
+  includes a browser surface with history, artifacts, and terminal-oriented
+  views, though the active next batch is upgrading that terminal tab from
+  replay/input consumption to a browser-owned live attached session for
+  browser-launched interactive demos.
 - Move CI and agent automation onto stable JSON with `effigy --json <command>`.
 - Replace scattered release and validation scripts with built-in command
   surfaces as adoption grows.

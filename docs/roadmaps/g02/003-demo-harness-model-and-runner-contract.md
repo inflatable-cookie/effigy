@@ -2252,25 +2252,28 @@ allows it, without launching a nested TUI.
 
 Batch `03.53` result:
 
-- the browser `Terminal` tab now renders a demo-scoped terminal screen instead
-  of a plain text/log page
+- the browser `Terminal` tab now renders a vt-backed demo-scoped terminal
+  replay surface instead of a plain text/log page
 - `↑` and `↓` in the focused terminal tab now scroll terminal output, while
   `Enter` toggles browser-side input capture when the active session reports
   forwarding support
 - `demo input` now performs real runner-owned forwarding by appending to a
   per-session handoff file for detached run-backed demos instead of only
   advertising the contract
-- existing demos with only recorded output still render through the embedded
+- existing demos with only recorded output still render through the browser
   terminal surface via latest-attempt fallback
-- the no-nested-TUI rule remains intact; the browser consumes the runner-owned
-  session contract instead of launching another TUI
+- the no-nested-TUI rule remains intact; the browser consumes runner-owned
+  session data instead of launching another TUI
+- later operator feedback proved this was still not the real desired surface:
+  it replays and forwards, but the demo is not actually running in that pane
 
-Why this batch was the right implementation slice:
+Why this batch was the right implementation slice at the time:
 
-- it turns the terminal tab into the honest surface the browser was missing
-- it makes browser-side input real without redefining the human-attached CLI
+- it replaced the metadata/log-only page with a stronger terminal-shaped
+  browser consumer
+- it made browser-side input real without redefining the human-attached CLI
   path as a fake text prompt flow
-- it keeps terminal semantics demo-scoped and contract-driven instead of
+- it kept terminal semantics demo-scoped and contract-driven instead of
   importing the concurrent TUI app model wholesale
 
 ### 10.51 Demo Post-Browser-Terminal-Emulator Boundary
@@ -2611,6 +2614,56 @@ Decision focus:
   concurrent-runner interaction projection is real
 - whether terminal/runtime work is coherent enough to pause again
 
+Batch `03.62` result:
+
+- recovered the browser-terminal authority chain after operator feedback showed
+  the shipped tab was still a replay/input consumer, not a browser-owned live
+  terminal session
+- do not take more runner-only concurrent-runtime fidelity next
+- do not pause terminal/browser work yet
+- the next bounded slice is browser-owned live attached terminal sessions for
+  browser-launched run-backed interactive demos
+- preserve the no-nested-TUI rule by leaving concurrent-runner-backed demos on
+  the existing flattened projected path for now
+
+Why this decision is the right boundary:
+
+- the user wants the demo to actually run in the browser terminal pane, not
+  for the browser to repaint runner logs and forward text opportunistically
+- more runner-only fidelity work would not close the actual browser/product
+  gap anymore
+- widening immediately to concurrent-runner live embedding would break the
+  bounded-slice rule and collide with the no-nested-TUI constraint
+- a run-backed browser-owned live terminal session is the smallest honest next
+  slice that fixes the operator-facing mismatch
+
+### 10.60 Demo Browser Live Attached Terminal Session
+
+Batch `03.63` target:
+
+Replace browser terminal replay with a browser-owned live attached terminal
+session for browser-launched run-backed interactive demos, while preserving
+runner-owned logs, receipts, and history.
+
+In scope for the next implementation slice:
+
+- add one browser-owned live attached terminal session path for browser-launched
+  run-backed demos whose mode requires terminal interaction
+- have the `Terminal` tab host the live output and input loop for that session
+- preserve runner-owned receipts, logs, latest-attempt state, and retained
+  history while the session is live
+- keep detached/session-contract surfaces coherent for non-browser clients
+- leave concurrent-runner-backed demos on the existing flattened projected path
+  for now
+
+Out of scope for the next implementation slice:
+
+- launching or embedding the concurrent TUI inside `effigy demo browser`
+- generic process-manager UI or multi-process demo sub-tabs
+- redesigning the browser layout or control model again
+- broad backend unification beyond the bounded run-backed browser-attached path
+- desktop-client work
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -2680,7 +2733,7 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the next bounded slice after
-concurrent-runner terminal interaction projection landed through the demo
-session contract while nested TUI embedding and wider runtime drift stay
+Use the active `g02.003` strict lane to replace browser terminal replay with a
+browser-owned live attached terminal session for browser-launched run-backed
+interactive demos while nested TUI embedding and wider runtime drift stay
 explicitly bounded.
