@@ -1,11 +1,11 @@
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command as ProcessCommand, Stdio};
+use std::process::{ChildStdin, Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -276,11 +276,17 @@ fn render_demo_inspect(
     renderer.key_values(&record.active_terminal_session.to_key_values())?;
     if !record.active_terminal_session.recent_stdout.is_empty() {
         renderer.text("")?;
-        renderer.bullet_list("recent-stdout", &record.active_terminal_session.recent_stdout)?;
+        renderer.bullet_list(
+            "recent-stdout",
+            &record.active_terminal_session.recent_stdout,
+        )?;
     }
     if !record.active_terminal_session.recent_stderr.is_empty() {
         renderer.text("")?;
-        renderer.bullet_list("recent-stderr", &record.active_terminal_session.recent_stderr)?;
+        renderer.bullet_list(
+            "recent-stderr",
+            &record.active_terminal_session.recent_stderr,
+        )?;
     }
     renderer.text("")?;
 
@@ -843,28 +849,28 @@ fn render_demo_input(
     }
 
     if output_json {
-        return encode_json(&json!({
-            "schema": "effigy.demo.input.v1",
-            "schema_version": 1,
-            "ok": true,
-            "demo_id": demo_id,
-            "input": {
-                "text": text,
-                "append_newline": append_newline,
-                "forwarded_bytes": forwarded_text.len(),
-            },
-            "active_terminal_session": record.active_terminal_session.to_json(),
-        }), true);
+        return encode_json(
+            &json!({
+                "schema": "effigy.demo.input.v1",
+                "schema_version": 1,
+                "ok": true,
+                "demo_id": demo_id,
+                "input": {
+                    "text": text,
+                    "append_newline": append_newline,
+                    "forwarded_bytes": forwarded_text.len(),
+                },
+                "active_terminal_session": record.active_terminal_session.to_json(),
+            }),
+            true,
+        );
     }
 
     let mut renderer = text_renderer();
     renderer.section("Demo Terminal Input")?;
     renderer.key_values(&[
         KeyValue::new("demo", demo_id.to_owned()),
-        KeyValue::new(
-            "append-newline",
-            if append_newline { "yes" } else { "no" },
-        ),
+        KeyValue::new("append-newline", if append_newline { "yes" } else { "no" }),
         KeyValue::new("forwarded-bytes", forwarded_text.len().to_string()),
     ])?;
     render_utf8(renderer.into_inner())
@@ -1430,15 +1436,17 @@ fn load_active_terminal_session(
 
     let stdout_log_path = active_attempt.stdout_log_path.clone();
     let stderr_log_path = active_attempt.stderr_log_path.clone();
-    let input_forwarding_reason = (!active_attempt.supports_input_forwarding).then_some(
-        "input forwarding is not exposed through the current demo runtime".to_owned(),
-    );
+    let input_forwarding_reason = (!active_attempt.supports_input_forwarding)
+        .then_some("input forwarding is not exposed through the current demo runtime".to_owned());
     DemoActiveTerminalSession {
         available: true,
         state: "live".to_owned(),
         attempt_id: active_attempt.attempt_id.clone(),
         transport: active_attempt.terminal_transport.rendered().to_owned(),
-        pty: matches!(active_attempt.terminal_transport, DemoTerminalTransport::Pty),
+        pty: matches!(
+            active_attempt.terminal_transport,
+            DemoTerminalTransport::Pty
+        ),
         supports_input_forwarding: active_attempt.supports_input_forwarding,
         input_forwarding_reason: input_forwarding_reason.clone(),
         input_forwarding: if active_attempt.supports_input_forwarding {
@@ -1455,11 +1463,15 @@ fn load_active_terminal_session(
         output_available: stdout_log_path.is_some() || stderr_log_path.is_some(),
         recent_stdout: stdout_log_path
             .as_deref()
-            .map(|path| read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES))
+            .map(|path| {
+                read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES)
+            })
             .unwrap_or_default(),
         recent_stderr: stderr_log_path
             .as_deref()
-            .map(|path| read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES))
+            .map(|path| {
+                read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES)
+            })
             .unwrap_or_default(),
     }
 }
@@ -1735,13 +1747,14 @@ fn execute_run_backed_demo(
     run_command: &str,
     output_json: bool,
 ) -> Result<DemoExecutionAttempt, RunnerError> {
-    let attached_terminal = !output_json && demo_mode_prefers_attached_terminal(mode);
+    let launch_mode = resolve_demo_launch_mode(mode, output_json);
+    let attached_terminal = launch_mode.attached_terminal();
     let log_paths = if output_json || attached_terminal {
-        DemoLogPaths::prepare(repo_root, demo_id)?
+        DemoLogPaths::prepare_for_launch_mode(repo_root, demo_id, launch_mode)?
     } else {
         DemoLogPaths::none()
     };
-    let mut child = build_run_backed_process(repo_root, run_command, output_json || attached_terminal)?
+    let mut child = build_run_backed_process(repo_root, run_command, launch_mode)?
         .spawn()
         .map_err(|error| {
             RunnerError::task_invocation(format!(
@@ -1766,7 +1779,7 @@ fn execute_run_backed_demo(
             entrypoint_kind: "run".to_owned(),
             entrypoint_value: run_command.to_owned(),
             command: run_command.to_owned(),
-            terminal_transport: PersistedDemoTerminalTransport::Stream,
+            terminal_transport: launch_mode.transport(),
             supports_input_forwarding: false,
             nested_tui: false,
             stdout_log_path: log_paths.stdout.clone(),
@@ -1775,6 +1788,11 @@ fn execute_run_backed_demo(
     )?;
 
     if output_json || attached_terminal {
+        let _stdin_forward = if launch_mode.forward_stdin() && io::stdin().is_terminal() {
+            child.stdin.take().map(spawn_stdin_forward)
+        } else {
+            None
+        };
         let stdout_reader = child.stdout.take().ok_or_else(|| {
             RunnerError::task_invocation(format!(
                 "Demo `{demo_id}` launched without a stdout capture pipe."
@@ -1800,8 +1818,20 @@ fn execute_run_backed_demo(
                 "Demo `{demo_id}` failed to wait for run entrypoint: {error}"
             ))
         })?;
-        let stdout = join_output_capture(stdout_handle, "stdout", demo_id)?;
-        let stderr = join_output_capture(stderr_handle, "stderr", demo_id)?;
+        let mut stdout = join_output_capture(stdout_handle, "stdout", demo_id)?;
+        let mut stderr = join_output_capture(stderr_handle, "stderr", demo_id)?;
+        if matches!(launch_mode, DemoLaunchMode::AttachedPty) {
+            stdout = sanitize_pty_transcript(&stdout);
+            stderr = sanitize_pty_transcript(&stderr);
+            if let Some(path) = &log_paths.stdout_absolute {
+                fs::write(path, &stdout)
+                    .map_err(|error| RunnerError::task_invocation_failed_write(path, error))?;
+            }
+            if let Some(path) = &log_paths.stderr_absolute {
+                fs::write(path, &stderr)
+                    .map_err(|error| RunnerError::task_invocation_failed_write(path, error))?;
+            }
+        }
         let stop_requested = active_attempt_is_stop_requested(repo_root, demo_id);
         return Ok(run_attempt_from_output(
             demo_id,
@@ -1834,20 +1864,91 @@ fn execute_run_backed_demo(
 }
 
 fn demo_mode_prefers_attached_terminal(mode: ManifestDemoMode) -> bool {
-    matches!(mode, ManifestDemoMode::Interactive | ManifestDemoMode::Hybrid)
+    matches!(
+        mode,
+        ManifestDemoMode::Interactive | ManifestDemoMode::Hybrid
+    )
+}
+
+#[derive(Clone, Copy)]
+enum DemoLaunchMode {
+    DetachedJson,
+    AttachedStream,
+    AttachedPty,
+}
+
+impl DemoLaunchMode {
+    fn attached_terminal(self) -> bool {
+        matches!(self, Self::AttachedStream | Self::AttachedPty)
+    }
+
+    fn capture_output(self) -> bool {
+        matches!(self, Self::DetachedJson | Self::AttachedPty)
+    }
+
+    fn forward_stdin(self) -> bool {
+        matches!(self, Self::AttachedPty)
+    }
+
+    fn transport(self) -> PersistedDemoTerminalTransport {
+        match self {
+            Self::AttachedPty => PersistedDemoTerminalTransport::Pty,
+            Self::DetachedJson | Self::AttachedStream => PersistedDemoTerminalTransport::Stream,
+        }
+    }
+}
+
+fn resolve_demo_launch_mode(mode: ManifestDemoMode, output_json: bool) -> DemoLaunchMode {
+    if output_json {
+        return DemoLaunchMode::DetachedJson;
+    }
+    if !demo_mode_prefers_attached_terminal(mode) {
+        return DemoLaunchMode::DetachedJson;
+    }
+    if demo_runtime_supports_pty() {
+        DemoLaunchMode::AttachedPty
+    } else {
+        DemoLaunchMode::AttachedStream
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn demo_runtime_supports_pty() -> bool {
+    true
+}
+
+#[cfg(not(target_os = "macos"))]
+fn demo_runtime_supports_pty() -> bool {
+    false
 }
 
 fn build_run_backed_process(
     repo_root: &Path,
     run_command: &str,
-    capture_output: bool,
+    launch_mode: DemoLaunchMode,
 ) -> Result<ProcessCommand, RunnerError> {
-    let mut process = ProcessCommand::new("sh");
-    process.arg("-c").arg(run_command).current_dir(repo_root);
-    if capture_output {
-        process.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut process = match launch_mode {
+        DemoLaunchMode::AttachedPty => build_run_backed_pty_process(repo_root, run_command),
+        DemoLaunchMode::DetachedJson | DemoLaunchMode::AttachedStream => {
+            let mut process = ProcessCommand::new("sh");
+            process.arg("-c").arg(run_command).current_dir(repo_root);
+            process
+        }
+    };
+    if launch_mode.capture_output() {
+        process
+            .stdin(if launch_mode.forward_stdin() {
+                Stdio::piped()
+            } else {
+                Stdio::inherit()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
     } else {
-        process.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        process
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
     }
     #[cfg(unix)]
     unsafe {
@@ -1858,6 +1959,26 @@ fn build_run_backed_process(
     }
     with_local_node_bin_path(&mut process, repo_root);
     Ok(process)
+}
+
+#[cfg(target_os = "macos")]
+fn build_run_backed_pty_process(repo_root: &Path, run_command: &str) -> ProcessCommand {
+    let mut process = ProcessCommand::new("script");
+    process
+        .arg("-q")
+        .arg("/dev/null")
+        .arg("sh")
+        .arg("-c")
+        .arg(run_command)
+        .current_dir(repo_root);
+    process
+}
+
+#[cfg(not(target_os = "macos"))]
+fn build_run_backed_pty_process(repo_root: &Path, run_command: &str) -> ProcessCommand {
+    let mut process = ProcessCommand::new("sh");
+    process.arg("-c").arg(run_command).current_dir(repo_root);
+    process
 }
 
 fn run_attempt_from_output(
@@ -1981,6 +2102,22 @@ where
         }
         Ok(String::from_utf8_lossy(&output).to_string())
     })
+}
+
+fn spawn_stdin_forward(mut child_stdin: ChildStdin) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let mut input = io::stdin().lock();
+        let _ = io::copy(&mut input, &mut child_stdin);
+        let _ = child_stdin.flush();
+    })
+}
+
+fn sanitize_pty_transcript(output: &str) -> String {
+    output
+        .chars()
+        .filter(|ch| matches!(ch, '\n' | '\r' | '\t') || !ch.is_control())
+        .collect::<String>()
+        .replace("^D", "")
 }
 
 fn join_output_capture(
@@ -2293,7 +2430,7 @@ fn persist_demo_attempt_logs(
     if stdout.is_empty() && stderr.is_empty() {
         return Ok(DemoLogPaths::none());
     }
-    let log_paths = DemoLogPaths::prepare(repo_root, demo_id)?;
+    let log_paths = DemoLogPaths::prepare_split(repo_root, demo_id)?;
     if let Some(path) = &log_paths.stdout_absolute {
         fs::write(path, stdout)
             .map_err(|error| RunnerError::task_invocation_failed_write(path, error))?;
@@ -2707,7 +2844,20 @@ impl DemoLogPaths {
         }
     }
 
-    fn prepare(repo_root: &Path, demo_id: &str) -> Result<Self, RunnerError> {
+    fn prepare_for_launch_mode(
+        repo_root: &Path,
+        demo_id: &str,
+        launch_mode: DemoLaunchMode,
+    ) -> Result<Self, RunnerError> {
+        match launch_mode {
+            DemoLaunchMode::AttachedPty => Self::prepare_pty(repo_root, demo_id),
+            DemoLaunchMode::DetachedJson | DemoLaunchMode::AttachedStream => {
+                Self::prepare_split(repo_root, demo_id)
+            }
+        }
+    }
+
+    fn prepare_split(repo_root: &Path, demo_id: &str) -> Result<Self, RunnerError> {
         let stdout_absolute = effective_output_log_path(repo_root, demo_id, "stdout");
         let stderr_absolute = effective_output_log_path(repo_root, demo_id, "stderr");
         if let Some(parent) = stdout_absolute.parent() {
@@ -2723,6 +2873,22 @@ impl DemoLogPaths {
             stderr: Some(display_repo_path(&stderr_absolute, repo_root)),
             stdout_absolute: Some(stdout_absolute),
             stderr_absolute: Some(stderr_absolute),
+        })
+    }
+
+    fn prepare_pty(repo_root: &Path, demo_id: &str) -> Result<Self, RunnerError> {
+        let stdout_absolute = effective_output_log_path(repo_root, demo_id, "stdout");
+        if let Some(parent) = stdout_absolute.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| RunnerError::task_invocation_failed_write(parent, error))?;
+        }
+        fs::write(&stdout_absolute, "")
+            .map_err(|error| RunnerError::task_invocation_failed_write(&stdout_absolute, error))?;
+        Ok(Self {
+            stdout: Some(display_repo_path(&stdout_absolute, repo_root)),
+            stderr: None,
+            stdout_absolute: Some(stdout_absolute),
+            stderr_absolute: None,
         })
     }
 }
