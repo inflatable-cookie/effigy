@@ -72,6 +72,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add an integrated retained-history view inside `effigy demo browser`, so
   operators can open one demo's settled `demo history` result set from the
   action menu and review retained attempts without leaving the browser
+- Add a runner-owned active demo terminal/session handoff to `effigy demo inspect`,
+  `demo run`, and `demo stop`, including transport metadata, bounded recent
+  output snapshots, and explicit no-nested-TUI signaling for later browser
+  terminal views
 
 ### Changed
 - Rework `effigy demo browser` around the same magenta-framed visual language

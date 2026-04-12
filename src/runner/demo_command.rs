@@ -40,6 +40,7 @@ const DEMO_ACTIVE_DIR: &str = ".effigy/demo/active";
 const DEMO_LOGS_DIR: &str = ".effigy/demo/logs";
 const DEMO_HISTORY_DIR: &str = ".effigy/demo/history";
 const DEMO_ATTEMPT_HISTORY_LIMIT: usize = 10;
+const DEMO_ACTIVE_TERMINAL_RECENT_LINES: usize = 8;
 
 pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
     let cwd = current_working_dir()?;
@@ -257,6 +258,18 @@ fn render_demo_inspect(
 
     renderer.section("Active Attempt")?;
     renderer.key_values(&record.active_attempt.to_key_values())?;
+    renderer.text("")?;
+
+    renderer.section("Active Terminal Session")?;
+    renderer.key_values(&record.active_terminal_session.to_key_values())?;
+    if !record.active_terminal_session.recent_stdout.is_empty() {
+        renderer.text("")?;
+        renderer.bullet_list("recent-stdout", &record.active_terminal_session.recent_stdout)?;
+    }
+    if !record.active_terminal_session.recent_stderr.is_empty() {
+        renderer.text("")?;
+        renderer.bullet_list("recent-stderr", &record.active_terminal_session.recent_stderr)?;
+    }
     renderer.text("")?;
 
     renderer.section("Latest Attempt")?;
@@ -609,6 +622,7 @@ fn render_demo_execute(
                 },
                 "execution": attempt.to_json(),
                 "active_attempt": record.active_attempt.to_json(),
+                "active_terminal_session": record.active_terminal_session.to_json(),
                 "latest_attempt": record.latest_attempt.to_json(),
             }),
             true,
@@ -789,6 +803,7 @@ fn render_demo_stop_result(
                     "defined_in": record.primary_source,
                 },
                 "active_attempt": reported_active_attempt.to_json(),
+                "active_terminal_session": record.active_terminal_session.to_json(),
                 "latest_attempt": record.latest_attempt.to_json(),
             }),
             true,
@@ -1102,6 +1117,7 @@ fn build_demo_record(
     let latest_attempt = load_latest_attempt(repo_root, demo_id, demo)?;
     let active_attempt = load_active_attempt(repo_root, demo_id)?;
     let attempt_history = load_attempt_history(repo_root, demo_id)?;
+    let active_terminal_session = load_active_terminal_session(repo_root, &active_attempt);
     let gap_class = derive_gap_class(demo.status, latest_attempt.stale);
 
     Ok(DemoRecord {
@@ -1121,6 +1137,7 @@ fn build_demo_record(
         primary_source,
         gap_class,
         active_attempt,
+        active_terminal_session,
         latest_attempt,
         attempt_history,
     })
@@ -1303,6 +1320,41 @@ fn load_active_attempt(repo_root: &Path, demo_id: &str) -> Result<DemoActiveAtte
     ))
 }
 
+fn load_active_terminal_session(
+    repo_root: &Path,
+    active_attempt: &DemoActiveAttempt,
+) -> DemoActiveTerminalSession {
+    if !active_attempt.active {
+        return DemoActiveTerminalSession::inactive();
+    }
+
+    let stdout_log_path = active_attempt.stdout_log_path.clone();
+    let stderr_log_path = active_attempt.stderr_log_path.clone();
+    DemoActiveTerminalSession {
+        available: true,
+        state: "live".to_owned(),
+        attempt_id: active_attempt.attempt_id.clone(),
+        transport: active_attempt.terminal_transport.rendered().to_owned(),
+        pty: matches!(active_attempt.terminal_transport, DemoTerminalTransport::Pty),
+        supports_input_forwarding: active_attempt.supports_input_forwarding,
+        input_forwarding_reason: (!active_attempt.supports_input_forwarding).then_some(
+            "input forwarding is not exposed through the current demo runtime".to_owned(),
+        ),
+        nested_tui: active_attempt.nested_tui,
+        stdout_log_path: stdout_log_path.clone(),
+        stderr_log_path: stderr_log_path.clone(),
+        output_available: stdout_log_path.is_some() || stderr_log_path.is_some(),
+        recent_stdout: stdout_log_path
+            .as_deref()
+            .map(|path| read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES))
+            .unwrap_or_default(),
+        recent_stderr: stderr_log_path
+            .as_deref()
+            .map(|path| read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES))
+            .unwrap_or_default(),
+    }
+}
+
 fn demo_active_attempt_from_record(
     _repo_root: &Path,
     _demo_id: &str,
@@ -1321,6 +1373,12 @@ fn demo_active_attempt_from_record(
         entrypoint_kind: Some(record.entrypoint_kind.clone()),
         entrypoint_value: Some(record.entrypoint_value.clone()),
         command: Some(record.command.clone()),
+        terminal_transport: match record.terminal_transport {
+            PersistedDemoTerminalTransport::Stream => DemoTerminalTransport::Stream,
+            PersistedDemoTerminalTransport::Pty => DemoTerminalTransport::Pty,
+        },
+        supports_input_forwarding: record.supports_input_forwarding,
+        nested_tui: record.nested_tui,
         stdout_log_path: record.stdout_log_path.clone(),
         stderr_log_path: record.stderr_log_path.clone(),
         parse_error: None,
@@ -1359,6 +1417,33 @@ fn normalize_artifact_refs(value: &JsonValue) -> Option<Vec<String>> {
         }
     }
     Some(rendered)
+}
+
+fn read_recent_output_lines(repo_root: &Path, rendered_path: &str, limit: usize) -> Vec<String> {
+    let absolute = resolve_repo_relative_path(repo_root, rendered_path);
+    let Ok(content) = fs::read_to_string(&absolute) else {
+        return Vec::new();
+    };
+    let mut lines = content
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if lines.len() > limit {
+        let keep_from = lines.len() - limit;
+        lines.drain(..keep_from);
+    }
+    lines
+}
+
+fn resolve_repo_relative_path(repo_root: &Path, path: &str) -> PathBuf {
+    let rendered = Path::new(path);
+    if rendered.is_absolute() {
+        rendered.to_path_buf()
+    } else {
+        repo_root.join(rendered)
+    }
 }
 
 fn execute_demo_attempt(
@@ -1400,6 +1485,9 @@ fn execute_task_backed_demo(
             entrypoint_kind: "task".to_owned(),
             entrypoint_value: task_name.to_owned(),
             command: task_name.to_owned(),
+            terminal_transport: PersistedDemoTerminalTransport::Stream,
+            supports_input_forwarding: false,
+            nested_tui: false,
             stdout_log_path: None,
             stderr_log_path: None,
         },
@@ -1567,6 +1655,9 @@ fn execute_run_backed_demo(
             entrypoint_kind: "run".to_owned(),
             entrypoint_value: run_command.to_owned(),
             command: run_command.to_owned(),
+            terminal_transport: PersistedDemoTerminalTransport::Stream,
+            supports_input_forwarding: false,
+            nested_tui: false,
             stdout_log_path: log_paths.stdout.clone(),
             stderr_log_path: log_paths.stderr.clone(),
         },
@@ -2174,6 +2265,7 @@ struct DemoRecord {
     primary_source: String,
     gap_class: &'static str,
     active_attempt: DemoActiveAttempt,
+    active_terminal_session: DemoActiveTerminalSession,
     latest_attempt: DemoLatestAttempt,
     attempt_history: DemoAttemptHistory,
 }
@@ -2232,6 +2324,7 @@ impl DemoRecord {
             "defined_in": self.primary_source,
             "actions": self.actions().to_json(),
             "active_attempt": self.active_attempt.to_json(),
+            "active_terminal_session": self.active_terminal_session.to_json(),
             "latest_attempt": self.latest_attempt.to_json(),
         })
     }
@@ -2258,6 +2351,7 @@ impl DemoRecord {
             "sources": self.sources,
             "actions": self.actions().to_json(),
             "active_attempt": self.active_attempt.to_json(),
+            "active_terminal_session": self.active_terminal_session.to_json(),
             "latest_attempt": self.latest_attempt.to_json(),
             "attempt_history": self.attempt_history.to_json(),
         })
@@ -2486,6 +2580,9 @@ struct DemoActiveAttempt {
     entrypoint_kind: Option<String>,
     entrypoint_value: Option<String>,
     command: Option<String>,
+    terminal_transport: DemoTerminalTransport,
+    supports_input_forwarding: bool,
+    nested_tui: bool,
     stdout_log_path: Option<String>,
     stderr_log_path: Option<String>,
     parse_error: Option<String>,
@@ -2505,6 +2602,9 @@ impl DemoActiveAttempt {
             entrypoint_kind: None,
             entrypoint_value: None,
             command: None,
+            terminal_transport: DemoTerminalTransport::None,
+            supports_input_forwarding: false,
+            nested_tui: false,
             stdout_log_path: None,
             stderr_log_path: None,
             parse_error: None,
@@ -2581,10 +2681,120 @@ impl DemoActiveAttempt {
                 "value": self.entrypoint_value,
             },
             "command": self.command,
+            "terminal_transport": self.terminal_transport.rendered(),
+            "supports_input_forwarding": self.supports_input_forwarding,
+            "nested_tui": self.nested_tui,
             "stdout_log_path": self.stdout_log_path,
             "stderr_log_path": self.stderr_log_path,
             "output_available": self.stdout_log_path.is_some() || self.stderr_log_path.is_some(),
             "parse_error": self.parse_error,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DemoTerminalTransport {
+    None,
+    Stream,
+    Pty,
+}
+
+impl DemoTerminalTransport {
+    fn rendered(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Stream => "stream",
+            Self::Pty => "pty",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DemoActiveTerminalSession {
+    available: bool,
+    state: String,
+    attempt_id: Option<String>,
+    transport: String,
+    pty: bool,
+    supports_input_forwarding: bool,
+    input_forwarding_reason: Option<String>,
+    nested_tui: bool,
+    stdout_log_path: Option<String>,
+    stderr_log_path: Option<String>,
+    output_available: bool,
+    recent_stdout: Vec<String>,
+    recent_stderr: Vec<String>,
+}
+
+impl DemoActiveTerminalSession {
+    fn inactive() -> Self {
+        Self {
+            available: false,
+            state: "none".to_owned(),
+            attempt_id: None,
+            transport: "none".to_owned(),
+            pty: false,
+            supports_input_forwarding: false,
+            input_forwarding_reason: Some(
+                "no active demo terminal session is currently available".to_owned(),
+            ),
+            nested_tui: false,
+            stdout_log_path: None,
+            stderr_log_path: None,
+            output_available: false,
+            recent_stdout: Vec::new(),
+            recent_stderr: Vec::new(),
+        }
+    }
+
+    fn to_key_values(&self) -> Vec<KeyValue> {
+        let mut values = vec![
+            KeyValue::new("state", self.state.clone()),
+            KeyValue::new("transport", self.transport.clone()),
+            KeyValue::new("pty", if self.pty { "yes" } else { "no" }),
+            KeyValue::new(
+                "input-forwarding",
+                if self.supports_input_forwarding {
+                    "yes".to_owned()
+                } else {
+                    availability_label(false, self.input_forwarding_reason.as_deref())
+                },
+            ),
+            KeyValue::new("nested-tui", if self.nested_tui { "yes" } else { "no" }),
+            KeyValue::new(
+                "output-available",
+                if self.output_available { "yes" } else { "no" },
+            ),
+        ];
+        if let Some(attempt_id) = &self.attempt_id {
+            values.push(KeyValue::new("attempt-id", attempt_id.clone()));
+        }
+        if let Some(stdout_log_path) = &self.stdout_log_path {
+            values.push(KeyValue::new("stdout-log", stdout_log_path.clone()));
+        }
+        if let Some(stderr_log_path) = &self.stderr_log_path {
+            values.push(KeyValue::new("stderr-log", stderr_log_path.clone()));
+        }
+        values
+    }
+
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "available": self.available,
+            "state": self.state,
+            "attempt_id": self.attempt_id,
+            "transport": self.transport,
+            "pty": self.pty,
+            "supports_input_forwarding": self.supports_input_forwarding,
+            "input_forwarding_reason": self.input_forwarding_reason,
+            "nested_tui": self.nested_tui,
+            "stdout_log_path": self.stdout_log_path,
+            "stderr_log_path": self.stderr_log_path,
+            "output_available": self.output_available,
+            "recent_output": {
+                "stdout_lines": self.recent_stdout,
+                "stderr_lines": self.recent_stderr,
+            },
         })
     }
 }
@@ -2806,8 +3016,22 @@ struct PersistedDemoActiveAttempt {
     entrypoint_kind: String,
     entrypoint_value: String,
     command: String,
+    #[serde(default)]
+    terminal_transport: PersistedDemoTerminalTransport,
+    #[serde(default)]
+    supports_input_forwarding: bool,
+    #[serde(default)]
+    nested_tui: bool,
     stdout_log_path: Option<String>,
     stderr_log_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+enum PersistedDemoTerminalTransport {
+    #[default]
+    Stream,
+    Pty,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -2839,9 +3063,10 @@ impl Drop for DemoActiveAttemptGuard {
 #[cfg(test)]
 mod tests {
     use super::{
-        load_active_attempt, write_active_attempt_record, DemoActiveAttempt,
-        PersistedDemoActiveAttempt, PersistedDemoActivePhase, PersistedDemoAttemptHistory,
-        PersistedDemoHistoricalAttempt, DEMO_ATTEMPT_HISTORY_LIMIT,
+        load_active_attempt, read_recent_output_lines, write_active_attempt_record,
+        DemoActiveAttempt, DemoTerminalTransport, PersistedDemoActiveAttempt,
+        PersistedDemoActivePhase, PersistedDemoAttemptHistory, PersistedDemoHistoricalAttempt,
+        PersistedDemoTerminalTransport, DEMO_ATTEMPT_HISTORY_LIMIT,
     };
     use std::{
         fs,
@@ -2900,6 +3125,9 @@ mod tests {
                 entrypoint_kind: "run".to_owned(),
                 entrypoint_value: "sleep 1".to_owned(),
                 command: "sleep 1".to_owned(),
+                terminal_transport: PersistedDemoTerminalTransport::Stream,
+                supports_input_forwarding: false,
+                nested_tui: false,
                 stdout_log_path: None,
                 stderr_log_path: None,
             },
@@ -2920,6 +3148,68 @@ mod tests {
             repo_root.join(".effigy/demo/active/demo.json").exists(),
             "stop-requested active record should survive until the owner process clears it"
         );
+        let _ = fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn load_active_attempt_defaults_terminal_fields_for_legacy_records() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "effigy-demo-active-legacy-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be monotonic enough for test ids")
+                .as_nanos()
+        ));
+        fs::create_dir_all(repo_root.join(".effigy/demo/active")).expect("create active dir");
+        let path = repo_root.join(".effigy/demo/active/demo.json");
+        fs::write(
+            &path,
+            format!(
+                r#"{{
+  "schema": "effigy.demo.active.v1",
+  "schema_version": 1,
+  "attempt_id": "attempt-legacy",
+  "demo_id": "demo",
+  "phase": "running",
+  "started_at_epoch_ms": 1,
+  "owner_pid": {},
+  "target_pid": null,
+  "stoppable": true,
+  "entrypoint_kind": "run",
+  "entrypoint_value": "sleep 1",
+  "command": "sleep 1",
+  "stdout_log_path": ".effigy/demo/logs/demo.stdout.log",
+  "stderr_log_path": ".effigy/demo/logs/demo.stderr.log"
+}}"#,
+                std::process::id()
+            ),
+        )
+        .expect("write legacy active attempt");
+
+        let active = load_active_attempt(&repo_root, "demo").expect("load active attempt");
+        assert!(active.active);
+        assert_eq!(active.terminal_transport, DemoTerminalTransport::Stream);
+        assert!(!active.supports_input_forwarding);
+        assert!(!active.nested_tui);
+        let _ = fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn read_recent_output_lines_keeps_last_non_empty_lines() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "effigy-demo-terminal-tail-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be monotonic enough for test ids")
+                .as_nanos()
+        ));
+        fs::create_dir_all(repo_root.join(".effigy/demo/logs")).expect("create logs dir");
+        let path = repo_root.join(".effigy/demo/logs/demo.stdout.log");
+        fs::write(&path, "one\n\ntwo\nthree\nfour\n").expect("write log");
+
+        let lines = read_recent_output_lines(&repo_root, ".effigy/demo/logs/demo.stdout.log", 2);
+        assert_eq!(lines, vec!["three".to_owned(), "four".to_owned()]);
+
         let _ = fs::remove_dir_all(&repo_root);
     }
 }

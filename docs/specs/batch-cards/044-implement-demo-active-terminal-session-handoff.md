@@ -1,6 +1,6 @@
 # 044 Implement Demo Active Terminal Session Handoff
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -57,5 +57,6 @@ launching nested TUIs.
 
 ## Next Task
 
-Implement the next ready follow-up selected after this active-session handoff
-so the browser can consume it through a bounded terminal view.
+Execute [`045-implement-demo-browser-terminal-view.md`](./045-implement-demo-browser-terminal-view.md)
+to let the browser consume the active demo terminal/session contract through a
+bounded demo-scoped terminal view.

@@ -197,6 +197,11 @@ Lifecycle notes:
 - `demo inspect` now shows both the latest terminal receipt and any active
   in-flight attempt, plus explicit action availability, receipt freshness, and
   a bounded recent-attempt history for older terminal outcomes.
+- `demo inspect` now also exposes a runner-owned active terminal/session
+  handoff for active demos, including stream-vs-pty transport metadata,
+  explicit input-forwarding capability signaling, recent stdout/stderr
+  snapshots, and an explicit `nested_tui = false` boundary for browser
+  consumers.
 - `demo history <id>` gives that retained result history a dedicated query
   surface, with optional `--limit <N>` trimming, so operators can inspect one
   demo's recent terminal outcomes without overloading the broader inspect view.
@@ -209,10 +214,9 @@ Lifecycle notes:
 - task-backed demos remain runnable, but stop is still an explicit
   `not supported through the current runtime` boundary.
 - the browser currently focuses on honest navigation, bounded action dispatch,
-  artifact-opening, and metadata-query parity with the shipped `demo list`
-  contract; terminal emulation, richer detail rendering, and list/browser
-  history rendering remain deferred while the runner-side history surface
-  settles first.
+  artifact-opening, metadata-query parity, and integrated retained-history
+  review. A later terminal view can now build on the shipped runner-owned
+  active terminal/session handoff instead of launching nested TUIs.
 
 ## 3) Full Task Table with Runtime Controls
 

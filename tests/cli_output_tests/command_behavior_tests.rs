@@ -545,6 +545,22 @@ fn cli_demo_inspect_json_reports_latest_attempt_and_sources() {
         "current"
     );
     assert_eq!(parsed["result"]["demo"]["attempt_history"]["count"], 0);
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["available"],
+        false
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["state"],
+        "none"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["transport"],
+        "none"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["nested_tui"],
+        false
+    );
 }
 
 #[test]
@@ -1021,14 +1037,19 @@ owner = "demo"
 mode = "interactive"
 status = "ready"
 covers = ["demo.lifecycle"]
-run = "sh -lc 'while true; do sleep 1; done'"
+run = "sh -lc 'printf boot-line\\n; printf boot-err\\n >&2; while true; do printf tick\\n; printf err-tick\\n >&2; sleep 1; done'"
 "#,
     )
     .expect("write demo manifest");
 
     let mut child = spawn_demo_run_process(&root, "waiter");
     let active_path = root.join(".effigy/demo/active/waiter.json");
+    let stdout_log = root.join(".effigy/demo/logs/waiter.stdout.log");
+    let stderr_log = root.join(".effigy/demo/logs/waiter.stderr.log");
     wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+    wait_for_path_exists(&stdout_log, Duration::from_secs(5), "stdout log");
+    wait_for_path_exists(&stderr_log, Duration::from_secs(5), "stderr log");
+    std::thread::sleep(Duration::from_millis(200));
 
     let output = run_json_cli_command(&root, &["demo", "inspect", "waiter"]);
     assert!(output.status.success(), "demo inspect failed: {output:?}");
@@ -1051,6 +1072,44 @@ run = "sh -lc 'while true; do sleep 1; done'"
     assert_eq!(
         parsed["result"]["demo"]["actions"]["run"]["available"],
         false
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["available"],
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["state"],
+        "live"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["transport"],
+        "stream"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["pty"],
+        false
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["supports_input_forwarding"],
+        false
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["nested_tui"],
+        false
+    );
+    assert!(
+        parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stdout_lines"]
+            .as_array()
+            .expect("stdout lines")
+            .iter()
+            .any(|line| line.as_str().is_some_and(|line| line.contains("boot-line") || line.contains("tick")))
+    );
+    assert!(
+        parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stderr_lines"]
+            .as_array()
+            .expect("stderr lines")
+            .iter()
+            .any(|line| line.as_str().is_some_and(|line| line.contains("boot-err") || line.contains("err-tick")))
     );
 
     let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
