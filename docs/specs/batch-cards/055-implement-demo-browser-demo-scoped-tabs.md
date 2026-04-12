@@ -1,6 +1,6 @@
 # 055 Implement Demo Browser Demo-Scoped Tabs
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -50,5 +50,5 @@ selected demo can switch cleanly between `Overview`, `History`, `Terminal`, and
 
 ## Next Task
 
-Execute the next ready follow-up selected after demo-scoped tab convergence
-lands.
+Execute [`056-decide-demo-post-browser-tab-convergence-boundary.md`](./056-decide-demo-post-browser-tab-convergence-boundary.md)
+to choose the next bounded follow-up after demo-scoped tab convergence lands.

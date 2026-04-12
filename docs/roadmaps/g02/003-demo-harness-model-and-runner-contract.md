@@ -2070,6 +2070,39 @@ Why this batch was the right decision slice:
 - browser input would reopen transport and ownership questions before the
   browser surface itself is fully converged
 
+### 10.45 Demo Browser Demo-Scoped Tabs
+
+Batch `03.48` target:
+
+Converge the browser detail surface into bounded demo-scoped tabs so one
+selected demo can switch cleanly between `Overview`, `History`, `Terminal`, and
+`Artifacts` without drifting into nested TUI or managed-process UI.
+
+In scope for the next implementation slice:
+
+- introduce bounded demo-scoped tabs for the selected demo detail surface
+- map existing one-demo browser content into `Overview`, `History`, `Terminal`,
+  and `Artifacts` views
+- keep history and terminal views consuming the shipped runner-owned contracts
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+
+Out of scope for the next implementation slice:
+
+- browser text input or broader interactive terminal controls
+- embedding the concurrent TUI inside `effigy demo browser`
+- multi-process demo sub-tabs or generic managed-process UI
+- retained-history replay as an interactive terminal
+- broad runtime cancellation or desktop-client work
+
+Shipped result:
+
+- the selected demo detail surface now exposes explicit demo-scoped tabs for
+  `Overview`, `History`, `Terminal`, and `Artifacts`
+- history and terminal remain runner-contract consumers while artifacts move
+  out of overview into their own dedicated one-demo view
+- tab switching stays demo-scoped and browser-local, with `Esc` returning
+  non-overview tabs back to `Overview` instead of exiting immediately
+
 Batch `03.41` result:
 
 - the runner now exposes a bounded `effigy demo input <DEMO_ID> --text <TEXT>
@@ -2158,6 +2191,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to converge the browser detail surface
-into bounded demo-scoped tabs while nested TUI embedding and wider runtime
-expansion stay explicitly bounded.
+Use the active `g02.003` strict lane to decide the bounded follow-up after
+demo-scoped browser tab convergence landed while nested TUI embedding and wider
+runtime expansion stay explicitly bounded.
