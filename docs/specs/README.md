@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to implement the next bounded backend-parity slice:
-browser-owned live attached terminal sessions for browser-launched
+Use the active spec lane to decide the next bounded slice after browser-owned
+live attached terminal sessions reached bounded parity for run-backed and
 single-process concurrent-runner-backed demos.

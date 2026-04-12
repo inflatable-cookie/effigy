@@ -2753,6 +2753,44 @@ Out of scope for the next implementation slice:
   concurrent-runner case
 - desktop-client work
 
+Batch `03.65` result:
+
+- browser-launched single-process concurrent-runner-backed interactive demos
+  now use the browser-owned live attached terminal session path
+- browser live-session selection now follows a bounded runtime capability fact
+  instead of hard-coding run-backed-only selection
+- attached single-process concurrent-runner text runs now feed stdin through
+  the existing demo-owned input handoff so browser-launched live sessions can
+  interact honestly without nested TUI launch
+- multi-process concurrent-runner demos still stay on the flattened projected
+  terminal/session surface
+
+Why this implementation matters:
+
+- it closes the most obvious backend parity gap inside the browser live
+  terminal model without reopening generic browser churn
+- it keeps the browser demo-scoped by expanding only the single-process case
+  that still fits one demo-owned terminal story
+- it preserves the no-nested-TUI rule and avoids turning the browser into a
+  second process manager
+
+### 10.63 Demo Post-Browser-Live-Concurrent-Runner-Session-Parity Boundary
+
+Batch `03.66` target:
+
+Choose the next bounded slice after browser-owned live attached terminal
+sessions reached bounded parity for run-backed and single-process
+concurrent-runner-backed interactive demos, while keeping the lane demo-scoped
+and still bounded away from nested TUI embedding, generic process-manager
+work, and fresh browser churn unless it clearly earns the next slot.
+
+Decision focus:
+
+- whether one more bounded browser/runtime parity follow-up is justified now
+- whether the next value belongs in a runner-owned richer concurrent-runtime
+  truth slice
+- whether browser-terminal work is coherent enough to pause again
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -2822,7 +2860,7 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to add browser-owned live attached
-terminal-session parity for browser-launched single-process
-concurrent-runner-backed interactive demos while nested TUI embedding and
-multi-process browser-manager drift stay explicitly bounded.
+Use the active `g02.003` strict lane to decide the next bounded slice after
+browser-owned live attached terminal sessions reached bounded parity for
+run-backed and single-process concurrent-runner-backed demos while nested TUI
+embedding and multi-process browser-manager drift stay explicitly bounded.

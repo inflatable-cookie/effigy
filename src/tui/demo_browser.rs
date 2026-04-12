@@ -1719,7 +1719,12 @@ fn detail_prefers_live_browser_terminal(detail: &DemoDetail, subcommand: &DemoSu
     matches!(
         subcommand,
         DemoSubcommand::Run { .. } | DemoSubcommand::Rerun { .. }
-    ) && detail.runtime_backend.kind == "run"
+    ) && detail
+        .runtime_backend
+        .capabilities
+        .iter()
+        .any(|capability| capability == "browser-live-attach")
+        && !detail.active_terminal_session.nested_tui
         && matches!(detail.mode.as_str(), "interactive" | "hybrid")
 }
 
@@ -4100,6 +4105,7 @@ mod tests {
         let mut detail = detail_with_artifacts(&[]);
         detail.mode = "interactive".to_owned();
         detail.runtime_backend.kind = "run".to_owned();
+        detail.runtime_backend.capabilities = vec!["browser-live-attach".to_owned()];
 
         assert!(detail_prefers_live_browser_terminal(
             &detail,
@@ -4116,7 +4122,22 @@ mod tests {
     }
 
     #[test]
-    fn non_run_backed_demo_does_not_prefer_live_browser_terminal() {
+    fn concurrent_runner_single_process_demo_prefers_live_browser_terminal() {
+        let mut detail = detail_with_artifacts(&[]);
+        detail.mode = "interactive".to_owned();
+        detail.runtime_backend.kind = "concurrent-runner".to_owned();
+        detail.runtime_backend.capabilities = vec!["browser-live-attach".to_owned()];
+
+        assert!(detail_prefers_live_browser_terminal(
+            &detail,
+            &crate::DemoSubcommand::Run {
+                demo_id: detail.id.clone()
+            }
+        ));
+    }
+
+    #[test]
+    fn concurrent_runner_without_live_attach_capability_does_not_prefer_live_browser_terminal() {
         let mut detail = detail_with_artifacts(&[]);
         detail.mode = "interactive".to_owned();
         detail.runtime_backend.kind = "concurrent-runner".to_owned();
