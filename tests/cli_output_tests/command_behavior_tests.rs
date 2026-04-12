@@ -403,6 +403,20 @@ fn spawn_demo_run_process(root: &std::path::Path, demo_id: &str) -> std::process
         .expect("spawn demo run process")
 }
 
+fn spawn_demo_text_run_process(root: &std::path::Path, demo_id: &str) -> std::process::Child {
+    Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("demo")
+        .arg("run")
+        .arg(demo_id)
+        .arg("--repo")
+        .arg(root)
+        .env("NO_COLOR", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn text demo run process")
+}
+
 fn wait_for_child_exit(child: &mut std::process::Child, timeout: Duration, label: &str) {
     let started = Instant::now();
     loop {
@@ -1131,6 +1145,129 @@ run = "sh -lc 'printf boot-line\\n; printf boot-err\\n >&2; while true; do print
     let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
     assert!(stop.status.success(), "demo stop failed: {stop:?}");
     wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
+}
+
+#[test]
+fn cli_demo_inspect_json_reports_active_attempt_for_attached_text_run_demo() {
+    let root = temp_workspace("demo-inspect-active-text");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[demos.waiter]
+title = "Waiter"
+summary = "Keeps a demo process alive until stopped."
+proof = "Verify attached text-mode demo runs still expose active session state."
+owner = "demo"
+mode = "interactive"
+status = "ready"
+covers = ["demo.lifecycle"]
+run = "sh -lc 'printf \"boot-line\\n\"; printf \"boot-err\\n\" >&2; while true; do sleep 1; done'"
+"#,
+    )
+    .expect("write demo manifest");
+
+    let mut child = spawn_demo_text_run_process(&root, "waiter");
+    let active_path = root.join(".effigy/demo/active/waiter.json");
+    let stdout_log = root.join(".effigy/demo/logs/waiter.stdout.log");
+    let stderr_log = root.join(".effigy/demo/logs/waiter.stderr.log");
+    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+    wait_for_path_exists(&stdout_log, Duration::from_secs(5), "stdout log");
+    wait_for_path_exists(&stderr_log, Duration::from_secs(5), "stderr log");
+    std::thread::sleep(Duration::from_millis(200));
+
+    let output = run_json_cli_command(&root, &["demo", "inspect", "waiter"]);
+    assert!(output.status.success(), "demo inspect failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["demo"]["active_attempt"]["active"], true);
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["available"],
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["transport"],
+        "stream"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stdout_lines"][0],
+        "boot-line"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stderr_lines"][0],
+        "boot-err"
+    );
+
+    let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
+    assert!(stop.status.success(), "demo stop failed: {stop:?}");
+    wait_for_child_exit(&mut child, Duration::from_secs(5), "text demo run process");
+}
+
+#[test]
+fn cli_demo_run_text_interactive_attaches_and_persists_logs() {
+    let root = temp_workspace("demo-run-text-attached");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[demos.prompt]
+title = "Prompt"
+summary = "Shows attached terminal output."
+proof = "Verify interactive text-mode demo runs preserve logs and receipts."
+owner = "demo"
+mode = "interactive"
+status = "ready"
+covers = ["demo.terminal"]
+run = "sh -lc 'printf \"hello-out\\n\"; printf \"hello-err\\n\" >&2'"
+"#,
+    )
+    .expect("write demo manifest");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("demo")
+        .arg("run")
+        .arg("prompt")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run attached text demo");
+    assert!(output.status.success(), "demo run failed: {output:?}");
+
+    assert!(
+        String::from_utf8(output.stdout)
+            .expect("utf8 stdout")
+            .contains("hello-out"),
+        "attached stdout was not mirrored"
+    );
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("utf8 stderr")
+            .contains("hello-err"),
+        "attached stderr was not mirrored"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".effigy/demo/logs/prompt.stdout.log"))
+            .expect("read stdout log"),
+        "hello-out\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".effigy/demo/logs/prompt.stderr.log"))
+            .expect("read stderr log"),
+        "hello-err\n"
+    );
+
+    let receipt: Value = serde_json::from_str(
+        &fs::read_to_string(root.join(".effigy/demo/receipts/prompt.json"))
+            .expect("read demo receipt"),
+    )
+    .expect("parse demo receipt");
+    assert_eq!(receipt["status"], "passed");
+    assert_eq!(
+        receipt["stdout_log_path"],
+        ".effigy/demo/logs/prompt.stdout.log"
+    );
+    assert_eq!(
+        receipt["stderr_log_path"],
+        ".effigy/demo/logs/prompt.stderr.log"
+    );
 }
 
 #[test]

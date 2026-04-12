@@ -85,6 +85,10 @@ During v0.x, MINOR bumps may include breaking changes.
   inventing client-side transport semantics
 
 ### Changed
+- Make text-mode `effigy demo run <DEMO_ID>` attach directly for interactive
+  and hybrid run-backed demos while still teeing live stdout/stderr into the
+  runner-owned log, receipt, and active-session surfaces so human terminal use
+  stays first-class without dropping the shipped machine/client contract
 - Rework `effigy demo browser` around the same magenta-framed visual language
   as the concurrent TUI and collapse the interaction model down to arrow-key
   browsing, enter-led action dispatch, escape-to-close, direct search, and one

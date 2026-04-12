@@ -1895,6 +1895,16 @@ Out of scope for the next implementation slice:
 - retained-history replay as an interactive terminal
 - broad runtime cancellation or desktop-client work
 
+Shipped result:
+
+- text-mode `demo run` now attaches interactive and hybrid run-backed demos
+  directly to the live terminal session instead of forcing text-payload
+  forwarding to act as the main human UX
+- the attached path still captures stdout/stderr into runner-owned logs,
+  receipts, attempt history, and active-session inspection surfaces
+- `demo input` remains available as secondary automation/client
+  infrastructure rather than the primary human interaction path
+
 Batch `03.41` result:
 
 - the runner now exposes a bounded `effigy demo input <DEMO_ID> --text <TEXT>
@@ -1983,7 +1993,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to make direct attached terminal sessions
-the default human path for demos that need interactive terminal IO, while
-browser tab convergence, nested TUI embedding, and wider runtime expansion
-remain deferred.
+Use the active `g02.003` strict lane to decide the next bounded follow-up after
+attached terminal run mode lands, keeping browser tab convergence, nested TUI
+embedding, and wider runtime expansion explicitly bounded.
