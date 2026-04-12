@@ -69,7 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide the bounded follow-up
-after attached terminal run mode, while browser tab convergence, nested TUI
-embedding, broader runtime expansion, and desktop-client questions stay
-separate.
+Execute the active `g02.003` ready card next to deepen the runner-owned demo
+terminal/session contract with PTY-backed interactive semantics, while browser
+tab convergence, nested TUI embedding, broader runtime expansion, and
+desktop-client questions stay separate.

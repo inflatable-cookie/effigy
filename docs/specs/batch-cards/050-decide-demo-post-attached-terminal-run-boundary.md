@@ -1,6 +1,6 @@
 # 050 Decide Demo Post-Attached-Terminal-Run Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -50,4 +50,6 @@ land without widening into nested TUI embedding or generic runtime churn.
 
 ## Next Task
 
-Execute the ready follow-up selected by this boundary decision.
+Execute [`051-implement-demo-pty-terminal-session-contract.md`](./051-implement-demo-pty-terminal-session-contract.md)
+to deepen the runner-owned demo terminal/session contract with PTY-backed
+interactive semantics before any browser tab convergence work.
