@@ -325,7 +325,6 @@ impl DemoBrowserApp {
         match item {
             ActionMenuItem::Run | ActionMenuItem::Rerun => self.dispatch_run_or_rerun(),
             ActionMenuItem::Stop => self.dispatch_stop(),
-            ActionMenuItem::OpenArtifact => self.dispatch_open_artifact(),
             ActionMenuItem::OpenHistory => self.enter_history_mode(),
             ActionMenuItem::Refresh => {
                 self.refresh_state()?;
@@ -1735,9 +1734,6 @@ fn action_menu_items_for_detail(detail: &DemoDetail) -> Vec<ActionMenuItem> {
     if detail.actions.stop.available {
         items.push(ActionMenuItem::Stop);
     }
-    if !detail.latest_attempt.artifacts.is_empty() {
-        items.push(ActionMenuItem::OpenArtifact);
-    }
     items.push(ActionMenuItem::OpenHistory);
     items.push(ActionMenuItem::Refresh);
     items
@@ -1894,7 +1890,6 @@ enum ActionMenuItem {
     Run,
     Rerun,
     Stop,
-    OpenArtifact,
     OpenHistory,
     Refresh,
 }
@@ -1905,7 +1900,6 @@ impl ActionMenuItem {
             Self::Run => "Run demo",
             Self::Rerun => "Rerun demo",
             Self::Stop => "Stop demo",
-            Self::OpenArtifact => "Open artifact",
             Self::OpenHistory => "View history",
             Self::Refresh => "Refresh state",
         }
@@ -2178,13 +2172,14 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        clamp_artifact_index, first_demo_id, history_detail_render, next_gap_filter,
-        next_group_by, next_mode_filter, next_status_filter, overview_detail_render,
-        query_summary, read_recent_log_lines, resolve_artifact_path, resolve_repo_relative_path,
-        row_contains_demo, selected_artifact, ActionMenuItem, BrowserRow, DemoDetail,
-        DemoHistoryAttempt, DemoHistoryAttemptHistoryPayload, DemoHistoryPayload,
-        DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery,
-        DemoListStatus, DemoSummary, DetailSelectableItem,
+        action_menu_items_for_detail, clamp_artifact_index, first_demo_id,
+        history_detail_render, next_gap_filter, next_group_by, next_mode_filter,
+        next_status_filter, overview_detail_render, query_summary, read_recent_log_lines,
+        resolve_artifact_path, resolve_repo_relative_path, row_contains_demo, selected_artifact,
+        ActionMenuItem, BrowserRow, DemoDetail, DemoHistoryAttempt,
+        DemoHistoryAttemptHistoryPayload, DemoHistoryPayload, DemoLatestAttempt, DemoListGap,
+        DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSummary,
+        DetailSelectableItem,
     };
 
     fn summary(id: &str) -> DemoSummary {
@@ -2443,6 +2438,17 @@ mod tests {
     #[test]
     fn browser_action_menu_exposes_integrated_history_label() {
         assert_eq!(ActionMenuItem::OpenHistory.label(), "View history");
+    }
+
+    #[test]
+    fn browser_action_menu_keeps_artifact_opening_in_detail_navigation_only() {
+        let detail = detail_with_artifacts(&["one", "two"]);
+        let items = action_menu_items_for_detail(&detail)
+            .into_iter()
+            .map(ActionMenuItem::label)
+            .collect::<Vec<_>>();
+
+        assert_eq!(items, vec!["Rerun demo", "View history", "Refresh state"]);
     }
 
     #[test]
