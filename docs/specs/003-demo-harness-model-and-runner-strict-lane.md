@@ -69,6 +69,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide the next bounded slice
-after projected-runtime process summary truth landed, while nested TUI
+Execute the active `g02.003` ready card next to add runner-owned projected
+output-provenance truth for flattened concurrent demos while nested TUI
 embedding and multi-process browser-manager drift stay out of bounds.

@@ -2971,6 +2971,47 @@ Out of scope for the next decision slice:
 - multi-process browser panes by default
 - embedding the concurrent TUI
 
+Batch `03.70` result:
+
+- the next bounded slice is not browser churn and not a lane pause
+- the next bounded slice is one more runner-owned truth layer:
+  projected-output provenance for flattened concurrent-runner demos
+- browser consumers should keep waiting to consume runner truth instead of
+  inventing multi-process output semantics locally
+
+Why this decision is the right boundary:
+
+- projected process names and merge truth are now present, but clients still
+  cannot tell how flattened output preserves or discards source attribution
+- a browser follow-up before that truth lands would still drift toward guesswork
+- one more bounded runner contract slice keeps later multi-process browser work
+  honest without widening into generic process-manager controls
+
+### 10.68 Demo Concurrent Runtime Projected Output Provenance Contract
+
+Batch `03.71` target:
+
+Add bounded runner-owned output-provenance facts for projected concurrent-runner
+demos that stay on the flattened path.
+
+In scope for the next implementation slice:
+
+- add demo-owned projected-output provenance facts such as:
+  - whether merged output preserves per-process attribution
+  - whether the flattened transcript is unlabeled
+  - whether one process remains the sole output source despite projected runtime
+- expose those facts through inspect and active terminal/session payloads
+- keep the contract bounded and demo-owned instead of turning into generic
+  process-manager log metadata
+
+Out of scope for the next implementation slice:
+
+- multi-process browser panes or tabs
+- embedded concurrent TUI
+- generic process-manager controls
+- browser layout redesign
+- desktop-client work
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -3040,6 +3081,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to add runner-owned concurrent-runtime
-projection-shape truth for richer concurrent-runner demos while nested TUI
+Use the active `g02.003` strict lane to add runner-owned projected
+output-provenance truth for flattened concurrent-runner demos while nested TUI
 embedding and multi-process browser-manager drift stay explicitly bounded.

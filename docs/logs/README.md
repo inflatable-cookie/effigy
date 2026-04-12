@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/12-221500-demo-post-projected-process-summary-boundary-decision.md`](./2026-04/12-221500-demo-post-projected-process-summary-boundary-decision.md)
 - [`2026-04/12-210500-demo-concurrent-runtime-projected-process-summary-contract-implementation.md`](./2026-04/12-210500-demo-concurrent-runtime-projected-process-summary-contract-implementation.md)
 - [`2026-04/12-203800-demo-post-concurrent-runtime-projection-shape-boundary-decision.md`](./2026-04/12-203800-demo-post-concurrent-runtime-projection-shape-boundary-decision.md)
 - [`2026-04/12-201500-demo-concurrent-runtime-projection-shape-contract-implementation.md`](./2026-04/12-201500-demo-concurrent-runtime-projection-shape-contract-implementation.md)
@@ -394,6 +395,6 @@ Batch: <batch-slug>
 ## Next Task
 
 Keep the active evidence window aligned to the current strict lane so the next
-product decision stays anchored on the post-concurrent-runner interaction
-boundary instead of widening back into browser churn or generic
+runner slice stays anchored on projected-output provenance truth for flattened
+concurrent demos instead of widening back into browser churn or generic
 process-manager work by habit.

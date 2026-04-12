@@ -35,14 +35,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01/028-script-surface-reduction-and-builtins.md` reduces repo shell logic into Effigy-native command surfaces and is complete.
 - `g02/001-bootstrap-command-and-clone-contract.md` started the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up, and is now complete: released plus live-pilot validated on `loophole` and `songsprout`.
 - `g02/002-manifest-composition-and-override-contract.md` defines the general split-manifest model so features do not invent their own file-loading semantics, and its foundation plus inspectability are already shipped.
-- `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy; the lane has already shipped registry loading, inspection, lifecycle control, one-demo history, attached and PTY-backed terminal runner semantics, browser demo tabs, browser terminal replay/input/resize consumption, concurrent-runner session plus interaction projection, browser-owned live attached terminal sessions for browser-launched run-backed interactive demos, bounded single-process concurrent-runner browser live-session parity, runner-owned concurrent-runtime projection-shape truth, and projected-runtime process summary truth. The next bounded slice is the post-summary boundary decision.
+- `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy; the lane has already shipped registry loading, inspection, lifecycle control, one-demo history, attached and PTY-backed terminal runner semantics, browser demo tabs, browser terminal replay/input/resize consumption, concurrent-runner session plus interaction projection, browser-owned live attached terminal sessions for browser-launched run-backed interactive demos, bounded single-process concurrent-runner browser live-session parity, runner-owned concurrent-runtime projection-shape truth, and projected-runtime process summary truth. The next bounded slice is projected-output provenance truth for flattened concurrent demos.
 
 ## Active Strict Lane
 
 - `g02.003` is the active roadmap milestone.
 - `docs/specs/003-demo-harness-model-and-runner-strict-lane.md` is the active
   strict planning lane around that roadmap.
-- `docs/specs/batch-cards/077-decide-demo-post-projected-process-summary-boundary.md`
+- `docs/specs/batch-cards/078-implement-demo-concurrent-runtime-projected-output-provenance-contract.md`
   is the current ready card.
 
 ## Research Program
@@ -65,8 +65,8 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute the active ready card for `g02.003` to decide the next bounded slice
-after projected-runtime process summary truth landed.
+Execute the active ready card for `g02.003` to add projected-output provenance
+truth for flattened concurrent demos.
 
 
 ## Historical language boundary
