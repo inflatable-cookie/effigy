@@ -1592,6 +1592,49 @@ Out of scope for the next decision slice:
 - widening into multi-demo history aggregation, analytics, or queueing
 - broader runtime cancellation or desktop-client work
 
+Batch `03.34` result:
+
+- the next bounded value should still not go into `demo list`, because the
+  discovery surface remains inventory-first and should not absorb retained
+  history density
+- the next slice should still not add browser-side retained tables, badges, or
+  timelines, because the self-hosted demos do not yet justify another density
+  pass
+- the next bounded value can now move into a client/browser consumer, but only
+  as a one-demo history handoff that consumes the settled `demo history`
+  contract instead of inventing browser-local history semantics
+
+Why this is the right follow-up:
+
+- outcome filtering, ordinal selection, and stable attempt drilldown now make
+  the dedicated history query contract honest enough for a client to consume
+- the real remaining gap is discoverability from the browser, not more
+  runner-side history semantics
+- a narrow handoff lets the browser participate without reopening broad client
+  density churn or generic timeline work
+
+### 10.32 Demo Browser History Handoff
+
+Batch `03.35` target:
+
+Implement a bounded browser history handoff on top of the settled one-demo
+history query contract.
+
+In scope for the next implementation slice:
+
+- add a narrow one-demo browser affordance that points operators from the
+  selected demo into its dedicated history surface
+- keep the affordance anchored on the shipped `demo history` query contract
+  rather than inventing browser-local history semantics
+- preserve the existing compact browser list/detail posture while proving that
+  a client can now consume the settled history contract safely
+
+Out of scope for the next implementation slice:
+
+- browser-side retained history tables, panes, badges, or timelines
+- `demo list` history summaries or grouping changes
+- multi-demo history aggregation, analytics, queueing, or broader runtime work
+
 ### 10.27 Demo History Query Follow-Up Boundary
 
 Batch `03.30` target:
@@ -1634,6 +1677,6 @@ Out of scope for the next decision slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide whether any later history
-density should remain query-first or can safely move into a client/browser
-consumer, while wider runtime expansion remains deferred.
+Use the active `g02.003` strict lane to add a bounded browser history handoff
+on top of the settled one-demo query contract, while wider runtime expansion
+remains deferred.

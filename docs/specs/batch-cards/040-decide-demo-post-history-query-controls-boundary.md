@@ -1,6 +1,6 @@
 # 040 Decide Demo Post-History-Query-Controls Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -45,5 +45,6 @@ without reopening browser churn or widening into generic timeline tooling.
 
 ## Next Task
 
-Execute the ready follow-up selected in this decision batch so the demo-history
-lane stays bounded and explicit.
+Execute [`041-implement-demo-browser-history-handoff.md`](./041-implement-demo-browser-history-handoff.md)
+to let the browser consume the settled one-demo history contract through a
+bounded handoff without adding list density or in-browser timelines.
