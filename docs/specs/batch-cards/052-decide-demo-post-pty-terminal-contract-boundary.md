@@ -1,6 +1,6 @@
 # 052 Decide Demo Post-PTY-Terminal-Contract Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -47,6 +47,22 @@ land without widening into nested TUI embedding or generic runtime churn.
 - the decision requires nested TUI launch to stay coherent
 - the next move becomes materially ambiguous without fresh evidence
 
+## Decision
+
+- do not deepen runner-owned terminal semantics again immediately; attached
+  terminal runs, input-contract plumbing, and PTY-backed session reporting now
+  form a sufficient runner baseline for the next consumer slice
+- do not jump to demo-scoped tabs yet; tabs are still presentation convergence
+  and would mix too many browser changes into one batch
+- do prioritize bounded browser terminal convergence next so the browser can
+  consume the richer active-session contract as a live demo-scoped terminal
+  surface rather than a static recent-lines summary
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner;
+  the browser should render the demo session itself, not launch the concurrent
+  TUI inside the browser
+
 ## Next Task
 
-Execute the ready follow-up selected by this boundary decision.
+Execute [`053-implement-demo-browser-live-terminal-view.md`](./053-implement-demo-browser-live-terminal-view.md)
+to let `effigy demo browser` consume the shipped demo terminal/session contract
+as a bounded live terminal view before any tab convergence work.

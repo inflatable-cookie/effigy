@@ -1942,6 +1942,51 @@ Shipped result:
   populated, with merged terminal output represented honestly instead of a fake
   split stderr stream
 
+### 10.42 Demo Post-PTY Terminal Contract Boundary
+
+Batch `03.45` target:
+
+Choose the next bounded slice after PTY-backed demo terminal/session semantics
+land without widening into nested TUI embedding or generic runtime churn.
+
+In scope for the next decision slice:
+
+- assess whether the next terminal-related value belongs in:
+  - deeper runner-owned input/session semantics on top of the shipped PTY path
+  - bounded browser terminal convergence on top of the richer runner contract
+  - demo-scoped tab convergence such as `Overview`, `History`, `Terminal`, and
+    `Artifacts`
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+- leave the lane with one explicit ready card
+
+Out of scope for the next decision slice:
+
+- implementing tabs, browser input, or broader runtime controls in the
+  decision batch
+- embedding the concurrent TUI inside `effigy demo browser`
+- multi-process demo sub-tabs or generic managed-process UI
+- retained-history replay as an interactive terminal
+- broader runtime cancellation or desktop-client work
+
+Batch `03.45` result:
+
+- the next bounded slice is browser terminal convergence, not another round of
+  deeper runner-owned terminal semantics
+- tabs remain a plausible later presentation convergence move, but they stay
+  deferred behind one more proof step that the browser can consume the richer
+  session contract live and demo-scoped
+- the no-nested-TUI rule remains intact for demos backed by the concurrent
+  runner
+
+Why this batch was the right decision slice:
+
+- attached terminal runs plus PTY-backed session reporting now make the runner
+  contract honest enough for a consumer-focused follow-up
+- another runner-only batch now risks churn without changing the main operator
+  gap, which is browser-side consumption of live demo output
+- tabs still bundle too much presentation change at once; a bounded live
+  terminal view is the cleaner next proof point
+
 Batch `03.41` result:
 
 - the runner now exposes a bounded `effigy demo input <DEMO_ID> --text <TEXT>
@@ -2030,7 +2075,7 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the bounded follow-up after
-PTY-backed demo terminal/session semantics land, keeping browser tab
-convergence, nested TUI embedding, and wider runtime expansion explicitly
-bounded.
+Use the active `g02.003` strict lane to let `effigy demo browser` consume the
+shipped demo terminal/session contract as a bounded live terminal view, while
+browser tab convergence, nested TUI embedding, and wider runtime expansion stay
+explicitly bounded.
