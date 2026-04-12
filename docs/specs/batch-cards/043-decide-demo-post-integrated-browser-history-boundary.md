@@ -1,6 +1,6 @@
 # 043 Decide Demo Post-Integrated-Browser-History Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -48,5 +48,6 @@ tooling.
 
 ## Next Task
 
-Execute the ready follow-up selected in this decision batch so the lane stays
-bounded and explicit.
+Execute [`044-implement-demo-active-terminal-session-handoff.md`](./044-implement-demo-active-terminal-session-handoff.md)
+to add a runner-owned active demo terminal/session contract before any
+tabbed browser terminal integration.

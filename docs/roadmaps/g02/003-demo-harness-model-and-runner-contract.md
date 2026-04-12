@@ -1722,6 +1722,49 @@ Out of scope for the next decision slice:
 - adding `demo list` retained-history density, badges, or grouped summaries
 - broader runtime cancellation or desktop-client work
 
+Batch `03.37` result:
+
+- the next bounded value should not deepen retained-attempt activation first;
+  the larger missing contract is active demo terminal/session handoff
+- demo-browser presentation can plausibly grow into demo-scoped tabs such as
+  `Overview`, `History`, `Terminal`, and `Artifacts`, but that remains a later
+  client decision rather than the next immediate implementation slice
+- demos that internally use the concurrent runner must project their active
+  terminal surface through a demo-owned session contract instead of launching a
+  nested TUI inside `effigy demo browser`
+
+Why this batch was the right decision slice:
+
+- operator feedback now points at live terminal output and input as the real
+  missing capability, not denser retained-history rendering
+- the concurrent TUI already proves Effigy has usable PTY and terminal-text
+  machinery, so the honest next gap is contract and ownership rather than raw
+  rendering feasibility
+- keeping the next slice runner-first preserves the roadmap rule that clients
+  consume runner semantics instead of inventing nested UI/runtime behavior
+
+### 10.35 Active Demo Terminal Session Handoff
+
+Batch `03.38` target:
+
+Implement a runner-owned active demo terminal/session handoff so later browser
+views can render live output and forward bounded input without nested TUIs.
+
+In scope for the next implementation slice:
+
+- expose one-demo active-session terminal metadata and live-output handoff
+- distinguish PTY-backed versus plain stream-backed active attempts
+- expose whether bounded input forwarding is supported for the active attempt
+- keep demos backed by the concurrent runner flattened behind the demo session
+  contract instead of embedding the concurrent TUI
+
+Out of scope for the next implementation slice:
+
+- tabbed browser UI or terminal-pane rendering
+- multi-process demo sub-tabs or managed-process embedding in the browser
+- replaying retained history as an interactive terminal
+- broader runtime cancellation or desktop-client work
+
 ### 10.27 Demo History Query Follow-Up Boundary
 
 Batch `03.30` target:
