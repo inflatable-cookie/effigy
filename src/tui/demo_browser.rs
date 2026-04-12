@@ -3329,6 +3329,9 @@ struct DemoRuntimeBackend {
     #[serde(default)]
     #[allow(dead_code)]
     projected_process_summary: DemoRuntimeProjectedProcessSummary,
+    #[serde(default)]
+    #[allow(dead_code)]
+    projected_output_provenance: DemoRuntimeProjectedOutputProvenance,
     #[allow(dead_code)]
     capabilities: Vec<String>,
 }
@@ -3353,6 +3356,18 @@ struct DemoRuntimeProjectedProcessSummary {
     managed_process_names: Vec<String>,
     #[allow(dead_code)]
     merged_output_from_multiple_processes: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct DemoRuntimeProjectedOutputProvenance {
+    #[allow(dead_code)]
+    present: bool,
+    #[allow(dead_code)]
+    kind: String,
+    #[allow(dead_code)]
+    label: String,
+    #[allow(dead_code)]
+    source_attributed: bool,
 }
 
 impl DemoTerminalSize {
@@ -3431,6 +3446,8 @@ mod tests {
                 flattened_projection: false,
                 projection_shape: super::DemoRuntimeProjectionShape::default(),
                 projected_process_summary: super::DemoRuntimeProjectedProcessSummary::default(),
+                projected_output_provenance:
+                    super::DemoRuntimeProjectedOutputProvenance::default(),
                 capabilities: vec![],
             },
             actions: super::DemoActionAvailability {
@@ -3814,6 +3831,8 @@ mod tests {
                     managed_process_count: None,
                 },
                 projected_process_summary: super::DemoRuntimeProjectedProcessSummary::default(),
+                projected_output_provenance:
+                    super::DemoRuntimeProjectedOutputProvenance::default(),
                 capabilities: vec![
                     "active-terminal-session".to_owned(),
                     "live-terminal-output".to_owned(),
@@ -3951,6 +3970,8 @@ mod tests {
                     managed_process_count: None,
                 },
                 projected_process_summary: super::DemoRuntimeProjectedProcessSummary::default(),
+                projected_output_provenance:
+                    super::DemoRuntimeProjectedOutputProvenance::default(),
                 capabilities: vec![
                     "active-terminal-session".to_owned(),
                     "live-terminal-output".to_owned(),
