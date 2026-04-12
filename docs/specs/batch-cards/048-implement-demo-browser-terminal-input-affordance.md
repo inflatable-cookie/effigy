@@ -1,53 +1,40 @@
 # 048 Implement Demo Browser Terminal Input Affordance
 
-Status: ready
+Status: superseded
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
 
 ## Objective
 
-Let `effigy demo browser` consume the shipped runner-owned active-terminal
-input contract through one bounded demo-scoped terminal interaction affordance.
+This card is superseded. It proposed browser-side text-entry affordances before
+the lane settled the default human interaction model for terminal demos.
 
 ## In Scope
 
-- add one browser-side terminal input affordance for the selected demo
-- consume the shipped `demo input <DEMO_ID> --text <TEXT> [--append-newline]`
-  contract instead of inventing client-side transport semantics
-- keep the interaction demo-scoped rather than process-manager-scoped
-- reflect unavailable input-forwarding honestly when the active session reports
-  it unsupported
+- preserved only as traceable history for the superseded browser-first idea
 
 ## Out Of Scope
 
-- browser tab convergence or broader browser layout changes
-- embedding the concurrent TUI inside `effigy demo browser`
-- multi-process demo sub-tabs or generic managed-process controls
-- retained-history replay as an interactive terminal
-- broad runtime cancellation or desktop-client work
+- further execution from this card
 
 ## Acceptance Criteria
 
-- the browser can trigger one bounded terminal input flow for the selected demo
-- the flow stays aligned to the runner-owned demo input contract
-- unsupported input-forwarding is rendered honestly
-- one explicit ready card remains after closeout
+- the lane uses a fresh ready card aligned to the updated human interaction
+  boundary instead of continuing from this superseded browser-first slice
 
 ## Validation
 
-- `cargo test`
-- `cargo clippy --all-targets -- -D warnings -A clippy::result_large_err -A clippy::too_many_arguments -A clippy::type_complexity`
-- `cargo run --bin effigy -- qa`
 - `git diff --check`
+- `cargo run --bin effigy -- qa:docs`
 
 ## Stop Conditions
 
-- the batch widens into browser tabs instead of bounded terminal interaction
-- the browser starts inventing its own transport semantics
-- the design requires nested TUI launch
+- execution continues from this stale card instead of the recovered lane state
 
 ## Next Task
 
-Implement the next ready follow-up selected after this browser interaction
-slice lands.
+Execute [`049-implement-demo-attached-terminal-run-mode.md`](./049-implement-demo-attached-terminal-run-mode.md)
+to make direct attached terminal sessions the default human path for demos that
+need interactive terminal IO, while keeping `demo input` as secondary
+automation/client infrastructure.
