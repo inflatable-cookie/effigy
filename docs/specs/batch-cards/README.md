@@ -55,9 +55,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`049-implement-demo-attached-terminal-run-mode.md`](./049-implement-demo-attached-terminal-run-mode.md) (complete)
 - [`050-decide-demo-post-attached-terminal-run-boundary.md`](./050-decide-demo-post-attached-terminal-run-boundary.md) (complete)
 - [`051-implement-demo-pty-terminal-session-contract.md`](./051-implement-demo-pty-terminal-session-contract.md) (complete)
-- [`052-decide-demo-post-pty-terminal-contract-boundary.md`](./052-decide-demo-post-pty-terminal-contract-boundary.md)
+- [`052-decide-demo-post-pty-terminal-contract-boundary.md`](./052-decide-demo-post-pty-terminal-contract-boundary.md) (complete)
+- [`053-implement-demo-browser-live-terminal-view.md`](./053-implement-demo-browser-live-terminal-view.md)
 
 ## Next Task
 
-Execute the active ready card to decide the next bounded follow-up after
-PTY-backed demo terminal/session semantics landed.
+Execute the active ready card to let `effigy demo browser` consume the shipped
+demo terminal/session contract as a bounded live terminal view before any tab
+convergence work.
