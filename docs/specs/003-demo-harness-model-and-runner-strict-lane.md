@@ -69,7 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to let the browser terminal view
-consume the shipped runner-owned input contract through one bounded demo-scoped
-interaction affordance, while browser tab convergence, nested TUI embedding,
-broader runtime expansion, and desktop-client questions stay separate.
+Execute the active `g02.003` ready card next to make direct attached terminal
+sessions the default human path for demos that need interactive terminal IO,
+while browser tab convergence, nested TUI embedding, broader runtime
+expansion, and desktop-client questions stay separate.

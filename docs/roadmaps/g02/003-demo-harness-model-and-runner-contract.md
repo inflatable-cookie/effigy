@@ -1918,18 +1918,41 @@ Why this batch was the right implementation slice:
 
 Batch `03.42` target:
 
-Let `effigy demo browser` consume the shipped runner-owned active-terminal
-input contract through one bounded demo-scoped terminal interaction
-affordance.
+This slice is superseded. It assumed browser-side text entry should land next,
+but operator feedback changed the human interaction boundary.
+
+Why it became stale:
+
+- `demo input --text ...` is useful infrastructure for automation and clients,
+  but poor primary UX for humans doing iterative terminal debugging
+- direct attached terminal sessions are the honest human path for demos that
+  need terminal IO
+- browser/client affordances should follow that human boundary instead of
+  defining it
+
+Recovery result:
+
+- browser-first input affordance work is superseded for now
+- the next slice is attached human terminal interaction on top of the existing
+  runner-owned session and input contract surfaces
+
+### 10.40 Demo Attached Terminal Run Mode
+
+Batch `03.43` target:
+
+Make direct attached terminal sessions the default human interaction path for
+demos that need live terminal IO, while keeping the shipped `demo input`
+surface as secondary automation/client infrastructure.
 
 In scope for the next implementation slice:
 
-- add one browser-side terminal input affordance for the selected demo
-- consume the shipped `demo input <DEMO_ID> --text <TEXT> [--append-newline]`
-  contract instead of inventing client-side transport semantics
-- keep the interaction demo-scoped rather than process-manager-scoped
-- reflect unavailable input-forwarding honestly when the active session reports
-  it unsupported
+- add a human-facing attached terminal run mode for demos whose runtime needs
+  live terminal interaction
+- keep receipts, latest-attempt state, and history semantics aligned with the
+  shipped demo runner contract
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+- keep `demo input` available as secondary machine/client infrastructure
+  rather than the primary human UX
 
 Out of scope for the next implementation slice:
 
@@ -1960,7 +1983,7 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to let the browser terminal view consume
-the shipped runner-owned input contract through one bounded demo-scoped
-interaction affordance, while browser tab convergence, nested TUI embedding,
-and wider runtime expansion remain deferred.
+Use the active `g02.003` strict lane to make direct attached terminal sessions
+the default human path for demos that need interactive terminal IO, while
+browser tab convergence, nested TUI embedding, and wider runtime expansion
+remain deferred.
