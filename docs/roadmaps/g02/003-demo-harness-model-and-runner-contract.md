@@ -2881,6 +2881,51 @@ Out of scope for the next decision slice:
 - multi-process browser tabs or panes by default
 - embedding the concurrent TUI
 
+Batch `03.68` result:
+
+- do not spend the next slot on browser chrome or multi-process browser
+  controls
+- do not pause this branch yet
+- the next bounded slice is one more runner-owned concurrent-runtime truth
+  layer
+- specifically: add bounded projected-process summary facts for concurrent-runner
+  demos that stay on the flattened path
+
+Why this decision is the right boundary:
+
+- `projection_shape` settled whether one live terminal is honest
+- the next gap is still runner truth: what sits behind a projected
+  multi-process demo-owned terminal/session
+- browser follow-up now would still need to guess or stay vague about that
+  projected runtime
+- one bounded process-summary slice keeps later browser work honest without
+  widening into generic process-manager UI
+
+### 10.66 Demo Concurrent Runtime Projected Process Summary Contract
+
+Batch `03.69` target:
+
+Add bounded runner-owned process summary facts for concurrent-runner demos that
+stay on the flattened projected path.
+
+In scope for the next implementation slice:
+
+- add demo-scoped projected-runtime summary facts such as:
+  - managed process names
+  - managed process count parity with the projection-shape contract
+  - whether the active session is merging output from multiple named managed
+    processes
+- expose those facts through inspect and active terminal/session payloads
+- keep the contract bounded and demo-owned rather than turning into generic
+  process-manager inventory
+
+Out of scope for the next implementation slice:
+
+- multi-process browser panes or tabs
+- embedded concurrent TUI
+- generic process-manager controls
+- redesigning browser layout again
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
