@@ -69,6 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to add bounded history-query
-narrowing and selection ergonomics, then keep browser density, runtime
-expansion, and desktop-client questions separate.
+Execute the active `g02.003` ready card next to decide whether any later demo
+history density should remain query-first or can safely move into a client,
+then keep browser density, runtime expansion, and desktop-client questions
+separate.

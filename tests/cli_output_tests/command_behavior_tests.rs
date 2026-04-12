@@ -786,6 +786,170 @@ task = "demo:login-smoke"
 }
 
 #[test]
+fn cli_demo_history_json_filters_by_outcome() {
+    let root = temp_workspace("demo-history-outcome-json");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[demos.login-smoke]
+title = "Login Smoke"
+summary = "Proves the local login flow reaches an authenticated state."
+proof = "Verify the default local login journey succeeds end to end."
+owner = "auth"
+mode = "interactive"
+status = "ready"
+tags = ["auth", "smoke"]
+covers = ["auth.login"]
+run = "sh -lc 'printf first-pass'"
+"#,
+    )
+    .expect("write initial demo manifest");
+
+    let first = run_json_cli_command(&root, &["demo", "run", "login-smoke"]);
+    assert!(first.status.success(), "first demo run failed: {first:?}");
+    std::thread::sleep(Duration::from_millis(2));
+
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[demos.login-smoke]
+title = "Login Smoke"
+summary = "Proves the local login flow reaches an authenticated state."
+proof = "Verify the default local login journey succeeds end to end."
+owner = "auth"
+mode = "interactive"
+status = "ready"
+tags = ["auth", "smoke"]
+covers = ["auth.login"]
+run = "sh -lc 'printf second-fail; exit 7'"
+"#,
+    )
+    .expect("write failing demo manifest");
+
+    let second = run_json_cli_command(&root, &["demo", "rerun", "login-smoke"]);
+    assert!(
+        !second.status.success(),
+        "failing demo rerun unexpectedly passed: {second:?}"
+    );
+
+    let output = run_json_cli_command(
+        &root,
+        &["demo", "history", "login-smoke", "--outcome", "failed"],
+    );
+    assert!(output.status.success(), "demo history failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+
+    assert_eq!(parsed["result"]["query"]["outcome"], "failed");
+    assert_eq!(parsed["result"]["attempt_history"]["stored_count"], 2);
+    assert_eq!(parsed["result"]["attempt_history"]["filtered_count"], 1);
+    assert_eq!(parsed["result"]["attempt_history"]["displayed_count"], 1);
+    assert_eq!(parsed["result"]["attempt_history"]["outcome"], "failed");
+    assert_eq!(
+        parsed["result"]["attempt_history"]["attempts"][0]["outcome"],
+        "failed"
+    );
+    assert_eq!(
+        parsed["result"]["attempt_history"]["attempts"][0]["ordinal"],
+        1
+    );
+}
+
+#[test]
+fn cli_demo_history_json_can_select_attempt_by_filtered_ordinal() {
+    let root = temp_workspace("demo-history-ordinal-json");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[demos.login-smoke]
+title = "Login Smoke"
+summary = "Proves the local login flow reaches an authenticated state."
+proof = "Verify the default local login journey succeeds end to end."
+owner = "auth"
+mode = "interactive"
+status = "ready"
+tags = ["auth", "smoke"]
+covers = ["auth.login"]
+run = "sh -lc 'printf fail-one; exit 7'"
+"#,
+    )
+    .expect("write first failing demo manifest");
+
+    let first = run_json_cli_command(&root, &["demo", "run", "login-smoke"]);
+    assert!(
+        !first.status.success(),
+        "first failing demo run unexpectedly passed: {first:?}"
+    );
+    std::thread::sleep(Duration::from_millis(2));
+
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[demos.login-smoke]
+title = "Login Smoke"
+summary = "Proves the local login flow reaches an authenticated state."
+proof = "Verify the default local login journey succeeds end to end."
+owner = "auth"
+mode = "interactive"
+status = "ready"
+tags = ["auth", "smoke"]
+covers = ["auth.login"]
+run = "sh -lc 'printf fail-two; exit 9'"
+"#,
+    )
+    .expect("write second failing demo manifest");
+
+    let second = run_json_cli_command(&root, &["demo", "rerun", "login-smoke"]);
+    assert!(
+        !second.status.success(),
+        "second failing demo rerun unexpectedly passed: {second:?}"
+    );
+
+    let history = run_json_cli_command(
+        &root,
+        &["demo", "history", "login-smoke", "--outcome", "failed"],
+    );
+    assert!(history.status.success(), "demo history failed: {history:?}");
+    let parsed_history = parse_stdout_json(&history);
+    assert_eq!(
+        parsed_history["result"]["attempt_history"]["filtered_count"],
+        2
+    );
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "demo",
+            "history",
+            "login-smoke",
+            "--outcome",
+            "failed",
+            "--ordinal",
+            "2",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "ordinal history selection failed: {output:?}"
+    );
+    let parsed = parse_stdout_json(&output);
+
+    assert_eq!(parsed["result"]["query"]["outcome"], "failed");
+    assert_eq!(parsed["result"]["query"]["ordinal"], 2);
+    assert_eq!(
+        parsed["result"]["selected_attempt"]["attempt_id"],
+        parsed["result"]["attempt_history"]["attempts"][1]["attempt_id"]
+    );
+    assert_eq!(
+        parsed["result"]["selected_attempt"]["outcome"],
+        parsed["result"]["attempt_history"]["attempts"][1]["outcome"]
+    );
+    assert_eq!(
+        parsed["result"]["attempt_history"]["attempts"][1]["ordinal"],
+        2
+    );
+}
+
+#[test]
 fn cli_demo_run_json_run_backed_failure_writes_receipt_and_reports_failure() {
     let root = temp_workspace("demo-run-shell-json");
     fs::create_dir_all(root.join("receipts")).expect("mkdir receipts");

@@ -1,6 +1,6 @@
 # 039 Implement Demo History Query Controls
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -52,6 +52,6 @@ or the browser.
 
 ## Next Task
 
-Use the next active ready card to add bounded history-query narrowing and
-selection ergonomics inside `demo history`, then decide whether any later
-history density should remain query-first or can safely move into a client.
+Execute [`040-decide-demo-post-history-query-controls-boundary.md`](./040-decide-demo-post-history-query-controls-boundary.md)
+to decide whether any later history density should remain query-first or can
+safely move into a client without reopening browser churn.

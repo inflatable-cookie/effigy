@@ -334,6 +334,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to add bounded history-query narrowing and
-selection ergonomics, while keeping broader runtime and desktop-client
-questions deferred.
+Use the active `g02.003` ready card to decide whether any later demo-history
+density should remain query-first or can safely move into a client/browser
+consumer, while keeping broader runtime and desktop-client questions deferred.

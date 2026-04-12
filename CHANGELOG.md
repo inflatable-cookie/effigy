@@ -65,6 +65,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add `effigy demo history <id> --attempt <ATTEMPT_ID>` so operators can
   select one retained historical attempt and inspect its receipt, artifacts,
   and log references directly from the dedicated history surface
+- Add bounded history-query controls to `effigy demo history <id>`, including
+  `--outcome <OUTCOME>` filtering and `--ordinal <N>` selection, so operators
+  can narrow one demo's retained results and select a displayed attempt
+  without copying long attempt ids for common review flows
 
 ### Changed
 - Rework `effigy demo browser` around the same magenta-framed visual language

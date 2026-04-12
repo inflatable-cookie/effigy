@@ -13,12 +13,12 @@ Current milestones:
 
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
 - [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
-- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, metadata-query parity, first-browser cleanup, bounded persisted attempt history, a dedicated `demo history` query surface, and historical-attempt drilldown now shipped; the next slice is to add bounded history-query narrowing and selection ergonomics without widening list or browser density by default)
+- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, metadata-query parity, first-browser cleanup, bounded persisted attempt history, a dedicated `demo history` query surface, historical-attempt drilldown, and bounded history-query controls now shipped; the next slice is to decide whether any later history density should remain query-first or can safely move into a client/browser consumer)
 
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/039-implement-demo-history-query-controls.md`](../specs/batch-cards/039-implement-demo-history-query-controls.md)
+- [`../specs/batch-cards/040-decide-demo-post-history-query-controls-boundary.md`](../specs/batch-cards/040-decide-demo-post-history-query-controls-boundary.md)
 
 Rules:
 
@@ -28,5 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` ready card to add bounded history-query narrowing and
-selection ergonomics, while broader runtime expansion stays deferred.
+Use the active `g02.003` ready card to decide whether any later history
+density should remain query-first or can safely move into a
+client/browser consumer, while broader runtime expansion stays deferred.

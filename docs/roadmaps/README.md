@@ -35,15 +35,15 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01/028-script-surface-reduction-and-builtins.md` reduces repo shell logic into Effigy-native command surfaces and is complete.
 - `g02/001-bootstrap-command-and-clone-contract.md` started the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up, and is now complete: released plus live-pilot validated on `loophole` and `songsprout`.
 - `g02/002-manifest-composition-and-override-contract.md` defines the general split-manifest model so features do not invent their own file-loading semantics, and its foundation plus inspectability are already shipped.
-- `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy; registry loading, inspection, `demo run`, lifecycle control, browser-state/query polish, repo-self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, metadata-query parity, first-browser cleanup, bounded persisted attempt history, a dedicated `demo history` query surface, and historical-attempt drilldown are now shipped, and the next bounded slice is to add bounded history-query narrowing and selection ergonomics instead of widening list/browser density by default.
+- `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy; registry loading, inspection, `demo run`, lifecycle control, browser-state/query polish, repo-self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, metadata-query parity, first-browser cleanup, bounded persisted attempt history, a dedicated `demo history` query surface, historical-attempt drilldown, and bounded history-query controls are now shipped, and the next bounded slice is to decide whether any later history density should remain query-first or can safely move into a client/browser consumer.
 
 ## Active Strict Lane
 
 - `g02.003` is the active roadmap milestone.
 - `docs/specs/003-demo-harness-model-and-runner-strict-lane.md` is the active
   strict planning lane around that roadmap.
-- `docs/specs/batch-cards/039-implement-demo-history-query-controls.md` is the
-  current ready card.
+- `docs/specs/batch-cards/040-decide-demo-post-history-query-controls-boundary.md`
+  is the current ready card.
 
 ## Research Program
 
@@ -65,8 +65,9 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute the active ready card for `g02.003` to add bounded history-query
-narrowing and selection ergonomics.
+Execute the active ready card for `g02.003` to decide whether any later
+history density should remain query-first or can safely move into a
+client/browser consumer.
 
 
 ## Historical language boundary

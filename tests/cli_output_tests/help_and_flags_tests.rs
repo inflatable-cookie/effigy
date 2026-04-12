@@ -232,12 +232,14 @@ fn cli_demo_help_is_command_specific() {
     assert!(stdout.contains("demo Help"));
     assert!(stdout.contains("effigy demo list [--search <TEXT>] [--owner <NAME>]"));
     assert!(stdout.contains("effigy demo inspect <DEMO_ID> [--repo <PATH>] [--json]"));
-    assert!(stdout.contains("effigy demo history <DEMO_ID> [--limit <N>] [--attempt <ATTEMPT_ID>] [--repo <PATH>] [--json]"));
+    assert!(stdout.contains("effigy demo history <DEMO_ID> [--limit <N>] [--outcome <OUTCOME>] [--attempt <ATTEMPT_ID> | --ordinal <N>] [--repo <PATH>] [--json]"));
     assert!(stdout.contains("effigy demo run <DEMO_ID> [--repo <PATH>] [--json]"));
     assert!(stdout.contains("effigy demo stop <DEMO_ID> [--repo <PATH>] [--json]"));
     assert!(stdout.contains("effigy demo rerun <DEMO_ID> [--repo <PATH>] [--json]"));
     assert!(stdout.contains("--group-by <FIELD>"));
     assert!(stdout.contains("--stale-only"));
+    assert!(stdout.contains("--outcome <OUTCOME>"));
+    assert!(stdout.contains("--ordinal <N>"));
     assert!(!stdout.contains("docs Help"));
 }
 
