@@ -1,6 +1,6 @@
 # 077 Decide Demo Post-Projected-Process-Summary Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -50,5 +50,6 @@ clearly earns the next slot.
 
 ## Next Task
 
-Execute this decision batch, then leave one explicit ready card instead of
-widening directly into multi-process browser controls.
+Execute [`078-implement-demo-concurrent-runtime-projected-output-provenance-contract.md`](./078-implement-demo-concurrent-runtime-projected-output-provenance-contract.md)
+to add runner-owned output-provenance facts for projected concurrent demos
+before any multi-process browser follow-up.
