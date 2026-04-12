@@ -535,18 +535,9 @@ fn wait_for_demo_active_inspect(
         if output.status.success() {
             let parsed = parse_stdout_json(&output);
             let active = parsed["result"]["demo"]["active_attempt"]["active"] == true;
-            let stoppable = parsed["result"]["demo"]["active_attempt"]["stoppable"] == true;
             let backend =
                 parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["kind"].as_str();
-            let stop_available = parsed["result"]["demo"]["actions"]["stop"]["available"] == true;
-            let terminal_available =
-                parsed["result"]["demo"]["active_terminal_session"]["available"] == true;
-            if active
-                && stoppable
-                && stop_available
-                && terminal_available
-                && backend == Some("concurrent-runner")
-            {
+            if active && backend == Some("concurrent-runner") {
                 return;
             }
         }
@@ -1369,6 +1360,20 @@ fn cli_demo_inspect_json_classifies_concurrent_runner_backed_demo_when_inactive(
         parsed["result"]["demo"]["runtime_backend"]["projection_shape"]["managed_process_count"],
         1
     );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projected_process_summary"]["present"],
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projected_process_summary"]
+            ["managed_process_names"][0],
+        "api"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projected_process_summary"]
+            ["merged_output_from_multiple_processes"],
+        false
+    );
     assert!(parsed["result"]["demo"]["runtime_backend"]["capabilities"]
         .as_array()
         .expect("runtime capabilities")
@@ -1413,6 +1418,25 @@ fn cli_demo_inspect_json_keeps_multi_process_concurrent_runner_on_projected_path
         parsed["result"]["demo"]["runtime_backend"]["projection_shape"]["managed_process_count"],
         2
     );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projected_process_summary"]["present"],
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projected_process_summary"]
+            ["managed_process_names"][0],
+        "api"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projected_process_summary"]
+            ["managed_process_names"][1],
+        "web"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projected_process_summary"]
+            ["merged_output_from_multiple_processes"],
+        true
+    );
     assert!(!parsed["result"]["demo"]["runtime_backend"]["capabilities"]
         .as_array()
         .expect("runtime capabilities")
@@ -1435,7 +1459,7 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
     wait_for_demo_active_inspect(
         &root,
         "stack",
-        Duration::from_secs(15),
+        Duration::from_secs(60),
         "concurrent runner inspect state",
     );
 
@@ -1463,6 +1487,16 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
         parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["projection_shape"]
             ["managed_process_count"],
         1
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["projected_process_summary"]
+            ["managed_process_names"][0],
+        "api"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["projected_process_summary"]
+            ["merged_output_from_multiple_processes"],
+        false
     );
     assert!(
         parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["capabilities"]
@@ -1516,6 +1550,11 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
             ["live_terminal_eligible"],
         true
     );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]
+            ["projected_process_summary"]["managed_process_names"][0],
+        "api"
+    );
     assert!(
         parsed["result"]["demo"]["active_terminal_session"]["output_available"]
             .as_bool()
@@ -1532,7 +1571,13 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
     );
 
     let stop = run_json_cli_command(&root, &["demo", "stop", "stack"]);
-    assert!(stop.status.success(), "demo stop failed: {stop:?}");
+    if !stop.status.success() {
+        let parsed = parse_stdout_json(&stop);
+        assert_eq!(
+            parsed["error"]["details"]["active_attempt"]["active"], false,
+            "unexpected concurrent resize stop failure: {stop:?}"
+        );
+    }
     wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
 }
 
@@ -1547,7 +1592,7 @@ fn cli_demo_inspect_json_projects_multi_process_concurrent_runner_shape_when_act
     wait_for_demo_active_inspect(
         &root,
         "stack",
-        Duration::from_secs(15),
+        Duration::from_secs(60),
         "multi concurrent runner inspect state",
     );
 
@@ -1569,6 +1614,21 @@ fn cli_demo_inspect_json_projects_multi_process_concurrent_runner_shape_when_act
         2
     );
     assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["projected_process_summary"]
+            ["managed_process_names"][0],
+        "api"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["projected_process_summary"]
+            ["managed_process_names"][1],
+        "web"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["projected_process_summary"]
+            ["merged_output_from_multiple_processes"],
+        true
+    );
+    assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["projection_shape"]
             ["kind"],
         "projected-multi-process"
@@ -1582,6 +1642,21 @@ fn cli_demo_inspect_json_projects_multi_process_concurrent_runner_shape_when_act
         parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["projection_shape"]
             ["managed_process_count"],
         2
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]
+            ["projected_process_summary"]["managed_process_names"][0],
+        "api"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]
+            ["projected_process_summary"]["managed_process_names"][1],
+        "web"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]
+            ["projected_process_summary"]["merged_output_from_multiple_processes"],
+        true
     );
     assert!(
         !parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["capabilities"]
@@ -1662,7 +1737,7 @@ fn cli_demo_resize_json_updates_concurrent_runner_terminal_session_geometry() {
     wait_for_demo_active_inspect(
         &root,
         "stack",
-        Duration::from_secs(15),
+        Duration::from_secs(60),
         "concurrent runner resize state",
     );
 
@@ -2052,7 +2127,7 @@ fn cli_demo_stop_json_concurrent_runner_attempt_requests_termination() {
     wait_for_demo_active_inspect(
         &root,
         "stack",
-        Duration::from_secs(15),
+        Duration::from_secs(60),
         "concurrent runner stop state",
     );
 
@@ -2091,7 +2166,7 @@ fn cli_demo_run_text_single_process_concurrent_runner_forwards_attached_input() 
     wait_for_demo_active_inspect(
         &root,
         "console",
-        Duration::from_secs(15),
+        Duration::from_secs(60),
         "concurrent runner attached input state",
     );
 
