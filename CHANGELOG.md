@@ -97,6 +97,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Make `effigy demo inspect <id>` and `demo list` expose browser-facing
   freshness, receipt presence, grouped discovery output, and action
   availability so the next browser/TUI slice can build on honest runner state
+- Remove artifact opening from the `effigy demo browser` action sheet so
+  retained artifacts are activated only through detail-pane navigation instead
+  of a redundant action that bypassed the current selection flow
 
 ### Fixed
 - Make stop-requested run-backed demos persist `stop-requested` state before
