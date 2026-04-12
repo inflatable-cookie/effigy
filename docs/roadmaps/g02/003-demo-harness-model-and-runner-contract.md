@@ -2926,6 +2926,51 @@ Out of scope for the next implementation slice:
 - generic process-manager controls
 - redesigning browser layout again
 
+Batch `03.69` result:
+
+- concurrent-runner-backed demo payloads now expose runner-owned
+  `projected_process_summary` facts through `runtime_backend` on demo detail,
+  active attempt, and active terminal/session surfaces
+- projected demo payloads now say:
+  - which managed process names sit behind the flattened demo-owned terminal
+    or session
+  - whether that projected surface is merging output from multiple named
+    managed processes
+- browser consumers can keep reading runner truth instead of inventing
+  multi-process heuristics
+
+Why this implementation is the right boundary:
+
+- it adds one more layer of runner truth without turning the demo contract
+  into generic process-manager inventory
+- it keeps later browser follow-up honest if projected multi-process demos earn
+  another UI slice
+- it still stays away from nested TUI launch and multi-pane browser churn
+
+### 10.67 Demo Post-Projected-Process-Summary Boundary
+
+Batch `03.70` target:
+
+Decide the next bounded slice after projected-runtime process summary truth
+landed.
+
+In scope for the next decision slice:
+
+- decide whether the next value belongs in:
+  - one more runner-owned concurrent-runtime truth slice
+  - a bounded browser follow-up that consumes the richer projected-runtime
+    truth honestly
+  - a pause from this branch of demo work
+- preserve the no-nested-TUI rule
+- leave one explicit ready card
+
+Out of scope for the next decision slice:
+
+- implementing the next slice
+- generic process-manager UI
+- multi-process browser panes by default
+- embedding the concurrent TUI
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:

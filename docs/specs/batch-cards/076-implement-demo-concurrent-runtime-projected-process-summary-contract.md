@@ -1,6 +1,6 @@
 # 076 Implement Demo Concurrent Runtime Projected Process Summary Contract
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -55,6 +55,6 @@ demo-owned terminal/session without widening into a process manager.
 
 ## Next Task
 
-Implement this runner-owned projected-runtime summary slice, then leave one new
-explicit boundary card instead of widening straight into multi-process browser
-controls.
+Execute
+`077-decide-demo-post-projected-process-summary-boundary.md` to make the next
+bounded boundary call after projected-runtime process summary truth landed.

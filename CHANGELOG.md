@@ -105,6 +105,11 @@ During v0.x, MINOR bumps may include breaking changes.
   session semantics
 
 ### Changed
+- Deepen concurrent-runner-backed projected demo runtime reporting with
+  runner-owned `projected_process_summary` facts so inspect and active
+  terminal/session payloads now expose the managed process names behind one
+  flattened demo-owned terminal/session and whether that projected surface is
+  merging output from multiple named managed processes
 - Deepen concurrent-runner-backed demo runtime reporting with runner-owned
   `projection_shape` facts so inspect and active terminal/session payloads now
   say whether a demo is `single-terminal` or `projected-multi-process`,

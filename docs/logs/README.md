@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/12-210500-demo-concurrent-runtime-projected-process-summary-contract-implementation.md`](./2026-04/12-210500-demo-concurrent-runtime-projected-process-summary-contract-implementation.md)
 - [`2026-04/12-203800-demo-post-concurrent-runtime-projection-shape-boundary-decision.md`](./2026-04/12-203800-demo-post-concurrent-runtime-projection-shape-boundary-decision.md)
 - [`2026-04/12-201500-demo-concurrent-runtime-projection-shape-contract-implementation.md`](./2026-04/12-201500-demo-concurrent-runtime-projection-shape-contract-implementation.md)
 - [`2026-04/12-193500-demo-post-browser-live-concurrent-runner-session-parity-boundary-decision.md`](./2026-04/12-193500-demo-post-browser-live-concurrent-runner-session-parity-boundary-decision.md)

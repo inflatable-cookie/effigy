@@ -1742,6 +1742,7 @@ fn demo_active_attempt_from_record(
         browser_live_attach_supported: infer_browser_live_attach_supported(record),
         projection_shape_kind: infer_projection_shape_kind(record).to_owned(),
         managed_process_count: infer_managed_process_count(record),
+        managed_process_names: record.managed_process_names.clone(),
         terminal_transport: match record.terminal_transport {
             PersistedDemoTerminalTransport::Stream => DemoTerminalTransport::Stream,
             PersistedDemoTerminalTransport::Pty => DemoTerminalTransport::Pty,
@@ -1827,6 +1828,16 @@ fn runtime_projection_shape_for_active_attempt(
             active_attempt.managed_process_count,
         ),
         _ => DemoRuntimeProjectionShape::none(),
+    }
+}
+
+fn runtime_projected_process_summary_for_active_attempt(
+    active_attempt: &DemoActiveAttempt,
+) -> DemoRuntimeProjectedProcessSummary {
+    if active_attempt.managed_process_names.is_empty() {
+        DemoRuntimeProjectedProcessSummary::none()
+    } else {
+        DemoRuntimeProjectedProcessSummary::from_names(active_attempt.managed_process_names.clone())
     }
 }
 
@@ -1959,6 +1970,7 @@ fn execute_task_backed_demo(
             browser_live_attach_supported: false,
             projection_shape_kind: Some("none".to_owned()),
             managed_process_count: None,
+            managed_process_names: Vec::new(),
             terminal_transport: PersistedDemoTerminalTransport::Stream,
             supports_input_forwarding: false,
             supports_resize: false,
@@ -2165,6 +2177,11 @@ fn execute_concurrent_runner_backed_demo(
                     .clone(),
             ),
             managed_process_count: Some(plan.processes.len()),
+            managed_process_names: plan
+                .processes
+                .iter()
+                .map(|process| process.name.clone())
+                .collect(),
             terminal_transport: PersistedDemoTerminalTransport::Stream,
             supports_input_forwarding: input_handoff_path.is_some(),
             supports_resize: resize_handoff_path.is_some(),
@@ -2484,6 +2501,37 @@ fn concurrent_runner_task_supports_browser_live_attach(repo_root: &Path, task_na
         .is_some_and(|count| concurrent_runner_projection_shape(count).live_terminal_eligible)
 }
 
+fn concurrent_runner_task_process_names(repo_root: &Path, task_name: &str) -> Option<Vec<String>> {
+    let Ok(Some(resolved)) = demo_task_selection(repo_root, task_name) else {
+        return None;
+    };
+    let Ok(selection) = resolved.selection() else {
+        return None;
+    };
+    let runtime_args = TaskRuntimeArgs {
+        repo_override: None,
+        verbose_root: false,
+        env_schema_override: None,
+        passthrough: Vec::new(),
+    };
+    resolve_managed_task_plan(
+        &resolved.selector,
+        selection.catalog,
+        selection.task,
+        &runtime_args,
+        &resolved.catalogs,
+        &selection.catalog.catalog_root,
+    )
+    .ok()
+    .flatten()
+    .map(|plan| {
+        plan.processes
+            .iter()
+            .map(|process| process.name.clone())
+            .collect()
+    })
+}
+
 fn concurrent_runner_task_process_count(repo_root: &Path, task_name: &str) -> Option<usize> {
     let Ok(Some(resolved)) = demo_task_selection(repo_root, task_name) else {
         return None;
@@ -2522,6 +2570,12 @@ fn concurrent_runner_projection_shape(process_count: usize) -> DemoRuntimeProjec
     } else {
         DemoRuntimeProjectionShape::projected_multi_process(Some(process_count))
     }
+}
+
+fn concurrent_runner_projected_process_summary(
+    managed_process_names: Vec<String>,
+) -> DemoRuntimeProjectedProcessSummary {
+    DemoRuntimeProjectedProcessSummary::from_names(managed_process_names)
 }
 
 fn concurrent_runner_input_target_process(
@@ -2647,6 +2701,7 @@ fn execute_run_backed_demo(
             browser_live_attach_supported: true,
             projection_shape_kind: Some("single-terminal".to_owned()),
             managed_process_count: None,
+            managed_process_names: Vec::new(),
             terminal_transport: launch_mode.transport(),
             supports_input_forwarding: input_handoff_path.is_some(),
             supports_resize: resize_handoff_path.is_some(),
@@ -3854,6 +3909,7 @@ struct DemoRuntimeBackend {
     label: String,
     flattened_projection: bool,
     projection_shape: DemoRuntimeProjectionShape,
+    projected_process_summary: DemoRuntimeProjectedProcessSummary,
     capabilities: Vec<String>,
 }
 
@@ -3864,6 +3920,7 @@ impl DemoRuntimeBackend {
             label: "none".to_owned(),
             flattened_projection: false,
             projection_shape: DemoRuntimeProjectionShape::none(),
+            projected_process_summary: DemoRuntimeProjectedProcessSummary::none(),
             capabilities: Vec::new(),
         }
     }
@@ -3875,6 +3932,7 @@ impl DemoRuntimeBackend {
                 label: "task-backed".to_owned(),
                 flattened_projection: false,
                 projection_shape: DemoRuntimeProjectionShape::none(),
+                projected_process_summary: DemoRuntimeProjectedProcessSummary::none(),
                 capabilities: Vec::new(),
             },
             DemoEntrypoint::Run(_) => Self {
@@ -3882,6 +3940,7 @@ impl DemoRuntimeBackend {
                 label: "run-backed".to_owned(),
                 flattened_projection: false,
                 projection_shape: DemoRuntimeProjectionShape::single_terminal(None),
+                projected_process_summary: DemoRuntimeProjectedProcessSummary::none(),
                 capabilities: vec![
                     "active-terminal-session".to_owned(),
                     "browser-live-attach".to_owned(),
@@ -3906,6 +3965,7 @@ impl DemoRuntimeBackend {
             "label": self.label,
             "flattened_projection": self.flattened_projection,
             "projection_shape": self.projection_shape.to_json(),
+            "projected_process_summary": self.projected_process_summary.to_json(),
             "capabilities": self.capabilities,
         })
     }
@@ -3961,6 +4021,47 @@ impl DemoRuntimeProjectionShape {
     }
 }
 
+#[derive(Debug, Clone)]
+struct DemoRuntimeProjectedProcessSummary {
+    present: bool,
+    managed_process_names: Vec<String>,
+    merged_output_from_multiple_processes: bool,
+}
+
+impl DemoRuntimeProjectedProcessSummary {
+    fn none() -> Self {
+        Self {
+            present: false,
+            managed_process_names: Vec::new(),
+            merged_output_from_multiple_processes: false,
+        }
+    }
+
+    fn from_names(managed_process_names: Vec<String>) -> Self {
+        Self {
+            present: !managed_process_names.is_empty(),
+            merged_output_from_multiple_processes: managed_process_names.len() > 1,
+            managed_process_names,
+        }
+    }
+
+    fn rendered_names(&self) -> String {
+        if self.managed_process_names.is_empty() {
+            "none".to_owned()
+        } else {
+            self.managed_process_names.join(", ")
+        }
+    }
+
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "present": self.present,
+            "managed_process_names": self.managed_process_names,
+            "merged_output_from_multiple_processes": self.merged_output_from_multiple_processes,
+        })
+    }
+}
+
 fn demo_runtime_backend(
     repo_root: &Path,
     loaded: &LoadedTaskManifest,
@@ -4001,6 +4102,10 @@ fn demo_runtime_backend_from_entrypoint(
                 if concurrent_runner_task_supports_browser_live_attach(repo_root, task_name) {
                     capabilities.push("browser-live-attach".to_owned());
                 }
+                let projected_process_summary =
+                    concurrent_runner_task_process_names(repo_root, task_name)
+                        .map(concurrent_runner_projected_process_summary)
+                        .unwrap_or_else(DemoRuntimeProjectedProcessSummary::none);
                 let projection_shape = concurrent_runner_task_process_count(repo_root, task_name)
                     .map(concurrent_runner_projection_shape)
                     .unwrap_or_else(|| DemoRuntimeProjectionShape::projected_multi_process(None));
@@ -4009,6 +4114,7 @@ fn demo_runtime_backend_from_entrypoint(
                     label: runtime_backend_label("concurrent-runner").to_owned(),
                     flattened_projection: true,
                     projection_shape,
+                    projected_process_summary,
                     capabilities,
                 }
             } else {
@@ -4104,6 +4210,7 @@ struct DemoActiveAttempt {
     browser_live_attach_supported: bool,
     projection_shape_kind: String,
     managed_process_count: Option<usize>,
+    managed_process_names: Vec<String>,
     terminal_transport: DemoTerminalTransport,
     supports_input_forwarding: bool,
     supports_resize: bool,
@@ -4136,6 +4243,7 @@ impl DemoActiveAttempt {
             browser_live_attach_supported: false,
             projection_shape_kind: "none".to_owned(),
             managed_process_count: None,
+            managed_process_names: Vec::new(),
             terminal_transport: DemoTerminalTransport::None,
             supports_input_forwarding: false,
             supports_resize: false,
@@ -4186,6 +4294,7 @@ impl DemoActiveAttempt {
             label: runtime_backend_label(&self.runtime_backend_kind).to_owned(),
             flattened_projection: self.flattened_runtime_projection,
             projection_shape: runtime_projection_shape_for_active_attempt(self),
+            projected_process_summary: runtime_projected_process_summary_for_active_attempt(self),
             capabilities,
         }
     }
@@ -4263,6 +4372,31 @@ impl DemoActiveAttempt {
         }
         if let Some(count) = self.managed_process_count {
             values.push(KeyValue::new("managed-process-count", count.to_string()));
+        }
+        if !self
+            .runtime_backend()
+            .projected_process_summary
+            .managed_process_names
+            .is_empty()
+        {
+            values.push(KeyValue::new(
+                "managed-processes",
+                self.runtime_backend()
+                    .projected_process_summary
+                    .rendered_names(),
+            ));
+            values.push(KeyValue::new(
+                "runtime-merged-output",
+                if self
+                    .runtime_backend()
+                    .projected_process_summary
+                    .merged_output_from_multiple_processes
+                {
+                    "yes"
+                } else {
+                    "no"
+                },
+            ));
         }
         if let Some(stdout_log_path) = &self.stdout_log_path {
             values.push(KeyValue::new("stdout-log", stdout_log_path.clone()));
@@ -4467,6 +4601,26 @@ impl DemoActiveTerminalSession {
         }
         if let Some(count) = self.runtime_backend.projection_shape.managed_process_count {
             values.push(KeyValue::new("managed-process-count", count.to_string()));
+        }
+        if self.runtime_backend.projected_process_summary.present {
+            values.push(KeyValue::new(
+                "managed-processes",
+                self.runtime_backend
+                    .projected_process_summary
+                    .rendered_names(),
+            ));
+            values.push(KeyValue::new(
+                "runtime-merged-output",
+                if self
+                    .runtime_backend
+                    .projected_process_summary
+                    .merged_output_from_multiple_processes
+                {
+                    "yes"
+                } else {
+                    "no"
+                },
+            ));
         }
         values
     }
@@ -4825,6 +4979,8 @@ struct PersistedDemoActiveAttempt {
     #[serde(default)]
     managed_process_count: Option<usize>,
     #[serde(default)]
+    managed_process_names: Vec<String>,
+    #[serde(default)]
     terminal_transport: PersistedDemoTerminalTransport,
     #[serde(default)]
     supports_input_forwarding: bool,
@@ -4945,6 +5101,7 @@ mod tests {
                 browser_live_attach_supported: true,
                 projection_shape_kind: Some("single-terminal".to_owned()),
                 managed_process_count: None,
+                managed_process_names: Vec::new(),
                 terminal_transport: PersistedDemoTerminalTransport::Stream,
                 supports_input_forwarding: false,
                 supports_resize: false,
