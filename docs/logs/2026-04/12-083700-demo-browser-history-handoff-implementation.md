@@ -51,6 +51,6 @@ browser history belongs anywhere at all.
 
 ## Next Task
 
-Execute [`042-decide-demo-post-browser-history-handoff-boundary.md`](../../specs/batch-cards/042-decide-demo-post-browser-history-handoff-boundary.md)
-to decide whether any later history/browser follow-up should deepen browser
-consumption further or return to query-first runner work.
+Execute [`042-implement-demo-browser-integrated-history-view.md`](../../specs/batch-cards/042-implement-demo-browser-integrated-history-view.md)
+to replace the shipped browser history handoff with an integrated retained-
+history view inside the detail pane.

@@ -20,6 +20,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 ## Next Task
 
 Use the active spec lane to decide whether any later history/browser follow-up
-should deepen browser consumption further or return to query-first runner
-work, then keep this area trimmed so it reflects live planning rather than
-every historical plan.
+should deepen one-demo browser activation from retained attempts or return to
+query-first runner work, then keep this area trimmed so it reflects live
+planning rather than every historical plan.

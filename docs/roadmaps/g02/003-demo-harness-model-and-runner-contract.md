@@ -1654,26 +1654,72 @@ Why this batch was the right implementation slice:
 - later browser/client work can now make a more informed choice about whether
   denser history rendering belongs anywhere at all
 
-### 10.33 Post-Browser-History-Handoff Boundary
+### 10.33 Demo Browser Integrated History View
 
 Batch `03.36` target:
 
-Choose the next bounded slice after the shipped browser history handoff
-without reopening browser churn or widening into generic timeline tooling.
+Integrate one-demo retained history into the browser detail pane so operators
+can review it in-place instead of leaving the browser.
+
+In scope for the next implementation slice:
+
+- replace the shipped browser history handoff with an integrated detail-pane
+  history mode for the selected demo
+- keep the browser anchored on the settled one-demo `demo history` contract
+  instead of inventing multi-demo or analytics semantics
+- let detail-pane `↑` and `↓` navigation cover all visible actions/options in
+  the pane, including actions, retained attempts, and artifacts
+- leave the lane with one explicit ready card after the integrated browser
+  history batch lands
+
+Out of scope for the next implementation slice:
+
+- widening into multi-demo history aggregation, analytics, or queueing
+- adding `demo list` retained-history density, badges, or grouped summaries
+- broader runtime cancellation or desktop-client work
+
+Batch `03.36` result:
+
+- `effigy demo browser` now exposes a `View history` action that switches the
+  detail pane into an integrated retained-history mode for the selected demo
+- the detail pane now lets `↑` and `↓` navigate all visible interactive
+  entries, including actions, retained attempts, and artifacts
+- retained attempts render directly inside the browser detail pane while still
+  consuming the settled one-demo `demo history` contract as the source of
+  truth
+
+Why this batch was the right implementation slice:
+
+- it resolves the real operator friction exposed by self-hosted use: leaving
+  the browser to review retained history broke the flow too aggressively
+- it keeps history semantics runner-owned by consuming the existing
+  `demo history` contract instead of inventing browser-local storage or
+  multi-demo analytics
+- later browser/client work can now decide more honestly whether any remaining
+  value belongs in deeper activation from retained attempts or back in
+  runner/query contracts
+
+### 10.34 Post-Integrated-Browser-History Boundary
+
+Batch `03.37` target:
+
+Choose the next bounded slice after the shipped integrated browser history view
+without reopening broad browser churn or widening into generic timeline
+tooling.
 
 In scope for the next decision slice:
 
-- assess whether the shipped browser history handoff is enough browser-side
+- assess whether the integrated one-demo history view is enough browser-side
   consumption for now
-- decide whether any next bounded value belongs in deeper browser consumption,
-  renewed runner/query work, or another tightly bounded client follow-up
+- decide whether any next bounded value belongs in deeper one-demo browser
+  activation from retained attempts, renewed runner/query work, or another
+  tightly bounded client follow-up
 - leave the lane with one explicit ready card
 
 Out of scope for the next decision slice:
 
-- implementing browser-side retained history tables, badges, or timelines
-  immediately
 - widening into multi-demo history aggregation, analytics, or queueing
+- adding `demo list` retained-history density, badges, or grouped summaries
 - broader runtime cancellation or desktop-client work
 
 ### 10.27 Demo History Query Follow-Up Boundary
@@ -1719,5 +1765,6 @@ Out of scope for the next decision slice:
 ## Next Task
 
 Use the active `g02.003` strict lane to decide whether any later
-history/browser follow-up should deepen browser consumption further or return
-to query-first runner work, while wider runtime expansion remains deferred.
+history/browser follow-up should deepen one-demo browser activation from
+retained attempts or return to query-first runner work, while wider runtime
+expansion remains deferred.
