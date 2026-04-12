@@ -13,12 +13,12 @@ Current milestones:
 
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
 - [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
-- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, metadata-query parity, first-browser cleanup, bounded persisted attempt history, a dedicated `demo history` query surface, historical-attempt drilldown, bounded history-query controls, and an integrated one-demo browser history view now shipped; the next slice is to decide whether any later history/browser follow-up should deepen one-demo browser activation from retained attempts or return to query-first runner work)
+- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, metadata-query parity, first-browser cleanup, bounded persisted attempt history, a dedicated `demo history` query surface, historical-attempt drilldown, bounded history-query controls, and an integrated one-demo browser history view now shipped; the next slice is a runner-owned active demo terminal/session handoff so later browser tabs can consume live output/input without nested TUIs)
 
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/043-decide-demo-post-integrated-browser-history-boundary.md`](../specs/batch-cards/043-decide-demo-post-integrated-browser-history-boundary.md)
+- [`../specs/batch-cards/044-implement-demo-active-terminal-session-handoff.md`](../specs/batch-cards/044-implement-demo-active-terminal-session-handoff.md)
 
 Rules:
 
@@ -28,7 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` ready card to decide whether any later
-history/browser follow-up should deepen one-demo browser activation from
-retained attempts or return to query-first runner work, while broader runtime
-expansion stays deferred.
+Use the active `g02.003` ready card to implement a runner-owned active demo
+terminal/session handoff so later browser tabs can consume live output/input
+without nested TUIs, while broader runtime expansion stays deferred.
