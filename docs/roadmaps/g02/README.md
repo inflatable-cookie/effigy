@@ -13,12 +13,12 @@ Current milestones:
 
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
 - [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
-- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, metadata-query parity, first-browser cleanup, bounded persisted attempt history, a dedicated `demo history` query surface, historical-attempt drilldown, bounded history-query controls, an integrated one-demo browser history view, a runner-owned active demo terminal/session handoff, and a bounded browser terminal view now shipped; the next slice is a deeper runner-owned active-session input contract before any browser tab convergence work)
+- [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (in progress; defines first-class demo proof, runner semantics, coverage/gap model, and TUI browser contract, with registry/inspection, run foundation, lifecycle control, browser-state/query polish, self-hosted proof demos, browser list/detail foundation, browser artifact-opening affordances, bounded browser live log visibility, in-browser query controls, detail-pane navigation, metadata-query parity, first-browser cleanup, bounded persisted attempt history, a dedicated `demo history` query surface, historical-attempt drilldown, bounded history-query controls, an integrated one-demo browser history view, a runner-owned active demo terminal/session handoff, a bounded browser terminal view, and a bounded active-terminal input contract now shipped; the next slice is one browser-side terminal input affordance on top of that contract)
 
 Active strict planning lane:
 
 - [`../specs/003-demo-harness-model-and-runner-strict-lane.md`](../specs/003-demo-harness-model-and-runner-strict-lane.md)
-- [`../specs/batch-cards/047-implement-demo-active-terminal-input-contract.md`](../specs/batch-cards/047-implement-demo-active-terminal-input-contract.md)
+- [`../specs/batch-cards/048-implement-demo-browser-terminal-input-affordance.md`](../specs/batch-cards/048-implement-demo-browser-terminal-input-affordance.md)
 
 Rules:
 
@@ -28,6 +28,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.003` ready card to deepen the runner-owned active demo
-terminal/session contract with bounded input-forwarding semantics before any
-browser tab convergence work, while broader runtime expansion stays deferred.
+Use the active `g02.003` ready card to let the browser terminal view consume
+the shipped runner-owned input contract through one bounded demo-scoped
+interaction affordance, while broader runtime expansion stays deferred.

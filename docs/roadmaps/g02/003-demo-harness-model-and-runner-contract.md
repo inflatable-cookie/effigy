@@ -1895,6 +1895,50 @@ Out of scope for the next implementation slice:
 - retained-history replay as an interactive terminal
 - broad runtime cancellation or desktop-client work
 
+Batch `03.41` result:
+
+- the runner now exposes a bounded `effigy demo input <DEMO_ID> --text <TEXT>
+  [--append-newline]` command surface for one demo-scoped active terminal
+  session
+- `active_terminal_session` now includes explicit `input_forwarding` contract
+  metadata so later clients can consume one settled invocation shape
+- the runtime remains honest today: forwarding still reports unsupported unless
+  the active demo runtime actually exposes it
+
+Why this batch was the right implementation slice:
+
+- it settles the missing command and contract shape before browser interaction
+  work starts
+- it keeps terminal input demo-scoped instead of widening into generic process
+  management
+- it lets later browser work consume one runner-owned forwarding surface rather
+  than inventing client-side transport semantics
+
+### 10.39 Demo Browser Terminal Input Affordance
+
+Batch `03.42` target:
+
+Let `effigy demo browser` consume the shipped runner-owned active-terminal
+input contract through one bounded demo-scoped terminal interaction
+affordance.
+
+In scope for the next implementation slice:
+
+- add one browser-side terminal input affordance for the selected demo
+- consume the shipped `demo input <DEMO_ID> --text <TEXT> [--append-newline]`
+  contract instead of inventing client-side transport semantics
+- keep the interaction demo-scoped rather than process-manager-scoped
+- reflect unavailable input-forwarding honestly when the active session reports
+  it unsupported
+
+Out of scope for the next implementation slice:
+
+- browser tab convergence or broader browser layout changes
+- embedding the concurrent TUI inside `effigy demo browser`
+- multi-process demo sub-tabs or generic managed-process controls
+- retained-history replay as an interactive terminal
+- broad runtime cancellation or desktop-client work
+
 ## 11) Acceptance Criteria
 
 - [ ] Effigy has a clear first-class demo model that is not reducible to random
@@ -1916,7 +1960,7 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to deepen the runner-owned active demo
-terminal/session contract with bounded input-forwarding semantics, while
-browser tab convergence, nested TUI embedding, and wider runtime expansion
-remain deferred.
+Use the active `g02.003` strict lane to let the browser terminal view consume
+the shipped runner-owned input contract through one bounded demo-scoped
+interaction affordance, while browser tab convergence, nested TUI embedding,
+and wider runtime expansion remain deferred.

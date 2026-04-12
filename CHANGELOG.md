@@ -79,6 +79,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add a bounded live terminal view inside `effigy demo browser`, so operators
   can inspect one selected demo's active terminal/session metadata and recent
   output in-place without launching nested TUIs
+- Add `effigy demo input <DEMO_ID> --text <TEXT> [--append-newline]` plus a
+  bounded active-terminal input-forwarding contract shape, so later browser
+  terminal work can target one demo-scoped forwarding surface without
+  inventing client-side transport semantics
 
 ### Changed
 - Rework `effigy demo browser` around the same magenta-framed visual language

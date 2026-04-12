@@ -12,7 +12,7 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     render_info_notices(
         renderer,
         &[
-            "Use `effigy demo browser` for the first interactive proof browser, `effigy demo list` for direct CLI discovery, `effigy demo inspect <DEMO_ID>` to inspect one record in detail, and `effigy demo run <DEMO_ID>` to record a new normalized attempt before `stop` or `rerun` when lifecycle control exists for that demo. `demo inspect` now also exposes a runner-owned active terminal/session handoff for live demo attempts, including transport metadata, recent output snapshots, and explicit input-forwarding capability signaling. Inside the browser, `←` and `→` switch between the demo list and the detail pane, `↑` and `↓` act inside the focused panel, `Enter` opens the action sheet from the list or activates the selected detail-side action, history row, terminal action, or artifact, the action sheet can switch the detail pane into the selected demo's retained-history or live-terminal view, `Esc` closes overlays, returns non-root detail views to overview, or quits from overview, `/` edits search, and `f` opens the single filter sheet for owner/tag/mode/cover/status/gap/stale/grouping controls.",
+            "Use `effigy demo browser` for the first interactive proof browser, `effigy demo list` for direct CLI discovery, `effigy demo inspect <DEMO_ID>` to inspect one record in detail, and `effigy demo run <DEMO_ID>` to record a new normalized attempt before `stop` or `rerun` when lifecycle control exists for that demo. `demo inspect` now also exposes a runner-owned active terminal/session handoff for live demo attempts, including transport metadata, recent output snapshots, and explicit input-forwarding capability signaling, while `demo input <DEMO_ID> --text <TEXT>` is the bounded forwarding surface when the active runtime exposes it. Inside the browser, `←` and `→` switch between the demo list and the detail pane, `↑` and `↓` act inside the focused panel, `Enter` opens the action sheet from the list or activates the selected detail-side action, history row, terminal action, or artifact, the action sheet can switch the detail pane into the selected demo's retained-history or live-terminal view, `Esc` closes overlays, returns non-root detail views to overview, or quits from overview, `/` edits search, and `f` opens the single filter sheet for owner/tag/mode/cover/status/gap/stale/grouping controls.",
         ],
     )?;
 
@@ -25,12 +25,14 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy demo history <DEMO_ID> [--limit <N>] [--outcome <OUTCOME>] [--attempt <ATTEMPT_ID> | --ordinal <N>] [--repo <PATH>] [--json]",
             "effigy demo run <DEMO_ID> [--repo <PATH>] [--json]",
             "effigy demo stop <DEMO_ID> [--repo <PATH>] [--json]",
+            "effigy demo input <DEMO_ID> --text <TEXT> [--append-newline] [--repo <PATH>] [--json]",
             "effigy demo rerun <DEMO_ID> [--repo <PATH>] [--json]",
             "effigy --json demo list [--search <TEXT>] [--owner <NAME>] [--tag <TAG>] [--mode <MODE>] [--cover <AREA>] [--status <STATUS>] [--gap <GAP>] [--stale-only] [--group-by <FIELD>] [--repo <PATH>]",
             "effigy --json demo inspect <DEMO_ID> [--repo <PATH>]",
             "effigy --json demo history <DEMO_ID> [--limit <N>] [--outcome <OUTCOME>] [--attempt <ATTEMPT_ID> | --ordinal <N>] [--repo <PATH>]",
             "effigy --json demo run <DEMO_ID> [--repo <PATH>]",
             "effigy --json demo stop <DEMO_ID> [--repo <PATH>]",
+            "effigy --json demo input <DEMO_ID> --text <TEXT> [--append-newline] [--repo <PATH>]",
             "effigy --json demo rerun <DEMO_ID> [--repo <PATH>]",
         ],
     )?;
@@ -84,6 +86,14 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
                 "Inspect the Nth retained attempt from the current `demo history` result set",
             ),
             (
+                "--text <TEXT>",
+                "Forward one text payload through `demo input` to the active terminal session",
+            ),
+            (
+                "--append-newline",
+                "Append one trailing newline when forwarding bounded terminal input",
+            ),
+            (
                 "--json",
                 "Render machine-readable demo discovery, inspection, or run payloads",
             ),
@@ -108,6 +118,7 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy demo history login-smoke --outcome terminated --ordinal 1",
             "effigy demo run login-smoke",
             "effigy demo stop login-smoke",
+            "effigy demo input lifecycle-window --text 'status'",
             "effigy demo rerun login-smoke",
             "effigy --json demo inspect login-smoke",
         ],

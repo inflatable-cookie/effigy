@@ -561,6 +561,14 @@ fn cli_demo_inspect_json_reports_latest_attempt_and_sources() {
         parsed["result"]["demo"]["active_terminal_session"]["nested_tui"],
         false
     );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["input_forwarding"]["available"],
+        false
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["input_forwarding"]["mode"],
+        "text"
+    );
 }
 
 #[test]
@@ -1094,6 +1102,14 @@ run = "sh -lc 'printf boot-line\\n; printf boot-err\\n >&2; while true; do print
         false
     );
     assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["input_forwarding"]["available"],
+        false
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["input_forwarding"]["command_template"],
+        "effigy demo input <DEMO_ID> --text <TEXT> [--append-newline]"
+    );
+    assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["nested_tui"],
         false
     );
@@ -1110,6 +1126,80 @@ run = "sh -lc 'printf boot-line\\n; printf boot-err\\n >&2; while true; do print
             .expect("stderr lines")
             .iter()
             .any(|line| line.as_str().is_some_and(|line| line.contains("boot-err") || line.contains("err-tick")))
+    );
+
+    let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
+    assert!(stop.status.success(), "demo stop failed: {stop:?}");
+    wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
+}
+
+#[test]
+fn cli_demo_input_json_rejects_when_no_active_terminal_session_exists() {
+    let root = temp_workspace("demo-input-no-session-json");
+    write_demo_manifest_fixture(&root);
+
+    let output = run_json_cli_command(
+        &root,
+        &["demo", "input", "login-smoke", "--text", "hello"],
+    );
+    assert!(
+        !output.status.success(),
+        "demo input unexpectedly passed: {output:?}"
+    );
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["error"]["details"]["schema"], "effigy.demo.input.v1");
+    assert_eq!(parsed["error"]["details"]["demo_id"], "login-smoke");
+    assert_eq!(
+        parsed["error"]["details"]["active_terminal_session"]["available"],
+        false
+    );
+}
+
+#[test]
+fn cli_demo_input_json_rejects_when_runtime_does_not_expose_forwarding() {
+    let root = temp_workspace("demo-input-unsupported-json");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[demos.waiter]
+title = "Waiter"
+summary = "Keeps a demo process alive until stopped."
+proof = "Verify active demo input fails honestly when runtime forwarding is unavailable."
+owner = "demo"
+mode = "interactive"
+status = "ready"
+covers = ["demo.input"]
+run = "sh -lc 'printf boot-line; while true; do sleep 1; done'"
+"#,
+    )
+    .expect("write demo manifest");
+
+    let mut child = spawn_demo_run_process(&root, "waiter");
+    let active_path = root.join(".effigy/demo/active/waiter.json");
+    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+
+    let output = run_json_cli_command(
+        &root,
+        &["demo", "input", "waiter", "--text", "hello", "--append-newline"],
+    );
+    assert!(
+        !output.status.success(),
+        "demo input unexpectedly passed: {output:?}"
+    );
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["error"]["details"]["schema"], "effigy.demo.input.v1");
+    assert_eq!(parsed["error"]["details"]["demo_id"], "waiter");
+    assert_eq!(
+        parsed["error"]["details"]["input"]["forwarded_bytes"],
+        6
+    );
+    assert_eq!(
+        parsed["error"]["details"]["active_terminal_session"]["available"],
+        true
+    );
+    assert_eq!(
+        parsed["error"]["details"]["active_terminal_session"]["input_forwarding"]["available"],
+        false
     );
 
     let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);

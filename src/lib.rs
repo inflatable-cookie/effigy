@@ -289,6 +289,15 @@ pub enum DemoSubcommand {
         /// Stable demo id carried by the `[demos.<id>]` map key.
         demo_id: String,
     },
+    /// Forward bounded terminal input to one active demo attempt.
+    Input {
+        /// Stable demo id carried by the `[demos.<id>]` map key.
+        demo_id: String,
+        /// Text payload to forward to the active demo terminal session.
+        text: String,
+        /// Whether to append one trailing newline before forwarding.
+        append_newline: bool,
+    },
     /// Start a fresh demo attempt from the current manifest definition.
     Rerun {
         /// Stable demo id carried by the `[demos.<id>]` map key.
