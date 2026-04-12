@@ -2103,6 +2103,74 @@ Shipped result:
 - tab switching stays demo-scoped and browser-local, with `Esc` returning
   non-overview tabs back to `Overview` instead of exiting immediately
 
+### 10.46 Demo Post-Browser-Tab-Convergence Boundary
+
+Batch `03.49` target:
+
+Choose the next bounded slice after demo-scoped browser tab convergence lands
+without widening into nested TUI embedding, browser bloat, or generic runtime
+churn.
+
+In scope for the next decision slice:
+
+- assess whether the next value belongs in:
+  - bounded browser-side interaction on top of the converged tab surface
+  - another narrowly bounded browser polish or consumption slice
+  - a return to runner/query work if browser-side value has flattened
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+- leave the lane with one explicit ready card
+
+Out of scope for the next decision slice:
+
+- implementing browser input, nested TUI embedding, or broader runtime controls
+- multi-process demo sub-tabs or generic managed-process UI
+- retained-history replay as an interactive terminal
+- broad runtime cancellation or desktop-client work
+
+Batch `03.49` result:
+
+- do not return to runner/query work yet; operator feedback showed the browser
+  control model is still materially wrong after tab convergence
+- prioritize one more bounded browser interaction slice next: panel-first
+  navigation where `Tab` switches panels and arrow keys navigate inside the
+  active panel
+- browser terminal input stays deferred because attached terminal execution is
+  still the honest human-first path
+
+Why this batch was the right decision slice:
+
+- tabs solved view structure, but not control ownership
+- operator feedback showed the current control model still fights the browser
+  layout and hides the intended panel boundaries
+- one more control-model batch is still structural browser work, not aimless
+  polish churn
+
+### 10.47 Demo Browser Panel-First Navigation
+
+Batch `03.50` target:
+
+Make the converged demo browser controls panel-first: `Tab` moves focus between
+major panels, and left/right/up/down navigate inside the active panel.
+
+In scope for the next implementation slice:
+
+- make `Tab` and `Shift+Tab` switch browser panel focus instead of detail tabs
+- keep arrow-key navigation owned by the active panel:
+  - list panel: up/down move demos
+  - tab strip: left/right move tabs
+  - detail content: up/down move items inside the active tab content
+- preserve the shipped demo-scoped tabs (`Overview`, `History`, `Terminal`,
+  `Artifacts`)
+- keep `Esc` hierarchical and non-root-safe
+- update help/tests/docs for the new control model
+
+Out of scope for the next implementation slice:
+
+- browser terminal text input or other new interactive terminal controls
+- nested TUI embedding or process-manager-shaped sub-tabs
+- new runner/query contracts
+- desktop-client work
+
 Batch `03.41` result:
 
 - the runner now exposes a bounded `effigy demo input <DEMO_ID> --text <TEXT>
@@ -2191,6 +2259,7 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the bounded follow-up after
-demo-scoped browser tab convergence landed while nested TUI embedding and wider
-runtime expansion stay explicitly bounded.
+Use the active `g02.003` strict lane to make demo-browser navigation
+panel-first now that operator feedback showed the converged tab surface still
+has the wrong control model, while nested TUI embedding and wider runtime
+expansion stay explicitly bounded.

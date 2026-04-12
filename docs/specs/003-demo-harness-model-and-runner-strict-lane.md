@@ -69,6 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide the bounded follow-up
-after demo-scoped browser tab convergence landed, while nested TUI embedding,
-broader runtime expansion, and desktop-client questions stay separate.
+Execute the active `g02.003` ready card next to land panel-first demo-browser
+navigation now that operator feedback showed the converged tab surface still
+has the wrong control model, while nested TUI embedding, broader runtime
+expansion, and desktop-client questions stay separate.
