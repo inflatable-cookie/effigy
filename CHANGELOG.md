@@ -88,6 +88,9 @@ During v0.x, MINOR bumps may include breaking changes.
   inventing client-side transport semantics
 
 ### Changed
+- Trim `effigy demo browser` history, terminal, and artifacts tabs down to
+  their core content, strengthen the right-panel title/tab chrome, and let the
+  terminal tab fall back to latest-attempt logs when no active session exists
 - Tighten `effigy demo browser` right-panel chrome so the selected demo title
   owns the panel frame, the tab strip drops the redundant `tabs:` label, and
   in-body duplicate tab titles are removed
