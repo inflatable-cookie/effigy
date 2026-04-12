@@ -1132,14 +1132,18 @@ run = "sh -lc 'printf boot-line\\n; printf boot-err\\n >&2; while true; do print
             .as_array()
             .expect("stdout lines")
             .iter()
-            .any(|line| line.as_str().is_some_and(|line| line.contains("boot-line") || line.contains("tick")))
+            .any(|line| line
+                .as_str()
+                .is_some_and(|line| line.contains("boot-line") || line.contains("tick")))
     );
     assert!(
         parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stderr_lines"]
             .as_array()
             .expect("stderr lines")
             .iter()
-            .any(|line| line.as_str().is_some_and(|line| line.contains("boot-err") || line.contains("err-tick")))
+            .any(|line| line
+                .as_str()
+                .is_some_and(|line| line.contains("boot-err") || line.contains("err-tick")))
     );
 
     let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
@@ -1161,7 +1165,7 @@ owner = "demo"
 mode = "interactive"
 status = "ready"
 covers = ["demo.lifecycle"]
-run = "sh -lc 'printf \"boot-line\\n\"; printf \"boot-err\\n\" >&2; while true; do sleep 1; done'"
+run = "sh -lc 'test -t 0 && printf \"pty-live\\n\"; printf \"boot-err\\n\" >&2; while true; do sleep 1; done'"
 "#,
     )
     .expect("write demo manifest");
@@ -1169,10 +1173,8 @@ run = "sh -lc 'printf \"boot-line\\n\"; printf \"boot-err\\n\" >&2; while true; 
     let mut child = spawn_demo_text_run_process(&root, "waiter");
     let active_path = root.join(".effigy/demo/active/waiter.json");
     let stdout_log = root.join(".effigy/demo/logs/waiter.stdout.log");
-    let stderr_log = root.join(".effigy/demo/logs/waiter.stderr.log");
     wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
     wait_for_path_exists(&stdout_log, Duration::from_secs(5), "stdout log");
-    wait_for_path_exists(&stderr_log, Duration::from_secs(5), "stderr log");
     std::thread::sleep(Duration::from_millis(200));
 
     let output = run_json_cli_command(&root, &["demo", "inspect", "waiter"]);
@@ -1185,15 +1187,27 @@ run = "sh -lc 'printf \"boot-line\\n\"; printf \"boot-err\\n\" >&2; while true; 
     );
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["transport"],
-        "stream"
+        "pty"
     );
     assert_eq!(
-        parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stdout_lines"][0],
-        "boot-line"
+        parsed["result"]["demo"]["active_terminal_session"]["pty"],
+        true
+    );
+    assert!(
+        parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stdout_lines"]
+            .as_array()
+            .expect("stdout lines")
+            .iter()
+            .any(|line| line
+                .as_str()
+                .is_some_and(|line| line.contains("pty-live") || line.contains("boot-err")))
     );
     assert_eq!(
-        parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stderr_lines"][0],
-        "boot-err"
+        parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stderr_lines"]
+            .as_array()
+            .expect("stderr lines")
+            .len(),
+        0
     );
 
     let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
@@ -1215,7 +1229,7 @@ owner = "demo"
 mode = "interactive"
 status = "ready"
 covers = ["demo.terminal"]
-run = "sh -lc 'printf \"hello-out\\n\"; printf \"hello-err\\n\" >&2'"
+run = "sh -lc 'test -t 1 && printf \"tty-yes\\n\" || printf \"tty-no\\n\"; printf \"hello-err\\n\" >&2'"
 "#,
     )
     .expect("write demo manifest");
@@ -1234,24 +1248,23 @@ run = "sh -lc 'printf \"hello-out\\n\"; printf \"hello-err\\n\" >&2'"
     assert!(
         String::from_utf8(output.stdout)
             .expect("utf8 stdout")
-            .contains("hello-out"),
+            .contains("tty-yes"),
         "attached stdout was not mirrored"
     );
     assert!(
         String::from_utf8(output.stderr)
             .expect("utf8 stderr")
-            .contains("hello-err"),
-        "attached stderr was not mirrored"
+            .is_empty(),
+        "pty transcript should not claim a split stderr stream"
     );
     assert_eq!(
         fs::read_to_string(root.join(".effigy/demo/logs/prompt.stdout.log"))
             .expect("read stdout log"),
-        "hello-out\n"
+        "tty-yes\r\nhello-err\r\n"
     );
-    assert_eq!(
-        fs::read_to_string(root.join(".effigy/demo/logs/prompt.stderr.log"))
-            .expect("read stderr log"),
-        "hello-err\n"
+    assert!(
+        !root.join(".effigy/demo/logs/prompt.stderr.log").exists(),
+        "pty path should not create a split stderr log"
     );
 
     let receipt: Value = serde_json::from_str(
@@ -1264,10 +1277,7 @@ run = "sh -lc 'printf \"hello-out\\n\"; printf \"hello-err\\n\" >&2'"
         receipt["stdout_log_path"],
         ".effigy/demo/logs/prompt.stdout.log"
     );
-    assert_eq!(
-        receipt["stderr_log_path"],
-        ".effigy/demo/logs/prompt.stderr.log"
-    );
+    assert_eq!(receipt["stderr_log_path"], Value::Null);
 }
 
 #[test]
@@ -1275,10 +1285,7 @@ fn cli_demo_input_json_rejects_when_no_active_terminal_session_exists() {
     let root = temp_workspace("demo-input-no-session-json");
     write_demo_manifest_fixture(&root);
 
-    let output = run_json_cli_command(
-        &root,
-        &["demo", "input", "login-smoke", "--text", "hello"],
-    );
+    let output = run_json_cli_command(&root, &["demo", "input", "login-smoke", "--text", "hello"]);
     assert!(
         !output.status.success(),
         "demo input unexpectedly passed: {output:?}"
@@ -1317,7 +1324,14 @@ run = "sh -lc 'printf boot-line; while true; do sleep 1; done'"
 
     let output = run_json_cli_command(
         &root,
-        &["demo", "input", "waiter", "--text", "hello", "--append-newline"],
+        &[
+            "demo",
+            "input",
+            "waiter",
+            "--text",
+            "hello",
+            "--append-newline",
+        ],
     );
     assert!(
         !output.status.success(),
@@ -1326,10 +1340,7 @@ run = "sh -lc 'printf boot-line; while true; do sleep 1; done'"
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["error"]["details"]["schema"], "effigy.demo.input.v1");
     assert_eq!(parsed["error"]["details"]["demo_id"], "waiter");
-    assert_eq!(
-        parsed["error"]["details"]["input"]["forwarded_bytes"],
-        6
-    );
+    assert_eq!(parsed["error"]["details"]["input"]["forwarded_bytes"], 6);
     assert_eq!(
         parsed["error"]["details"]["active_terminal_session"]["available"],
         true

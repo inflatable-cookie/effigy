@@ -1,6 +1,6 @@
 # 051 Implement Demo PTY Terminal Session Contract
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -53,4 +53,6 @@ honestly without nested TUI launch.
 
 ## Next Task
 
-Execute the next ready follow-up selected after this PTY contract slice lands.
+Execute [`052-decide-demo-post-pty-terminal-contract-boundary.md`](./052-decide-demo-post-pty-terminal-contract-boundary.md)
+to choose the next bounded follow-up after PTY-backed demo terminal/session
+semantics landed.

@@ -1931,6 +1931,17 @@ Out of scope for the next implementation slice:
 - retained-history replay as an interactive terminal
 - broad runtime cancellation or desktop-client work
 
+Shipped result:
+
+- text-mode interactive and hybrid run-backed demos now use a PTY-backed
+  attached terminal path on macOS instead of pretending terminal-oriented demos
+  are just split stream processes
+- the runner now reports honest `pty` transport metadata through active-session
+  inspection and browser terminal consumption surfaces
+- PTY transcript capture stays runner-owned: logs, receipts, and history remain
+  populated, with merged terminal output represented honestly instead of a fake
+  split stderr stream
+
 Batch `03.41` result:
 
 - the runner now exposes a bounded `effigy demo input <DEMO_ID> --text <TEXT>
@@ -2019,7 +2030,7 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to deepen the runner-owned demo
-terminal/session contract with PTY-backed interactive semantics, keeping
-browser tab convergence, nested TUI embedding, and wider runtime expansion
-explicitly bounded.
+Use the active `g02.003` strict lane to decide the bounded follow-up after
+PTY-backed demo terminal/session semantics land, keeping browser tab
+convergence, nested TUI embedding, and wider runtime expansion explicitly
+bounded.

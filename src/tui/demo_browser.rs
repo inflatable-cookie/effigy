@@ -476,14 +476,12 @@ impl DemoBrowserApp {
         let detail_focused = matches!(self.focus, BrowserFocus::Detail);
         let selected_item = self.selected_detail_item();
         match (&self.detail, self.detail_mode) {
-            (Some(detail), DetailMode::Overview) => {
-                overview_detail_render(
-                    detail,
-                    selected_item,
-                    detail_focused,
-                    self.result_visible_demo_ids.contains(&detail.id),
-                )
-            }
+            (Some(detail), DetailMode::Overview) => overview_detail_render(
+                detail,
+                selected_item,
+                detail_focused,
+                self.result_visible_demo_ids.contains(&detail.id),
+            ),
             (Some(detail), DetailMode::History) => {
                 history_detail_render(detail, self.history.as_ref(), selected_item, detail_focused)
             }
@@ -548,7 +546,8 @@ impl DemoBrowserApp {
 
     fn selected_detail_item(&self) -> Option<DetailSelectableItem> {
         let items = self.detail_selectable_items();
-        items.get(self.selected_detail_entry_index)
+        items
+            .get(self.selected_detail_entry_index)
             .copied()
             .or_else(|| items.first().copied())
     }
@@ -571,7 +570,8 @@ impl DemoBrowserApp {
             self.footer_message = "No demo is currently selected.".to_owned();
             return;
         }
-        self.selected_detail_entry_index = next_index(self.selected_detail_entry_index, items.len());
+        self.selected_detail_entry_index =
+            next_index(self.selected_detail_entry_index, items.len());
         self.sync_selected_detail_entry();
     }
 
@@ -581,7 +581,8 @@ impl DemoBrowserApp {
             self.footer_message = "No demo is currently selected.".to_owned();
             return;
         }
-        self.selected_detail_entry_index = prev_index(self.selected_detail_entry_index, items.len());
+        self.selected_detail_entry_index =
+            prev_index(self.selected_detail_entry_index, items.len());
         self.sync_selected_detail_entry();
     }
 
@@ -694,7 +695,9 @@ impl DemoBrowserApp {
         let history = fetch_demo_history(&self.repo_root, &demo_id)?;
         self.detail_mode = DetailMode::History;
         self.history = Some(history);
-        self.selected_history_attempt_ordinal = self.selected_history_attempt().map(|attempt| attempt.ordinal);
+        self.selected_history_attempt_ordinal = self
+            .selected_history_attempt()
+            .map(|attempt| attempt.ordinal);
         self.selected_detail_entry_index = 0;
         if self.history_attempt_count() > 0 {
             self.selected_detail_entry_index = 2;
@@ -912,7 +915,8 @@ impl DemoBrowserApp {
             self.selected_detail_entry_index = 0;
             self.selected_history_attempt_ordinal = None;
             self.history = None;
-        } else if matches!(self.detail_mode, DetailMode::History) && self.selected_demo_id.is_some() {
+        } else if matches!(self.detail_mode, DetailMode::History) && self.selected_demo_id.is_some()
+        {
             self.history = Some(fetch_demo_history(
                 &self.repo_root,
                 self.selected_demo_id
@@ -1616,19 +1620,17 @@ fn history_detail_render(
     ]);
 
     for (label, item) in [
-        (
-            "Back to overview",
-            DetailSelectableItem::HistoryBack,
-        ),
-        (
-            "Refresh history",
-            DetailSelectableItem::HistoryRefresh,
-        ),
+        ("Back to overview", DetailSelectableItem::HistoryBack),
+        ("Refresh history", DetailSelectableItem::HistoryRefresh),
     ] {
         if selected_item == Some(item) {
             selected_line_index = Some(lines.len());
         }
-        lines.push(selectable_detail_line(label, selected_item == Some(item), detail_focused));
+        lines.push(selectable_detail_line(
+            label,
+            selected_item == Some(item),
+            detail_focused,
+        ));
     }
 
     lines.push(Line::from(""));
@@ -1667,7 +1669,9 @@ fn history_detail_render(
 
     lines.push(Line::from(""));
     lines.push(section_heading("Selected Attempt"));
-    if let Some(attempt) = history.and_then(|history| selected_history_attempt(history, selected_history_ordinal_from_item(selected_item))) {
+    if let Some(attempt) = history.and_then(|history| {
+        selected_history_attempt(history, selected_history_ordinal_from_item(selected_item))
+    }) {
         lines.push(compact_kv_line("ordinal", &attempt.ordinal.to_string()));
         lines.push(compact_kv_line("attempt", &attempt.attempt_id));
         lines.push(compact_kv_line("outcome", &attempt.outcome));
@@ -1687,7 +1691,9 @@ fn history_detail_render(
             lines.push(compact_kv_line("exit", &exit_code.to_string()));
         }
         if attempt.artifacts.is_empty() {
-            lines.push(muted_line("No retained artifacts for the selected attempt.".to_owned()));
+            lines.push(muted_line(
+                "No retained artifacts for the selected attempt.".to_owned(),
+            ));
         } else {
             lines.push(compact_kv_line("artifacts", &attempt.artifacts.join(", ")));
         }
@@ -1737,7 +1743,11 @@ fn terminal_detail_render(
         if selected_item == Some(item) {
             selected_line_index = Some(lines.len());
         }
-        lines.push(selectable_detail_line(label, selected_item == Some(item), detail_focused));
+        lines.push(selectable_detail_line(
+            label,
+            selected_item == Some(item),
+            detail_focused,
+        ));
     }
 
     lines.push(Line::from(""));
@@ -1781,14 +1791,17 @@ fn terminal_detail_render(
     lines.push(Line::from(""));
     lines.push(section_heading("Recent Output"));
     if !session.output_available {
-        lines.push(muted_line("No terminal output is available yet.".to_owned()));
+        lines.push(muted_line(
+            "No terminal output is available yet.".to_owned(),
+        ));
         return DetailRender {
             lines,
             selected_line_index,
         };
     }
 
-    if session.recent_output.stdout_lines.is_empty() && session.recent_output.stderr_lines.is_empty()
+    if session.recent_output.stdout_lines.is_empty()
+        && session.recent_output.stderr_lines.is_empty()
     {
         lines.push(muted_line(
             "Terminal output logs exist, but no recent lines were captured.".to_owned(),
@@ -1932,7 +1945,11 @@ fn muted_line(value: String) -> Line<'static> {
 }
 
 fn yes_no(value: bool) -> &'static str {
-    if value { "yes" } else { "no" }
+    if value {
+        "yes"
+    } else {
+        "no"
+    }
 }
 
 fn next_status_filter(current: Option<DemoListStatus>) -> Option<DemoListStatus> {
@@ -2369,15 +2386,14 @@ mod tests {
     };
 
     use super::{
-        action_menu_items_for_detail, clamp_artifact_index, first_demo_id,
-        history_detail_render, next_gap_filter, next_group_by, next_mode_filter,
-        next_status_filter, overview_detail_render, query_summary, read_recent_log_lines,
-        resolve_artifact_path, resolve_repo_relative_path, row_contains_demo, selected_artifact,
-        status_style, terminal_detail_render, ActionMenuItem, BrowserRow, DemoBrowserApp, DemoDetail,
-        DemoHistoryAttempt, DetailMode,
-        DemoHistoryAttemptHistoryPayload, DemoHistoryPayload, DemoLatestAttempt, DemoListGap,
-        DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSummary,
-        DetailSelectableItem,
+        action_menu_items_for_detail, clamp_artifact_index, first_demo_id, history_detail_render,
+        next_gap_filter, next_group_by, next_mode_filter, next_status_filter,
+        overview_detail_render, query_summary, read_recent_log_lines, resolve_artifact_path,
+        resolve_repo_relative_path, row_contains_demo, selected_artifact, status_style,
+        terminal_detail_render, ActionMenuItem, BrowserRow, DemoBrowserApp, DemoDetail,
+        DemoHistoryAttempt, DemoHistoryAttemptHistoryPayload, DemoHistoryPayload,
+        DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery,
+        DemoListStatus, DemoSummary, DetailMode, DetailSelectableItem,
     };
 
     fn summary(id: &str) -> DemoSummary {
@@ -2620,11 +2636,11 @@ mod tests {
             true,
             false,
         )
-            .lines
-            .into_iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
+        .lines
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
 
         assert!(rendered.contains("Browser Proof Report"));
         assert!(rendered.contains("Summary"));
@@ -2635,7 +2651,10 @@ mod tests {
         assert!(rendered.contains(".effigy/demo/artifacts/browser-proof-report/index.html"));
         assert!(rendered.contains("covers: effigy.demo.browser"));
         assert!(rendered.contains("↑/↓ selects actions and artifacts"));
-        assert!(rendered.find("tags: self-hosted, proof") < rendered.find("covers: effigy.demo.browser"));
+        assert!(
+            rendered.find("tags: self-hosted, proof")
+                < rendered.find("covers: effigy.demo.browser")
+        );
         assert!(rendered.find("covers: effigy.demo.browser") < rendered.find("Summary"));
         assert!(!rendered.contains("Result"));
         assert!(!rendered.contains("status: passed"));
@@ -2655,11 +2674,11 @@ mod tests {
             false,
             false,
         )
-            .lines
-            .into_iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
+        .lines
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
 
         assert!(rendered.contains("→ focuses actions and artifacts"));
         assert!(!rendered.contains("› one"));
@@ -2720,7 +2739,12 @@ mod tests {
 
         assert_eq!(
             items,
-            vec!["Rerun demo", "View history", "View terminal", "Refresh state"]
+            vec![
+                "Rerun demo",
+                "View history",
+                "View terminal",
+                "Refresh state"
+            ]
         );
     }
 
@@ -2748,16 +2772,13 @@ mod tests {
             },
         };
 
-        let rendered = terminal_detail_render(
-            &detail,
-            Some(DetailSelectableItem::TerminalRefresh),
-            true,
-        )
-        .lines
-        .into_iter()
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
+        let rendered =
+            terminal_detail_render(&detail, Some(DetailSelectableItem::TerminalRefresh), true)
+                .lines
+                .into_iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
 
         assert!(rendered.contains("Terminal View"));
         assert!(rendered.contains("Back to overview"));
@@ -2779,16 +2800,13 @@ mod tests {
     fn browser_terminal_view_reports_unavailable_session_honestly() {
         let detail = detail_with_artifacts(&[]);
 
-        let rendered = terminal_detail_render(
-            &detail,
-            Some(DetailSelectableItem::TerminalBack),
-            true,
-        )
-        .lines
-        .into_iter()
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
+        let rendered =
+            terminal_detail_render(&detail, Some(DetailSelectableItem::TerminalBack), true)
+                .lines
+                .into_iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
 
         assert!(rendered.contains("Terminal View"));
         assert!(rendered.contains("No active terminal session is available for this demo."));
