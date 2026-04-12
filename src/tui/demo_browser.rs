@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fs;
 use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -486,7 +487,7 @@ impl DemoBrowserApp {
                 history_detail_render(detail, self.history.as_ref(), selected_item, detail_focused)
             }
             (Some(detail), DetailMode::Terminal) => {
-                terminal_detail_render(detail, selected_item, detail_focused)
+                terminal_detail_render(&self.repo_root, detail, selected_item, detail_focused)
             }
             (None, _) => DetailRender {
                 lines: vec![
@@ -1711,6 +1712,7 @@ fn history_detail_render(
 }
 
 fn terminal_detail_render(
+    repo_root: &Path,
     detail: &DemoDetail,
     selected_item: Option<DetailSelectableItem>,
     detail_focused: bool,
@@ -1787,9 +1789,10 @@ fn terminal_detail_render(
     if let Some(stderr_log_path) = &session.stderr_log_path {
         lines.push(compact_kv_line("stderr", stderr_log_path));
     }
+    lines.push(compact_kv_line("refresh", "auto every 750ms"));
 
     lines.push(Line::from(""));
-    lines.push(section_heading("Recent Output"));
+    lines.push(section_heading("Live Output"));
     if !session.output_available {
         lines.push(muted_line(
             "No terminal output is available yet.".to_owned(),
@@ -1800,9 +1803,10 @@ fn terminal_detail_render(
         };
     }
 
-    if session.recent_output.stdout_lines.is_empty()
-        && session.recent_output.stderr_lines.is_empty()
-    {
+    let terminal_output = resolve_terminal_view_output(repo_root, session);
+    lines.push(compact_kv_line("source", terminal_output.source_label()));
+
+    if terminal_output.stdout_lines.is_empty() && terminal_output.stderr_lines.is_empty() {
         lines.push(muted_line(
             "Terminal output logs exist, but no recent lines were captured.".to_owned(),
         ));
@@ -1812,19 +1816,19 @@ fn terminal_detail_render(
         };
     }
 
-    if !session.recent_output.stdout_lines.is_empty() {
+    if !terminal_output.stdout_lines.is_empty() {
         lines.push(compact_kv_line("stream", "stdout"));
-        for line in &session.recent_output.stdout_lines {
+        for line in &terminal_output.stdout_lines {
             lines.push(Line::from(line.clone()));
         }
     }
 
-    if !session.recent_output.stderr_lines.is_empty() {
-        if !session.recent_output.stdout_lines.is_empty() {
+    if !terminal_output.stderr_lines.is_empty() {
+        if !terminal_output.stdout_lines.is_empty() {
             lines.push(Line::from(""));
         }
         lines.push(compact_kv_line("stream", "stderr"));
-        for line in &session.recent_output.stderr_lines {
+        for line in &terminal_output.stderr_lines {
             lines.push(Line::from(line.clone()));
         }
     }
@@ -1835,10 +1839,6 @@ fn terminal_detail_render(
     }
 }
 
-#[cfg(test)]
-use std::fs;
-
-#[cfg(test)]
 fn read_recent_log_lines(path: &Path, limit: usize) -> Result<Vec<String>, String> {
     let content = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
@@ -1847,6 +1847,62 @@ fn read_recent_log_lines(path: &Path, limit: usize) -> Result<Vec<String>, Strin
         lines = lines.split_off(lines.len() - limit);
     }
     Ok(lines)
+}
+
+const DEMO_BROWSER_TERMINAL_LIVE_LINE_LIMIT: usize = 24;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TerminalViewOutput {
+    stdout_lines: Vec<String>,
+    stderr_lines: Vec<String>,
+    source: TerminalViewOutputSource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TerminalViewOutputSource {
+    LiveLogs,
+    InspectSnapshot,
+}
+
+impl TerminalViewOutput {
+    fn source_label(&self) -> &'static str {
+        match self.source {
+            TerminalViewOutputSource::LiveLogs => "live tail",
+            TerminalViewOutputSource::InspectSnapshot => "inspect snapshot",
+        }
+    }
+}
+
+fn resolve_terminal_view_output(
+    repo_root: &Path,
+    session: &DemoActiveTerminalSession,
+) -> TerminalViewOutput {
+    let stdout_lines = session.stdout_log_path.as_deref().and_then(|path| {
+        read_recent_log_lines(
+            &resolve_repo_relative_path(repo_root, path),
+            DEMO_BROWSER_TERMINAL_LIVE_LINE_LIMIT,
+        )
+        .ok()
+    });
+    let stderr_lines = session.stderr_log_path.as_deref().and_then(|path| {
+        read_recent_log_lines(
+            &resolve_repo_relative_path(repo_root, path),
+            DEMO_BROWSER_TERMINAL_LIVE_LINE_LIMIT,
+        )
+        .ok()
+    });
+
+    let source = if stdout_lines.is_some() || stderr_lines.is_some() {
+        TerminalViewOutputSource::LiveLogs
+    } else {
+        TerminalViewOutputSource::InspectSnapshot
+    };
+
+    TerminalViewOutput {
+        stdout_lines: stdout_lines.unwrap_or_else(|| session.recent_output.stdout_lines.clone()),
+        stderr_lines: stderr_lines.unwrap_or_else(|| session.recent_output.stderr_lines.clone()),
+        source,
+    }
 }
 
 fn compact_kv_line(label: &str, value: &str) -> Line<'static> {
@@ -2772,13 +2828,35 @@ mod tests {
             },
         };
 
-        let rendered =
-            terminal_detail_render(&detail, Some(DetailSelectableItem::TerminalRefresh), true)
-                .lines
-                .into_iter()
-                .map(|line| line.to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
+        let repo_root = std::env::temp_dir().join(format!(
+            "effigy-demo-browser-terminal-view-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(repo_root.join(".effigy/demo/logs"));
+        std::fs::write(
+            repo_root.join(".effigy/demo/logs/demo-123.stdout.log"),
+            "boot\nserve-live\n",
+        )
+        .expect("write stdout log");
+        std::fs::write(
+            repo_root.join(".effigy/demo/logs/demo-123.stderr.log"),
+            "warn-live\n",
+        )
+        .expect("write stderr log");
+
+        let rendered = terminal_detail_render(
+            &repo_root,
+            &detail,
+            Some(DetailSelectableItem::TerminalRefresh),
+            true,
+        )
+        .lines
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        let _ = std::fs::remove_dir_all(&repo_root);
 
         assert!(rendered.contains("Terminal View"));
         assert!(rendered.contains("Back to overview"));
@@ -2789,28 +2867,73 @@ mod tests {
         assert!(rendered.contains("nested-tui: no"));
         assert!(rendered.contains("stdout: .effigy/demo/logs/demo-123.stdout.log"));
         assert!(rendered.contains("stderr: .effigy/demo/logs/demo-123.stderr.log"));
+        assert!(rendered.contains("refresh: auto every 750ms"));
+        assert!(rendered.contains("source: live tail"));
         assert!(rendered.contains("stream: stdout"));
         assert!(rendered.contains("boot"));
-        assert!(rendered.contains("serve"));
+        assert!(rendered.contains("serve-live"));
         assert!(rendered.contains("stream: stderr"));
-        assert!(rendered.contains("warn"));
+        assert!(rendered.contains("warn-live"));
     }
 
     #[test]
     fn browser_terminal_view_reports_unavailable_session_honestly() {
         let detail = detail_with_artifacts(&[]);
 
-        let rendered =
-            terminal_detail_render(&detail, Some(DetailSelectableItem::TerminalBack), true)
-                .lines
-                .into_iter()
-                .map(|line| line.to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
+        let rendered = terminal_detail_render(
+            Path::new("/tmp/demo-repo"),
+            &detail,
+            Some(DetailSelectableItem::TerminalBack),
+            true,
+        )
+        .lines
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
 
         assert!(rendered.contains("Terminal View"));
         assert!(rendered.contains("No active terminal session is available for this demo."));
         assert!(!rendered.contains("Recent Output"));
+    }
+
+    #[test]
+    fn browser_terminal_view_falls_back_to_inspect_snapshot_when_logs_are_missing() {
+        let mut detail = detail_with_artifacts(&[]);
+        detail.active_terminal_session = super::DemoActiveTerminalSession {
+            available: true,
+            state: "running".to_owned(),
+            attempt_id: Some("demo-123".to_owned()),
+            transport: "pty".to_owned(),
+            pty: true,
+            supports_input_forwarding: false,
+            input_forwarding_reason: Some(
+                "Input forwarding is not available for this active demo.".to_owned(),
+            ),
+            nested_tui: false,
+            stdout_log_path: Some(".effigy/demo/logs/missing.stdout.log".to_owned()),
+            stderr_log_path: None,
+            output_available: true,
+            recent_output: super::DemoTerminalRecentOutput {
+                stdout_lines: vec!["snapshot-line".to_owned()],
+                stderr_lines: vec![],
+            },
+        };
+
+        let rendered = terminal_detail_render(
+            Path::new("/tmp/demo-repo"),
+            &detail,
+            Some(DetailSelectableItem::TerminalBack),
+            true,
+        )
+        .lines
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        assert!(rendered.contains("source: inspect snapshot"));
+        assert!(rendered.contains("snapshot-line"));
     }
 
     #[test]

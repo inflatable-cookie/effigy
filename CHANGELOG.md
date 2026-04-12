@@ -77,8 +77,8 @@ During v0.x, MINOR bumps may include breaking changes.
   output snapshots, and explicit no-nested-TUI signaling for later browser
   terminal views
 - Add a bounded live terminal view inside `effigy demo browser`, so operators
-  can inspect one selected demo's active terminal/session metadata and recent
-  output in-place without launching nested TUIs
+  can inspect one selected demo's active terminal/session metadata and a live
+  tail from runner-owned logs in-place without launching nested TUIs
 - Add `effigy demo input <DEMO_ID> --text <TEXT> [--append-newline]` plus a
   bounded active-terminal input-forwarding contract shape, so later browser
   terminal work can target one demo-scoped forwarding surface without

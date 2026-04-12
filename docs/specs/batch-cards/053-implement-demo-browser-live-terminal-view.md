@@ -1,6 +1,6 @@
 # 053 Implement Demo Browser Live Terminal View
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -53,5 +53,6 @@ session inside the browser without nested TUI launch.
 
 ## Next Task
 
-Execute the next ready follow-up selected after live browser terminal
-consumption lands.
+Execute [`054-decide-demo-post-browser-live-terminal-view-boundary.md`](./054-decide-demo-post-browser-live-terminal-view-boundary.md)
+to choose the next bounded follow-up after live browser terminal consumption
+lands.
