@@ -1340,6 +1340,7 @@ fn build_demo_record(
     demo: &ManifestDemoConfig,
 ) -> Result<DemoRecord, RunnerError> {
     let sources = demo_sources_for_id(repo_root, loaded, demo_id);
+    let entrypoint = demo_entrypoint(demo);
     let primary_source = sources
         .first()
         .cloned()
@@ -1362,10 +1363,11 @@ fn build_demo_record(
         tags: demo.tags.clone(),
         prerequisites: demo.prerequisites.clone(),
         dependencies: demo.dependencies.clone(),
-        entrypoint: demo_entrypoint(demo),
+        entrypoint: entrypoint.clone(),
         sources,
         primary_source,
         gap_class,
+        runtime_backend: demo_runtime_backend(&entrypoint, &active_attempt),
         active_attempt,
         active_terminal_session,
         latest_attempt,
@@ -1560,12 +1562,14 @@ fn load_active_terminal_session(
 
     let stdout_log_path = active_attempt.stdout_log_path.clone();
     let stderr_log_path = active_attempt.stderr_log_path.clone();
+    let runtime_backend = active_attempt.runtime_backend();
     let input_forwarding_reason = (!active_attempt.supports_input_forwarding)
         .then_some("input forwarding is not exposed through the current demo runtime".to_owned());
     DemoActiveTerminalSession {
         available: true,
         state: "live".to_owned(),
         attempt_id: active_attempt.attempt_id.clone(),
+        runtime_backend,
         transport: active_attempt.terminal_transport.rendered().to_owned(),
         pty: matches!(
             active_attempt.terminal_transport,
@@ -1698,6 +1702,12 @@ fn demo_active_attempt_from_record(
         entrypoint_kind: Some(record.entrypoint_kind.clone()),
         entrypoint_value: Some(record.entrypoint_value.clone()),
         command: Some(record.command.clone()),
+        runtime_backend_kind: infer_runtime_backend_kind(
+            record.runtime_backend_kind.as_deref(),
+            &record.entrypoint_kind,
+        )
+        .to_owned(),
+        flattened_runtime_projection: record.flattened_runtime_projection,
         terminal_transport: match record.terminal_transport {
             PersistedDemoTerminalTransport::Stream => DemoTerminalTransport::Stream,
             PersistedDemoTerminalTransport::Pty => DemoTerminalTransport::Pty,
@@ -1712,6 +1722,27 @@ fn demo_active_attempt_from_record(
         stdout_log_path: record.stdout_log_path.clone(),
         stderr_log_path: record.stderr_log_path.clone(),
         parse_error: None,
+    }
+}
+
+fn infer_runtime_backend_kind<'a>(
+    persisted_kind: Option<&'a str>,
+    entrypoint_kind: &'a str,
+) -> &'a str {
+    persisted_kind.unwrap_or(match entrypoint_kind {
+        "task" => "task",
+        "run" => "run",
+        _ => "none",
+    })
+}
+
+fn runtime_backend_label(kind: &str) -> &'static str {
+    match kind {
+        "task" => "task-backed",
+        "run" => "run-backed",
+        "concurrent-runner" => "concurrent-runner-backed",
+        "none" => "none",
+        _ => "custom-runtime",
     }
 }
 
@@ -1815,6 +1846,8 @@ fn execute_task_backed_demo(
             entrypoint_kind: "task".to_owned(),
             entrypoint_value: task_name.to_owned(),
             command: task_name.to_owned(),
+            runtime_backend_kind: Some("task".to_owned()),
+            flattened_runtime_projection: false,
             terminal_transport: PersistedDemoTerminalTransport::Stream,
             supports_input_forwarding: false,
             supports_resize: false,
@@ -2002,6 +2035,8 @@ fn execute_run_backed_demo(
             entrypoint_kind: "run".to_owned(),
             entrypoint_value: run_command.to_owned(),
             command: run_command.to_owned(),
+            runtime_backend_kind: Some("run".to_owned()),
+            flattened_runtime_projection: false,
             terminal_transport: launch_mode.transport(),
             supports_input_forwarding: input_handoff_path.is_some(),
             supports_resize: resize_handoff_path.is_some(),
@@ -2913,6 +2948,7 @@ struct DemoRecord {
     sources: Vec<String>,
     primary_source: String,
     gap_class: &'static str,
+    runtime_backend: DemoRuntimeBackend,
     active_attempt: DemoActiveAttempt,
     active_terminal_session: DemoActiveTerminalSession,
     latest_attempt: DemoLatestAttempt,
@@ -2971,6 +3007,7 @@ impl DemoRecord {
             "tags": self.tags,
             "entrypoint": self.entrypoint.to_json(),
             "defined_in": self.primary_source,
+            "runtime_backend": self.runtime_backend.to_json(),
             "actions": self.actions().to_json(),
             "active_attempt": self.active_attempt.to_json(),
             "active_terminal_session": self.active_terminal_session.to_json(),
@@ -2998,6 +3035,7 @@ impl DemoRecord {
             "entrypoint": self.entrypoint.to_json(),
             "defined_in": self.primary_source,
             "sources": self.sources,
+            "runtime_backend": self.runtime_backend.to_json(),
             "actions": self.actions().to_json(),
             "active_attempt": self.active_attempt.to_json(),
             "active_terminal_session": self.active_terminal_session.to_json(),
@@ -3179,6 +3217,74 @@ impl DemoEntrypoint {
 }
 
 #[derive(Debug, Clone)]
+struct DemoRuntimeBackend {
+    kind: String,
+    label: String,
+    flattened_projection: bool,
+    capabilities: Vec<String>,
+}
+
+impl DemoRuntimeBackend {
+    fn none() -> Self {
+        Self {
+            kind: "none".to_owned(),
+            label: "none".to_owned(),
+            flattened_projection: false,
+            capabilities: Vec::new(),
+        }
+    }
+
+    fn from_entrypoint(entrypoint: &DemoEntrypoint) -> Self {
+        match entrypoint {
+            DemoEntrypoint::Task(_) => Self {
+                kind: "task".to_owned(),
+                label: "task-backed".to_owned(),
+                flattened_projection: false,
+                capabilities: Vec::new(),
+            },
+            DemoEntrypoint::Run(_) => Self {
+                kind: "run".to_owned(),
+                label: "run-backed".to_owned(),
+                flattened_projection: false,
+                capabilities: vec![
+                    "active-terminal-session".to_owned(),
+                    "live-terminal-output".to_owned(),
+                    "stop".to_owned(),
+                ],
+            },
+        }
+    }
+
+    fn rendered_capabilities(&self) -> String {
+        if self.capabilities.is_empty() {
+            "none".to_owned()
+        } else {
+            self.capabilities.join(", ")
+        }
+    }
+
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "kind": self.kind,
+            "label": self.label,
+            "flattened_projection": self.flattened_projection,
+            "capabilities": self.capabilities,
+        })
+    }
+}
+
+fn demo_runtime_backend(
+    entrypoint: &DemoEntrypoint,
+    active_attempt: &DemoActiveAttempt,
+) -> DemoRuntimeBackend {
+    if active_attempt.active {
+        active_attempt.runtime_backend()
+    } else {
+        DemoRuntimeBackend::from_entrypoint(entrypoint)
+    }
+}
+
+#[derive(Debug, Clone)]
 struct DemoLogPaths {
     stdout: Option<String>,
     stderr: Option<String>,
@@ -3258,6 +3364,8 @@ struct DemoActiveAttempt {
     entrypoint_kind: Option<String>,
     entrypoint_value: Option<String>,
     command: Option<String>,
+    runtime_backend_kind: String,
+    flattened_runtime_projection: bool,
     terminal_transport: DemoTerminalTransport,
     supports_input_forwarding: bool,
     supports_resize: bool,
@@ -3285,6 +3393,8 @@ impl DemoActiveAttempt {
             entrypoint_kind: None,
             entrypoint_value: None,
             command: None,
+            runtime_backend_kind: "none".to_owned(),
+            flattened_runtime_projection: false,
             terminal_transport: DemoTerminalTransport::None,
             supports_input_forwarding: false,
             supports_resize: false,
@@ -3303,9 +3413,54 @@ impl DemoActiveAttempt {
         &self.state
     }
 
+    fn runtime_backend(&self) -> DemoRuntimeBackend {
+        if !self.active {
+            return DemoRuntimeBackend::none();
+        }
+        let mut capabilities = Vec::new();
+        if matches!(
+            self.runtime_backend_kind.as_str(),
+            "run" | "concurrent-runner"
+        ) {
+            capabilities.push("active-terminal-session".to_owned());
+            capabilities.push("live-terminal-output".to_owned());
+            if self.stoppable {
+                capabilities.push("stop".to_owned());
+            }
+            if self.supports_input_forwarding {
+                capabilities.push("input-forwarding".to_owned());
+            }
+            if self.supports_resize {
+                capabilities.push("resize".to_owned());
+            }
+            if self.terminal_transport == DemoTerminalTransport::Pty {
+                capabilities.push("pty".to_owned());
+            }
+        }
+        DemoRuntimeBackend {
+            kind: self.runtime_backend_kind.clone(),
+            label: runtime_backend_label(&self.runtime_backend_kind).to_owned(),
+            flattened_projection: self.flattened_runtime_projection,
+            capabilities,
+        }
+    }
+
     fn to_key_values(&self) -> Vec<KeyValue> {
         let mut values = vec![
             KeyValue::new("state", self.state.clone()),
+            KeyValue::new("runtime-backend", self.runtime_backend().label.clone()),
+            KeyValue::new(
+                "runtime-flattened",
+                if self.flattened_runtime_projection {
+                    "yes"
+                } else {
+                    "no"
+                },
+            ),
+            KeyValue::new(
+                "runtime-capabilities",
+                self.runtime_backend().rendered_capabilities(),
+            ),
             KeyValue::new(
                 "stoppable",
                 if self.stoppable {
@@ -3369,6 +3524,7 @@ impl DemoActiveAttempt {
                 "value": self.entrypoint_value,
             },
             "command": self.command,
+            "runtime_backend": self.runtime_backend().to_json(),
             "terminal_transport": self.terminal_transport.rendered(),
             "supports_input_forwarding": self.supports_input_forwarding,
             "supports_resize": self.supports_resize,
@@ -3409,6 +3565,7 @@ struct DemoActiveTerminalSession {
     available: bool,
     state: String,
     attempt_id: Option<String>,
+    runtime_backend: DemoRuntimeBackend,
     transport: String,
     pty: bool,
     supports_input_forwarding: bool,
@@ -3432,6 +3589,7 @@ impl DemoActiveTerminalSession {
             available: false,
             state: "none".to_owned(),
             attempt_id: None,
+            runtime_backend: DemoRuntimeBackend::none(),
             transport: "none".to_owned(),
             pty: false,
             supports_input_forwarding: false,
@@ -3462,6 +3620,19 @@ impl DemoActiveTerminalSession {
     fn to_key_values(&self) -> Vec<KeyValue> {
         let mut values = vec![
             KeyValue::new("state", self.state.clone()),
+            KeyValue::new("runtime-backend", self.runtime_backend.label.clone()),
+            KeyValue::new(
+                "runtime-flattened",
+                if self.runtime_backend.flattened_projection {
+                    "yes"
+                } else {
+                    "no"
+                },
+            ),
+            KeyValue::new(
+                "runtime-capabilities",
+                self.runtime_backend.rendered_capabilities(),
+            ),
             KeyValue::new("transport", self.transport.clone()),
             KeyValue::new("pty", if self.pty { "yes" } else { "no" }),
             KeyValue::new(
@@ -3520,6 +3691,7 @@ impl DemoActiveTerminalSession {
             "available": self.available,
             "state": self.state,
             "attempt_id": self.attempt_id,
+            "runtime_backend": self.runtime_backend.to_json(),
             "transport": self.transport,
             "pty": self.pty,
             "supports_input_forwarding": self.supports_input_forwarding,
@@ -3858,6 +4030,10 @@ struct PersistedDemoActiveAttempt {
     entrypoint_value: String,
     command: String,
     #[serde(default)]
+    runtime_backend_kind: Option<String>,
+    #[serde(default)]
+    flattened_runtime_projection: bool,
+    #[serde(default)]
     terminal_transport: PersistedDemoTerminalTransport,
     #[serde(default)]
     supports_input_forwarding: bool,
@@ -3973,6 +4149,8 @@ mod tests {
                 entrypoint_kind: "run".to_owned(),
                 entrypoint_value: "sleep 1".to_owned(),
                 command: "sleep 1".to_owned(),
+                runtime_backend_kind: Some("run".to_owned()),
+                flattened_runtime_projection: false,
                 terminal_transport: PersistedDemoTerminalTransport::Stream,
                 supports_input_forwarding: false,
                 supports_resize: false,
@@ -4042,6 +4220,7 @@ mod tests {
         let active = load_active_attempt(&repo_root, "demo").expect("load active attempt");
         assert!(active.active);
         assert_eq!(active.terminal_transport, DemoTerminalTransport::Stream);
+        assert_eq!(active.runtime_backend().kind, "run");
         assert!(!active.supports_input_forwarding);
         assert!(!active.supports_resize);
         assert!(!active.nested_tui);

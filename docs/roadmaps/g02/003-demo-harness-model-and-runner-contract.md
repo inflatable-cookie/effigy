@@ -2414,6 +2414,43 @@ Out of scope for the next implementation slice:
 - generic process-manager UI or multi-process sub-tabs
 - desktop-client work
 
+Batch `03.57` result:
+
+- `demo inspect` now reports bounded `runtime_backend` identity and capability
+  facts at the demo, active-attempt, and active-terminal-session layers
+- current task-backed and run-backed demos now project honest backend labels
+  and capability sets through one demo-scoped contract
+- active-attempt legacy records infer backend identity safely so the contract
+  stays backward-compatible while preserving the no-nested-TUI rule for future
+  richer runtimes
+
+Why this implementation moved the lane:
+
+- richer runtimes now have an honest place to declare themselves before any
+  later browser or backend slice tries to consume them
+- the browser can keep consuming runner-owned facts instead of reverse-
+  engineering runtime meaning from transport, input, and resize fields alone
+- the next honest question is boundary shape again: whether to implement one
+  richer runtime/backend slice next, take one narrow browser consumer follow-
+  up, or pause the lane's terminal/runtime work
+
+### 10.55 Demo Post-Runtime-Backend-Capability Boundary
+
+Batch `03.58` target:
+
+Choose the next bounded slice after runner-owned demo runtime backend and
+capability reporting landed, keeping the lane demo-scoped and explicitly
+bounded away from browser churn, nested TUI embedding, and generic
+runtime-manager work.
+
+Decision focus:
+
+- whether the next value belongs in one richer runner backend implementation
+  slice on top of the new contract
+- whether one narrow browser consumer follow-up is justified now that backend
+  facts are explicit
+- whether terminal/runtime work is coherent enough to pause again
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -2483,6 +2520,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to add bounded runtime backend and
-capability facts for active demo sessions while nested TUI embedding and wider
-runtime drift stay explicitly bounded.
+Use the active `g02.003` strict lane to decide the next bounded slice after
+runtime backend and capability reporting landed while nested TUI embedding and
+wider runtime drift stay explicitly bounded.

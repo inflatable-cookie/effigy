@@ -69,7 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to add bounded runtime backend and
-capability facts for active demo sessions, so richer runtimes can stay
-demo-scoped without forcing meaning through the browser or reopening nested TUI
-embedding.
+Execute the active `g02.003` ready card next to decide the post-runtime-
+backend-capability boundary, so the lane can choose the next bounded
+runner/client slice without reopening browser churn, nested TUI embedding, or
+generic runtime-manager drift.

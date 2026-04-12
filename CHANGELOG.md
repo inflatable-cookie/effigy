@@ -97,6 +97,10 @@ During v0.x, MINOR bumps may include breaking changes.
   session semantics
 
 ### Changed
+- Deepen demo inspect/active-session contracts with runner-owned
+  `runtime_backend` identity and capability facts so task-backed, run-backed,
+  and future richer demo runtimes can stay demo-scoped without forcing meaning
+  through browser-only semantics or nested TUI launch
 - Deepen active demo terminal/session reporting with explicit terminal size,
   resize posture, and detached-session resize handoff metadata, and have
   `effigy demo browser` auto-sync the terminal tab viewport through that

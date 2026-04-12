@@ -1,6 +1,6 @@
 # 064 Implement Demo Runtime Backend Capability Contract
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -34,6 +34,16 @@ without nested TUI launch or browser-invented semantics.
 - concurrent-runner-backed demos remain flattened behind the demo session
   contract instead of requiring nested TUI launch
 
+## Result
+
+- `demo inspect` now reports bounded `runtime_backend` identity and capability
+  facts at the demo, active-attempt, and active-terminal-session layers
+- current task-backed and run-backed demos now project honest backend labels
+  and capability sets through one demo-scoped contract
+- active-attempt legacy records infer backend identity safely, so the contract
+  stays backward-compatible while preserving the no-nested-TUI rule for future
+  richer runtimes
+
 ## Validation
 
 - `cargo test`
@@ -50,6 +60,6 @@ without nested TUI launch or browser-invented semantics.
 
 ## Next Task
 
-Execute this card to add bounded runtime backend and capability facts to active
-demo session surfaces without widening into browser churn or nested TUI
-embedding.
+Execute [`065-decide-demo-post-runtime-backend-capability-boundary.md`](./065-decide-demo-post-runtime-backend-capability-boundary.md)
+to choose the next bounded slice after backend/capability reporting landed
+without reopening browser churn or widening into generic runtime-manager work.
