@@ -334,6 +334,7 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to add a bounded browser history handoff
-on top of the settled one-demo query contract, while keeping broader runtime
-and desktop-client questions deferred.
+Use the active `g02.003` ready card to decide whether any later
+history/browser follow-up should deepen browser consumption further or return
+to query-first runner work, while keeping broader runtime and desktop-client
+questions deferred.

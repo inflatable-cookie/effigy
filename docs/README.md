@@ -129,6 +129,7 @@ Reference:
 
 ## Next Task
 
-Use the active strict `g02.003` spec lane to add a bounded browser history
-handoff on top of the settled one-demo query contract, then keep the docs
-front doors aligned to that bounded slice.
+Use the active strict `g02.003` spec lane to decide whether any later
+history/browser follow-up should deepen browser consumption further or return
+to query-first runner work, then keep the docs front doors aligned to that
+bounded slice.

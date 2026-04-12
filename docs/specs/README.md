@@ -19,6 +19,7 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to add a bounded browser history handoff on top of
-the settled query contract, then keep this area trimmed so it reflects live
-planning rather than every historical plan.
+Use the active spec lane to decide whether any later history/browser follow-up
+should deepen browser consumption further or return to query-first runner
+work, then keep this area trimmed so it reflects live planning rather than
+every historical plan.

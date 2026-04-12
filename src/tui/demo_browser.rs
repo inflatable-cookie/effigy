@@ -1,4 +1,4 @@
-use std::io::{self, Stdout};
+use std::io::{self, Stdout, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver};
@@ -35,7 +35,10 @@ pub fn run_demo_browser_tui(
     let mut app = DemoBrowserApp::new(repo_root, initial_group_by);
     let result = app.run(&mut terminal);
     restore_browser_terminal(&mut terminal)?;
-    result
+    match result? {
+        Some(handoff) => run_demo_browser_handoff(&app.repo_root, handoff),
+        None => Ok(()),
+    }
 }
 
 fn init_browser_terminal() -> Result<BrowserTerminal, RunnerError> {
@@ -69,6 +72,7 @@ struct DemoBrowserApp {
     last_refresh: Instant,
     total_demo_count: usize,
     overlay: Option<BrowserOverlay>,
+    handoff: Option<BrowserHandoff>,
 }
 
 impl DemoBrowserApp {
@@ -91,10 +95,14 @@ impl DemoBrowserApp {
             last_refresh: Instant::now() - Duration::from_secs(5),
             total_demo_count: 0,
             overlay: None,
+            handoff: None,
         }
     }
 
-    fn run(&mut self, terminal: &mut BrowserTerminal) -> Result<(), RunnerError> {
+    fn run(
+        &mut self,
+        terminal: &mut BrowserTerminal,
+    ) -> Result<Option<BrowserHandoff>, RunnerError> {
         self.refresh_state()?;
         loop {
             self.poll_pending_action();
@@ -118,8 +126,11 @@ impl DemoBrowserApp {
             } else if self.last_refresh.elapsed() >= Duration::from_millis(750) {
                 self.refresh_state()?;
             }
+            if self.handoff.is_some() {
+                break;
+            }
         }
-        Ok(())
+        Ok(self.handoff.take())
     }
 
     fn handle_key(&mut self, code: KeyCode) -> Result<bool, RunnerError> {
@@ -324,6 +335,7 @@ impl DemoBrowserApp {
         if !detail.latest_attempt.artifacts.is_empty() {
             items.push(ActionMenuItem::OpenArtifact);
         }
+        items.push(ActionMenuItem::OpenHistory);
         items.push(ActionMenuItem::Refresh);
         items
     }
@@ -333,6 +345,7 @@ impl DemoBrowserApp {
             ActionMenuItem::Run | ActionMenuItem::Rerun => self.dispatch_run_or_rerun(),
             ActionMenuItem::Stop => self.dispatch_stop(),
             ActionMenuItem::OpenArtifact => self.dispatch_open_artifact(),
+            ActionMenuItem::OpenHistory => self.dispatch_open_history(),
             ActionMenuItem::Refresh => {
                 self.refresh_state()?;
                 self.footer_message = "Refreshed demo browser state.".to_owned();
@@ -613,6 +626,22 @@ impl DemoBrowserApp {
         }
         open_artifact_path(&artifact_path)?;
         self.footer_message = format!("Opened artifact `{}`.", artifact_path.display());
+        Ok(())
+    }
+
+    fn dispatch_open_history(&mut self) -> Result<(), RunnerError> {
+        let Some(detail) = self.selected_detail() else {
+            self.footer_message = "No demo is currently selected.".to_owned();
+            return Ok(());
+        };
+        let demo_id = detail.id.clone();
+        self.handoff = Some(BrowserHandoff::DemoHistory {
+            demo_id: demo_id.clone(),
+        });
+        self.footer_message = format!(
+            "Handing off to `effigy demo history {}` outside the browser.",
+            demo_id
+        );
         Ok(())
     }
 
@@ -1076,6 +1105,32 @@ fn invoke_demo_json(_repo_root: &Path, args: DemoArgs) -> Result<JsonValue, Runn
     })
 }
 
+fn run_demo_browser_handoff(repo_root: &Path, handoff: BrowserHandoff) -> Result<(), RunnerError> {
+    match handoff {
+        BrowserHandoff::DemoHistory { demo_id } => {
+            let rendered = run_command(Command::Demo(DemoArgs {
+                subcommand: DemoSubcommand::History {
+                    demo_id,
+                    limit: None,
+                    outcome: None,
+                    attempt_id: None,
+                    attempt_ordinal: None,
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: false,
+            }))?;
+            let mut stdout = io::stdout();
+            stdout
+                .write_all(rendered.as_bytes())
+                .map_err(|error| RunnerError::Ui(error.to_string()))?;
+            stdout
+                .flush()
+                .map_err(|error| RunnerError::Ui(error.to_string()))?;
+            Ok(())
+        }
+    }
+}
+
 fn row_contains_demo(rows: &[BrowserRow], demo_id: &str) -> bool {
     rows.iter().any(|row| match row {
         BrowserRow::Group(_) => false,
@@ -1306,6 +1361,16 @@ fn detail_lines(
         }
     }
     lines.push(Line::from(""));
+    lines.push(section_heading("History"));
+    lines.push(compact_kv_line(
+        "command",
+        &format!("effigy demo history {}", detail.id),
+    ));
+    lines.push(muted_line(
+        "Open Actions and choose Open history to leave the browser and run the dedicated history view."
+            .to_owned(),
+    ));
+    lines.push(Line::from(""));
     lines.push(section_heading("Artifacts"));
     if detail.latest_attempt.artifacts.is_empty() {
         lines.push(muted_line("No recorded artifacts.".to_owned()));
@@ -1526,6 +1591,7 @@ enum ActionMenuItem {
     Rerun,
     Stop,
     OpenArtifact,
+    OpenHistory,
     Refresh,
 }
 
@@ -1536,9 +1602,15 @@ impl ActionMenuItem {
             Self::Rerun => "Rerun demo",
             Self::Stop => "Stop demo",
             Self::OpenArtifact => "Open artifact",
+            Self::OpenHistory => "Open history",
             Self::Refresh => "Refresh state",
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BrowserHandoff {
+    DemoHistory { demo_id: String },
 }
 
 #[derive(Default)]
@@ -1752,8 +1824,8 @@ mod tests {
         clamp_artifact_index, detail_lines, first_demo_id, next_gap_filter, next_group_by,
         next_mode_filter, next_status_filter, query_summary, read_recent_log_lines,
         resolve_artifact_path, resolve_repo_relative_path, row_contains_demo, selected_artifact,
-        BrowserRow, DemoDetail, DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListMode,
-        DemoListQuery, DemoListStatus, DemoSummary,
+        ActionMenuItem, BrowserRow, DemoDetail, DemoLatestAttempt, DemoListGap, DemoListGroupBy,
+        DemoListMode, DemoListQuery, DemoListStatus, DemoSummary,
     };
 
     fn summary(id: &str) -> DemoSummary {
@@ -1975,6 +2047,9 @@ mod tests {
         assert!(rendered.contains("Result"));
         assert!(rendered.contains("status: passed"));
         assert!(rendered.contains("Latest attempt wrote a proof report."));
+        assert!(rendered.contains("History"));
+        assert!(rendered.contains("command: effigy demo history browser-proof-report"));
+        assert!(rendered.contains("Open Actions and choose Open history"));
         assert!(rendered.contains(".effigy/demo/artifacts/browser-proof-report/index.html"));
         assert!(rendered.contains("covers: effigy.demo.browser"));
         assert!(rendered.contains("↑/↓ selects artifact"));
@@ -1995,5 +2070,10 @@ mod tests {
 
         assert!(rendered.contains("→ focuses artifacts"));
         assert!(!rendered.contains("› one"));
+    }
+
+    #[test]
+    fn browser_action_menu_exposes_history_handoff_label() {
+        assert_eq!(ActionMenuItem::OpenHistory.label(), "Open history");
     }
 }

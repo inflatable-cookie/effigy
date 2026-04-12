@@ -1635,6 +1635,47 @@ Out of scope for the next implementation slice:
 - `demo list` history summaries or grouping changes
 - multi-demo history aggregation, analytics, queueing, or broader runtime work
 
+Batch `03.35` result:
+
+- `effigy demo browser` now exposes an `Open history` action for the selected
+  demo
+- the browser detail pane now shows the exact `effigy demo history <DEMO_ID>`
+  handoff command
+- choosing the history handoff leaves the browser and runs the dedicated
+  `demo history` surface in normal terminal mode instead of inventing
+  browser-local retained-history semantics
+
+Why this batch was the right implementation slice:
+
+- it proved that the browser can now consume the settled one-demo history
+  contract without becoming a second history UI
+- it kept retained-history density out of the browser while still improving
+  discoverability from the main client surface
+- later browser/client work can now make a more informed choice about whether
+  denser history rendering belongs anywhere at all
+
+### 10.33 Post-Browser-History-Handoff Boundary
+
+Batch `03.36` target:
+
+Choose the next bounded slice after the shipped browser history handoff
+without reopening browser churn or widening into generic timeline tooling.
+
+In scope for the next decision slice:
+
+- assess whether the shipped browser history handoff is enough browser-side
+  consumption for now
+- decide whether any next bounded value belongs in deeper browser consumption,
+  renewed runner/query work, or another tightly bounded client follow-up
+- leave the lane with one explicit ready card
+
+Out of scope for the next decision slice:
+
+- implementing browser-side retained history tables, badges, or timelines
+  immediately
+- widening into multi-demo history aggregation, analytics, or queueing
+- broader runtime cancellation or desktop-client work
+
 ### 10.27 Demo History Query Follow-Up Boundary
 
 Batch `03.30` target:
@@ -1677,6 +1718,6 @@ Out of scope for the next decision slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to add a bounded browser history handoff
-on top of the settled one-demo query contract, while wider runtime expansion
-remains deferred.
+Use the active `g02.003` strict lane to decide whether any later
+history/browser follow-up should deepen browser consumption further or return
+to query-first runner work, while wider runtime expansion remains deferred.

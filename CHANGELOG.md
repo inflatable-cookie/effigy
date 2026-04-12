@@ -69,6 +69,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `--outcome <OUTCOME>` filtering and `--ordinal <N>` selection, so operators
   can narrow one demo's retained results and select a displayed attempt
   without copying long attempt ids for common review flows
+- Add a bounded history handoff inside `effigy demo browser`, so operators can
+  leave the browser and open the dedicated `demo history <id>` surface for the
+  selected demo without adding retained-history tables or timelines to the
+  browser itself
 
 ### Changed
 - Rework `effigy demo browser` around the same magenta-framed visual language

@@ -1,6 +1,6 @@
 # 041 Implement Demo Browser History Handoff
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -50,5 +50,6 @@ handoff without adding list density or in-browser timelines.
 
 ## Next Task
 
-Use the next active ready card to deepen browser-side consumption only if the
-history handoff proves useful without reopening client churn.
+Execute [`042-decide-demo-post-browser-history-handoff-boundary.md`](./042-decide-demo-post-browser-history-handoff-boundary.md)
+to decide whether any later history/browser follow-up should deepen browser
+consumption further or return to query-first runner work.
