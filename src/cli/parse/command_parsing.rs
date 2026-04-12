@@ -85,6 +85,7 @@ where
         "history" => parse_demo_history(args),
         "run" => parse_demo_run(args),
         "stop" => parse_demo_stop(args),
+        "input" => parse_demo_input(args),
         "rerun" => parse_demo_rerun(args),
         other => Err(unknown_argument(other)),
     }
@@ -482,6 +483,59 @@ where
 
     Ok(Command::Demo(DemoArgs {
         subcommand: DemoSubcommand::Stop { demo_id },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_demo_input<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut demo_id: Option<String> = None;
+    let mut text: Option<String> = None;
+    let mut append_newline = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--text" => {
+                text = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--text".to_owned(),
+                    },
+                )?)
+            }
+            "--append-newline" => append_newline = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Demo)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ if demo_id.is_none() => demo_id = Some(arg),
+            _ => return Err(unknown_argument(arg)),
+        }
+    }
+
+    let Some(demo_id) = demo_id else {
+        return Err(CliParseError::MissingFlagValue {
+            flag: "<DEMO_ID>".to_owned(),
+        });
+    };
+    let Some(text) = text else {
+        return Err(CliParseError::MissingFlagValue {
+            flag: "--text".to_owned(),
+        });
+    };
+
+    Ok(Command::Demo(DemoArgs {
+        subcommand: DemoSubcommand::Input {
+            demo_id,
+            text,
+            append_newline,
+        },
         repo_override,
         output_json,
     }))

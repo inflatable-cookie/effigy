@@ -1,6 +1,6 @@
 # 047 Implement Demo Active Terminal Input Contract
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -53,5 +53,6 @@ interaction without nested TUIs.
 
 ## Next Task
 
-Implement the next ready follow-up selected after this runner contract slice
-lands.
+Execute [`048-implement-demo-browser-terminal-input-affordance.md`](./048-implement-demo-browser-terminal-input-affordance.md)
+to let the browser terminal view consume the shipped runner-owned input
+contract through one bounded demo-scoped interaction affordance.

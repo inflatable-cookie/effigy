@@ -69,7 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to deepen the runner-owned active
-demo terminal/session contract with bounded input-forwarding semantics, while
-browser tab convergence, nested TUI embedding, broader runtime expansion, and
-desktop-client questions stay separate.
+Execute the active `g02.003` ready card next to let the browser terminal view
+consume the shipped runner-owned input contract through one bounded demo-scoped
+interaction affordance, while browser tab convergence, nested TUI embedding,
+broader runtime expansion, and desktop-client questions stay separate.

@@ -101,6 +101,18 @@ pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
         DemoSubcommand::Stop { demo_id } => {
             render_demo_stop(&repo_root, &loaded, &demo_id, args.output_json)
         }
+        DemoSubcommand::Input {
+            demo_id,
+            text,
+            append_newline,
+        } => render_demo_input(
+            &repo_root,
+            &loaded,
+            &demo_id,
+            &text,
+            append_newline,
+            args.output_json,
+        ),
     }
 }
 
@@ -770,6 +782,94 @@ fn render_demo_stop(
     )
 }
 
+fn render_demo_input(
+    repo_root: &Path,
+    loaded: &LoadedTaskManifest,
+    demo_id: &str,
+    text: &str,
+    append_newline: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let Some(demo) = loaded.manifest.demos.get(demo_id) else {
+        return demo_error(
+            output_json,
+            "effigy.demo.input.v1",
+            format!("demo `{demo_id}` was not found"),
+            json!({ "demo_id": demo_id }),
+        );
+    };
+
+    let record = build_demo_record(repo_root, loaded, demo_id, demo)?;
+    let forwarded_text = if append_newline {
+        format!("{text}\n")
+    } else {
+        text.to_owned()
+    };
+
+    if !record.active_attempt.active {
+        return demo_error(
+            output_json,
+            "effigy.demo.input.v1",
+            format!("demo `{demo_id}` has no active terminal session to receive input"),
+            json!({
+                "demo_id": demo_id,
+                "input": {
+                    "text": text,
+                    "append_newline": append_newline,
+                    "forwarded_bytes": forwarded_text.len(),
+                },
+                "active_terminal_session": record.active_terminal_session.to_json(),
+            }),
+        );
+    }
+
+    if !record.active_terminal_session.supports_input_forwarding {
+        return demo_error(
+            output_json,
+            "effigy.demo.input.v1",
+            format!(
+                "demo `{demo_id}` does not expose terminal input forwarding in the current runtime"
+            ),
+            json!({
+                "demo_id": demo_id,
+                "input": {
+                    "text": text,
+                    "append_newline": append_newline,
+                    "forwarded_bytes": forwarded_text.len(),
+                },
+                "active_terminal_session": record.active_terminal_session.to_json(),
+            }),
+        );
+    }
+
+    if output_json {
+        return encode_json(&json!({
+            "schema": "effigy.demo.input.v1",
+            "schema_version": 1,
+            "ok": true,
+            "demo_id": demo_id,
+            "input": {
+                "text": text,
+                "append_newline": append_newline,
+                "forwarded_bytes": forwarded_text.len(),
+            },
+            "active_terminal_session": record.active_terminal_session.to_json(),
+        }), true);
+    }
+
+    let mut renderer = text_renderer();
+    renderer.section("Demo Terminal Input")?;
+    renderer.key_values(&[
+        KeyValue::new("demo", demo_id.to_owned()),
+        KeyValue::new(
+            "append-newline",
+            if append_newline { "yes" } else { "no" },
+        ),
+        KeyValue::new("forwarded-bytes", forwarded_text.len().to_string()),
+    ])?;
+    render_utf8(renderer.into_inner())
+}
+
 fn render_demo_stop_result(
     repo_root: &Path,
     loaded: &LoadedTaskManifest,
@@ -1330,6 +1430,9 @@ fn load_active_terminal_session(
 
     let stdout_log_path = active_attempt.stdout_log_path.clone();
     let stderr_log_path = active_attempt.stderr_log_path.clone();
+    let input_forwarding_reason = (!active_attempt.supports_input_forwarding).then_some(
+        "input forwarding is not exposed through the current demo runtime".to_owned(),
+    );
     DemoActiveTerminalSession {
         available: true,
         state: "live".to_owned(),
@@ -1337,9 +1440,15 @@ fn load_active_terminal_session(
         transport: active_attempt.terminal_transport.rendered().to_owned(),
         pty: matches!(active_attempt.terminal_transport, DemoTerminalTransport::Pty),
         supports_input_forwarding: active_attempt.supports_input_forwarding,
-        input_forwarding_reason: (!active_attempt.supports_input_forwarding).then_some(
-            "input forwarding is not exposed through the current demo runtime".to_owned(),
-        ),
+        input_forwarding_reason: input_forwarding_reason.clone(),
+        input_forwarding: if active_attempt.supports_input_forwarding {
+            DemoTerminalInputForwarding::available()
+        } else {
+            DemoTerminalInputForwarding::unavailable(
+                input_forwarding_reason
+                    .expect("reason exists when input forwarding is unavailable"),
+            )
+        },
         nested_tui: active_attempt.nested_tui,
         stdout_log_path: stdout_log_path.clone(),
         stderr_log_path: stderr_log_path.clone(),
@@ -2718,6 +2827,7 @@ struct DemoActiveTerminalSession {
     pty: bool,
     supports_input_forwarding: bool,
     input_forwarding_reason: Option<String>,
+    input_forwarding: DemoTerminalInputForwarding,
     nested_tui: bool,
     stdout_log_path: Option<String>,
     stderr_log_path: Option<String>,
@@ -2738,6 +2848,9 @@ impl DemoActiveTerminalSession {
             input_forwarding_reason: Some(
                 "no active demo terminal session is currently available".to_owned(),
             ),
+            input_forwarding: DemoTerminalInputForwarding::unavailable(
+                "no active demo terminal session is currently available".to_owned(),
+            ),
             nested_tui: false,
             stdout_log_path: None,
             stderr_log_path: None,
@@ -2754,11 +2867,15 @@ impl DemoActiveTerminalSession {
             KeyValue::new("pty", if self.pty { "yes" } else { "no" }),
             KeyValue::new(
                 "input-forwarding",
-                if self.supports_input_forwarding {
+                if self.input_forwarding.available {
                     "yes".to_owned()
                 } else {
                     availability_label(false, self.input_forwarding_reason.as_deref())
                 },
+            ),
+            KeyValue::new(
+                "input-command",
+                self.input_forwarding.command_template.clone(),
             ),
             KeyValue::new("nested-tui", if self.nested_tui { "yes" } else { "no" }),
             KeyValue::new(
@@ -2787,6 +2904,7 @@ impl DemoActiveTerminalSession {
             "pty": self.pty,
             "supports_input_forwarding": self.supports_input_forwarding,
             "input_forwarding_reason": self.input_forwarding_reason,
+            "input_forwarding": self.input_forwarding.to_json(),
             "nested_tui": self.nested_tui,
             "stdout_log_path": self.stdout_log_path,
             "stderr_log_path": self.stderr_log_path,
@@ -2795,6 +2913,49 @@ impl DemoActiveTerminalSession {
                 "stdout_lines": self.recent_stdout,
                 "stderr_lines": self.recent_stderr,
             },
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DemoTerminalInputForwarding {
+    available: bool,
+    reason: Option<String>,
+    mode: String,
+    append_newline_supported: bool,
+    command_template: String,
+}
+
+impl DemoTerminalInputForwarding {
+    fn unavailable(reason: String) -> Self {
+        Self {
+            available: false,
+            reason: Some(reason),
+            mode: "text".to_owned(),
+            append_newline_supported: true,
+            command_template: "effigy demo input <DEMO_ID> --text <TEXT> [--append-newline]"
+                .to_owned(),
+        }
+    }
+
+    fn available() -> Self {
+        Self {
+            available: true,
+            reason: None,
+            mode: "text".to_owned(),
+            append_newline_supported: true,
+            command_template: "effigy demo input <DEMO_ID> --text <TEXT> [--append-newline]"
+                .to_owned(),
+        }
+    }
+
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "available": self.available,
+            "reason": self.reason,
+            "mode": self.mode,
+            "append_newline_supported": self.append_newline_supported,
+            "command_template": self.command_template,
         })
     }
 }
