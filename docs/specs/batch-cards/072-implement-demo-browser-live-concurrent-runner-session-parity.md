@@ -1,6 +1,6 @@
 # 072 Implement Demo Browser Live Concurrent-Runner Session Parity
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -45,6 +45,18 @@ projected session path.
   session path instead of pretending to be live-attached
 - the lane closes with one new explicit ready card
 
+## Result
+
+- browser-launched single-process concurrent-runner-backed interactive demos
+  now use the browser-owned live attached terminal session path
+- multi-process concurrent-runner demos still stay on the flattened projected
+  terminal/session surface
+- browser live-session selection now follows a bounded backend capability fact
+  instead of a run-backed-only check
+- attached single-process concurrent-runner text runs now feed stdin through
+  the existing demo-owned input handoff so browser live sessions can interact
+  honestly without nested TUI launch
+
 ## Validation
 
 - `cargo test`
@@ -61,6 +73,8 @@ projected session path.
 
 ## Next Task
 
-Implement this bounded browser/backend parity slice, then leave one new
-explicit boundary card instead of widening straight into multi-process browser
-semantics.
+Execute
+`073-decide-demo-post-browser-live-concurrent-runner-session-parity-boundary.md`
+to choose the next bounded slice after browser-owned live attached terminal
+sessions reached bounded parity for run-backed and single-process
+concurrent-runner-backed demos.

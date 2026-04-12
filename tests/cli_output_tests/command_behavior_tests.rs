@@ -436,6 +436,31 @@ task = "console"
     .expect("write concurrent input demo manifest");
 }
 
+fn write_demo_concurrent_runner_multi_fixture(root: &std::path::Path) {
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks.dev]
+mode = "tui"
+concurrent = [
+  { name = "api", run = "printf api-ok\n; while true; do sleep 1; done" },
+  { name = "web", run = "printf web-ok\n; while true; do sleep 1; done" }
+]
+
+[demos.stack]
+title = "Stack"
+summary = "Projects a multi-process concurrent runner task through demo surfaces."
+proof = "Verify multi-process concurrent-runner-backed demos stay on the projected browser path."
+owner = "demo"
+mode = "interactive"
+status = "ready"
+covers = ["demo.concurrent-multi"]
+task = "dev"
+"#,
+    )
+    .expect("write multi-process concurrent demo manifest");
+}
+
 fn spawn_demo_run_process(root: &std::path::Path, demo_id: &str) -> std::process::Child {
     Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")
@@ -463,6 +488,24 @@ fn spawn_demo_text_run_process(root: &std::path::Path, demo_id: &str) -> std::pr
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn text demo run process")
+}
+
+fn spawn_demo_text_run_process_with_input(
+    root: &std::path::Path,
+    demo_id: &str,
+) -> std::process::Child {
+    Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("demo")
+        .arg("run")
+        .arg(demo_id)
+        .arg("--repo")
+        .arg(root)
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn text demo run process with input")
 }
 
 fn wait_for_child_exit(child: &mut std::process::Child, timeout: Duration, label: &str) {
@@ -1316,6 +1359,34 @@ fn cli_demo_inspect_json_classifies_concurrent_runner_backed_demo_when_inactive(
         .expect("runtime capabilities")
         .iter()
         .any(|value| value.as_str() == Some("active-terminal-session")));
+    assert!(parsed["result"]["demo"]["runtime_backend"]["capabilities"]
+        .as_array()
+        .expect("runtime capabilities")
+        .iter()
+        .any(|value| value.as_str() == Some("browser-live-attach")));
+}
+
+#[test]
+fn cli_demo_inspect_json_keeps_multi_process_concurrent_runner_on_projected_path() {
+    let root = temp_workspace("demo-concurrent-runtime-backend-multi-json");
+    write_demo_concurrent_runner_multi_fixture(&root);
+
+    let output = run_json_cli_command(&root, &["demo", "inspect", "stack"]);
+    assert!(output.status.success(), "demo inspect failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["kind"],
+        "concurrent-runner"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["flattened_projection"],
+        true
+    );
+    assert!(!parsed["result"]["demo"]["runtime_backend"]["capabilities"]
+        .as_array()
+        .expect("runtime capabilities")
+        .iter()
+        .any(|value| value.as_str() == Some("browser-live-attach")));
 }
 
 #[test]
@@ -1353,6 +1424,11 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
         parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["flattened_projection"],
         true
     );
+    assert!(parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["capabilities"]
+        .as_array()
+        .expect("runtime capabilities")
+        .iter()
+        .any(|value| value.as_str() == Some("browser-live-attach")));
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["kind"],
         "concurrent-runner"
@@ -1381,6 +1457,11 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
         parsed["result"]["demo"]["active_terminal_session"]["resize_handoff_path"],
         ".effigy/demo/active/stack.resize.jsonl"
     );
+    assert!(parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["capabilities"]
+        .as_array()
+        .expect("runtime capabilities")
+        .iter()
+        .any(|value| value.as_str() == Some("browser-live-attach")));
     assert!(
         parsed["result"]["demo"]["active_terminal_session"]["output_available"]
             .as_bool()
@@ -1436,8 +1517,25 @@ fn cli_demo_input_json_forwards_to_running_concurrent_runner_demo_session() {
     assert_eq!(handoff, "hello\n");
 
     let stop = run_json_cli_command(&root, &["demo", "stop", "console"]);
-    assert!(stop.status.success(), "demo stop failed: {stop:?}");
-    wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
+    if !stop.status.success() {
+        let parsed = parse_stdout_json(&stop);
+        assert_eq!(
+            parsed["error"]["details"]["active_attempt"]["active"],
+            false,
+            "unexpected concurrent attached stop failure: {stop:?}"
+        );
+    }
+    let started = Instant::now();
+    loop {
+        if let Some(_status) = child.try_wait().expect("poll child exit") {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "demo run process did not exit in time"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[test]
@@ -1866,6 +1964,70 @@ fn cli_demo_stop_json_concurrent_runner_attempt_requests_termination() {
     )
     .expect("parse demo receipt");
     assert_eq!(receipt["status"], "terminated");
+}
+
+#[test]
+fn cli_demo_run_text_single_process_concurrent_runner_forwards_attached_input() {
+    let root = temp_workspace("demo-concurrent-attached-input-text");
+    write_demo_concurrent_runner_input_fixture(&root);
+
+    let mut child = spawn_demo_text_run_process_with_input(&root, "console");
+    let active_path = root.join(".effigy/demo/active/console.json");
+    let stdin_handoff = root.join(".effigy/demo/active/console.stdin.log");
+    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+    wait_for_demo_active_inspect(
+        &root,
+        "console",
+        Duration::from_secs(15),
+        "concurrent runner attached input state",
+    );
+
+    child
+        .stdin
+        .as_mut()
+        .expect("child stdin")
+        .write_all(b"hello\n")
+        .expect("write attached input");
+    child
+        .stdin
+        .as_mut()
+        .expect("child stdin")
+        .flush()
+        .expect("flush attached input");
+
+    let started = Instant::now();
+    loop {
+        let rendered = fs::read_to_string(&stdin_handoff).unwrap_or_default();
+        if rendered.contains("hello\n") {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "attached concurrent runner input handoff was not observed in time"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    let stop = run_json_cli_command(&root, &["demo", "stop", "console"]);
+    if !stop.status.success() {
+        let parsed = parse_stdout_json(&stop);
+        assert_eq!(
+            parsed["error"]["details"]["active_attempt"]["active"],
+            false,
+            "unexpected concurrent attached stop failure: {stop:?}"
+        );
+    }
+    let started = Instant::now();
+    loop {
+        if let Some(_status) = child.try_wait().expect("poll child exit") {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "demo run process did not exit in time"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[test]

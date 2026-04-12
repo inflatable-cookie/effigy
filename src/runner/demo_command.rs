@@ -1739,6 +1739,7 @@ fn demo_active_attempt_from_record(
         )
         .to_owned(),
         flattened_runtime_projection: record.flattened_runtime_projection,
+        browser_live_attach_supported: infer_browser_live_attach_supported(record),
         terminal_transport: match record.terminal_transport {
             PersistedDemoTerminalTransport::Stream => DemoTerminalTransport::Stream,
             PersistedDemoTerminalTransport::Pty => DemoTerminalTransport::Pty,
@@ -1765,6 +1766,18 @@ fn infer_runtime_backend_kind<'a>(
         "run" => "run",
         _ => "none",
     })
+}
+
+fn infer_browser_live_attach_supported(record: &PersistedDemoActiveAttempt) -> bool {
+    if record.browser_live_attach_supported {
+        return true;
+    }
+    if record.runtime_backend_kind.as_deref() == Some("run") {
+        return true;
+    }
+    record.runtime_backend_kind.as_deref() == Some("concurrent-runner")
+        && !record.nested_tui
+        && record.supports_input_forwarding
 }
 
 fn runtime_backend_label(kind: &str) -> &'static str {
@@ -1893,6 +1906,7 @@ fn execute_task_backed_demo(
             command: task_name.to_owned(),
             runtime_backend_kind: Some("task".to_owned()),
             flattened_runtime_projection: false,
+            browser_live_attach_supported: false,
             terminal_transport: PersistedDemoTerminalTransport::Stream,
             supports_input_forwarding: false,
             supports_resize: false,
@@ -2054,7 +2068,8 @@ fn execute_concurrent_runner_backed_demo(
         ))
     })?;
     let detached_interaction_projection = output_json;
-    let input_target_process = if detached_interaction_projection {
+    let browser_live_attach_supported = concurrent_runner_supports_browser_live_attach(&plan);
+    let input_target_process = if detached_interaction_projection || browser_live_attach_supported {
         concurrent_runner_input_target_process(&plan)
     } else {
         None
@@ -2091,6 +2106,7 @@ fn execute_concurrent_runner_backed_demo(
             command: format!("<managed:{task_name} profile:{}>", plan.profile),
             runtime_backend_kind: Some("concurrent-runner".to_owned()),
             flattened_runtime_projection: true,
+            browser_live_attach_supported,
             terminal_transport: PersistedDemoTerminalTransport::Stream,
             supports_input_forwarding: input_handoff_path.is_some(),
             supports_resize: resize_handoff_path.is_some(),
@@ -2162,6 +2178,14 @@ fn run_concurrent_runner_demo_runtime(
         input_handoff_path.clone(),
         !output_json,
     )?;
+    let _stdin_handoff = if !output_json {
+        input_handoff_path
+            .as_ref()
+            .filter(|_| state.input_target_process.is_some())
+            .map(|path| spawn_stdin_handoff_capture(path.clone()))
+    } else {
+        None
+    };
 
     while state.exit_count < expected
         || state.drained_after_exit < DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT
@@ -2397,6 +2421,39 @@ fn render_non_zero_exits(processes: &[(String, String)]) -> String {
         .join(", ")
 }
 
+fn concurrent_runner_task_supports_browser_live_attach(repo_root: &Path, task_name: &str) -> bool {
+    let Ok(Some(resolved)) = demo_task_selection(repo_root, task_name) else {
+        return false;
+    };
+    let Ok(selection) = resolved.selection() else {
+        return false;
+    };
+    let runtime_args = TaskRuntimeArgs {
+        repo_override: None,
+        verbose_root: false,
+        env_schema_override: None,
+        passthrough: Vec::new(),
+    };
+    resolve_managed_task_plan(
+        &resolved.selector,
+        selection.catalog,
+        selection.task,
+        &runtime_args,
+        &resolved.catalogs,
+        &selection.catalog.catalog_root,
+    )
+    .ok()
+    .flatten()
+    .as_ref()
+    .is_some_and(concurrent_runner_supports_browser_live_attach)
+}
+
+fn concurrent_runner_supports_browser_live_attach(
+    plan: &crate::runner::model::managed::ManagedTaskPlan,
+) -> bool {
+    concurrent_runner_input_target_process(plan).is_some()
+}
+
 fn concurrent_runner_input_target_process(
     plan: &crate::runner::model::managed::ManagedTaskPlan,
 ) -> Option<String> {
@@ -2517,6 +2574,7 @@ fn execute_run_backed_demo(
             command: run_command.to_owned(),
             runtime_backend_kind: Some("run".to_owned()),
             flattened_runtime_projection: false,
+            browser_live_attach_supported: true,
             terminal_transport: launch_mode.transport(),
             supports_input_forwarding: input_handoff_path.is_some(),
             supports_resize: resize_handoff_path.is_some(),
@@ -2889,6 +2947,28 @@ fn spawn_stdin_forward(mut child_stdin: ChildStdin) -> thread::JoinHandle<()> {
         let mut input = io::stdin().lock();
         let _ = io::copy(&mut input, &mut child_stdin);
         let _ = child_stdin.flush();
+    })
+}
+
+fn spawn_stdin_handoff_capture(path: PathBuf) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let mut input = io::stdin().lock();
+        let mut buffer = [0u8; 1024];
+        while let Ok(read) = input.read(&mut buffer) {
+            if read == 0 {
+                break;
+            }
+            let Ok(mut handoff) = fs::OpenOptions::new().append(true).open(&path) else {
+                break;
+            };
+            if handoff
+                .write_all(&buffer[..read])
+                .and_then(|_| handoff.flush())
+                .is_err()
+            {
+                break;
+            }
+        }
     })
 }
 
@@ -3728,6 +3808,7 @@ impl DemoRuntimeBackend {
                 flattened_projection: false,
                 capabilities: vec![
                     "active-terminal-session".to_owned(),
+                    "browser-live-attach".to_owned(),
                     "live-terminal-output".to_owned(),
                     "stop".to_owned(),
                 ],
@@ -3786,14 +3867,18 @@ fn demo_runtime_backend_from_entrypoint(
                     })
                     .unwrap_or(false)
             {
+                let mut capabilities = vec![
+                    "active-terminal-session".to_owned(),
+                    "live-terminal-output".to_owned(),
+                ];
+                if concurrent_runner_task_supports_browser_live_attach(repo_root, task_name) {
+                    capabilities.push("browser-live-attach".to_owned());
+                }
                 DemoRuntimeBackend {
                     kind: "concurrent-runner".to_owned(),
                     label: runtime_backend_label("concurrent-runner").to_owned(),
                     flattened_projection: true,
-                    capabilities: vec![
-                        "active-terminal-session".to_owned(),
-                        "live-terminal-output".to_owned(),
-                    ],
+                    capabilities,
                 }
             } else {
                 DemoRuntimeBackend::from_entrypoint(entrypoint)
@@ -3885,6 +3970,7 @@ struct DemoActiveAttempt {
     command: Option<String>,
     runtime_backend_kind: String,
     flattened_runtime_projection: bool,
+    browser_live_attach_supported: bool,
     terminal_transport: DemoTerminalTransport,
     supports_input_forwarding: bool,
     supports_resize: bool,
@@ -3914,6 +4000,7 @@ impl DemoActiveAttempt {
             command: None,
             runtime_backend_kind: "none".to_owned(),
             flattened_runtime_projection: false,
+            browser_live_attach_supported: false,
             terminal_transport: DemoTerminalTransport::None,
             supports_input_forwarding: false,
             supports_resize: false,
@@ -3945,6 +4032,9 @@ impl DemoActiveAttempt {
             capabilities.push("live-terminal-output".to_owned());
             if self.stoppable {
                 capabilities.push("stop".to_owned());
+            }
+            if self.browser_live_attach_supported {
+                capabilities.push("browser-live-attach".to_owned());
             }
             if self.supports_input_forwarding {
                 capabilities.push("input-forwarding".to_owned());
@@ -4553,6 +4643,8 @@ struct PersistedDemoActiveAttempt {
     #[serde(default)]
     flattened_runtime_projection: bool,
     #[serde(default)]
+    browser_live_attach_supported: bool,
+    #[serde(default)]
     terminal_transport: PersistedDemoTerminalTransport,
     #[serde(default)]
     supports_input_forwarding: bool,
@@ -4670,6 +4762,7 @@ mod tests {
                 command: "sleep 1".to_owned(),
                 runtime_backend_kind: Some("run".to_owned()),
                 flattened_runtime_projection: false,
+                browser_live_attach_supported: true,
                 terminal_transport: PersistedDemoTerminalTransport::Stream,
                 supports_input_forwarding: false,
                 supports_resize: false,

@@ -11,6 +11,10 @@ During v0.x, MINOR bumps may include breaking changes.
   sessions for browser-launched run-backed interactive demos, so the `Terminal`
   tab can host the actual running demo with direct input while runner-owned
   logs, receipts, and history still populate behind it
+- Extend browser-owned live attached terminal sessions to browser-launched
+  single-process concurrent-runner-backed interactive demos, while keeping
+  multi-process concurrent demos on the existing projected terminal/session
+  path instead of launching nested TUIs
 - Add general manifest composition through `[manifest].include`, including
   nested partial-fragment loading, path-scoped override enforcement, and
   deterministic conflict failures so features like `tasks`, `docs_policy`, and
