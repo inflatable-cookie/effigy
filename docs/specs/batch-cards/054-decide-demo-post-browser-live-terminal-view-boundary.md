@@ -1,6 +1,6 @@
 # 054 Decide Demo Post-Browser-Live-Terminal-View Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -47,6 +47,22 @@ without widening into tabs, nested TUI embedding, or generic runtime churn.
 - the decision requires nested TUI launch to stay coherent
 - the next move becomes materially ambiguous without fresh evidence
 
+## Decision
+
+- do not prioritize browser-side terminal input next; the human-first path for
+  interactive demos is already direct attached terminal execution, and browser
+  input would reopen transport/ownership questions too early
+- do not deepen runner-owned terminal semantics again immediately; the runner
+  contract is already sufficient for the next browser-facing slice
+- do prioritize demo-scoped tab convergence next so the browser can present the
+  now-real `Overview`, `History`, `Terminal`, and `Artifacts` facets as first-
+  class sibling views of one selected demo
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner;
+  tab convergence must stay demo-scoped and must not drift into managed-process
+  UI
+
 ## Next Task
 
-Execute the ready follow-up selected by this boundary decision.
+Execute [`055-implement-demo-browser-demo-scoped-tabs.md`](./055-implement-demo-browser-demo-scoped-tabs.md)
+to converge the browser detail surface into bounded demo-scoped tabs for
+`Overview`, `History`, `Terminal`, and `Artifacts`.

@@ -2025,6 +2025,51 @@ Shipped result:
 - the browser still consumes runner-owned session metadata and log paths rather
   than inventing nested-TUI or process-manager ownership
 
+### 10.44 Demo Post-Browser-Live-Terminal-View Boundary
+
+Batch `03.47` target:
+
+Choose the next bounded slice after live browser terminal consumption lands
+without widening into tabs, nested TUI embedding, or generic runtime churn.
+
+In scope for the next decision slice:
+
+- assess whether the next terminal-related value belongs in:
+  - bounded browser-side interaction on top of the shipped live terminal view
+  - demo-scoped tab convergence such as `Overview`, `History`, `Terminal`, and
+    `Artifacts`
+  - another narrowly bounded runner/browser contract follow-up
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+- leave the lane with one explicit ready card
+
+Out of scope for the next decision slice:
+
+- implementing browser input, tabs, or broader runtime controls in the
+  decision batch
+- embedding the concurrent TUI inside `effigy demo browser`
+- multi-process demo sub-tabs or generic managed-process UI
+- retained-history replay as an interactive terminal
+- broad runtime cancellation or desktop-client work
+
+Batch `03.47` result:
+
+- the next bounded slice is demo-scoped tab convergence, not browser-side
+  terminal input and not another runner-only terminal contract pass
+- browser input remains deferred because direct attached terminal execution is
+  already the honest human interaction path for demos that need live terminal
+  IO
+- the no-nested-TUI rule remains intact for demos backed by the concurrent
+  runner
+
+Why this batch was the right decision slice:
+
+- the browser now has enough real one-demo surfaces for tabs to organize them
+  coherently: overview, history, terminal, and artifacts
+- another contract-only pass would risk churn without changing the current
+  operator-facing gap
+- browser input would reopen transport and ownership questions before the
+  browser surface itself is fully converged
+
 Batch `03.41` result:
 
 - the runner now exposes a bounded `effigy demo input <DEMO_ID> --text <TEXT>
@@ -2113,6 +2158,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the bounded follow-up after live
-browser terminal consumption landed, while browser tab convergence, nested TUI
-embedding, and wider runtime expansion stay explicitly bounded.
+Use the active `g02.003` strict lane to converge the browser detail surface
+into bounded demo-scoped tabs while nested TUI embedding and wider runtime
+expansion stay explicitly bounded.
