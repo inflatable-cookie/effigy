@@ -69,6 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to choose the bounded follow-up
-after panel-first demo-browser navigation landed, while nested TUI embedding,
-broader runtime expansion, and desktop-client questions stay separate.
+Execute the active `g02.003` ready card next to deepen runner-owned richer-
+runtime session semantics now that panel-first demo-browser navigation landed,
+while nested TUI embedding, broader runtime expansion, and desktop-client
+questions stay separate.

@@ -61,9 +61,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`055-implement-demo-browser-demo-scoped-tabs.md`](./055-implement-demo-browser-demo-scoped-tabs.md) (complete)
 - [`056-decide-demo-post-browser-tab-convergence-boundary.md`](./056-decide-demo-post-browser-tab-convergence-boundary.md) (complete)
 - [`057-implement-demo-browser-panel-first-navigation.md`](./057-implement-demo-browser-panel-first-navigation.md) (complete)
-- [`058-decide-demo-post-panel-first-navigation-boundary.md`](./058-decide-demo-post-panel-first-navigation-boundary.md)
+- [`058-decide-demo-post-panel-first-navigation-boundary.md`](./058-decide-demo-post-panel-first-navigation-boundary.md) (complete)
+- [`059-implement-demo-runtime-backend-capability-contract.md`](./059-implement-demo-runtime-backend-capability-contract.md)
 
 ## Next Task
 
-Execute the active ready card to choose the next bounded slice after the demo
-browser control model converged on panel-first navigation.
+Execute the active ready card to deepen the runner-owned active session
+contract for richer demo runtimes now that the demo browser is coherent enough
+to pause.
