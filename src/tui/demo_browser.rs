@@ -1572,7 +1572,7 @@ fn overview_detail_render(
 }
 
 fn history_detail_render(
-    detail: &DemoDetail,
+    _detail: &DemoDetail,
     history: Option<&DemoHistoryPayload>,
     selected_item: Option<DetailSelectableItem>,
     detail_focused: bool,
@@ -1580,18 +1580,7 @@ fn history_detail_render(
     let mut lines = Vec::new();
     let mut selected_line_index = None;
 
-    if !detail.tags.is_empty() {
-        lines.push(muted_line(format!("tags: {}", detail.tags.join(", "))));
-    }
-
-    lines.extend([
-        muted_line(format!(
-            "Retained attempts for `effigy demo history {}` inside the browser.",
-            detail.id
-        )),
-        Line::from(""),
-        section_heading("Actions"),
-    ]);
+    lines.push(section_heading("Actions"));
 
     {
         let (label, item) = ("Refresh history", DetailSelectableItem::HistoryRefresh);
@@ -1691,21 +1680,7 @@ fn terminal_detail_render(
     let mut lines = Vec::new();
     let mut selected_line_index = None;
 
-    if !detail.tags.is_empty() {
-        lines.push(muted_line(format!("tags: {}", detail.tags.join(", "))));
-    }
-    if !detail.covers.is_empty() {
-        lines.push(compact_kv_line("covers", &detail.covers.join(", ")));
-    }
-
-    lines.extend([
-        muted_line(format!(
-            "Active terminal session for `effigy demo inspect {}` inside the browser.",
-            detail.id
-        )),
-        Line::from(""),
-        section_heading("Actions"),
-    ]);
+    lines.push(section_heading("Actions"));
 
     {
         let (label, item) = ("Refresh terminal", DetailSelectableItem::TerminalRefresh);
@@ -1814,21 +1789,7 @@ fn artifacts_detail_render(
     let mut lines = Vec::new();
     let mut selected_line_index = None;
 
-    if !detail.tags.is_empty() {
-        lines.push(muted_line(format!("tags: {}", detail.tags.join(", "))));
-    }
-    if !detail.covers.is_empty() {
-        lines.push(compact_kv_line("covers", &detail.covers.join(", ")));
-    }
-
-    lines.extend([
-        muted_line(format!(
-            "Recorded artifacts for the selected demo `{}`.",
-            detail.id
-        )),
-        Line::from(""),
-        section_heading("Artifacts"),
-    ]);
+    lines.push(section_heading("Artifacts"));
 
     if detail.latest_attempt.artifacts.is_empty() {
         lines.push(muted_line("No recorded artifacts.".to_owned()));
@@ -2870,6 +2831,8 @@ mod tests {
     fn browser_terminal_view_renders_active_session_output() {
         let mut detail = detail_with_artifacts(&[]);
         detail.id = "browser-proof-report".to_owned();
+        detail.tags = vec!["self-hosted".to_owned()];
+        detail.covers = vec!["effigy.demo.browser".to_owned()];
         detail.active_terminal_session = super::DemoActiveTerminalSession {
             available: true,
             state: "running".to_owned(),
@@ -2934,6 +2897,9 @@ mod tests {
         assert!(rendered.contains("serve-live"));
         assert!(rendered.contains("stream: stderr"));
         assert!(rendered.contains("warn-live"));
+        assert!(!rendered.contains("tags:"));
+        assert!(!rendered.contains("covers:"));
+        assert!(!rendered.contains("Active terminal session for"));
     }
 
     #[test]
@@ -2997,7 +2963,8 @@ mod tests {
 
     #[test]
     fn browser_history_view_renders_selected_attempt_details() {
-        let detail = detail_with_artifacts(&[]);
+        let mut detail = detail_with_artifacts(&[]);
+        detail.tags = vec!["self-hosted".to_owned()];
         let history = DemoHistoryPayload {
             attempt_history: DemoHistoryAttemptHistoryPayload {
                 path: None,
@@ -3041,6 +3008,8 @@ mod tests {
         assert!(rendered.contains("stdout: .effigy/demo/logs/demo-123.stdout.log"));
         assert!(rendered.contains("stderr: .effigy/demo/logs/demo-123.stderr.log"));
         assert!(rendered.contains("artifacts: .effigy/demo/artifacts/report.html"));
+        assert!(!rendered.contains("tags:"));
+        assert!(!rendered.contains("Retained attempts for"));
     }
 
     #[test]
@@ -3102,7 +3071,9 @@ mod tests {
 
     #[test]
     fn browser_artifacts_tab_renders_artifact_entries() {
-        let detail = detail_with_artifacts(&["one", "two"]);
+        let mut detail = detail_with_artifacts(&["one", "two"]);
+        detail.tags = vec!["self-hosted".to_owned()];
+        detail.covers = vec!["effigy.demo.browser".to_owned()];
         let rendered =
             artifacts_detail_render(&detail, Some(DetailSelectableItem::Artifact(1)), true)
                 .lines
@@ -3114,6 +3085,9 @@ mod tests {
         assert!(rendered.contains("one"));
         assert!(rendered.contains("two"));
         assert!(rendered.contains("↑/↓ selects artifacts"));
+        assert!(!rendered.contains("tags:"));
+        assert!(!rendered.contains("covers:"));
+        assert!(!rendered.contains("Recorded artifacts for"));
     }
 
     #[test]
