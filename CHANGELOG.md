@@ -104,6 +104,9 @@ During v0.x, MINOR bumps may include breaking changes.
   session runs or reruns a demo, move `covers:` directly under `tags:`, and
   keep the result summary at the bottom of the detail pane so fresh-session
   overview layouts stay focused on metadata, actions, and artifacts first
+- Remove the redundant bracketed action summary from `effigy demo browser`
+  list rows now that run/history/artifact affordances are owned by the detail
+  pane instead of the left-hand list
 
 ### Fixed
 - Make stop-requested run-backed demos persist `stop-requested` state before
