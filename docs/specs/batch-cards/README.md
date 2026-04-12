@@ -65,9 +65,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`059-implement-demo-runtime-backend-capability-contract.md`](./059-implement-demo-runtime-backend-capability-contract.md) (superseded)
 - [`060-implement-demo-browser-terminal-emulator.md`](./060-implement-demo-browser-terminal-emulator.md) (complete)
 - [`061-decide-demo-post-browser-terminal-emulator-boundary.md`](./061-decide-demo-post-browser-terminal-emulator-boundary.md) (complete)
-- [`062-implement-demo-active-terminal-resize-contract.md`](./062-implement-demo-active-terminal-resize-contract.md)
+- [`062-implement-demo-active-terminal-resize-contract.md`](./062-implement-demo-active-terminal-resize-contract.md) (complete)
+- [`063-decide-demo-post-terminal-resize-contract-boundary.md`](./063-decide-demo-post-terminal-resize-contract-boundary.md)
 
 ## Next Task
 
-Execute the active ready card to add runner-owned terminal size and resize
-handoff for active demo sessions.
+Execute the active ready card to choose the next bounded slice after active
+demo terminal resize semantics landed.

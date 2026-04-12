@@ -76,6 +76,7 @@ struct DemoBrowserApp {
     detail_tab: DetailTab,
     detail: Option<DemoDetail>,
     history: Option<DemoHistoryPayload>,
+    last_reported_terminal_size: Option<(String, u16, u16)>,
     result_visible_demo_ids: HashSet<String>,
     footer_message: String,
     pending_action: Option<PendingAction>,
@@ -105,6 +106,7 @@ impl DemoBrowserApp {
             detail_tab: DetailTab::Overview,
             detail: None,
             history: None,
+            last_reported_terminal_size: None,
             result_visible_demo_ids: HashSet::new(),
             footer_message: "Loading demo registry...".to_owned(),
             pending_action: None,
@@ -125,15 +127,17 @@ impl DemoBrowserApp {
             if event::poll(Duration::from_millis(125))
                 .map_err(|error| RunnerError::Ui(error.to_string()))?
             {
-                if let Event::Key(key) =
-                    event::read().map_err(|error| RunnerError::Ui(error.to_string()))?
-                {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+                match event::read().map_err(|error| RunnerError::Ui(error.to_string()))? {
+                    Event::Key(key) => {
+                        if key.kind != KeyEventKind::Press {
+                            continue;
+                        }
+                        if self.handle_key(key)? {
+                            break;
+                        }
                     }
-                    if self.handle_key(key)? {
-                        break;
-                    }
+                    Event::Resize(cols, rows) => self.handle_resize_event(cols, rows)?,
+                    _ => {}
                 }
             } else if self.last_refresh.elapsed() >= Duration::from_millis(750) {
                 self.refresh_state()?;
@@ -181,6 +185,10 @@ impl DemoBrowserApp {
             let _ = self.set_detail_tab(DetailTab::Overview);
             false
         }
+    }
+
+    fn handle_resize_event(&mut self, cols: u16, rows: u16) -> Result<(), RunnerError> {
+        self.sync_active_terminal_resize_for_viewport(browser_terminal_viewport_size(cols, rows))
     }
 
     fn handle_down_key(&mut self) {
@@ -668,6 +676,9 @@ impl DemoBrowserApp {
             DetailTab::Terminal => "Viewing Terminal tab.".to_owned(),
             DetailTab::Artifacts => "Viewing Artifacts tab.".to_owned(),
         };
+        if matches!(self.detail_tab, DetailTab::Terminal) {
+            self.sync_active_terminal_resize_for_current_view()?;
+        }
         Ok(())
     }
 
@@ -1000,6 +1011,7 @@ impl DemoBrowserApp {
             self.terminal_scroll_offset = 0;
             self.terminal_input_mode = false;
             self.history = None;
+            self.last_reported_terminal_size = None;
         } else if matches!(self.detail_tab, DetailTab::History) && self.selected_demo_id.is_some() {
             self.history = Some(fetch_demo_history(
                 &self.repo_root,
@@ -1014,6 +1026,50 @@ impl DemoBrowserApp {
         self.sync_selected_detail_entry();
 
         self.last_refresh = Instant::now();
+        self.sync_active_terminal_resize_for_current_view()?;
+        Ok(())
+    }
+
+    fn sync_active_terminal_resize_for_current_view(&mut self) -> Result<(), RunnerError> {
+        let Ok((cols, rows)) = crossterm::terminal::size() else {
+            return Ok(());
+        };
+        self.sync_active_terminal_resize_for_viewport(browser_terminal_viewport_size(cols, rows))
+    }
+
+    fn sync_active_terminal_resize_for_viewport(
+        &mut self,
+        (cols, rows): (u16, u16),
+    ) -> Result<(), RunnerError> {
+        if !matches!(self.detail_tab, DetailTab::Terminal) {
+            return Ok(());
+        }
+        let Some(detail) = self.selected_detail() else {
+            return Ok(());
+        };
+        let session = &detail.active_terminal_session;
+        if !session.available || !session.resize.available {
+            return Ok(());
+        }
+        let next = (detail.id.clone(), cols, rows);
+        if self.last_reported_terminal_size.as_ref() == Some(&next) {
+            return Ok(());
+        }
+        let demo_id = detail.id.clone();
+        let _ = invoke_demo_json(
+            &self.repo_root,
+            DemoArgs {
+                subcommand: DemoSubcommand::Resize {
+                    demo_id: demo_id.clone(),
+                    cols,
+                    rows,
+                },
+                repo_override: Some(self.repo_root.clone()),
+                output_json: true,
+            },
+        )?;
+        self.last_reported_terminal_size = Some(next);
+        self.last_refresh = Instant::now() - Duration::from_secs(5);
         Ok(())
     }
 
@@ -2011,6 +2067,8 @@ fn build_terminal_view(
             session.recent_output.stdout_lines.clone(),
             session.recent_output.stderr_lines.clone(),
             TerminalViewSource::ActiveLogs,
+            session.terminal_size.cols,
+            session.terminal_size.rows,
         );
         return render_terminal_view_from_source(source, width, height, scroll_offset);
     }
@@ -2023,6 +2081,8 @@ fn build_terminal_view(
             Vec::new(),
             Vec::new(),
             TerminalViewSource::LatestAttemptLogs,
+            None,
+            None,
         );
         return render_terminal_view_from_source(source, width, height, scroll_offset);
     }
@@ -2041,6 +2101,8 @@ struct TerminalStreamSource {
     stdout_bytes: Vec<u8>,
     stderr_lines: Vec<String>,
     source: TerminalViewSource,
+    terminal_cols: Option<u16>,
+    terminal_rows: Option<u16>,
 }
 
 fn terminal_stream_source(
@@ -2050,6 +2112,8 @@ fn terminal_stream_source(
     fallback_stdout_lines: Vec<String>,
     fallback_stderr_lines: Vec<String>,
     source: TerminalViewSource,
+    terminal_cols: Option<u16>,
+    terminal_rows: Option<u16>,
 ) -> TerminalStreamSource {
     let stdout_bytes = stdout_log_path
         .map(|path| resolve_repo_relative_path(repo_root, path))
@@ -2080,6 +2144,8 @@ fn terminal_stream_source(
             stderr_lines
         },
         source: resolved_source,
+        terminal_cols,
+        terminal_rows,
     }
 }
 
@@ -2089,9 +2155,11 @@ fn render_terminal_view_from_source(
     height: usize,
     scroll_offset: usize,
 ) -> TerminalView {
+    let parser_rows = source.terminal_rows.unwrap_or(height as u16).max(1);
+    let parser_cols = source.terminal_cols.unwrap_or(width as u16).max(1);
     let mut parser = VtParser::new(
-        height as u16,
-        width as u16,
+        parser_rows,
+        parser_cols,
         DEMO_BROWSER_TERMINAL_PARSER_SCROLLBACK,
     );
     if !source.stdout_bytes.is_empty() {
@@ -2174,6 +2242,19 @@ fn terminal_status_lines(
             Span::raw(transport.to_owned()),
             Span::raw("   "),
             Span::styled(
+                " size: ",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(
+                session
+                    .terminal_size
+                    .rendered()
+                    .unwrap_or_else(|| "unknown".to_owned()),
+            ),
+            Span::raw("   "),
+            Span::styled(
                 " input: ",
                 Style::default()
                     .fg(Color::DarkGray)
@@ -2183,6 +2264,39 @@ fn terminal_status_lines(
         ]),
         Line::from(""),
     ]
+}
+
+fn browser_terminal_viewport_size(total_cols: u16, total_rows: u16) -> (u16, u16) {
+    let area = Rect::new(0, 0, total_cols, total_rows);
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Min(10),
+            Constraint::Length(4),
+        ])
+        .split(area);
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+        .split(layout[1]);
+    let inner = Block::default()
+        .borders(Borders::ALL)
+        .border_set(ratatui::symbols::border::ROUNDED)
+        .inner(body[1]);
+    let tabs = detail_tab_lines(DetailTab::Terminal, true, inner.width as usize);
+    let terminal_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(tabs.len() as u16),
+            Constraint::Length(2),
+            Constraint::Min(1),
+        ])
+        .split(inner);
+    (
+        terminal_layout[2].width.max(1),
+        terminal_layout[2].height.max(1),
+    )
 }
 
 fn browser_terminal_key_input(key: &KeyEvent) -> Option<String> {
@@ -2781,6 +2895,10 @@ struct DemoActiveTerminalSession {
     input_forwarding_reason: Option<String>,
     #[allow(dead_code)]
     nested_tui: bool,
+    terminal_size: DemoTerminalSize,
+    resize: DemoTerminalResize,
+    #[allow(dead_code)]
+    resize_handoff_path: Option<String>,
     #[allow(dead_code)]
     stdin_input_path: Option<String>,
     stdout_log_path: Option<String>,
@@ -2788,6 +2906,23 @@ struct DemoActiveTerminalSession {
     #[allow(dead_code)]
     output_available: bool,
     recent_output: DemoTerminalRecentOutput,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DemoTerminalSize {
+    cols: Option<u16>,
+    rows: Option<u16>,
+}
+
+impl DemoTerminalSize {
+    fn rendered(&self) -> Option<String> {
+        Some(format!("{}x{}", self.cols?, self.rows?))
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DemoTerminalResize {
+    available: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -2877,6 +3012,12 @@ mod tests {
                     "Input forwarding is not available for this active demo.".to_owned(),
                 ),
                 nested_tui: false,
+                terminal_size: super::DemoTerminalSize {
+                    cols: None,
+                    rows: None,
+                },
+                resize: super::DemoTerminalResize { available: false },
+                resize_handoff_path: None,
                 stdin_input_path: None,
                 stdout_log_path: None,
                 stderr_log_path: None,
@@ -3218,6 +3359,12 @@ mod tests {
                 "Input forwarding is not available for this active demo.".to_owned(),
             ),
             nested_tui: false,
+            terminal_size: super::DemoTerminalSize {
+                cols: Some(80),
+                rows: Some(24),
+            },
+            resize: super::DemoTerminalResize { available: false },
+            resize_handoff_path: None,
             stdin_input_path: None,
             stdout_log_path: Some(".effigy/demo/logs/demo-123.stdout.log".to_owned()),
             stderr_log_path: Some(".effigy/demo/logs/demo-123.stderr.log".to_owned()),
@@ -3332,6 +3479,12 @@ mod tests {
                 "Input forwarding is not available for this active demo.".to_owned(),
             ),
             nested_tui: false,
+            terminal_size: super::DemoTerminalSize {
+                cols: Some(120),
+                rows: Some(32),
+            },
+            resize: super::DemoTerminalResize { available: false },
+            resize_handoff_path: None,
             stdin_input_path: None,
             stdout_log_path: Some(".effigy/demo/logs/missing.stdout.log".to_owned()),
             stderr_log_path: None,

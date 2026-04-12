@@ -12,7 +12,7 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
     render_info_notices(
         renderer,
         &[
-            "Use `effigy demo browser` for the first interactive proof browser, `effigy demo list` for direct CLI discovery, `effigy demo inspect <DEMO_ID>` to inspect one record in detail, and `effigy demo run <DEMO_ID>` to record a new normalized attempt before `stop` or `rerun` when lifecycle control exists for that demo. In text mode, interactive and hybrid run-backed demos now attach directly to the live terminal session, and when the runtime supports it they use a PTY-backed transport so terminal-oriented demos can run honestly while still writing runner-owned logs and receipts. `demo inspect` also exposes the active terminal/session handoff for live demo attempts, including transport metadata, recent output snapshots, and explicit input-forwarding capability signaling, while `demo input <DEMO_ID> --text <TEXT>` remains the bounded forwarding surface when the active runtime exposes it. Inside the browser, `Tab` and `Shift+Tab` switch between the demo list and the detail pane, `←` and `→` switch the selected detail view between `Overview`, `History`, `Terminal`, and `Artifacts` when the detail pane is focused, `↑` and `↓` act inside the focused panel, and on the `Terminal` tab they scroll the embedded terminal screen. `Enter` opens the action sheet from the list, activates the selected detail-side action/history/artifact entry, or toggles terminal input capture on the `Terminal` tab when the active session supports it. `Esc` closes overlays, leaves terminal input capture, returns non-overview tabs to `Overview`, or quits from `Overview`, `/` edits search, and `f` opens the single filter sheet for owner/tag/mode/cover/status/gap/stale/grouping controls.",
+            "Use `effigy demo browser` for the first interactive proof browser, `effigy demo list` for direct CLI discovery, `effigy demo inspect <DEMO_ID>` to inspect one record in detail, and `effigy demo run <DEMO_ID>` to record a new normalized attempt before `stop` or `rerun` when lifecycle control exists for that demo. In text mode, interactive and hybrid run-backed demos now attach directly to the live terminal session, and when the runtime supports it they use a PTY-backed transport so terminal-oriented demos can run honestly while still writing runner-owned logs and receipts. `demo inspect` also exposes the active terminal/session handoff for live demo attempts, including transport metadata, recent output snapshots, terminal size metadata, and explicit input/resize capability signaling. `demo input <DEMO_ID> --text <TEXT>` remains the bounded forwarding surface for terminal text, and `demo resize <DEMO_ID> --cols <COLS> --rows <ROWS>` is the bounded geometry handoff when the active runtime exposes it. Inside the browser, `Tab` and `Shift+Tab` switch between the demo list and the detail pane, `←` and `→` switch the selected detail view between `Overview`, `History`, `Terminal`, and `Artifacts` when the detail pane is focused, `↑` and `↓` act inside the focused panel, and on the `Terminal` tab they scroll the embedded terminal screen. `Enter` opens the action sheet from the list, activates the selected detail-side action/history/artifact entry, or toggles terminal input capture on the `Terminal` tab when the active session supports it. `Esc` closes overlays, leaves terminal input capture, returns non-overview tabs to `Overview`, or quits from `Overview`, `/` edits search, and `f` opens the single filter sheet for owner/tag/mode/cover/status/gap/stale/grouping controls.",
         ],
     )?;
 
@@ -26,6 +26,7 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy demo run <DEMO_ID> [--repo <PATH>] [--json]",
             "effigy demo stop <DEMO_ID> [--repo <PATH>] [--json]",
             "effigy demo input <DEMO_ID> --text <TEXT> [--append-newline] [--repo <PATH>] [--json]",
+            "effigy demo resize <DEMO_ID> --cols <COLS> --rows <ROWS> [--repo <PATH>] [--json]",
             "effigy demo rerun <DEMO_ID> [--repo <PATH>] [--json]",
             "effigy --json demo list [--search <TEXT>] [--owner <NAME>] [--tag <TAG>] [--mode <MODE>] [--cover <AREA>] [--status <STATUS>] [--gap <GAP>] [--stale-only] [--group-by <FIELD>] [--repo <PATH>]",
             "effigy --json demo inspect <DEMO_ID> [--repo <PATH>]",
@@ -33,6 +34,7 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy --json demo run <DEMO_ID> [--repo <PATH>]",
             "effigy --json demo stop <DEMO_ID> [--repo <PATH>]",
             "effigy --json demo input <DEMO_ID> --text <TEXT> [--append-newline] [--repo <PATH>]",
+            "effigy --json demo resize <DEMO_ID> --cols <COLS> --rows <ROWS> [--repo <PATH>]",
             "effigy --json demo rerun <DEMO_ID> [--repo <PATH>]",
         ],
     )?;
@@ -94,6 +96,14 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
                 "Append one trailing newline when forwarding bounded terminal input",
             ),
             (
+                "--cols <COLS>",
+                "Set the active demo terminal session width in columns through `demo resize`",
+            ),
+            (
+                "--rows <ROWS>",
+                "Set the active demo terminal session height in rows through `demo resize`",
+            ),
+            (
                 "--json",
                 "Render machine-readable demo discovery, inspection, or run payloads",
             ),
@@ -119,6 +129,7 @@ pub(crate) fn render_demo_help<R: Renderer>(renderer: &mut R) -> UiResult<()> {
             "effigy demo run login-smoke",
             "effigy demo stop login-smoke",
             "effigy demo input lifecycle-window --text 'status'",
+            "effigy demo resize lifecycle-window --cols 120 --rows 32",
             "effigy demo rerun login-smoke",
             "effigy --json demo inspect login-smoke",
         ],

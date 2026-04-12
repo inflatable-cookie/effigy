@@ -86,6 +86,7 @@ where
         "run" => parse_demo_run(args),
         "stop" => parse_demo_stop(args),
         "input" => parse_demo_input(args),
+        "resize" => parse_demo_resize(args),
         "rerun" => parse_demo_rerun(args),
         other => Err(unknown_argument(other)),
     }
@@ -572,6 +573,69 @@ where
         repo_override,
         output_json,
     }))
+}
+
+fn parse_demo_resize<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut demo_id: Option<String> = None;
+    let mut cols: Option<u16> = None;
+    let mut rows: Option<u16> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--cols" => cols = Some(parse_terminal_dimension(&mut args, "--cols")?),
+            "--rows" => rows = Some(parse_terminal_dimension(&mut args, "--rows")?),
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Demo)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ if demo_id.is_none() => demo_id = Some(arg),
+            _ => return Err(unknown_argument(arg)),
+        }
+    }
+
+    let Some(demo_id) = demo_id else {
+        return Err(CliParseError::MissingFlagValue {
+            flag: "<DEMO_ID>".to_owned(),
+        });
+    };
+    let Some(cols) = cols else {
+        return Err(CliParseError::MissingFlagValue {
+            flag: "--cols".to_owned(),
+        });
+    };
+    let Some(rows) = rows else {
+        return Err(CliParseError::MissingFlagValue {
+            flag: "--rows".to_owned(),
+        });
+    };
+
+    Ok(Command::Demo(DemoArgs {
+        subcommand: DemoSubcommand::Resize {
+            demo_id,
+            cols,
+            rows,
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_terminal_dimension<I>(args: &mut I, flag: &str) -> Result<u16, CliParseError>
+where
+    I: Iterator<Item = String>,
+{
+    let parsed = parse_positive_integer(args, flag)?;
+    u16::try_from(parsed).map_err(|_| CliParseError::InvalidFlagValue {
+        flag: flag.to_owned(),
+        value: parsed.to_string(),
+        expected: "a positive integer between 1 and 65535".to_owned(),
+    })
 }
 
 fn parse_bootstrap<I>(args: I) -> Result<Command, CliParseError>

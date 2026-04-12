@@ -69,6 +69,8 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to add runner-owned terminal size
-and resize handoff, so terminal-aware demos can react honestly without
-reopening browser churn, nested TUI embedding, or generic runtime drift.
+Execute the active `g02.003` ready card next to decide the post-terminal-
+resize boundary, so the lane can choose whether the next terminal follow-up
+belongs in deeper runner-owned fidelity, one more narrow browser consumer
+slice, or a pause from browser churn without reopening nested TUI embedding or
+generic runtime drift.

@@ -2334,6 +2334,43 @@ Out of scope for the next implementation slice:
 - embedding the concurrent TUI inside `effigy demo browser`
 - desktop-client work
 
+Batch `03.55` result:
+
+- added `effigy demo resize <DEMO_ID> --cols <COLS> --rows <ROWS>` as the
+  runner-owned terminal geometry update surface
+- extended the active demo terminal/session contract with terminal size
+  metadata, resize posture, resize command metadata, and resize handoff paths
+- wired detached/browser-consumed demo sessions through a runner-owned resize
+  handoff and had the browser terminal tab report viewport changes through it
+  when available
+
+Why this implementation moved the lane:
+
+- terminal size is now first-class runner state instead of being implied by a
+  browser pane or stale initial defaults
+- browser-consumed terminal surfaces now hand geometry changes back through the
+  runner contract instead of inventing browser-local session semantics
+- the next honest question is boundary shape again: whether terminal follow-up
+  now belongs in deeper runner fidelity, one more browser consumer slice, or a
+  pause from browser churn
+
+### 10.53 Demo Post-Terminal-Resize Boundary
+
+Batch `03.56` target:
+
+Decide the next bounded slice after active demo terminal resize semantics land,
+keeping the lane demo-scoped and explicitly bounded away from nested TUI
+embedding and generic runtime-manager work.
+
+Decision focus:
+
+- whether the next value belongs in deeper runner-owned terminal fidelity for
+  detached/browser-consumed demos
+- whether one more narrow browser terminal follow-up is justified now that
+  resize semantics are real
+- whether browser terminal work is coherent enough to pause again while the
+  runner contract deepens
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -2403,6 +2440,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to add runner-owned terminal size and
-resize handoff for active demo sessions while nested TUI embedding and wider
-runtime drift stay explicitly bounded.
+Use the active `g02.003` strict lane to decide the next bounded slice after
+active demo terminal resize semantics landed while nested TUI embedding and
+wider runtime drift stay explicitly bounded.

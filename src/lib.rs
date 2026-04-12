@@ -298,6 +298,15 @@ pub enum DemoSubcommand {
         /// Whether to append one trailing newline before forwarding.
         append_newline: bool,
     },
+    /// Update the active demo terminal session geometry in character cells.
+    Resize {
+        /// Stable demo id carried by the `[demos.<id>]` map key.
+        demo_id: String,
+        /// Requested terminal width in columns.
+        cols: u16,
+        /// Requested terminal height in rows.
+        rows: u16,
+    },
     /// Start a fresh demo attempt from the current manifest definition.
     Rerun {
         /// Stable demo id carried by the `[demos.<id>]` map key.
