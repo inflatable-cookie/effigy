@@ -2250,43 +2250,45 @@ Replace the browser terminal log view with embedded terminal emulation for the
 selected demo, including input forwarding where the active runner session
 allows it, without launching a nested TUI.
 
-In scope for the next implementation slice:
+Batch `03.53` result:
 
-- render the selected demo's active terminal output through embedded terminal
-  emulation instead of plain log lines
-- forward user input from the browser terminal tab when the runner-owned input
-  contract reports it as available
-- reuse the existing terminal emulation stack from the concurrent TUI where it
-  fits, without importing the concurrent TUI app model
-- keep terminal behavior demo-scoped and tied to the selected demo session
-- preserve fallback handling for demos with no active session
-- update help/tests/docs for the new terminal behavior
-
-Out of scope for the next implementation slice:
-
-- launching or embedding the concurrent TUI inside `effigy demo browser`
-- generic multi-process tab UI
-- another browser layout/control redesign
-- desktop-client work
-
-Batch `03.41` result:
-
-- the runner now exposes a bounded `effigy demo input <DEMO_ID> --text <TEXT>
-  [--append-newline]` command surface for one demo-scoped active terminal
-  session
-- `active_terminal_session` now includes explicit `input_forwarding` contract
-  metadata so later clients can consume one settled invocation shape
-- the runtime remains honest today: forwarding still reports unsupported unless
-  the active demo runtime actually exposes it
+- the browser `Terminal` tab now renders a demo-scoped terminal screen instead
+  of a plain text/log page
+- `↑` and `↓` in the focused terminal tab now scroll terminal output, while
+  `Enter` toggles browser-side input capture when the active session reports
+  forwarding support
+- `demo input` now performs real runner-owned forwarding by appending to a
+  per-session handoff file for detached run-backed demos instead of only
+  advertising the contract
+- existing demos with only recorded output still render through the embedded
+  terminal surface via latest-attempt fallback
+- the no-nested-TUI rule remains intact; the browser consumes the runner-owned
+  session contract instead of launching another TUI
 
 Why this batch was the right implementation slice:
 
-- it settles the missing command and contract shape before browser interaction
-  work starts
-- it keeps terminal input demo-scoped instead of widening into generic process
-  management
-- it lets later browser work consume one runner-owned forwarding surface rather
-  than inventing client-side transport semantics
+- it turns the terminal tab into the honest surface the browser was missing
+- it makes browser-side input real without redefining the human-attached CLI
+  path as a fake text prompt flow
+- it keeps terminal semantics demo-scoped and contract-driven instead of
+  importing the concurrent TUI app model wholesale
+
+### 10.51 Demo Post-Browser-Terminal-Emulator Boundary
+
+Batch `03.54` target:
+
+Choose the next bounded slice after embedded browser terminal emulation lands
+without reopening browser churn, nested TUI embedding, or generic runtime
+manager drift.
+
+Decision focus:
+
+- whether the next substantial value belongs in deeper runner-owned terminal
+  fidelity such as resize or richer live transport semantics
+- whether one more narrow browser follow-up is justified now that terminal
+  emulation is real
+- whether browser work is coherent enough to pause again while the runner
+  contract deepens
 
 ### 10.39 Demo Browser Terminal Input Affordance
 
@@ -2357,7 +2359,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to replace the browser terminal log view
-with embedded terminal emulation and input on top of the existing runner-owned
-demo session contract, while nested TUI embedding and wider runtime expansion
-stay explicitly bounded.
+Use the active `g02.003` strict lane to decide the next bounded slice after
+embedded browser terminal emulation landed, keeping nested TUI embedding and
+wider runtime drift explicitly bounded.

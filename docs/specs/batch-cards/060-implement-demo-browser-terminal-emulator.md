@@ -1,6 +1,6 @@
 # 060 Implement Demo Browser Terminal Emulator
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -54,7 +54,18 @@ allows it, without launching a nested TUI.
 - the work drifts into generic process-manager behavior instead of demo-scoped
   terminal interaction
 
+## Outcome
+
+- shipped embedded terminal emulation inside the demo-browser `Terminal` tab
+- added browser-side terminal input capture on top of the runner-owned
+  `demo input` surface
+- replaced the contract-only `demo input` implementation with a real
+  runner-owned active-session input handoff for detached run-backed demos
+- preserved fallback handling for demos with no active session and kept the
+  no-nested-TUI rule intact
+
 ## Next Task
 
-Implement this batch, then leave one explicit boundary card for what follows
-after embedded browser terminal emulation lands.
+Execute [`061-decide-demo-post-browser-terminal-emulator-boundary.md`](./061-decide-demo-post-browser-terminal-emulator-boundary.md)
+to choose the next bounded slice after embedded browser terminal emulation
+lands.

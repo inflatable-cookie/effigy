@@ -1113,11 +1113,15 @@ run = "sh -lc 'printf boot-line\\n; printf boot-err\\n >&2; while true; do print
     );
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["supports_input_forwarding"],
-        false
+        true
     );
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["input_forwarding"]["available"],
-        false
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["stdin_input_path"],
+        ".effigy/demo/active/waiter.stdin.log"
     );
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["input_forwarding"]["command_template"],
@@ -1300,7 +1304,7 @@ fn cli_demo_input_json_rejects_when_no_active_terminal_session_exists() {
 }
 
 #[test]
-fn cli_demo_input_json_rejects_when_runtime_does_not_expose_forwarding() {
+fn cli_demo_input_json_forwards_to_running_detached_demo_session() {
     let root = temp_workspace("demo-input-unsupported-json");
     fs::write(
         root.join("effigy.toml"),
@@ -1308,7 +1312,7 @@ fn cli_demo_input_json_rejects_when_runtime_does_not_expose_forwarding() {
 [demos.waiter]
 title = "Waiter"
 summary = "Keeps a demo process alive until stopped."
-proof = "Verify active demo input fails honestly when runtime forwarding is unavailable."
+proof = "Verify active demo input reaches the detached runner-owned terminal session."
 owner = "demo"
 mode = "interactive"
 status = "ready"
@@ -1333,22 +1337,22 @@ run = "sh -lc 'printf boot-line; while true; do sleep 1; done'"
             "--append-newline",
         ],
     );
-    assert!(
-        !output.status.success(),
-        "demo input unexpectedly passed: {output:?}"
-    );
+    assert!(output.status.success(), "demo input failed: {output:?}");
     let parsed = parse_stdout_json(&output);
-    assert_eq!(parsed["error"]["details"]["schema"], "effigy.demo.input.v1");
-    assert_eq!(parsed["error"]["details"]["demo_id"], "waiter");
-    assert_eq!(parsed["error"]["details"]["input"]["forwarded_bytes"], 6);
+    assert_eq!(parsed["result"]["schema"], "effigy.demo.input.v1");
+    assert_eq!(parsed["result"]["demo_id"], "waiter");
+    assert_eq!(parsed["result"]["input"]["forwarded_bytes"], 6);
     assert_eq!(
-        parsed["error"]["details"]["active_terminal_session"]["available"],
+        parsed["result"]["active_terminal_session"]["available"],
         true
     );
     assert_eq!(
-        parsed["error"]["details"]["active_terminal_session"]["input_forwarding"]["available"],
-        false
+        parsed["result"]["active_terminal_session"]["input_forwarding"]["available"],
+        true
     );
+    let handoff = fs::read_to_string(root.join(".effigy/demo/active/waiter.stdin.log"))
+        .expect("read terminal handoff");
+    assert_eq!(handoff, "hello\n");
 
     let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
     assert!(stop.status.success(), "demo stop failed: {stop:?}");

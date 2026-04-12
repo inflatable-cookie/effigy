@@ -86,6 +86,10 @@ During v0.x, MINOR bumps may include breaking changes.
   bounded active-terminal input-forwarding contract shape, so later browser
   terminal work can target one demo-scoped forwarding surface without
   inventing client-side transport semantics
+- Add embedded terminal emulation to `effigy demo browser`, plus browser-side
+  terminal input capture and a real runner-owned input handoff for active
+  run-backed demo sessions, so the terminal tab can act like a live terminal
+  surface instead of a plain log page without launching nested TUIs
 
 ### Changed
 - Trim `effigy demo browser` history, terminal, and artifacts tabs down to
@@ -142,6 +146,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Make `Esc` in `effigy demo browser` return from nested detail-pane history
   back to the demo overview before quitting, so `Esc` only exits the browser
   from the root overview surface
+- Replace the `effigy demo browser` terminal tab's text/log summary with a
+  demo-scoped terminal screen, letting `↑` and `↓` scroll terminal output,
+  `Enter` toggle terminal input capture when the active session supports it,
+  and `Esc` leave terminal input mode before it navigates the browser
 
 ### Fixed
 - Make stop-requested run-backed demos persist `stop-requested` state before
