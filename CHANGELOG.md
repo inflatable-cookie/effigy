@@ -88,6 +88,9 @@ During v0.x, MINOR bumps may include breaking changes.
   inventing client-side transport semantics
 
 ### Changed
+- Tighten `effigy demo browser` right-panel chrome so the selected demo title
+  owns the panel frame, the tab strip drops the redundant `tabs:` label, and
+  in-body duplicate tab titles are removed
 - Swap `effigy demo browser` to a panel-first control model so `Tab` and
   `Shift+Tab` switch between the demo list and detail pane while `←` and `→`
   switch the selected detail view and `↑` and `↓` stay inside the focused
