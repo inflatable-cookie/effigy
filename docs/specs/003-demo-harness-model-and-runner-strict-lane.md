@@ -69,7 +69,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide whether any later demo
-history density should remain query-first or can safely move into a client,
-then keep browser density, runtime expansion, and desktop-client questions
-separate.
+Execute the active `g02.003` ready card next to add a bounded browser history
+handoff on top of the settled one-demo query contract, then keep broader
+browser density, runtime expansion, and desktop-client questions separate.
