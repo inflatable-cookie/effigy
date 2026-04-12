@@ -1071,9 +1071,13 @@ impl DemoBrowserApp {
                 }
             })
             .unwrap_or(0);
+        let panel_title = self
+            .selected_detail()
+            .map(|detail| format!(" {} ", detail.title))
+            .unwrap_or_else(|| " Demo ".to_owned());
         let detail = Paragraph::new(render.lines)
             .block(effigy_panel_block(
-                Some(" Detail "),
+                Some(panel_title.as_str()),
                 false,
                 if matches!(self.focus, BrowserFocus::Detail) {
                     EFFIGY_ACCENT
@@ -1522,7 +1526,7 @@ fn overview_detail_render(
     detail_focused: bool,
     show_result: bool,
 ) -> DetailRender {
-    let mut lines = vec![title_line(&detail.title)];
+    let mut lines = Vec::new();
     let mut selected_line_index = None;
 
     if !detail.tags.is_empty() {
@@ -1573,7 +1577,7 @@ fn history_detail_render(
     selected_item: Option<DetailSelectableItem>,
     detail_focused: bool,
 ) -> DetailRender {
-    let mut lines = vec![title_line(&detail.title)];
+    let mut lines = Vec::new();
     let mut selected_line_index = None;
 
     if !detail.tags.is_empty() {
@@ -1581,8 +1585,6 @@ fn history_detail_render(
     }
 
     lines.extend([
-        Line::from(""),
-        section_heading("History View"),
         muted_line(format!(
             "Retained attempts for `effigy demo history {}` inside the browser.",
             detail.id
@@ -1686,7 +1688,7 @@ fn terminal_detail_render(
     selected_item: Option<DetailSelectableItem>,
     detail_focused: bool,
 ) -> DetailRender {
-    let mut lines = vec![title_line(&detail.title)];
+    let mut lines = Vec::new();
     let mut selected_line_index = None;
 
     if !detail.tags.is_empty() {
@@ -1697,8 +1699,6 @@ fn terminal_detail_render(
     }
 
     lines.extend([
-        Line::from(""),
-        section_heading("Terminal View"),
         muted_line(format!(
             "Active terminal session for `effigy demo inspect {}` inside the browser.",
             detail.id
@@ -1811,7 +1811,7 @@ fn artifacts_detail_render(
     selected_item: Option<DetailSelectableItem>,
     detail_focused: bool,
 ) -> DetailRender {
-    let mut lines = vec![title_line(&detail.title)];
+    let mut lines = Vec::new();
     let mut selected_line_index = None;
 
     if !detail.tags.is_empty() {
@@ -1822,8 +1822,6 @@ fn artifacts_detail_render(
     }
 
     lines.extend([
-        Line::from(""),
-        section_heading("Artifacts View"),
         muted_line(format!(
             "Recorded artifacts for the selected demo `{}`.",
             detail.id
@@ -2003,12 +2001,7 @@ fn action_menu_items_for_detail(detail: &DemoDetail) -> Vec<ActionMenuItem> {
 }
 
 fn detail_tab_lines(current_tab: DetailTab, detail_focused: bool) -> Vec<Line<'static>> {
-    let mut spans = vec![Span::styled(
-        "tabs: ",
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD),
-    )];
+    let mut spans = Vec::new();
     for (index, tab) in DetailTab::ALL.iter().enumerate() {
         if index > 0 {
             spans.push(Span::raw("  "));
@@ -2034,15 +2027,6 @@ fn detail_tab_lines(current_tab: DetailTab, detail_focused: bool) -> Vec<Line<'s
         }),
         Line::from(""),
     ]
-}
-
-fn title_line(value: &str) -> Line<'static> {
-    Line::from(vec![Span::styled(
-        value.to_owned(),
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD),
-    )])
 }
 
 fn muted_line(value: String) -> Line<'static> {
@@ -2780,13 +2764,13 @@ mod tests {
         .collect::<Vec<_>>()
         .join("\n");
 
-        assert!(rendered.contains("Browser Proof Report"));
         assert!(rendered.contains("Summary"));
         assert!(rendered.contains("Generate a human-checkable proof report."));
         assert!(rendered.contains("tags: self-hosted, proof"));
         assert!(rendered.contains("Actions"));
         assert!(rendered.contains("Rerun demo"));
         assert!(rendered.contains("covers: effigy.demo.browser"));
+        assert!(!rendered.contains("Browser Proof Report"));
         assert!(
             rendered.find("tags: self-hosted, proof")
                 < rendered.find("covers: effigy.demo.browser")
@@ -2832,6 +2816,7 @@ mod tests {
         assert!(rendered.contains("History"));
         assert!(rendered.contains("Terminal"));
         assert!(rendered.contains("Artifacts"));
+        assert!(!rendered.contains("tabs:"));
         assert!(rendered.contains("←/→ switches demo views"));
     }
 
@@ -2935,7 +2920,6 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&repo_root);
 
-        assert!(rendered.contains("Terminal View"));
         assert!(rendered.contains("Refresh terminal"));
         assert!(rendered.contains("state: running"));
         assert!(rendered.contains("attempt: demo-123"));
@@ -2968,7 +2952,6 @@ mod tests {
         .collect::<Vec<_>>()
         .join("\n");
 
-        assert!(rendered.contains("Terminal View"));
         assert!(rendered.contains("No active terminal session is available for this demo."));
         assert!(!rendered.contains("Recent Output"));
     }
@@ -3051,7 +3034,6 @@ mod tests {
         .collect::<Vec<_>>()
         .join("\n");
 
-        assert!(rendered.contains("History View"));
         assert!(rendered.contains("Refresh history"));
         assert!(rendered.contains("#01"));
         assert!(rendered.contains("Proof artifact was missing."));
@@ -3129,10 +3111,42 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-        assert!(rendered.contains("Artifacts View"));
         assert!(rendered.contains("one"));
         assert!(rendered.contains("two"));
         assert!(rendered.contains("↑/↓ selects artifacts"));
+    }
+
+    #[test]
+    fn browser_tab_renders_do_not_repeat_title_chrome() {
+        let mut detail = detail_with_artifacts(&["one"]);
+        detail.title = "Browser Proof Report".to_owned();
+
+        let history_rendered = history_detail_render(&detail, None, None, true)
+            .lines
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!history_rendered.contains("Browser Proof Report"));
+        assert!(!history_rendered.contains("History View"));
+
+        let terminal_rendered = terminal_detail_render(Path::new("/tmp/demo-repo"), &detail, None, true)
+            .lines
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!terminal_rendered.contains("Browser Proof Report"));
+        assert!(!terminal_rendered.contains("Terminal View"));
+
+        let artifacts_rendered = artifacts_detail_render(&detail, None, true)
+            .lines
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!artifacts_rendered.contains("Browser Proof Report"));
+        assert!(!artifacts_rendered.contains("Artifacts View"));
     }
 
     #[test]
