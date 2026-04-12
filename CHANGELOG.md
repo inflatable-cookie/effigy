@@ -76,6 +76,9 @@ During v0.x, MINOR bumps may include breaking changes.
   `demo run`, and `demo stop`, including transport metadata, bounded recent
   output snapshots, and explicit no-nested-TUI signaling for later browser
   terminal views
+- Add a bounded live terminal view inside `effigy demo browser`, so operators
+  can inspect one selected demo's active terminal/session metadata and recent
+  output in-place without launching nested TUIs
 
 ### Changed
 - Rework `effigy demo browser` around the same magenta-framed visual language
