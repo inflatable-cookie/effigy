@@ -67,7 +67,7 @@ struct DemoBrowserApp {
     selected_detail_entry_index: usize,
     selected_artifact_index: usize,
     selected_history_attempt_ordinal: Option<usize>,
-    detail_mode: DetailMode,
+    detail_tab: DetailTab,
     detail: Option<DemoDetail>,
     history: Option<DemoHistoryPayload>,
     result_visible_demo_ids: HashSet<String>,
@@ -94,7 +94,7 @@ impl DemoBrowserApp {
             selected_detail_entry_index: 0,
             selected_artifact_index: 0,
             selected_history_attempt_ordinal: None,
-            detail_mode: DetailMode::Overview,
+            detail_tab: DetailTab::Overview,
             detail: None,
             history: None,
             result_visible_demo_ids: HashSet::new(),
@@ -145,6 +145,8 @@ impl DemoBrowserApp {
             KeyCode::Up => self.handle_up_key(),
             KeyCode::Right => self.focus_detail(),
             KeyCode::Left => self.focus_list(),
+            KeyCode::Tab => self.select_next_detail_tab()?,
+            KeyCode::BackTab => self.select_previous_detail_tab()?,
             KeyCode::Char('/') => self.open_prompt(QueryPromptKind::Search),
             KeyCode::Char('f') => self.open_filter_overlay(),
             KeyCode::Enter => self.handle_enter_key()?,
@@ -158,16 +160,11 @@ impl DemoBrowserApp {
     }
 
     fn handle_escape_key(&mut self) -> bool {
-        match self.detail_mode {
-            DetailMode::Overview => true,
-            DetailMode::History => {
-                self.exit_history_mode();
-                false
-            }
-            DetailMode::Terminal => {
-                self.exit_terminal_mode();
-                false
-            }
+        if matches!(self.detail_tab, DetailTab::Overview) {
+            true
+        } else {
+            let _ = self.set_detail_tab(DetailTab::Overview);
+            false
         }
     }
 
@@ -344,11 +341,6 @@ impl DemoBrowserApp {
         match item {
             ActionMenuItem::Run | ActionMenuItem::Rerun => self.dispatch_run_or_rerun(),
             ActionMenuItem::Stop => self.dispatch_stop(),
-            ActionMenuItem::OpenHistory => self.enter_history_mode(),
-            ActionMenuItem::OpenTerminal => {
-                self.enter_terminal_mode();
-                Ok(())
-            }
             ActionMenuItem::Refresh => {
                 self.refresh_state()?;
                 self.footer_message = "Refreshed demo browser state.".to_owned();
@@ -476,18 +468,21 @@ impl DemoBrowserApp {
     fn detail_render(&self) -> DetailRender {
         let detail_focused = matches!(self.focus, BrowserFocus::Detail);
         let selected_item = self.selected_detail_item();
-        match (&self.detail, self.detail_mode) {
-            (Some(detail), DetailMode::Overview) => overview_detail_render(
+        match (&self.detail, self.detail_tab) {
+            (Some(detail), DetailTab::Overview) => overview_detail_render(
                 detail,
                 selected_item,
                 detail_focused,
                 self.result_visible_demo_ids.contains(&detail.id),
             ),
-            (Some(detail), DetailMode::History) => {
+            (Some(detail), DetailTab::History) => {
                 history_detail_render(detail, self.history.as_ref(), selected_item, detail_focused)
             }
-            (Some(detail), DetailMode::Terminal) => {
+            (Some(detail), DetailTab::Terminal) => {
                 terminal_detail_render(&self.repo_root, detail, selected_item, detail_focused)
+            }
+            (Some(detail), DetailTab::Artifacts) => {
+                artifacts_detail_render(detail, selected_item, detail_focused)
             }
             (None, _) => DetailRender {
                 lines: vec![
@@ -505,28 +500,14 @@ impl DemoBrowserApp {
             return Vec::new();
         };
 
-        match self.detail_mode {
-            DetailMode::Overview => {
-                let mut items = self
-                    .action_menu_items()
-                    .into_iter()
-                    .map(DetailSelectableItem::Action)
-                    .collect::<Vec<_>>();
-                items.extend(
-                    detail
-                        .latest_attempt
-                        .artifacts
-                        .iter()
-                        .enumerate()
-                        .map(|(index, _)| DetailSelectableItem::Artifact(index)),
-                );
-                items
-            }
-            DetailMode::History => {
-                let mut items = vec![
-                    DetailSelectableItem::HistoryBack,
-                    DetailSelectableItem::HistoryRefresh,
-                ];
+        match self.detail_tab {
+            DetailTab::Overview => self
+                .action_menu_items()
+                .into_iter()
+                .map(DetailSelectableItem::Action)
+                .collect::<Vec<_>>(),
+            DetailTab::History => {
+                let mut items = vec![DetailSelectableItem::HistoryRefresh];
                 if let Some(history) = &self.history {
                     items.extend(
                         history
@@ -538,10 +519,14 @@ impl DemoBrowserApp {
                 }
                 items
             }
-            DetailMode::Terminal => vec![
-                DetailSelectableItem::TerminalBack,
-                DetailSelectableItem::TerminalRefresh,
-            ],
+            DetailTab::Terminal => vec![DetailSelectableItem::TerminalRefresh],
+            DetailTab::Artifacts => detail
+                .latest_attempt
+                .artifacts
+                .iter()
+                .enumerate()
+                .map(|(index, _)| DetailSelectableItem::Artifact(index))
+                .collect::<Vec<_>>(),
         }
     }
 
@@ -562,7 +547,42 @@ impl DemoBrowserApp {
     fn focus_detail(&mut self) {
         self.focus = BrowserFocus::Detail;
         self.footer_message =
-            "Detail panel focused. ↑/↓ selects visible actions and entries. Enter activates the selected option.".to_owned();
+            "Detail panel focused. Tab switches tabs. ↑/↓ selects visible entries. Enter activates the selected option.".to_owned();
+    }
+
+    fn select_next_detail_tab(&mut self) -> Result<(), RunnerError> {
+        if !matches!(self.focus, BrowserFocus::Detail) || self.selected_detail().is_none() {
+            return Ok(());
+        }
+        self.set_detail_tab(self.detail_tab.next())
+    }
+
+    fn select_previous_detail_tab(&mut self) -> Result<(), RunnerError> {
+        if !matches!(self.focus, BrowserFocus::Detail) || self.selected_detail().is_none() {
+            return Ok(());
+        }
+        self.set_detail_tab(self.detail_tab.previous())
+    }
+
+    fn set_detail_tab(&mut self, next_tab: DetailTab) -> Result<(), RunnerError> {
+        self.detail_tab = next_tab;
+        self.selected_detail_entry_index = 0;
+        if matches!(self.detail_tab, DetailTab::History) {
+            if let Some(demo_id) = self.selected_demo_id().map(str::to_owned) {
+                self.history = Some(fetch_demo_history(&self.repo_root, &demo_id)?);
+                self.selected_history_attempt_ordinal = self
+                    .selected_history_attempt()
+                    .map(|attempt| attempt.ordinal);
+            }
+        }
+        self.sync_selected_detail_entry();
+        self.footer_message = match self.detail_tab {
+            DetailTab::Overview => "Viewing Overview tab.".to_owned(),
+            DetailTab::History => "Viewing History tab.".to_owned(),
+            DetailTab::Terminal => "Viewing Terminal tab.".to_owned(),
+            DetailTab::Artifacts => "Viewing Artifacts tab.".to_owned(),
+        };
+        Ok(())
     }
 
     fn select_next_detail_entry(&mut self) {
@@ -687,58 +707,6 @@ impl DemoBrowserApp {
         Ok(())
     }
 
-    fn enter_history_mode(&mut self) -> Result<(), RunnerError> {
-        let Some(detail) = self.selected_detail() else {
-            self.footer_message = "No demo is currently selected.".to_owned();
-            return Ok(());
-        };
-        let demo_id = detail.id.clone();
-        let history = fetch_demo_history(&self.repo_root, &demo_id)?;
-        self.detail_mode = DetailMode::History;
-        self.history = Some(history);
-        self.selected_history_attempt_ordinal = self
-            .selected_history_attempt()
-            .map(|attempt| attempt.ordinal);
-        self.selected_detail_entry_index = 0;
-        if self.history_attempt_count() > 0 {
-            self.selected_detail_entry_index = 2;
-            self.sync_selected_detail_entry();
-        } else {
-            self.footer_message =
-                "Viewing retained history in the detail pane. No retained attempts were found."
-                    .to_owned();
-        }
-        Ok(())
-    }
-
-    fn exit_history_mode(&mut self) {
-        self.detail_mode = DetailMode::Overview;
-        self.history = None;
-        self.selected_history_attempt_ordinal = None;
-        self.selected_detail_entry_index = 0;
-        self.sync_selected_detail_entry();
-        self.footer_message = "Returned to demo overview in the detail pane.".to_owned();
-    }
-
-    fn enter_terminal_mode(&mut self) {
-        self.detail_mode = DetailMode::Terminal;
-        self.selected_detail_entry_index = 0;
-        self.sync_selected_detail_entry();
-    }
-
-    fn exit_terminal_mode(&mut self) {
-        self.detail_mode = DetailMode::Overview;
-        self.selected_detail_entry_index = 0;
-        self.sync_selected_detail_entry();
-        self.footer_message = "Returned to demo overview in the detail pane.".to_owned();
-    }
-
-    fn history_attempt_count(&self) -> usize {
-        self.history
-            .as_ref()
-            .map_or(0, |history| history.attempt_history.attempts.len())
-    }
-
     fn refresh_history_mode(&mut self) -> Result<(), RunnerError> {
         let Some(detail) = self.selected_detail() else {
             self.footer_message = "No demo is currently selected.".to_owned();
@@ -762,19 +730,11 @@ impl DemoBrowserApp {
                 self.selected_artifact_index = index;
                 self.dispatch_open_artifact()
             }
-            DetailSelectableItem::HistoryBack => {
-                self.exit_history_mode();
-                Ok(())
-            }
             DetailSelectableItem::HistoryRefresh => self.refresh_history_mode(),
             DetailSelectableItem::HistoryAttempt(ordinal) => {
                 self.selected_history_attempt_ordinal = Some(ordinal);
                 self.footer_message =
                     format!("Viewing retained attempt #{ordinal} in the detail pane.");
-                Ok(())
-            }
-            DetailSelectableItem::TerminalBack => {
-                self.exit_terminal_mode();
                 Ok(())
             }
             DetailSelectableItem::TerminalRefresh => {
@@ -802,9 +762,6 @@ impl DemoBrowserApp {
                     self.footer_message = format!("Selected artifact `{artifact}`.");
                 }
             }
-            DetailSelectableItem::HistoryBack => {
-                self.footer_message = "Selected history action `Back to overview`.".to_owned();
-            }
             DetailSelectableItem::HistoryRefresh => {
                 self.footer_message = "Selected history action `Refresh history`.".to_owned();
             }
@@ -812,9 +769,6 @@ impl DemoBrowserApp {
                 self.selected_history_attempt_ordinal = Some(ordinal);
                 self.footer_message =
                     format!("Selected retained attempt #{ordinal} in the detail pane.");
-            }
-            DetailSelectableItem::TerminalBack => {
-                self.footer_message = "Selected terminal action `Back to overview`.".to_owned();
             }
             DetailSelectableItem::TerminalRefresh => {
                 self.footer_message = "Selected terminal action `Refresh terminal`.".to_owned();
@@ -912,12 +866,11 @@ impl DemoBrowserApp {
             None => None,
         };
         if self.selected_demo_id != previous_selected_demo_id {
-            self.detail_mode = DetailMode::Overview;
+            self.detail_tab = DetailTab::Overview;
             self.selected_detail_entry_index = 0;
             self.selected_history_attempt_ordinal = None;
             self.history = None;
-        } else if matches!(self.detail_mode, DetailMode::History) && self.selected_demo_id.is_some()
-        {
+        } else if matches!(self.detail_tab, DetailTab::History) && self.selected_demo_id.is_some() {
             self.history = Some(fetch_demo_history(
                 &self.repo_root,
                 self.selected_demo_id
@@ -1068,7 +1021,16 @@ impl DemoBrowserApp {
     }
 
     fn render_detail(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let render = self.detail_render();
+        let mut render = self.detail_render();
+        if self.detail.is_some() {
+            let tab_lines =
+                detail_tab_lines(self.detail_tab, matches!(self.focus, BrowserFocus::Detail));
+            let tab_line_count = tab_lines.len();
+            render.lines.splice(0..0, tab_lines);
+            if let Some(selected_line_index) = &mut render.selected_line_index {
+                *selected_line_index += tab_line_count;
+            }
+        }
         let inner_height = area.height.saturating_sub(2) as usize;
         let scroll = render
             .selected_line_index
@@ -1101,6 +1063,8 @@ impl DemoBrowserApp {
             Span::raw("move  "),
             Span::styled(" ←→ ", key_style()),
             Span::raw("panel  "),
+            Span::styled(" Tab ", key_style()),
+            Span::raw("tabs  "),
             Span::styled(" Enter ", key_style()),
             Span::raw("act/open  "),
             Span::styled(" / ", key_style()),
@@ -1560,28 +1524,6 @@ fn overview_detail_render(
             detail_focused,
         ));
     }
-    lines.push(Line::from(""));
-    lines.push(section_heading("Artifacts"));
-    if detail.latest_attempt.artifacts.is_empty() {
-        lines.push(muted_line("No recorded artifacts.".to_owned()));
-    } else {
-        for (index, artifact) in detail.latest_attempt.artifacts.iter().enumerate() {
-            let current_item = DetailSelectableItem::Artifact(index);
-            if selected_item == Some(current_item) {
-                selected_line_index = Some(lines.len());
-            }
-            lines.push(selectable_detail_line(
-                artifact,
-                selected_item == Some(current_item),
-                detail_focused,
-            ));
-        }
-        lines.push(muted_line(if detail_focused {
-            "↑/↓ selects actions and artifacts  •  Enter activates selection".to_owned()
-        } else {
-            "→ focuses actions and artifacts".to_owned()
-        }));
-    }
     if show_result && detail.latest_attempt.recorded {
         lines.push(Line::from(""));
         lines.push(section_heading("Result"));
@@ -1620,10 +1562,8 @@ fn history_detail_render(
         section_heading("Actions"),
     ]);
 
-    for (label, item) in [
-        ("Back to overview", DetailSelectableItem::HistoryBack),
-        ("Refresh history", DetailSelectableItem::HistoryRefresh),
-    ] {
+    {
+        let (label, item) = ("Refresh history", DetailSelectableItem::HistoryRefresh);
         if selected_item == Some(item) {
             selected_line_index = Some(lines.len());
         }
@@ -1738,10 +1678,8 @@ fn terminal_detail_render(
         section_heading("Actions"),
     ]);
 
-    for (label, item) in [
-        ("Back to overview", DetailSelectableItem::TerminalBack),
-        ("Refresh terminal", DetailSelectableItem::TerminalRefresh),
-    ] {
+    {
+        let (label, item) = ("Refresh terminal", DetailSelectableItem::TerminalRefresh);
         if selected_item == Some(item) {
             selected_line_index = Some(lines.len());
         }
@@ -1831,6 +1769,59 @@ fn terminal_detail_render(
         for line in &terminal_output.stderr_lines {
             lines.push(Line::from(line.clone()));
         }
+    }
+
+    DetailRender {
+        lines,
+        selected_line_index,
+    }
+}
+
+fn artifacts_detail_render(
+    detail: &DemoDetail,
+    selected_item: Option<DetailSelectableItem>,
+    detail_focused: bool,
+) -> DetailRender {
+    let mut lines = vec![title_line(&detail.title)];
+    let mut selected_line_index = None;
+
+    if !detail.tags.is_empty() {
+        lines.push(muted_line(format!("tags: {}", detail.tags.join(", "))));
+    }
+    if !detail.covers.is_empty() {
+        lines.push(compact_kv_line("covers", &detail.covers.join(", ")));
+    }
+
+    lines.extend([
+        Line::from(""),
+        section_heading("Artifacts View"),
+        muted_line(format!(
+            "Recorded artifacts for the selected demo `{}`.",
+            detail.id
+        )),
+        Line::from(""),
+        section_heading("Artifacts"),
+    ]);
+
+    if detail.latest_attempt.artifacts.is_empty() {
+        lines.push(muted_line("No recorded artifacts.".to_owned()));
+    } else {
+        for (index, artifact) in detail.latest_attempt.artifacts.iter().enumerate() {
+            let current_item = DetailSelectableItem::Artifact(index);
+            if selected_item == Some(current_item) {
+                selected_line_index = Some(lines.len());
+            }
+            lines.push(selectable_detail_line(
+                artifact,
+                selected_item == Some(current_item),
+                detail_focused,
+            ));
+        }
+        lines.push(muted_line(if detail_focused {
+            "↑/↓ selects artifacts  •  Enter opens selection".to_owned()
+        } else {
+            "→ focuses artifacts".to_owned()
+        }));
     }
 
     DetailRender {
@@ -1978,10 +1969,42 @@ fn action_menu_items_for_detail(detail: &DemoDetail) -> Vec<ActionMenuItem> {
     if detail.actions.stop.available {
         items.push(ActionMenuItem::Stop);
     }
-    items.push(ActionMenuItem::OpenHistory);
-    items.push(ActionMenuItem::OpenTerminal);
     items.push(ActionMenuItem::Refresh);
     items
+}
+
+fn detail_tab_lines(current_tab: DetailTab, detail_focused: bool) -> Vec<Line<'static>> {
+    let mut spans = vec![Span::styled(
+        "tabs: ",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    )];
+    for (index, tab) in DetailTab::ALL.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("  "));
+        }
+        let style = if *tab == current_tab {
+            Style::default()
+                .fg(EFFIGY_ACCENT)
+                .add_modifier(Modifier::BOLD)
+        } else if detail_focused {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(EFFIGY_MUTED)
+        };
+        spans.push(Span::styled(tab.label().to_owned(), style));
+    }
+
+    vec![
+        Line::from(spans),
+        muted_line(if detail_focused {
+            "Tab / Shift+Tab switches demo views".to_owned()
+        } else {
+            "→ focuses detail, then Tab switches demo views".to_owned()
+        }),
+        Line::from(""),
+    ]
 }
 
 fn title_line(value: &str) -> Line<'static> {
@@ -2143,8 +2166,6 @@ enum ActionMenuItem {
     Run,
     Rerun,
     Stop,
-    OpenHistory,
-    OpenTerminal,
     Refresh,
 }
 
@@ -2154,28 +2175,59 @@ impl ActionMenuItem {
             Self::Run => "Run demo",
             Self::Rerun => "Rerun demo",
             Self::Stop => "Stop demo",
-            Self::OpenHistory => "View history",
-            Self::OpenTerminal => "View terminal",
             Self::Refresh => "Refresh state",
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DetailMode {
+enum DetailTab {
     Overview,
     History,
     Terminal,
+    Artifacts,
+}
+
+impl DetailTab {
+    const ALL: [Self; 4] = [
+        Self::Overview,
+        Self::History,
+        Self::Terminal,
+        Self::Artifacts,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::History => "History",
+            Self::Terminal => "Terminal",
+            Self::Artifacts => "Artifacts",
+        }
+    }
+
+    fn next(self) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|candidate| *candidate == self)
+            .expect("current tab exists");
+        Self::ALL[next_index(index, Self::ALL.len())]
+    }
+
+    fn previous(self) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|candidate| *candidate == self)
+            .expect("current tab exists");
+        Self::ALL[prev_index(index, Self::ALL.len())]
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DetailSelectableItem {
     Action(ActionMenuItem),
     Artifact(usize),
-    HistoryBack,
     HistoryRefresh,
     HistoryAttempt(usize),
-    TerminalBack,
     TerminalRefresh,
 }
 
@@ -2442,14 +2494,15 @@ mod tests {
     };
 
     use super::{
-        action_menu_items_for_detail, clamp_artifact_index, first_demo_id, history_detail_render,
-        next_gap_filter, next_group_by, next_mode_filter, next_status_filter,
-        overview_detail_render, query_summary, read_recent_log_lines, resolve_artifact_path,
-        resolve_repo_relative_path, row_contains_demo, selected_artifact, status_style,
-        terminal_detail_render, ActionMenuItem, BrowserRow, DemoBrowserApp, DemoDetail,
-        DemoHistoryAttempt, DemoHistoryAttemptHistoryPayload, DemoHistoryPayload,
-        DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery,
-        DemoListStatus, DemoSummary, DetailMode, DetailSelectableItem,
+        action_menu_items_for_detail, artifacts_detail_render, clamp_artifact_index,
+        detail_tab_lines, first_demo_id, history_detail_render, next_gap_filter, next_group_by,
+        next_mode_filter, next_status_filter, overview_detail_render, query_summary,
+        read_recent_log_lines, resolve_artifact_path, resolve_repo_relative_path,
+        row_contains_demo, selected_artifact, status_style, terminal_detail_render, ActionMenuItem,
+        BrowserRow, DemoBrowserApp, DemoDetail, DemoHistoryAttempt,
+        DemoHistoryAttemptHistoryPayload, DemoHistoryPayload, DemoLatestAttempt, DemoListGap,
+        DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSummary,
+        DetailSelectableItem, DetailTab,
     };
 
     fn summary(id: &str) -> DemoSummary {
@@ -2688,7 +2741,7 @@ mod tests {
 
         let rendered = overview_detail_render(
             &detail,
-            Some(DetailSelectableItem::Action(ActionMenuItem::OpenHistory)),
+            Some(DetailSelectableItem::Action(ActionMenuItem::Rerun)),
             true,
             false,
         )
@@ -2703,10 +2756,8 @@ mod tests {
         assert!(rendered.contains("Generate a human-checkable proof report."));
         assert!(rendered.contains("tags: self-hosted, proof"));
         assert!(rendered.contains("Actions"));
-        assert!(rendered.contains("View history"));
-        assert!(rendered.contains(".effigy/demo/artifacts/browser-proof-report/index.html"));
+        assert!(rendered.contains("Rerun demo"));
         assert!(rendered.contains("covers: effigy.demo.browser"));
-        assert!(rendered.contains("↑/↓ selects actions and artifacts"));
         assert!(
             rendered.find("tags: self-hosted, proof")
                 < rendered.find("covers: effigy.demo.browser")
@@ -2718,15 +2769,16 @@ mod tests {
         assert!(!rendered.contains("Latest Receipt"));
         assert!(!rendered.contains("actions:"));
         assert!(!rendered.contains("attempts:"));
+        assert!(!rendered.contains("Artifacts"));
     }
 
     #[test]
     fn browser_detail_lines_hide_pointer_when_inactive() {
-        let detail = detail_with_artifacts(&["one", "two"]);
+        let detail = detail_with_artifacts(&[]);
 
         let rendered = overview_detail_render(
             &detail,
-            Some(DetailSelectableItem::Artifact(0)),
+            Some(DetailSelectableItem::Action(ActionMenuItem::Rerun)),
             false,
             false,
         )
@@ -2736,18 +2788,22 @@ mod tests {
         .collect::<Vec<_>>()
         .join("\n");
 
-        assert!(rendered.contains("→ focuses actions and artifacts"));
-        assert!(!rendered.contains("› one"));
+        assert!(!rendered.contains("› Rerun demo"));
     }
 
     #[test]
-    fn browser_action_menu_exposes_integrated_history_label() {
-        assert_eq!(ActionMenuItem::OpenHistory.label(), "View history");
-    }
+    fn browser_tab_line_renders_all_demo_scoped_tabs() {
+        let rendered = detail_tab_lines(DetailTab::Terminal, true)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
 
-    #[test]
-    fn browser_action_menu_exposes_terminal_label() {
-        assert_eq!(ActionMenuItem::OpenTerminal.label(), "View terminal");
+        assert!(rendered.contains("Overview"));
+        assert!(rendered.contains("History"));
+        assert!(rendered.contains("Terminal"));
+        assert!(rendered.contains("Artifacts"));
+        assert!(rendered.contains("Tab / Shift+Tab switches demo views"));
     }
 
     #[test]
@@ -2757,7 +2813,7 @@ mod tests {
 
         let hidden = overview_detail_render(
             &detail,
-            Some(DetailSelectableItem::Action(ActionMenuItem::OpenHistory)),
+            Some(DetailSelectableItem::Action(ActionMenuItem::Rerun)),
             true,
             false,
         )
@@ -2770,7 +2826,7 @@ mod tests {
 
         let visible = overview_detail_render(
             &detail,
-            Some(DetailSelectableItem::Action(ActionMenuItem::OpenHistory)),
+            Some(DetailSelectableItem::Action(ActionMenuItem::Rerun)),
             true,
             true,
         )
@@ -2782,26 +2838,18 @@ mod tests {
         assert!(visible.contains("Result"));
         assert!(visible.contains("status: passed"));
         assert!(visible.contains("Latest attempt wrote a proof report."));
-        assert!(visible.find("Artifacts") < visible.find("Result"));
+        assert!(visible.find("Actions") < visible.find("Result"));
     }
 
     #[test]
-    fn browser_action_menu_keeps_artifact_opening_in_detail_navigation_only() {
+    fn browser_action_menu_keeps_tab_switching_out_of_action_menu() {
         let detail = detail_with_artifacts(&["one", "two"]);
         let items = action_menu_items_for_detail(&detail)
             .into_iter()
             .map(ActionMenuItem::label)
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            items,
-            vec![
-                "Rerun demo",
-                "View history",
-                "View terminal",
-                "Refresh state"
-            ]
-        );
+        assert_eq!(items, vec!["Rerun demo", "Refresh state"]);
     }
 
     #[test]
@@ -2859,7 +2907,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&repo_root);
 
         assert!(rendered.contains("Terminal View"));
-        assert!(rendered.contains("Back to overview"));
         assert!(rendered.contains("Refresh terminal"));
         assert!(rendered.contains("state: running"));
         assert!(rendered.contains("attempt: demo-123"));
@@ -2883,7 +2930,7 @@ mod tests {
         let rendered = terminal_detail_render(
             Path::new("/tmp/demo-repo"),
             &detail,
-            Some(DetailSelectableItem::TerminalBack),
+            Some(DetailSelectableItem::TerminalRefresh),
             true,
         )
         .lines
@@ -2923,7 +2970,7 @@ mod tests {
         let rendered = terminal_detail_render(
             Path::new("/tmp/demo-repo"),
             &detail,
-            Some(DetailSelectableItem::TerminalBack),
+            Some(DetailSelectableItem::TerminalRefresh),
             true,
         )
         .lines
@@ -2976,7 +3023,6 @@ mod tests {
         .join("\n");
 
         assert!(rendered.contains("History View"));
-        assert!(rendered.contains("Back to overview"));
         assert!(rendered.contains("Refresh history"));
         assert!(rendered.contains("#01"));
         assert!(rendered.contains("Proof artifact was missing."));
@@ -2987,11 +3033,11 @@ mod tests {
     }
 
     #[test]
-    fn browser_escape_returns_from_history_before_exiting() {
+    fn browser_escape_returns_to_overview_tab_before_exiting() {
         let mut app = DemoBrowserApp::new(PathBuf::from("/tmp/demo-repo"), None);
         app.detail = Some(detail_with_artifacts(&[]));
         app.selected_demo_id = Some("demo".to_owned());
-        app.detail_mode = DetailMode::History;
+        app.detail_tab = DetailTab::History;
         app.history = Some(DemoHistoryPayload {
             attempt_history: DemoHistoryAttemptHistoryPayload {
                 path: None,
@@ -3009,29 +3055,41 @@ mod tests {
         let should_exit = app.handle_key(KeyCode::Esc).expect("escape should succeed");
 
         assert!(!should_exit);
-        assert!(matches!(app.detail_mode, DetailMode::Overview));
-        assert!(app.history.is_none());
-        assert_eq!(
-            app.footer_message,
-            "Returned to demo overview in the detail pane."
-        );
+        assert!(matches!(app.detail_tab, DetailTab::Overview));
+        assert_eq!(app.footer_message, "Viewing Overview tab.");
     }
 
     #[test]
-    fn browser_escape_returns_from_terminal_before_exiting() {
+    fn browser_tab_key_cycles_demo_scoped_tabs() {
         let mut app = DemoBrowserApp::new(PathBuf::from("/tmp/demo-repo"), None);
         app.detail = Some(detail_with_artifacts(&[]));
         app.selected_demo_id = Some("demo".to_owned());
-        app.detail_mode = DetailMode::Terminal;
+        app.focus = super::BrowserFocus::Detail;
+        app.detail_tab = DetailTab::Terminal;
 
-        let should_exit = app.handle_key(KeyCode::Esc).expect("escape should succeed");
+        app.handle_key(KeyCode::Tab).expect("tab should succeed");
+        assert!(matches!(app.detail_tab, DetailTab::Artifacts));
 
-        assert!(!should_exit);
-        assert!(matches!(app.detail_mode, DetailMode::Overview));
-        assert_eq!(
-            app.footer_message,
-            "Returned to demo overview in the detail pane."
-        );
+        app.handle_key(KeyCode::BackTab)
+            .expect("shift-tab should succeed");
+        assert!(matches!(app.detail_tab, DetailTab::Terminal));
+    }
+
+    #[test]
+    fn browser_artifacts_tab_renders_artifact_entries() {
+        let detail = detail_with_artifacts(&["one", "two"]);
+        let rendered =
+            artifacts_detail_render(&detail, Some(DetailSelectableItem::Artifact(1)), true)
+                .lines
+                .into_iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+        assert!(rendered.contains("Artifacts View"));
+        assert!(rendered.contains("one"));
+        assert!(rendered.contains("two"));
+        assert!(rendered.contains("↑/↓ selects artifacts"));
     }
 
     #[test]
