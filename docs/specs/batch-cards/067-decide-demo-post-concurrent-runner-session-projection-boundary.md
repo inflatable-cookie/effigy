@@ -1,6 +1,6 @@
 # 067 Decide Demo Post-Concurrent-Runner Session Projection Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -34,6 +34,16 @@ process-manager work.
 - the decision stays demo-scoped rather than process-manager-scoped
 - the lane remains anchored in one active ready card
 
+## Result
+
+- do not take a browser/client follow-up next
+- do not pause terminal/runtime work yet
+- the next bounded slice is runner-owned concurrent-runner terminal
+  interaction projection:
+  - input forwarding
+  - resize semantics
+  - still flattened behind the demo-scoped session contract
+
 ## Validation
 
 - `cargo run --bin effigy -- qa:docs`
@@ -47,5 +57,6 @@ process-manager work.
 
 ## Next Task
 
-Execute this card to choose the next bounded slice after concurrent-runner
-demo session projection lands.
+Execute [`068-implement-demo-concurrent-runner-terminal-interaction-projection.md`](./068-implement-demo-concurrent-runner-terminal-interaction-projection.md)
+to add bounded input and resize projection for concurrent-runner-backed demos
+through the demo session contract.
