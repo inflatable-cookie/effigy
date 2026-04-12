@@ -1679,6 +1679,12 @@ fn cli_demo_input_json_forwards_to_running_concurrent_runner_demo_session() {
     let mut child = spawn_demo_run_process(&root, "console");
     let active_path = root.join(".effigy/demo/active/console.json");
     wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+    wait_for_demo_active_inspect(
+        &root,
+        "console",
+        Duration::from_secs(60),
+        "concurrent runner input state",
+    );
 
     let output = run_json_cli_command(
         &root,
