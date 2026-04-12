@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04-12-demo-post-browser-terminal-view-boundary-decision.md`](./2026-04/12-151500-demo-post-browser-terminal-view-boundary-decision.md)
 - [`2026-04-12-demo-browser-terminal-view-implementation.md`](./2026-04/12-144500-demo-browser-terminal-view-implementation.md)
 - [`2026-04-12-demo-active-terminal-session-handoff-implementation.md`](./2026-04/12-131500-demo-active-terminal-session-handoff-implementation.md)
 - [`2026-04-12-demo-post-integrated-browser-history-boundary-decision.md`](./2026-04/12-121500-demo-post-integrated-browser-history-boundary-decision.md)
@@ -363,6 +364,6 @@ Batch: <batch-slug>
 ## Next Task
 
 Keep the active evidence window aligned to the current strict lane so the next
-product decision stays anchored on the shipped browser terminal view and the
-runner-owned session contract instead of widening into nested TUI embedding by
-habit.
+product decision stays anchored on the runner-owned active terminal/session
+contract and bounded input-forwarding work instead of widening into browser tab
+polish or nested TUI embedding by habit.
