@@ -1,6 +1,6 @@
 # 058 Decide Demo Post-Panel-First-Navigation Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -44,6 +44,16 @@ work.
 - the decision requires nested TUI launch to stay coherent
 - the next move becomes materially ambiguous without fresh evidence
 
+## Decision
+
+- do not prioritize another browser follow-up immediately
+- do return to runner/query contract work next
+- do make the next slice richer-runtime backend/capability reporting for active
+  demo sessions
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+
 ## Next Task
 
-Execute the ready follow-up selected by this boundary decision.
+Execute [`059-implement-demo-runtime-backend-capability-contract.md`](./059-implement-demo-runtime-backend-capability-contract.md)
+to deepen the runner-owned active session contract for richer demo runtimes
+without reopening browser churn or nested TUI embedding.

@@ -2204,6 +2204,47 @@ Out of scope for the next decision slice:
 - generic managed-process UI or multi-process demo sub-tabs
 - desktop-client work
 
+Batch `03.51` result:
+
+- do not prioritize another browser follow-up immediately
+- do return to runner/query contract work next
+- do make the next slice richer-runtime backend/capability reporting for active
+  demo sessions
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+
+Why this batch was the right decision slice:
+
+- panel-first navigation fixed the last obvious browser control mismatch
+- the browser now has a coherent one-demo shape across overview/history/
+  terminal/artifacts
+- the next broad product risk is richer demo runtimes forcing semantics
+  through browser presentation instead of exposing them from the runner
+
+### 10.49 Demo Runtime Backend Capability Contract
+
+Batch `03.52` target:
+
+Deepen the runner-owned active demo session contract so demos backed by richer
+runtimes can expose honest backend/capability facts without launching nested
+TUIs inside `effigy demo browser`.
+
+In scope for the next implementation slice:
+
+- add bounded backend/capability metadata to the active demo session surface
+- distinguish simple run-backed sessions from richer runtime-backed sessions
+  without widening into generic process-manager UI
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+- keep browser and text surfaces consuming runner-owned facts instead of
+  inferring backend shape locally
+- update help/tests/docs for the new contract
+
+Out of scope for the next implementation slice:
+
+- browser terminal input or another browser layout/control pass
+- embedding the concurrent TUI inside `effigy demo browser`
+- generic multi-process tab UI
+- desktop-client work
+
 Batch `03.41` result:
 
 - the runner now exposes a bounded `effigy demo input <DEMO_ID> --text <TEXT>
@@ -2292,6 +2333,7 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to choose the bounded follow-up after
-panel-first demo-browser navigation landed, while nested TUI embedding and
-wider runtime expansion stay explicitly bounded.
+Use the active `g02.003` strict lane to deepen the runner-owned active session
+contract for richer demo runtimes now that panel-first demo-browser navigation
+landed, while nested TUI embedding and wider runtime expansion stay explicitly
+bounded.
