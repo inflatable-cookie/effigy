@@ -2528,6 +2528,52 @@ Decision focus:
   concurrent-runner projection is real
 - whether terminal/runtime work is coherent enough to pause again
 
+Batch `03.60` result:
+
+- do not take a browser/client follow-up next
+- do not pause terminal/runtime work yet
+- the next bounded slice is runner-owned concurrent-runner terminal
+  interaction projection:
+  - input forwarding
+  - resize semantics
+  - still flattened behind the demo-scoped session contract
+
+Why this decision is the right boundary:
+
+- concurrent-runner-backed demos can now project active output and stop
+  semantics, but still trail the interaction contract already available for
+  run-backed demos
+- browser follow-up here would force UI semantics ahead of the richer backend
+  becoming honest enough
+- pausing now would leave the concurrent-runner path materially weaker than
+  the runner contract already presents as product surface
+
+### 10.58 Demo Concurrent-Runner Terminal Interaction Projection
+
+Batch `03.61` target:
+
+Project bounded terminal interaction for concurrent-runner-backed demos
+through the existing demo session contract so browser and CLI consumers can
+use input and resize semantics without nested TUI launch.
+
+In scope for the next implementation slice:
+
+- add one bounded input-forwarding projection for concurrent-runner-backed
+  active demo sessions
+- add one bounded resize projection for concurrent-runner-backed active demo
+  sessions
+- keep the interaction shape demo-scoped and flattened rather than exposing a
+  generic process-manager surface
+- preserve receipts, logs, history, and the no-nested-TUI rule
+
+Out of scope for the next implementation slice:
+
+- browser layout or control redesign
+- embedding the concurrent TUI inside `effigy demo browser`
+- multi-process demo sub-tabs or generic managed-process controls
+- broader concurrent-runner UX outside the demo contract
+- desktop-client work
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -2597,6 +2643,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the next bounded slice after
-concurrent-runner-backed demos landed behind the demo session contract while
+Use the active `g02.003` strict lane to add bounded concurrent-runner
+terminal interaction projection through the demo session contract while
 nested TUI embedding and wider runtime drift stay explicitly bounded.

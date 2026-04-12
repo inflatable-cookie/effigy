@@ -65,8 +65,8 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute the active ready card for `g02.003` to decide the next bounded slice
-after concurrent-runner-backed demos landed behind the demo session contract.
+Execute the active ready card for `g02.003` to add bounded concurrent-runner
+terminal interaction projection through the demo session contract.
 
 
 ## Historical language boundary
