@@ -69,6 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to implement a runner-owned active
-demo terminal/session handoff, then keep tabbed browser presentation, broader
-runtime expansion, and desktop-client questions separate.
+Execute the active `g02.003` ready card next to let the browser consume the
+runner-owned active demo terminal/session contract through a bounded terminal
+view, then keep broader runtime expansion and desktop-client questions
+separate.

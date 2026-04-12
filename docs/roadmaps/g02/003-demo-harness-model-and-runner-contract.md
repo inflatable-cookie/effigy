@@ -1765,6 +1765,47 @@ Out of scope for the next implementation slice:
 - replaying retained history as an interactive terminal
 - broader runtime cancellation or desktop-client work
 
+Batch `03.38` result:
+
+- `effigy demo inspect <id>` now exposes a dedicated active demo
+  terminal/session contract alongside active-attempt lifecycle state and latest
+  attempt history
+- the active terminal/session contract now reports transport (`none`,
+  `stream`, or `pty`), input-forwarding capability, explicit no-nested-TUI
+  signaling, log references, and bounded recent stdout/stderr snapshots
+- `demo run` and `demo stop` JSON payloads now also carry the same terminal
+  handoff contract so later clients can stay on runner-owned session semantics
+
+Why this batch was the right implementation slice:
+
+- it settles the missing runner contract before browser UI invents terminal
+  semantics
+- it keeps concurrent-runner-backed demos on the right side of the boundary:
+  projected through one demo session contract instead of nested TUI launch
+- it gives the next browser batch a truthful handoff for demo-scoped terminal
+  rendering without widening into generic process-manager embedding
+
+### 10.36 Demo Browser Terminal View
+
+Batch `03.39` target:
+
+Let `effigy demo browser` consume the shipped active demo terminal/session
+contract through a bounded demo-scoped terminal view.
+
+In scope for the next implementation slice:
+
+- render active terminal metadata and recent live output for the selected demo
+- keep the browser presentation demo-scoped rather than process-manager-scoped
+- reflect unavailable terminal sessions honestly without nested TUI launch
+
+Out of scope for the next implementation slice:
+
+- generic managed-process tabs or concurrent-TUI embedding
+- retained-history replay as an interactive terminal
+- full input-forwarding implementation when the current contract still reports
+  it unavailable
+- broader runtime cancellation or desktop-client work
+
 ### 10.27 Demo History Query Follow-Up Boundary
 
 Batch `03.30` target:

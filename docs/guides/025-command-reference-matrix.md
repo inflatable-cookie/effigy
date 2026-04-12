@@ -163,8 +163,10 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
 - `demo inspect` reads declared or generated receipt/artifact references and
   normalizes the latest known proof state and any active in-flight attempt
   without executing the demo. It also reports action availability, receipt
-  freshness, whether a recorded receipt is currently present, and a bounded
-  recent-attempt history for terminal demo outcomes.
+  freshness, whether a recorded receipt is currently present, a bounded
+  recent-attempt history for terminal demo outcomes, and a runner-owned active
+  terminal/session handoff with transport metadata, recent output snapshots,
+  and explicit no-nested-TUI signaling.
 - `demo history` gives one demo's retained terminal-attempt history a separate
   query surface, with optional `--limit <N>` trimming, so operators can focus
   on result timeline review without widening `demo list` or the browser.
@@ -179,9 +181,10 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
   list/detail panel focus, an action sheet for bounded
   `run`/`stop`/`rerun`/refresh behavior, direct artifact opening from the
   detail side, and a single filter sheet for the shipped `demo list` metadata
-  dimensions including tag, mode, and cover, while still deferring terminal
-  emulation, richer detail rendering, and browser-side attempt-history
-  rendering.
+  dimensions including tag, mode, and cover. Integrated retained-history review
+  is now in place, and any later browser terminal view should consume the
+  runner-owned active terminal/session contract instead of launching nested
+  TUIs.
 - `demo run` executes either a declared task-backed or run-backed entrypoint,
   writes a normalized receipt, and refreshes the latest-attempt state that
   `demo inspect` reports.

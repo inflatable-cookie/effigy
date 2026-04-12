@@ -47,9 +47,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`041-implement-demo-browser-history-handoff.md`](./041-implement-demo-browser-history-handoff.md) (complete)
 - [`042-implement-demo-browser-integrated-history-view.md`](./042-implement-demo-browser-integrated-history-view.md) (complete)
 - [`043-decide-demo-post-integrated-browser-history-boundary.md`](./043-decide-demo-post-integrated-browser-history-boundary.md) (complete)
-- [`044-implement-demo-active-terminal-session-handoff.md`](./044-implement-demo-active-terminal-session-handoff.md)
+- [`044-implement-demo-active-terminal-session-handoff.md`](./044-implement-demo-active-terminal-session-handoff.md) (complete)
+- [`045-implement-demo-browser-terminal-view.md`](./045-implement-demo-browser-terminal-view.md)
 
 ## Next Task
 
-Execute the active ready card to implement a runner-owned active demo
-terminal/session handoff before any tabbed browser terminal integration.
+Execute the active ready card to let the browser consume the runner-owned
+active demo terminal/session contract through a bounded terminal view.
