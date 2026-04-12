@@ -1,6 +1,6 @@
 # 057 Implement Demo Browser Panel-First Navigation
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -8,15 +8,15 @@ Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
 ## Objective
 
 Make the converged demo browser controls panel-first: `Tab` moves focus between
-major panels, and left/right/up/down navigate inside the active panel.
+the list and detail panels, and arrow keys navigate inside the active panel.
 
 ## In Scope
 
 - make `Tab` and `Shift+Tab` switch browser panel focus instead of detail tabs
 - keep arrow-key navigation owned by the active panel:
   - list panel: up/down move demos
-  - tab strip: left/right move tabs
-  - detail content: up/down move items inside the active tab content
+  - detail panel: left/right switch views and up/down move items inside the
+    selected view
 - preserve the shipped demo-scoped tabs (`Overview`, `History`, `Terminal`,
   `Artifacts`)
 - keep `Esc` hierarchical and non-root-safe
@@ -34,8 +34,8 @@ major panels, and left/right/up/down navigate inside the active panel.
 - panel focus is explicit and navigable with `Tab` / `Shift+Tab`
 - arrow keys navigate within the active panel instead of switching cross-panel
   context implicitly
-- demo-scoped tabs still exist, but tab selection moves to left/right within
-  the tab-strip panel
+- demo-scoped tabs still exist, but detail-view selection moves to `←` / `→`
+  inside the focused detail panel
 - tests cover the new control scheme
 
 ## Validation
@@ -53,5 +53,5 @@ major panels, and left/right/up/down navigate inside the active panel.
 
 ## Next Task
 
-Implement this batch, then leave one explicit boundary card for what follows
-after panel-first browser navigation lands.
+Execute [`058-decide-demo-post-panel-first-navigation-boundary.md`](./058-decide-demo-post-panel-first-navigation-boundary.md)
+to choose the next bounded slice after panel-first browser navigation landed.

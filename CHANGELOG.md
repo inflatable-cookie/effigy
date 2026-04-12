@@ -88,6 +88,10 @@ During v0.x, MINOR bumps may include breaking changes.
   inventing client-side transport semantics
 
 ### Changed
+- Swap `effigy demo browser` to a panel-first control model so `Tab` and
+  `Shift+Tab` switch between the demo list and detail pane while `←` and `→`
+  switch the selected detail view and `↑` and `↓` stay inside the focused
+  panel
 - Make text-mode `effigy demo run <DEMO_ID>` attach directly for interactive
   and hybrid run-backed demos while still teeing live stdout/stderr into the
   runner-owned log, receipt, and active-session surfaces so human terminal use

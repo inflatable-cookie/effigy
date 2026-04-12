@@ -143,10 +143,9 @@ impl DemoBrowserApp {
             KeyCode::Char('q') => return Ok(true),
             KeyCode::Down => self.handle_down_key(),
             KeyCode::Up => self.handle_up_key(),
-            KeyCode::Right => self.focus_detail(),
-            KeyCode::Left => self.focus_list(),
-            KeyCode::Tab => self.select_next_detail_tab()?,
-            KeyCode::BackTab => self.select_previous_detail_tab()?,
+            KeyCode::Right => self.handle_right_key()?,
+            KeyCode::Left => self.handle_left_key()?,
+            KeyCode::Tab | KeyCode::BackTab => self.toggle_focus_panel(),
             KeyCode::Char('/') => self.open_prompt(QueryPromptKind::Search),
             KeyCode::Char('f') => self.open_filter_overlay(),
             KeyCode::Enter => self.handle_enter_key()?,
@@ -189,6 +188,28 @@ impl DemoBrowserApp {
                 Ok(())
             }
             BrowserFocus::Detail => self.dispatch_selected_detail_entry(),
+        }
+    }
+
+    fn handle_right_key(&mut self) -> Result<(), RunnerError> {
+        match self.focus {
+            BrowserFocus::List => {
+                self.footer_message =
+                    "List panel focused. Tab switches to detail. ↑/↓ selects demos.".to_owned();
+                Ok(())
+            }
+            BrowserFocus::Detail => self.select_next_detail_tab(),
+        }
+    }
+
+    fn handle_left_key(&mut self) -> Result<(), RunnerError> {
+        match self.focus {
+            BrowserFocus::List => {
+                self.footer_message =
+                    "List panel focused. Tab switches to detail. ↑/↓ selects demos.".to_owned();
+                Ok(())
+            }
+            BrowserFocus::Detail => self.select_previous_detail_tab(),
         }
     }
 
@@ -541,24 +562,32 @@ impl DemoBrowserApp {
     fn focus_list(&mut self) {
         self.focus = BrowserFocus::List;
         self.footer_message =
-            "List panel focused. ↑/↓ selects demos. Enter opens actions.".to_owned();
+            "List panel focused. ↑/↓ selects demos. Tab switches to detail. Enter opens actions."
+                .to_owned();
     }
 
     fn focus_detail(&mut self) {
         self.focus = BrowserFocus::Detail;
         self.footer_message =
-            "Detail panel focused. Tab switches tabs. ↑/↓ selects visible entries. Enter activates the selected option.".to_owned();
+            "Detail panel focused. ←/→ switches views. ↑/↓ selects visible entries. Enter activates the selected option.".to_owned();
+    }
+
+    fn toggle_focus_panel(&mut self) {
+        match self.focus {
+            BrowserFocus::List => self.focus_detail(),
+            BrowserFocus::Detail => self.focus_list(),
+        }
     }
 
     fn select_next_detail_tab(&mut self) -> Result<(), RunnerError> {
-        if !matches!(self.focus, BrowserFocus::Detail) || self.selected_detail().is_none() {
+        if self.selected_detail().is_none() {
             return Ok(());
         }
         self.set_detail_tab(self.detail_tab.next())
     }
 
     fn select_previous_detail_tab(&mut self) -> Result<(), RunnerError> {
-        if !matches!(self.focus, BrowserFocus::Detail) || self.selected_detail().is_none() {
+        if self.selected_detail().is_none() {
             return Ok(());
         }
         self.set_detail_tab(self.detail_tab.previous())
@@ -1062,9 +1091,9 @@ impl DemoBrowserApp {
             Span::styled(" ↑↓ ", key_style()),
             Span::raw("move  "),
             Span::styled(" ←→ ", key_style()),
-            Span::raw("panel  "),
+            Span::raw("view  "),
             Span::styled(" Tab ", key_style()),
-            Span::raw("tabs  "),
+            Span::raw("panel  "),
             Span::styled(" Enter ", key_style()),
             Span::raw("act/open  "),
             Span::styled(" / ", key_style()),
@@ -1999,9 +2028,9 @@ fn detail_tab_lines(current_tab: DetailTab, detail_focused: bool) -> Vec<Line<'s
     vec![
         Line::from(spans),
         muted_line(if detail_focused {
-            "Tab / Shift+Tab switches demo views".to_owned()
+            "←/→ switches demo views  •  ↑/↓ selects visible entries".to_owned()
         } else {
-            "→ focuses detail, then Tab switches demo views".to_owned()
+            "Tab focuses detail, then ←/→ switches demo views".to_owned()
         }),
         Line::from(""),
     ]
@@ -2803,7 +2832,7 @@ mod tests {
         assert!(rendered.contains("History"));
         assert!(rendered.contains("Terminal"));
         assert!(rendered.contains("Artifacts"));
-        assert!(rendered.contains("Tab / Shift+Tab switches demo views"));
+        assert!(rendered.contains("←/→ switches demo views"));
     }
 
     #[test]
@@ -3060,18 +3089,32 @@ mod tests {
     }
 
     #[test]
-    fn browser_tab_key_cycles_demo_scoped_tabs() {
+    fn browser_tab_key_switches_between_list_and_detail_panels() {
+        let mut app = DemoBrowserApp::new(PathBuf::from("/tmp/demo-repo"), None);
+        app.detail = Some(detail_with_artifacts(&[]));
+        app.selected_demo_id = Some("demo".to_owned());
+        assert!(matches!(app.focus, super::BrowserFocus::List));
+
+        app.handle_key(KeyCode::Tab).expect("tab should succeed");
+        assert!(matches!(app.focus, super::BrowserFocus::Detail));
+
+        app.handle_key(KeyCode::BackTab)
+            .expect("shift-tab should succeed");
+        assert!(matches!(app.focus, super::BrowserFocus::List));
+    }
+
+    #[test]
+    fn browser_arrow_keys_switch_demo_views_inside_detail_panel() {
         let mut app = DemoBrowserApp::new(PathBuf::from("/tmp/demo-repo"), None);
         app.detail = Some(detail_with_artifacts(&[]));
         app.selected_demo_id = Some("demo".to_owned());
         app.focus = super::BrowserFocus::Detail;
         app.detail_tab = DetailTab::Terminal;
 
-        app.handle_key(KeyCode::Tab).expect("tab should succeed");
+        app.handle_key(KeyCode::Right).expect("right should succeed");
         assert!(matches!(app.detail_tab, DetailTab::Artifacts));
 
-        app.handle_key(KeyCode::BackTab)
-            .expect("shift-tab should succeed");
+        app.handle_key(KeyCode::Left).expect("left should succeed");
         assert!(matches!(app.detail_tab, DetailTab::Terminal));
     }
 
