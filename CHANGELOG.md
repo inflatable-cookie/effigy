@@ -90,8 +90,17 @@ During v0.x, MINOR bumps may include breaking changes.
   terminal input capture and a real runner-owned input handoff for active
   run-backed demo sessions, so the terminal tab can act like a live terminal
   surface instead of a plain log page without launching nested TUIs
+- Add `effigy demo resize <DEMO_ID> --cols <COLS> --rows <ROWS>` plus
+  runner-owned terminal size/resize contract fields, so active demo sessions
+  can report terminal geometry and browser-consumed demo terminals can hand
+  resize intent back through the runner instead of inventing browser-local
+  session semantics
 
 ### Changed
+- Deepen active demo terminal/session reporting with explicit terminal size,
+  resize posture, and detached-session resize handoff metadata, and have
+  `effigy demo browser` auto-sync the terminal tab viewport through that
+  runner-owned resize surface when the active session supports it
 - Trim `effigy demo browser` history, terminal, and artifacts tabs down to
   their core content, strengthen the right-panel title/tab chrome, and let the
   terminal tab fall back to latest-attempt logs when no active session exists

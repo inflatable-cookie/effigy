@@ -1124,8 +1124,28 @@ run = "sh -lc 'printf boot-line\\n; printf boot-err\\n >&2; while true; do print
         ".effigy/demo/active/waiter.stdin.log"
     );
     assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["terminal_size"]["cols"],
+        80
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["terminal_size"]["rows"],
+        24
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["resize"]["available"],
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["resize_handoff_path"],
+        ".effigy/demo/active/waiter.resize.jsonl"
+    );
+    assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["input_forwarding"]["command_template"],
         "effigy demo input <DEMO_ID> --text <TEXT> [--append-newline]"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["resize"]["command_template"],
+        "effigy demo resize <DEMO_ID> --cols <COLS> --rows <ROWS>"
     );
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["nested_tui"],
@@ -1196,6 +1216,10 @@ run = "sh -lc 'test -t 0 && printf \"pty-live\\n\"; printf \"boot-err\\n\" >&2; 
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["pty"],
         true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["resize"]["available"],
+        false
     );
     assert!(
         parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stdout_lines"]
@@ -1357,6 +1381,91 @@ run = "sh -lc 'printf boot-line; while true; do sleep 1; done'"
     let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
     assert!(stop.status.success(), "demo stop failed: {stop:?}");
     wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
+}
+
+#[test]
+fn cli_demo_resize_json_updates_active_terminal_session_geometry() {
+    let root = temp_workspace("demo-resize-json");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[demos.waiter]
+title = "Waiter"
+summary = "Keeps a demo process alive until stopped."
+proof = "Verify active demo resize updates runner-owned terminal session geometry."
+owner = "demo"
+mode = "interactive"
+status = "ready"
+covers = ["demo.resize"]
+run = "sh -lc 'printf boot-line; while true; do sleep 1; done'"
+"#,
+    )
+    .expect("write demo manifest");
+
+    let mut child = spawn_demo_run_process(&root, "waiter");
+    let active_path = root.join(".effigy/demo/active/waiter.json");
+    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+
+    let output = run_json_cli_command(
+        &root,
+        &["demo", "resize", "waiter", "--cols", "132", "--rows", "40"],
+    );
+    assert!(output.status.success(), "demo resize failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.demo.resize.v1");
+    assert_eq!(parsed["result"]["demo_id"], "waiter");
+    assert_eq!(parsed["result"]["terminal_size"]["cols"], 132);
+    assert_eq!(parsed["result"]["terminal_size"]["rows"], 40);
+    assert_eq!(
+        parsed["result"]["active_terminal_session"]["terminal_size"]["cols"],
+        132
+    );
+    assert_eq!(
+        parsed["result"]["active_terminal_session"]["terminal_size"]["rows"],
+        40
+    );
+
+    let handoff = fs::read_to_string(root.join(".effigy/demo/active/waiter.resize.jsonl"))
+        .expect("read terminal resize handoff");
+    assert!(handoff.contains("\"cols\":132"));
+    assert!(handoff.contains("\"rows\":40"));
+
+    let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
+    assert!(stop.status.success(), "demo stop failed: {stop:?}");
+    wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
+}
+
+#[test]
+fn cli_demo_resize_json_rejects_when_no_active_terminal_session_exists() {
+    let root = temp_workspace("demo-resize-no-session-json");
+    write_demo_manifest_fixture(&root);
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "demo",
+            "resize",
+            "login-smoke",
+            "--cols",
+            "120",
+            "--rows",
+            "30",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "demo resize unexpectedly passed: {output:?}"
+    );
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(
+        parsed["error"]["details"]["schema"],
+        "effigy.demo.resize.v1"
+    );
+    assert_eq!(parsed["error"]["details"]["demo_id"], "login-smoke");
+    assert_eq!(
+        parsed["error"]["details"]["active_terminal_session"]["available"],
+        false
+    );
 }
 
 #[test]

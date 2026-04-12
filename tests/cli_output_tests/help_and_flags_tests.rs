@@ -235,11 +235,16 @@ fn cli_demo_help_is_command_specific() {
     assert!(stdout.contains("effigy demo history <DEMO_ID> [--limit <N>] [--outcome <OUTCOME>] [--attempt <ATTEMPT_ID> | --ordinal <N>] [--repo <PATH>] [--json]"));
     assert!(stdout.contains("effigy demo run <DEMO_ID> [--repo <PATH>] [--json]"));
     assert!(stdout.contains("effigy demo stop <DEMO_ID> [--repo <PATH>] [--json]"));
+    assert!(stdout.contains(
+        "effigy demo resize <DEMO_ID> --cols <COLS> --rows <ROWS> [--repo <PATH>] [--json]"
+    ));
     assert!(stdout.contains("effigy demo rerun <DEMO_ID> [--repo <PATH>] [--json]"));
     assert!(stdout.contains("--group-by <FIELD>"));
     assert!(stdout.contains("--stale-only"));
     assert!(stdout.contains("--outcome <OUTCOME>"));
     assert!(stdout.contains("--ordinal <N>"));
+    assert!(stdout.contains("--cols <COLS>"));
+    assert!(stdout.contains("--rows <ROWS>"));
     assert!(!stdout.contains("docs Help"));
 }
 

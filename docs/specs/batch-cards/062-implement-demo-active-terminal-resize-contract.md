@@ -1,6 +1,6 @@
 # 062 Implement Demo Active Terminal Resize Contract
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -52,7 +52,19 @@ surfaces without launching a nested TUI.
 - the runtime cannot expose honest resize behavior without a broader boundary
   decision
 
+## Result
+
+- added `effigy demo resize <DEMO_ID> --cols <COLS> --rows <ROWS>`
+- extended the active terminal/session contract with terminal size metadata,
+  resize posture, resize command metadata, and resize handoff paths
+- wired detached/browser-consumed demo sessions through a runner-owned resize
+  handoff surface and had the browser terminal tab report viewport changes
+  through it when available
+- updated help, tests, changelog, and currentness surfaces around the new
+  terminal resize contract
+
 ## Next Task
 
-Implement this batch, then leave one explicit boundary card for what follows
-after active demo terminal resize semantics land.
+Execute [`063-decide-demo-post-terminal-resize-contract-boundary.md`](./063-decide-demo-post-terminal-resize-contract-boundary.md)
+to choose the next bounded slice after active demo terminal resize semantics
+landed.

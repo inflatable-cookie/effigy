@@ -47,6 +47,8 @@ const DEMO_HISTORY_DIR: &str = ".effigy/demo/history";
 const DEMO_ATTEMPT_HISTORY_LIMIT: usize = 10;
 const DEMO_ACTIVE_TERMINAL_RECENT_LINES: usize = 8;
 const DEMO_INPUT_POLL_INTERVAL_MS: u64 = 40;
+const DEMO_DEFAULT_TERMINAL_COLS: u16 = 80;
+const DEMO_DEFAULT_TERMINAL_ROWS: u16 = 24;
 
 pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
     let cwd = current_working_dir()?;
@@ -119,6 +121,11 @@ pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
             append_newline,
             args.output_json,
         ),
+        DemoSubcommand::Resize {
+            demo_id,
+            cols,
+            rows,
+        } => render_demo_resize(&repo_root, &loaded, &demo_id, cols, rows, args.output_json),
     }
 }
 
@@ -901,6 +908,98 @@ fn render_demo_input(
     render_utf8(renderer.into_inner())
 }
 
+fn render_demo_resize(
+    repo_root: &Path,
+    loaded: &LoadedTaskManifest,
+    demo_id: &str,
+    cols: u16,
+    rows: u16,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let Some(demo) = loaded.manifest.demos.get(demo_id) else {
+        return demo_error(
+            output_json,
+            "effigy.demo.resize.v1",
+            format!("demo `{demo_id}` was not found"),
+            json!({ "demo_id": demo_id, "terminal_size": { "cols": cols, "rows": rows } }),
+        );
+    };
+
+    let record = build_demo_record(repo_root, loaded, demo_id, demo)?;
+    if !record.active_attempt.active {
+        return demo_error(
+            output_json,
+            "effigy.demo.resize.v1",
+            format!("demo `{demo_id}` has no active terminal session to resize"),
+            json!({
+                "demo_id": demo_id,
+                "terminal_size": { "cols": cols, "rows": rows },
+                "active_terminal_session": record.active_terminal_session.to_json(),
+            }),
+        );
+    }
+    if !record.active_terminal_session.resize.available {
+        return demo_error(
+            output_json,
+            "effigy.demo.resize.v1",
+            format!(
+                "demo `{demo_id}` does not expose terminal resize handoff in the current runtime"
+            ),
+            json!({
+                "demo_id": demo_id,
+                "terminal_size": { "cols": cols, "rows": rows },
+                "active_terminal_session": record.active_terminal_session.to_json(),
+            }),
+        );
+    }
+
+    let Some(resize_path) = record
+        .active_terminal_session
+        .resize_handoff_path
+        .as_deref()
+    else {
+        return demo_error(
+            output_json,
+            "effigy.demo.resize.v1",
+            format!("demo `{demo_id}` does not expose a writable terminal resize handoff"),
+            json!({
+                "demo_id": demo_id,
+                "terminal_size": { "cols": cols, "rows": rows },
+                "active_terminal_session": record.active_terminal_session.to_json(),
+            }),
+        );
+    };
+
+    update_active_terminal_resize(repo_root, demo_id, cols, rows, resize_path)?;
+    let refreshed = build_demo_record(repo_root, loaded, demo_id, demo)?;
+
+    if output_json {
+        return encode_json(
+            &json!({
+                "schema": "effigy.demo.resize.v1",
+                "schema_version": 1,
+                "ok": true,
+                "demo_id": demo_id,
+                "terminal_size": {
+                    "cols": cols,
+                    "rows": rows,
+                },
+                "active_terminal_session": refreshed.active_terminal_session.to_json(),
+            }),
+            true,
+        );
+    }
+
+    let mut renderer = text_renderer();
+    renderer.section("Demo Terminal Resize")?;
+    renderer.key_values(&[
+        KeyValue::new("demo", demo_id.to_owned()),
+        KeyValue::new("cols", cols.to_string()),
+        KeyValue::new("rows", rows.to_string()),
+    ])?;
+    render_utf8(renderer.into_inner())
+}
+
 fn render_demo_stop_result(
     repo_root: &Path,
     loaded: &LoadedTaskManifest,
@@ -1483,6 +1582,19 @@ fn load_active_terminal_session(
             )
         },
         nested_tui: active_attempt.nested_tui,
+        terminal_size: DemoTerminalSize {
+            cols: active_attempt.terminal_cols,
+            rows: active_attempt.terminal_rows,
+        },
+        resize: if active_attempt.supports_resize {
+            DemoTerminalResizeForwarding::available()
+        } else {
+            DemoTerminalResizeForwarding::unavailable(
+                "terminal resize handoff is not exposed through the current demo runtime"
+                    .to_owned(),
+            )
+        },
+        resize_handoff_path: active_attempt.resize_handoff_path.clone(),
         stdin_input_path: active_attempt.stdin_input_path.clone(),
         stdout_log_path: stdout_log_path.clone(),
         stderr_log_path: stderr_log_path.clone(),
@@ -1502,6 +1614,24 @@ fn load_active_terminal_session(
     }
 }
 
+fn update_active_terminal_resize(
+    repo_root: &Path,
+    demo_id: &str,
+    cols: u16,
+    rows: u16,
+    rendered_resize_path: &str,
+) -> Result<(), RunnerError> {
+    let Some(mut record) = read_active_attempt_record(repo_root, demo_id)? else {
+        return Err(RunnerError::task_invocation(format!(
+            "demo `{demo_id}` no longer has an active terminal session"
+        )));
+    };
+    record.terminal_cols = Some(cols);
+    record.terminal_rows = Some(rows);
+    write_active_attempt_record(repo_root, demo_id, &record)?;
+    append_demo_terminal_resize(repo_root, rendered_resize_path, cols, rows)
+}
+
 fn append_demo_terminal_input(
     repo_root: &Path,
     rendered_path: &str,
@@ -1518,6 +1648,34 @@ fn append_demo_terminal_input(
         .open(&absolute)
         .map_err(|error| RunnerError::task_invocation_failed_write(&absolute, error))?;
     file.write_all(forwarded_text.as_bytes())
+        .and_then(|_| file.flush())
+        .map_err(|error| RunnerError::task_invocation_failed_write(&absolute, error))
+}
+
+fn append_demo_terminal_resize(
+    repo_root: &Path,
+    rendered_path: &str,
+    cols: u16,
+    rows: u16,
+) -> Result<(), RunnerError> {
+    let absolute = resolve_repo_relative_path(repo_root, rendered_path);
+    if let Some(parent) = absolute.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| RunnerError::task_invocation_failed_write(parent, error))?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&absolute)
+        .map_err(|error| RunnerError::task_invocation_failed_write(&absolute, error))?;
+    let rendered = serde_json::to_string(&json!({
+        "cols": cols,
+        "rows": rows,
+        "recorded_at_epoch_ms": now_epoch_ms(),
+    }))
+    .map_err(|error| RunnerError::task_invocation_failed_render(&absolute, error))?;
+    file.write_all(rendered.as_bytes())
+        .and_then(|_| file.write_all(b"\n"))
         .and_then(|_| file.flush())
         .map_err(|error| RunnerError::task_invocation_failed_write(&absolute, error))
 }
@@ -1545,7 +1703,11 @@ fn demo_active_attempt_from_record(
             PersistedDemoTerminalTransport::Pty => DemoTerminalTransport::Pty,
         },
         supports_input_forwarding: record.supports_input_forwarding,
+        supports_resize: record.supports_resize,
         nested_tui: record.nested_tui,
+        terminal_cols: record.terminal_cols,
+        terminal_rows: record.terminal_rows,
+        resize_handoff_path: record.resize_handoff_path.clone(),
         stdin_input_path: record.stdin_input_path.clone(),
         stdout_log_path: record.stdout_log_path.clone(),
         stderr_log_path: record.stderr_log_path.clone(),
@@ -1655,7 +1817,11 @@ fn execute_task_backed_demo(
             command: task_name.to_owned(),
             terminal_transport: PersistedDemoTerminalTransport::Stream,
             supports_input_forwarding: false,
+            supports_resize: false,
             nested_tui: false,
+            terminal_cols: None,
+            terminal_rows: None,
+            resize_handoff_path: None,
             stdin_input_path: None,
             stdout_log_path: None,
             stderr_log_path: None,
@@ -1797,9 +1963,14 @@ fn execute_run_backed_demo(
 ) -> Result<DemoExecutionAttempt, RunnerError> {
     let launch_mode = resolve_demo_launch_mode(mode, output_json);
     let attached_terminal = launch_mode.attached_terminal();
+    let initial_terminal_size = initial_terminal_size_for_launch_mode(launch_mode);
     let input_handoff_path = launch_mode
         .supports_input_forwarding()
         .then(|| prepare_demo_input_handoff(repo_root, demo_id))
+        .transpose()?;
+    let resize_handoff_path = launch_mode
+        .supports_resize()
+        .then(|| prepare_demo_resize_handoff(repo_root, demo_id))
         .transpose()?;
     let log_paths = if output_json || attached_terminal {
         DemoLogPaths::prepare_for_launch_mode(repo_root, demo_id, launch_mode)?
@@ -1833,7 +2004,13 @@ fn execute_run_backed_demo(
             command: run_command.to_owned(),
             terminal_transport: launch_mode.transport(),
             supports_input_forwarding: input_handoff_path.is_some(),
+            supports_resize: resize_handoff_path.is_some(),
             nested_tui: false,
+            terminal_cols: initial_terminal_size.map(|(cols, _)| cols),
+            terminal_rows: initial_terminal_size.map(|(_, rows)| rows),
+            resize_handoff_path: resize_handoff_path
+                .as_ref()
+                .map(|path| display_repo_path(path, repo_root)),
             stdin_input_path: input_handoff_path
                 .as_ref()
                 .map(|path| display_repo_path(path, repo_root)),
@@ -1881,6 +2058,7 @@ fn execute_run_backed_demo(
         if let Some(forward) = input_forward {
             stop_input_handoff_forward(forward, input_handoff_path.as_deref());
         }
+        clear_resize_handoff(resize_handoff_path.as_deref());
         let mut stdout = join_output_capture(stdout_handle, "stdout", demo_id)?;
         let mut stderr = join_output_capture(stderr_handle, "stderr", demo_id)?;
         if matches!(launch_mode, DemoLaunchMode::AttachedPty) {
@@ -1913,6 +2091,7 @@ fn execute_run_backed_demo(
             "Demo `{demo_id}` failed to wait for run entrypoint: {error}"
         ))
     })?;
+    clear_resize_handoff(resize_handoff_path.as_deref());
     let stop_requested = active_attempt_is_stop_requested(repo_root, demo_id);
     Ok(run_attempt_from_output(
         demo_id,
@@ -1957,12 +2136,29 @@ impl DemoLaunchMode {
         matches!(self, Self::DetachedJson)
     }
 
+    fn supports_resize(self) -> bool {
+        matches!(self, Self::DetachedJson)
+    }
+
     fn transport(self) -> PersistedDemoTerminalTransport {
         match self {
             Self::AttachedPty => PersistedDemoTerminalTransport::Pty,
             Self::DetachedJson | Self::AttachedStream => PersistedDemoTerminalTransport::Stream,
         }
     }
+}
+
+fn initial_terminal_size_for_launch_mode(launch_mode: DemoLaunchMode) -> Option<(u16, u16)> {
+    match launch_mode {
+        DemoLaunchMode::AttachedStream | DemoLaunchMode::AttachedPty => current_terminal_size(),
+        DemoLaunchMode::DetachedJson => {
+            Some((DEMO_DEFAULT_TERMINAL_COLS, DEMO_DEFAULT_TERMINAL_ROWS))
+        }
+    }
+}
+
+fn current_terminal_size() -> Option<(u16, u16)> {
+    crossterm::terminal::size().ok()
 }
 
 fn resolve_demo_launch_mode(mode: ManifestDemoMode, output_json: bool) -> DemoLaunchMode {
@@ -2205,6 +2401,17 @@ fn prepare_demo_input_handoff(repo_root: &Path, demo_id: &str) -> Result<PathBuf
     Ok(path)
 }
 
+fn prepare_demo_resize_handoff(repo_root: &Path, demo_id: &str) -> Result<PathBuf, RunnerError> {
+    let path = effective_resize_handoff_path(repo_root, demo_id);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| RunnerError::task_invocation_failed_write(parent, error))?;
+    }
+    fs::write(&path, "")
+        .map_err(|error| RunnerError::task_invocation_failed_write(&path, error))?;
+    Ok(path)
+}
+
 fn spawn_input_handoff_forward(
     path: PathBuf,
     mut child_stdin: ChildStdin,
@@ -2240,6 +2447,12 @@ fn spawn_input_handoff_forward(
 fn stop_input_handoff_forward(forward: DemoInputHandoffForward, path: Option<&Path>) {
     forward.stop.store(true, Ordering::Relaxed);
     let _ = forward.handle.join();
+    if let Some(path) = path {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn clear_resize_handoff(path: Option<&Path>) {
     if let Some(path) = path {
         let _ = fs::remove_file(path);
     }
@@ -2483,6 +2696,13 @@ fn effective_output_log_path(repo_root: &Path, demo_id: &str, stream: &str) -> P
 fn effective_input_handoff_path(repo_root: &Path, demo_id: &str) -> PathBuf {
     repo_root.join(DEMO_ACTIVE_DIR).join(format!(
         "{}.stdin.log",
+        sanitize_demo_id_for_filename(demo_id)
+    ))
+}
+
+fn effective_resize_handoff_path(repo_root: &Path, demo_id: &str) -> PathBuf {
+    repo_root.join(DEMO_ACTIVE_DIR).join(format!(
+        "{}.resize.jsonl",
         sanitize_demo_id_for_filename(demo_id)
     ))
 }
@@ -3040,7 +3260,11 @@ struct DemoActiveAttempt {
     command: Option<String>,
     terminal_transport: DemoTerminalTransport,
     supports_input_forwarding: bool,
+    supports_resize: bool,
     nested_tui: bool,
+    terminal_cols: Option<u16>,
+    terminal_rows: Option<u16>,
+    resize_handoff_path: Option<String>,
     stdin_input_path: Option<String>,
     stdout_log_path: Option<String>,
     stderr_log_path: Option<String>,
@@ -3063,7 +3287,11 @@ impl DemoActiveAttempt {
             command: None,
             terminal_transport: DemoTerminalTransport::None,
             supports_input_forwarding: false,
+            supports_resize: false,
             nested_tui: false,
+            terminal_cols: None,
+            terminal_rows: None,
+            resize_handoff_path: None,
             stdin_input_path: None,
             stdout_log_path: None,
             stderr_log_path: None,
@@ -3143,7 +3371,13 @@ impl DemoActiveAttempt {
             "command": self.command,
             "terminal_transport": self.terminal_transport.rendered(),
             "supports_input_forwarding": self.supports_input_forwarding,
+            "supports_resize": self.supports_resize,
             "nested_tui": self.nested_tui,
+            "terminal_size": {
+                "cols": self.terminal_cols,
+                "rows": self.terminal_rows,
+            },
+            "resize_handoff_path": self.resize_handoff_path,
             "stdin_input_path": self.stdin_input_path,
             "stdout_log_path": self.stdout_log_path,
             "stderr_log_path": self.stderr_log_path,
@@ -3181,6 +3415,9 @@ struct DemoActiveTerminalSession {
     input_forwarding_reason: Option<String>,
     input_forwarding: DemoTerminalInputForwarding,
     nested_tui: bool,
+    terminal_size: DemoTerminalSize,
+    resize: DemoTerminalResizeForwarding,
+    resize_handoff_path: Option<String>,
     stdin_input_path: Option<String>,
     stdout_log_path: Option<String>,
     stderr_log_path: Option<String>,
@@ -3205,6 +3442,14 @@ impl DemoActiveTerminalSession {
                 "no active demo terminal session is currently available".to_owned(),
             ),
             nested_tui: false,
+            terminal_size: DemoTerminalSize {
+                cols: None,
+                rows: None,
+            },
+            resize: DemoTerminalResizeForwarding::unavailable(
+                "no active demo terminal session is currently available".to_owned(),
+            ),
+            resize_handoff_path: None,
             stdin_input_path: None,
             stdout_log_path: None,
             stderr_log_path: None,
@@ -3231,6 +3476,21 @@ impl DemoActiveTerminalSession {
                 "input-command",
                 self.input_forwarding.command_template.clone(),
             ),
+            KeyValue::new(
+                "terminal-size",
+                self.terminal_size
+                    .rendered()
+                    .unwrap_or_else(|| "<unknown>".to_owned()),
+            ),
+            KeyValue::new(
+                "resize",
+                if self.resize.available {
+                    "yes".to_owned()
+                } else {
+                    availability_label(false, self.resize.reason.as_deref())
+                },
+            ),
+            KeyValue::new("resize-command", self.resize.command_template.clone()),
             KeyValue::new("nested-tui", if self.nested_tui { "yes" } else { "no" }),
             KeyValue::new(
                 "output-available",
@@ -3242,6 +3502,9 @@ impl DemoActiveTerminalSession {
         }
         if let Some(stdin_input_path) = &self.stdin_input_path {
             values.push(KeyValue::new("stdin-input", stdin_input_path.clone()));
+        }
+        if let Some(resize_handoff_path) = &self.resize_handoff_path {
+            values.push(KeyValue::new("resize-handoff", resize_handoff_path.clone()));
         }
         if let Some(stdout_log_path) = &self.stdout_log_path {
             values.push(KeyValue::new("stdout-log", stdout_log_path.clone()));
@@ -3263,6 +3526,9 @@ impl DemoActiveTerminalSession {
             "input_forwarding_reason": self.input_forwarding_reason,
             "input_forwarding": self.input_forwarding.to_json(),
             "nested_tui": self.nested_tui,
+            "terminal_size": self.terminal_size.to_json(),
+            "resize": self.resize.to_json(),
+            "resize_handoff_path": self.resize_handoff_path,
             "stdin_input_path": self.stdin_input_path,
             "stdout_log_path": self.stdout_log_path,
             "stderr_log_path": self.stderr_log_path,
@@ -3271,6 +3537,25 @@ impl DemoActiveTerminalSession {
                 "stdout_lines": self.recent_stdout,
                 "stderr_lines": self.recent_stderr,
             },
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DemoTerminalSize {
+    cols: Option<u16>,
+    rows: Option<u16>,
+}
+
+impl DemoTerminalSize {
+    fn rendered(&self) -> Option<String> {
+        Some(format!("{}x{}", self.cols?, self.rows?))
+    }
+
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "cols": self.cols,
+            "rows": self.rows,
         })
     }
 }
@@ -3313,6 +3598,43 @@ impl DemoTerminalInputForwarding {
             "reason": self.reason,
             "mode": self.mode,
             "append_newline_supported": self.append_newline_supported,
+            "command_template": self.command_template,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DemoTerminalResizeForwarding {
+    available: bool,
+    reason: Option<String>,
+    mode: String,
+    command_template: String,
+}
+
+impl DemoTerminalResizeForwarding {
+    fn unavailable(reason: String) -> Self {
+        Self {
+            available: false,
+            reason: Some(reason),
+            mode: "cells".to_owned(),
+            command_template: "effigy demo resize <DEMO_ID> --cols <COLS> --rows <ROWS>".to_owned(),
+        }
+    }
+
+    fn available() -> Self {
+        Self {
+            available: true,
+            reason: None,
+            mode: "cells".to_owned(),
+            command_template: "effigy demo resize <DEMO_ID> --cols <COLS> --rows <ROWS>".to_owned(),
+        }
+    }
+
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "available": self.available,
+            "reason": self.reason,
+            "mode": self.mode,
             "command_template": self.command_template,
         })
     }
@@ -3540,7 +3862,12 @@ struct PersistedDemoActiveAttempt {
     #[serde(default)]
     supports_input_forwarding: bool,
     #[serde(default)]
+    supports_resize: bool,
+    #[serde(default)]
     nested_tui: bool,
+    terminal_cols: Option<u16>,
+    terminal_rows: Option<u16>,
+    resize_handoff_path: Option<String>,
     stdin_input_path: Option<String>,
     stdout_log_path: Option<String>,
     stderr_log_path: Option<String>,
@@ -3583,10 +3910,11 @@ impl Drop for DemoActiveAttemptGuard {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_demo_terminal_input, load_active_attempt, read_recent_output_lines,
-        write_active_attempt_record, DemoActiveAttempt, DemoTerminalTransport,
-        PersistedDemoActiveAttempt, PersistedDemoActivePhase, PersistedDemoAttemptHistory,
-        PersistedDemoHistoricalAttempt, PersistedDemoTerminalTransport, DEMO_ATTEMPT_HISTORY_LIMIT,
+        append_demo_terminal_input, append_demo_terminal_resize, load_active_attempt,
+        read_recent_output_lines, write_active_attempt_record, DemoActiveAttempt,
+        DemoTerminalTransport, PersistedDemoActiveAttempt, PersistedDemoActivePhase,
+        PersistedDemoAttemptHistory, PersistedDemoHistoricalAttempt,
+        PersistedDemoTerminalTransport, DEMO_ATTEMPT_HISTORY_LIMIT,
     };
     use std::{
         fs,
@@ -3647,7 +3975,11 @@ mod tests {
                 command: "sleep 1".to_owned(),
                 terminal_transport: PersistedDemoTerminalTransport::Stream,
                 supports_input_forwarding: false,
+                supports_resize: false,
                 nested_tui: false,
+                terminal_cols: None,
+                terminal_rows: None,
+                resize_handoff_path: None,
                 stdin_input_path: None,
                 stdout_log_path: None,
                 stderr_log_path: None,
@@ -3711,6 +4043,7 @@ mod tests {
         assert!(active.active);
         assert_eq!(active.terminal_transport, DemoTerminalTransport::Stream);
         assert!(!active.supports_input_forwarding);
+        assert!(!active.supports_resize);
         assert!(!active.nested_tui);
         let _ = fs::remove_dir_all(&repo_root);
     }
@@ -3752,6 +4085,28 @@ mod tests {
 
         let written = fs::read_to_string(repo_root.join(rendered_path)).expect("read input file");
         assert_eq!(written, "status\n");
+
+        let _ = fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn append_demo_terminal_resize_appends_jsonl_events() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "effigy-demo-resize-handoff-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be monotonic enough for test ids")
+                .as_nanos()
+        ));
+        fs::create_dir_all(repo_root.join(".effigy/demo/active")).expect("create resize dir");
+        let rendered_path = ".effigy/demo/active/demo.resize.jsonl";
+
+        append_demo_terminal_resize(&repo_root, rendered_path, 120, 32)
+            .expect("append first resize payload");
+
+        let written = fs::read_to_string(repo_root.join(rendered_path)).expect("read resize file");
+        assert!(written.contains("\"cols\":120"));
+        assert!(written.contains("\"rows\":32"));
 
         let _ = fs::remove_dir_all(&repo_root);
     }
