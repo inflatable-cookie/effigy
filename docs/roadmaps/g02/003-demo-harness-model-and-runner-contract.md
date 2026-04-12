@@ -2371,6 +2371,49 @@ Decision focus:
 - whether browser terminal work is coherent enough to pause again while the
   runner contract deepens
 
+Batch `03.56` result:
+
+- pause browser terminal follow-up again; the browser now has enough terminal
+  surface to stop driving semantics
+- make the next slice runner-owned runtime backend and capability reporting for
+  active demo sessions and inspect surfaces
+- keep richer runtimes, including demos backed by the concurrent runner,
+  flattened behind one demo-scoped contract with no nested TUI launch
+
+Why this decision is the right boundary:
+
+- terminal emulation, input, and resize are all shipped, so another browser
+  consumer batch now would be churn
+- the sharper remaining gap is how richer runtimes identify themselves and
+  advertise honest demo-scoped capabilities without leaking process-manager
+  meaning into the browser
+- backend/capability reporting was previously deferred because the browser
+  terminal surface was still fake; that blocker is gone now
+
+### 10.54 Demo Runtime Backend Capability Contract
+
+Batch `03.57` target:
+
+Add bounded runner-owned runtime backend and capability facts to active demo
+session surfaces so richer runtimes can project honest demo-scoped behavior
+without nested TUI launch or browser-invented semantics.
+
+In scope for the next implementation slice:
+
+- extend active demo session and inspect payloads with bounded backend identity
+  and capability facts
+- distinguish the current task-backed, run-backed, and future richer runtime
+  paths through one demo-scoped contract
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+- keep the contract useful to both text/json CLI surfaces and the browser
+
+Out of scope for the next implementation slice:
+
+- implementing a new richer runtime backend
+- browser layout or control changes
+- generic process-manager UI or multi-process sub-tabs
+- desktop-client work
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -2440,6 +2483,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the next bounded slice after
-active demo terminal resize semantics landed while nested TUI embedding and
-wider runtime drift stay explicitly bounded.
+Use the active `g02.003` strict lane to add bounded runtime backend and
+capability facts for active demo sessions while nested TUI embedding and wider
+runtime drift stay explicitly bounded.
