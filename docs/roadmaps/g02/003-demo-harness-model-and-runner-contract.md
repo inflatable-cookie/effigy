@@ -2290,6 +2290,50 @@ Decision focus:
 - whether browser work is coherent enough to pause again while the runner
   contract deepens
 
+Batch `03.54` result:
+
+- do not take another immediate browser layout or control follow-up
+- do deepen runner-owned terminal/session fidelity next
+- the next slice is terminal size and resize handoff for active demo sessions
+- preserve the no-nested-TUI rule and keep browser terminal work a consumer of
+  the runner contract rather than the place where session semantics are
+  invented
+
+Why this decision was the right boundary:
+
+- embedded terminal emulation closed the obvious browser gap, so another
+  browser polish slice would be churn
+- terminal-aware demos still need honest size semantics from the runner, which
+  is now the sharper product gap
+- size/resize strengthens both attached and browser-consumed demo terminals
+  without widening into generic process-manager work
+
+### 10.52 Demo Active Terminal Resize Contract
+
+Batch `03.55` target:
+
+Add runner-owned terminal size and resize handoff for active demo sessions so
+terminal-aware demos can react honestly in attached and browser-consumed
+surfaces without nested TUI embedding.
+
+In scope for the next implementation slice:
+
+- extend the active demo terminal/session contract with bounded size metadata
+  and resize capability signaling
+- add one runner-owned resize handoff surface for active demo sessions where
+  the runtime can support it
+- wire the current detached/browser-consumed demo runtime through that resize
+  handoff where honest
+- keep browser terminal consumption contract-driven rather than inventing
+  browser-local session semantics
+
+Out of scope for the next implementation slice:
+
+- another browser layout or control redesign
+- generic multi-process runtime controls
+- embedding the concurrent TUI inside `effigy demo browser`
+- desktop-client work
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -2359,6 +2403,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the next bounded slice after
-embedded browser terminal emulation landed, keeping nested TUI embedding and
-wider runtime drift explicitly bounded.
+Use the active `g02.003` strict lane to add runner-owned terminal size and
+resize handoff for active demo sessions while nested TUI embedding and wider
+runtime drift stay explicitly bounded.

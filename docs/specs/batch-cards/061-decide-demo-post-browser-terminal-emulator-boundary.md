@@ -1,6 +1,6 @@
 # 061 Decide Demo Post-Browser-Terminal-Emulator Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -46,7 +46,26 @@ runtime-manager work.
 - the decision requires nested TUI launch to stay coherent
 - the next move becomes materially ambiguous without fresh evidence
 
+## Decision
+
+- do not start another browser-layout or browser-control follow-up immediately
+- do not widen into generic runtime-manager work
+- do deepen runner-owned terminal/session fidelity next
+- make the next slice terminal size and resize handoff for active demo
+  sessions, so terminal-aware demos can react honestly without nested TUI
+  embedding
+
+## Why
+
+- embedded browser terminal emulation is now real enough that more browser
+  chrome work would be churn
+- the next honest gap is not presentation but fidelity: terminal-aware demos
+  still need runner-owned size semantics rather than a fixed replay surface
+- size/resize stays demo-scoped, strengthens both attached and browser
+  terminal paths, and avoids importing the concurrent TUI app model wholesale
+
 ## Next Task
 
-Execute this card to choose the next bounded slice after browser terminal
-emulation lands.
+Execute [`062-implement-demo-active-terminal-resize-contract.md`](./062-implement-demo-active-terminal-resize-contract.md)
+to add runner-owned terminal size and resize handoff for active demo sessions
+without reopening browser churn or nested TUI embedding.
