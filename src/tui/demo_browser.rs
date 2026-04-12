@@ -976,11 +976,6 @@ impl DemoBrowserApp {
                         ),
                         Span::raw(" "),
                         Span::styled(format!("{:<10}", status), status_style(status)),
-                        Span::raw(" "),
-                        Span::styled(
-                            format!("[{}]", summary.action_summary()),
-                            Style::default().fg(EFFIGY_MUTED),
-                        ),
                     ]);
                     ListItem::new(line)
                 }
@@ -2064,23 +2059,6 @@ struct DemoGroup {
 struct DemoSummary {
     id: String,
     effective_status: String,
-    actions: DemoActionAvailability,
-}
-
-impl DemoSummary {
-    fn action_summary(&self) -> &'static str {
-        if self.actions.stop.available {
-            "stop"
-        } else if self.actions.run.available && self.actions.rerun.available {
-            "run/rerun"
-        } else if self.actions.run.available {
-            "run"
-        } else if self.actions.rerun.available {
-            "rerun"
-        } else {
-            "none"
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -2179,12 +2157,17 @@ struct DemoLatestAttempt {
 mod tests {
     use std::path::Path;
 
+    use ratatui::{
+        style::{Modifier, Style},
+        text::{Line, Span},
+    };
+
     use super::{
         action_menu_items_for_detail, clamp_artifact_index, first_demo_id,
         history_detail_render, next_gap_filter, next_group_by, next_mode_filter,
         next_status_filter, overview_detail_render, query_summary, read_recent_log_lines,
         resolve_artifact_path, resolve_repo_relative_path, row_contains_demo, selected_artifact,
-        ActionMenuItem, BrowserRow, DemoDetail, DemoHistoryAttempt,
+        status_style, ActionMenuItem, BrowserRow, DemoDetail, DemoHistoryAttempt,
         DemoHistoryAttemptHistoryPayload, DemoHistoryPayload, DemoLatestAttempt, DemoListGap,
         DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSummary,
         DetailSelectableItem,
@@ -2194,20 +2177,6 @@ mod tests {
         DemoSummary {
             id: id.to_owned(),
             effective_status: "ready".to_owned(),
-            actions: super::DemoActionAvailability {
-                run: super::DemoActionState {
-                    available: true,
-                    reason: None,
-                },
-                stop: super::DemoActionState {
-                    available: false,
-                    reason: None,
-                },
-                rerun: super::DemoActionState {
-                    available: true,
-                    reason: None,
-                },
-            },
         }
     }
 
@@ -2299,6 +2268,29 @@ mod tests {
         assert_eq!(first_demo_id(&rows).as_deref(), Some("alpha"));
         assert!(row_contains_demo(&rows, "beta"));
         assert!(!row_contains_demo(&rows, "missing"));
+    }
+
+    #[test]
+    fn browser_demo_rows_do_not_show_redundant_bracketed_action_summary() {
+        let summary = summary("browser-proof-report");
+        let line = Line::from(vec![
+            Span::raw(" "),
+            Span::styled(
+                format!("{:<23}", summary.id),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                format!("{:<10}", summary.effective_status),
+                status_style(&summary.effective_status),
+            ),
+        ]);
+        let rendered = line.to_string();
+
+        assert!(rendered.contains("browser-proof-report"));
+        assert!(rendered.contains("ready"));
+        assert!(!rendered.contains('['));
+        assert!(!rendered.contains("run/rerun"));
     }
 
     #[test]
