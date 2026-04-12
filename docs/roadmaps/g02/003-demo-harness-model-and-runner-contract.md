@@ -2224,25 +2224,49 @@ Why this batch was the right decision slice:
 
 Batch `03.52` target:
 
-Deepen the runner-owned active demo session contract so demos backed by richer
-runtimes can expose honest backend/capability facts without launching nested
-TUIs inside `effigy demo browser`.
+This slice is superseded. It aimed at richer backend/capability metadata, but
+operator feedback clarified that the real missing surface is embedded terminal
+emulation with input, not another metadata-only contract pass.
+
+Why it became stale:
+
+- the current browser terminal tab is a log/metadata page, not a terminal
+  emulator
+- the user explicitly wants live terminal behavior with input where supported
+- another metadata-first batch would delay the real interaction surface again
+
+Recovery result:
+
+- backend/capability-only contract work is superseded for now
+- the next slice is embedded demo-browser terminal emulation and input on top
+  of the existing runner-owned session/input surfaces
+- the no-nested-TUI rule remains in force
+
+### 10.50 Demo Browser Terminal Emulator
+
+Batch `03.53` target:
+
+Replace the browser terminal log view with embedded terminal emulation for the
+selected demo, including input forwarding where the active runner session
+allows it, without launching a nested TUI.
 
 In scope for the next implementation slice:
 
-- add bounded backend/capability metadata to the active demo session surface
-- distinguish simple run-backed sessions from richer runtime-backed sessions
-  without widening into generic process-manager UI
-- preserve the no-nested-TUI rule for demos backed by the concurrent runner
-- keep browser and text surfaces consuming runner-owned facts instead of
-  inferring backend shape locally
-- update help/tests/docs for the new contract
+- render the selected demo's active terminal output through embedded terminal
+  emulation instead of plain log lines
+- forward user input from the browser terminal tab when the runner-owned input
+  contract reports it as available
+- reuse the existing terminal emulation stack from the concurrent TUI where it
+  fits, without importing the concurrent TUI app model
+- keep terminal behavior demo-scoped and tied to the selected demo session
+- preserve fallback handling for demos with no active session
+- update help/tests/docs for the new terminal behavior
 
 Out of scope for the next implementation slice:
 
-- browser terminal input or another browser layout/control pass
-- embedding the concurrent TUI inside `effigy demo browser`
+- launching or embedding the concurrent TUI inside `effigy demo browser`
 - generic multi-process tab UI
+- another browser layout/control redesign
 - desktop-client work
 
 Batch `03.41` result:
@@ -2333,7 +2357,7 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to deepen the runner-owned active session
-contract for richer demo runtimes now that panel-first demo-browser navigation
-landed, while nested TUI embedding and wider runtime expansion stay explicitly
-bounded.
+Use the active `g02.003` strict lane to replace the browser terminal log view
+with embedded terminal emulation and input on top of the existing runner-owned
+demo session contract, while nested TUI embedding and wider runtime expansion
+stay explicitly bounded.

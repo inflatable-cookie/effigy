@@ -69,7 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to deepen runner-owned richer-
-runtime session semantics now that panel-first demo-browser navigation landed,
-while nested TUI embedding, broader runtime expansion, and desktop-client
-questions stay separate.
+Execute the active `g02.003` ready card next to replace the browser terminal
+log view with embedded demo-scoped terminal emulation and input, while nested
+TUI embedding, broader runtime expansion, and desktop-client questions stay
+separate.
