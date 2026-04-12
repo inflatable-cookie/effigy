@@ -69,8 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide the post-terminal-
-resize boundary, so the lane can choose whether the next terminal follow-up
-belongs in deeper runner-owned fidelity, one more narrow browser consumer
-slice, or a pause from browser churn without reopening nested TUI embedding or
-generic runtime drift.
+Execute the active `g02.003` ready card next to add bounded runtime backend and
+capability facts for active demo sessions, so richer runtimes can stay
+demo-scoped without forcing meaning through the browser or reopening nested TUI
+embedding.
