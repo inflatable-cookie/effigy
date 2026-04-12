@@ -1053,8 +1053,11 @@ impl DemoBrowserApp {
     fn render_detail(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let mut render = self.detail_render();
         if self.detail.is_some() {
-            let tab_lines =
-                detail_tab_lines(self.detail_tab, matches!(self.focus, BrowserFocus::Detail));
+            let tab_lines = detail_tab_lines(
+                self.detail_tab,
+                matches!(self.focus, BrowserFocus::Detail),
+                area.width.saturating_sub(2) as usize,
+            );
             let tab_line_count = tab_lines.len();
             render.lines.splice(0..0, tab_lines);
             if let Some(selected_line_index) = &mut render.selected_line_index {
@@ -2011,7 +2014,7 @@ fn action_menu_items_for_detail(detail: &DemoDetail) -> Vec<ActionMenuItem> {
     items
 }
 
-fn detail_tab_lines(current_tab: DetailTab, detail_focused: bool) -> Vec<Line<'static>> {
+fn detail_tab_lines(current_tab: DetailTab, detail_focused: bool, width: usize) -> Vec<Line<'static>> {
     let mut spans = Vec::new();
     for (index, tab) in DetailTab::ALL.iter().enumerate() {
         if index > 0 {
@@ -2029,16 +2032,19 @@ fn detail_tab_lines(current_tab: DetailTab, detail_focused: bool) -> Vec<Line<'s
         spans.push(Span::styled(format!(" {} ", tab.label()), style));
     }
 
-    vec![Line::from(spans), tab_border_line(detail_focused)]
+    vec![Line::from(spans), tab_border_line(detail_focused, width)]
 }
 
-fn tab_border_line(detail_focused: bool) -> Line<'static> {
+fn tab_border_line(detail_focused: bool, width: usize) -> Line<'static> {
     let style = Style::default().fg(if detail_focused {
         EFFIGY_ACCENT
     } else {
         EFFIGY_MUTED
     });
-    Line::from(vec![Span::styled(line::NORMAL.horizontal.repeat(80), style)])
+    Line::from(vec![Span::styled(
+        line::NORMAL.horizontal.repeat(width.max(1)),
+        style,
+    )])
 }
 
 fn muted_line(value: String) -> Line<'static> {
@@ -2824,7 +2830,7 @@ mod tests {
 
     #[test]
     fn browser_tab_line_renders_all_demo_scoped_tabs() {
-        let rendered = detail_tab_lines(DetailTab::Terminal, true)
+        let rendered = detail_tab_lines(DetailTab::Terminal, true, 32)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -2837,6 +2843,12 @@ mod tests {
         assert!(!rendered.contains("tabs:"));
         assert!(rendered.contains(" Terminal "));
         assert!(rendered.contains("─"));
+    }
+
+    #[test]
+    fn browser_tab_border_matches_requested_width() {
+        let lines = detail_tab_lines(DetailTab::Overview, true, 17);
+        assert_eq!(lines[1].to_string().chars().count(), 17);
     }
 
     #[test]
