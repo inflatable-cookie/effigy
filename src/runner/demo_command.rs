@@ -765,7 +765,8 @@ fn render_demo_stop(
 
     let target_pid = persisted.target_pid;
 
-    if persisted.runtime_backend_kind.as_deref() == Some("concurrent-runner") && target_pid.is_none()
+    if persisted.runtime_backend_kind.as_deref() == Some("concurrent-runner")
+        && target_pid.is_none()
     {
         persisted.phase = PersistedDemoActivePhase::StopRequested;
         write_active_attempt_record(repo_root, demo_id, &persisted)?;
@@ -1844,13 +1845,9 @@ fn execute_demo_attempt(
     output_json: bool,
 ) -> Result<DemoExecutionAttempt, RunnerError> {
     match demo_entrypoint(demo) {
-        DemoEntrypoint::Task(task_name) => execute_task_backed_demo(
-            repo_root,
-            demo_id,
-            &task_name,
-            demo.mode,
-            output_json,
-        ),
+        DemoEntrypoint::Task(task_name) => {
+            execute_task_backed_demo(repo_root, demo_id, &task_name, demo.mode, output_json)
+        }
         DemoEntrypoint::Run(run_command) => {
             execute_run_backed_demo(repo_root, demo_id, demo.mode, &run_command, output_json)
         }
@@ -2024,7 +2021,8 @@ fn demo_task_selection(
 }
 
 fn task_is_concurrent_runner_backed(task: &ManifestTask) -> bool {
-    task.mode.as_deref() == Some("tui") && (!task.concurrent.is_empty() || !task.profiles.is_empty())
+    task.mode.as_deref() == Some("tui")
+        && (!task.concurrent.is_empty() || !task.profiles.is_empty())
 }
 
 fn execute_concurrent_runner_backed_demo(
@@ -2165,16 +2163,17 @@ fn run_concurrent_runner_demo_runtime(
         !output_json,
     )?;
 
-    while state.exit_count < expected || state.drained_after_exit < DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT
+    while state.exit_count < expected
+        || state.drained_after_exit < DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT
     {
         if !state.stop_requested && active_attempt_is_stop_requested(repo_root, demo_id) {
             state.stop_requested = true;
             supervisor.terminate_all();
         }
         state.forward_pending_input(&supervisor)?;
-        if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(
-            DEMO_MANAGED_EVENT_POLL_INTERVAL_MS,
-        )) {
+        if let Some(event) = supervisor
+            .next_event_timeout(Duration::from_millis(DEMO_MANAGED_EVENT_POLL_INTERVAL_MS))
+        {
             state.record_event(event, &supervisor)?;
         } else {
             state.record_idle_tick(expected);
@@ -2333,12 +2332,7 @@ impl DemoConcurrentRuntimeState {
         Ok(())
     }
 
-    fn record_exit(
-        &mut self,
-        process: &str,
-        payload: &str,
-        supervisor: &ProcessSupervisor,
-    ) {
+    fn record_exit(&mut self, process: &str, payload: &str, supervisor: &ProcessSupervisor) {
         self.exit_count += 1;
         if payload != "exit=0" {
             self.non_zero_exits
@@ -3787,7 +3781,9 @@ fn demo_runtime_backend_from_entrypoint(
                 || demo_task_selection(repo_root, task_name)
                     .ok()
                     .flatten()
-                    .and_then(|selection| selection.task().ok().map(task_is_concurrent_runner_backed))
+                    .and_then(|selection| {
+                        selection.task().ok().map(task_is_concurrent_runner_backed)
+                    })
                     .unwrap_or(false)
             {
                 DemoRuntimeBackend {
