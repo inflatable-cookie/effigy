@@ -1987,6 +1987,44 @@ Why this batch was the right decision slice:
 - tabs still bundle too much presentation change at once; a bounded live
   terminal view is the cleaner next proof point
 
+### 10.43 Demo Browser Live Terminal View
+
+Batch `03.46` target:
+
+Let `effigy demo browser` consume the shipped active demo terminal/session
+contract as a bounded live terminal view so operators can watch an active demo
+session inside the browser without nested TUI launch.
+
+In scope for the next implementation slice:
+
+- deepen the existing browser terminal view from static recent-output summary to
+  bounded live session consumption for one selected demo
+- keep the terminal surface demo-scoped and driven by the runner-owned
+  `active_terminal_session` contract
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+- keep receipts, logs, and history runner-owned; browser terminal remains a
+  consumer, not a second source of truth
+
+Out of scope for the next implementation slice:
+
+- browser text input or full terminal interaction controls
+- demo-scoped tabs or broader browser layout convergence
+- embedding the concurrent TUI inside `effigy demo browser`
+- multi-process demo sub-tabs or generic managed-process controls
+- retained-history replay as an interactive terminal
+- broad runtime cancellation or desktop-client work
+
+Shipped result:
+
+- the browser terminal view now tails runner-owned stdout/stderr logs directly
+  when available instead of only showing the bounded recent-output snapshot from
+  `demo inspect`
+- the detail pane keeps terminal semantics demo-scoped and refreshes on the
+  existing browser cadence, with clear source labeling for live log tail versus
+  inspect-snapshot fallback
+- the browser still consumes runner-owned session metadata and log paths rather
+  than inventing nested-TUI or process-manager ownership
+
 Batch `03.41` result:
 
 - the runner now exposes a bounded `effigy demo input <DEMO_ID> --text <TEXT>
@@ -2075,7 +2113,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to let `effigy demo browser` consume the
-shipped demo terminal/session contract as a bounded live terminal view, while
-browser tab convergence, nested TUI embedding, and wider runtime expansion stay
-explicitly bounded.
+Use the active `g02.003` strict lane to decide the bounded follow-up after live
+browser terminal consumption landed, while browser tab convergence, nested TUI
+embedding, and wider runtime expansion stay explicitly bounded.

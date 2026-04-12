@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/12-112900-demo-browser-live-terminal-view-implementation.md`](./2026-04/12-112900-demo-browser-live-terminal-view-implementation.md)
 - [`2026-04/12-111600-demo-post-pty-terminal-contract-boundary-decision.md`](./2026-04/12-111600-demo-post-pty-terminal-contract-boundary-decision.md)
 - [`2026-04-12-demo-pty-terminal-session-contract-implementation.md`](./2026-04/12-110355-demo-pty-terminal-session-contract-implementation.md)
 - [`2026-04-12-demo-post-attached-terminal-run-boundary-decision.md`](./2026-04/12-105536-demo-post-attached-terminal-run-boundary-decision.md)

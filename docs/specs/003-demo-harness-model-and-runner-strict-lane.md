@@ -69,7 +69,7 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to let `effigy demo browser`
-consume the shipped demo terminal/session contract as a bounded live terminal
-view, while browser tab convergence, nested TUI embedding, broader runtime
-expansion, and desktop-client questions stay separate.
+Execute the active `g02.003` ready card next to decide the bounded follow-up
+after live browser terminal consumption landed, while browser tab convergence,
+nested TUI embedding, broader runtime expansion, and desktop-client questions
+stay separate.
