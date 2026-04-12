@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -68,6 +69,7 @@ struct DemoBrowserApp {
     detail_mode: DetailMode,
     detail: Option<DemoDetail>,
     history: Option<DemoHistoryPayload>,
+    result_visible_demo_ids: HashSet<String>,
     footer_message: String,
     pending_action: Option<PendingAction>,
     last_refresh: Instant,
@@ -94,6 +96,7 @@ impl DemoBrowserApp {
             detail_mode: DetailMode::Overview,
             detail: None,
             history: None,
+            result_visible_demo_ids: HashSet::new(),
             footer_message: "Loading demo registry...".to_owned(),
             pending_action: None,
             last_refresh: Instant::now() - Duration::from_secs(5),
@@ -455,7 +458,12 @@ impl DemoBrowserApp {
         let selected_item = self.selected_detail_item();
         match (&self.detail, self.detail_mode) {
             (Some(detail), DetailMode::Overview) => {
-                overview_detail_render(detail, selected_item, detail_focused)
+                overview_detail_render(
+                    detail,
+                    selected_item,
+                    detail_focused,
+                    self.result_visible_demo_ids.contains(&detail.id),
+                )
             }
             (Some(detail), DetailMode::History) => {
                 history_detail_render(detail, self.history.as_ref(), selected_item, detail_focused)
@@ -593,6 +601,7 @@ impl DemoBrowserApp {
             label: action_label.to_owned(),
             receiver,
         });
+        self.result_visible_demo_ids.insert(demo_id.clone());
         self.footer_message =
             format!("Started `{action_label}` for demo `{demo_id}` in the background.");
         Ok(())
@@ -1464,12 +1473,16 @@ fn overview_detail_render(
     detail: &DemoDetail,
     selected_item: Option<DetailSelectableItem>,
     detail_focused: bool,
+    show_result: bool,
 ) -> DetailRender {
     let mut lines = vec![title_line(&detail.title)];
     let mut selected_line_index = None;
 
     if !detail.tags.is_empty() {
         lines.push(muted_line(format!("tags: {}", detail.tags.join(", "))));
+    }
+    if !detail.covers.is_empty() {
+        lines.push(compact_kv_line("covers", &detail.covers.join(", ")));
     }
 
     lines.extend([
@@ -1480,19 +1493,6 @@ fn overview_detail_render(
         section_heading("Proof"),
         Line::from(detail.proof.clone()),
     ]);
-
-    if !detail.covers.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(compact_kv_line("covers", &detail.covers.join(", ")));
-    }
-    if detail.latest_attempt.recorded {
-        lines.push(Line::from(""));
-        lines.push(section_heading("Result"));
-        lines.push(compact_kv_line("status", &detail.latest_attempt.state));
-        if let Some(summary) = &detail.latest_attempt.summary {
-            lines.push(Line::from(summary.clone()));
-        }
-    }
     lines.push(Line::from(""));
     lines.push(section_heading("Actions"));
     for action in action_menu_items_for_detail(detail) {
@@ -1527,6 +1527,14 @@ fn overview_detail_render(
         } else {
             "→ focuses actions and artifacts".to_owned()
         }));
+    }
+    if show_result && detail.latest_attempt.recorded {
+        lines.push(Line::from(""));
+        lines.push(section_heading("Result"));
+        lines.push(compact_kv_line("status", &detail.latest_attempt.state));
+        if let Some(summary) = &detail.latest_attempt.summary {
+            lines.push(Line::from(summary.clone()));
+        }
     }
     DetailRender {
         lines,
@@ -2392,6 +2400,7 @@ mod tests {
             &detail,
             Some(DetailSelectableItem::Action(ActionMenuItem::OpenHistory)),
             true,
+            false,
         )
             .lines
             .into_iter()
@@ -2403,14 +2412,16 @@ mod tests {
         assert!(rendered.contains("Summary"));
         assert!(rendered.contains("Generate a human-checkable proof report."));
         assert!(rendered.contains("tags: self-hosted, proof"));
-        assert!(rendered.contains("Result"));
-        assert!(rendered.contains("status: passed"));
-        assert!(rendered.contains("Latest attempt wrote a proof report."));
         assert!(rendered.contains("Actions"));
         assert!(rendered.contains("View history"));
         assert!(rendered.contains(".effigy/demo/artifacts/browser-proof-report/index.html"));
         assert!(rendered.contains("covers: effigy.demo.browser"));
         assert!(rendered.contains("↑/↓ selects actions and artifacts"));
+        assert!(rendered.find("tags: self-hosted, proof") < rendered.find("covers: effigy.demo.browser"));
+        assert!(rendered.find("covers: effigy.demo.browser") < rendered.find("Summary"));
+        assert!(!rendered.contains("Result"));
+        assert!(!rendered.contains("status: passed"));
+        assert!(!rendered.contains("Latest attempt wrote a proof report."));
         assert!(!rendered.contains("Latest Receipt"));
         assert!(!rendered.contains("actions:"));
         assert!(!rendered.contains("attempts:"));
@@ -2423,6 +2434,7 @@ mod tests {
         let rendered = overview_detail_render(
             &detail,
             Some(DetailSelectableItem::Artifact(0)),
+            false,
             false,
         )
             .lines
@@ -2438,6 +2450,41 @@ mod tests {
     #[test]
     fn browser_action_menu_exposes_integrated_history_label() {
         assert_eq!(ActionMenuItem::OpenHistory.label(), "View history");
+    }
+
+    #[test]
+    fn browser_detail_lines_show_result_only_after_session_run_visibility() {
+        let mut detail = detail_with_artifacts(&["one"]);
+        detail.latest_attempt.summary = Some("Latest attempt wrote a proof report.".to_owned());
+
+        let hidden = overview_detail_render(
+            &detail,
+            Some(DetailSelectableItem::Action(ActionMenuItem::OpenHistory)),
+            true,
+            false,
+        )
+        .lines
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+        assert!(!hidden.contains("Result"));
+
+        let visible = overview_detail_render(
+            &detail,
+            Some(DetailSelectableItem::Action(ActionMenuItem::OpenHistory)),
+            true,
+            true,
+        )
+        .lines
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+        assert!(visible.contains("Result"));
+        assert!(visible.contains("status: passed"));
+        assert!(visible.contains("Latest attempt wrote a proof report."));
+        assert!(visible.find("Artifacts") < visible.find("Result"));
     }
 
     #[test]
