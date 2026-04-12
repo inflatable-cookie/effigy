@@ -2855,6 +2855,8 @@ struct DemoDetail {
     gap_class: String,
     covers: Vec<String>,
     tags: Vec<String>,
+    #[allow(dead_code)]
+    runtime_backend: DemoRuntimeBackend,
     actions: DemoActionAvailability,
     #[allow(dead_code)]
     active_attempt: DemoActiveAttempt,
@@ -2879,6 +2881,8 @@ struct DemoActionState {
 struct DemoActiveAttempt {
     #[allow(dead_code)]
     state: String,
+    #[allow(dead_code)]
+    runtime_backend: Option<DemoRuntimeBackend>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -2888,6 +2892,8 @@ struct DemoActiveTerminalSession {
     state: String,
     #[allow(dead_code)]
     attempt_id: Option<String>,
+    #[allow(dead_code)]
+    runtime_backend: Option<DemoRuntimeBackend>,
     transport: String,
     #[allow(dead_code)]
     pty: bool,
@@ -2912,6 +2918,18 @@ struct DemoActiveTerminalSession {
 struct DemoTerminalSize {
     cols: Option<u16>,
     rows: Option<u16>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DemoRuntimeBackend {
+    #[allow(dead_code)]
+    kind: String,
+    #[allow(dead_code)]
+    label: String,
+    #[allow(dead_code)]
+    flattened_projection: bool,
+    #[allow(dead_code)]
+    capabilities: Vec<String>,
 }
 
 impl DemoTerminalSize {
@@ -2984,6 +3002,12 @@ mod tests {
             gap_class: "existing".to_owned(),
             covers: vec![],
             tags: vec![],
+            runtime_backend: super::DemoRuntimeBackend {
+                kind: "task".to_owned(),
+                label: "task-backed".to_owned(),
+                flattened_projection: false,
+                capabilities: vec![],
+            },
             actions: super::DemoActionAvailability {
                 run: super::DemoActionState {
                     available: true,
@@ -3000,11 +3024,13 @@ mod tests {
             },
             active_attempt: super::DemoActiveAttempt {
                 state: "idle".to_owned(),
+                runtime_backend: None,
             },
             active_terminal_session: super::DemoActiveTerminalSession {
                 available: false,
                 state: "idle".to_owned(),
                 attempt_id: None,
+                runtime_backend: None,
                 transport: "none".to_owned(),
                 pty: false,
                 supports_input_forwarding: false,
@@ -3352,6 +3378,16 @@ mod tests {
             available: true,
             state: "running".to_owned(),
             attempt_id: Some("demo-123".to_owned()),
+            runtime_backend: Some(super::DemoRuntimeBackend {
+                kind: "run".to_owned(),
+                label: "run-backed".to_owned(),
+                flattened_projection: false,
+                capabilities: vec![
+                    "active-terminal-session".to_owned(),
+                    "live-terminal-output".to_owned(),
+                    "stop".to_owned(),
+                ],
+            }),
             transport: "stream".to_owned(),
             pty: false,
             supports_input_forwarding: false,
@@ -3472,6 +3508,17 @@ mod tests {
             available: true,
             state: "running".to_owned(),
             attempt_id: Some("demo-123".to_owned()),
+            runtime_backend: Some(super::DemoRuntimeBackend {
+                kind: "run".to_owned(),
+                label: "run-backed".to_owned(),
+                flattened_projection: false,
+                capabilities: vec![
+                    "active-terminal-session".to_owned(),
+                    "live-terminal-output".to_owned(),
+                    "stop".to_owned(),
+                    "pty".to_owned(),
+                ],
+            }),
             transport: "pty".to_owned(),
             pty: true,
             supports_input_forwarding: false,

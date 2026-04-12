@@ -534,6 +534,11 @@ fn cli_demo_inspect_json_reports_latest_attempt_and_sources() {
     assert_eq!(parsed["result"]["schema"], "effigy.demo.inspect.v1");
     assert_eq!(parsed["result"]["demo"]["id"], "login-smoke");
     assert_eq!(parsed["result"]["demo"]["entrypoint"]["kind"], "task");
+    assert_eq!(parsed["result"]["demo"]["runtime_backend"]["kind"], "task");
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["label"],
+        "task-backed"
+    );
     assert_eq!(
         parsed["result"]["demo"]["latest_attempt"]["summary"],
         "Interactive login proof passed."
@@ -569,6 +574,10 @@ fn cli_demo_inspect_json_reports_latest_attempt_and_sources() {
     );
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["transport"],
+        "none"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["kind"],
         "none"
     );
     assert_eq!(
@@ -1103,9 +1112,40 @@ run = "sh -lc 'printf boot-line\\n; printf boot-err\\n >&2; while true; do print
         parsed["result"]["demo"]["active_terminal_session"]["state"],
         "live"
     );
+    assert_eq!(parsed["result"]["demo"]["runtime_backend"]["kind"], "run");
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["kind"],
+        "run"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["flattened_projection"],
+        false
+    );
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["transport"],
         "stream"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["kind"],
+        "run"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["label"],
+        "run-backed"
+    );
+    assert!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["capabilities"]
+            .as_array()
+            .expect("runtime capabilities")
+            .iter()
+            .any(|value| value.as_str() == Some("input-forwarding"))
+    );
+    assert!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["capabilities"]
+            .as_array()
+            .expect("runtime capabilities")
+            .iter()
+            .any(|value| value.as_str() == Some("resize"))
     );
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["pty"],
@@ -1210,6 +1250,10 @@ run = "sh -lc 'test -t 0 && printf \"pty-live\\n\"; printf \"boot-err\\n\" >&2; 
         true
     );
     assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["kind"],
+        "run"
+    );
+    assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["transport"],
         "pty"
     );
@@ -1220,6 +1264,13 @@ run = "sh -lc 'test -t 0 && printf \"pty-live\\n\"; printf \"boot-err\\n\" >&2; 
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["resize"]["available"],
         false
+    );
+    assert!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["capabilities"]
+            .as_array()
+            .expect("runtime capabilities")
+            .iter()
+            .any(|value| value.as_str() == Some("pty"))
     );
     assert!(
         parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stdout_lines"]
