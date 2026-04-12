@@ -19,5 +19,5 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to add runner-owned projection-shape truth for richer
-concurrent-runner demos before reopening any multi-process browser follow-up.
+Use the active spec lane to make the next bounded boundary call after
+runner-owned concurrent-runtime projection-shape truth landed.

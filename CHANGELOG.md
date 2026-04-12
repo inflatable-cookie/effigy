@@ -105,6 +105,11 @@ During v0.x, MINOR bumps may include breaking changes.
   session semantics
 
 ### Changed
+- Deepen concurrent-runner-backed demo runtime reporting with runner-owned
+  `projection_shape` facts so inspect and active terminal/session payloads now
+  say whether a demo is `single-terminal` or `projected-multi-process`,
+  whether one live browser terminal is eligible, and how many managed
+  processes sit behind the projection when that count is known
 - Deepen demo inspect/active-session contracts with runner-owned
   `runtime_backend` identity and capability facts so task-backed, run-backed,
   and future richer demo runtimes can stay demo-scoped without forcing meaning

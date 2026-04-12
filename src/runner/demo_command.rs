@@ -1740,6 +1740,8 @@ fn demo_active_attempt_from_record(
         .to_owned(),
         flattened_runtime_projection: record.flattened_runtime_projection,
         browser_live_attach_supported: infer_browser_live_attach_supported(record),
+        projection_shape_kind: infer_projection_shape_kind(record).to_owned(),
+        managed_process_count: infer_managed_process_count(record),
         terminal_transport: match record.terminal_transport {
             PersistedDemoTerminalTransport::Stream => DemoTerminalTransport::Stream,
             PersistedDemoTerminalTransport::Pty => DemoTerminalTransport::Pty,
@@ -1778,6 +1780,54 @@ fn infer_browser_live_attach_supported(record: &PersistedDemoActiveAttempt) -> b
     record.runtime_backend_kind.as_deref() == Some("concurrent-runner")
         && !record.nested_tui
         && record.supports_input_forwarding
+}
+
+fn infer_projection_shape_kind(record: &PersistedDemoActiveAttempt) -> &str {
+    if let Some(kind) = record.projection_shape_kind.as_deref() {
+        return kind;
+    }
+    let runtime_backend_kind = infer_runtime_backend_kind(
+        record.runtime_backend_kind.as_deref(),
+        &record.entrypoint_kind,
+    );
+    if runtime_backend_kind == "run" {
+        return "single-terminal";
+    }
+    if runtime_backend_kind == "concurrent-runner" {
+        if infer_browser_live_attach_supported(record) {
+            return "single-terminal";
+        }
+        return "projected-multi-process";
+    }
+    "none"
+}
+
+fn infer_managed_process_count(record: &PersistedDemoActiveAttempt) -> Option<usize> {
+    if record.managed_process_count.is_some() {
+        return record.managed_process_count;
+    }
+    let runtime_backend_kind = infer_runtime_backend_kind(
+        record.runtime_backend_kind.as_deref(),
+        &record.entrypoint_kind,
+    );
+    if runtime_backend_kind == "concurrent-runner" && infer_browser_live_attach_supported(record) {
+        return Some(1);
+    }
+    None
+}
+
+fn runtime_projection_shape_for_active_attempt(
+    active_attempt: &DemoActiveAttempt,
+) -> DemoRuntimeProjectionShape {
+    match active_attempt.projection_shape_kind.as_str() {
+        "single-terminal" => {
+            DemoRuntimeProjectionShape::single_terminal(active_attempt.managed_process_count)
+        }
+        "projected-multi-process" => DemoRuntimeProjectionShape::projected_multi_process(
+            active_attempt.managed_process_count,
+        ),
+        _ => DemoRuntimeProjectionShape::none(),
+    }
 }
 
 fn runtime_backend_label(kind: &str) -> &'static str {
@@ -1907,6 +1957,8 @@ fn execute_task_backed_demo(
             runtime_backend_kind: Some("task".to_owned()),
             flattened_runtime_projection: false,
             browser_live_attach_supported: false,
+            projection_shape_kind: Some("none".to_owned()),
+            managed_process_count: None,
             terminal_transport: PersistedDemoTerminalTransport::Stream,
             supports_input_forwarding: false,
             supports_resize: false,
@@ -2107,6 +2159,12 @@ fn execute_concurrent_runner_backed_demo(
             runtime_backend_kind: Some("concurrent-runner".to_owned()),
             flattened_runtime_projection: true,
             browser_live_attach_supported,
+            projection_shape_kind: Some(
+                concurrent_runner_projection_shape(plan.processes.len())
+                    .kind
+                    .clone(),
+            ),
+            managed_process_count: Some(plan.processes.len()),
             terminal_transport: PersistedDemoTerminalTransport::Stream,
             supports_input_forwarding: input_handoff_path.is_some(),
             supports_resize: resize_handoff_path.is_some(),
@@ -2422,11 +2480,16 @@ fn render_non_zero_exits(processes: &[(String, String)]) -> String {
 }
 
 fn concurrent_runner_task_supports_browser_live_attach(repo_root: &Path, task_name: &str) -> bool {
+    concurrent_runner_task_process_count(repo_root, task_name)
+        .is_some_and(|count| concurrent_runner_projection_shape(count).live_terminal_eligible)
+}
+
+fn concurrent_runner_task_process_count(repo_root: &Path, task_name: &str) -> Option<usize> {
     let Ok(Some(resolved)) = demo_task_selection(repo_root, task_name) else {
-        return false;
+        return None;
     };
     let Ok(selection) = resolved.selection() else {
-        return false;
+        return None;
     };
     let runtime_args = TaskRuntimeArgs {
         repo_override: None,
@@ -2444,14 +2507,21 @@ fn concurrent_runner_task_supports_browser_live_attach(repo_root: &Path, task_na
     )
     .ok()
     .flatten()
-    .as_ref()
-    .is_some_and(concurrent_runner_supports_browser_live_attach)
+    .map(|plan| plan.processes.len())
 }
 
 fn concurrent_runner_supports_browser_live_attach(
     plan: &crate::runner::model::managed::ManagedTaskPlan,
 ) -> bool {
     concurrent_runner_input_target_process(plan).is_some()
+}
+
+fn concurrent_runner_projection_shape(process_count: usize) -> DemoRuntimeProjectionShape {
+    if process_count == 1 {
+        DemoRuntimeProjectionShape::single_terminal(Some(1))
+    } else {
+        DemoRuntimeProjectionShape::projected_multi_process(Some(process_count))
+    }
 }
 
 fn concurrent_runner_input_target_process(
@@ -2575,6 +2645,8 @@ fn execute_run_backed_demo(
             runtime_backend_kind: Some("run".to_owned()),
             flattened_runtime_projection: false,
             browser_live_attach_supported: true,
+            projection_shape_kind: Some("single-terminal".to_owned()),
+            managed_process_count: None,
             terminal_transport: launch_mode.transport(),
             supports_input_forwarding: input_handoff_path.is_some(),
             supports_resize: resize_handoff_path.is_some(),
@@ -3781,6 +3853,7 @@ struct DemoRuntimeBackend {
     kind: String,
     label: String,
     flattened_projection: bool,
+    projection_shape: DemoRuntimeProjectionShape,
     capabilities: Vec<String>,
 }
 
@@ -3790,6 +3863,7 @@ impl DemoRuntimeBackend {
             kind: "none".to_owned(),
             label: "none".to_owned(),
             flattened_projection: false,
+            projection_shape: DemoRuntimeProjectionShape::none(),
             capabilities: Vec::new(),
         }
     }
@@ -3800,12 +3874,14 @@ impl DemoRuntimeBackend {
                 kind: "task".to_owned(),
                 label: "task-backed".to_owned(),
                 flattened_projection: false,
+                projection_shape: DemoRuntimeProjectionShape::none(),
                 capabilities: Vec::new(),
             },
             DemoEntrypoint::Run(_) => Self {
                 kind: "run".to_owned(),
                 label: "run-backed".to_owned(),
                 flattened_projection: false,
+                projection_shape: DemoRuntimeProjectionShape::single_terminal(None),
                 capabilities: vec![
                     "active-terminal-session".to_owned(),
                     "browser-live-attach".to_owned(),
@@ -3829,7 +3905,58 @@ impl DemoRuntimeBackend {
             "kind": self.kind,
             "label": self.label,
             "flattened_projection": self.flattened_projection,
+            "projection_shape": self.projection_shape.to_json(),
             "capabilities": self.capabilities,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DemoRuntimeProjectionShape {
+    kind: String,
+    live_terminal_eligible: bool,
+    projected_multi_process: bool,
+    managed_process_count: Option<usize>,
+}
+
+impl DemoRuntimeProjectionShape {
+    fn none() -> Self {
+        Self {
+            kind: "none".to_owned(),
+            live_terminal_eligible: false,
+            projected_multi_process: false,
+            managed_process_count: None,
+        }
+    }
+
+    fn single_terminal(managed_process_count: Option<usize>) -> Self {
+        Self {
+            kind: "single-terminal".to_owned(),
+            live_terminal_eligible: true,
+            projected_multi_process: false,
+            managed_process_count,
+        }
+    }
+
+    fn projected_multi_process(managed_process_count: Option<usize>) -> Self {
+        Self {
+            kind: "projected-multi-process".to_owned(),
+            live_terminal_eligible: false,
+            projected_multi_process: true,
+            managed_process_count,
+        }
+    }
+
+    fn rendered_label(&self) -> &str {
+        &self.kind
+    }
+
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "kind": self.kind,
+            "live_terminal_eligible": self.live_terminal_eligible,
+            "projected_multi_process": self.projected_multi_process,
+            "managed_process_count": self.managed_process_count,
         })
     }
 }
@@ -3874,10 +4001,14 @@ fn demo_runtime_backend_from_entrypoint(
                 if concurrent_runner_task_supports_browser_live_attach(repo_root, task_name) {
                     capabilities.push("browser-live-attach".to_owned());
                 }
+                let projection_shape = concurrent_runner_task_process_count(repo_root, task_name)
+                    .map(concurrent_runner_projection_shape)
+                    .unwrap_or_else(|| DemoRuntimeProjectionShape::projected_multi_process(None));
                 DemoRuntimeBackend {
                     kind: "concurrent-runner".to_owned(),
                     label: runtime_backend_label("concurrent-runner").to_owned(),
                     flattened_projection: true,
+                    projection_shape,
                     capabilities,
                 }
             } else {
@@ -3971,6 +4102,8 @@ struct DemoActiveAttempt {
     runtime_backend_kind: String,
     flattened_runtime_projection: bool,
     browser_live_attach_supported: bool,
+    projection_shape_kind: String,
+    managed_process_count: Option<usize>,
     terminal_transport: DemoTerminalTransport,
     supports_input_forwarding: bool,
     supports_resize: bool,
@@ -4001,6 +4134,8 @@ impl DemoActiveAttempt {
             runtime_backend_kind: "none".to_owned(),
             flattened_runtime_projection: false,
             browser_live_attach_supported: false,
+            projection_shape_kind: "none".to_owned(),
+            managed_process_count: None,
             terminal_transport: DemoTerminalTransport::None,
             supports_input_forwarding: false,
             supports_resize: false,
@@ -4050,6 +4185,7 @@ impl DemoActiveAttempt {
             kind: self.runtime_backend_kind.clone(),
             label: runtime_backend_label(&self.runtime_backend_kind).to_owned(),
             flattened_projection: self.flattened_runtime_projection,
+            projection_shape: runtime_projection_shape_for_active_attempt(self),
             capabilities,
         }
     }
@@ -4069,6 +4205,25 @@ impl DemoActiveAttempt {
             KeyValue::new(
                 "runtime-capabilities",
                 self.runtime_backend().rendered_capabilities(),
+            ),
+            KeyValue::new(
+                "runtime-shape",
+                self.runtime_backend()
+                    .projection_shape
+                    .rendered_label()
+                    .to_owned(),
+            ),
+            KeyValue::new(
+                "runtime-live-terminal",
+                if self
+                    .runtime_backend()
+                    .projection_shape
+                    .live_terminal_eligible
+                {
+                    "yes"
+                } else {
+                    "no"
+                },
             ),
             KeyValue::new(
                 "stoppable",
@@ -4105,6 +4260,9 @@ impl DemoActiveAttempt {
         }
         if let Some(command) = &self.command {
             values.push(KeyValue::new("command", command.clone()));
+        }
+        if let Some(count) = self.managed_process_count {
+            values.push(KeyValue::new("managed-process-count", count.to_string()));
         }
         if let Some(stdout_log_path) = &self.stdout_log_path {
             values.push(KeyValue::new("stdout-log", stdout_log_path.clone()));
@@ -4242,6 +4400,21 @@ impl DemoActiveTerminalSession {
                 "runtime-capabilities",
                 self.runtime_backend.rendered_capabilities(),
             ),
+            KeyValue::new(
+                "runtime-shape",
+                self.runtime_backend
+                    .projection_shape
+                    .rendered_label()
+                    .to_owned(),
+            ),
+            KeyValue::new(
+                "runtime-live-terminal",
+                if self.runtime_backend.projection_shape.live_terminal_eligible {
+                    "yes"
+                } else {
+                    "no"
+                },
+            ),
             KeyValue::new("transport", self.transport.clone()),
             KeyValue::new("pty", if self.pty { "yes" } else { "no" }),
             KeyValue::new(
@@ -4291,6 +4464,9 @@ impl DemoActiveTerminalSession {
         }
         if let Some(stderr_log_path) = &self.stderr_log_path {
             values.push(KeyValue::new("stderr-log", stderr_log_path.clone()));
+        }
+        if let Some(count) = self.runtime_backend.projection_shape.managed_process_count {
+            values.push(KeyValue::new("managed-process-count", count.to_string()));
         }
         values
     }
@@ -4645,6 +4821,10 @@ struct PersistedDemoActiveAttempt {
     #[serde(default)]
     browser_live_attach_supported: bool,
     #[serde(default)]
+    projection_shape_kind: Option<String>,
+    #[serde(default)]
+    managed_process_count: Option<usize>,
+    #[serde(default)]
     terminal_transport: PersistedDemoTerminalTransport,
     #[serde(default)]
     supports_input_forwarding: bool,
@@ -4763,6 +4943,8 @@ mod tests {
                 runtime_backend_kind: Some("run".to_owned()),
                 flattened_runtime_projection: false,
                 browser_live_attach_supported: true,
+                projection_shape_kind: Some("single-terminal".to_owned()),
+                managed_process_count: None,
                 terminal_transport: PersistedDemoTerminalTransport::Stream,
                 supports_input_forwarding: false,
                 supports_resize: false,
@@ -4833,6 +5015,16 @@ mod tests {
         assert!(active.active);
         assert_eq!(active.terminal_transport, DemoTerminalTransport::Stream);
         assert_eq!(active.runtime_backend().kind, "run");
+        assert_eq!(
+            active.runtime_backend().projection_shape.rendered_label(),
+            "single-terminal"
+        );
+        assert!(
+            active
+                .runtime_backend()
+                .projection_shape
+                .live_terminal_eligible
+        );
         assert!(!active.supports_input_forwarding);
         assert!(!active.supports_resize);
         assert!(!active.nested_tui);

@@ -536,8 +536,8 @@ fn wait_for_demo_active_inspect(
             let parsed = parse_stdout_json(&output);
             let active = parsed["result"]["demo"]["active_attempt"]["active"] == true;
             let stoppable = parsed["result"]["demo"]["active_attempt"]["stoppable"] == true;
-            let backend = parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["kind"]
-                .as_str();
+            let backend =
+                parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["kind"].as_str();
             let stop_available = parsed["result"]["demo"]["actions"]["stop"]["available"] == true;
             let terminal_available =
                 parsed["result"]["demo"]["active_terminal_session"]["available"] == true;
@@ -550,7 +550,10 @@ fn wait_for_demo_active_inspect(
                 return;
             }
         }
-        assert!(started.elapsed() < timeout, "{label} did not become active in time");
+        assert!(
+            started.elapsed() < timeout,
+            "{label} did not become active in time"
+        );
         std::thread::sleep(Duration::from_millis(25));
     }
 }
@@ -1354,6 +1357,18 @@ fn cli_demo_inspect_json_classifies_concurrent_runner_backed_demo_when_inactive(
         parsed["result"]["demo"]["runtime_backend"]["flattened_projection"],
         true
     );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projection_shape"]["kind"],
+        "single-terminal"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projection_shape"]["live_terminal_eligible"],
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projection_shape"]["managed_process_count"],
+        1
+    );
     assert!(parsed["result"]["demo"]["runtime_backend"]["capabilities"]
         .as_array()
         .expect("runtime capabilities")
@@ -1381,6 +1396,22 @@ fn cli_demo_inspect_json_keeps_multi_process_concurrent_runner_on_projected_path
     assert_eq!(
         parsed["result"]["demo"]["runtime_backend"]["flattened_projection"],
         true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projection_shape"]["kind"],
+        "projected-multi-process"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projection_shape"]["live_terminal_eligible"],
+        false
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projection_shape"]["projected_multi_process"],
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["projection_shape"]["managed_process_count"],
+        2
     );
     assert!(!parsed["result"]["demo"]["runtime_backend"]["capabilities"]
         .as_array()
@@ -1424,11 +1455,22 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
         parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["flattened_projection"],
         true
     );
-    assert!(parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["capabilities"]
-        .as_array()
-        .expect("runtime capabilities")
-        .iter()
-        .any(|value| value.as_str() == Some("browser-live-attach")));
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["projection_shape"]["kind"],
+        "single-terminal"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["projection_shape"]
+            ["managed_process_count"],
+        1
+    );
+    assert!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["capabilities"]
+            .as_array()
+            .expect("runtime capabilities")
+            .iter()
+            .any(|value| value.as_str() == Some("browser-live-attach"))
+    );
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["kind"],
         "concurrent-runner"
@@ -1457,11 +1499,23 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
         parsed["result"]["demo"]["active_terminal_session"]["resize_handoff_path"],
         ".effigy/demo/active/stack.resize.jsonl"
     );
-    assert!(parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["capabilities"]
-        .as_array()
-        .expect("runtime capabilities")
-        .iter()
-        .any(|value| value.as_str() == Some("browser-live-attach")));
+    assert!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["capabilities"]
+            .as_array()
+            .expect("runtime capabilities")
+            .iter()
+            .any(|value| value.as_str() == Some("browser-live-attach"))
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["projection_shape"]
+            ["kind"],
+        "single-terminal"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["projection_shape"]
+            ["live_terminal_eligible"],
+        true
+    );
     assert!(
         parsed["result"]["demo"]["active_terminal_session"]["output_available"]
             .as_bool()
@@ -1475,6 +1529,66 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["stderr_log_path"],
         ".effigy/demo/logs/stack.stderr.log"
+    );
+
+    let stop = run_json_cli_command(&root, &["demo", "stop", "stack"]);
+    assert!(stop.status.success(), "demo stop failed: {stop:?}");
+    wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
+}
+
+#[test]
+fn cli_demo_inspect_json_projects_multi_process_concurrent_runner_shape_when_active() {
+    let root = temp_workspace("demo-concurrent-active-multi-json");
+    write_demo_concurrent_runner_multi_fixture(&root);
+
+    let mut child = spawn_demo_run_process(&root, "stack");
+    let active_path = root.join(".effigy/demo/active/stack.json");
+    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+    wait_for_demo_active_inspect(
+        &root,
+        "stack",
+        Duration::from_secs(15),
+        "multi concurrent runner inspect state",
+    );
+
+    let output = run_json_cli_command(&root, &["demo", "inspect", "stack"]);
+    assert!(output.status.success(), "demo inspect failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["projection_shape"]["kind"],
+        "projected-multi-process"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["projection_shape"]
+            ["projected_multi_process"],
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["projection_shape"]
+            ["managed_process_count"],
+        2
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["projection_shape"]
+            ["kind"],
+        "projected-multi-process"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["projection_shape"]
+            ["live_terminal_eligible"],
+        false
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["projection_shape"]
+            ["managed_process_count"],
+        2
+    );
+    assert!(
+        !parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["capabilities"]
+            .as_array()
+            .expect("runtime capabilities")
+            .iter()
+            .any(|value| value.as_str() == Some("browser-live-attach"))
     );
 
     let stop = run_json_cli_command(&root, &["demo", "stop", "stack"]);
@@ -1520,8 +1634,7 @@ fn cli_demo_input_json_forwards_to_running_concurrent_runner_demo_session() {
     if !stop.status.success() {
         let parsed = parse_stdout_json(&stop);
         assert_eq!(
-            parsed["error"]["details"]["active_attempt"]["active"],
-            false,
+            parsed["error"]["details"]["active_attempt"]["active"], false,
             "unexpected concurrent attached stop failure: {stop:?}"
         );
     }
@@ -2012,8 +2125,7 @@ fn cli_demo_run_text_single_process_concurrent_runner_forwards_attached_input() 
     if !stop.status.success() {
         let parsed = parse_stdout_json(&stop);
         assert_eq!(
-            parsed["error"]["details"]["active_attempt"]["active"],
-            false,
+            parsed["error"]["details"]["active_attempt"]["active"], false,
             "unexpected concurrent attached stop failure: {stop:?}"
         );
     }
