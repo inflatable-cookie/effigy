@@ -69,7 +69,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide the bounded follow-up
-after live browser terminal consumption landed, while browser tab convergence,
-nested TUI embedding, broader runtime expansion, and desktop-client questions
-stay separate.
+Execute the active `g02.003` ready card next to converge the browser detail
+surface into bounded demo-scoped tabs, while nested TUI embedding, broader
+runtime expansion, and desktop-client questions stay separate.
