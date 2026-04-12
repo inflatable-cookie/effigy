@@ -13,9 +13,10 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::symbols::line;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
@@ -1076,15 +1077,26 @@ impl DemoBrowserApp {
             .map(|detail| format!(" {} ", detail.title))
             .unwrap_or_else(|| " Demo ".to_owned());
         let detail = Paragraph::new(render.lines)
-            .block(effigy_panel_block(
-                Some(panel_title.as_str()),
-                false,
-                if matches!(self.focus, BrowserFocus::Detail) {
-                    EFFIGY_ACCENT
-                } else {
-                    Color::DarkGray
-                },
-            ))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_set(ratatui::symbols::border::ROUNDED)
+                    .border_style(Style::default().fg(if matches!(self.focus, BrowserFocus::Detail)
+                    {
+                        EFFIGY_ACCENT
+                    } else {
+                        Color::DarkGray
+                    }))
+                    .title_top(
+                        Line::from(Span::styled(
+                            panel_title,
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ))
+                        .left_aligned(),
+                    ),
+            )
             .scroll((scroll, 0))
             .wrap(Wrap { trim: false });
         frame.render_widget(detail, area);
@@ -1701,6 +1713,13 @@ fn terminal_detail_render(
         lines.push(muted_line(
             "No active terminal session is available for this demo.".to_owned(),
         ));
+        if let Some(terminal_output) = resolve_latest_attempt_view_output(repo_root, &detail.latest_attempt)
+        {
+            lines.push(Line::from(""));
+            lines.push(section_heading("Latest Output"));
+            lines.push(compact_kv_line("source", terminal_output.source_label()));
+            append_terminal_output_lines(&mut lines, &terminal_output);
+        }
         return DetailRender {
             lines,
             selected_line_index,
@@ -1747,33 +1766,7 @@ fn terminal_detail_render(
 
     let terminal_output = resolve_terminal_view_output(repo_root, session);
     lines.push(compact_kv_line("source", terminal_output.source_label()));
-
-    if terminal_output.stdout_lines.is_empty() && terminal_output.stderr_lines.is_empty() {
-        lines.push(muted_line(
-            "Terminal output logs exist, but no recent lines were captured.".to_owned(),
-        ));
-        return DetailRender {
-            lines,
-            selected_line_index,
-        };
-    }
-
-    if !terminal_output.stdout_lines.is_empty() {
-        lines.push(compact_kv_line("stream", "stdout"));
-        for line in &terminal_output.stdout_lines {
-            lines.push(Line::from(line.clone()));
-        }
-    }
-
-    if !terminal_output.stderr_lines.is_empty() {
-        if !terminal_output.stdout_lines.is_empty() {
-            lines.push(Line::from(""));
-        }
-        lines.push(compact_kv_line("stream", "stderr"));
-        for line in &terminal_output.stderr_lines {
-            lines.push(Line::from(line.clone()));
-        }
-    }
+    append_terminal_output_lines(&mut lines, &terminal_output);
 
     DetailRender {
         lines,
@@ -1841,6 +1834,7 @@ struct TerminalViewOutput {
 enum TerminalViewOutputSource {
     LiveLogs,
     InspectSnapshot,
+    LatestAttemptLogs,
 }
 
 impl TerminalViewOutput {
@@ -1848,6 +1842,7 @@ impl TerminalViewOutput {
         match self.source {
             TerminalViewOutputSource::LiveLogs => "live tail",
             TerminalViewOutputSource::InspectSnapshot => "inspect snapshot",
+            TerminalViewOutputSource::LatestAttemptLogs => "latest attempt logs",
         }
     }
 }
@@ -1881,6 +1876,61 @@ fn resolve_terminal_view_output(
         stdout_lines: stdout_lines.unwrap_or_else(|| session.recent_output.stdout_lines.clone()),
         stderr_lines: stderr_lines.unwrap_or_else(|| session.recent_output.stderr_lines.clone()),
         source,
+    }
+}
+
+fn resolve_latest_attempt_view_output(
+    repo_root: &Path,
+    latest_attempt: &DemoLatestAttempt,
+) -> Option<TerminalViewOutput> {
+    if !latest_attempt.output_available {
+        return None;
+    }
+    let stdout_lines = latest_attempt.stdout_log_path.as_deref().and_then(|path| {
+        read_recent_log_lines(
+            &resolve_repo_relative_path(repo_root, path),
+            DEMO_BROWSER_TERMINAL_LIVE_LINE_LIMIT,
+        )
+        .ok()
+    });
+    let stderr_lines = latest_attempt.stderr_log_path.as_deref().and_then(|path| {
+        read_recent_log_lines(
+            &resolve_repo_relative_path(repo_root, path),
+            DEMO_BROWSER_TERMINAL_LIVE_LINE_LIMIT,
+        )
+        .ok()
+    });
+
+    Some(TerminalViewOutput {
+        stdout_lines: stdout_lines.unwrap_or_default(),
+        stderr_lines: stderr_lines.unwrap_or_default(),
+        source: TerminalViewOutputSource::LatestAttemptLogs,
+    })
+}
+
+fn append_terminal_output_lines(lines: &mut Vec<Line<'static>>, terminal_output: &TerminalViewOutput) {
+    if terminal_output.stdout_lines.is_empty() && terminal_output.stderr_lines.is_empty() {
+        lines.push(muted_line(
+            "Terminal output logs exist, but no recent lines were captured.".to_owned(),
+        ));
+        return;
+    }
+
+    if !terminal_output.stdout_lines.is_empty() {
+        lines.push(compact_kv_line("stream", "stdout"));
+        for line in &terminal_output.stdout_lines {
+            lines.push(Line::from(line.clone()));
+        }
+    }
+
+    if !terminal_output.stderr_lines.is_empty() {
+        if !terminal_output.stdout_lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+        lines.push(compact_kv_line("stream", "stderr"));
+        for line in &terminal_output.stderr_lines {
+            lines.push(Line::from(line.clone()));
+        }
     }
 }
 
@@ -1965,7 +2015,7 @@ fn detail_tab_lines(current_tab: DetailTab, detail_focused: bool) -> Vec<Line<'s
     let mut spans = Vec::new();
     for (index, tab) in DetailTab::ALL.iter().enumerate() {
         if index > 0 {
-            spans.push(Span::raw("  "));
+            spans.push(Span::raw("   "));
         }
         let style = if *tab == current_tab {
             Style::default()
@@ -1976,18 +2026,19 @@ fn detail_tab_lines(current_tab: DetailTab, detail_focused: bool) -> Vec<Line<'s
         } else {
             Style::default().fg(EFFIGY_MUTED)
         };
-        spans.push(Span::styled(tab.label().to_owned(), style));
+        spans.push(Span::styled(format!(" {} ", tab.label()), style));
     }
 
-    vec![
-        Line::from(spans),
-        muted_line(if detail_focused {
-            "←/→ switches demo views  •  ↑/↓ selects visible entries".to_owned()
-        } else {
-            "Tab focuses detail, then ←/→ switches demo views".to_owned()
-        }),
-        Line::from(""),
-    ]
+    vec![Line::from(spans), tab_border_line(detail_focused)]
+}
+
+fn tab_border_line(detail_focused: bool) -> Line<'static> {
+    let style = Style::default().fg(if detail_focused {
+        EFFIGY_ACCENT
+    } else {
+        EFFIGY_MUTED
+    });
+    Line::from(vec![Span::styled(line::NORMAL.horizontal.repeat(80), style)])
 }
 
 fn muted_line(value: String) -> Line<'static> {
@@ -2455,6 +2506,9 @@ struct DemoLatestAttempt {
     state: String,
     artifacts: Vec<String>,
     summary: Option<String>,
+    stdout_log_path: Option<String>,
+    stderr_log_path: Option<String>,
+    output_available: bool,
 }
 
 #[cfg(test)]
@@ -2539,6 +2593,9 @@ mod tests {
                 state: "passed".to_owned(),
                 artifacts: artifacts.iter().map(|value| (*value).to_owned()).collect(),
                 summary: None,
+                stdout_log_path: None,
+                stderr_log_path: None,
+                output_available: false,
             },
         }
     }
@@ -2778,7 +2835,8 @@ mod tests {
         assert!(rendered.contains("Terminal"));
         assert!(rendered.contains("Artifacts"));
         assert!(!rendered.contains("tabs:"));
-        assert!(rendered.contains("←/→ switches demo views"));
+        assert!(rendered.contains(" Terminal "));
+        assert!(rendered.contains("─"));
     }
 
     #[test]
@@ -2920,6 +2978,50 @@ mod tests {
 
         assert!(rendered.contains("No active terminal session is available for this demo."));
         assert!(!rendered.contains("Recent Output"));
+    }
+
+    #[test]
+    fn browser_terminal_view_falls_back_to_latest_attempt_output_when_session_is_unavailable() {
+        let mut detail = detail_with_artifacts(&[]);
+        detail.latest_attempt.stdout_log_path = Some(".effigy/demo/logs/demo-latest.stdout.log".to_owned());
+        detail.latest_attempt.stderr_log_path = Some(".effigy/demo/logs/demo-latest.stderr.log".to_owned());
+        detail.latest_attempt.output_available = true;
+
+        let repo_root = std::env::temp_dir().join(format!(
+            "effigy-demo-browser-latest-terminal-view-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(repo_root.join(".effigy/demo/logs"));
+        std::fs::write(
+            repo_root.join(".effigy/demo/logs/demo-latest.stdout.log"),
+            "latest-out\n",
+        )
+        .expect("write stdout log");
+        std::fs::write(
+            repo_root.join(".effigy/demo/logs/demo-latest.stderr.log"),
+            "latest-err\n",
+        )
+        .expect("write stderr log");
+
+        let rendered = terminal_detail_render(
+            &repo_root,
+            &detail,
+            Some(DetailSelectableItem::TerminalRefresh),
+            true,
+        )
+        .lines
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+
+        assert!(rendered.contains("No active terminal session is available for this demo."));
+        assert!(rendered.contains("Latest Output"));
+        assert!(rendered.contains("source: latest attempt logs"));
+        assert!(rendered.contains("latest-out"));
+        assert!(rendered.contains("latest-err"));
     }
 
     #[test]
