@@ -1905,6 +1905,32 @@ Shipped result:
 - `demo input` remains available as secondary automation/client
   infrastructure rather than the primary human interaction path
 
+### 10.41 Demo PTY Terminal Session Contract
+
+Batch `03.44` target:
+
+Deepen the runner-owned demo terminal/session contract with PTY-backed
+interactive semantics so demos that genuinely require terminal behavior can be
+run honestly without nested TUI launch.
+
+In scope for the next implementation slice:
+
+- add PTY-backed execution semantics for run-backed demos whose terminal
+  runtime needs real interactive terminal behavior
+- keep the runner-owned active-session, receipt, log, and history surfaces
+  aligned with the shipped attached-terminal path
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+- keep browser terminal work a consumer of the contract rather than the place
+  where PTY semantics are invented
+
+Out of scope for the next implementation slice:
+
+- browser tab convergence or broader browser layout changes
+- embedding the concurrent TUI inside `effigy demo browser`
+- multi-process demo sub-tabs or generic managed-process controls
+- retained-history replay as an interactive terminal
+- broad runtime cancellation or desktop-client work
+
 Batch `03.41` result:
 
 - the runner now exposes a bounded `effigy demo input <DEMO_ID> --text <TEXT>
@@ -1993,6 +2019,7 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the next bounded follow-up after
-attached terminal run mode lands, keeping browser tab convergence, nested TUI
-embedding, and wider runtime expansion explicitly bounded.
+Use the active `g02.003` strict lane to deepen the runner-owned demo
+terminal/session contract with PTY-backed interactive semantics, keeping
+browser tab convergence, nested TUI embedding, and wider runtime expansion
+explicitly bounded.
