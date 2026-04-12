@@ -1,6 +1,6 @@
 # 056 Decide Demo Post-Browser-Tab-Convergence Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -45,6 +45,20 @@ churn.
 - the decision requires nested TUI launch to stay coherent
 - the next move becomes materially ambiguous without fresh evidence
 
+## Decision
+
+- do not return to runner/query work yet; operator feedback shows the browser
+  control model is still materially wrong after tab convergence
+- do prioritize one more bounded browser interaction slice next: panel-first
+  navigation where `Tab` switches panels and arrow keys navigate inside the
+  active panel
+- do keep browser terminal input deferred; attached terminal execution remains
+  the honest human-first interaction path and this control change does not
+  reopen transport/ownership questions
+- preserve the no-nested-TUI rule for demos backed by the concurrent runner
+
 ## Next Task
 
-Execute the ready follow-up selected by this boundary decision.
+Execute [`057-implement-demo-browser-panel-first-navigation.md`](./057-implement-demo-browser-panel-first-navigation.md)
+to make `Tab` switch panels and keep left/right/up/down navigation inside the
+active panel.
