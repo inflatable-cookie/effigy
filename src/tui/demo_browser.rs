@@ -138,7 +138,8 @@ impl DemoBrowserApp {
             return Ok(false);
         }
         match code {
-            KeyCode::Esc | KeyCode::Char('q') => return Ok(true),
+            KeyCode::Esc => return Ok(self.handle_escape_key()),
+            KeyCode::Char('q') => return Ok(true),
             KeyCode::Down => self.handle_down_key(),
             KeyCode::Up => self.handle_up_key(),
             KeyCode::Right => self.focus_detail(),
@@ -153,6 +154,16 @@ impl DemoBrowserApp {
             _ => {}
         }
         Ok(false)
+    }
+
+    fn handle_escape_key(&mut self) -> bool {
+        match self.detail_mode {
+            DetailMode::Overview => true,
+            DetailMode::History => {
+                self.exit_history_mode();
+                false
+            }
+        }
     }
 
     fn handle_down_key(&mut self) {
@@ -2155,8 +2166,9 @@ struct DemoLatestAttempt {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
+    use crossterm::event::KeyCode;
     use ratatui::{
         style::{Modifier, Style},
         text::{Line, Span},
@@ -2167,7 +2179,8 @@ mod tests {
         history_detail_render, next_gap_filter, next_group_by, next_mode_filter,
         next_status_filter, overview_detail_render, query_summary, read_recent_log_lines,
         resolve_artifact_path, resolve_repo_relative_path, row_contains_demo, selected_artifact,
-        status_style, ActionMenuItem, BrowserRow, DemoDetail, DemoHistoryAttempt,
+        status_style, ActionMenuItem, BrowserRow, DemoBrowserApp, DemoDetail,
+        DemoHistoryAttempt, DetailMode,
         DemoHistoryAttemptHistoryPayload, DemoHistoryPayload, DemoLatestAttempt, DemoListGap,
         DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSummary,
         DetailSelectableItem,
@@ -2538,5 +2551,47 @@ mod tests {
         assert!(rendered.contains("stdout: .effigy/demo/logs/demo-123.stdout.log"));
         assert!(rendered.contains("stderr: .effigy/demo/logs/demo-123.stderr.log"));
         assert!(rendered.contains("artifacts: .effigy/demo/artifacts/report.html"));
+    }
+
+    #[test]
+    fn browser_escape_returns_from_history_before_exiting() {
+        let mut app = DemoBrowserApp::new(PathBuf::from("/tmp/demo-repo"), None);
+        app.detail = Some(detail_with_artifacts(&[]));
+        app.selected_demo_id = Some("demo".to_owned());
+        app.detail_mode = DetailMode::History;
+        app.history = Some(DemoHistoryPayload {
+            attempt_history: DemoHistoryAttemptHistoryPayload {
+                path: None,
+                stored_count: 0,
+                filtered_count: 0,
+                displayed_count: 0,
+                count: 0,
+                limit: None,
+                outcome: None,
+                parse_error: None,
+                attempts: vec![],
+            },
+        });
+
+        let should_exit = app.handle_key(KeyCode::Esc).expect("escape should succeed");
+
+        assert!(!should_exit);
+        assert!(matches!(app.detail_mode, DetailMode::Overview));
+        assert!(app.history.is_none());
+        assert_eq!(
+            app.footer_message,
+            "Returned to demo overview in the detail pane."
+        );
+    }
+
+    #[test]
+    fn browser_escape_exits_from_overview_root_view() {
+        let mut app = DemoBrowserApp::new(PathBuf::from("/tmp/demo-repo"), None);
+        app.detail = Some(detail_with_artifacts(&[]));
+        app.selected_demo_id = Some("demo".to_owned());
+
+        let should_exit = app.handle_key(KeyCode::Esc).expect("escape should succeed");
+
+        assert!(should_exit);
     }
 }
