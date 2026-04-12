@@ -1,4 +1,4 @@
-use std::io::{self, Stdout, Write};
+use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver};
@@ -35,10 +35,7 @@ pub fn run_demo_browser_tui(
     let mut app = DemoBrowserApp::new(repo_root, initial_group_by);
     let result = app.run(&mut terminal);
     restore_browser_terminal(&mut terminal)?;
-    match result? {
-        Some(handoff) => run_demo_browser_handoff(&app.repo_root, handoff),
-        None => Ok(()),
-    }
+    result
 }
 
 fn init_browser_terminal() -> Result<BrowserTerminal, RunnerError> {
@@ -65,14 +62,17 @@ struct DemoBrowserApp {
     focus: BrowserFocus,
     selected_demo_id: Option<String>,
     selected_row_index: usize,
+    selected_detail_entry_index: usize,
     selected_artifact_index: usize,
+    selected_history_attempt_ordinal: Option<usize>,
+    detail_mode: DetailMode,
     detail: Option<DemoDetail>,
+    history: Option<DemoHistoryPayload>,
     footer_message: String,
     pending_action: Option<PendingAction>,
     last_refresh: Instant,
     total_demo_count: usize,
     overlay: Option<BrowserOverlay>,
-    handoff: Option<BrowserHandoff>,
 }
 
 impl DemoBrowserApp {
@@ -88,21 +88,21 @@ impl DemoBrowserApp {
             focus: BrowserFocus::List,
             selected_demo_id: None,
             selected_row_index: 0,
+            selected_detail_entry_index: 0,
             selected_artifact_index: 0,
+            selected_history_attempt_ordinal: None,
+            detail_mode: DetailMode::Overview,
             detail: None,
+            history: None,
             footer_message: "Loading demo registry...".to_owned(),
             pending_action: None,
             last_refresh: Instant::now() - Duration::from_secs(5),
             total_demo_count: 0,
             overlay: None,
-            handoff: None,
         }
     }
 
-    fn run(
-        &mut self,
-        terminal: &mut BrowserTerminal,
-    ) -> Result<Option<BrowserHandoff>, RunnerError> {
+    fn run(&mut self, terminal: &mut BrowserTerminal) -> Result<(), RunnerError> {
         self.refresh_state()?;
         loop {
             self.poll_pending_action();
@@ -126,11 +126,8 @@ impl DemoBrowserApp {
             } else if self.last_refresh.elapsed() >= Duration::from_millis(750) {
                 self.refresh_state()?;
             }
-            if self.handoff.is_some() {
-                break;
-            }
         }
-        Ok(self.handoff.take())
+        Ok(())
     }
 
     fn handle_key(&mut self, code: KeyCode) -> Result<bool, RunnerError> {
@@ -158,14 +155,14 @@ impl DemoBrowserApp {
     fn handle_down_key(&mut self) {
         match self.focus {
             BrowserFocus::List => self.select_next_demo(),
-            BrowserFocus::Detail => self.select_next_artifact(),
+            BrowserFocus::Detail => self.select_next_detail_entry(),
         }
     }
 
     fn handle_up_key(&mut self) {
         match self.focus {
             BrowserFocus::List => self.select_previous_demo(),
-            BrowserFocus::Detail => self.select_previous_artifact(),
+            BrowserFocus::Detail => self.select_previous_detail_entry(),
         }
     }
 
@@ -175,7 +172,7 @@ impl DemoBrowserApp {
                 self.open_action_overlay();
                 Ok(())
             }
-            BrowserFocus::Detail => self.dispatch_open_artifact(),
+            BrowserFocus::Detail => self.dispatch_selected_detail_entry(),
         }
     }
 
@@ -321,23 +318,7 @@ impl DemoBrowserApp {
         let Some(detail) = self.selected_detail() else {
             return vec![ActionMenuItem::Refresh];
         };
-        let mut items = Vec::new();
-        if let Some(subcommand) = preferred_run_action(detail) {
-            items.push(match subcommand {
-                DemoSubcommand::Run { .. } => ActionMenuItem::Run,
-                DemoSubcommand::Rerun { .. } => ActionMenuItem::Rerun,
-                _ => unreachable!(),
-            });
-        }
-        if detail.actions.stop.available {
-            items.push(ActionMenuItem::Stop);
-        }
-        if !detail.latest_attempt.artifacts.is_empty() {
-            items.push(ActionMenuItem::OpenArtifact);
-        }
-        items.push(ActionMenuItem::OpenHistory);
-        items.push(ActionMenuItem::Refresh);
-        items
+        action_menu_items_for_detail(detail)
     }
 
     fn run_action_menu_item(&mut self, item: ActionMenuItem) -> Result<(), RunnerError> {
@@ -345,7 +326,7 @@ impl DemoBrowserApp {
             ActionMenuItem::Run | ActionMenuItem::Rerun => self.dispatch_run_or_rerun(),
             ActionMenuItem::Stop => self.dispatch_stop(),
             ActionMenuItem::OpenArtifact => self.dispatch_open_artifact(),
-            ActionMenuItem::OpenHistory => self.dispatch_open_history(),
+            ActionMenuItem::OpenHistory => self.enter_history_mode(),
             ActionMenuItem::Refresh => {
                 self.refresh_state()?;
                 self.footer_message = "Refreshed demo browser state.".to_owned();
@@ -465,21 +446,78 @@ impl DemoBrowserApp {
         selected_artifact(detail, self.selected_artifact_index)
     }
 
-    fn detail_lines(&self) -> Vec<Line<'static>> {
-        if let Some(detail) = &self.detail {
-            detail_lines(
-                &self.repo_root,
-                detail,
-                self.selected_artifact_index,
-                matches!(self.focus, BrowserFocus::Detail),
-            )
-        } else {
-            vec![
-                Line::from("No demo selected."),
-                Line::from(""),
-                Line::from("Use ↑/↓ in the list to select a demo."),
-            ]
+    fn selected_history_attempt(&self) -> Option<&DemoHistoryAttempt> {
+        let history = self.history.as_ref()?;
+        selected_history_attempt(history, self.selected_history_attempt_ordinal)
+    }
+
+    fn detail_render(&self) -> DetailRender {
+        let detail_focused = matches!(self.focus, BrowserFocus::Detail);
+        let selected_item = self.selected_detail_item();
+        match (&self.detail, self.detail_mode) {
+            (Some(detail), DetailMode::Overview) => {
+                overview_detail_render(detail, selected_item, detail_focused)
+            }
+            (Some(detail), DetailMode::History) => {
+                history_detail_render(detail, self.history.as_ref(), selected_item, detail_focused)
+            }
+            (None, _) => DetailRender {
+                lines: vec![
+                    Line::from("No demo selected."),
+                    Line::from(""),
+                    Line::from("Use ↑/↓ in the list to select a demo."),
+                ],
+                selected_line_index: None,
+            },
         }
+    }
+
+    fn detail_selectable_items(&self) -> Vec<DetailSelectableItem> {
+        let Some(detail) = self.selected_detail() else {
+            return Vec::new();
+        };
+
+        match self.detail_mode {
+            DetailMode::Overview => {
+                let mut items = self
+                    .action_menu_items()
+                    .into_iter()
+                    .map(DetailSelectableItem::Action)
+                    .collect::<Vec<_>>();
+                items.extend(
+                    detail
+                        .latest_attempt
+                        .artifacts
+                        .iter()
+                        .enumerate()
+                        .map(|(index, _)| DetailSelectableItem::Artifact(index)),
+                );
+                items
+            }
+            DetailMode::History => {
+                let mut items = vec![
+                    DetailSelectableItem::HistoryBack,
+                    DetailSelectableItem::HistoryRefresh,
+                ];
+                if let Some(history) = &self.history {
+                    items.extend(
+                        history
+                            .attempt_history
+                            .attempts
+                            .iter()
+                            .map(|attempt| DetailSelectableItem::HistoryAttempt(attempt.ordinal)),
+                    );
+                }
+                items
+            }
+        }
+    }
+
+    fn selected_detail_item(&self) -> Option<DetailSelectableItem> {
+        let items = self.detail_selectable_items();
+        items.get(self.selected_detail_entry_index)
+            .copied()
+            .or_else(|| items.first().copied())
     }
 
     fn focus_list(&mut self) {
@@ -491,43 +529,27 @@ impl DemoBrowserApp {
     fn focus_detail(&mut self) {
         self.focus = BrowserFocus::Detail;
         self.footer_message =
-            "Detail panel focused. ↑/↓ selects artifacts. Enter opens the selected artifact."
-                .to_owned();
+            "Detail panel focused. ↑/↓ selects actions, history, and artifacts. Enter activates the selected option.".to_owned();
     }
 
-    fn select_next_artifact(&mut self) {
-        let Some(detail) = self.selected_detail() else {
+    fn select_next_detail_entry(&mut self) {
+        let items = self.detail_selectable_items();
+        if items.is_empty() {
             self.footer_message = "No demo is currently selected.".to_owned();
             return;
-        };
-        if detail.latest_attempt.artifacts.is_empty() {
-            self.footer_message = "The selected demo has no recorded artifacts.".to_owned();
-            return;
         }
-        self.selected_artifact_index =
-            (self.selected_artifact_index + 1) % detail.latest_attempt.artifacts.len();
-        if let Some(artifact) = self.selected_artifact() {
-            self.footer_message = format!("Selected artifact `{artifact}`.");
-        }
+        self.selected_detail_entry_index = next_index(self.selected_detail_entry_index, items.len());
+        self.sync_selected_detail_entry();
     }
 
-    fn select_previous_artifact(&mut self) {
-        let Some(detail) = self.selected_detail() else {
+    fn select_previous_detail_entry(&mut self) {
+        let items = self.detail_selectable_items();
+        if items.is_empty() {
             self.footer_message = "No demo is currently selected.".to_owned();
             return;
-        };
-        if detail.latest_attempt.artifacts.is_empty() {
-            self.footer_message = "The selected demo has no recorded artifacts.".to_owned();
-            return;
         }
-        if self.selected_artifact_index == 0 {
-            self.selected_artifact_index = detail.latest_attempt.artifacts.len() - 1;
-        } else {
-            self.selected_artifact_index -= 1;
-        }
-        if let Some(artifact) = self.selected_artifact() {
-            self.footer_message = format!("Selected artifact `{artifact}`.");
-        }
+        self.selected_detail_entry_index = prev_index(self.selected_detail_entry_index, items.len());
+        self.sync_selected_detail_entry();
     }
 
     fn dispatch_run_or_rerun(&mut self) -> Result<(), RunnerError> {
@@ -629,20 +651,109 @@ impl DemoBrowserApp {
         Ok(())
     }
 
-    fn dispatch_open_history(&mut self) -> Result<(), RunnerError> {
+    fn enter_history_mode(&mut self) -> Result<(), RunnerError> {
         let Some(detail) = self.selected_detail() else {
             self.footer_message = "No demo is currently selected.".to_owned();
             return Ok(());
         };
         let demo_id = detail.id.clone();
-        self.handoff = Some(BrowserHandoff::DemoHistory {
-            demo_id: demo_id.clone(),
-        });
-        self.footer_message = format!(
-            "Handing off to `effigy demo history {}` outside the browser.",
-            demo_id
-        );
+        let history = fetch_demo_history(&self.repo_root, &demo_id)?;
+        self.detail_mode = DetailMode::History;
+        self.history = Some(history);
+        self.selected_history_attempt_ordinal = self.selected_history_attempt().map(|attempt| attempt.ordinal);
+        self.selected_detail_entry_index = 0;
+        if self.history_attempt_count() > 0 {
+            self.selected_detail_entry_index = 2;
+            self.sync_selected_detail_entry();
+        } else {
+            self.footer_message =
+                "Viewing retained history in the detail pane. No retained attempts were found."
+                    .to_owned();
+        }
         Ok(())
+    }
+
+    fn exit_history_mode(&mut self) {
+        self.detail_mode = DetailMode::Overview;
+        self.history = None;
+        self.selected_history_attempt_ordinal = None;
+        self.selected_detail_entry_index = 0;
+        self.sync_selected_detail_entry();
+        self.footer_message = "Returned to demo overview in the detail pane.".to_owned();
+    }
+
+    fn history_attempt_count(&self) -> usize {
+        self.history
+            .as_ref()
+            .map_or(0, |history| history.attempt_history.attempts.len())
+    }
+
+    fn refresh_history_mode(&mut self) -> Result<(), RunnerError> {
+        let Some(detail) = self.selected_detail() else {
+            self.footer_message = "No demo is currently selected.".to_owned();
+            return Ok(());
+        };
+        let history = fetch_demo_history(&self.repo_root, &detail.id)?;
+        self.history = Some(history);
+        self.sync_selected_detail_entry();
+        self.footer_message = "Refreshed retained history in the detail pane.".to_owned();
+        Ok(())
+    }
+
+    fn dispatch_selected_detail_entry(&mut self) -> Result<(), RunnerError> {
+        let Some(item) = self.selected_detail_item() else {
+            self.footer_message = "No detail action is available for the selected demo.".to_owned();
+            return Ok(());
+        };
+        match item {
+            DetailSelectableItem::Action(action) => self.run_action_menu_item(action),
+            DetailSelectableItem::Artifact(index) => {
+                self.selected_artifact_index = index;
+                self.dispatch_open_artifact()
+            }
+            DetailSelectableItem::HistoryBack => {
+                self.exit_history_mode();
+                Ok(())
+            }
+            DetailSelectableItem::HistoryRefresh => self.refresh_history_mode(),
+            DetailSelectableItem::HistoryAttempt(ordinal) => {
+                self.selected_history_attempt_ordinal = Some(ordinal);
+                self.footer_message =
+                    format!("Viewing retained attempt #{ordinal} in the detail pane.");
+                Ok(())
+            }
+        }
+    }
+
+    fn sync_selected_detail_entry(&mut self) {
+        let items = self.detail_selectable_items();
+        if items.is_empty() {
+            self.selected_detail_entry_index = 0;
+            return;
+        }
+        self.selected_detail_entry_index = self.selected_detail_entry_index.min(items.len() - 1);
+        match items[self.selected_detail_entry_index] {
+            DetailSelectableItem::Action(action) => {
+                self.footer_message = format!("Selected detail action `{}`.", action.label());
+            }
+            DetailSelectableItem::Artifact(index) => {
+                self.selected_artifact_index = index;
+                if let Some(artifact) = self.selected_artifact() {
+                    self.footer_message = format!("Selected artifact `{artifact}`.");
+                }
+            }
+            DetailSelectableItem::HistoryBack => {
+                self.footer_message = "Selected history action `Back to overview`.".to_owned();
+            }
+            DetailSelectableItem::HistoryRefresh => {
+                self.footer_message = "Selected history action `Refresh history`.".to_owned();
+            }
+            DetailSelectableItem::HistoryAttempt(ordinal) => {
+                self.selected_history_attempt_ordinal = Some(ordinal);
+                self.footer_message =
+                    format!("Selected retained attempt #{ordinal} in the detail pane.");
+            }
+        }
     }
 
     fn poll_pending_action(&mut self) {
@@ -679,6 +790,7 @@ impl DemoBrowserApp {
     }
 
     fn refresh_state(&mut self) -> Result<(), RunnerError> {
+        let previous_selected_demo_id = self.selected_demo_id.clone();
         let payload = invoke_demo_json(
             &self.repo_root,
             DemoArgs {
@@ -733,9 +845,23 @@ impl DemoBrowserApp {
             }
             None => None,
         };
+        if self.selected_demo_id != previous_selected_demo_id {
+            self.detail_mode = DetailMode::Overview;
+            self.selected_detail_entry_index = 0;
+            self.selected_history_attempt_ordinal = None;
+            self.history = None;
+        } else if matches!(self.detail_mode, DetailMode::History) && self.selected_demo_id.is_some() {
+            self.history = Some(fetch_demo_history(
+                &self.repo_root,
+                self.selected_demo_id
+                    .as_deref()
+                    .expect("selected demo id exists in history mode"),
+            )?);
+        }
         self.selected_artifact_index = self.detail.as_ref().map_or(0, |detail| {
             clamp_artifact_index(self.selected_artifact_index, detail)
         });
+        self.sync_selected_detail_entry();
 
         self.last_refresh = Instant::now();
         Ok(())
@@ -880,8 +1006,19 @@ impl DemoBrowserApp {
     }
 
     fn render_detail(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let lines = self.detail_lines();
-        let detail = Paragraph::new(lines)
+        let render = self.detail_render();
+        let inner_height = area.height.saturating_sub(2) as usize;
+        let scroll = render
+            .selected_line_index
+            .map(|line_index| {
+                if inner_height == 0 {
+                    0
+                } else {
+                    line_index.saturating_sub(inner_height.saturating_sub(1)) as u16
+                }
+            })
+            .unwrap_or(0);
+        let detail = Paragraph::new(render.lines)
             .block(effigy_panel_block(
                 Some(" Detail "),
                 false,
@@ -891,6 +1028,7 @@ impl DemoBrowserApp {
                     Color::DarkGray
                 },
             ))
+            .scroll((scroll, 0))
             .wrap(Wrap { trim: false });
         frame.render_widget(detail, area);
     }
@@ -1105,30 +1243,26 @@ fn invoke_demo_json(_repo_root: &Path, args: DemoArgs) -> Result<JsonValue, Runn
     })
 }
 
-fn run_demo_browser_handoff(repo_root: &Path, handoff: BrowserHandoff) -> Result<(), RunnerError> {
-    match handoff {
-        BrowserHandoff::DemoHistory { demo_id } => {
-            let rendered = run_command(Command::Demo(DemoArgs {
-                subcommand: DemoSubcommand::History {
-                    demo_id,
-                    limit: None,
-                    outcome: None,
-                    attempt_id: None,
-                    attempt_ordinal: None,
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: false,
-            }))?;
-            let mut stdout = io::stdout();
-            stdout
-                .write_all(rendered.as_bytes())
-                .map_err(|error| RunnerError::Ui(error.to_string()))?;
-            stdout
-                .flush()
-                .map_err(|error| RunnerError::Ui(error.to_string()))?;
-            Ok(())
-        }
-    }
+fn fetch_demo_history(repo_root: &Path, demo_id: &str) -> Result<DemoHistoryPayload, RunnerError> {
+    let payload = invoke_demo_json(
+        repo_root,
+        DemoArgs {
+            subcommand: DemoSubcommand::History {
+                demo_id: demo_id.to_owned(),
+                limit: None,
+                outcome: None,
+                attempt_id: None,
+                attempt_ordinal: None,
+            },
+            repo_override: Some(repo_root.to_path_buf()),
+            output_json: true,
+        },
+    )?;
+    serde_json::from_value(payload).map_err(|error| {
+        RunnerError::TaskInvocation(format!(
+            "failed to parse demo history payload for browser: {error}"
+        ))
+    })
 }
 
 fn row_contains_demo(rows: &[BrowserRow], demo_id: &str) -> bool {
@@ -1327,13 +1461,13 @@ fn build_open_command(path: &Path) -> ProcessCommand {
     command
 }
 
-fn detail_lines(
-    _repo_root: &Path,
+fn overview_detail_render(
     detail: &DemoDetail,
-    selected_artifact_index: usize,
+    selected_item: Option<DetailSelectableItem>,
     detail_focused: bool,
-) -> Vec<Line<'static>> {
+) -> DetailRender {
     let mut lines = vec![title_line(&detail.title)];
+    let mut selected_line_index = None;
 
     if !detail.tags.is_empty() {
         lines.push(muted_line(format!("tags: {}", detail.tags.join(", "))));
@@ -1361,32 +1495,157 @@ fn detail_lines(
         }
     }
     lines.push(Line::from(""));
-    lines.push(section_heading("History"));
-    lines.push(compact_kv_line(
-        "command",
-        &format!("effigy demo history {}", detail.id),
-    ));
-    lines.push(muted_line(
-        "Open Actions and choose Open history to leave the browser and run the dedicated history view."
-            .to_owned(),
-    ));
+    lines.push(section_heading("Actions"));
+    for action in action_menu_items_for_detail(detail) {
+        let current_item = DetailSelectableItem::Action(action);
+        if selected_item == Some(current_item) {
+            selected_line_index = Some(lines.len());
+        }
+        lines.push(selectable_detail_line(
+            action.label(),
+            selected_item == Some(current_item),
+            detail_focused,
+        ));
+    }
     lines.push(Line::from(""));
     lines.push(section_heading("Artifacts"));
     if detail.latest_attempt.artifacts.is_empty() {
         lines.push(muted_line("No recorded artifacts.".to_owned()));
     } else {
-        let selected_index = clamp_artifact_index(selected_artifact_index, detail);
         for (index, artifact) in detail.latest_attempt.artifacts.iter().enumerate() {
-            let selected = index == selected_index;
-            lines.push(artifact_list_line(artifact, selected, detail_focused));
+            let current_item = DetailSelectableItem::Artifact(index);
+            if selected_item == Some(current_item) {
+                selected_line_index = Some(lines.len());
+            }
+            lines.push(selectable_detail_line(
+                artifact,
+                selected_item == Some(current_item),
+                detail_focused,
+            ));
         }
         lines.push(muted_line(if detail_focused {
-            "↑/↓ selects artifact  •  Enter opens selection".to_owned()
+            "↑/↓ selects actions and artifacts  •  Enter activates selection".to_owned()
         } else {
-            "→ focuses artifacts".to_owned()
+            "→ focuses actions and artifacts".to_owned()
         }));
     }
-    lines
+    DetailRender {
+        lines,
+        selected_line_index,
+    }
+}
+
+fn history_detail_render(
+    detail: &DemoDetail,
+    history: Option<&DemoHistoryPayload>,
+    selected_item: Option<DetailSelectableItem>,
+    detail_focused: bool,
+) -> DetailRender {
+    let mut lines = vec![title_line(&detail.title)];
+    let mut selected_line_index = None;
+
+    if !detail.tags.is_empty() {
+        lines.push(muted_line(format!("tags: {}", detail.tags.join(", "))));
+    }
+
+    lines.extend([
+        Line::from(""),
+        section_heading("History View"),
+        muted_line(format!(
+            "Retained attempts for `effigy demo history {}` inside the browser.",
+            detail.id
+        )),
+        Line::from(""),
+        section_heading("Actions"),
+    ]);
+
+    for (label, item) in [
+        (
+            "Back to overview",
+            DetailSelectableItem::HistoryBack,
+        ),
+        (
+            "Refresh history",
+            DetailSelectableItem::HistoryRefresh,
+        ),
+    ] {
+        if selected_item == Some(item) {
+            selected_line_index = Some(lines.len());
+        }
+        lines.push(selectable_detail_line(label, selected_item == Some(item), detail_focused));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(section_heading("Retained Attempts"));
+    match history {
+        Some(history) => {
+            if let Some(parse_error) = &history.attempt_history.parse_error {
+                lines.push(muted_line(format!("history parse error: {parse_error}")));
+            }
+            if history.attempt_history.attempts.is_empty() {
+                lines.push(muted_line("No retained attempts were recorded.".to_owned()));
+            } else {
+                for attempt in &history.attempt_history.attempts {
+                    let item = DetailSelectableItem::HistoryAttempt(attempt.ordinal);
+                    if selected_item == Some(item) {
+                        selected_line_index = Some(lines.len());
+                    }
+                    lines.push(selectable_detail_line(
+                        &format!(
+                            "#{:02}  {:<10} {}",
+                            attempt.ordinal,
+                            attempt.outcome,
+                            attempt
+                                .summary
+                                .as_deref()
+                                .unwrap_or("No retained summary recorded.")
+                        ),
+                        selected_item == Some(item),
+                        detail_focused,
+                    ));
+                }
+            }
+        }
+        None => lines.push(muted_line("Retained history is not loaded.".to_owned())),
+    }
+
+    lines.push(Line::from(""));
+    lines.push(section_heading("Selected Attempt"));
+    if let Some(attempt) = history.and_then(|history| selected_history_attempt(history, selected_history_ordinal_from_item(selected_item))) {
+        lines.push(compact_kv_line("ordinal", &attempt.ordinal.to_string()));
+        lines.push(compact_kv_line("attempt", &attempt.attempt_id));
+        lines.push(compact_kv_line("outcome", &attempt.outcome));
+        if let Some(summary) = &attempt.summary {
+            lines.push(Line::from(summary.clone()));
+        }
+        if let Some(receipt_path) = &attempt.receipt_path {
+            lines.push(compact_kv_line("receipt", receipt_path));
+        }
+        if let Some(stdout_log_path) = &attempt.stdout_log_path {
+            lines.push(compact_kv_line("stdout", stdout_log_path));
+        }
+        if let Some(stderr_log_path) = &attempt.stderr_log_path {
+            lines.push(compact_kv_line("stderr", stderr_log_path));
+        }
+        if let Some(exit_code) = attempt.exit_code {
+            lines.push(compact_kv_line("exit", &exit_code.to_string()));
+        }
+        if attempt.artifacts.is_empty() {
+            lines.push(muted_line("No retained artifacts for the selected attempt.".to_owned()));
+        } else {
+            lines.push(compact_kv_line("artifacts", &attempt.artifacts.join(", ")));
+        }
+    } else {
+        lines.push(muted_line(
+            "Select a retained attempt to inspect its normalized receipt and log references."
+                .to_owned(),
+        ));
+    }
+
+    DetailRender {
+        lines,
+        selected_line_index,
+    }
 }
 
 #[cfg(test)]
@@ -1424,7 +1683,7 @@ fn section_heading(label: &str) -> Line<'static> {
     )])
 }
 
-fn artifact_list_line(value: &str, selected: bool, focused: bool) -> Line<'static> {
+fn selectable_detail_line(value: &str, selected: bool, focused: bool) -> Line<'static> {
     let marker = if selected && focused { "› " } else { "  " };
     let style = if selected && focused {
         Style::default()
@@ -1437,6 +1696,51 @@ fn artifact_list_line(value: &str, selected: bool, focused: bool) -> Line<'stati
         Span::styled(marker, style),
         Span::styled(value.to_owned(), style),
     ])
+}
+
+fn selected_history_attempt(
+    history: &DemoHistoryPayload,
+    selected_ordinal: Option<usize>,
+) -> Option<&DemoHistoryAttempt> {
+    if history.attempt_history.attempts.is_empty() {
+        return None;
+    }
+    selected_ordinal
+        .and_then(|ordinal| {
+            history
+                .attempt_history
+                .attempts
+                .iter()
+                .find(|attempt| attempt.ordinal == ordinal)
+        })
+        .or_else(|| history.attempt_history.attempts.first())
+}
+
+fn selected_history_ordinal_from_item(item: Option<DetailSelectableItem>) -> Option<usize> {
+    match item {
+        Some(DetailSelectableItem::HistoryAttempt(ordinal)) => Some(ordinal),
+        _ => None,
+    }
+}
+
+fn action_menu_items_for_detail(detail: &DemoDetail) -> Vec<ActionMenuItem> {
+    let mut items = Vec::new();
+    if let Some(subcommand) = preferred_run_action(detail) {
+        items.push(match subcommand {
+            DemoSubcommand::Run { .. } => ActionMenuItem::Run,
+            DemoSubcommand::Rerun { .. } => ActionMenuItem::Rerun,
+            _ => unreachable!(),
+        });
+    }
+    if detail.actions.stop.available {
+        items.push(ActionMenuItem::Stop);
+    }
+    if !detail.latest_attempt.artifacts.is_empty() {
+        items.push(ActionMenuItem::OpenArtifact);
+    }
+    items.push(ActionMenuItem::OpenHistory);
+    items.push(ActionMenuItem::Refresh);
+    items
 }
 
 fn title_line(value: &str) -> Line<'static> {
@@ -1585,7 +1889,7 @@ impl ActionMenuState {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ActionMenuItem {
     Run,
     Rerun,
@@ -1602,15 +1906,30 @@ impl ActionMenuItem {
             Self::Rerun => "Rerun demo",
             Self::Stop => "Stop demo",
             Self::OpenArtifact => "Open artifact",
-            Self::OpenHistory => "Open history",
+            Self::OpenHistory => "View history",
             Self::Refresh => "Refresh state",
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum BrowserHandoff {
-    DemoHistory { demo_id: String },
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DetailMode {
+    Overview,
+    History,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DetailSelectableItem {
+    Action(ActionMenuItem),
+    Artifact(usize),
+    HistoryBack,
+    HistoryRefresh,
+    HistoryAttempt(usize),
+}
+
+struct DetailRender {
+    lines: Vec<Line<'static>>,
+    selected_line_index: Option<usize>,
 }
 
 #[derive(Default)]
@@ -1768,6 +2087,44 @@ struct DemoInspectPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct DemoHistoryPayload {
+    attempt_history: DemoHistoryAttemptHistoryPayload,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DemoHistoryAttemptHistoryPayload {
+    #[allow(dead_code)]
+    path: Option<String>,
+    #[allow(dead_code)]
+    stored_count: usize,
+    #[allow(dead_code)]
+    filtered_count: usize,
+    #[allow(dead_code)]
+    displayed_count: usize,
+    #[allow(dead_code)]
+    count: usize,
+    #[allow(dead_code)]
+    limit: Option<usize>,
+    #[allow(dead_code)]
+    outcome: Option<String>,
+    parse_error: Option<String>,
+    attempts: Vec<DemoHistoryAttempt>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DemoHistoryAttempt {
+    ordinal: usize,
+    attempt_id: String,
+    outcome: String,
+    summary: Option<String>,
+    receipt_path: Option<String>,
+    artifacts: Vec<String>,
+    stdout_log_path: Option<String>,
+    stderr_log_path: Option<String>,
+    exit_code: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct DemoDetail {
     id: String,
     title: String,
@@ -1821,11 +2178,13 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        clamp_artifact_index, detail_lines, first_demo_id, next_gap_filter, next_group_by,
-        next_mode_filter, next_status_filter, query_summary, read_recent_log_lines,
-        resolve_artifact_path, resolve_repo_relative_path, row_contains_demo, selected_artifact,
-        ActionMenuItem, BrowserRow, DemoDetail, DemoLatestAttempt, DemoListGap, DemoListGroupBy,
-        DemoListMode, DemoListQuery, DemoListStatus, DemoSummary,
+        clamp_artifact_index, first_demo_id, history_detail_render, next_gap_filter,
+        next_group_by, next_mode_filter, next_status_filter, overview_detail_render,
+        query_summary, read_recent_log_lines, resolve_artifact_path, resolve_repo_relative_path,
+        row_contains_demo, selected_artifact, ActionMenuItem, BrowserRow, DemoDetail,
+        DemoHistoryAttempt, DemoHistoryAttemptHistoryPayload, DemoHistoryPayload,
+        DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery,
+        DemoListStatus, DemoSummary, DetailSelectableItem,
     };
 
     fn summary(id: &str) -> DemoSummary {
@@ -2034,7 +2393,12 @@ mod tests {
         detail.tags = vec!["self-hosted".to_owned(), "proof".to_owned()];
         detail.latest_attempt.summary = Some("Latest attempt wrote a proof report.".to_owned());
 
-        let rendered = detail_lines(Path::new("/tmp/effigy"), &detail, 0, true)
+        let rendered = overview_detail_render(
+            &detail,
+            Some(DetailSelectableItem::Action(ActionMenuItem::OpenHistory)),
+            true,
+        )
+            .lines
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -2047,12 +2411,11 @@ mod tests {
         assert!(rendered.contains("Result"));
         assert!(rendered.contains("status: passed"));
         assert!(rendered.contains("Latest attempt wrote a proof report."));
-        assert!(rendered.contains("History"));
-        assert!(rendered.contains("command: effigy demo history browser-proof-report"));
-        assert!(rendered.contains("Open Actions and choose Open history"));
+        assert!(rendered.contains("Actions"));
+        assert!(rendered.contains("View history"));
         assert!(rendered.contains(".effigy/demo/artifacts/browser-proof-report/index.html"));
         assert!(rendered.contains("covers: effigy.demo.browser"));
-        assert!(rendered.contains("↑/↓ selects artifact"));
+        assert!(rendered.contains("↑/↓ selects actions and artifacts"));
         assert!(!rendered.contains("Latest Receipt"));
         assert!(!rendered.contains("actions:"));
         assert!(!rendered.contains("attempts:"));
@@ -2062,18 +2425,73 @@ mod tests {
     fn browser_detail_lines_hide_pointer_when_inactive() {
         let detail = detail_with_artifacts(&["one", "two"]);
 
-        let rendered = detail_lines(Path::new("/tmp/effigy"), &detail, 0, false)
+        let rendered = overview_detail_render(
+            &detail,
+            Some(DetailSelectableItem::Artifact(0)),
+            false,
+        )
+            .lines
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(rendered.contains("→ focuses artifacts"));
+        assert!(rendered.contains("→ focuses actions and artifacts"));
         assert!(!rendered.contains("› one"));
     }
 
     #[test]
-    fn browser_action_menu_exposes_history_handoff_label() {
-        assert_eq!(ActionMenuItem::OpenHistory.label(), "Open history");
+    fn browser_action_menu_exposes_integrated_history_label() {
+        assert_eq!(ActionMenuItem::OpenHistory.label(), "View history");
+    }
+
+    #[test]
+    fn browser_history_view_renders_selected_attempt_details() {
+        let detail = detail_with_artifacts(&[]);
+        let history = DemoHistoryPayload {
+            attempt_history: DemoHistoryAttemptHistoryPayload {
+                path: None,
+                stored_count: 1,
+                filtered_count: 1,
+                displayed_count: 1,
+                count: 1,
+                limit: None,
+                outcome: None,
+                parse_error: None,
+                attempts: vec![DemoHistoryAttempt {
+                    ordinal: 1,
+                    attempt_id: "demo-123".to_owned(),
+                    outcome: "failed".to_owned(),
+                    summary: Some("Proof artifact was missing.".to_owned()),
+                    receipt_path: Some(".effigy/demo/history/demo-123.json".to_owned()),
+                    artifacts: vec![".effigy/demo/artifacts/report.html".to_owned()],
+                    stdout_log_path: Some(".effigy/demo/logs/demo-123.stdout.log".to_owned()),
+                    stderr_log_path: Some(".effigy/demo/logs/demo-123.stderr.log".to_owned()),
+                    exit_code: Some(1),
+                }],
+            },
+        };
+
+        let rendered = history_detail_render(
+            &detail,
+            Some(&history),
+            Some(DetailSelectableItem::HistoryAttempt(1)),
+            true,
+        )
+        .lines
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        assert!(rendered.contains("History View"));
+        assert!(rendered.contains("Back to overview"));
+        assert!(rendered.contains("Refresh history"));
+        assert!(rendered.contains("#01"));
+        assert!(rendered.contains("Proof artifact was missing."));
+        assert!(rendered.contains("receipt: .effigy/demo/history/demo-123.json"));
+        assert!(rendered.contains("stdout: .effigy/demo/logs/demo-123.stdout.log"));
+        assert!(rendered.contains("stderr: .effigy/demo/logs/demo-123.stderr.log"));
+        assert!(rendered.contains("artifacts: .effigy/demo/artifacts/report.html"));
     }
 }

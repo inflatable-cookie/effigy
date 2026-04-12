@@ -45,10 +45,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`039-implement-demo-history-query-controls.md`](./039-implement-demo-history-query-controls.md) (complete)
 - [`040-decide-demo-post-history-query-controls-boundary.md`](./040-decide-demo-post-history-query-controls-boundary.md) (complete)
 - [`041-implement-demo-browser-history-handoff.md`](./041-implement-demo-browser-history-handoff.md) (complete)
-- [`042-decide-demo-post-browser-history-handoff-boundary.md`](./042-decide-demo-post-browser-history-handoff-boundary.md)
+- [`042-implement-demo-browser-integrated-history-view.md`](./042-implement-demo-browser-integrated-history-view.md) (complete)
+- [`043-decide-demo-post-integrated-browser-history-boundary.md`](./043-decide-demo-post-integrated-browser-history-boundary.md)
 
 ## Next Task
 
 Execute the active ready card to decide whether any later history/browser
-follow-up should deepen browser consumption further or return to query-first
-runner work.
+follow-up should deepen one-demo browser activation from retained attempts or
+return to query-first runner work.

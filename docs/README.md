@@ -130,6 +130,6 @@ Reference:
 ## Next Task
 
 Use the active strict `g02.003` spec lane to decide whether any later
-history/browser follow-up should deepen browser consumption further or return
-to query-first runner work, then keep the docs front doors aligned to that
-bounded slice.
+history/browser follow-up should deepen one-demo browser activation from
+retained attempts or return to query-first runner work, then keep the docs
+front doors aligned to that bounded slice.
