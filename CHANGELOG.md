@@ -100,6 +100,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Remove artifact opening from the `effigy demo browser` action sheet so
   retained artifacts are activated only through detail-pane navigation instead
   of a redundant action that bypassed the current selection flow
+- Make `effigy demo browser` hide the `Result` section until the current
+  session runs or reruns a demo, move `covers:` directly under `tags:`, and
+  keep the result summary at the bottom of the detail pane so fresh-session
+  overview layouts stay focused on metadata, actions, and artifacts first
 
 ### Fixed
 - Make stop-requested run-backed demos persist `stop-requested` state before
