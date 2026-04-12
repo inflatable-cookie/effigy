@@ -334,7 +334,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to decide whether any later
-history/browser follow-up should deepen browser consumption further or return
-to query-first runner work, while keeping broader runtime and desktop-client
-questions deferred.
+Use the active `g02.003` ready card to decide the next bounded slice after
+concurrent-runner-backed demos landed behind the demo session contract, while
+broader runtime and desktop-client questions stay deferred.

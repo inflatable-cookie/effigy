@@ -388,6 +388,30 @@ run = "printf pending"
     .expect("write render receipt");
 }
 
+fn write_demo_concurrent_runner_fixture(root: &std::path::Path) {
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks.dev]
+mode = "tui"
+concurrent = [
+  { name = "api", run = "printf api-ok\n; while true; do sleep 1; done" }
+]
+
+[demos.stack]
+title = "Stack"
+summary = "Projects a concurrent runner task through demo surfaces."
+proof = "Verify concurrent-runner-backed demos project through the demo session contract."
+owner = "demo"
+mode = "interactive"
+status = "ready"
+covers = ["demo.concurrent"]
+task = "dev"
+"#,
+    )
+    .expect("write concurrent demo manifest");
+}
+
 fn spawn_demo_run_process(root: &std::path::Path, demo_id: &str) -> std::process::Child {
     Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")
@@ -1216,6 +1240,98 @@ run = "sh -lc 'printf boot-line\\n; printf boot-err\\n >&2; while true; do print
 }
 
 #[test]
+fn cli_demo_inspect_json_classifies_concurrent_runner_backed_demo_when_inactive() {
+    let root = temp_workspace("demo-concurrent-runtime-backend-json");
+    write_demo_concurrent_runner_fixture(&root);
+
+    let output = run_json_cli_command(&root, &["demo", "inspect", "stack"]);
+    assert!(output.status.success(), "demo inspect failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["kind"],
+        "concurrent-runner"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["flattened_projection"],
+        true
+    );
+    assert!(
+        parsed["result"]["demo"]["runtime_backend"]["capabilities"]
+            .as_array()
+            .expect("runtime capabilities")
+            .iter()
+            .any(|value| value.as_str() == Some("active-terminal-session"))
+    );
+}
+
+#[test]
+fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_demo() {
+    let root = temp_workspace("demo-concurrent-active-json");
+    write_demo_concurrent_runner_fixture(&root);
+
+    let mut child = spawn_demo_run_process(&root, "stack");
+    let active_path = root.join(".effigy/demo/active/stack.json");
+    let stdout_log = root.join(".effigy/demo/logs/stack.stdout.log");
+    let stderr_log = root.join(".effigy/demo/logs/stack.stderr.log");
+    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+    wait_for_path_exists(&stdout_log, Duration::from_secs(5), "stdout log");
+    wait_for_path_exists(&stderr_log, Duration::from_secs(5), "stderr log");
+    std::thread::sleep(Duration::from_millis(250));
+
+    let output = run_json_cli_command(&root, &["demo", "inspect", "stack"]);
+    assert!(output.status.success(), "demo inspect failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["demo"]["active_attempt"]["active"], true);
+    assert_eq!(
+        parsed["result"]["demo"]["runtime_backend"]["kind"],
+        "concurrent-runner"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["kind"],
+        "concurrent-runner"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["flattened_projection"],
+        true
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["kind"],
+        "concurrent-runner"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["transport"],
+        "stream"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["nested_tui"],
+        false
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["supports_input_forwarding"],
+        false
+    );
+    assert!(
+        parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stdout_lines"]
+            .as_array()
+            .expect("stdout lines")
+            .iter()
+            .any(|line| line.as_str().is_some_and(|line| line.contains("[api] api-ok")))
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["stdout_log_path"],
+        ".effigy/demo/logs/stack.stdout.log"
+    );
+    assert_eq!(
+        parsed["result"]["demo"]["active_terminal_session"]["stderr_log_path"],
+        ".effigy/demo/logs/stack.stderr.log"
+    );
+
+    let stop = run_json_cli_command(&root, &["demo", "stop", "stack"]);
+    assert!(stop.status.success(), "demo stop failed: {stop:?}");
+    wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
+}
+
+#[test]
 fn cli_demo_inspect_json_reports_active_attempt_for_attached_text_run_demo() {
     let root = temp_workspace("demo-inspect-active-text");
     fs::write(
@@ -1555,6 +1671,38 @@ run = "sh -lc 'while true; do sleep 1; done'"
     wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
     let receipt: Value = serde_json::from_str(
         &fs::read_to_string(root.join(".effigy/demo/receipts/waiter.json"))
+            .expect("read demo receipt"),
+    )
+    .expect("parse demo receipt");
+    assert_eq!(receipt["status"], "terminated");
+}
+
+#[test]
+fn cli_demo_stop_json_concurrent_runner_attempt_requests_termination() {
+    let root = temp_workspace("demo-stop-concurrent-json");
+    write_demo_concurrent_runner_fixture(&root);
+
+    let mut child = spawn_demo_run_process(&root, "stack");
+    let active_path = root.join(".effigy/demo/active/stack.json");
+    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
+
+    let output = run_json_cli_command(&root, &["demo", "stop", "stack"]);
+    assert!(output.status.success(), "demo stop failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.demo.stop.v1");
+    assert_eq!(parsed["result"]["active_attempt"]["active"], true);
+    assert_eq!(
+        parsed["result"]["active_attempt"]["state"],
+        "stop-requested"
+    );
+    assert_eq!(
+        parsed["result"]["active_attempt"]["runtime_backend"]["kind"],
+        "concurrent-runner"
+    );
+
+    wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
+    let receipt: Value = serde_json::from_str(
+        &fs::read_to_string(root.join(".effigy/demo/receipts/stack.json"))
             .expect("read demo receipt"),
     )
     .expect("parse demo receipt");

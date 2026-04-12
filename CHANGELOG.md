@@ -101,6 +101,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `runtime_backend` identity and capability facts so task-backed, run-backed,
   and future richer demo runtimes can stay demo-scoped without forcing meaning
   through browser-only semantics or nested TUI launch
+- Project concurrent-runner-backed demos through the shipped demo session
+  contract so `demo inspect`, active terminal/session reporting, and `demo stop`
+  expose honest flattened concurrent-runner facts without launching a nested
+  TUI
 - Deepen active demo terminal/session reporting with explicit terminal size,
   resize posture, and detached-session resize handoff metadata, and have
   `effigy demo browser` auto-sync the terminal tab viewport through that
