@@ -1,6 +1,6 @@
 # 068 Implement Demo Concurrent-Runner Terminal Interaction Projection
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -37,6 +37,20 @@ use input and resize semantics without nested TUI launch.
   nested TUI launch
 - the contract stays demo-scoped rather than process-manager-scoped
 
+## Result
+
+- concurrent-runner-backed detached demo sessions now expose demo-owned stdin
+  and resize handoff paths through the active attempt and active terminal
+  session contract
+- the managed concurrent runtime now forwards appended input from the demo
+  handoff file into one flattened target process when the projected demo
+  resolves to a single process
+- `demo input` and `demo resize` now work for eligible concurrent-runner-
+  backed detached demo sessions through the same demo-scoped contract used by
+  browser consumers
+- CLI regression coverage now locks inspect, input, resize, and stop behavior
+  for concurrent-runner-backed demos
+
 ## Validation
 
 - `cargo test`
@@ -52,6 +66,6 @@ use input and resize semantics without nested TUI launch.
 
 ## Next Task
 
-Execute this card to add bounded concurrent-runner terminal interaction
-projection through the demo session contract.
-
+Execute [`069-decide-demo-post-concurrent-runner-terminal-interaction-boundary.md`](./069-decide-demo-post-concurrent-runner-terminal-interaction-boundary.md)
+to choose the next bounded slice after concurrent-runner terminal interaction
+projection landed.

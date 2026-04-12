@@ -19,6 +19,7 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to add bounded concurrent-runner terminal
-interaction projection through the demo session contract, then keep this area
-trimmed so it reflects live planning rather than stale lane history.
+Use the active spec lane to decide the next bounded slice after
+concurrent-runner terminal interaction projection landed through the demo
+session contract, then keep this area trimmed so it reflects live planning
+rather than stale lane history.
