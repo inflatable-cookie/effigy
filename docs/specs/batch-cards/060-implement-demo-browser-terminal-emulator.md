@@ -56,13 +56,16 @@ allows it, without launching a nested TUI.
 
 ## Outcome
 
-- shipped embedded terminal emulation inside the demo-browser `Terminal` tab
+- shipped a vt-backed terminal replay surface inside the demo-browser
+  `Terminal` tab
 - added browser-side terminal input capture on top of the runner-owned
   `demo input` surface
 - replaced the contract-only `demo input` implementation with a real
   runner-owned active-session input handoff for detached run-backed demos
 - preserved fallback handling for demos with no active session and kept the
   no-nested-TUI rule intact
+- later operator feedback showed this still was not the full ask because the
+  demo was not actually running in that pane
 
 ## Next Task
 
