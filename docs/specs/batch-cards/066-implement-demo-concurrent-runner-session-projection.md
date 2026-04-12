@@ -1,6 +1,6 @@
 # 066 Implement Demo Concurrent-Runner Session Projection
 
-Status: ready
+Status: complete
 Updated: 2026-04-12
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -36,6 +36,19 @@ they can report honest active session facts without nested TUI launch.
 - browser and CLI surfaces can consume the richer runtime through the same
   contract they already use
 
+## Result
+
+- concurrent-runner-backed demo task entrypoints now project through a
+  flattened demo-owned runtime path instead of falling back to generic
+  task-backed semantics
+- `demo inspect`, active attempt details, and active terminal/session payloads
+  now report `runtime_backend = concurrent-runner` with honest flattened
+  projection facts during both inactive and active states
+- `demo stop` now works for concurrent-runner-backed active demos through the
+  same demo-owned active-attempt contract, without launching a nested TUI
+- CLI regression coverage now locks inactive classification, active-session
+  projection, and stop/terminated receipt behavior
+
 ## Validation
 
 - `cargo test`
@@ -52,5 +65,6 @@ they can report honest active session facts without nested TUI launch.
 
 ## Next Task
 
-Execute this card to project concurrent-runner-backed demos through the demo
-session contract without reopening browser churn or nested TUI embedding.
+Execute [`067-decide-demo-post-concurrent-runner-session-projection-boundary.md`](./067-decide-demo-post-concurrent-runner-session-projection-boundary.md)
+to choose the next bounded slice after concurrent-runner demo session
+projection landed.

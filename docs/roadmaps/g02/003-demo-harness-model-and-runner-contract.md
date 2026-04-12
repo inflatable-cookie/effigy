@@ -2492,6 +2492,42 @@ Out of scope for the next implementation slice:
 - broad managed-runtime expansion outside the demo contract
 - desktop-client work
 
+Batch `03.59` result:
+
+- concurrent-runner-backed demo task entrypoints now project through a
+  flattened demo-owned runtime path instead of falling back to generic
+  task-backed semantics
+- `demo inspect`, active attempt details, and active terminal/session payloads
+  now report `runtime_backend = concurrent-runner` with honest flattened
+  projection facts during both inactive and active states
+- `demo stop` now works for concurrent-runner-backed active demos through the
+  same demo-owned active-attempt contract without nested TUI launch
+
+Why this implementation matters:
+
+- it proves the backend/capability contract can carry one richer runtime
+  backend without browser-invented semantics
+- it keeps concurrent-runner-backed demos flattened behind the demo object
+  instead of leaking process-manager UX into the browser
+- it turns the no-nested-TUI rule into shipped behavior rather than roadmap-only intent
+
+### 10.57 Demo Post-Concurrent-Runner Session Projection Boundary
+
+Batch `03.60` target:
+
+Choose the next bounded slice after concurrent-runner-backed demos can project
+through the demo session contract, while keeping the lane demo-scoped and
+bounded away from browser churn, nested TUI embedding, and generic
+process-manager work.
+
+Decision focus:
+
+- whether the next value belongs in one more runner-owned concurrent-runtime
+  fidelity slice
+- whether one narrow browser/client consumer follow-up is justified now that
+  concurrent-runner projection is real
+- whether terminal/runtime work is coherent enough to pause again
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
@@ -2561,6 +2597,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to project concurrent-runner-backed demos
-through the existing demo session contract while nested TUI embedding and
-wider runtime drift stay explicitly bounded.
+Use the active `g02.003` strict lane to decide the next bounded slice after
+concurrent-runner-backed demos landed behind the demo session contract while
+nested TUI embedding and wider runtime drift stay explicitly bounded.

@@ -23,12 +23,17 @@ use nix::unistd::{setpgid, Pid};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 
+use crate::process_manager::{ProcessEvent, ProcessEventKind, ProcessSpec, ProcessSupervisor};
+use crate::runner::catalog::select_catalog_and_task;
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
 use crate::runner::execute::run_manifest_task_with_cwd;
+use crate::runner::managed::command::resolve_managed_task_plan;
 use crate::runner::manifest::{
     load_task_manifest_with_inspection, LoadedTaskManifest, ManifestDemoConfig, ManifestDemoMode,
-    ManifestDemoStatus,
+    ManifestDemoStatus, ManifestTask,
 };
+use crate::runner::model::catalog::{LoadedCatalog, TaskRuntimeArgs, TaskSelection, TaskSelector};
+use crate::runner::util::parse_task_selector;
 use crate::runner::util::with_local_node_bin_path;
 use crate::tui::run_demo_browser_tui;
 use crate::ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer, TableSpec};
@@ -47,6 +52,8 @@ const DEMO_HISTORY_DIR: &str = ".effigy/demo/history";
 const DEMO_ATTEMPT_HISTORY_LIMIT: usize = 10;
 const DEMO_ACTIVE_TERMINAL_RECENT_LINES: usize = 8;
 const DEMO_INPUT_POLL_INTERVAL_MS: u64 = 40;
+const DEMO_MANAGED_EVENT_POLL_INTERVAL_MS: u64 = 100;
+const DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT: usize = 3;
 const DEMO_DEFAULT_TERMINAL_COLS: u16 = 80;
 const DEMO_DEFAULT_TERMINAL_ROWS: u16 = 24;
 
@@ -696,18 +703,20 @@ fn render_demo_stop(
     let active_attempt = load_active_attempt(repo_root, demo_id)?;
     match demo_entrypoint(demo) {
         DemoEntrypoint::Task(task_name) => {
-            return demo_error(
-                output_json,
-                "effigy.demo.stop.v1",
-                format!(
-                    "demo `{demo_id}` uses task entrypoint `{task_name}`; stop is not supported until task execution exposes cancellable handles"
-                ),
-                json!({
-                    "demo_id": demo_id,
-                    "entrypoint": { "kind": "task", "value": task_name },
-                    "active_attempt": active_attempt.to_json(),
-                }),
-            );
+            if active_attempt.runtime_backend_kind != "concurrent-runner" {
+                return demo_error(
+                    output_json,
+                    "effigy.demo.stop.v1",
+                    format!(
+                        "demo `{demo_id}` uses task entrypoint `{task_name}`; stop is not supported until task execution exposes cancellable handles"
+                    ),
+                    json!({
+                        "demo_id": demo_id,
+                        "entrypoint": { "kind": "task", "value": task_name },
+                        "active_attempt": active_attempt.to_json(),
+                    }),
+                );
+            }
         }
         DemoEntrypoint::Run(_) => {}
     }
@@ -754,7 +763,28 @@ fn render_demo_stop(
         );
     }
 
-    let Some(target_pid) = persisted.target_pid else {
+    let target_pid = persisted.target_pid;
+
+    if persisted.runtime_backend_kind.as_deref() == Some("concurrent-runner") && target_pid.is_none()
+    {
+        persisted.phase = PersistedDemoActivePhase::StopRequested;
+        write_active_attempt_record(repo_root, demo_id, &persisted)?;
+        return render_demo_stop_result(
+            repo_root,
+            loaded,
+            demo_id,
+            output_json,
+            "stop requested",
+            demo_active_attempt_from_record(
+                repo_root,
+                demo_id,
+                &persisted,
+                render_active_attempt_path(repo_root, demo_id),
+            ),
+        );
+    }
+
+    let Some(target_pid) = target_pid else {
         return demo_error(
             output_json,
             "effigy.demo.stop.v1",
@@ -1367,7 +1397,7 @@ fn build_demo_record(
         sources,
         primary_source,
         gap_class,
-        runtime_backend: demo_runtime_backend(&entrypoint, &active_attempt),
+        runtime_backend: demo_runtime_backend(repo_root, loaded, &entrypoint, &active_attempt),
         active_attempt,
         active_terminal_session,
         latest_attempt,
@@ -1814,9 +1844,13 @@ fn execute_demo_attempt(
     output_json: bool,
 ) -> Result<DemoExecutionAttempt, RunnerError> {
     match demo_entrypoint(demo) {
-        DemoEntrypoint::Task(task_name) => {
-            execute_task_backed_demo(repo_root, demo_id, &task_name, output_json)
-        }
+        DemoEntrypoint::Task(task_name) => execute_task_backed_demo(
+            repo_root,
+            demo_id,
+            &task_name,
+            demo.mode,
+            output_json,
+        ),
         DemoEntrypoint::Run(run_command) => {
             execute_run_backed_demo(repo_root, demo_id, demo.mode, &run_command, output_json)
         }
@@ -1827,8 +1861,22 @@ fn execute_task_backed_demo(
     repo_root: &Path,
     demo_id: &str,
     task_name: &str,
+    demo_mode: ManifestDemoMode,
     output_json: bool,
 ) -> Result<DemoExecutionAttempt, RunnerError> {
+    if let Some(selection) = demo_task_selection(repo_root, task_name)? {
+        if task_is_concurrent_runner_backed(selection.task()?) {
+            return execute_concurrent_runner_backed_demo(
+                repo_root,
+                demo_id,
+                task_name,
+                demo_mode,
+                selection,
+                output_json,
+            );
+        }
+    }
+
     let attempt_id = build_attempt_id(demo_id);
     let _active_guard = register_active_attempt(
         repo_root,
@@ -1924,6 +1972,364 @@ fn execute_task_backed_demo(
             DemoLogPaths::none(),
         )),
     }
+}
+
+struct DemoTaskSelectionResolved {
+    selector: TaskSelector,
+    catalogs: Vec<LoadedCatalog>,
+    selected_catalog_index: usize,
+}
+
+impl DemoTaskSelectionResolved {
+    fn selection(&self) -> Result<TaskSelection<'_>, RunnerError> {
+        select_catalog_and_task(
+            &self.selector,
+            &self.catalogs,
+            &self.catalogs[self.selected_catalog_index].catalog_root,
+        )
+    }
+
+    fn task(&self) -> Result<&ManifestTask, RunnerError> {
+        self.selection().map(|selection| selection.task)
+    }
+}
+
+fn demo_task_selection(
+    repo_root: &Path,
+    task_name: &str,
+) -> Result<Option<DemoTaskSelectionResolved>, RunnerError> {
+    let catalogs = crate::runner::catalog::discover_catalogs_allow_missing(repo_root)?;
+    if catalogs.is_empty() {
+        return Ok(None);
+    }
+    let selector = parse_task_selector(task_name)?;
+    let selection = select_catalog_and_task(&selector, &catalogs, repo_root)?;
+    let selected_catalog_index = catalogs
+        .iter()
+        .position(|catalog| {
+            catalog.alias == selection.catalog.alias
+                && catalog.catalog_root == selection.catalog.catalog_root
+                && catalog.manifest_path == selection.catalog.manifest_path
+        })
+        .ok_or_else(|| {
+            RunnerError::task_invocation(format!(
+                "failed to re-identify selected task catalog for demo task `{task_name}`"
+            ))
+        })?;
+    Ok(Some(DemoTaskSelectionResolved {
+        selector,
+        catalogs,
+        selected_catalog_index,
+    }))
+}
+
+fn task_is_concurrent_runner_backed(task: &ManifestTask) -> bool {
+    task.mode.as_deref() == Some("tui") && (!task.concurrent.is_empty() || !task.profiles.is_empty())
+}
+
+fn execute_concurrent_runner_backed_demo(
+    repo_root: &Path,
+    demo_id: &str,
+    task_name: &str,
+    demo_mode: ManifestDemoMode,
+    resolved: DemoTaskSelectionResolved,
+    output_json: bool,
+) -> Result<DemoExecutionAttempt, RunnerError> {
+    let selection = resolved.selection()?;
+    let runtime_args = TaskRuntimeArgs {
+        repo_override: None,
+        verbose_root: false,
+        env_schema_override: None,
+        passthrough: Vec::new(),
+    };
+    let plan = resolve_managed_task_plan(
+        &resolved.selector,
+        selection.catalog,
+        selection.task,
+        &runtime_args,
+        &resolved.catalogs,
+        &selection.catalog.catalog_root,
+    )?
+    .ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "demo `{demo_id}` task `{task_name}` does not resolve to a managed concurrent runtime"
+        ))
+    })?;
+    let log_paths = DemoLogPaths::prepare_split(repo_root, demo_id)?;
+    let initial_terminal_size = if demo_mode_prefers_attached_terminal(demo_mode) {
+        current_terminal_size()
+    } else {
+        Some((DEMO_DEFAULT_TERMINAL_COLS, DEMO_DEFAULT_TERMINAL_ROWS))
+    };
+    let attempt_id = build_attempt_id(demo_id);
+    let _active_guard = register_active_attempt(
+        repo_root,
+        demo_id,
+        PersistedDemoActiveAttempt {
+            schema: "effigy.demo.active.v1".to_owned(),
+            schema_version: 1,
+            attempt_id,
+            demo_id: demo_id.to_owned(),
+            phase: PersistedDemoActivePhase::Running,
+            started_at_epoch_ms: now_epoch_ms(),
+            owner_pid: std::process::id(),
+            target_pid: None,
+            stoppable: true,
+            entrypoint_kind: "task".to_owned(),
+            entrypoint_value: task_name.to_owned(),
+            command: format!("<managed:{task_name} profile:{}>", plan.profile),
+            runtime_backend_kind: Some("concurrent-runner".to_owned()),
+            flattened_runtime_projection: true,
+            terminal_transport: PersistedDemoTerminalTransport::Stream,
+            supports_input_forwarding: false,
+            supports_resize: false,
+            nested_tui: false,
+            terminal_cols: initial_terminal_size.map(|(cols, _)| cols),
+            terminal_rows: initial_terminal_size.map(|(_, rows)| rows),
+            resize_handoff_path: None,
+            stdin_input_path: None,
+            stdout_log_path: log_paths.stdout.clone(),
+            stderr_log_path: log_paths.stderr.clone(),
+        },
+    )?;
+
+    run_concurrent_runner_demo_runtime(repo_root, demo_id, task_name, plan, log_paths, output_json)
+}
+
+fn run_concurrent_runner_demo_runtime(
+    repo_root: &Path,
+    demo_id: &str,
+    task_name: &str,
+    plan: crate::runner::model::managed::ManagedTaskPlan,
+    log_paths: DemoLogPaths,
+    output_json: bool,
+) -> Result<DemoExecutionAttempt, RunnerError> {
+    let shutdown_on_exit_processes = plan
+        .processes
+        .iter()
+        .filter(|process| process.shutdown_on_exit)
+        .map(|process| process.name.clone())
+        .collect::<BTreeSet<String>>();
+    let specs = plan
+        .processes
+        .iter()
+        .cloned()
+        .map(|process| ProcessSpec {
+            name: process.name,
+            run: process.run,
+            cwd: process.cwd,
+            start_after_ms: process.start_after_ms,
+            shutdown_on_exit: process.shutdown_on_exit,
+            pty: true,
+            env: BTreeMap::new(),
+        })
+        .collect::<Vec<_>>();
+    let expected = specs.len();
+    let supervisor = ProcessSupervisor::spawn(repo_root.to_path_buf(), specs)?;
+    let mut state = DemoConcurrentRuntimeState::new(
+        log_paths.stdout_absolute.as_deref(),
+        log_paths.stderr_absolute.as_deref(),
+        shutdown_on_exit_processes,
+        !output_json,
+    )?;
+
+    while state.exit_count < expected || state.drained_after_exit < DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT
+    {
+        if !state.stop_requested && active_attempt_is_stop_requested(repo_root, demo_id) {
+            state.stop_requested = true;
+            supervisor.terminate_all();
+        }
+        if let Some(event) = supervisor.next_event_timeout(Duration::from_millis(
+            DEMO_MANAGED_EVENT_POLL_INTERVAL_MS,
+        )) {
+            state.record_event(event, &supervisor)?;
+        } else {
+            state.record_idle_tick(expected);
+        }
+    }
+
+    supervisor.terminate_all();
+
+    let command = format!("<managed:{task_name} profile:{}>", plan.profile);
+    let summary = if state.stop_requested {
+        format!(
+            "Demo `{demo_id}` terminated after stop request while projecting managed task `{task_name}`."
+        )
+    } else if plan.fail_on_non_zero && !state.non_zero_exits.is_empty() {
+        format!(
+            "Demo `{demo_id}` failed via managed task `{task_name}`: {}",
+            render_non_zero_exits(&state.non_zero_exits)
+        )
+    } else {
+        format!(
+            "Demo `{demo_id}` completed via managed task `{task_name}` profile `{}`.",
+            plan.profile
+        )
+    };
+
+    if state.stop_requested {
+        Ok(terminated_demo_attempt(
+            "task",
+            task_name,
+            &command,
+            None,
+            summary,
+            state.stdout,
+            state.stderr,
+            log_paths,
+        ))
+    } else if plan.fail_on_non_zero && !state.non_zero_exits.is_empty() {
+        Ok(failed_demo_attempt(
+            "task",
+            task_name,
+            &command,
+            None,
+            summary,
+            state.stdout,
+            state.stderr,
+            log_paths,
+        ))
+    } else {
+        Ok(successful_demo_attempt(
+            "task",
+            task_name,
+            &command,
+            None,
+            Some(summary),
+            state.stdout,
+            state.stderr,
+            log_paths,
+        ))
+    }
+}
+
+struct DemoConcurrentRuntimeState {
+    stdout: String,
+    stderr: String,
+    stdout_log: Option<fs::File>,
+    stderr_log: Option<fs::File>,
+    exit_count: usize,
+    drained_after_exit: usize,
+    non_zero_exits: Vec<(String, String)>,
+    shutdown_on_exit_processes: BTreeSet<String>,
+    stop_requested: bool,
+    mirror_output: bool,
+}
+
+impl DemoConcurrentRuntimeState {
+    fn new(
+        stdout_log_path: Option<&Path>,
+        stderr_log_path: Option<&Path>,
+        shutdown_on_exit_processes: BTreeSet<String>,
+        mirror_output: bool,
+    ) -> Result<Self, RunnerError> {
+        Ok(Self {
+            stdout: String::new(),
+            stderr: String::new(),
+            stdout_log: open_append_file(stdout_log_path)?,
+            stderr_log: open_append_file(stderr_log_path)?,
+            exit_count: 0,
+            drained_after_exit: 0,
+            non_zero_exits: Vec::new(),
+            shutdown_on_exit_processes,
+            stop_requested: false,
+            mirror_output,
+        })
+    }
+
+    fn record_event(
+        &mut self,
+        event: ProcessEvent,
+        supervisor: &ProcessSupervisor,
+    ) -> Result<(), RunnerError> {
+        if self.exit_count > 0 {
+            self.drained_after_exit = 0;
+        }
+        match event.kind {
+            ProcessEventKind::Stdout => self.record_stdout(&event.process, &event.payload)?,
+            ProcessEventKind::Stderr => self.record_stderr(&event.process, &event.payload)?,
+            ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {}
+            ProcessEventKind::Exit => self.record_exit(&event.process, &event.payload, supervisor),
+        }
+        Ok(())
+    }
+
+    fn record_stdout(&mut self, process: &str, payload: &str) -> Result<(), RunnerError> {
+        let rendered = format!("[{process}] {payload}\n");
+        self.stdout.push_str(&rendered);
+        if self.mirror_output {
+            print!("{rendered}");
+            io::stdout()
+                .flush()
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        }
+        if let Some(file) = self.stdout_log.as_mut() {
+            file.write_all(rendered.as_bytes())
+                .and_then(|_| file.flush())
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn record_stderr(&mut self, process: &str, payload: &str) -> Result<(), RunnerError> {
+        let rendered = format!("[{process} stderr] {payload}\n");
+        self.stderr.push_str(&rendered);
+        if self.mirror_output {
+            eprint!("{rendered}");
+            io::stderr()
+                .flush()
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        }
+        if let Some(file) = self.stderr_log.as_mut() {
+            file.write_all(rendered.as_bytes())
+                .and_then(|_| file.flush())
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn record_exit(
+        &mut self,
+        process: &str,
+        payload: &str,
+        supervisor: &ProcessSupervisor,
+    ) {
+        self.exit_count += 1;
+        if payload != "exit=0" {
+            self.non_zero_exits
+                .push((process.to_owned(), payload.to_owned()));
+        }
+        if self.shutdown_on_exit_processes.contains(process) {
+            supervisor.terminate_all();
+        }
+    }
+
+    fn record_idle_tick(&mut self, expected: usize) {
+        if self.exit_count >= expected {
+            self.drained_after_exit += 1;
+        }
+    }
+}
+
+fn open_append_file(path: Option<&Path>) -> Result<Option<fs::File>, RunnerError> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    Ok(Some(
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|error| RunnerError::task_invocation_failed_write(path, error))?,
+    ))
+}
+
+fn render_non_zero_exits(processes: &[(String, String)]) -> String {
+    processes
+        .iter()
+        .map(|(process, payload)| format!("{process} {payload}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn parse_task_backed_attempt_json(
@@ -3274,13 +3680,50 @@ impl DemoRuntimeBackend {
 }
 
 fn demo_runtime_backend(
+    repo_root: &Path,
+    loaded: &LoadedTaskManifest,
     entrypoint: &DemoEntrypoint,
     active_attempt: &DemoActiveAttempt,
 ) -> DemoRuntimeBackend {
     if active_attempt.active {
         active_attempt.runtime_backend()
     } else {
-        DemoRuntimeBackend::from_entrypoint(entrypoint)
+        demo_runtime_backend_from_entrypoint(repo_root, loaded, entrypoint)
+    }
+}
+
+fn demo_runtime_backend_from_entrypoint(
+    repo_root: &Path,
+    loaded: &LoadedTaskManifest,
+    entrypoint: &DemoEntrypoint,
+) -> DemoRuntimeBackend {
+    match entrypoint {
+        DemoEntrypoint::Task(task_name) => {
+            if loaded
+                .manifest
+                .tasks
+                .get(task_name)
+                .is_some_and(task_is_concurrent_runner_backed)
+                || demo_task_selection(repo_root, task_name)
+                    .ok()
+                    .flatten()
+                    .and_then(|selection| selection.task().ok().map(task_is_concurrent_runner_backed))
+                    .unwrap_or(false)
+            {
+                DemoRuntimeBackend {
+                    kind: "concurrent-runner".to_owned(),
+                    label: runtime_backend_label("concurrent-runner").to_owned(),
+                    flattened_projection: true,
+                    capabilities: vec![
+                        "active-terminal-session".to_owned(),
+                        "live-terminal-output".to_owned(),
+                    ],
+                }
+            } else {
+                DemoRuntimeBackend::from_entrypoint(entrypoint)
+            }
+        }
+        DemoEntrypoint::Run(_) => DemoRuntimeBackend::from_entrypoint(entrypoint),
     }
 }
 

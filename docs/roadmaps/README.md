@@ -65,9 +65,8 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute the active ready card for `g02.003` to decide whether any later
-history/browser follow-up should deepen one-demo browser activation from
-retained attempts or return to query-first runner work.
+Execute the active ready card for `g02.003` to decide the next bounded slice
+after concurrent-runner-backed demos landed behind the demo session contract.
 
 
 ## Historical language boundary
