@@ -22,7 +22,9 @@ use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use crate::runner::{run_command, RunnerError};
-use crate::tui::core::{effigy_panel_block, next_index, prev_index, EFFIGY_ACCENT, EFFIGY_MUTED};
+use crate::tui::core::{
+    effigy_panel_block, next_index, prev_index, EFFIGY_ACCENT, EFFIGY_ACCENT_SOFT, EFFIGY_MUTED,
+};
 use crate::{
     Command, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus,
     DemoSubcommand,
@@ -1038,14 +1040,8 @@ impl DemoBrowserApp {
                     Color::DarkGray
                 },
             ))
-            .highlight_style(if list_focused {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            })
-            .highlight_symbol(if list_focused { "▌" } else { " " })
+            .highlight_style(selected_list_highlight_style(list_focused))
+            .highlight_symbol(selected_list_highlight_symbol())
             .repeat_highlight_symbol(true);
         frame.render_stateful_widget(list, area, &mut state);
     }
@@ -1424,6 +1420,22 @@ fn key_style() -> Style {
     Style::default()
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD)
+}
+
+fn selected_list_highlight_style(list_focused: bool) -> Style {
+    if list_focused {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(EFFIGY_ACCENT_SOFT)
+            .add_modifier(Modifier::BOLD)
+    }
+}
+
+fn selected_list_highlight_symbol() -> &'static str {
+    "▌"
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
@@ -2523,7 +2535,7 @@ mod tests {
 
     use crossterm::event::KeyCode;
     use ratatui::{
-        style::{Modifier, Style},
+        style::{Color, Modifier, Style},
         text::{Line, Span},
     };
 
@@ -2532,7 +2544,8 @@ mod tests {
         detail_tab_lines, first_demo_id, history_detail_render, next_gap_filter, next_group_by,
         next_mode_filter, next_status_filter, overview_detail_render, query_summary,
         read_recent_log_lines, resolve_artifact_path, resolve_repo_relative_path,
-        row_contains_demo, selected_artifact, status_style, terminal_detail_render, ActionMenuItem,
+        row_contains_demo, selected_artifact, selected_list_highlight_style,
+        selected_list_highlight_symbol, status_style, terminal_detail_render, ActionMenuItem,
         BrowserRow, DemoBrowserApp, DemoDetail, DemoHistoryAttempt,
         DemoHistoryAttemptHistoryPayload, DemoHistoryPayload, DemoLatestAttempt, DemoListGap,
         DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSummary,
@@ -2849,6 +2862,18 @@ mod tests {
     fn browser_tab_border_matches_requested_width() {
         let lines = detail_tab_lines(DetailTab::Overview, true, 17);
         assert_eq!(lines[1].to_string().chars().count(), 17);
+    }
+
+    #[test]
+    fn browser_list_selection_style_persists_when_detail_is_focused() {
+        let unfocused = selected_list_highlight_style(false);
+        let focused = selected_list_highlight_style(true);
+
+        assert_eq!(selected_list_highlight_symbol(), "▌");
+        assert_eq!(unfocused.fg, Some(super::EFFIGY_ACCENT_SOFT));
+        assert_eq!(focused.fg, Some(Color::Yellow));
+        assert!(unfocused.add_modifier.contains(Modifier::BOLD));
+        assert!(focused.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
