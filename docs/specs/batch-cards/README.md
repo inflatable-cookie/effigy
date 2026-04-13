@@ -84,9 +84,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`078-implement-demo-concurrent-runtime-projected-output-provenance-contract.md`](./078-implement-demo-concurrent-runtime-projected-output-provenance-contract.md) (complete)
 - [`079-decide-demo-post-projected-output-provenance-boundary.md`](./079-decide-demo-post-projected-output-provenance-boundary.md) (superseded)
 - [`080-implement-demo-browser-terminal-path-convergence.md`](./080-implement-demo-browser-terminal-path-convergence.md) (complete)
-- [`081-validate-demo-browser-on-real-project-cohort.md`](./081-validate-demo-browser-on-real-project-cohort.md)
+- [`081-validate-demo-browser-on-real-project-cohort.md`](./081-validate-demo-browser-on-real-project-cohort.md) (complete)
+- [`082-decide-demo-release-readiness-after-signal-proof.md`](./082-decide-demo-release-readiness-after-signal-proof.md)
 
 ## Next Task
 
-Execute the active ready card to trial the shipped demo browser and live
-terminal flow on at least two real consumer projects before release.
+Execute the active ready card to decide whether the Signal proof pass is enough
+for demo release prep or whether one more consumer-validation batch is still
+required first.

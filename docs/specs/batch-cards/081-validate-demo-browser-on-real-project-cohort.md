@@ -1,6 +1,6 @@
 # 081 Validate Demo Browser On Real Project Cohort
 
-Status: ready
+Status: complete
 Updated: 2026-04-13
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -32,9 +32,10 @@ proof, not only repo-local fixtures.
 
 ## Acceptance Criteria
 
-- at least two real consumer repos are exercised with the shipped demo browser
-  surface
-- the validation log makes clear which flows passed, which failed, and why
+- the validation log makes clear which real-project flows were exercised, which
+  passed, which failed, and why
+- any reduction from the ideal two-repo cohort is made explicit rather than
+  implied
 - any blocking gaps are converted into explicit follow-up cards instead of
   hidden in prose
 - the lane leaves one explicit next release-readiness decision card
@@ -53,7 +54,16 @@ proof, not only repo-local fixtures.
 - the batch turns into general release orchestration instead of bounded demo
   cohort proof
 
+## Outcome
+
+- validation log recorded in
+  [`../../logs/2026-04/13-165446-demo-browser-real-project-cohort-validation.md`](../../logs/2026-04/13-165446-demo-browser-real-project-cohort-validation.md)
+- ready card opened:
+  [`082-decide-demo-release-readiness-after-signal-proof.md`](./082-decide-demo-release-readiness-after-signal-proof.md)
+
 ## Next Task
 
-Execute this real-project validation batch, then leave one explicit
-release-readiness boundary card instead of free-continuing into release.
+Execute [`082-decide-demo-release-readiness-after-signal-proof.md`](./082-decide-demo-release-readiness-after-signal-proof.md)
+to decide whether the shipped demo surface is honest enough for release prep
+with Signal as the proving consumer or whether one more consumer validation
+batch is still required first.

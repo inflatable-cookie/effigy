@@ -3124,6 +3124,46 @@ Why this is the right next boundary:
 - any remaining blocking gaps should be surfaced as explicit follow-up cards
   before release, not discovered after release
 
+Closeout:
+
+- Signal now serves as the first real consumer proof repo for the shipped demo
+  browser and live terminal flow
+- Signal demo adoption proved:
+  - included demo-manifest composition
+  - native `[demos.*]` registry entries
+  - inline demo `run = [ ... ]` sequences instead of per-demo wrapper tasks
+  - browser inspection, history, live terminal, and headless run flow against a
+    non-Effigy repo
+- operator-driven Signal browser trials produced the final browser fixes needed
+  to make the terminal/browser surface trustworthy enough for release prep
+- one explicit residual gap remains:
+  - a second equally ready consumer repo was not completed in the same bounded
+    batch window
+
+### 10.72 Demo Release Readiness After Signal Proof
+
+Batch `03.75` target:
+
+Decide whether Signal-only real-consumer proof is enough to let `g02.003` leave
+the strict lane for release prep, or whether one more bounded consumer batch is
+still required.
+
+Decision inputs:
+
+- Signal now proves the shipped browser, terminal, history, and inline-demo
+  manifest surfaces on a real consumer repo
+- some remaining issues discovered during validation were consumer-local script
+  problems rather than Effigy product failures
+- the original ideal target of two real consumer repos was not fully met in the
+  same bounded release-prep window
+
+What the next decision must classify explicitly:
+
+- whether missing second-consumer proof is release-blocking or acceptable
+  residual risk
+- whether `g02.003` now exits to release prep / release-readiness work
+- or whether one extra bounded consumer-validation slice is still required
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
