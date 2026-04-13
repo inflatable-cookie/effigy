@@ -3225,6 +3225,18 @@ Decision inputs:
 - release execution still requires the normal release protocol and explicit
   human approval
 
+Decision:
+
+- actual release-execution work is justified next
+- no additional demo-surface implementation or validation batch is required
+  before that boundary
+
+Execution preconditions remain:
+
+- clean working tree
+- explicit human release instruction
+- normal release gates green at execution time
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
