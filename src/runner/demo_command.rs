@@ -2767,11 +2767,12 @@ fn execute_run_backed_demo(
         } else {
             None
         };
-        let input_forward = child
-            .stdin
-            .take()
-            .zip(input_handoff_path.as_ref())
-            .map(|(stdin, path)| spawn_input_handoff_forward(path.clone(), stdin));
+        let input_forward = input_handoff_path.as_ref().and_then(|path| {
+            child
+                .stdin
+                .take()
+                .map(|stdin| spawn_input_handoff_forward(path.clone(), stdin))
+        });
         let stdout_reader = child.stdout.take().ok_or_else(|| {
             RunnerError::task_invocation(format!(
                 "Demo `{demo_id}` launched without a stdout capture pipe."
