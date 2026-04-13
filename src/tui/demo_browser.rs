@@ -1228,48 +1228,7 @@ impl DemoBrowserApp {
     }
 
     fn render_header(&self, frame: &mut Frame<'_>, area: Rect) {
-        let pending = self
-            .pending_action
-            .as_ref()
-            .map_or("idle", |action| action.label.as_str());
-        let lines = vec![
-            Line::from(vec![
-                Span::styled(
-                    " Demo Browser ",
-                    Style::default()
-                        .fg(EFFIGY_MUTED)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  "),
-                Span::styled("group:", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    format!(" {}", self.group_by.map_or("none", DemoListGroupBy::as_str)),
-                    Style::default().fg(Color::White),
-                ),
-                Span::raw("  "),
-                Span::styled("pending:", Style::default().fg(Color::DarkGray)),
-                Span::styled(format!(" {pending}"), Style::default().fg(Color::White)),
-                Span::raw("  "),
-                Span::styled("repo:", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    format!(" {}", self.repo_root.display()),
-                    Style::default().fg(EFFIGY_MUTED),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("query:", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    format!(" {}", query_summary(&self.query)),
-                    Style::default().fg(Color::White),
-                ),
-                Span::raw("  "),
-                Span::styled("count:", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    format!(" {}/{}", self.rows_demo_count(), self.total_demo_count),
-                    Style::default().fg(Color::White),
-                ),
-            ]),
-        ];
+        let lines = browser_header_lines(&self.repo_root);
         frame.render_widget(
             Paragraph::new(lines).block(effigy_panel_block(Some(" EFFIGY "), true, EFFIGY_ACCENT)),
             area,
@@ -1287,6 +1246,29 @@ impl DemoBrowserApp {
 
     fn render_list(&self, frame: &mut Frame<'_>, area: Rect) {
         let list_focused = matches!(self.focus, BrowserFocus::List);
+        let block = effigy_panel_block(
+            Some(" Demos "),
+            false,
+            if list_focused {
+                EFFIGY_ACCENT
+            } else {
+                Color::DarkGray
+            },
+        );
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(2), Constraint::Min(1)])
+            .split(inner);
+        frame.render_widget(
+            Paragraph::new(browser_list_summary_lines(
+                &query_summary(&self.query),
+                self.rows_demo_count(),
+                self.total_demo_count,
+            )),
+            layout[0],
+        );
         let items = self
             .rows
             .iter()
@@ -1318,19 +1300,10 @@ impl DemoBrowserApp {
             state.select(Some(self.selected_row_index));
         }
         let list = List::new(items)
-            .block(effigy_panel_block(
-                Some(" Demos "),
-                false,
-                if list_focused {
-                    EFFIGY_ACCENT
-                } else {
-                    Color::DarkGray
-                },
-            ))
             .highlight_style(selected_list_highlight_style(list_focused))
             .highlight_symbol(selected_list_highlight_symbol())
             .repeat_highlight_symbol(true);
-        frame.render_stateful_widget(list, area, &mut state);
+        frame.render_stateful_widget(list, layout[1], &mut state);
     }
 
     fn render_detail(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -2560,6 +2533,46 @@ fn browser_body_constraints() -> [Constraint; 2] {
     [Constraint::Percentage(28), Constraint::Percentage(72)]
 }
 
+fn browser_header_lines(repo_root: &Path) -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::styled(
+                " Demo Browser ",
+                Style::default()
+                    .fg(EFFIGY_MUTED)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled("repo:", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(" {}", repo_root.display()),
+                Style::default().fg(EFFIGY_MUTED),
+            ),
+        ]),
+        Line::from(""),
+    ]
+}
+
+fn browser_list_summary_lines(
+    query: &str,
+    displayed_count: usize,
+    total_count: usize,
+) -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::styled("query:", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!(" {query}"), Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("count:", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(" {displayed_count}/{total_count}"),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+    ]
+}
+
 fn browser_terminal_key_input(key: &KeyEvent) -> Option<String> {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         if let KeyCode::Char(c) = key.code {
@@ -3519,7 +3532,8 @@ mod tests {
 
     use super::{
         action_menu_items_for_detail, artifacts_detail_render, browser_body_constraints,
-        browser_live_terminal_env, browser_terminal_key_input,
+        browser_header_lines, browser_list_summary_lines, browser_live_terminal_env,
+        browser_terminal_key_input,
         browser_vt_lines, clamp_artifact_index, detail_prefers_live_browser_terminal,
         detail_tab_lines, first_demo_id, history_detail_render, next_gap_filter, next_group_by,
         next_mode_filter, next_status_filter, overview_detail_render, query_summary,
@@ -3862,6 +3876,34 @@ mod tests {
     fn browser_tab_border_matches_requested_width() {
         let lines = detail_tab_lines(DetailTab::Overview, true, 17);
         assert_eq!(lines[1].to_string().chars().count(), 17);
+    }
+
+    #[test]
+    fn browser_header_lines_only_show_repo_context() {
+        let rendered = browser_header_lines(Path::new("/tmp/demo-repo"))
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Demo Browser"));
+        assert!(rendered.contains("repo: /tmp/demo-repo"));
+        assert!(!rendered.contains("group:"));
+        assert!(!rendered.contains("pending:"));
+        assert!(!rendered.contains("query:"));
+        assert!(!rendered.contains("count:"));
+    }
+
+    #[test]
+    fn browser_list_summary_lines_show_query_and_count() {
+        let rendered = browser_list_summary_lines("ready only", 2, 7)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("query: ready only"));
+        assert!(rendered.contains("count: 2/7"));
     }
 
     #[test]
