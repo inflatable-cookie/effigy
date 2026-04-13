@@ -1966,27 +1966,51 @@ run = "sh -lc 'test -t 1 && printf \"tty-yes\\n\" || printf \"tty-no\\n\"; print
         .expect("run attached text demo");
     assert!(output.status.success(), "demo run failed: {output:?}");
 
-    assert!(
-        String::from_utf8(output.stdout)
-            .expect("utf8 stdout")
-            .contains("tty-yes"),
-        "attached stdout was not mirrored"
-    );
-    assert!(
-        String::from_utf8(output.stderr)
-            .expect("utf8 stderr")
-            .is_empty(),
-        "pty transcript should not claim a split stderr stream"
-    );
-    assert_eq!(
-        fs::read_to_string(root.join(".effigy/demo/logs/prompt.stdout.log"))
-            .expect("read stdout log"),
-        "tty-yes\r\nhello-err\r\n"
-    );
-    assert!(
-        !root.join(".effigy/demo/logs/prompt.stderr.log").exists(),
-        "pty path should not create a split stderr log"
-    );
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+
+    #[cfg(target_os = "macos")]
+    {
+        assert!(
+            stdout.contains("tty-yes"),
+            "attached stdout was not mirrored"
+        );
+        assert!(
+            stderr.is_empty(),
+            "pty transcript should not claim a split stderr stream"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(".effigy/demo/logs/prompt.stdout.log"))
+                .expect("read stdout log"),
+            "tty-yes\r\nhello-err\r\n"
+        );
+        assert!(
+            !root.join(".effigy/demo/logs/prompt.stderr.log").exists(),
+            "pty path should not create a split stderr log"
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        assert!(
+            stdout.contains("tty-no"),
+            "attached stdout was not mirrored"
+        );
+        assert!(
+            stderr.contains("hello-err"),
+            "stream transcript should preserve split stderr output"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(".effigy/demo/logs/prompt.stdout.log"))
+                .expect("read stdout log"),
+            "tty-no\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(".effigy/demo/logs/prompt.stderr.log"))
+                .expect("read stderr log"),
+            "hello-err\n"
+        );
+    }
 
     let receipt: Value = serde_json::from_str(
         &fs::read_to_string(root.join(".effigy/demo/receipts/prompt.json"))
@@ -1998,7 +2022,13 @@ run = "sh -lc 'test -t 1 && printf \"tty-yes\\n\" || printf \"tty-no\\n\"; print
         receipt["stdout_log_path"],
         ".effigy/demo/logs/prompt.stdout.log"
     );
+    #[cfg(target_os = "macos")]
     assert_eq!(receipt["stderr_log_path"], Value::Null);
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(
+        receipt["stderr_log_path"],
+        ".effigy/demo/logs/prompt.stderr.log"
+    );
 }
 
 #[test]
