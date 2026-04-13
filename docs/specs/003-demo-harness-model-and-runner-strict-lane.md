@@ -47,10 +47,10 @@ or repo migration work.
 `strict-ready`
 
 Signal now serves as the proving consumer that let `g02.003` leave strict
-implementation and enter bounded release prep. The active ready card is now a
-release-readiness checkpoint slice that packages the shipped demo surface,
-residual risks, and operator recommendation before any actual release execution
-work.
+implementation and enter bounded release prep. The release-readiness checkpoint
+is now recorded. The active ready card is a final release boundary decision:
+decide whether actual release-execution work is justified next once the working
+tree is clean and a human explicitly asks for release execution.
 
 ## Batch Model
 
@@ -79,6 +79,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to prepare the demo-surface
-release-readiness checkpoint, residual risks, and operator recommendation
-before any actual release execution work.
+Execute the active `g02.003` ready card next to decide whether actual release-
+execution work is justified now that the demo-surface release-readiness
+checkpoint is complete.
