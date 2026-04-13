@@ -56,9 +56,7 @@ const DEMO_MANAGED_EVENT_POLL_INTERVAL_MS: u64 = 100;
 const DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT: usize = 3;
 const DEMO_DEFAULT_TERMINAL_COLS: u16 = 80;
 const DEMO_DEFAULT_TERMINAL_ROWS: u16 = 24;
-#[cfg(any(target_os = "macos", test))]
 const DEMO_BROWSER_TERMINAL_COLS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_COLS";
-#[cfg(any(target_os = "macos", test))]
 const DEMO_BROWSER_TERMINAL_ROWS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_ROWS";
 
 pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
@@ -2908,7 +2906,6 @@ fn current_terminal_size() -> Option<(u16, u16)> {
     crossterm::terminal::size().ok()
 }
 
-#[cfg(any(target_os = "macos", test))]
 fn browser_terminal_size_override() -> Option<(u16, u16)> {
     let cols = std::env::var(DEMO_BROWSER_TERMINAL_COLS_ENV)
         .ok()?
