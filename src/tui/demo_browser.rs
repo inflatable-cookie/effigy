@@ -1757,18 +1757,18 @@ fn status_style(status: &str) -> Style {
 fn render_browser_demo_row(summary: &DemoSummary, available_width: usize) -> Line<'static> {
     let status = summary.effective_status.as_str();
     let status_width = status.len().max(5);
-    let reserved = 1 + 1 + status_width;
+    let reserved = 1 + status_width + 1;
     let name_width = available_width.saturating_sub(reserved).max(1);
     let rendered_id = truncate_demo_row_label(&summary.id, name_width);
 
     Line::from(vec![
-        Span::raw(" "),
         Span::styled(
             format!("{rendered_id:<name_width$}"),
             Style::default().add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
         Span::styled(format!("{status:>status_width$}"), status_style(status)),
+        Span::raw(" "),
     ])
 }
 
@@ -3730,7 +3730,7 @@ mod tests {
         let rendered = render_browser_demo_row(&summary, 24).to_string();
 
         assert!(rendered.contains("hardware-topol..."));
-        assert!(rendered.ends_with("ready"));
+        assert!(rendered.ends_with("ready "));
     }
 
     #[test]
