@@ -1,7 +1,7 @@
 # 080 Implement Demo Browser Terminal Path Convergence
 
-Status: ready
-Updated: 2026-04-12
+Status: complete
+Updated: 2026-04-13
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
 
@@ -61,5 +61,6 @@ concurrent runner already uses, so terminal output fidelity is honest again.
 
 ## Next Task
 
-Execute this convergence batch, then leave one explicit next boundary card only
-after browser live terminal fidelity is trustworthy again.
+Execute [`081-validate-demo-browser-on-real-project-cohort.md`](./081-validate-demo-browser-on-real-project-cohort.md)
+to trial the shipped demo browser and terminal flow on at least two real
+consumer projects before release.
