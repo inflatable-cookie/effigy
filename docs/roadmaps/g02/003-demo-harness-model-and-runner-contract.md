@@ -3087,6 +3087,43 @@ Out of scope for the next implementation slice:
 - broad runner contract redesign outside what convergence strictly needs
 - desktop-client work
 
+Closeout:
+
+- browser live terminal now uses the shared concurrent-runner shaping/session
+  path instead of a browser-only near-copy
+- fidelity fixes now cover:
+  - incremental shared live terminal buffering
+  - UTF-8 chunk-boundary handling
+  - LF-to-CRLF normalization before VT ingest
+  - correct terminated-run classification on stop
+  - ANSI 256-color and truecolor decode in the browser terminal path
+  - stable browser layout and pane-focus behavior during live runs
+- browser-launched live demos now render color and preserve terminal fidelity
+  honestly enough to stop treating the browser terminal as a recovery surface
+
+### 10.71 Demo Browser Real-Project Validation Before Release
+
+Batch `03.74` target:
+
+Before a demo release boundary is proposed, validate the shipped browser and
+live terminal flow on at least two real consumer projects with actual demos.
+
+In scope for the next validation slice:
+
+- choose a bounded real-project cohort with actual demo definitions
+- run the demo browser end to end on each repo, including live terminal and
+  retained history/receipt follow-through
+- capture which flows pass, which fail, and any remaining blockers
+- keep release execution itself out of scope
+
+Why this is the right next boundary:
+
+- the browser terminal path is finally stable enough to deserve external proof
+- release readiness should come from real consumer demo usage, not only local
+  fixtures and repo-owned proof demos
+- any remaining blocking gaps should be surfaced as explicit follow-up cards
+  before release, not discovered after release
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:

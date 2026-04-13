@@ -83,9 +83,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`077-decide-demo-post-projected-process-summary-boundary.md`](./077-decide-demo-post-projected-process-summary-boundary.md) (complete)
 - [`078-implement-demo-concurrent-runtime-projected-output-provenance-contract.md`](./078-implement-demo-concurrent-runtime-projected-output-provenance-contract.md) (complete)
 - [`079-decide-demo-post-projected-output-provenance-boundary.md`](./079-decide-demo-post-projected-output-provenance-boundary.md) (superseded)
-- [`080-implement-demo-browser-terminal-path-convergence.md`](./080-implement-demo-browser-terminal-path-convergence.md)
+- [`080-implement-demo-browser-terminal-path-convergence.md`](./080-implement-demo-browser-terminal-path-convergence.md) (complete)
+- [`081-validate-demo-browser-on-real-project-cohort.md`](./081-validate-demo-browser-on-real-project-cohort.md)
 
 ## Next Task
 
-Execute the active ready card to converge browser live terminal integration
-onto the shared concurrent-runner terminal path.
+Execute the active ready card to trial the shipped demo browser and live
+terminal flow on at least two real consumer projects before release.

@@ -1,7 +1,7 @@
 # 003 Demo Harness Model And Runner Strict Lane
 
 Status: active
-Updated: 2026-04-12
+Updated: 2026-04-13
 Roadmap: `g02.003`
 
 ## Context
@@ -46,11 +46,10 @@ or repo migration work.
 
 `strict-ready`
 
-The previous ready card (`079`) became stale after browser terminal fidelity
-testing showed the shipped browser live-terminal path still diverges from the
-concurrent-runner integration it was meant to match. The active ready card is
-now a recovery-backed implementation slice that converges those paths before
-the lane makes another broader boundary call.
+Browser terminal-path convergence is now shipped. The active ready card is a
+release-readiness validation slice that trials the shipped demo browser and
+live terminal flow on real consumer projects before this lane proposes a demo
+release boundary.
 
 ## Batch Model
 
@@ -79,6 +78,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to converge browser live terminal
-integration onto the shared concurrent-runner path before any new broader
-boundary decision.
+Execute the active `g02.003` ready card next to trial the shipped demo browser
+and live terminal flow on at least two real consumer projects before any demo
+release boundary decision.
