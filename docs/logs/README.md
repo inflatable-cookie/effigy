@@ -362,6 +362,8 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-03-06-generated-in-src-doctor-docs-and-benchmark-validation.md`](./2026-03/06-181500-generated-in-src-doctor-docs-and-benchmark-validation.md)
 - [`2026-03-06-stale-suppressions-doctor-docs-and-benchmark-validation.md`](./2026-03/06-193000-stale-suppressions-doctor-docs-and-benchmark-validation.md)
 - [`2026-03-07-post-m1-release-readiness-checkpoint.md`](./2026-03/07-090000-post-m1-release-readiness-checkpoint.md)
+- [`2026-04-13-demo-browser-terminal-path-convergence-closeout.md`](./2026-04/13-103457-demo-browser-terminal-path-convergence-closeout.md)
+- [`2026-04-13-demo-browser-real-project-cohort-validation.md`](./2026-04/13-165446-demo-browser-real-project-cohort-validation.md)
 
 ## Log template
 
@@ -398,6 +400,5 @@ Batch: <batch-slug>
 ## Next Task
 
 Keep the active evidence window aligned to the current strict lane so the next
-decision stays anchored on the post-projected-output-provenance boundary
-instead of widening back into browser churn or generic process-manager work by
-habit.
+decision stays anchored on the post-Signal release-readiness boundary instead
+of widening back into browser churn or release execution by habit.

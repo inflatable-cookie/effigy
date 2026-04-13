@@ -46,10 +46,11 @@ or repo migration work.
 
 `strict-ready`
 
-Browser terminal-path convergence is now shipped. The active ready card is a
-release-readiness validation slice that trials the shipped demo browser and
-live terminal flow on real consumer projects before this lane proposes a demo
-release boundary.
+Signal now serves as the first real proving consumer for the shipped demo
+browser and live terminal flow. The active ready card is now a release-
+readiness decision slice: decide whether that bounded proof is sufficient for
+release prep or whether one more consumer-validation batch is still required
+before this lane proposes a demo release boundary.
 
 ## Batch Model
 
@@ -78,6 +79,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to trial the shipped demo browser
-and live terminal flow on at least two real consumer projects before any demo
-release boundary decision.
+Execute the active `g02.003` ready card next to decide whether the shipped demo
+surface is honest enough for release prep after the Signal proof pass or
+whether one more consumer-validation batch is still required first.
