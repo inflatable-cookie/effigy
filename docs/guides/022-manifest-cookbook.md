@@ -5,6 +5,12 @@ This cookbook provides copy-paste manifest patterns you can adapt directly.
 Use it when the next improvement should happen in `effigy.toml` instead of in
 another wrapper script, shell note, or team-specific convention.
 
+If you want the narrative front doors first, start with:
+
+- [`058-demo-system-guide.md`](./058-demo-system-guide.md) for the demo system
+- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+  for `[manifest].include` and fragment layout
+
 
 ## Vision Alignment
 
@@ -187,15 +193,19 @@ Lifecycle notes:
   `--stale-only`, and `--group-by`.
 - `demo browser` now provides the first live list/detail TUI on top of the
   shipped registry, query, inspect, run, stop, and rerun surfaces.
-- inside `demo browser`, `←`/`→` switches focus between the demo list and the
-  detail/artifact pane; `↑`/`↓` acts inside the focused panel; `Enter` opens
-  the action sheet from the list or opens the selected artifact from the
-  detail side; `Esc` closes a sheet or quits the browser.
+- inside `demo browser`, `Tab`/`Shift+Tab` switches focus between the demo list
+  and the detail pane; when the detail pane is focused, `←`/`→` switches
+  between `Overview`, `History`, `Terminal`, and `Artifacts`; `↑`/`↓` acts
+  inside the focused pane or active tab; `Enter` opens the action sheet from
+  the list, activates the selected detail-side entry, or toggles terminal input
+  capture on the `Terminal` tab when supported; `Esc` closes overlays, leaves
+  terminal input capture, returns non-overview tabs to `Overview`, or quits
+  from the root overview.
 - inside `demo browser`, use `/` for direct search and `f` for the filter
   sheet, which now owns owner/tag/mode/cover/status/gap/stale/grouping
   controls.
-- the detail side is now intentionally short and artifact-oriented rather than
-  a scrolling receipt/log document.
+- the detail side is now tabbed and intentionally short rather than one long
+  scrolling receipt/log document.
 - `demo inspect` now shows both the latest terminal receipt and any active
   in-flight attempt, plus explicit action availability, receipt freshness, and
   a bounded recent-attempt history for older terminal outcomes.
@@ -216,9 +226,9 @@ Lifecycle notes:
 - task-backed demos remain runnable, but stop is still an explicit
   `not supported through the current runtime` boundary.
 - the browser currently focuses on honest navigation, bounded action dispatch,
-  artifact-opening, metadata-query parity, and integrated retained-history
-  review. A later terminal view can now build on the shipped runner-owned
-  active terminal/session handoff instead of launching nested TUIs.
+  artifact-opening, metadata-query parity, integrated retained-history review,
+  and a live terminal tab for the bounded honest runtime cases. It still must
+  not launch nested TUIs.
 
 ## 3) Full Task Table with Runtime Controls
 

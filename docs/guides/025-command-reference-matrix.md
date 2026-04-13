@@ -53,7 +53,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy contracts` | Validate reusable JSON contract artifacts such as selection payloads and schema-index contract coverage | `check-json`, `validate-selection`, `--repo`, `--index`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--contract`, `--artifact`, `--json` | `effigy.contracts.check-json.v1`, `effigy.contracts.selection-validation.v1` | `017-json-output-contracts.md` |
 | `effigy distribution` | Run non-publish distribution preflight checks, validate release/distribution metadata, write first-publish summary contracts, check artifact bundles, and generate acceptance closeout logs from captured artifacts | `preflight`, `validate-metadata`, `validate-artifacts`, `generate-closeout`, `write-summary`, `--repo`, `--tag`, `--skip-docs`, `--skip-smoke`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--output`, `--owner`, `--expect-homebrew`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.distribution.preflight.v1`, `effigy.distribution.metadata.v1`, `effigy.distribution.artifacts.v1`, `effigy.distribution.closeout.v1`, `effigy.distribution.summary.v1` | `044-distribution-first-publish-execution-runbook.md` |
 | `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, and optionally start the declared dev task | `<git-url>`, `--path`, `--branch`, `--start`, `--plan`, `--json` | `effigy.bootstrap.v1` | `057-bootstrap-repo-bringup.md` |
-| `effigy demo` | Discover repo-owned proof demos, browse them in the first list/detail TUI, inspect active/latest state, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `run`, `stop`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.rerun.v1` | `022-manifest-cookbook.md` |
+| `effigy demo` | Discover repo-owned proof demos, browse them in the demo browser, inspect active/latest state, query retained attempt history, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `history`, `run`, `stop`, `input`, `resize`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.history.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.input.v1`, `effigy.demo.resize.v1`, `effigy.demo.rerun.v1` | `058-demo-system-guide.md` |
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--json`, `--markdown`, `--out`, `--fail-on-findings`, `--show-warnings` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
 | `effigy test` | Run built-in or explicit `tasks.test` test orchestration | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-foundation.md` |
@@ -111,9 +111,11 @@ effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--start] [--plan] [
 effigy demo list [--search <TEXT>] [--owner <NAME>] [--tag <TAG>] [--mode <MODE>] [--cover <AREA>] [--status <STATUS>] [--gap <GAP>] [--stale-only] [--group-by <FIELD>] [--repo <PATH>] [--json]
 effigy demo browser [--group-by <FIELD>] [--repo <PATH>]
 effigy demo inspect <DEMO_ID> [--repo <PATH>] [--json]
-effigy demo history <DEMO_ID> [--limit <N>] [--attempt <ATTEMPT_ID>] [--repo <PATH>] [--json]
+effigy demo history <DEMO_ID> [--limit <N>] [--outcome <OUTCOME>] [--attempt <ATTEMPT_ID> | --ordinal <N>] [--repo <PATH>] [--json]
 effigy demo run <DEMO_ID> [--repo <PATH>] [--json]
 effigy demo stop <DEMO_ID> [--repo <PATH>] [--json]
+effigy demo input <DEMO_ID> --text <TEXT> [--append-newline] [--repo <PATH>] [--json]
+effigy demo resize <DEMO_ID> --cols <COLS> --rows <ROWS> [--repo <PATH>] [--json]
 effigy demo rerun <DEMO_ID> [--repo <PATH>] [--json]
 effigy scan god-files [--threshold <N>] [--high <N>] [--critical <N>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
 effigy scan duplicate-blocks [--threshold <N>] [--high <N>] [--critical <N>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
@@ -168,29 +170,33 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
   terminal/session handoff with transport metadata, recent output snapshots,
   and explicit no-nested-TUI signaling.
 - `demo history` gives one demo's retained terminal-attempt history a separate
-  query surface, with optional `--limit <N>` trimming, so operators can focus
-  on result timeline review without widening `demo list` or the browser.
-- `demo history --attempt <ATTEMPT_ID>` drills into one retained historical
-  result inside that same one-demo query surface instead of forcing browser or
-  list density to carry prior-result review.
+  query surface, with optional `--limit <N>` trimming and `--outcome
+  <OUTCOME>` narrowing, so operators can focus on result timeline review
+  without widening `demo list` or the browser.
+- `demo history --attempt <ATTEMPT_ID>` and `demo history --ordinal <N>` drill
+  into one retained historical result inside that same one-demo query surface
+  instead of forcing browser or list density to carry prior-result review.
 - `demo list` supports bounded browser-style discovery with focused filters and
   grouping, but it deliberately stops short of UI behavior or rich browsing
   state.
 - `demo browser` is the first interactive browser client for that surface. It
-  now uses an arrow/enter/escape-first interaction model with explicit
-  list/detail panel focus, an action sheet for bounded
-  `run`/`stop`/`rerun`/refresh behavior, direct artifact opening from the
-  detail side, and a single filter sheet for the shipped `demo list` metadata
-  dimensions including tag, mode, and cover. Integrated retained-history review
-  is now in place, and any later browser terminal view should consume the
-  runner-owned active terminal/session contract instead of launching nested
-  TUIs.
+  now uses `Tab` / `Shift+Tab` for list/detail focus, `←` / `→` for detail-tab
+  switching, `↑` / `↓` for in-pane navigation, an action sheet for bounded
+  `run`/`stop`/`rerun`/refresh behavior, direct artifact/history activation from
+  the detail side, and a single filter sheet for the shipped `demo list`
+  metadata dimensions including tag, mode, and cover. Integrated retained-
+  history review and a live terminal tab are now in place for the bounded
+  honest runtime cases; the browser still must not launch nested TUIs.
 - `demo run` executes either a declared task-backed or run-backed entrypoint,
   writes a normalized receipt, and refreshes the latest-attempt state that
   `demo inspect` reports.
 - `demo stop` only works for demos whose active attempt is directly owned by
   the runner; task-backed demos still report an explicit unstoppability
   boundary.
+- `demo input` is the bounded text-forwarding surface for detached active demo
+  terminal sessions when the runtime reports input availability.
+- `demo resize` is the bounded geometry handoff for active demo terminal
+  sessions when the runtime reports resize availability.
 - `demo rerun` starts a fresh attempt and fails if the demo already has an
   active attempt.
 - task execution locks on `task:<name>` by default; use `tasks.<name>.lock = "<shared-name>"` to opt multiple tasks into the same `shared:<name>` scope.

@@ -44,6 +44,7 @@ start teaching them the task name that expresses the intent.
 Deep dive:
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 
 ## 3) Standardize The Workflows Teams Repeat
 
@@ -142,7 +143,28 @@ Deep dive:
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 
-## 6) When Effigy Still Feels Hard
+## 6) Treat Proof Demos As A First-Class Operator Surface
+
+When a repo has demo or proof scripts that people actually need to discover,
+run, inspect, and review, move them into `[demos.<id>]` instead of keeping
+them as an ad hoc script pile.
+
+```sh
+effigy demo list
+effigy demo browser
+effigy demo inspect login-smoke
+effigy demo history login-smoke --limit 5
+effigy demo run login-smoke
+```
+
+Use demos when the repo should name what the proof covers and keep operator
+review inside one surface.
+
+Deep dive:
+- [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+
+## 7) When Effigy Still Feels Hard
 
 That usually means the product surface or manifest still needs work.
 
@@ -170,6 +192,7 @@ After this guide, you should have a clearer default path for:
 - discovering work
 - running tasks and tests
 - using built-ins for health, watch, and scans
+- using demos as an explicit proof surface instead of script sprawl
 - spotting the next piece of repo friction that should move into Effigy
 
 ## Related Guides
@@ -180,6 +203,8 @@ After this guide, you should have a clearer default path for:
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
 - [`050-env-schema-integration.md`](./050-env-schema-integration.md)
+- [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 
 ## Next Step
 
