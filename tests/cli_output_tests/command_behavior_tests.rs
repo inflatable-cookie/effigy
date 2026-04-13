@@ -1852,7 +1852,10 @@ run = "sh -lc 'test -t 0 && printf \"pty-live\\n\"; printf \"boot-err\\n\" >&2; 
             parsed["result"]["demo"]["active_terminal_session"]["transport"],
             "pty"
         );
-        assert_eq!(parsed["result"]["demo"]["active_terminal_session"]["pty"], true);
+        assert_eq!(
+            parsed["result"]["demo"]["active_terminal_session"]["pty"],
+            true
+        );
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1869,13 +1872,26 @@ run = "sh -lc 'test -t 0 && printf \"pty-live\\n\"; printf \"boot-err\\n\" >&2; 
         parsed["result"]["demo"]["active_terminal_session"]["resize"]["available"],
         false
     );
-    assert!(
-        parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["capabilities"]
-            .as_array()
-            .expect("runtime capabilities")
-            .iter()
-            .any(|value| value.as_str() == Some("pty"))
-    );
+    #[cfg(target_os = "macos")]
+    {
+        assert!(
+            parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["capabilities"]
+                .as_array()
+                .expect("runtime capabilities")
+                .iter()
+                .any(|value| value.as_str() == Some("pty"))
+        );
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        assert!(
+            !parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["capabilities"]
+                .as_array()
+                .expect("runtime capabilities")
+                .iter()
+                .any(|value| value.as_str() == Some("pty"))
+        );
+    }
     assert!(
         parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stdout_lines"]
             .as_array()
