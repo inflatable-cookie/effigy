@@ -1279,19 +1279,10 @@ impl DemoBrowserApp {
                         .fg(EFFIGY_ACCENT)
                         .add_modifier(Modifier::BOLD),
                 )])),
-                BrowserRow::Demo(summary) => {
-                    let status = summary.effective_status.as_str();
-                    let line = Line::from(vec![
-                        Span::raw(" "),
-                        Span::styled(
-                            format!("{:<23}", summary.id),
-                            Style::default().add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(" "),
-                        Span::styled(format!("{:<10}", status), status_style(status)),
-                    ]);
-                    ListItem::new(line)
-                }
+                BrowserRow::Demo(summary) => ListItem::new(render_browser_demo_row(
+                    summary,
+                    inner.width as usize,
+                )),
             })
             .collect::<Vec<_>>();
 
@@ -1757,6 +1748,39 @@ fn status_style(status: &str) -> Style {
         "missing" | "planned" => Style::default().fg(Color::Magenta),
         _ => Style::default().fg(Color::Cyan),
     }
+}
+
+fn render_browser_demo_row(summary: &DemoSummary, available_width: usize) -> Line<'static> {
+    let status = summary.effective_status.as_str();
+    let status_width = status.len().max(5);
+    let reserved = 1 + 1 + status_width;
+    let name_width = available_width.saturating_sub(reserved).max(1);
+    let rendered_id = truncate_demo_row_label(&summary.id, name_width);
+
+    Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            format!("{rendered_id:<name_width$}"),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(format!("{status:>status_width$}"), status_style(status)),
+    ])
+}
+
+fn truncate_demo_row_label(label: &str, max_width: usize) -> String {
+    let width = label.chars().count();
+    if width <= max_width {
+        return label.to_owned();
+    }
+    if max_width <= 3 {
+        return ".".repeat(max_width);
+    }
+
+    let keep = max_width - 3;
+    let mut truncated = label.chars().take(keep).collect::<String>();
+    truncated.push_str("...");
+    truncated
 }
 
 fn key_style() -> Style {
@@ -3527,11 +3551,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::{
-        layout::Constraint,
-        style::{Color, Modifier, Style},
-        text::{Line, Span},
-    };
+    use ratatui::{layout::Constraint, style::{Color, Modifier}};
 
     use super::{
         action_menu_items_for_detail, artifacts_detail_render, browser_body_constraints,
@@ -3540,9 +3560,10 @@ mod tests {
         detail_prefers_live_browser_terminal, detail_tab_lines, first_demo_id,
         history_detail_render, next_gap_filter, next_group_by, next_mode_filter,
         next_status_filter, overview_detail_render, query_summary, read_recent_log_lines,
+        render_browser_demo_row,
         resolve_artifact_path, resolve_repo_relative_path, row_contains_demo,
         sanitize_live_terminal_bytes, selected_artifact, selected_list_highlight_style,
-        selected_list_highlight_symbol, status_style, take_complete_terminal_bytes,
+        selected_list_highlight_symbol, take_complete_terminal_bytes,
         terminal_detail_render, ActionMenuItem, BrowserRow, DemoBrowserApp, DemoDetail,
         DemoHistoryAttempt, DemoHistoryAttemptHistoryPayload, DemoHistoryPayload,
         DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery,
@@ -3690,24 +3711,22 @@ mod tests {
     #[test]
     fn browser_demo_rows_do_not_show_redundant_bracketed_action_summary() {
         let summary = summary("browser-proof-report");
-        let line = Line::from(vec![
-            Span::raw(" "),
-            Span::styled(
-                format!("{:<23}", summary.id),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" "),
-            Span::styled(
-                format!("{:<10}", summary.effective_status),
-                status_style(&summary.effective_status),
-            ),
-        ]);
+        let line = render_browser_demo_row(&summary, 32);
         let rendered = line.to_string();
 
         assert!(rendered.contains("browser-proof-report"));
         assert!(rendered.contains("ready"));
         assert!(!rendered.contains('['));
         assert!(!rendered.contains("run/rerun"));
+    }
+
+    #[test]
+    fn browser_demo_rows_ellipsize_name_and_preserve_right_aligned_status() {
+        let summary = summary("hardware-topology-diagnostics");
+        let rendered = render_browser_demo_row(&summary, 24).to_string();
+
+        assert!(rendered.contains("hardware-topol..."));
+        assert!(rendered.ends_with("ready"));
     }
 
     #[test]
