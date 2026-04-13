@@ -46,11 +46,11 @@ or repo migration work.
 
 `strict-ready`
 
-Signal now serves as the first real proving consumer for the shipped demo
-browser and live terminal flow. The active ready card is now a release-
-readiness decision slice: decide whether that bounded proof is sufficient for
-release prep or whether one more consumer-validation batch is still required
-before this lane proposes a demo release boundary.
+Signal now serves as the proving consumer that let `g02.003` leave strict
+implementation and enter bounded release prep. The active ready card is now a
+release-readiness checkpoint slice that packages the shipped demo surface,
+residual risks, and operator recommendation before any actual release execution
+work.
 
 ## Batch Model
 
@@ -79,6 +79,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide whether the shipped demo
-surface is honest enough for release prep after the Signal proof pass or
-whether one more consumer-validation batch is still required first.
+Execute the active `g02.003` ready card next to prepare the demo-surface
+release-readiness checkpoint, residual risks, and operator recommendation
+before any actual release execution work.

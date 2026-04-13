@@ -1,6 +1,6 @@
 # 082 Decide Demo Release Readiness After Signal Proof
 
-Status: ready
+Status: complete
 Updated: 2026-04-13
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -52,7 +52,27 @@ pass, or whether one more real consumer validation batch is still required.
 - the lane tries to hide missing consumer proof behind vague “good enough”
   language
 
+## Decision
+
+- Signal-only real-consumer proof is sufficient to let `g02.003` leave strict
+  implementation and enter release prep
+- the missing second-consumer proof is accepted as explicit residual release
+  risk, not as a hidden blocker
+- reason:
+  - Signal exercises the real browser, history, live terminal, and inline-demo
+    manifest surfaces on a non-Effigy consumer repo
+  - the remaining issues discovered in that proof window were consumer-local
+    script/runtime problems rather than Effigy product failures
+  - release prep now has enough real evidence to proceed honestly as long as it
+    records the missing second-consumer proof as follow-up risk
+
+## Outcome
+
+- release-prep ready card opened:
+  [`083-prepare-demo-release-readiness-checkpoint.md`](./083-prepare-demo-release-readiness-checkpoint.md)
+
 ## Next Task
 
-Execute this decision batch next, then leave one explicit release-prep or
-extra-consumer-validation card instead of free-continuing.
+Execute [`083-prepare-demo-release-readiness-checkpoint.md`](./083-prepare-demo-release-readiness-checkpoint.md)
+to assemble the demo-surface release-readiness checkpoint, residual risks, and
+operator recommendation before any actual release execution work.

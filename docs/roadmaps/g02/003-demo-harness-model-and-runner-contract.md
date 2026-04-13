@@ -3164,6 +3164,37 @@ What the next decision must classify explicitly:
 - whether `g02.003` now exits to release prep / release-readiness work
 - or whether one extra bounded consumer-validation slice is still required
 
+Decision:
+
+- Signal-only real-consumer proof is sufficient for release prep
+- missing second-consumer proof is accepted as explicit residual risk rather
+  than treated as a release-blocking gap
+
+Why this boundary is honest:
+
+- Signal exercises the shipped browser, history, live terminal, and inline-demo
+  manifest surfaces on a real consumer repo
+- no unresolved Effigy product bug survived the Signal proof window as a known
+  release blocker
+- the remaining gaps are release-readiness packaging and operator-facing risk
+  communication, not more mandatory product implementation
+
+### 10.73 Demo Release Readiness Checkpoint
+
+Batch `03.76` target:
+
+Prepare the demo-surface release-readiness checkpoint now that the strict lane
+has enough real consumer proof to leave implementation.
+
+In scope for the next slice:
+
+- summarize the shipped demo surface for release review
+- capture residual risks explicitly, especially:
+  - only one validated consumer repo before release prep
+  - consumer-local script/runtime issues that do not block Effigy itself
+- provide the operator recommendation for whether release execution should
+  proceed once the normal release gates are green
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
