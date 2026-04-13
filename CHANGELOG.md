@@ -105,6 +105,9 @@ During v0.x, MINOR bumps may include breaking changes.
   session semantics
 
 ### Changed
+- Keep `effigy demo browser` on one stable `28/72` list/detail split so the
+  terminal detail pane no longer expands only after a demo starts and the TUI
+  layout stays visually steady while demos launch
 - Force `effigy demo browser` live terminal sessions to launch demo children
   with `EFFIGY_COLOR=always` and no `NO_COLOR`, so ANSI-colored demo output
   can render inside the browser terminal tab instead of being downgraded to
