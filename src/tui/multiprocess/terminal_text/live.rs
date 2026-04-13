@@ -50,7 +50,8 @@ pub(crate) fn render_vt_lines(
     height: usize,
     scroll_offset: usize,
 ) -> (Vec<Line<'static>>, usize) {
-    let (logs, clamped_scroll, _) = vt_logs(parser, height.max(1), width.max(1), scroll_offset, false);
+    let (logs, clamped_scroll, _) =
+        vt_logs(parser, height.max(1), width.max(1), scroll_offset, false);
     let lines = logs
         .into_iter()
         .map(|entry| ansi_line(&entry.line, Style::default()))
