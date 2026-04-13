@@ -1279,7 +1279,7 @@ impl DemoBrowserApp {
     fn render_body(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let layout = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints(browser_body_constraints(self.detail_tab))
+            .constraints(browser_body_constraints())
             .split(area);
         self.render_list(frame, layout[0]);
         self.render_detail(frame, layout[1]);
@@ -2535,7 +2535,7 @@ fn browser_terminal_viewport_size(total_cols: u16, total_rows: u16) -> (u16, u16
         .split(area);
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints(browser_body_constraints(DetailTab::Terminal))
+        .constraints(browser_body_constraints())
         .split(layout[1]);
     let inner = Block::default()
         .borders(Borders::ALL)
@@ -2556,12 +2556,8 @@ fn browser_terminal_viewport_size(total_cols: u16, total_rows: u16) -> (u16, u16
     )
 }
 
-fn browser_body_constraints(detail_tab: DetailTab) -> [Constraint; 2] {
-    if matches!(detail_tab, DetailTab::Terminal) {
-        [Constraint::Percentage(28), Constraint::Percentage(72)]
-    } else {
-        [Constraint::Percentage(38), Constraint::Percentage(62)]
-    }
+fn browser_body_constraints() -> [Constraint; 2] {
+    [Constraint::Percentage(28), Constraint::Percentage(72)]
 }
 
 fn browser_terminal_key_input(key: &KeyEvent) -> Option<String> {
@@ -3516,13 +3512,14 @@ mod tests {
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{
+        layout::Constraint,
         style::{Color, Modifier, Style},
         text::{Line, Span},
     };
 
     use super::{
-        action_menu_items_for_detail, artifacts_detail_render, browser_live_terminal_env,
-        browser_terminal_key_input,
+        action_menu_items_for_detail, artifacts_detail_render, browser_body_constraints,
+        browser_live_terminal_env, browser_terminal_key_input,
         browser_vt_lines, clamp_artifact_index, detail_prefers_live_browser_terminal,
         detail_tab_lines, first_demo_id, history_detail_render, next_gap_filter, next_group_by,
         next_mode_filter, next_status_filter, overview_detail_render, query_summary,
@@ -3865,6 +3862,12 @@ mod tests {
     fn browser_tab_border_matches_requested_width() {
         let lines = detail_tab_lines(DetailTab::Overview, true, 17);
         assert_eq!(lines[1].to_string().chars().count(), 17);
+    }
+
+    #[test]
+    fn browser_body_constraints_keep_stable_wide_split() {
+        let constraints = browser_body_constraints();
+        assert_eq!(constraints, [Constraint::Percentage(28), Constraint::Percentage(72)]);
     }
 
     #[test]
