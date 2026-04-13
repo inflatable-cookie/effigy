@@ -1,6 +1,6 @@
 # 084 Decide Demo Release Execution Readiness
 
-Status: ready
+Status: complete
 Updated: 2026-04-13
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -44,7 +44,22 @@ a human explicitly requests release execution.
 - the decision drifts into running release commands without explicit human ask
 - the batch hides the clean-worktree requirement for release execution
 
+## Decision
+
+- actual release-execution work is justified next
+- no additional demo-surface validation or implementation batch is required
+  first
+- preconditions remain explicit:
+  - working tree must be clean
+  - a human must explicitly ask for release execution
+
+## Outcome
+
+- ready card opened:
+  [`085-execute-demo-release-protocol.md`](./085-execute-demo-release-protocol.md)
+
 ## Next Task
 
-Execute this decision batch next, then leave one explicit release-execution or
-bounded-pre-release-fix card instead of drifting back into implementation.
+Execute [`085-execute-demo-release-protocol.md`](./085-execute-demo-release-protocol.md)
+once the working tree is clean and a human explicitly asks to run the release
+protocol.

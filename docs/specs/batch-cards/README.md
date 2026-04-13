@@ -87,10 +87,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`081-validate-demo-browser-on-real-project-cohort.md`](./081-validate-demo-browser-on-real-project-cohort.md) (complete)
 - [`082-decide-demo-release-readiness-after-signal-proof.md`](./082-decide-demo-release-readiness-after-signal-proof.md) (complete)
 - [`083-prepare-demo-release-readiness-checkpoint.md`](./083-prepare-demo-release-readiness-checkpoint.md) (complete)
-- [`084-decide-demo-release-execution-readiness.md`](./084-decide-demo-release-execution-readiness.md)
+- [`084-decide-demo-release-execution-readiness.md`](./084-decide-demo-release-execution-readiness.md) (complete)
+- [`085-execute-demo-release-protocol.md`](./085-execute-demo-release-protocol.md)
 
 ## Next Task
 
-Execute the active ready card to decide whether actual release-execution work
-is justified now that the demo-surface release-readiness checkpoint is
-complete.
+Execute the active ready card next only when the working tree is clean and a
+human explicitly asks to proceed with release execution.
