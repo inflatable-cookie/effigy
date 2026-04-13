@@ -122,6 +122,22 @@ At minimum, the repo should expose:
 - `build`
 - `dev`
 
+### Demo adoption note
+
+If the consumer repo also has an operator-visible proof or demo surface:
+
+- keep the native demo registry in `[demos.<id>]`
+- prefer a dedicated fragment such as `demos/effigy.demos.toml` once the proof
+  surface is non-trivial
+- let demos carry inline `run = [ ... ]` sequences when wrapper tasks add no
+  real reuse
+
+Use these pages for the practical detail instead of re-explaining them here:
+
+- [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+
 ### Default test policy
 
 Pick one of these and document it explicitly:
@@ -450,9 +466,14 @@ Use this checklist when assessing a candidate consumer repo:
 - [`051-release-orchestration.md`](./051-release-orchestration.md)
 - [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
+- [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 
 ## Next Step
 
 Assess the first pilot repo against the checklist in Section 9, then normalize
 the missing surfaces before building the reusable `northstar-effigy` skill
-bundle.
+bundle. If the repo also needs native demo adoption, continue with
+[`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+instead of scattering demo migration notes across this contract page.
