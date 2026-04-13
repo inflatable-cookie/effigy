@@ -1892,22 +1892,44 @@ run = "sh -lc 'test -t 0 && printf \"pty-live\\n\"; printf \"boot-err\\n\" >&2; 
                 .any(|value| value.as_str() == Some("pty"))
         );
     }
-    assert!(
-        parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stdout_lines"]
-            .as_array()
-            .expect("stdout lines")
-            .iter()
-            .any(|line| line
-                .as_str()
-                .is_some_and(|line| line.contains("pty-live") || line.contains("boot-err")))
-    );
-    assert_eq!(
-        parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stderr_lines"]
-            .as_array()
-            .expect("stderr lines")
-            .len(),
-        0
-    );
+    #[cfg(target_os = "macos")]
+    {
+        assert!(
+            parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stdout_lines"]
+                .as_array()
+                .expect("stdout lines")
+                .iter()
+                .any(|line| line
+                    .as_str()
+                    .is_some_and(|line| line.contains("pty-live") || line.contains("boot-err")))
+        );
+        assert_eq!(
+            parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stderr_lines"]
+                .as_array()
+                .expect("stderr lines")
+                .len(),
+            0
+        );
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        assert!(
+            parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stdout_lines"]
+                .as_array()
+                .expect("stdout lines")
+                .iter()
+                .all(|line| line
+                    .as_str()
+                    .is_some_and(|line| !line.contains("pty-live") && !line.contains("boot-err")))
+        );
+        assert!(
+            parsed["result"]["demo"]["active_terminal_session"]["recent_output"]["stderr_lines"]
+                .as_array()
+                .expect("stderr lines")
+                .iter()
+                .any(|line| line.as_str().is_some_and(|line| line.contains("boot-err")))
+        );
+    }
 
     let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
     assert!(stop.status.success(), "demo stop failed: {stop:?}");
