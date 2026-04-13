@@ -96,3 +96,9 @@ Canonical reference:
 - If there is no ready card, stop in planning instead of improvising execution.
 - When the next move is materially ambiguous, ask for intent instead of
   guessing.
+
+## Internal Writing Style
+
+Use the repo-local style reference for internal work and normal replies:
+
+- `docs/policy/internal-writing-style.md`
