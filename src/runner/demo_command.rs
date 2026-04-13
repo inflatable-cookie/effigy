@@ -56,6 +56,8 @@ const DEMO_MANAGED_EVENT_POLL_INTERVAL_MS: u64 = 100;
 const DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT: usize = 3;
 const DEMO_DEFAULT_TERMINAL_COLS: u16 = 80;
 const DEMO_DEFAULT_TERMINAL_ROWS: u16 = 24;
+const DEMO_BROWSER_TERMINAL_COLS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_COLS";
+const DEMO_BROWSER_TERMINAL_ROWS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_ROWS";
 
 pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
     let cwd = current_working_dir()?;
@@ -671,7 +673,7 @@ fn render_demo_execute(
         return Err(RunnerError::CommandJsonFailure { rendered });
     }
 
-    if attempt.ok {
+    if attempt.ok || attempt.outcome == "terminated" {
         return render_demo_execute_text(&record, &attempt, invocation.title());
     }
 
@@ -2898,7 +2900,25 @@ fn initial_terminal_size_for_launch_mode(launch_mode: DemoLaunchMode) -> Option<
 }
 
 fn current_terminal_size() -> Option<(u16, u16)> {
+    if let Some(size) = browser_terminal_size_override() {
+        return Some(size);
+    }
     crossterm::terminal::size().ok()
+}
+
+fn browser_terminal_size_override() -> Option<(u16, u16)> {
+    let cols = std::env::var(DEMO_BROWSER_TERMINAL_COLS_ENV)
+        .ok()?
+        .parse::<u16>()
+        .ok()?;
+    let rows = std::env::var(DEMO_BROWSER_TERMINAL_ROWS_ENV)
+        .ok()?
+        .parse::<u16>()
+        .ok()?;
+    if cols == 0 || rows == 0 {
+        return None;
+    }
+    Some((cols, rows))
 }
 
 fn resolve_demo_launch_mode(mode: ManifestDemoMode, output_json: bool) -> DemoLaunchMode {
@@ -2962,19 +2982,25 @@ fn build_run_backed_process(
                 .map_err(|error| std::io::Error::other(error.to_string()))
         });
     }
+    if let Some((cols, rows)) = current_terminal_size() {
+        process
+            .env("COLUMNS", cols.to_string())
+            .env("LINES", rows.to_string());
+    }
     with_local_node_bin_path(&mut process, repo_root);
     Ok(process)
 }
 
 #[cfg(target_os = "macos")]
 fn build_run_backed_pty_process(repo_root: &Path, run_command: &str) -> ProcessCommand {
+    let wrapped = wrap_pty_shell_command(run_command, current_terminal_size());
     let mut process = ProcessCommand::new("script");
     process
         .arg("-q")
         .arg("/dev/null")
         .arg("sh")
         .arg("-c")
-        .arg(run_command)
+        .arg(wrapped)
         .current_dir(repo_root);
     process
 }
@@ -3030,6 +3056,13 @@ fn run_attempt_from_output(
         stderr,
         log_paths,
     )
+}
+
+fn wrap_pty_shell_command(run_command: &str, terminal_size: Option<(u16, u16)>) -> String {
+    let Some((cols, rows)) = terminal_size else {
+        return run_command.to_owned();
+    };
+    format!("stty cols {cols} rows {rows} >/dev/null 2>&1; {run_command}")
 }
 
 #[derive(Clone, Copy)]
@@ -5168,11 +5201,16 @@ impl Drop for DemoActiveAttemptGuard {
 mod tests {
     use super::{
         append_demo_terminal_input, append_demo_terminal_resize, load_active_attempt,
-        read_recent_output_lines, write_active_attempt_record, DemoActiveAttempt,
-        DemoTerminalTransport, PersistedDemoActiveAttempt, PersistedDemoActivePhase,
-        PersistedDemoAttemptHistory, PersistedDemoHistoricalAttempt,
-        PersistedDemoTerminalTransport, DEMO_ATTEMPT_HISTORY_LIMIT,
+        browser_terminal_size_override, read_recent_output_lines, wrap_pty_shell_command,
+        write_active_attempt_record, DemoActiveAttempt, DemoActiveTerminalSession,
+        DemoAttemptHistory, DemoEntrypoint, DemoLatestAttempt, DemoLogPaths, DemoRecord,
+        DemoRuntimeBackend, DemoTerminalTransport, PersistedDemoActiveAttempt,
+        PersistedDemoActivePhase, PersistedDemoAttemptHistory, PersistedDemoHistoricalAttempt,
+        PersistedDemoTerminalTransport, terminated_demo_attempt, render_demo_execute_text,
+        DEMO_ATTEMPT_HISTORY_LIMIT,
+        DEMO_BROWSER_TERMINAL_COLS_ENV, DEMO_BROWSER_TERMINAL_ROWS_ENV,
     };
+    use crate::runner::manifest::{ManifestDemoMode, ManifestDemoStatus};
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},
@@ -5384,5 +5422,90 @@ mod tests {
         assert!(written.contains("\"rows\":32"));
 
         let _ = fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn browser_terminal_size_override_reads_valid_env_values() {
+        unsafe {
+            std::env::set_var(DEMO_BROWSER_TERMINAL_COLS_ENV, "96");
+            std::env::set_var(DEMO_BROWSER_TERMINAL_ROWS_ENV, "28");
+        }
+
+        let size = browser_terminal_size_override();
+
+        unsafe {
+            std::env::remove_var(DEMO_BROWSER_TERMINAL_COLS_ENV);
+            std::env::remove_var(DEMO_BROWSER_TERMINAL_ROWS_ENV);
+        }
+
+        assert_eq!(size, Some((96, 28)));
+    }
+
+    #[test]
+    fn wrap_pty_shell_command_prefixes_stty_with_terminal_size() {
+        let wrapped = wrap_pty_shell_command("printf demo", Some((96, 28)));
+
+        assert_eq!(
+            wrapped,
+            "stty cols 96 rows 28 >/dev/null 2>&1; printf demo"
+        );
+    }
+
+    #[test]
+    fn render_demo_execute_treats_terminated_attempt_as_non_error_text_result() {
+        let record = DemoRecord {
+            id: "demo".to_owned(),
+            title: "Demo".to_owned(),
+            summary: "summary".to_owned(),
+            proof: "proof".to_owned(),
+            owner: "owner".to_owned(),
+            mode: ManifestDemoMode::Interactive,
+            status: ManifestDemoStatus::Ready,
+            covers: Vec::new(),
+            tags: Vec::new(),
+            prerequisites: Vec::new(),
+            dependencies: Vec::new(),
+            entrypoint: DemoEntrypoint::Run("printf demo".to_owned()),
+            sources: vec!["effigy.toml".to_owned()],
+            primary_source: "effigy.toml".to_owned(),
+            gap_class: "existing",
+            runtime_backend: DemoRuntimeBackend::from_entrypoint(&DemoEntrypoint::Run(
+                "printf demo".to_owned(),
+            )),
+            active_attempt: DemoActiveAttempt::inactive(None),
+            active_terminal_session: DemoActiveTerminalSession::inactive(),
+            latest_attempt: DemoLatestAttempt {
+                recorded: true,
+                receipt_path: Some(".effigy/demo/receipts/demo.json".to_owned()),
+                outcome: Some("terminated".to_owned()),
+                summary: Some("terminated".to_owned()),
+                stale: false,
+                artifacts: Vec::new(),
+                stdout_log_path: None,
+                stderr_log_path: None,
+                parse_error: None,
+            },
+            attempt_history: DemoAttemptHistory {
+                path: None,
+                attempts: Vec::new(),
+                parse_error: None,
+            },
+        };
+        let attempt = terminated_demo_attempt(
+            "run",
+            "printf demo",
+            "printf demo",
+            None,
+            "Demo `demo` was terminated after stop was requested.".to_owned(),
+            String::new(),
+            String::new(),
+            DemoLogPaths::none(),
+        );
+
+        let rendered =
+            render_demo_execute_text(&record, &attempt, "Demo Run").expect("render terminated");
+
+        assert!(rendered.contains("outcome: terminated"));
+        assert!(!rendered.contains("[error] Task failed"));
     }
 }

@@ -105,6 +105,13 @@ During v0.x, MINOR bumps may include breaking changes.
   session semantics
 
 ### Changed
+- Tighten `effigy demo browser` live terminal rendering so browser-launched
+  attached demo sessions seed their initial terminal geometry from the detail
+  pane and strip the stray literal `^D` wrapper noise that could leak into the
+  terminal tab for interactive demos like `lifecycle-window`
+- Make the Effigy CLI header width-aware in browser-owned live demo terminal
+  sessions so narrow terminal tabs keep the header but truncate long repo paths
+  instead of wrapping stray path fragments like `/effigy` onto a second line
 - Deepen concurrent-runner-backed projected demo runtime reporting with
   runner-owned `projected_output_provenance` facts so inspect and active
   terminal/session payloads now say whether flattened concurrent output is

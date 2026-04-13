@@ -20,18 +20,20 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::{Frame, Terminal};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
-use vt100::Parser as VtParser;
 
 use crate::runner::{run_command, RunnerError};
 use crate::tui::core::{
     effigy_panel_block, next_index, prev_index, EFFIGY_ACCENT, EFFIGY_ACCENT_SOFT, EFFIGY_MUTED,
 };
+use crate::tui::multiprocess::terminal_text::{render_vt_lines, LiveTerminalBuffer};
 use crate::{
     Command, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus,
     DemoSubcommand,
 };
 
 type BrowserTerminal = Terminal<CrosstermBackend<Stdout>>;
+const DEMO_BROWSER_TERMINAL_COLS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_COLS";
+const DEMO_BROWSER_TERMINAL_ROWS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_ROWS";
 
 pub fn run_demo_browser_tui(
     repo_root: PathBuf,
@@ -78,9 +80,11 @@ struct DemoBrowserApp {
     history: Option<DemoHistoryPayload>,
     live_terminal_session: Option<BrowserLiveTerminalSession>,
     last_reported_terminal_size: Option<(String, u16, u16)>,
+    last_rendered_terminal_viewport_size: Option<(u16, u16)>,
     result_visible_demo_ids: HashSet<String>,
     footer_message: String,
     pending_action: Option<PendingAction>,
+    pending_live_terminal_launch: Option<PendingLiveTerminalLaunch>,
     last_refresh: Instant,
     total_demo_count: usize,
     overlay: Option<BrowserOverlay>,
@@ -109,9 +113,11 @@ impl DemoBrowserApp {
             history: None,
             live_terminal_session: None,
             last_reported_terminal_size: None,
+            last_rendered_terminal_viewport_size: None,
             result_visible_demo_ids: HashSet::new(),
             footer_message: "Loading demo registry...".to_owned(),
             pending_action: None,
+            pending_live_terminal_launch: None,
             last_refresh: Instant::now() - Duration::from_secs(5),
             total_demo_count: 0,
             overlay: None,
@@ -126,6 +132,7 @@ impl DemoBrowserApp {
             terminal
                 .draw(|frame| self.render(frame))
                 .map_err(|error| RunnerError::Ui(error.to_string()))?;
+            self.poll_pending_live_terminal_launch()?;
 
             if event::poll(Duration::from_millis(125))
                 .map_err(|error| RunnerError::Ui(error.to_string()))?
@@ -743,17 +750,16 @@ impl DemoBrowserApp {
             _ => unreachable!(),
         };
         if detail_prefers_live_browser_terminal(&detail, &subcommand) {
-            let session = BrowserLiveTerminalSession::spawn(
-                self.repo_root.clone(),
-                detail.id.clone(),
-                subcommand,
-            )?;
-            self.live_terminal_session = Some(session);
             self.result_visible_demo_ids.insert(detail.id.clone());
             self.focus = BrowserFocus::Detail;
             self.set_detail_tab(DetailTab::Terminal)?;
+            self.pending_live_terminal_launch = Some(PendingLiveTerminalLaunch {
+                demo_id: detail.id.clone(),
+                subcommand,
+                action_label: action_label.to_owned(),
+            });
             self.footer_message = format!(
-                "Started live terminal {action_label} for demo `{}`.",
+                "Preparing live terminal {action_label} for demo `{}`.",
                 detail.id
             );
             self.last_refresh = Instant::now() - Duration::from_secs(5);
@@ -1016,6 +1022,29 @@ impl DemoBrowserApp {
         Ok(())
     }
 
+    fn poll_pending_live_terminal_launch(&mut self) -> Result<(), RunnerError> {
+        let Some(pending) = self.pending_live_terminal_launch.take() else {
+            return Ok(());
+        };
+        let Some(viewport_size) = self.last_rendered_terminal_viewport_size else {
+            self.pending_live_terminal_launch = Some(pending);
+            return Ok(());
+        };
+        let session = BrowserLiveTerminalSession::spawn(
+            self.repo_root.clone(),
+            pending.demo_id.clone(),
+            pending.subcommand,
+            Some(viewport_size),
+        )?;
+        self.live_terminal_session = Some(session);
+        self.footer_message = format!(
+            "Started live terminal {} for demo `{}`.",
+            pending.action_label, pending.demo_id
+        );
+        self.last_refresh = Instant::now() - Duration::from_secs(5);
+        Ok(())
+    }
+
     fn shutdown_live_terminal_session(&mut self) -> Result<(), RunnerError> {
         let Some(mut session) = self.live_terminal_session.take() else {
             return Ok(());
@@ -1116,6 +1145,7 @@ impl DemoBrowserApp {
             self.terminal_input_mode = false;
             self.history = None;
             self.last_reported_terminal_size = None;
+            self.last_rendered_terminal_viewport_size = None;
         } else if matches!(self.detail_tab, DetailTab::History) && self.selected_demo_id.is_some() {
             self.history = Some(fetch_demo_history(
                 &self.repo_root,
@@ -1250,7 +1280,7 @@ impl DemoBrowserApp {
     fn render_body(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let layout = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+            .constraints(browser_body_constraints(self.detail_tab))
             .split(area);
         self.render_list(frame, layout[0]);
         self.render_detail(frame, layout[1]);
@@ -1409,15 +1439,18 @@ impl DemoBrowserApp {
                 Constraint::Min(1),
             ])
             .split(inner);
+        self.last_rendered_terminal_viewport_size =
+            Some((layout[2].width.max(1), layout[2].height.max(1)));
 
         frame.render_widget(Paragraph::new(tab_lines), layout[0]);
 
-        let terminal_view = if let Some(session) = self.selected_live_terminal_session() {
+        let scroll_offset = self.terminal_scroll_offset;
+        let terminal_view = if let Some(session) = self.selected_live_terminal_session_mut() {
             build_live_terminal_view(
                 session,
                 layout[2].width as usize,
                 layout[2].height as usize,
-                self.terminal_scroll_offset,
+                scroll_offset,
             )
         } else {
             build_terminal_view(
@@ -1425,7 +1458,7 @@ impl DemoBrowserApp {
                 &detail,
                 layout[2].width as usize,
                 layout[2].height as usize,
-                self.terminal_scroll_offset,
+                scroll_offset,
             )
         };
         self.terminal_scroll_offset = terminal_view.scroll_offset;
@@ -1439,10 +1472,7 @@ impl DemoBrowserApp {
             Paragraph::new(status_lines).wrap(Wrap { trim: false }),
             layout[1],
         );
-        frame.render_widget(
-            Paragraph::new(terminal_view.lines).wrap(Wrap { trim: false }),
-            layout[2],
-        );
+        frame.render_widget(Paragraph::new(terminal_view.lines), layout[2]);
     }
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -2226,21 +2256,23 @@ fn build_terminal_view(
 }
 
 fn build_live_terminal_view(
-    session: &BrowserLiveTerminalSession,
+    session: &mut BrowserLiveTerminalSession,
     width: usize,
     height: usize,
     scroll_offset: usize,
 ) -> TerminalView {
-    render_terminal_view_from_bytes(
-        &session.transcript,
-        TerminalViewSource::LiveAttached,
-        width,
-        height,
-        scroll_offset,
-        None,
-        None,
-        Vec::new(),
-    )
+    let (mut lines, clamped_scroll) = session.terminal.render_lines(width, height, scroll_offset);
+    if lines.is_empty() {
+        lines.push(muted_line(
+            "Terminal output exists, but no visible screen content is available yet.".to_owned(),
+        ));
+    }
+    TerminalView {
+        lines,
+        source: TerminalViewSource::LiveAttached,
+        scroll_offset: clamped_scroll,
+        stderr_lines: Vec::new(),
+    }
 }
 
 struct TerminalStreamSource {
@@ -2325,7 +2357,7 @@ fn render_terminal_view_from_bytes(
 ) -> TerminalView {
     let parser_rows = terminal_rows.unwrap_or(height as u16).max(1);
     let parser_cols = terminal_cols.unwrap_or(width as u16).max(1);
-    let mut parser = VtParser::new(
+    let mut parser = vt100::Parser::new(
         parser_rows,
         parser_cols,
         DEMO_BROWSER_TERMINAL_PARSER_SCROLLBACK,
@@ -2333,15 +2365,7 @@ fn render_terminal_view_from_bytes(
     if !stdout_bytes.is_empty() {
         parser.process(stdout_bytes);
     }
-    let max_scroll = parser.screen().scrollback();
-    let clamped_scroll = scroll_offset.min(max_scroll);
-    parser.set_size(height as u16, width as u16);
-    parser.set_scrollback(max_scroll.saturating_sub(clamped_scroll));
-    let mut lines = parser
-        .screen()
-        .rows_formatted(0, width as u16)
-        .map(|row| Line::from(String::from_utf8_lossy(&row).into_owned()))
-        .collect::<Vec<_>>();
+    let (mut lines, clamped_scroll) = browser_vt_lines(&mut parser, width, height, scroll_offset);
     if lines.is_empty() {
         lines.push(muted_line(
             "Terminal output exists, but no visible screen content is available yet.".to_owned(),
@@ -2363,6 +2387,15 @@ fn render_terminal_view_from_bytes(
         scroll_offset: clamped_scroll,
         stderr_lines,
     }
+}
+
+fn browser_vt_lines(
+    parser: &mut vt100::Parser,
+    width: usize,
+    height: usize,
+    scroll_offset: usize,
+) -> (Vec<Line<'static>>, usize) {
+    render_vt_lines(parser, width, height, scroll_offset)
 }
 
 fn terminal_status_lines(
@@ -2503,7 +2536,7 @@ fn browser_terminal_viewport_size(total_cols: u16, total_rows: u16) -> (u16, u16
         .split(area);
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+        .constraints(browser_body_constraints(DetailTab::Terminal))
         .split(layout[1]);
     let inner = Block::default()
         .borders(Borders::ALL)
@@ -2522,6 +2555,14 @@ fn browser_terminal_viewport_size(total_cols: u16, total_rows: u16) -> (u16, u16
         terminal_layout[2].width.max(1),
         terminal_layout[2].height.max(1),
     )
+}
+
+fn browser_body_constraints(detail_tab: DetailTab) -> [Constraint; 2] {
+    if matches!(detail_tab, DetailTab::Terminal) {
+        [Constraint::Percentage(28), Constraint::Percentage(72)]
+    } else {
+        [Constraint::Percentage(38), Constraint::Percentage(62)]
+    }
 }
 
 fn browser_terminal_key_input(key: &KeyEvent) -> Option<String> {
@@ -2777,8 +2818,15 @@ struct PendingAction {
     receiver: Receiver<Result<JsonValue, RunnerError>>,
 }
 
+struct PendingLiveTerminalLaunch {
+    demo_id: String,
+    subcommand: DemoSubcommand,
+    action_label: String,
+}
+
 struct BrowserLiveTerminalSession {
     demo_id: String,
+    terminal: LiveTerminalBuffer,
     child: Child,
     stdin: Option<ChildStdin>,
     receiver: Receiver<LiveTerminalEvent>,
@@ -2795,6 +2843,7 @@ impl BrowserLiveTerminalSession {
         repo_root: PathBuf,
         demo_id: String,
         subcommand: DemoSubcommand,
+        viewport_size: Option<(u16, u16)>,
     ) -> Result<Self, RunnerError> {
         let executable = std::env::current_exe().map_err(|error| {
             RunnerError::Ui(format!(
@@ -2803,6 +2852,11 @@ impl BrowserLiveTerminalSession {
         })?;
         let mut command = ProcessCommand::new(executable);
         command.current_dir(&repo_root).env("NO_COLOR", "1");
+        if let Some((cols, rows)) = viewport_size {
+            command
+                .env(DEMO_BROWSER_TERMINAL_COLS_ENV, cols.to_string())
+                .env(DEMO_BROWSER_TERMINAL_ROWS_ENV, rows.to_string());
+        }
         match subcommand {
             DemoSubcommand::Run { demo_id } => {
                 command.arg("demo").arg("run").arg(demo_id);
@@ -2841,6 +2895,7 @@ impl BrowserLiveTerminalSession {
         spawn_live_terminal_reader(stderr, sender);
         Ok(Self {
             demo_id,
+            terminal: LiveTerminalBuffer::new(),
             child,
             stdin,
             receiver,
@@ -2862,7 +2917,9 @@ impl BrowserLiveTerminalSession {
     }
 
     fn append_output(&mut self, bytes: &[u8]) {
-        self.transcript.extend_from_slice(bytes);
+        let sanitized = sanitize_live_terminal_bytes(bytes);
+        self.terminal.push_chunk(&sanitized);
+        self.transcript.extend_from_slice(&sanitized);
         if self.transcript.len() > DEMO_BROWSER_LIVE_TERMINAL_TRANSCRIPT_MAX_BYTES {
             let excess = self.transcript.len() - DEMO_BROWSER_LIVE_TERMINAL_TRANSCRIPT_MAX_BYTES;
             self.transcript.drain(..excess);
@@ -2885,6 +2942,7 @@ impl BrowserLiveTerminalSession {
         self.exit_status = Some(status);
         self.stdin = None;
         self.drain_output();
+        self.terminal.finalize();
         Ok(Some((self.demo_id.clone(), status.success())))
     }
 
@@ -2921,6 +2979,7 @@ impl BrowserLiveTerminalSession {
         let _ = self.child.wait();
         self.stdin = None;
         self.exit_status = None;
+        self.terminal.finalize();
         Ok(())
     }
 }
@@ -2946,6 +3005,42 @@ where
             }
         }
     });
+}
+
+fn sanitize_live_terminal_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut sanitized = Vec::with_capacity(bytes.len());
+    let mut cursor = 0usize;
+    while let Some(relative) = bytes[cursor..].windows(2).position(|window| window == b"^D") {
+        let absolute = cursor + relative;
+        sanitized.extend_from_slice(&bytes[cursor..absolute]);
+        cursor = absolute + 2;
+        while cursor < bytes.len() && bytes[cursor] == 0x08 {
+            cursor += 1;
+        }
+    }
+    sanitized.extend_from_slice(&bytes[cursor..]);
+    normalize_terminal_newlines(&sanitized)
+}
+
+fn normalize_terminal_newlines(bytes: &[u8]) -> Vec<u8> {
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'\n' && normalized.last().copied() != Some(b'\r') {
+            normalized.push(b'\r');
+            normalized.push(b'\n');
+        } else {
+            normalized.push(byte);
+        }
+        index += 1;
+    }
+    normalized
+}
+
+#[cfg(test)]
+fn take_complete_terminal_bytes(carry: &mut Vec<u8>, bytes: &[u8]) -> Vec<u8> {
+    crate::tui::multiprocess::terminal_text::take_complete_terminal_bytes(carry, bytes)
 }
 
 enum BrowserOverlay {
@@ -3410,15 +3505,17 @@ mod tests {
 
     use super::{
         action_menu_items_for_detail, artifacts_detail_render, browser_terminal_key_input,
-        clamp_artifact_index, detail_prefers_live_browser_terminal, detail_tab_lines,
-        first_demo_id, history_detail_render, next_gap_filter, next_group_by, next_mode_filter,
-        next_status_filter, overview_detail_render, query_summary, read_recent_log_lines,
-        resolve_artifact_path, resolve_repo_relative_path, row_contains_demo, selected_artifact,
-        selected_list_highlight_style, selected_list_highlight_symbol, status_style,
+        browser_vt_lines, clamp_artifact_index, detail_prefers_live_browser_terminal,
+        detail_tab_lines, first_demo_id, history_detail_render, next_gap_filter, next_group_by,
+        next_mode_filter, next_status_filter, overview_detail_render, query_summary,
+        read_recent_log_lines, resolve_artifact_path, resolve_repo_relative_path,
+        row_contains_demo, selected_artifact, selected_list_highlight_style,
+        selected_list_highlight_symbol, status_style, take_complete_terminal_bytes,
         terminal_detail_render, ActionMenuItem, BrowserRow, DemoBrowserApp, DemoDetail,
         DemoHistoryAttempt, DemoHistoryAttemptHistoryPayload, DemoHistoryPayload,
         DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery,
         DemoListStatus, DemoSummary, DetailSelectableItem, DetailTab,
+        DEMO_BROWSER_TERMINAL_PARSER_SCROLLBACK, sanitize_live_terminal_bytes,
     };
 
     fn summary(id: &str) -> DemoSummary {
@@ -4245,6 +4342,43 @@ mod tests {
 
         app.handle_up_key();
         assert_eq!(app.terminal_scroll_offset, 1);
+    }
+
+    #[test]
+    fn browser_live_terminal_sanitizer_strips_literal_ctrl_d_marker_only() {
+        let mut transcript = b"\x1b[2Jhello".to_vec();
+        transcript.extend_from_slice(&sanitize_live_terminal_bytes(b"^D\x08\x08world"));
+
+        assert_eq!(String::from_utf8_lossy(&transcript), "\u{1b}[2Jhelloworld");
+    }
+
+    #[test]
+    fn browser_live_terminal_sanitizer_normalizes_lf_to_crlf() {
+        let sanitized = sanitize_live_terminal_bytes(b"one\ntwo\r\nthree\n");
+
+        assert_eq!(sanitized, b"one\r\ntwo\r\nthree\r\n");
+    }
+
+    #[test]
+    fn browser_live_terminal_buffers_split_utf8_border_bytes() {
+        let mut carry = Vec::new();
+        let top_left = "╭".as_bytes();
+        let first = take_complete_terminal_bytes(&mut carry, &top_left[..1]);
+        let second = take_complete_terminal_bytes(&mut carry, &top_left[1..]);
+        let third = take_complete_terminal_bytes(&mut carry, "──╮\n".as_bytes());
+
+        let mut parser = vt100::Parser::new(24, 72, DEMO_BROWSER_TERMINAL_PARSER_SCROLLBACK);
+        parser.process(&first);
+        parser.process(&second);
+        parser.process(&third);
+
+        let rendered = browser_vt_lines(&mut parser, 72, 4, 0)
+            .0
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(rendered.iter().any(|line| line.contains("╭──╮")));
     }
 
     #[test]

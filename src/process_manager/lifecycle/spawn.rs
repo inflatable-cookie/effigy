@@ -13,6 +13,9 @@ use nix::unistd::{setpgid, Pid};
 use super::super::{ProcessEvent, ProcessManagerError, ProcessSpec};
 use super::monitor::attach_child_stream_threads;
 
+const DEMO_BROWSER_TERMINAL_COLS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_COLS";
+const DEMO_BROWSER_TERMINAL_ROWS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_ROWS";
+
 pub(super) fn spawn_process_instance(
     spec: &ProcessSpec,
     events_tx: &Sender<ProcessEvent>,
@@ -78,13 +81,15 @@ fn spawn_plain_shell(spec: &ProcessSpec) -> ProcessCommand {
 fn spawn_with_pty_wrapper(spec: &ProcessSpec) -> ProcessCommand {
     #[cfg(target_os = "macos")]
     {
+        let terminal_size = browser_terminal_size_override();
+        let wrapped_run = wrap_pty_shell_command(&spec.run, terminal_size);
         let mut process = ProcessCommand::new("script");
         process
             .arg("-q")
             .arg("/dev/null")
             .arg("sh")
             .arg("-c")
-            .arg(&spec.run)
+            .arg(wrapped_run)
             .current_dir(&spec.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -97,6 +102,11 @@ fn spawn_with_pty_wrapper(spec: &ProcessSpec) -> ProcessCommand {
             });
         }
         with_local_node_bin_path(&mut process, &spec.cwd);
+        if let Some((cols, rows)) = terminal_size {
+            process
+                .env("COLUMNS", cols.to_string())
+                .env("LINES", rows.to_string());
+        }
         for (key, value) in &spec.env {
             process.env(key, value);
         }
@@ -120,4 +130,26 @@ fn with_local_node_bin_path(process: &mut ProcessCommand, cwd: &Path) {
         _ => local_rendered,
     };
     process.env("PATH", merged);
+}
+
+fn browser_terminal_size_override() -> Option<(u16, u16)> {
+    let cols = std::env::var(DEMO_BROWSER_TERMINAL_COLS_ENV)
+        .ok()?
+        .parse::<u16>()
+        .ok()?;
+    let rows = std::env::var(DEMO_BROWSER_TERMINAL_ROWS_ENV)
+        .ok()?
+        .parse::<u16>()
+        .ok()?;
+    if cols == 0 || rows == 0 {
+        return None;
+    }
+    Some((cols, rows))
+}
+
+fn wrap_pty_shell_command(run_command: &str, terminal_size: Option<(u16, u16)>) -> String {
+    let Some((cols, rows)) = terminal_size else {
+        return run_command.to_owned();
+    };
+    format!("stty cols {cols} rows {rows} >/dev/null 2>&1; {run_command}")
 }

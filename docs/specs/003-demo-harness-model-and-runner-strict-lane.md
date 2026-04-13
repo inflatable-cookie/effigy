@@ -42,6 +42,16 @@ The active strict lane is:
 This lane does not start desktop-client decisions, generic runtime cancellation,
 or repo migration work.
 
+## Current Posture
+
+`strict-ready`
+
+The previous ready card (`079`) became stale after browser terminal fidelity
+testing showed the shipped browser live-terminal path still diverges from the
+concurrent-runner integration it was meant to match. The active ready card is
+now a recovery-backed implementation slice that converges those paths before
+the lane makes another broader boundary call.
+
 ## Batch Model
 
 - planning stays in this spec plus the roadmap
@@ -69,6 +79,6 @@ front doors.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next to decide the next bounded slice
-after projected-output provenance truth landed while nested TUI embedding and
-multi-process browser-manager drift stay out of bounds.
+Execute the active `g02.003` ready card next to converge browser live terminal
+integration onto the shared concurrent-runner path before any new broader
+boundary decision.
