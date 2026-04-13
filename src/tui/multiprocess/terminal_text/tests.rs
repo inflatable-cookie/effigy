@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use vt100::Parser as VtParser;
 
 use crate::tui::core::LogEntryKind;
@@ -17,6 +17,23 @@ fn ansi_line_parses_basic_colour_sequence() {
     assert_eq!(line.spans.len(), 2);
     assert_eq!(line.spans[0].content.as_ref(), "error");
     assert_eq!(line.spans[1].content.as_ref(), " ok");
+}
+
+#[test]
+fn ansi_line_parses_ansi256_colour_sequence() {
+    let line = ansi_line("\u{1b}[38;5;212mEFFIGY\u{1b}[0m path", Style::default());
+    assert_eq!(line.spans.len(), 2);
+    assert_eq!(line.spans[0].content.as_ref(), "EFFIGY");
+    assert_eq!(line.spans[0].style.fg, Some(Color::Indexed(212)));
+    assert_eq!(line.spans[1].content.as_ref(), " path");
+}
+
+#[test]
+fn ansi_line_parses_truecolor_sequence() {
+    let line = ansi_line("\u{1b}[38;2;12;34;56mshade\u{1b}[0m", Style::default());
+    assert_eq!(line.spans.len(), 1);
+    assert_eq!(line.spans[0].content.as_ref(), "shade");
+    assert_eq!(line.spans[0].style.fg, Some(Color::Rgb(12, 34, 56)));
 }
 
 #[test]

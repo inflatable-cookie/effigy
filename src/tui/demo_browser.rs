@@ -751,7 +751,6 @@ impl DemoBrowserApp {
         };
         if detail_prefers_live_browser_terminal(&detail, &subcommand) {
             self.result_visible_demo_ids.insert(detail.id.clone());
-            self.focus = BrowserFocus::Detail;
             self.set_detail_tab(DetailTab::Terminal)?;
             self.pending_live_terminal_launch = Some(PendingLiveTerminalLaunch {
                 demo_id: detail.id.clone(),
@@ -4277,6 +4276,32 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
             .expect("escape should leave input mode");
         assert!(!app.terminal_input_mode);
+    }
+
+    #[test]
+    fn live_browser_run_keeps_list_focus_when_started_from_list_panel() {
+        let mut app = DemoBrowserApp::new(PathBuf::from("/tmp/demo-repo"), None);
+        let mut detail = detail_with_artifacts(&[]);
+        detail.mode = "interactive".to_owned();
+        detail.runtime_backend.kind = "run".to_owned();
+        detail.runtime_backend.capabilities = vec!["browser-live-attach".to_owned()];
+        detail.runtime_backend.projection_shape = super::DemoRuntimeProjectionShape {
+            kind: "single-terminal".to_owned(),
+            live_terminal_eligible: true,
+            projected_multi_process: false,
+            managed_process_count: None,
+        };
+        app.detail = Some(detail);
+        app.selected_demo_id = Some("demo".to_owned());
+        app.focus = super::BrowserFocus::List;
+        app.detail_tab = DetailTab::Overview;
+
+        app.dispatch_run_or_rerun()
+            .expect("live browser run should queue");
+
+        assert!(matches!(app.focus, super::BrowserFocus::List));
+        assert!(matches!(app.detail_tab, DetailTab::Terminal));
+        assert!(app.pending_live_terminal_launch.is_some());
     }
 
     #[test]
