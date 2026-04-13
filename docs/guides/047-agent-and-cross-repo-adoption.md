@@ -258,6 +258,21 @@ Release adoption policy:
 - document the repo's chosen version file and gate commands in `AGENTS.md` so
   agents do not fall back to the wrong toolchain defaults
 
+## 8) Demo And Manifest Adoption Boundary
+
+When a consumer repo is also adopting the native demo surface:
+
+- use [`058-demo-system-guide.md`](./058-demo-system-guide.md) for the steady-
+  state operator model
+- use [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+  when the repo should split demo config into a dedicated fragment
+- use [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+  when the repo is still moving from demo scripts or one-wrapper-task-per-demo
+  patterns
+
+Do not duplicate that migration guidance inside `AGENTS.md`. Keep agent
+instructions short and point them at the native demo surface once it exists.
+
 ## Expected Outcome
 
 - AI agents have one short, repeatable contract for using Effigy in project work
@@ -271,6 +286,9 @@ Release adoption policy:
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+- [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 - [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 - [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
@@ -279,4 +297,7 @@ Release adoption policy:
 
 After adding the Effigy-first agent contract to a consumer repo, validate the
 repo against the minimum adoption criteria in Section 4 and then remove any
-obsolete wrapper-first guidance in the same batch.
+obsolete wrapper-first guidance in the same batch. If the repo is also adopting
+native demos, continue with
+[`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+instead of inventing a repo-local demo migration path.
