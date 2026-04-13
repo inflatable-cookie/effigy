@@ -1269,6 +1269,10 @@ impl DemoBrowserApp {
             )),
             layout[0],
         );
+        let list_row_width = inner
+            .width
+            .saturating_sub(selected_list_highlight_symbol().chars().count() as u16)
+            as usize;
         let items = self
             .rows
             .iter()
@@ -1281,7 +1285,7 @@ impl DemoBrowserApp {
                 )])),
                 BrowserRow::Demo(summary) => ListItem::new(render_browser_demo_row(
                     summary,
-                    inner.width as usize,
+                    list_row_width,
                 )),
             })
             .collect::<Vec<_>>();
