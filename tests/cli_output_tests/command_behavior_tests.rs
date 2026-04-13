@@ -554,7 +554,8 @@ fn wait_for_demo_active_terminal_session(
         let output = run_json_cli_command(root, &["demo", "inspect", demo_id]);
         if output.status.success() {
             let parsed = parse_stdout_json(&output);
-            let available = parsed["result"]["demo"]["active_terminal_session"]["available"] == true;
+            let available =
+                parsed["result"]["demo"]["active_terminal_session"]["available"] == true;
             if available {
                 return;
             }

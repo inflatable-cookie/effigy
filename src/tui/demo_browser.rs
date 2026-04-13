@@ -1283,10 +1283,9 @@ impl DemoBrowserApp {
                         .fg(EFFIGY_ACCENT)
                         .add_modifier(Modifier::BOLD),
                 )])),
-                BrowserRow::Demo(summary) => ListItem::new(render_browser_demo_row(
-                    summary,
-                    list_row_width,
-                )),
+                BrowserRow::Demo(summary) => {
+                    ListItem::new(render_browser_demo_row(summary, list_row_width))
+                }
             })
             .collect::<Vec<_>>();
 
@@ -3555,7 +3554,10 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::{layout::Constraint, style::{Color, Modifier}};
+    use ratatui::{
+        layout::Constraint,
+        style::{Color, Modifier},
+    };
 
     use super::{
         action_menu_items_for_detail, artifacts_detail_render, browser_body_constraints,
@@ -3564,14 +3566,13 @@ mod tests {
         detail_prefers_live_browser_terminal, detail_tab_lines, first_demo_id,
         history_detail_render, next_gap_filter, next_group_by, next_mode_filter,
         next_status_filter, overview_detail_render, query_summary, read_recent_log_lines,
-        render_browser_demo_row,
-        resolve_artifact_path, resolve_repo_relative_path, row_contains_demo,
-        sanitize_live_terminal_bytes, selected_artifact, selected_list_highlight_style,
-        selected_list_highlight_symbol, take_complete_terminal_bytes,
-        terminal_detail_render, ActionMenuItem, BrowserRow, DemoBrowserApp, DemoDetail,
-        DemoHistoryAttempt, DemoHistoryAttemptHistoryPayload, DemoHistoryPayload,
-        DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery,
-        DemoListStatus, DemoSummary, DetailSelectableItem, DetailTab,
+        render_browser_demo_row, resolve_artifact_path, resolve_repo_relative_path,
+        row_contains_demo, sanitize_live_terminal_bytes, selected_artifact,
+        selected_list_highlight_style, selected_list_highlight_symbol,
+        take_complete_terminal_bytes, terminal_detail_render, ActionMenuItem, BrowserRow,
+        DemoBrowserApp, DemoDetail, DemoHistoryAttempt, DemoHistoryAttemptHistoryPayload,
+        DemoHistoryPayload, DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListMode,
+        DemoListQuery, DemoListStatus, DemoSummary, DetailSelectableItem, DetailTab,
         DEMO_BROWSER_TERMINAL_PARSER_SCROLLBACK,
     };
 
