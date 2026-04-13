@@ -105,6 +105,10 @@ During v0.x, MINOR bumps may include breaking changes.
   session semantics
 
 ### Changed
+- Force `effigy demo browser` live terminal sessions to launch demo children
+  with `EFFIGY_COLOR=always` and no `NO_COLOR`, so ANSI-colored demo output
+  can render inside the browser terminal tab instead of being downgraded to
+  plain text by piped stdout auto-detection
 - Tighten `effigy demo browser` live terminal rendering so browser-launched
   attached demo sessions seed their initial terminal geometry from the detail
   pane and strip the stray literal `^D` wrapper noise that could leak into the

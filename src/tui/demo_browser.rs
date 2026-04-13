@@ -2851,12 +2851,8 @@ impl BrowserLiveTerminalSession {
             ))
         })?;
         let mut command = ProcessCommand::new(executable);
-        command.current_dir(&repo_root).env("NO_COLOR", "1");
-        if let Some((cols, rows)) = viewport_size {
-            command
-                .env(DEMO_BROWSER_TERMINAL_COLS_ENV, cols.to_string())
-                .env(DEMO_BROWSER_TERMINAL_ROWS_ENV, rows.to_string());
-        }
+        command.current_dir(&repo_root);
+        apply_live_terminal_command_env(&mut command, viewport_size);
         match subcommand {
             DemoSubcommand::Run { demo_id } => {
                 command.arg("demo").arg("run").arg(demo_id);
@@ -3007,6 +3003,18 @@ where
     });
 }
 
+fn apply_live_terminal_command_env(
+    command: &mut ProcessCommand,
+    viewport_size: Option<(u16, u16)>,
+) {
+    command.env_remove("NO_COLOR").env("EFFIGY_COLOR", "always");
+    if let Some((cols, rows)) = viewport_size {
+        command
+            .env(DEMO_BROWSER_TERMINAL_COLS_ENV, cols.to_string())
+            .env(DEMO_BROWSER_TERMINAL_ROWS_ENV, rows.to_string());
+    }
+}
+
 fn sanitize_live_terminal_bytes(bytes: &[u8]) -> Vec<u8> {
     let mut sanitized = Vec::with_capacity(bytes.len());
     let mut cursor = 0usize;
@@ -3041,6 +3049,16 @@ fn normalize_terminal_newlines(bytes: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 fn take_complete_terminal_bytes(carry: &mut Vec<u8>, bytes: &[u8]) -> Vec<u8> {
     crate::tui::multiprocess::terminal_text::take_complete_terminal_bytes(carry, bytes)
+}
+
+#[cfg(test)]
+fn browser_live_terminal_env(viewport_size: Option<(u16, u16)>) -> Vec<(String, String)> {
+    let mut env = vec![("EFFIGY_COLOR".to_owned(), "always".to_owned())];
+    if let Some((cols, rows)) = viewport_size {
+        env.push((DEMO_BROWSER_TERMINAL_COLS_ENV.to_owned(), cols.to_string()));
+        env.push((DEMO_BROWSER_TERMINAL_ROWS_ENV.to_owned(), rows.to_string()));
+    }
+    env
 }
 
 enum BrowserOverlay {
@@ -3504,7 +3522,8 @@ mod tests {
     };
 
     use super::{
-        action_menu_items_for_detail, artifacts_detail_render, browser_terminal_key_input,
+        action_menu_items_for_detail, artifacts_detail_render, browser_live_terminal_env,
+        browser_terminal_key_input,
         browser_vt_lines, clamp_artifact_index, detail_prefers_live_browser_terminal,
         detail_tab_lines, first_demo_id, history_detail_render, next_gap_filter, next_group_by,
         next_mode_filter, next_status_filter, overview_detail_render, query_summary,
@@ -4379,6 +4398,22 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(rendered.iter().any(|line| line.contains("╭──╮")));
+    }
+
+    #[test]
+    fn browser_live_terminal_env_forces_color_and_size() {
+        let env = browser_live_terminal_env(Some((120, 33)));
+
+        assert!(env.contains(&("EFFIGY_COLOR".to_owned(), "always".to_owned())));
+        assert!(env.contains(&(super::DEMO_BROWSER_TERMINAL_COLS_ENV.to_owned(), "120".to_owned())));
+        assert!(env.contains(&(super::DEMO_BROWSER_TERMINAL_ROWS_ENV.to_owned(), "33".to_owned())));
+    }
+
+    #[test]
+    fn browser_live_terminal_env_forces_color_without_size() {
+        let env = browser_live_terminal_env(None);
+
+        assert_eq!(env, vec![("EFFIGY_COLOR".to_owned(), "always".to_owned())]);
     }
 
     #[test]
