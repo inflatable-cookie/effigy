@@ -1846,14 +1846,25 @@ run = "sh -lc 'test -t 0 && printf \"pty-live\\n\"; printf \"boot-err\\n\" >&2; 
         parsed["result"]["demo"]["active_terminal_session"]["runtime_backend"]["kind"],
         "run"
     );
-    assert_eq!(
-        parsed["result"]["demo"]["active_terminal_session"]["transport"],
-        "pty"
-    );
-    assert_eq!(
-        parsed["result"]["demo"]["active_terminal_session"]["pty"],
-        true
-    );
+    #[cfg(target_os = "macos")]
+    {
+        assert_eq!(
+            parsed["result"]["demo"]["active_terminal_session"]["transport"],
+            "pty"
+        );
+        assert_eq!(parsed["result"]["demo"]["active_terminal_session"]["pty"], true);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        assert_eq!(
+            parsed["result"]["demo"]["active_terminal_session"]["transport"],
+            "stream"
+        );
+        assert_eq!(
+            parsed["result"]["demo"]["active_terminal_session"]["pty"],
+            false
+        );
+    }
     assert_eq!(
         parsed["result"]["demo"]["active_terminal_session"]["resize"]["available"],
         false
