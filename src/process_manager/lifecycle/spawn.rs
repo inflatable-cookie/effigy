@@ -13,7 +13,9 @@ use nix::unistd::{setpgid, Pid};
 use super::super::{ProcessEvent, ProcessManagerError, ProcessSpec};
 use super::monitor::attach_child_stream_threads;
 
+#[cfg(target_os = "macos")]
 const DEMO_BROWSER_TERMINAL_COLS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_COLS";
+#[cfg(target_os = "macos")]
 const DEMO_BROWSER_TERMINAL_ROWS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_ROWS";
 
 pub(super) fn spawn_process_instance(
@@ -132,6 +134,7 @@ fn with_local_node_bin_path(process: &mut ProcessCommand, cwd: &Path) {
     process.env("PATH", merged);
 }
 
+#[cfg(target_os = "macos")]
 fn browser_terminal_size_override() -> Option<(u16, u16)> {
     let cols = std::env::var(DEMO_BROWSER_TERMINAL_COLS_ENV)
         .ok()?
@@ -147,6 +150,7 @@ fn browser_terminal_size_override() -> Option<(u16, u16)> {
     Some((cols, rows))
 }
 
+#[cfg(target_os = "macos")]
 fn wrap_pty_shell_command(run_command: &str, terminal_size: Option<(u16, u16)>) -> String {
     let Some((cols, rows)) = terminal_size else {
         return run_command.to_owned();

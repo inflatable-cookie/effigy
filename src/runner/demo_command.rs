@@ -56,7 +56,9 @@ const DEMO_MANAGED_EVENT_POLL_INTERVAL_MS: u64 = 100;
 const DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT: usize = 3;
 const DEMO_DEFAULT_TERMINAL_COLS: u16 = 80;
 const DEMO_DEFAULT_TERMINAL_ROWS: u16 = 24;
+#[cfg(any(target_os = "macos", test))]
 const DEMO_BROWSER_TERMINAL_COLS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_COLS";
+#[cfg(any(target_os = "macos", test))]
 const DEMO_BROWSER_TERMINAL_ROWS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_ROWS";
 
 pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
@@ -1745,8 +1747,7 @@ fn demo_active_attempt_from_record(
         projection_shape_kind: infer_projection_shape_kind(record).to_owned(),
         managed_process_count: infer_managed_process_count(record),
         managed_process_names: record.managed_process_names.clone(),
-        projected_output_provenance_kind: infer_projected_output_provenance_kind(record)
-            .to_owned(),
+        projected_output_provenance_kind: infer_projected_output_provenance_kind(record).to_owned(),
         terminal_transport: match record.terminal_transport {
             PersistedDemoTerminalTransport::Stream => DemoTerminalTransport::Stream,
             PersistedDemoTerminalTransport::Pty => DemoTerminalTransport::Pty,
@@ -2907,6 +2908,7 @@ fn current_terminal_size() -> Option<(u16, u16)> {
     crossterm::terminal::size().ok()
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn browser_terminal_size_override() -> Option<(u16, u16)> {
     let cols = std::env::var(DEMO_BROWSER_TERMINAL_COLS_ENV)
         .ok()?
@@ -3059,6 +3061,7 @@ fn run_attempt_from_output(
     )
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn wrap_pty_shell_command(run_command: &str, terminal_size: Option<(u16, u16)>) -> String {
     let Some((cols, rows)) = terminal_size else {
         return run_command.to_owned();
@@ -5201,14 +5204,13 @@ impl Drop for DemoActiveAttemptGuard {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_demo_terminal_input, append_demo_terminal_resize, load_active_attempt,
-        browser_terminal_size_override, read_recent_output_lines, wrap_pty_shell_command,
-        write_active_attempt_record, DemoActiveAttempt, DemoActiveTerminalSession,
-        DemoAttemptHistory, DemoEntrypoint, DemoLatestAttempt, DemoLogPaths, DemoRecord,
-        DemoRuntimeBackend, DemoTerminalTransport, PersistedDemoActiveAttempt,
-        PersistedDemoActivePhase, PersistedDemoAttemptHistory, PersistedDemoHistoricalAttempt,
-        PersistedDemoTerminalTransport, terminated_demo_attempt, render_demo_execute_text,
-        DEMO_ATTEMPT_HISTORY_LIMIT,
+        append_demo_terminal_input, append_demo_terminal_resize, browser_terminal_size_override,
+        load_active_attempt, read_recent_output_lines, render_demo_execute_text,
+        terminated_demo_attempt, wrap_pty_shell_command, write_active_attempt_record,
+        DemoActiveAttempt, DemoActiveTerminalSession, DemoAttemptHistory, DemoEntrypoint,
+        DemoLatestAttempt, DemoLogPaths, DemoRecord, DemoRuntimeBackend, DemoTerminalTransport,
+        PersistedDemoActiveAttempt, PersistedDemoActivePhase, PersistedDemoAttemptHistory,
+        PersistedDemoHistoricalAttempt, PersistedDemoTerminalTransport, DEMO_ATTEMPT_HISTORY_LIMIT,
         DEMO_BROWSER_TERMINAL_COLS_ENV, DEMO_BROWSER_TERMINAL_ROWS_ENV,
     };
     use crate::runner::manifest::{ManifestDemoMode, ManifestDemoStatus};
@@ -5446,10 +5448,7 @@ mod tests {
     fn wrap_pty_shell_command_prefixes_stty_with_terminal_size() {
         let wrapped = wrap_pty_shell_command("printf demo", Some((96, 28)));
 
-        assert_eq!(
-            wrapped,
-            "stty cols 96 rows 28 >/dev/null 2>&1; printf demo"
-        );
+        assert_eq!(wrapped, "stty cols 96 rows 28 >/dev/null 2>&1; printf demo");
     }
 
     #[test]

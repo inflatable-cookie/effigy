@@ -3026,7 +3026,10 @@ fn apply_live_terminal_command_env(
 fn sanitize_live_terminal_bytes(bytes: &[u8]) -> Vec<u8> {
     let mut sanitized = Vec::with_capacity(bytes.len());
     let mut cursor = 0usize;
-    while let Some(relative) = bytes[cursor..].windows(2).position(|window| window == b"^D") {
+    while let Some(relative) = bytes[cursor..]
+        .windows(2)
+        .position(|window| window == b"^D")
+    {
         let absolute = cursor + relative;
         sanitized.extend_from_slice(&bytes[cursor..absolute]);
         cursor = absolute + 2;
@@ -3533,18 +3536,18 @@ mod tests {
     use super::{
         action_menu_items_for_detail, artifacts_detail_render, browser_body_constraints,
         browser_header_lines, browser_list_summary_lines, browser_live_terminal_env,
-        browser_terminal_key_input,
-        browser_vt_lines, clamp_artifact_index, detail_prefers_live_browser_terminal,
-        detail_tab_lines, first_demo_id, history_detail_render, next_gap_filter, next_group_by,
-        next_mode_filter, next_status_filter, overview_detail_render, query_summary,
-        read_recent_log_lines, resolve_artifact_path, resolve_repo_relative_path,
-        row_contains_demo, selected_artifact, selected_list_highlight_style,
+        browser_terminal_key_input, browser_vt_lines, clamp_artifact_index,
+        detail_prefers_live_browser_terminal, detail_tab_lines, first_demo_id,
+        history_detail_render, next_gap_filter, next_group_by, next_mode_filter,
+        next_status_filter, overview_detail_render, query_summary, read_recent_log_lines,
+        resolve_artifact_path, resolve_repo_relative_path, row_contains_demo,
+        sanitize_live_terminal_bytes, selected_artifact, selected_list_highlight_style,
         selected_list_highlight_symbol, status_style, take_complete_terminal_bytes,
         terminal_detail_render, ActionMenuItem, BrowserRow, DemoBrowserApp, DemoDetail,
         DemoHistoryAttempt, DemoHistoryAttemptHistoryPayload, DemoHistoryPayload,
         DemoLatestAttempt, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery,
         DemoListStatus, DemoSummary, DetailSelectableItem, DetailTab,
-        DEMO_BROWSER_TERMINAL_PARSER_SCROLLBACK, sanitize_live_terminal_bytes,
+        DEMO_BROWSER_TERMINAL_PARSER_SCROLLBACK,
     };
 
     fn summary(id: &str) -> DemoSummary {
@@ -3572,8 +3575,7 @@ mod tests {
                 flattened_projection: false,
                 projection_shape: super::DemoRuntimeProjectionShape::default(),
                 projected_process_summary: super::DemoRuntimeProjectedProcessSummary::default(),
-                projected_output_provenance:
-                    super::DemoRuntimeProjectedOutputProvenance::default(),
+                projected_output_provenance: super::DemoRuntimeProjectedOutputProvenance::default(),
                 capabilities: vec![],
             },
             actions: super::DemoActionAvailability {
@@ -3909,7 +3911,10 @@ mod tests {
     #[test]
     fn browser_body_constraints_keep_stable_wide_split() {
         let constraints = browser_body_constraints();
-        assert_eq!(constraints, [Constraint::Percentage(28), Constraint::Percentage(72)]);
+        assert_eq!(
+            constraints,
+            [Constraint::Percentage(28), Constraint::Percentage(72)]
+        );
     }
 
     #[test]
@@ -3991,8 +3996,7 @@ mod tests {
                     managed_process_count: None,
                 },
                 projected_process_summary: super::DemoRuntimeProjectedProcessSummary::default(),
-                projected_output_provenance:
-                    super::DemoRuntimeProjectedOutputProvenance::default(),
+                projected_output_provenance: super::DemoRuntimeProjectedOutputProvenance::default(),
                 capabilities: vec![
                     "active-terminal-session".to_owned(),
                     "live-terminal-output".to_owned(),
@@ -4130,8 +4134,7 @@ mod tests {
                     managed_process_count: None,
                 },
                 projected_process_summary: super::DemoRuntimeProjectedProcessSummary::default(),
-                projected_output_provenance:
-                    super::DemoRuntimeProjectedOutputProvenance::default(),
+                projected_output_provenance: super::DemoRuntimeProjectedOutputProvenance::default(),
                 capabilities: vec![
                     "active-terminal-session".to_owned(),
                     "live-terminal-output".to_owned(),
@@ -4475,8 +4478,14 @@ mod tests {
         let env = browser_live_terminal_env(Some((120, 33)));
 
         assert!(env.contains(&("EFFIGY_COLOR".to_owned(), "always".to_owned())));
-        assert!(env.contains(&(super::DEMO_BROWSER_TERMINAL_COLS_ENV.to_owned(), "120".to_owned())));
-        assert!(env.contains(&(super::DEMO_BROWSER_TERMINAL_ROWS_ENV.to_owned(), "33".to_owned())));
+        assert!(env.contains(&(
+            super::DEMO_BROWSER_TERMINAL_COLS_ENV.to_owned(),
+            "120".to_owned()
+        )));
+        assert!(env.contains(&(
+            super::DEMO_BROWSER_TERMINAL_ROWS_ENV.to_owned(),
+            "33".to_owned()
+        )));
     }
 
     #[test]
