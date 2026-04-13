@@ -476,20 +476,6 @@ fn spawn_demo_run_process(root: &std::path::Path, demo_id: &str) -> std::process
         .expect("spawn demo run process")
 }
 
-fn spawn_demo_text_run_process(root: &std::path::Path, demo_id: &str) -> std::process::Child {
-    Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("demo")
-        .arg("run")
-        .arg(demo_id)
-        .arg("--repo")
-        .arg(root)
-        .env("NO_COLOR", "1")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn text demo run process")
-}
-
 fn spawn_demo_text_run_process_with_input(
     root: &std::path::Path,
     demo_id: &str,
@@ -509,14 +495,22 @@ fn spawn_demo_text_run_process_with_input(
 }
 
 fn wait_for_child_exit(child: &mut std::process::Child, timeout: Duration, label: &str) {
+    let status = wait_for_child_completion(child, timeout, label);
+    assert!(
+        !status.success(),
+        "{label} unexpectedly exited successfully: {status:?}"
+    );
+}
+
+fn wait_for_child_completion(
+    child: &mut std::process::Child,
+    timeout: Duration,
+    label: &str,
+) -> std::process::ExitStatus {
     let started = Instant::now();
     loop {
         if let Some(status) = child.try_wait().expect("poll child exit") {
-            assert!(
-                !status.success(),
-                "{label} unexpectedly exited successfully: {status:?}"
-            );
-            return;
+            return status;
         }
         assert!(started.elapsed() < timeout, "{label} did not exit in time");
         std::thread::sleep(Duration::from_millis(20));
@@ -1833,7 +1827,7 @@ run = "sh -lc 'test -t 0 && printf \"pty-live\\n\"; printf \"boot-err\\n\" >&2; 
     )
     .expect("write demo manifest");
 
-    let mut child = spawn_demo_text_run_process(&root, "waiter");
+    let mut child = spawn_demo_text_run_process_with_input(&root, "waiter");
     let active_path = root.join(".effigy/demo/active/waiter.json");
     let stdout_log = root.join(".effigy/demo/logs/waiter.stdout.log");
     wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
@@ -1890,7 +1884,7 @@ run = "sh -lc 'test -t 0 && printf \"pty-live\\n\"; printf \"boot-err\\n\" >&2; 
 
     let stop = run_json_cli_command(&root, &["demo", "stop", "waiter"]);
     assert!(stop.status.success(), "demo stop failed: {stop:?}");
-    wait_for_child_exit(&mut child, Duration::from_secs(5), "text demo run process");
+    let _ = wait_for_child_completion(&mut child, Duration::from_secs(5), "text demo run process");
 }
 
 #[test]
