@@ -364,6 +364,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-03-07-post-m1-release-readiness-checkpoint.md`](./2026-03/07-090000-post-m1-release-readiness-checkpoint.md)
 - [`2026-04-13-demo-browser-terminal-path-convergence-closeout.md`](./2026-04/13-103457-demo-browser-terminal-path-convergence-closeout.md)
 - [`2026-04-13-demo-browser-real-project-cohort-validation.md`](./2026-04/13-165446-demo-browser-real-project-cohort-validation.md)
+- [`2026-04-13-demo-release-readiness-after-signal-proof-decision.md`](./2026-04/13-170100-demo-release-readiness-after-signal-proof-decision.md)
 
 ## Log template
 
@@ -400,5 +401,5 @@ Batch: <batch-slug>
 ## Next Task
 
 Keep the active evidence window aligned to the current strict lane so the next
-decision stays anchored on the post-Signal release-readiness boundary instead
-of widening back into browser churn or release execution by habit.
+batch stays anchored on the demo release-readiness checkpoint instead of
+widening back into implementation churn or jumping ahead into release execution.
