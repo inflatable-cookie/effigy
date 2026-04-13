@@ -77,6 +77,11 @@ Electron main window or a primary app shell.
 For more patterns, use
 [`022-manifest-cookbook.md`](./022-manifest-cookbook.md).
 
+For manifest composition and demo-specific guidance, use:
+
+- [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+
 ## 3) Commands You Will Reach For First
 
 ### Discover and route work
@@ -146,6 +151,10 @@ Use JSON mode when CI, scripts, or agents are consuming Effigy output.
   [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - Need more manifest patterns:
   [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- Need the demo registry and browser/operator surface:
+  [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+- Need to split one manifest into focused fragments:
+  [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - Need repo bring-up from a git URL:
   [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
 - Need task routing detail:
@@ -175,6 +184,8 @@ After this guide, you should be able to:
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
+- [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 
 ## Next Step
 

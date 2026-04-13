@@ -21,10 +21,8 @@ manifest, not to teach people more wrapper scripts.
   query retained attempt history with `effigy demo history <id>`, record a
   normalized proof attempt with `effigy demo run <id>`, and use `demo stop` /
   `demo rerun` for runner-owned lifecycle control. The demo lane also now
-  includes a browser surface with history, artifacts, and terminal-oriented
-  views, though the active next batch is upgrading that terminal tab from
-  replay/input consumption to a browser-owned live attached session for
-  browser-launched interactive demos.
+  includes a browser surface with history, artifacts, and a live terminal tab
+  for the bounded honest runtime cases.
 - Move CI and agent automation onto stable JSON with `effigy --json <command>`.
 - Replace scattered release and validation scripts with built-in command
   surfaces as adoption grows.
@@ -50,7 +48,7 @@ older, use `cargo install` instead.
 From source:
 
 ```bash
-cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.2.12
+cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.2.13
 ```
 
 ## Start In 5 Minutes
@@ -143,6 +141,7 @@ effigy config --inspect
 
 Details:
 - [`022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
+- [`059-manifest-composition-guide.md`](./docs/guides/059-manifest-composition-guide.md)
 - [`050-env-schema-integration.md`](./docs/guides/050-env-schema-integration.md)
 - [`028-migration-quick-paths.md`](./docs/guides/028-migration-quick-paths.md)
 
@@ -181,7 +180,7 @@ effigy --json demo list
 ```
 
 Details:
-- [`022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
+- [`058-demo-system-guide.md`](./docs/guides/058-demo-system-guide.md)
 - [`025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
 - [`docs/roadmaps/g02/003-demo-harness-model-and-runner-contract.md`](./docs/roadmaps/g02/003-demo-harness-model-and-runner-contract.md)
 
@@ -199,21 +198,22 @@ cargo run --bin effigy -- demo browser
 The first browser foundation gives you:
 - a grouped demo list on the left
 - a detail pane for the selected demo
-- panel focus with `←` / `→`, so the list and detail side behave as distinct
-  controls instead of one overloaded document
-- `Enter` opening the action sheet from the list or the selected artifact from
-  the detail side
-- a calmer interaction model built around arrow keys, `Enter`, `Esc`, `/`,
-  and `f`
+- panel focus with `Tab` / `Shift+Tab`
+- detail tabs for `Overview`, `History`, `Terminal`, and `Artifacts`
+- `←` / `→` switching detail tabs when the detail pane is focused
+- `Enter` opening the action sheet from the list, activating the selected
+  detail-side entry, or toggling terminal input capture on the terminal tab
+- a calmer interaction model built around `Tab`, arrow keys, `Enter`, `Esc`,
+  `/`, and `f`
 - a single filter sheet for search-adjacent controls over owner, tag, mode,
   cover, status, gap, stale-only, and grouping
 - artifact selection as a simple list on the detail side, browsed with `↑` /
   `↓` once that panel is focused
+- a live terminal tab for browser-launched run-backed interactive demos and
+  bounded single-process concurrent-runner-backed interactive demos
 
-It still deliberately stops short of terminal emulation and rich artifact
-rendering. The current runner/browser baseline is about honest navigation,
-lifecycle control, opening recorded artifacts, and inspecting bounded recent
-attempt state without leaving Effigy.
+It still deliberately stops short of nested TUI launch or pretending that a
+flattened multi-process projected runtime is one live browser terminal.
 
 This repo now self-hosts two realistic demos:
 - `browser-proof-report` generates a small HTML report plus text snapshots under
