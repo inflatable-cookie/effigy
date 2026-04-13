@@ -2,6 +2,7 @@ use toml::Value;
 
 use super::diagnostics::SchemaContext;
 use super::tables::{require_table, validate_allowed_keys};
+use super::tasks::validate_run_step_table;
 use super::values::{
     validate_optional_enum_string_field, validate_optional_non_empty_string_field,
     validate_optional_string_array_field,
@@ -104,11 +105,7 @@ pub(super) fn validate_demos_section(context: &mut SchemaContext<'_, '_>, value:
             entry.get("task"),
             &format!("{entry_path}.task"),
         );
-        validate_optional_non_empty_string_field(
-            context,
-            entry.get("run"),
-            &format!("{entry_path}.run"),
-        );
+        validate_demo_run_field(context, demo_id, entry.get("run"));
         validate_optional_string_array_field(
             context,
             entry.get("prerequisites"),
@@ -132,6 +129,42 @@ pub(super) fn validate_demos_section(context: &mut SchemaContext<'_, '_>, value:
                 &entry_path,
                 "missing or ambiguous entrypoint",
                 "expected exactly one of `task` or `run`",
+            );
+        }
+    }
+}
+
+fn validate_demo_run_field(
+    context: &mut SchemaContext<'_, '_>,
+    demo_id: &str,
+    run: Option<&Value>,
+) {
+    let Some(run) = run else {
+        return;
+    };
+    let path = format!("demos.{demo_id}.run");
+    if run.is_str() {
+        validate_optional_non_empty_string_field(context, Some(run), &path);
+        return;
+    }
+
+    let Some(array) = run.as_array() else {
+        context.unsupported_value(
+            &path,
+            SchemaContext::value_type(run),
+            "expected string command or run-step array",
+        );
+        return;
+    };
+
+    for (index, step) in array.iter().enumerate() {
+        if let Some(step_table) = step.as_table() {
+            validate_run_step_table(context, &format!("demos.{demo_id}"), index, step_table);
+        } else if !step.is_str() {
+            context.unsupported_value(
+                &format!("{path}[{index}]"),
+                SchemaContext::value_type(step),
+                "expected string command or table with `run`/`task`",
             );
         }
     }

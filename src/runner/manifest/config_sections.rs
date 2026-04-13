@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::runner::error::RunnerError;
+use crate::runner::manifest::task_runtime::ManifestManagedRun;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -325,7 +326,7 @@ pub(in crate::runner) struct ManifestDemoConfig {
     #[serde(default)]
     pub(in crate::runner) task: Option<String>,
     #[serde(default)]
-    pub(in crate::runner) run: Option<String>,
+    pub(in crate::runner) run: Option<ManifestManagedRun>,
     #[serde(default)]
     pub(in crate::runner) prerequisites: Vec<String>,
     #[serde(default, alias = "depends_on")]
@@ -367,7 +368,7 @@ impl ManifestDemoConfig {
                 validate_non_empty_demo_string(manifest_path, demo_id, "task", task)?;
             }
             (None, Some(run)) => {
-                validate_non_empty_demo_string(manifest_path, demo_id, "run", run)?;
+                validate_demo_run(manifest_path, demo_id, run)?;
             }
             (Some(_), Some(_)) | (None, None) => {
                 return Err(RunnerError::TaskManifestCompose {
@@ -380,6 +381,29 @@ impl ManifestDemoConfig {
         }
 
         Ok(())
+    }
+}
+
+fn validate_demo_run(
+    manifest_path: &Path,
+    demo_id: &str,
+    run: &ManifestManagedRun,
+) -> Result<(), RunnerError> {
+    match run {
+        ManifestManagedRun::Command(command) => {
+            validate_non_empty_demo_string(manifest_path, demo_id, "run", command)
+        }
+        ManifestManagedRun::Sequence(steps) => {
+            if steps.is_empty() {
+                return Err(RunnerError::TaskManifestCompose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "invalid `[demos.{demo_id}]`: `run` sequence must contain at least one step"
+                    ),
+                });
+            }
+            Ok(())
+        }
     }
 }
 

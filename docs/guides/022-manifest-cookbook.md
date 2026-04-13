@@ -149,6 +149,8 @@ Registry rules:
 - each demo lives at `[demos.<id>]`
 - `title`, `summary`, `proof`, `owner`, `status`, `mode`, and `covers` are required
 - declare exactly one runnable entrypoint with `task = "..."` or `run = "..."`
+- demo `run` also accepts the same run-step array shape as task `run`, so small
+  proof chains can live directly in `[demos.*]` without an extra `demo:*` task
 - `receipt` and `artifacts` are optional, but they let `effigy demo inspect`
   show the latest known proof state instead of only static metadata
 - if `receipt` is omitted, `effigy demo run` writes a normalized receipt to

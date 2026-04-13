@@ -46,21 +46,21 @@ pub(in crate::runner) struct ManifestManagedConcurrentEntry {
     pub(in crate::runner) shutdown_on_exit: Option<bool>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(untagged)]
 pub(in crate::runner) enum ManifestManagedRun {
     Command(String),
     Sequence(Vec<ManifestManagedRunStep>),
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(untagged)]
 pub(in crate::runner) enum ManifestManagedRunStep {
     Command(String),
     Step(ManifestManagedRunStepTable),
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::runner) struct ManifestManagedRunStepTable {
     #[serde(default)]
@@ -85,14 +85,14 @@ pub(in crate::runner) struct ManifestManagedRunStepTable {
     pub(in crate::runner) fail_fast: Option<bool>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(untagged)]
 pub(in crate::runner) enum ManifestRunStepEnv {
     Inline(BTreeMap<String, String>),
     Profile(String),
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(untagged)]
 pub(in crate::runner) enum ManifestEnvFileDirective {
     Single(String),

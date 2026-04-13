@@ -9,13 +9,13 @@ use super::super::values::{
     validate_optional_string_array_field,
 };
 
-pub(super) fn validate_run_step_table(
+pub(in crate::runner::doctor::manifest::schema) fn validate_run_step_table(
     context: &mut SchemaContext<'_, '_>,
-    task_name: &str,
+    owner_path: &str,
     index: usize,
     step_table: &toml::map::Map<String, Value>,
 ) {
-    let step_path = format!("tasks.{task_name}.run[{index}]");
+    let step_path = format!("{owner_path}.run[{index}]");
     validate_allowed_keys(
         context,
         &step_path,

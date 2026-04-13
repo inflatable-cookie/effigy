@@ -11,7 +11,7 @@ mod profiles;
 mod run_steps;
 
 use profiles::validate_task_profiles;
-use run_steps::validate_run_step_table;
+pub(super) use run_steps::validate_run_step_table;
 
 pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &Value) {
     let Some(tasks_table) = require_table(
@@ -70,7 +70,7 @@ fn validate_compact_task_value(
 
     for (index, step) in array.iter().enumerate() {
         if let Some(step_table) = step.as_table() {
-            validate_run_step_table(context, task_name, index, step_table);
+            validate_run_step_table(context, &format!("tasks.{task_name}"), index, step_table);
         } else if !step.is_str() {
             context.unsupported_value(
                 &format!("tasks.{task_name}.run[{index}]"),

@@ -543,6 +543,30 @@ fn wait_for_demo_active_inspect(
     }
 }
 
+fn wait_for_demo_active_terminal_session(
+    root: &std::path::Path,
+    demo_id: &str,
+    timeout: Duration,
+    label: &str,
+) {
+    let started = Instant::now();
+    loop {
+        let output = run_json_cli_command(root, &["demo", "inspect", demo_id]);
+        if output.status.success() {
+            let parsed = parse_stdout_json(&output);
+            let available = parsed["result"]["demo"]["active_terminal_session"]["available"] == true;
+            if available {
+                return;
+            }
+        }
+        assert!(
+            started.elapsed() < timeout,
+            "{label} did not expose an active terminal session in time"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 #[test]
 fn cli_docs_check_links_json_reports_broken_relative_targets() {
     let root = temp_workspace("docs-check-links");
@@ -750,6 +774,50 @@ task = "demo:login-smoke"
     assert_eq!(receipt["schema"], "effigy.demo.receipt.v1");
     assert_eq!(receipt["status"], "passed");
     assert_eq!(receipt["entrypoint"]["kind"], "task");
+}
+
+#[test]
+fn cli_demo_run_json_inline_run_sequence_reports_run_entrypoint() {
+    let root = temp_workspace("demo-run-inline-sequence-json");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks]
+prep = "printf prep-ok >/dev/null"
+
+[demos.login-smoke]
+title = "Login Smoke"
+summary = "Proves the local login flow reaches an authenticated state."
+proof = "Verify the default local login journey succeeds end to end."
+owner = "auth"
+mode = "interactive"
+status = "ready"
+covers = ["auth.login"]
+run = [{ task = "prep" }, { run = "printf login-proof-ok" }]
+"#,
+    )
+    .expect("write demo manifest");
+
+    let output = run_json_cli_command(&root, &["demo", "run", "login-smoke"]);
+    assert!(output.status.success(), "demo run failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["ok"], true);
+    assert_eq!(parsed["result"]["execution"]["outcome"], "passed");
+    assert_eq!(parsed["result"]["execution"]["entrypoint"]["kind"], "run");
+    assert_eq!(
+        parsed["result"]["execution"]["entrypoint"]["value"],
+        "<sequence:2>"
+    );
+    assert_eq!(parsed["result"]["latest_attempt"]["outcome"], "passed");
+
+    let receipt: Value = serde_json::from_str(
+        &fs::read_to_string(root.join(".effigy/demo/receipts/login-smoke.json"))
+            .expect("read default demo receipt"),
+    )
+    .expect("parse demo receipt");
+    assert_eq!(receipt["status"], "passed");
+    assert_eq!(receipt["entrypoint"]["kind"], "run");
+    assert_eq!(receipt["entrypoint"]["value"], "<sequence:2>");
 }
 
 #[test]
@@ -1777,6 +1845,12 @@ fn cli_demo_resize_json_updates_concurrent_runner_terminal_session_geometry() {
         "stack",
         Duration::from_secs(60),
         "concurrent runner resize state",
+    );
+    wait_for_demo_active_terminal_session(
+        &root,
+        "stack",
+        Duration::from_secs(60),
+        "concurrent runner terminal session",
     );
 
     let output = run_json_cli_command(
