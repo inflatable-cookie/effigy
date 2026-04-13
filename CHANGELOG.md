@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
+
+## [0.2.13] - 2026-04-13
+
 ### Added
 - Demo registry entries now accept task-style `run` sequences directly under
   `[demos.*]`, so repos can inline small proof chains without separate
