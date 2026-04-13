@@ -43,6 +43,7 @@ pub fn render_cli_header<R: Renderer>(renderer: &mut R, root: &Path) -> UiResult
 
     let title_line = "EFFIGY".to_owned();
     let path_line = root.display().to_string();
+    let path_line = fit_cli_header_path(&title_line, &path_line, env!("CARGO_PKG_VERSION"));
     let combined_line = format!("{title_line}  {path_line}");
     let version = format!(" v{} ", env!("CARGO_PKG_VERSION"));
     let inner_width = combined_line.len();
@@ -81,4 +82,66 @@ pub fn render_cli_header<R: Renderer>(renderer: &mut R, root: &Path) -> UiResult
     }
     renderer.text("")?;
     Ok(())
+}
+
+fn fit_cli_header_path(title: &str, path: &str, version: &str) -> String {
+    let Some(cols) = cli_header_terminal_cols() else {
+        return path.to_owned();
+    };
+    let min_inner_width = title.len() + 2 + 1;
+    let max_inner_width = cols.saturating_sub(4).max(min_inner_width);
+    let available_path_width = max_inner_width.saturating_sub(title.len() + 2);
+    let _ = version;
+    truncate_path_for_header(path, available_path_width)
+}
+
+fn cli_header_terminal_cols() -> Option<usize> {
+    if let Some(cols) = std::env::var("EFFIGY_BROWSER_TERMINAL_COLS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|cols| *cols > 0)
+    {
+        return Some(cols);
+    }
+    crossterm::terminal::size()
+        .ok()
+        .map(|(cols, _)| cols as usize)
+        .filter(|cols| *cols > 0)
+}
+
+fn truncate_path_for_header(path: &str, available_path_width: usize) -> String {
+    if path.len() <= available_path_width {
+        return path.to_owned();
+    }
+    if available_path_width <= 1 {
+        return "…".to_owned();
+    }
+    let keep = available_path_width.saturating_sub(1);
+    let tail = path
+        .chars()
+        .rev()
+        .take(keep)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    let tail = tail
+        .find('/')
+        .filter(|index| *index > 0)
+        .map(|index| tail[index..].to_owned())
+        .unwrap_or(tail);
+    format!("…{tail}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_path_for_header;
+
+    #[test]
+    fn truncate_path_for_header_keeps_tail_when_space_is_tight() {
+        assert_eq!(
+            truncate_path_for_header("/Users/betterthanclay/Dev/projects/effigy", 18),
+            "…/projects/effigy"
+        );
+    }
 }

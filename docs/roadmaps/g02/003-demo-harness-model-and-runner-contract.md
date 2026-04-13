@@ -3035,24 +3035,57 @@ Why this implementation is the right boundary:
 
 Batch `03.72` target:
 
-Decide the next bounded slice after projected-output provenance truth landed.
+This decision slice is superseded.
 
-In scope for the next decision slice:
+Why it became stale:
 
-- decide whether the next value belongs in:
-  - a bounded browser follow-up that consumes projected-output provenance
-    honestly
-  - one more runner-owned concurrent-runtime truth slice
-  - a pause from this branch of demo work
+- browser terminal fidelity testing showed the shipped browser live-terminal
+  path still diverges materially from the concurrent-runner path it was meant
+  to match
+- that makes another “what comes next?” boundary choice dishonest because the
+  already-shipped browser terminal surface is not trustworthy enough yet
+- repeated symptom fixes were becoming churn instead of contract-valid forward
+  movement
+
+Recovery result:
+
+- supersede this decision slice
+- re-anchor the lane on one recovery-backed implementation batch that converges
+  browser live terminal integration onto the shared concurrent-runner terminal
+  path
+- preserve the no-nested-TUI rule and keep multi-process browser-manager drift
+  out of scope
+
+### 10.70 Demo Browser Terminal Path Convergence
+
+Batch `03.73` target:
+
+Repair browser live terminal fidelity by replacing the browser’s custom live
+terminal integration path with the same shared session/render path the
+concurrent runner already uses.
+
+In scope for the next implementation slice:
+
+- trace the concurrent-runner live terminal path end to end and identify the
+  minimal shared session/render abstraction the browser should consume
+- remove or bypass browser-specific terminal parsing/render glue where it
+  diverges from the concurrent-runner path
+- make browser-launched live terminal sessions use that shared path for:
+  - live output ingest
+  - vt state updates
+  - row shaping/render extraction
+  - width/resize fidelity
 - preserve the no-nested-TUI rule
-- leave one explicit ready card
+- add focused regressions that cover the `lifecycle-window` fidelity failures
+  already observed in the browser terminal pane
 
-Out of scope for the next decision slice:
+Out of scope for the next implementation slice:
 
-- implementing the next slice
-- generic process-manager UI
-- multi-process browser panes by default
+- browser chrome polish
+- multi-process browser panes or controls
 - embedding the concurrent TUI
+- broad runner contract redesign outside what convergence strictly needs
+- desktop-client work
 
 ### 10.39 Demo Browser Terminal Input Affordance
 

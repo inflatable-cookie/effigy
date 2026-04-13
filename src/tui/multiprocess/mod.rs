@@ -12,7 +12,7 @@ mod render;
 mod runtime_loop;
 mod setup;
 mod state;
-mod terminal_text;
+pub(crate) mod terminal_text;
 mod view_model;
 
 use diagnostics::RuntimeDiagnostics;
