@@ -153,6 +153,8 @@ Use JSON mode when CI, scripts, or agents are consuming Effigy output.
   [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - Need the demo registry and browser/operator surface:
   [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+- Need a generic migration path from demo scripts to native demos:
+  [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 - Need to split one manifest into focused fragments:
   [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - Need repo bring-up from a git URL:
@@ -186,6 +188,7 @@ After this guide, you should be able to:
 - [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 
 ## Next Step
 

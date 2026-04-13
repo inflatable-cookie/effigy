@@ -15,11 +15,14 @@ pages only when you need more detail.
    registry, browser, terminal, and history surface.
 4. [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
    for splitting `effigy.toml` into focused fragments.
-5. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) for copy-paste
+5. [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+   for moving a repo from demo scripts and wrapper tasks onto the native demo
+   surface.
+6. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) for copy-paste
    `effigy.toml` patterns.
-6. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for
+7. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for
    the full command and flag surface.
-7. [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md) when the
+8. [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md) when the
    job is "clone this repo here and bring it up."
 
 ## By Goal
@@ -46,12 +49,14 @@ pages only when you need more detail.
 ### I want to define or operate proof demos
 
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 
 ### I want to split `effigy.toml` into focused fragments
 
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 
@@ -154,6 +159,7 @@ Details:
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
@@ -168,6 +174,7 @@ Details:
 - [`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
+- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 
 ### Docs and Governance
 

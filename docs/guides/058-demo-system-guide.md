@@ -39,7 +39,7 @@ Smallest useful shape:
 title = "Login smoke"
 summary = "Checks that login still produces a working session."
 proof = "Operator-visible smoke proof for login."
-owner = "signal"
+owner = "platform"
 mode = "interactive"
 status = "ready"
 covers = ["auth.login"]
@@ -65,18 +65,18 @@ not deserve a separate wrapper task.
 Example with inline run steps:
 
 ```toml
-[demos.plugin-capability-browser]
-title = "Plugin Capability Browser"
-summary = "Builds and serves the plugin capability browser demo."
-proof = "Operator-visible proof for plugin capability browsing."
-owner = "signal"
+[demos.capability-browser]
+title = "Capability browser"
+summary = "Builds and serves the capability browser demo."
+proof = "Operator-visible proof for capability browsing."
+owner = "platform"
 mode = "interactive"
 status = "ready"
-covers = ["signal-plugin"]
+covers = ["plugin.capabilities"]
 run = [
   { task = "demo:coverage-matrix" },
-  { run = "python3 -m json.tool demos/manifests/plugin-capability-browser.demo.json > /dev/null" },
-  { run = "python3 demos/scripts/run_plugin_capability_browser_demo.py --scan-mode system --serve" },
+  { run = "python3 -m json.tool demos/manifests/capability-browser.demo.json > /dev/null" },
+  { run = "python3 demos/scripts/run_capability_browser_demo.py --serve" },
 ]
 ```
 
@@ -93,7 +93,7 @@ effigy demo run login-smoke
 Use filters when the inventory grows:
 
 ```sh
-effigy demo list --owner signal --status ready
+effigy demo list --owner platform --status ready
 effigy demo list --tag smoke --mode interactive
 effigy demo list --group-by owner --stale-only
 ```
@@ -218,12 +218,15 @@ After this guide, you should be able to:
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 - [`../roadmaps/g02/003-demo-harness-model-and-runner-contract.md`](../roadmaps/g02/003-demo-harness-model-and-runner-contract.md)
 
 ## Next Step
 
 After this guide, move to
 [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md) if
-you need to split demo config into manifest fragments, or use
+you need to split demo config into manifest fragments, use
+[`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+when the next job is migrating a script-based demo surface, or use
 [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) when the
 next job is command lookup or JSON-contract detail.

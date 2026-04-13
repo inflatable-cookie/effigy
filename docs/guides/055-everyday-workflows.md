@@ -162,6 +162,7 @@ review inside one surface.
 
 Deep dive:
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 
 ## 7) When Effigy Still Feels Hard
@@ -205,6 +206,7 @@ After this guide, you should have a clearer default path for:
 - [`050-env-schema-integration.md`](./050-env-schema-integration.md)
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 
 ## Next Step
 

@@ -117,7 +117,7 @@ Then in `demos/effigy.demos.toml`:
 title = "Login smoke"
 summary = "Checks that login still works."
 proof = "Operator-visible smoke proof for login."
-owner = "signal"
+owner = "platform"
 mode = "interactive"
 status = "ready"
 covers = ["auth.login"]
@@ -182,11 +182,14 @@ After this guide, you should be able to:
 - [`050-env-schema-integration.md`](./050-env-schema-integration.md)
 - [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 
 ## Next Step
 
 After this guide, use
 [`058-demo-system-guide.md`](./058-demo-system-guide.md) if the next split is a
-demo registry fragment, or use
+demo registry fragment, use
+[`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+if the next job is migrating an existing demo-script surface, or use
 [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) when you want more
 copy-paste manifest patterns instead of composition rules.

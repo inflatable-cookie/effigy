@@ -136,7 +136,7 @@ replaced it?”
 title = "Login smoke"
 summary = "Checks that the login flow still produces a working session."
 proof = "Operator-visible smoke proof for login."
-owner = "signal"
+owner = "platform"
 mode = "interactive"
 status = "ready"
 covers = ["auth.login"]
@@ -167,7 +167,7 @@ Discovery, inspection, and execution:
 ```sh
 effigy demo list
 effigy demo browser
-effigy demo list --owner signal --status ready
+effigy demo list --owner platform --status ready
 effigy demo list --group-by owner --stale-only
 effigy demo inspect login-smoke
 effigy demo history login-smoke --limit 5
@@ -229,6 +229,13 @@ Lifecycle notes:
   artifact-opening, metadata-query parity, integrated retained-history review,
   and a live terminal tab for the bounded honest runtime cases. It still must
   not launch nested TUIs.
+
+Migration note:
+- if a consumer repo already has a `demos/` script pack or one wrapper task per
+  demo, use
+  [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+  for the practical extraction and inline-`run = [ ... ]` path instead of
+  expanding this cookbook section further.
 
 ## 3) Full Task Table with Runtime Controls
 
