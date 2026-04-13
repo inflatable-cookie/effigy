@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
+### Added
+- Demo registry entries now accept task-style `run` sequences directly under
+  `[demos.*]`, so repos can inline small proof chains without separate
+  `demo:*` wrapper tasks.
 
 ### Added
 - Make `effigy demo browser` launch browser-owned live attached terminal

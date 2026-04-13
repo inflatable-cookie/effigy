@@ -28,9 +28,10 @@ use crate::runner::catalog::select_catalog_and_task;
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
 use crate::runner::execute::run_manifest_task_with_cwd;
 use crate::runner::managed::command::resolve_managed_task_plan;
+use crate::runner::managed::run_spec::{render_task_run_spec, RunSpecContext};
 use crate::runner::manifest::{
     load_task_manifest_with_inspection, LoadedTaskManifest, ManifestDemoConfig, ManifestDemoMode,
-    ManifestDemoStatus, ManifestTask,
+    ManifestDemoStatus, ManifestManagedRun, ManifestTask,
 };
 use crate::runner::model::catalog::{LoadedCatalog, TaskRuntimeArgs, TaskSelection, TaskSelector};
 use crate::runner::util::parse_task_selector;
@@ -642,7 +643,7 @@ fn render_demo_execute(
         );
     }
 
-    let attempt = execute_demo_attempt(repo_root, demo_id, demo, output_json)?;
+    let attempt = execute_demo_attempt(repo_root, loaded, demo_id, demo, output_json)?;
     write_latest_attempt_receipt(repo_root, demo_id, demo, &attempt)?;
     let record = build_demo_record(repo_root, loaded, demo_id, demo)?;
 
@@ -1432,8 +1433,40 @@ fn demo_entrypoint(demo: &ManifestDemoConfig) -> DemoEntrypoint {
     } else if let Some(run) = &demo.run {
         DemoEntrypoint::Run(run.clone())
     } else {
-        DemoEntrypoint::Run("<invalid>".to_owned())
+        DemoEntrypoint::Run(ManifestManagedRun::Command("<invalid>".to_owned()))
     }
+}
+
+fn demo_run_preview(run: &ManifestManagedRun) -> String {
+    match run {
+        ManifestManagedRun::Command(command) => command.clone(),
+        ManifestManagedRun::Sequence(steps) => format!("<sequence:{}>", steps.len()),
+    }
+}
+
+fn render_demo_run_command(
+    repo_root: &Path,
+    loaded: &LoadedTaskManifest,
+    demo_id: &str,
+    run: &ManifestManagedRun,
+) -> Result<String, RunnerError> {
+    let catalogs = crate::runner::catalog::discover_catalogs_allow_missing(repo_root)?;
+    let task_env = BTreeMap::new();
+    render_task_run_spec(
+        run,
+        RunSpecContext {
+            task_name: demo_id,
+            task_env: &task_env,
+            task_env_file: None,
+            env_profiles: &loaded.manifest.env,
+            args_rendered: "",
+            repo_root,
+            catalogs: &catalogs,
+            task_scope_cwd: repo_root,
+            runtime_env_schema_override: None,
+            depth: 0,
+        },
+    )
 }
 
 fn load_latest_attempt(
@@ -1945,6 +1978,7 @@ fn resolve_repo_relative_path(repo_root: &Path, path: &str) -> PathBuf {
 
 fn execute_demo_attempt(
     repo_root: &Path,
+    loaded: &LoadedTaskManifest,
     demo_id: &str,
     demo: &ManifestDemoConfig,
     output_json: bool,
@@ -1953,8 +1987,17 @@ fn execute_demo_attempt(
         DemoEntrypoint::Task(task_name) => {
             execute_task_backed_demo(repo_root, demo_id, &task_name, demo.mode, output_json)
         }
-        DemoEntrypoint::Run(run_command) => {
-            execute_run_backed_demo(repo_root, demo_id, demo.mode, &run_command, output_json)
+        DemoEntrypoint::Run(run_spec) => {
+            let entrypoint_value = demo_run_preview(&run_spec);
+            let rendered_command = render_demo_run_command(repo_root, loaded, demo_id, &run_spec)?;
+            execute_run_backed_demo(
+                repo_root,
+                demo_id,
+                demo.mode,
+                &entrypoint_value,
+                &rendered_command,
+                output_json,
+            )
         }
     }
 }
@@ -2692,6 +2735,7 @@ fn execute_run_backed_demo(
     repo_root: &Path,
     demo_id: &str,
     mode: ManifestDemoMode,
+    entrypoint_value: &str,
     run_command: &str,
     output_json: bool,
 ) -> Result<DemoExecutionAttempt, RunnerError> {
@@ -2734,7 +2778,7 @@ fn execute_run_backed_demo(
             target_pid: Some(child.id()),
             stoppable: true,
             entrypoint_kind: "run".to_owned(),
-            entrypoint_value: run_command.to_owned(),
+            entrypoint_value: entrypoint_value.to_owned(),
             command: run_command.to_owned(),
             runtime_backend_kind: Some("run".to_owned()),
             flattened_runtime_projection: false,
@@ -2818,6 +2862,7 @@ fn execute_run_backed_demo(
         let stop_requested = active_attempt_is_stop_requested(repo_root, demo_id);
         return Ok(run_attempt_from_output(
             demo_id,
+            entrypoint_value,
             run_command,
             status.code(),
             status.success(),
@@ -2837,6 +2882,7 @@ fn execute_run_backed_demo(
     let stop_requested = active_attempt_is_stop_requested(repo_root, demo_id);
     Ok(run_attempt_from_output(
         demo_id,
+        entrypoint_value,
         run_command,
         status.code(),
         status.success(),
@@ -3017,6 +3063,7 @@ fn build_run_backed_pty_process(repo_root: &Path, run_command: &str) -> ProcessC
 
 fn run_attempt_from_output(
     demo_id: &str,
+    entrypoint_value: &str,
     run_command: &str,
     exit_code: Option<i32>,
     success: bool,
@@ -3028,7 +3075,7 @@ fn run_attempt_from_output(
     if stop_requested {
         return terminated_demo_attempt(
             "run",
-            run_command,
+            entrypoint_value,
             run_command,
             exit_code,
             format!("Demo `{demo_id}` was terminated after stop was requested."),
@@ -3040,7 +3087,7 @@ fn run_attempt_from_output(
     if success {
         return successful_demo_attempt(
             "run",
-            run_command,
+            entrypoint_value,
             run_command,
             exit_code,
             Some(format!("Demo `{demo_id}` completed via run entrypoint.")),
@@ -3051,7 +3098,7 @@ fn run_attempt_from_output(
     }
     failed_demo_attempt(
         "run",
-        run_command,
+        entrypoint_value,
         run_command,
         exit_code,
         format!("Demo `{demo_id}` failed via run entrypoint."),
@@ -3954,28 +4001,28 @@ impl DemoGroup<'_> {
 #[derive(Debug, Clone)]
 enum DemoEntrypoint {
     Task(String),
-    Run(String),
+    Run(ManifestManagedRun),
 }
 
 impl DemoEntrypoint {
     fn render_compact(&self) -> String {
         match self {
             Self::Task(task) => format!("task:{task}"),
-            Self::Run(run) => format!("run:{run}"),
+            Self::Run(run) => format!("run:{}", demo_run_preview(run)),
         }
     }
 
     fn render_full(&self) -> String {
         match self {
             Self::Task(task) => format!("task `{task}`"),
-            Self::Run(run) => format!("run `{run}`"),
+            Self::Run(run) => format!("run `{}`", demo_run_preview(run)),
         }
     }
 
     fn to_json(&self) -> JsonValue {
         match self {
             Self::Task(task) => json!({ "kind": "task", "value": task }),
-            Self::Run(run) => json!({ "kind": "run", "value": run }),
+            Self::Run(run) => json!({ "kind": "run", "value": demo_run_preview(run) }),
         }
     }
 }
@@ -5213,7 +5260,7 @@ mod tests {
         PersistedDemoHistoricalAttempt, PersistedDemoTerminalTransport, DEMO_ATTEMPT_HISTORY_LIMIT,
         DEMO_BROWSER_TERMINAL_COLS_ENV, DEMO_BROWSER_TERMINAL_ROWS_ENV,
     };
-    use crate::runner::manifest::{ManifestDemoMode, ManifestDemoStatus};
+    use crate::runner::manifest::{ManifestDemoMode, ManifestDemoStatus, ManifestManagedRun};
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},
@@ -5465,12 +5512,12 @@ mod tests {
             tags: Vec::new(),
             prerequisites: Vec::new(),
             dependencies: Vec::new(),
-            entrypoint: DemoEntrypoint::Run("printf demo".to_owned()),
+            entrypoint: DemoEntrypoint::Run(ManifestManagedRun::Command("printf demo".to_owned())),
             sources: vec!["effigy.toml".to_owned()],
             primary_source: "effigy.toml".to_owned(),
             gap_class: "existing",
             runtime_backend: DemoRuntimeBackend::from_entrypoint(&DemoEntrypoint::Run(
-                "printf demo".to_owned(),
+                ManifestManagedRun::Command("printf demo".to_owned()),
             )),
             active_attempt: DemoActiveAttempt::inactive(None),
             active_terminal_session: DemoActiveTerminalSession::inactive(),
