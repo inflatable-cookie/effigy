@@ -1,6 +1,6 @@
 # 083 Prepare Demo Release Readiness Checkpoint
 
-Status: ready
+Status: complete
 Updated: 2026-04-13
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -48,8 +48,16 @@ release prep.
 - the batch drifts into actual release execution
 - the checkpoint hides residual risk behind generic “ready” language
 
+## Outcome
+
+- release-readiness checkpoint recorded in
+  [`../../logs/2026-04/13-173500-demo-release-readiness-checkpoint.md`](../../logs/2026-04/13-173500-demo-release-readiness-checkpoint.md)
+- ready card opened:
+  [`084-decide-demo-release-execution-readiness.md`](./084-decide-demo-release-execution-readiness.md)
+
 ## Next Task
 
-Execute this release-prep checkpoint batch next, then leave one explicit
-release-prep or release-decision card instead of drifting back into product
-implementation.
+Execute [`084-decide-demo-release-execution-readiness.md`](./084-decide-demo-release-execution-readiness.md)
+to decide whether Effigy should move from release prep into actual release
+execution work once the working tree is clean and a human explicitly asks for
+release execution.

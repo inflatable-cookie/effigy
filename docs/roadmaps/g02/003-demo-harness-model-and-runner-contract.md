@@ -3195,6 +3195,36 @@ In scope for the next slice:
 - provide the operator recommendation for whether release execution should
   proceed once the normal release gates are green
 
+Closeout:
+
+- release-prep evidence is now recorded:
+  - `qa:docs`: pass
+  - `qa:ci`: pass
+  - `release simulate`: pass
+- current release preview recommends:
+  - version `0.2.13`
+  - tag `v0.2.13`
+- operator recommendation:
+  - no more demo-surface implementation is required before release execution
+  - actual release execution should wait only on:
+    - a clean working tree
+    - explicit human release instruction
+
+### 10.74 Demo Release Execution Readiness
+
+Batch `03.77` target:
+
+Decide whether Effigy should move from release prep into actual release-
+execution work for the demo surface.
+
+Decision inputs:
+
+- release-prep evidence is green locally
+- Signal consumer proof is accepted as sufficient release evidence
+- residual risks remain explicit but non-blocking
+- release execution still requires the normal release protocol and explicit
+  human approval
+
 ### 10.39 Demo Browser Terminal Input Affordance
 
 Batch `03.42` target:
