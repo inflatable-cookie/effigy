@@ -2867,7 +2867,10 @@ impl DemoLaunchMode {
     }
 
     fn capture_output(self) -> bool {
-        matches!(self, Self::DetachedJson | Self::AttachedPty)
+        matches!(
+            self,
+            Self::DetachedJson | Self::AttachedStream | Self::AttachedPty
+        )
     }
 
     fn forward_stdin(self) -> bool {
