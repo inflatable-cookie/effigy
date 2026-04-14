@@ -61,11 +61,6 @@ Preferred release command path:
 - `effigy release verify-install --tag v0.__.__`
 - `effigy changelog extract CHANGELOG.md --version X.Y.Z`
 
-Compatibility backups:
-- `./scripts/prepare-release.sh`
-- `./scripts/check-release-gates.sh`
-- `./scripts/check-release-install-from-tag.sh --tag v0.__.__`
-
 Canonical reference:
 - [`docs/guides/051-release-orchestration.md`](./docs/guides/051-release-orchestration.md)
 

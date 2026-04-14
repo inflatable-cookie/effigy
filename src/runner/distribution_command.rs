@@ -208,7 +208,6 @@ fn run_validate_metadata(
     let required_files = [
         ".github/workflows/release-binaries.yml",
         "scripts/check-linux-glibc-floor.sh",
-        "scripts/check-release-install-from-tag.sh",
         "scripts/check-distribution-first-publish.sh",
     ];
     let workflow_path = repo_root.join(".github/workflows/release-binaries.yml");

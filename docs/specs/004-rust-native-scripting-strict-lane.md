@@ -41,9 +41,9 @@ The active strict lane is:
 
 This lane now has a shipped script-step foundation and a substantial Effigy
 dogfooding surface across tasks, demos, long-running lifecycle, and release
-compatibility wrappers. The first external pilot was selected, then deferred
-for repo-boundary safety reasons rather than missing capability. The internal
-wrapper convergence batch is now shipped as well. The next question is whether
+orchestration. The first external pilot was selected, then deferred for
+repo-boundary safety reasons rather than missing capability. The internal
+wrapper-retirement batch is now shipped as well. The next question is whether
 the lane should pause cleanly on that internal boundary until an external pilot
 becomes safe again.
 
@@ -51,7 +51,7 @@ becomes safe again.
 
 `strict-ready`
 
-The Keepsake pilot is temporarily deferred. Effigy wrapper convergence is now
+The Keepsake pilot is temporarily deferred. Effigy wrapper retirement is now
 shipped, and the next valid move is an explicit pause-or-reopen decision, not
 a stale external pilot and not another general debate about scripting policy.
 

@@ -65,11 +65,10 @@ Design notes:
 - [`2026-03-12-docs-policy-config-boundary.md`](../logs/2026-03/12-093000-docs-policy-config-boundary.md)
 - [`2026-03-12-minimal-docs-policy-config-design.md`](../logs/2026-03/12-094500-minimal-docs-policy-config-design.md)
 
-Compatibility wrapper scripts (retained for CI/release tooling integration):
-- `./scripts/check-release-gates.sh`
-- `./scripts/check-release-smoke.sh`
-- `./scripts/check-release-install-from-tag.sh`
+Intentional remaining shell scripts:
 - `./scripts/check-distribution-first-publish.sh`
+- `./scripts/check-linux-glibc-floor.sh`
+- `./scripts/effigy-dev`
 
 Boundary note:
 - `cargo qa-release` now maps straight to `effigy release gates`
@@ -78,10 +77,8 @@ Boundary note:
 
 Release policy note:
 - prefer built-in `effigy release ...` commands for operator-driven release work
-- keep wrapper scripts only where CI or an external contract still requires a
-  script entrypoint
-- do not treat wrapper retirement or workflow cutover as complete until the
-  explicitly human-gated adoption steps in guide `049` are finished
+- use shell scripts only where there is a real platform-side effect or shell
+  tooling reason, not as a compatibility alias for Effigy commands
 
 Primary JSON mode entrypoint:
 - `effigy --json <command>`
@@ -97,7 +94,7 @@ effigy release gates
 effigy release simulate
 effigy release status --check-gates
 effigy distribution preflight --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
-./scripts/check-release-install-from-tag.sh --tag v0.__.__
+effigy release verify-install --tag v0.__.__
 ./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 # writes ./artifacts/distribution-v0.__.__/distribution-summary.env
 effigy distribution validate-metadata --tag v0.__.__
@@ -366,7 +363,7 @@ What `effigy release gates` enforces:
 - release binary build
 - release smoke checks (`help`, `tasks`, `catalog_a/tasks`, `test --plan`, `catalog_a/test --plan`)
 - distribution metadata validation (`effigy distribution validate-metadata`)
-- install validation from the pushed tag (`check-release-install-from-tag.sh`)
+- install validation from the pushed tag (`effigy release verify-install`)
 
 ## 12) Recipe: Assert Completion Cache Policy Fields
 

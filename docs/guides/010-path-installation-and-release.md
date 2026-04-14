@@ -38,7 +38,7 @@ cargo install --path . --root ./.local-install --force
 Link stable/dev entrypoints into `~/.local/bin`:
 
 ```bash
-./scripts/install-local-bin-links.sh
+effigy link:local
 ```
 
 Then run directly:
@@ -85,7 +85,7 @@ For now, version is controlled in `Cargo.toml`.
 1. Run release gates in one pass: `effigy release gates`.
    - compatibility fallback: `cargo qa-release`
 2. Validate install from the release tag:
-   - `./scripts/check-release-install-from-tag.sh --tag v0.__.__`
+   - `effigy release verify-install --tag v0.__.__`
 3. CLI help and core commands run from installed PATH binary.
 4. Wrapper fallback still operational in at least one consumer repo.
 5. Update roadmap/log docs with validation evidence.
