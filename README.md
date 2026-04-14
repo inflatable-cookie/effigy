@@ -26,6 +26,9 @@ manifest, not to teach people more wrapper scripts.
 - Move CI and agent automation onto stable JSON with `effigy --json <command>`.
 - Replace scattered release and validation scripts with built-in command
   surfaces as adoption grows.
+- Provide optional distribution primitives so repos can adopt artifact
+  validation, closeout generation, publish checks, or fuller distribution
+  orchestration without inheriting one mandatory release protocol.
 
 ## Install
 
@@ -264,6 +267,7 @@ effigy release execute --plan
 ```
 
 Details:
+- [`062-distribution-system-guide.md`](./docs/guides/062-distribution-system-guide.md)
 - [`051-release-orchestration.md`](./docs/guides/051-release-orchestration.md)
 - [`052-changelog-workflows-and-northstar-profile.md`](./docs/guides/052-changelog-workflows-and-northstar-profile.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md)
@@ -276,6 +280,8 @@ Details:
   [`055-everyday-workflows.md`](./docs/guides/055-everyday-workflows.md)
 - Writing or cleaning up `effigy.toml`:
   [`022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
+- Want optional distribution primitives or release evidence workflows:
+  [`062-distribution-system-guide.md`](./docs/guides/062-distribution-system-guide.md)
 - Need the full command surface:
   [`025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
 - Need the full docs map:
@@ -311,18 +317,18 @@ cargo qa-release
 
 ## Current Planning Posture
 
-Effigy's active product lane is `g02.004`.
+Effigy's active product lane is `g02.005`.
 
-Use these surfaces before continuing scripting-boundary work:
+Use these surfaces before continuing optional distribution work:
 
 - [`docs/roadmaps/README.md`](./docs/roadmaps/README.md)
-- [`docs/roadmaps/g02/004-rust-native-scripting-surface-contract.md`](./docs/roadmaps/g02/004-rust-native-scripting-surface-contract.md)
+- [`docs/roadmaps/g02/005-optional-distribution-surface-contract.md`](./docs/roadmaps/g02/005-optional-distribution-surface-contract.md)
 - [`docs/specs/README.md`](./docs/specs/README.md)
 - [`docs/contracts/001-working-rules.md`](./docs/contracts/001-working-rules.md)
 
-Current scripting front doors:
+Current distribution front doors:
 
-- [`docs/guides/061-rhai-script-steps-guide.md`](./docs/guides/061-rhai-script-steps-guide.md)
+- [`docs/guides/062-distribution-system-guide.md`](./docs/guides/062-distribution-system-guide.md)
 - [`docs/guides/059-manifest-composition-guide.md`](./docs/guides/059-manifest-composition-guide.md)
 - [`docs/guides/022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
 

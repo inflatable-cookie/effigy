@@ -1,6 +1,6 @@
 # 098 Decide Post-Native-Distribution Rhai Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-14
 Roadmap: `g02.004`
 Spec: `docs/specs/004-rust-native-scripting-strict-lane.md`
@@ -41,8 +41,16 @@ internal batch is still justified before waiting on an external pilot repo.
 - `cargo run --bin effigy -- qa:docs`
 - `git diff --check`
 
+## Decision
+
+The Rhai lane should pause cleanly here.
+
+Effigy now has strong internal Rhai/native-distribution proof. The next
+problem is no longer “one more internal scripting batch”; it is turning the
+distribution surface into an optional cross-repo feature instead of an
+Effigy-self-hosting one.
+
 ## Next Task
 
-After this batch, either pause the Rhai lane cleanly on the Effigy-native
-boundary or open one final explicit internal card if workflow-bound glibc
-cutover is worth pursuing next.
+Open a new optional-distribution lane and implement the minimal
+manifest-driven distribution contract foundation.

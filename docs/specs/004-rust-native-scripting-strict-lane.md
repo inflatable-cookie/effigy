@@ -1,6 +1,6 @@
 # 004 Rust-Native Scripting Strict Lane
 
-Status: active
+Status: paused
 Updated: 2026-04-14
 Roadmap: `g02.004`
 
@@ -43,18 +43,17 @@ This lane now has a shipped script-step foundation and a substantial Effigy
 dogfooding surface across tasks, demos, long-running lifecycle, release
 orchestration, and native distribution cutover. The first external pilot was
 selected, then deferred for repo-boundary safety reasons rather than missing
-capability. The next question is whether the lane should pause cleanly on that
-internal boundary until an external pilot becomes safe again, or whether the
-workflow-bound glibc guard still justifies one more internal batch.
+capability. The lane is now paused on that clean internal boundary while the
+distribution surface is split into its own optional cross-repo product lane.
 
 ## Current Posture
 
-`strict-ready`
+`strict-paused`
 
 The Keepsake pilot is temporarily deferred. Effigy wrapper retirement and
-native distribution cutover are now shipped. The next valid move is an
-explicit pause-or-reopen decision from this boundary, not a stale external
-pilot and not another general debate about scripting policy.
+native distribution cutover are now shipped. No further scripting batch is
+active right now because the next product question is optional distribution
+adoption, not missing Rhai capability.
 
 ## Batch Model
 
@@ -83,6 +82,6 @@ for the current mixed-runtime script surfaces.
 
 ## Next Task
 
-Execute the active `g02.004` ready card to decide whether the Rhai lane should
-pause cleanly after native distribution cutover, or whether the workflow-bound
-glibc guard earns one final internal batch.
+Resume this lane only when an external Rhai pilot becomes safe again or a new
+internal scripting capability gap appears that is not really a distribution
+product question.
