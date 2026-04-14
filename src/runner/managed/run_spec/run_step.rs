@@ -34,17 +34,16 @@ fn resolve_table_task_run_step(
         step.run.as_deref(),
         step.task.as_deref(),
         step.rhai.as_deref(),
-        step.rhai_file.as_deref(),
         step.env.is_some() || step.env_file.is_some(),
         || {
             RunnerError::task_invocation(format!(
-                "task `{}` run step is invalid: define exactly one of `run`, `task`, `rhai`, or `rhai_file`",
+                "task `{}` run step is invalid: define exactly one of `run`, `task`, or `rhai`",
                 context.task_name
             ))
         },
         || {
             RunnerError::task_invocation(format!(
-                "task `{}` run step is invalid: missing `run`, `task`, `rhai`, or `rhai_file`",
+                "task `{}` run step is invalid: missing `run`, `task`, or `rhai`",
                 context.task_name
             ))
         },
@@ -55,7 +54,6 @@ fn resolve_table_task_run_step(
 enum RunOrTaskRef<'a> {
     Run(&'a str),
     Task(&'a str),
-    RhaiInline(&'a str),
     RhaiFile(&'a str),
     Noop,
 }
@@ -75,10 +73,7 @@ fn resolve_selected_run_or_task(
             context.runtime_env_schema_override,
             context.depth,
         ),
-        RunOrTaskRef::RhaiInline(script) => {
-            render_rhai_step_invocation(context, Some(script), None)
-        }
-        RunOrTaskRef::RhaiFile(path) => render_rhai_step_invocation(context, None, Some(path)),
+        RunOrTaskRef::RhaiFile(path) => render_rhai_step_invocation(context, path),
         RunOrTaskRef::Noop => Ok(":".to_owned()),
     }
 }
@@ -87,7 +82,6 @@ fn select_run_or_task<'a, FBoth, FNone>(
     run: Option<&'a str>,
     task: Option<&'a str>,
     rhai: Option<&'a str>,
-    rhai_file: Option<&'a str>,
     has_env_directive: bool,
     both_error: FBoth,
     none_error: FNone,
@@ -96,7 +90,7 @@ where
     FBoth: FnOnce() -> RunnerError,
     FNone: FnOnce() -> RunnerError,
 {
-    let selected = [run.is_some(), task.is_some(), rhai.is_some(), rhai_file.is_some()]
+    let selected = [run.is_some(), task.is_some(), rhai.is_some()]
         .into_iter()
         .filter(|selected| *selected)
         .count();
@@ -104,13 +98,12 @@ where
         return Err(both_error());
     }
 
-    match (run, task, rhai, rhai_file) {
-        (Some(run), None, None, None) => Ok(RunOrTaskRef::Run(run)),
-        (None, Some(task), None, None) => Ok(RunOrTaskRef::Task(task)),
-        (None, None, Some(script), None) => Ok(RunOrTaskRef::RhaiInline(script)),
-        (None, None, None, Some(path)) => Ok(RunOrTaskRef::RhaiFile(path)),
-        (None, None, None, None) if has_env_directive => Ok(RunOrTaskRef::Noop),
-        (None, None, None, None) => Err(none_error()),
+    match (run, task, rhai) {
+        (Some(run), None, None) => Ok(RunOrTaskRef::Run(run)),
+        (None, Some(task), None) => Ok(RunOrTaskRef::Task(task)),
+        (None, None, Some(path)) => Ok(RunOrTaskRef::RhaiFile(path)),
+        (None, None, None) if has_env_directive => Ok(RunOrTaskRef::Noop),
+        (None, None, None) => Err(none_error()),
         _ => Err(both_error()),
     }
 }

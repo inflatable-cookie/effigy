@@ -12,7 +12,6 @@ fn table_step(id: Option<&str>, depends_on: &[&str]) -> ManifestManagedRunStep {
         run: Some("printf ok".to_owned()),
         task: None,
         rhai: None,
-        rhai_file: None,
         env: None,
         env_file: None,
         id: id.map(str::to_owned),

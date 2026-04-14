@@ -15,8 +15,7 @@ external Bun or shell runtimes.
 
 - add a minimal Rhai-backed script step to task execution
 - support script sources as:
-  - inline script text
-  - file-backed `.rhai` source
+  - file-backed `.rhai` source referenced through `rhai = "path/to/script.rhai"`
 - ship a narrow v1 host API for:
   - logging
   - args access

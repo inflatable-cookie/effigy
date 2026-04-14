@@ -20,7 +20,7 @@ Rhai v1 is for repo automation glue, not general shell emulation.
 
 ### Include
 
-- inline and file-backed Rhai scripts
+- file-backed Rhai scripts referenced from the manifest
 - logging helpers
 - args access
 - env read

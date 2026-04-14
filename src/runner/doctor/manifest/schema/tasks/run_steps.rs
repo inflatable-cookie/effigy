@@ -25,7 +25,6 @@ pub(in crate::runner::doctor::manifest::schema) fn validate_run_step_table(
             "run",
             "task",
             "rhai",
-            "rhai_file",
             "env",
             "env_file",
             "id",
@@ -64,11 +63,6 @@ pub(in crate::runner::doctor::manifest::schema) fn validate_run_step_table(
         context,
         step_table.get("rhai"),
         &format!("{step_path}.rhai"),
-    );
-    validate_optional_non_empty_string_field(
-        context,
-        step_table.get("rhai_file"),
-        &format!("{step_path}.rhai_file"),
     );
     validate_env_table(context, &step_path, step_table.get("env"));
     validate_env_file(context, &step_path, step_table.get("env_file"));

@@ -59,7 +59,6 @@ fn profile_step(profile_name: &str) -> ManifestManagedRunStep {
         run: Some("printf ok".to_owned()),
         task: None,
         rhai: None,
-        rhai_file: None,
         env: Some(ManifestRunStepEnv::Profile(profile_name.to_owned())),
         env_file: None,
         id: None,

@@ -70,8 +70,6 @@ pub(in crate::runner) struct ManifestManagedRunStepTable {
     #[serde(default)]
     pub(in crate::runner) rhai: Option<String>,
     #[serde(default)]
-    pub(in crate::runner) rhai_file: Option<String>,
-    #[serde(default)]
     pub(in crate::runner) env: Option<ManifestRunStepEnv>,
     #[serde(default)]
     pub(in crate::runner) env_file: Option<ManifestEnvFileDirective>,

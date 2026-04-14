@@ -96,7 +96,7 @@ not distort frontend/build tooling just to make the repo “pure”.
 
 The key boundary is now settled:
 
-- Rhai v1 should support both inline and file-backed scripts
+- Rhai v1 should support file-backed scripts referenced from the manifest
 - Rhai v1 should expose:
   - logging
   - args access
