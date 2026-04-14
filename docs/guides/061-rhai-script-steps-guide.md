@@ -22,8 +22,7 @@ Use exactly one step entrypoint per step:
 
 - `{ run = "..." }`
 - `{ task = "..." }`
-- `{ rhai = "..." }`
-- `{ rhai_file = "scripts/example.rhai" }`
+- `{ rhai = "scripts/example.rhai" }`
 
 Rhai steps are for repo automation glue:
 
@@ -34,34 +33,16 @@ Rhai steps are for repo automation glue:
 
 They are not the new universal runtime for every repo.
 
-## 2) Use Inline Or File-Backed Scripts
-
-Inline example:
-
-```toml
-[tasks.demo:stamp]
-run = [
-  {
-    rhai = '''
-      let payload = #{ "status": "ok", "task": task_name };
-      write_file("tmp/stamp.json", json_stringify(payload));
-      log("wrote tmp/stamp.json");
-    '''
-  },
-]
-```
+## 2) Use File-Backed Scripts
 
 File-backed example:
 
 ```toml
 [tasks.link:local]
-run = [{ rhai_file = "scripts/rhai/install-local-bin-links.rhai" }]
+run = [{ rhai = "scripts/rhai/install-local-bin-links.rhai" }]
 ```
 
-Use inline `rhai = "..."` when the script is short and owned entirely by that
-task.
-
-Use `rhai_file = "..."` when:
+Use `rhai = "..."` as a repo-relative Rhai script path when:
 
 - the script is non-trivial
 - you want normal file diffing/review
@@ -114,48 +95,21 @@ Structured file write:
 
 ```toml
 [tasks.report:write]
-run = [
-  {
-    rhai = '''
-      let report = #{
-        "owner": env("USER"),
-        "repo": repo_root,
-      };
-      write_file("tmp/report.json", json_stringify(report));
-    '''
-  },
-]
+run = [{ rhai = "scripts/rhai/write-report.rhai" }]
 ```
 
 Structured process call:
 
 ```toml
 [tasks.test:smoke]
-run = [
-  {
-    rhai = '''
-      let result = run_process("cargo", ["test", "--lib"]);
-      if !result["success"] {
-        throw `cargo test failed\n${result["stderr"]}`;
-      }
-      log("cargo test passed");
-    '''
-  },
-]
+run = [{ rhai = "scripts/rhai/test-smoke.rhai" }]
 ```
 
 Nested task call:
 
 ```toml
 [tasks.docs:proof]
-run = [
-  {
-    rhai = '''
-      run_task("qa:docs", []);
-      log("docs proof passed");
-    '''
-  },
-]
+run = [{ rhai = "scripts/rhai/docs-proof.rhai" }]
 ```
 
 ## 5) Good Boundary
@@ -191,7 +145,7 @@ repo glue,” not “Effigy becomes a replacement shell.”
 
 After this guide, you should be able to:
 
-- choose between `rhai` and `rhai_file`
+- declare a Rhai-backed run step with `rhai = "path/to/script.rhai"`
 - use the current v1 host API safely
 - decide when Rhai is the right tool versus Bun + TS or an external ecosystem
 - migrate small Rust-repo glue tasks without reintroducing shell wrappers

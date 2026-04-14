@@ -5,32 +5,6 @@ use crate::runner::tests::prelude::execution::run_manifest_task_with_cwd;
 use crate::TaskInvocation;
 
 #[test]
-fn run_manifest_task_run_array_supports_inline_rhai_steps() {
-    let root = temp_workspace("run-array-inline-rhai-step");
-    let marker = root.join("marker.txt");
-    write_manifest(
-        &root.join("effigy.toml"),
-        &format!(
-            r#"[tasks.capture]
-run = [{{ rhai = 'let payload = json_parse("{{\"kind\":\"inline\"}}"); write_file("{}", payload["kind"] + "|" + args[0]);' }}]
-"#,
-            marker.display()
-        ),
-    );
-
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "capture".to_owned(),
-            args: vec!["hello-world".to_owned()],
-        },
-        root.clone(),
-    )
-    .expect("inline rhai task should run");
-
-    assert_file_text_equals(&marker, "inline|hello-world");
-}
-
-#[test]
 fn run_manifest_task_run_array_supports_file_backed_rhai_steps() {
     let root = temp_workspace("run-array-file-rhai-step");
     fs::create_dir_all(root.join("scripts/rhai")).expect("mkdir rhai script dir");
@@ -50,7 +24,7 @@ write_file("nested.txt", read_file("nested-source.txt"));
 run = "printf nested-ok > nested-source.txt"
 
 [tasks.validate]
-run = [{ rhai_file = "scripts/rhai/validate.rhai" }]
+run = [{ rhai = "scripts/rhai/validate.rhai" }]
 "#,
     );
 
@@ -87,6 +61,6 @@ run = [{ run = "printf invalid", rhai = "print(\"nope\")" }]
     .expect_err("conflicting rhai step should fail");
     assert_invocation_error_contains(
         error,
-        &["define exactly one of `run`, `task`, `rhai`, or `rhai_file`"],
+        &["define exactly one of `run`, `task`, or `rhai`"],
     );
 }

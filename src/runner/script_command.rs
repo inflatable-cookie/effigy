@@ -4,13 +4,12 @@ use std::sync::Arc;
 
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Position, Scope};
 
-use crate::{InternalRhaiArgs, InternalRhaiSource, TaskInvocation};
+use crate::{InternalRhaiArgs, TaskInvocation};
 
 use super::error::RunnerError;
 use super::execute::run_manifest_task_with_cwd;
 use super::util::with_local_node_bin_path;
 
-const EFFIGY_RHAI_INLINE: &str = "EFFIGY_RHAI_INLINE";
 const EFFIGY_RHAI_ARGS_JSON: &str = "EFFIGY_RHAI_ARGS_JSON";
 const EFFIGY_RHAI_TASK_NAME: &str = "EFFIGY_RHAI_TASK_NAME";
 const EFFIGY_RHAI_REPO_ROOT: &str = "EFFIGY_RHAI_REPO_ROOT";
@@ -35,14 +34,9 @@ pub(in crate::runner) fn run_internal_rhai(args: InternalRhaiArgs) -> Result<Str
 }
 
 fn load_script(args: &InternalRhaiArgs, context: &ScriptContext) -> Result<String, RunnerError> {
-    match &args.source {
-        InternalRhaiSource::Inline => required_env(EFFIGY_RHAI_INLINE),
-        InternalRhaiSource::File(path) => {
-            let resolved = resolve_script_path(&context.cwd, path);
-            std::fs::read_to_string(&resolved)
-                .map_err(|error| RunnerError::task_invocation_failed_read(&resolved, error))
-        }
-    }
+    let resolved = resolve_script_path(&context.cwd, &args.file);
+    std::fs::read_to_string(&resolved)
+        .map_err(|error| RunnerError::task_invocation_failed_read(&resolved, error))
 }
 
 fn load_script_args() -> Result<Vec<String>, RunnerError> {

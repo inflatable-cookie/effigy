@@ -21,13 +21,12 @@ pub(super) fn render_step_command(command: &str, context: RunSpecContext<'_>) ->
 
 pub(super) fn render_rhai_step_invocation(
     context: RunSpecContext<'_>,
-    inline_script: Option<&str>,
-    file_script: Option<&str>,
+    script_path: &str,
 ) -> Result<String, RunnerError> {
     let executable = resolve_effigy_invocation_prefix()?;
     let args_json = serde_json::to_string(context.args_raw)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let mut env_pairs = vec![
+    let env_pairs = vec![
         (
             "EFFIGY_INTERNAL_SUPPRESS_HEADER",
             shell_quote("1"),
@@ -46,17 +45,7 @@ pub(super) fn render_rhai_step_invocation(
         ),
     ];
 
-    let command = if let Some(script) = inline_script {
-        env_pairs.push(("EFFIGY_RHAI_INLINE", shell_quote(script)));
-        "__rhai-step".to_owned()
-    } else if let Some(path) = file_script {
-        format!("__rhai-step --file {}", shell_quote(path))
-    } else {
-        return Err(RunnerError::task_invocation(format!(
-            "task `{}` Rhai run step is invalid: missing both `rhai` and `rhai_file`",
-            context.task_name
-        )));
-    };
+    let command = format!("__rhai-step --file {}", shell_quote(script_path));
 
     let env_rendered = env_pairs
         .into_iter()

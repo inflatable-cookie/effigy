@@ -89,14 +89,7 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[doc(hidden)]
 pub struct InternalRhaiArgs {
-    pub source: InternalRhaiSource,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[doc(hidden)]
-pub enum InternalRhaiSource {
-    Inline,
-    File(PathBuf),
+    pub file: PathBuf,
 }
 
 /// Help topics supported by the built-in help renderer.

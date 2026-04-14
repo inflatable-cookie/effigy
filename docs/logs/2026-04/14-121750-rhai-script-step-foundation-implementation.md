@@ -10,8 +10,7 @@ Shipped the first bounded Effigy-native Rhai scripting surface.
 
 The foundation now supports:
 
-- inline Rhai steps with `rhai = "..."`
-- file-backed Rhai steps with `rhai_file = "scripts/example.rhai"`
+- Rhai-backed run steps with `rhai = "scripts/example.rhai"`
 - a narrow v1 host API for:
   - logging
   - args/context access
@@ -30,7 +29,7 @@ The first pilot migration also landed:
 ## Implementation Notes
 
 - added hidden internal `__rhai-step` execution plumbing
-- extended run-array step schema to accept `rhai` and `rhai_file`
+- extended run-array step schema to accept `rhai` as a file-backed script path
 - added a small script runtime under `src/runner/script_command.rs`
 - kept the host API intentionally narrow
 - avoided shell parsing in the Rhai subprocess surface

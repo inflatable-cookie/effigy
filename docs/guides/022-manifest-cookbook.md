@@ -267,7 +267,7 @@ Use when you need dependency-aware orchestration, retry policy, and per-step tim
 
 ```toml
 [tasks.link:local]
-run = [{ rhai_file = "scripts/rhai/install-local-bin-links.rhai" }]
+run = [{ rhai = "scripts/rhai/install-local-bin-links.rhai" }]
 ```
 
 File-backed Rhai:
@@ -278,21 +278,11 @@ write_file("tmp/proof.json", json_stringify(payload));
 log("wrote tmp/proof.json");
 ```
 
-Inline Rhai:
+Another file-backed example:
 
 ```toml
 [tasks.report:stamp]
-run = [
-  {
-    rhai = '''
-      let status = run_process("cargo", ["fmt", "--all", "--check"]);
-      if !status["success"] {
-        throw status["stderr"];
-      }
-      log("fmt check passed");
-    '''
-  },
-]
+run = [{ rhai = "scripts/rhai/report-stamp.rhai" }]
 ```
 
 Use this when:
