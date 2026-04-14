@@ -1,133 +1,14 @@
 [catalog]
 alias = "effigy"
 
+[manifest]
+include = [
+  "tasks/effigy.tasks.toml",
+  "demos/effigy.demos.toml",
+  "docs/effigy.docs.toml",
+  "quality/effigy.scan.toml",
+  "release/effigy.release.toml",
+]
+
 [bootstrap]
 setup = ["bootstrap:local"]
-
-# Keep built-in `test` canonical so `effigy test --plan` remains available.
-# Aggregator tasks below call the built-in through task refs.
-[tasks]
-"fmt:check" = "cargo fmt --all -- --check"
-"build:release" = "cargo build --release --bin effigy"
-"install:local" = "cargo install --path . --root ./.local-install --force"
-"link:local" = "./scripts/install-local-bin-links.sh"
-"bootstrap:local" = [{ task = "install:local" }, { task = "link:local" }]
-"smoke:release" = "./scripts/check-release-smoke.sh ./target/release/effigy"
-"dist:metadata" = "cargo run --bin effigy -- distribution validate-metadata"
-"qa:docs:links" = "cargo run --bin effigy -- docs check-links"
-"qa:docs:examples" = "cargo run --bin effigy -- docs check-json-examples"
-"qa:docs:index" = "cargo run --bin effigy -- docs check-index"
-"qa:docs:agent-defaults" = "cargo run --bin effigy -- docs check-forbidden AGENTS.md .github/workflows/json-contracts.yml docs/contracts/json-selection-contract.json --forbid '--repo .'"
-"qa:docs:vision:roadmaps" = "cargo run --bin effigy -- docs check-headings docs/roadmaps/g01/001-effigy-foundation.md docs/roadmaps/g01/002-deferral-fallback-system.md docs/roadmaps/g01/003-coloured-output-and-widgets.md docs/roadmaps/g01/004-dev-process-manager-tui.md docs/roadmaps/g01/005-unified-testing-orchestration.md docs/roadmaps/g01/006-tui-terminal-emulation.md docs/roadmaps/g01/007-test-runner-selection-and-environment-policy.md docs/roadmaps/g01/008-universal-json-command-coverage.md docs/roadmaps/g01/009-doctor-health-consolidation.md docs/roadmaps/g01/010-dag-lock-policy-baseline.md docs/roadmaps/g01/011-watch-init-migrate-foundation.md docs/roadmaps/g01/012-codebase-consolidation-and-health.md --require-heading '## Vision Alignment' --require-heading '## Primary Tags' --require-heading '## Target Envelope' --require-heading '## Vision Target Delta'"
-"qa:docs:vision:guides" = "cargo run --bin effigy -- docs check-headings docs/guides/016-task-routing-precedence.md docs/guides/017-json-output-contracts.md docs/guides/018-doctor-explain-mode.md docs/guides/019-watch-init-migrate-foundation.md docs/guides/020-dag-lock-policy-baseline.md docs/guides/021-quick-start-and-command-cookbook.md docs/guides/022-manifest-cookbook.md docs/guides/023-troubleshooting-and-failure-recipes.md docs/guides/024-ci-and-automation-recipes.md docs/guides/025-command-reference-matrix.md docs/guides/026-json-payload-examples.md --require-heading '## Vision Alignment'"
-"qa:docs:vision:report-policy" = "cargo run --bin effigy -- docs check-contains docs/logs/README.md docs/guides/036-release-notes-authoring-template-and-examples.md --require 'Vision Target Delta'"
-"qa:docs:vision:cutoff" = "cargo run --bin effigy -- docs check-contains docs/logs/README.md docs/guides/029-docs-qa-checklist-and-validation.md --require '2026-03-06'"
-"qa:docs:vision:workflow" = "cargo run --bin effigy -- docs check-workflow-paths"
-"qa:docs:vision:index" = "cargo run --bin effigy -- docs check-index --policy-index vision"
-"qa:docs:vision:next-action" = "cargo run --bin effigy -- docs check-next-action --policy vision"
-"qa:docs:vision" = [
-  { task = "qa:docs:vision:roadmaps" },
-  { task = "qa:docs:vision:guides" },
-  { task = "qa:docs:vision:report-policy" },
-  { task = "qa:docs:vision:cutoff" },
-  { task = "qa:docs:vision:workflow" },
-  { task = "qa:docs:vision:index" },
-  { task = "qa:docs:vision:next-action" },
-]
-"qa:docs" = [
-  { task = "qa:docs:links" },
-  { task = "qa:docs:examples" },
-  { task = "qa:docs:index" },
-  { task = "qa:docs:agent-defaults" },
-  { task = "qa:docs:vision" },
-]
-"qa:json" = "cargo run --bin effigy -- contracts check-json --fast --print-selected=text"
-"qa:json:ci" = "cargo run --bin effigy -- contracts check-json --full --print-selected=json"
-"qa:gates" = [{ task = "qa:docs" }, { task = "qa:json" }]
-"qa:ci" = [{ task = "qa:docs" }, { task = "qa:json:ci" }]
-"prepush:test:json-mode" = "cargo test --test cli_output_tests cli_json_mode"
-"prepush:test:lib" = "cargo test --lib"
-"prepush:test:cli-output" = "cargo test --test cli_output_tests"
-"prepush:ci" = [
-  { task = "qa:json:ci" },
-  { task = "prepush:test:json-mode" },
-  { task = "prepush:test:lib" },
-  { task = "prepush:test:cli-output" },
-  { task = "qa:docs" },
-]
-"dist:preflight:smoke" = "cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture"
-"demo:browser-proof-report" = "./scripts/demo/write-browser-proof-report.sh"
-health = [{ task = "qa:docs" }, { task = "qa:json" }]
-qa = [{ task = "test" }, { task = "qa:docs" }, { task = "qa:json" }]
-
-[demos.browser-proof-report]
-title = "Browser Proof Report"
-summary = "Generate a human-checkable snapshot of Effigy's own demo inventory, grouped query views, and inspect surface."
-proof = "Operator-visible proof that the shipped demo registry, query filters, grouping, and receipt-linked artifacts are usable on a real repo."
-owner = "effigy-product"
-mode = "headless"
-status = "ready"
-covers = ["effigy.demo.registry", "effigy.demo.browser-query"]
-tags = ["self-hosted", "proof-report"]
-task = "demo:browser-proof-report"
-artifacts = [
-  ".effigy/demo/artifacts/browser-proof-report/index.html",
-  ".effigy/demo/artifacts/browser-proof-report/list.txt",
-  ".effigy/demo/artifacts/browser-proof-report/grouped-by-gap.txt",
-  ".effigy/demo/artifacts/browser-proof-report/inspect-lifecycle-window.txt",
-]
-
-[demos.lifecycle-window]
-title = "Lifecycle Window"
-summary = "Hold a run-backed demo open until an operator stops it, while updating a small artifact directory in real time."
-proof = "Operator-visible proof that Effigy can expose active demo state, stoppability, and normalized terminal receipts for a real run-backed process."
-owner = "effigy-runtime"
-mode = "interactive"
-status = "ready"
-covers = ["effigy.demo.lifecycle", "effigy.demo.stop-rerun"]
-tags = ["self-hosted", "lifecycle"]
-run = "./scripts/demo/run-lifecycle-window.sh"
-artifacts = [
-  ".effigy/demo/artifacts/lifecycle-window/index.html",
-  ".effigy/demo/artifacts/lifecycle-window/status.txt",
-  ".effigy/demo/artifacts/lifecycle-window/heartbeat.txt",
-  ".effigy/demo/artifacts/lifecycle-window/events.log",
-]
-[release]
-version-file = "Cargo.toml"
-changelog = "CHANGELOG.md"
-sync-files = ["Cargo.lock"]
-tag-format = "v{version}"
-
-[docs_policy.indexes.vision]
-file = "docs/vision/README.md"
-dir = "docs/vision"
-section = "Vision Artifacts"
-exclude = ["history/**"]
-
-[docs_policy.next_actions.vision]
-index = "vision"
-heading = "## Next Task"
-allowlist_file = "docs/scripts/fixtures/vision-next-task/actionable-verbs.txt"
-
-[scan.god_files]
-# Keep doctor focused on unexpected new mega-hubs instead of the existing
-# release orchestration hub and monolithic CLI contract fixture batch.
-warn = 1500
-high = 3000
-critical = 8000
-exclude = [
-  "src/runner/release_command.rs",
-  "tests/cli_output_tests/command_behavior_tests.rs",
-]
-
-[scan.comment_ratio]
-exclude = ["src/changelog.rs"]
-
-[release.gates]
-format = "cargo fmt --all -- --check"
-test = "cargo test"
-qa = "cargo run --bin effigy -- qa:ci"
-build = "cargo build --release --bin effigy"
-smoke = "./scripts/check-release-smoke.sh ./target/release/effigy"
-metadata = "cargo run --bin effigy -- distribution validate-metadata"
