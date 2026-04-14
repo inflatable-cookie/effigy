@@ -118,11 +118,16 @@ fn render_distribution_help_shows_validation_options() {
     assert!(rendered.contains("distribution Help"));
     assert!(rendered.contains("effigy distribution preflight"));
     assert!(rendered.contains("effigy distribution validate-metadata"));
+    assert!(rendered.contains("effigy distribution check-glibc-floor"));
+    assert!(rendered.contains("effigy distribution first-publish"));
     assert!(rendered.contains("effigy distribution validate-artifacts"));
     assert!(rendered.contains("effigy distribution generate-closeout"));
     assert!(rendered.contains("effigy distribution write-summary"));
     assert!(rendered.contains("--tag <TAG>"));
+    assert!(rendered.contains("--binary <PATH>"));
+    assert!(rendered.contains("--max-glibc <VER>"));
     assert!(rendered.contains("--artifacts-dir <DIR>"));
+    assert!(rendered.contains("--skip-homebrew"));
     assert!(rendered.contains("--skip-docs"));
     assert!(rendered.contains("--skip-smoke"));
     assert!(rendered.contains("--expect-homebrew"));

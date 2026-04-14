@@ -6922,7 +6922,9 @@ mod tests {
             .expect("read release manifest");
         assert!(release_manifest.contains("sync-files = [\"Cargo.lock\"]"));
         assert!(!root.join("scripts/check-release-gates.sh").exists());
-        assert!(!root.join("scripts/check-release-install-from-tag.sh").exists());
+        assert!(!root
+            .join("scripts/check-release-install-from-tag.sh")
+            .exists());
         assert!(!root.join("scripts/check-release-smoke.sh").exists());
         assert!(!root.join("scripts/prepare-release.sh").exists());
     }

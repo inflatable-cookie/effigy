@@ -66,7 +66,6 @@ Design notes:
 - [`2026-03-12-minimal-docs-policy-config-design.md`](../logs/2026-03/12-094500-minimal-docs-policy-config-design.md)
 
 Intentional remaining shell scripts:
-- `./scripts/check-distribution-first-publish.sh`
 - `./scripts/check-linux-glibc-floor.sh`
 - `./scripts/effigy-dev`
 
@@ -95,7 +94,7 @@ effigy release simulate
 effigy release status --check-gates
 effigy distribution preflight --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
 effigy release verify-install --tag v0.__.__
-./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
+effigy distribution first-publish --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 # writes ./artifacts/distribution-v0.__.__/distribution-summary.env
 effigy distribution validate-metadata --tag v0.__.__
 effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-v0.__.__
@@ -104,9 +103,9 @@ cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixt
 effigy qa:docs
 ```
 
-For release debugging, use the built-in release commands first and reserve
-wrapper-script reproduction for cases where the CI contract still invokes the
-wrapper directly.
+For release debugging, use the built-in release and distribution commands
+first. The only remaining workflow-bound shell reproduction path is the Linux
+glibc floor check.
 
 Install pinning and team migration policy:
 - [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
@@ -171,8 +170,8 @@ jobs:
 
 Notes:
 - `effigy contracts check-json` is the primary validator; event-aware PR vs mainline behavior should live in workflow YAML rather than a shell wrapper.
-- `effigy distribution preflight`, `validate-metadata`, `validate-artifacts`, and `generate-closeout` are the primary distribution validation/reporting surfaces; the matching `scripts/*.sh` files are compatibility entrypoints.
-- `./scripts/check-distribution-first-publish.sh` is the one remaining intentional side-effect wrapper for real publish/install/Homebrew execution; it now delegates reusable validation work to `effigy release verify-install`, `effigy distribution write-summary`, and `effigy distribution validate-artifacts`.
+- `effigy distribution preflight`, `check-glibc-floor`, `first-publish`, `validate-metadata`, `validate-artifacts`, and `generate-closeout` are the primary distribution validation/reporting surfaces.
+- `scripts/check-linux-glibc-floor.sh` remains only because the release workflow still invokes that path directly; once workflow edits are approved, that guard should cut over to `effigy distribution check-glibc-floor`.
 - `set -o pipefail` ensures failures inside pipe chains fail the step.
 
 ## 4) Recipe: Nightly Full Contract Sweep

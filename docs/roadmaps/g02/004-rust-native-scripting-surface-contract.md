@@ -113,7 +113,9 @@ The key boundary is now settled:
   - full Python-analysis replacement in the first slice
 
 The remaining active question is whether the Rhai lane should now pause on a
-clean internal posture until an external pilot boundary becomes safe again.
+clean internal posture after native distribution cutover, or whether the
+workflow-bound glibc guard still earns one final internal batch before the
+lane waits on an external pilot boundary.
 
 ## Migration Classification
 
@@ -127,6 +129,8 @@ Shipped first targets:
 - `smoke:release`
 - `browser-proof-report`
 - `lifecycle-window`
+- native `effigy distribution first-publish`
+- native `effigy distribution check-glibc-floor`
 
 ### Keepsake
 
@@ -168,4 +172,6 @@ This milestone is ready to execute only when Effigy has:
 ## Next Task
 
 Use the active `g02.004` strict lane to decide whether Effigy dogfooding is
-now complete enough to pause cleanly until an external pilot is safe again.
+now complete enough to pause cleanly after native distribution cutover, or
+whether the workflow-bound glibc guard should be the final internal cutover
+batch before the lane waits on an external pilot.

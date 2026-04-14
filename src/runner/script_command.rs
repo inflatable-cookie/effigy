@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{thread, time::Duration};
 
@@ -94,7 +94,14 @@ fn execute_rhai_script(
     register_host_api(&mut engine, context.clone());
 
     let mut scope = Scope::new();
-    scope.push_constant("args", script_args.iter().cloned().map(Into::into).collect::<Array>());
+    scope.push_constant(
+        "args",
+        script_args
+            .iter()
+            .cloned()
+            .map(Into::into)
+            .collect::<Array>(),
+    );
     scope.push_constant("cwd", context.cwd.display().to_string());
     scope.push_constant("repo_root", context.repo_root.display().to_string());
     scope.push_constant("task_name", context.task_name.clone());
@@ -128,12 +135,15 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>) {
             thread::sleep(Duration::from_millis(millis as u64));
         }
     });
-    engine.register_fn("path_join", |base: ImmutableString, child: ImmutableString| -> String {
-        PathBuf::from(base.as_str())
-            .join(child.as_str())
-            .display()
-            .to_string()
-    });
+    engine.register_fn(
+        "path_join",
+        |base: ImmutableString, child: ImmutableString| -> String {
+            PathBuf::from(base.as_str())
+                .join(child.as_str())
+                .display()
+                .to_string()
+        },
+    );
 
     engine.register_fn(
         "make_temp_dir",
@@ -154,10 +164,12 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>) {
         "read_file",
         move |path: ImmutableString| -> Result<String, Box<EvalAltResult>> {
             let path = resolve_runtime_path(&file_context.cwd, path.as_str());
-            std::fs::read_to_string(&path).map_err(|error| rhai_runtime_error(format!(
-                "{}",
-                RunnerError::task_invocation_failed_read(&path, error)
-            )))
+            std::fs::read_to_string(&path).map_err(|error| {
+                rhai_runtime_error(format!(
+                    "{}",
+                    RunnerError::task_invocation_failed_read(&path, error)
+                ))
+            })
         },
     );
     let file_context = context.clone();
@@ -264,10 +276,12 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>) {
                         Err(error)
                     }
                 })
-                .map_err(|error| rhai_runtime_error(format!(
-                    "{}",
-                    RunnerError::task_invocation_failed_read(&path, error)
-                )))
+                .map_err(|error| {
+                    rhai_runtime_error(format!(
+                        "{}",
+                        RunnerError::task_invocation_failed_read(&path, error)
+                    ))
+                })
         },
     );
     let file_context = context.clone();
@@ -398,8 +412,14 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>) {
 
 fn process_result_map(output: std::process::Output) -> Map {
     let mut map = Map::new();
-    map.insert("status".into(), Dynamic::from_int(output.status.code().unwrap_or(-1).into()));
-    map.insert("success".into(), Dynamic::from_bool(output.status.success()));
+    map.insert(
+        "status".into(),
+        Dynamic::from_int(output.status.code().unwrap_or(-1).into()),
+    );
+    map.insert(
+        "success".into(),
+        Dynamic::from_bool(output.status.success()),
+    );
     map.insert(
         "stdout".into(),
         String::from_utf8_lossy(&output.stdout).to_string().into(),
@@ -425,7 +445,9 @@ fn dynamic_array_to_strings(args: &Array) -> Result<Vec<String>, Box<EvalAltResu
 
 fn required_env(key: &str) -> Result<String, RunnerError> {
     std::env::var(key).map_err(|_| {
-        RunnerError::task_invocation(format!("missing internal Rhai environment variable `{key}`"))
+        RunnerError::task_invocation(format!(
+            "missing internal Rhai environment variable `{key}`"
+        ))
     })
 }
 
@@ -470,8 +492,7 @@ fn allocate_temp_dir(prefix: &str) -> Result<PathBuf, RunnerError> {
     )))
 }
 
-fn install_stop_requested_flag(
-) -> Result<Arc<std::sync::atomic::AtomicBool>, RunnerError> {
+fn install_stop_requested_flag() -> Result<Arc<std::sync::atomic::AtomicBool>, RunnerError> {
     let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     #[cfg(unix)]
     {

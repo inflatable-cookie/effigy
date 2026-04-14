@@ -377,6 +377,73 @@ fn parse_distribution_preflight_with_summary_output() {
 }
 
 #[test]
+fn parse_distribution_check_glibc_floor_with_explicit_binary() {
+    let cmd = parse_command(vec![
+        "distribution".to_owned(),
+        "check-glibc-floor".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--binary".to_owned(),
+        "dist/effigy-linux".to_owned(),
+        "--max-glibc".to_owned(),
+        "2.35".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Distribution(DistributionArgs {
+            subcommand: DistributionSubcommand::CheckGlibcFloor {
+                binary_path: PathBuf::from("dist/effigy-linux"),
+                max_glibc: "2.35".to_owned(),
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_distribution_first_publish_with_overrides() {
+    let cmd = parse_command(vec![
+        "distribution".to_owned(),
+        "first-publish".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--tag".to_owned(),
+        "v0.2.5".to_owned(),
+        "--crate-version".to_owned(),
+        "0.2.5".to_owned(),
+        "--repo-url".to_owned(),
+        "https://example.com/repo.git".to_owned(),
+        "--brew-formula".to_owned(),
+        "tap/effigy/effigy".to_owned(),
+        "--skip-homebrew".to_owned(),
+        "--artifacts-dir".to_owned(),
+        "artifacts/dist".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Distribution(DistributionArgs {
+            subcommand: DistributionSubcommand::FirstPublish {
+                tag: "v0.2.5".to_owned(),
+                crate_version: Some("0.2.5".to_owned()),
+                repo_url: "https://example.com/repo.git".to_owned(),
+                brew_formula: "tap/effigy/effigy".to_owned(),
+                skip_homebrew: true,
+                artifacts_dir: Some(PathBuf::from("artifacts/dist")),
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_distribution_validate_artifacts_with_homebrew() {
     let cmd = parse_command(vec![
         "distribution".to_owned(),

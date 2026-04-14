@@ -82,8 +82,7 @@ Owner: `name/team`
   - [ ] `effigy release verify-install --tag v0.__.__`
 - [ ] Install validated from published crate.
 - [ ] First-publish artifact bundle captured:
-  - [ ] `./scripts/check-distribution-first-publish.sh --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__`
-    Side-effecting helper; built-in validation/reporting runs inside the wrapper.
+  - [ ] `effigy distribution first-publish --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__`
   - [ ] `effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-v0.__.__`
 
 ### Homebrew

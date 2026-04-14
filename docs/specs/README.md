@@ -20,5 +20,5 @@ lane needs tighter execution grammar than the roadmap alone provides.
 ## Next Task
 
 Use the active spec lane to decide whether the Rhai lane should now pause
-cleanly on the shipped Effigy dogfooding boundary until the first external
-pilot becomes safe again.
+cleanly after native Effigy distribution cutover, or whether the
+workflow-bound glibc guard earns one final internal batch first.

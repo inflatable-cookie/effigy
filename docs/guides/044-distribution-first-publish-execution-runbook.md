@@ -20,8 +20,8 @@ Recommended preflight before opening publish window:
 effigy distribution preflight --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env
 ```
 
-Keep `./scripts/check-distribution-first-publish.sh` as the side-effecting
-helper for the real publish/install cycle.
+Use `effigy distribution first-publish` as the side-effecting built-in for the
+real publish/install cycle.
 
 ## 2) Execution Order
 
@@ -35,16 +35,15 @@ Run this sequence in one release window:
 Optional one-command execution helper:
 
 ```bash
-./scripts/check-distribution-first-publish.sh --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
+effigy distribution first-publish --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
 effigy distribution generate-closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
 # use --expect-homebrew when Homebrew checks are expected in this release window
 # effigy distribution generate-closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z --expect-homebrew
 ```
 
-The helper is intentionally the remaining side-effecting wrapper. It delegates
-tag-install verification, artifact-summary writing, and artifact validation to
-native Effigy commands while retaining the real crates.io and Homebrew
-execution steps plus per-step log capture.
+The built-in owns the real crates.io and Homebrew execution steps plus
+per-step log capture. Tag-install verification, artifact-summary writing, and
+artifact validation remain native Effigy subcommands inside the same workflow.
 
 ## 3) Command Matrix
 
@@ -98,10 +97,10 @@ effigy --json help
 - CI pinned install log
 - one dated checkpoint log in `docs/logs/YYYY-MM/`
 
-When using the helper script, attach per-step logs from `--artifacts-dir` directly in the checkpoint log.
+When using the built-in, attach per-step logs from `--artifacts-dir` directly in the checkpoint log.
 The closeout log can be generated from those logs using `effigy distribution generate-closeout`.
 Artifact completeness can be checked directly with `effigy distribution validate-artifacts`.
-The first-publish helper now delegates tag verification to `effigy release verify-install`, `distribution-summary.env` writing to `effigy distribution write-summary`, and final artifact completeness checks to `effigy distribution validate-artifacts` before returning success.
+The first-publish built-in uses `effigy release verify-install`, writes `distribution-summary.env` through `effigy distribution write-summary`, and performs final artifact completeness checks through `effigy distribution validate-artifacts` before returning success.
 Local tooling sanity for this pipeline can be checked with `cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture`, which exercises the built-in distribution commands directly.
 
 ## 5) Acceptance Criteria Mapping
