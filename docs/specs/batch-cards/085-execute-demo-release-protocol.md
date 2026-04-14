@@ -1,6 +1,6 @@
 # 085 Execute Demo Release Protocol
 
-Status: ready
+Status: complete
 Updated: 2026-04-13
 Roadmap: `g02.003`
 Spec: `docs/specs/003-demo-harness-model-and-runner-strict-lane.md`
@@ -56,5 +56,4 @@ working tree is clean and a human explicitly requests release execution.
 
 ## Next Task
 
-Execute this card only after the working tree is clean and a human explicitly
-asks to proceed with release execution.
+This card is complete. Use the active `g02.004` ready card next.

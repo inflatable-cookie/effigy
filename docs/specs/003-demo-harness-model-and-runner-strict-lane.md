@@ -1,6 +1,6 @@
 # 003 Demo Harness Model And Runner Strict Lane
 
-Status: active
+Status: complete
 Updated: 2026-04-13
 Roadmap: `g02.003`
 
@@ -44,12 +44,10 @@ or repo migration work.
 
 ## Current Posture
 
-`strict-ready`
+`complete`
 
-Signal now serves as the proving consumer that let `g02.003` leave strict
-implementation and enter bounded release prep. Release execution is now judged
-to be the correct next batch, but it still requires a clean working tree and
-explicit human approval before any release command runs.
+`g02.003` is now shipped and released in `v0.2.13`. The lane no longer governs
+active work; scripting strategy moved into `g02.004`.
 
 ## Batch Model
 
@@ -72,11 +70,10 @@ Do not guess.
 
 ## Exit Condition
 
-This strict lane is complete when `g02.003` no longer relies on loose design
-intuition alone and the first implementation-planning step is explicit from the
-front doors.
+This strict lane is complete. The shipped demo/browser surface now lives in the
+roadmap and guides rather than an active strict execution lane.
 
 ## Next Task
 
-Execute the active `g02.003` ready card next only when the working tree is
-clean and a human explicitly asks to proceed with release execution.
+Use `g02.004` as the active strict lane next. `g02.003` is closed and no
+longer carries a ready card.

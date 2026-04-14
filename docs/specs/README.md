@@ -14,10 +14,10 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Active Spec Set
 
-- [`003-demo-harness-model-and-runner-strict-lane.md`](./003-demo-harness-model-and-runner-strict-lane.md)
+- [`004-rust-native-scripting-strict-lane.md`](./004-rust-native-scripting-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 ## Next Task
 
-Use the active spec lane to decide the next bounded slice after projected
-output provenance truth landed.
+Use the active spec lane to decide the Rhai boundary and pilot slice for
+Rust-first repos.

@@ -311,12 +311,12 @@ cargo qa-release
 
 ## Current Planning Posture
 
-Effigy's active product lane is `g02.003`.
+Effigy's active product lane is `g02.004`.
 
-Use these surfaces before continuing manifest-composition or demo-harness work:
+Use these surfaces before continuing scripting-boundary work:
 
 - [`docs/roadmaps/README.md`](./docs/roadmaps/README.md)
-- [`docs/roadmaps/g02/003-demo-harness-model-and-runner-contract.md`](./docs/roadmaps/g02/003-demo-harness-model-and-runner-contract.md)
+- [`docs/roadmaps/g02/004-rust-native-scripting-surface-contract.md`](./docs/roadmaps/g02/004-rust-native-scripting-surface-contract.md)
 - [`docs/specs/README.md`](./docs/specs/README.md)
 - [`docs/contracts/001-working-rules.md`](./docs/contracts/001-working-rules.md)
 
@@ -338,7 +338,5 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.003` ready card to decide the next bounded slice after
-concurrent-runner terminal interaction projection landed through the demo
-session contract, while broader runtime and desktop-client questions stay
-deferred.
+Use the active `g02.004` ready card to decide the Rhai boundary and pilot
+slice for Rust-first repos.
