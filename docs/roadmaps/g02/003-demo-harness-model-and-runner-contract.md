@@ -3306,6 +3306,6 @@ Out of scope for the next implementation slice:
 
 ## Next Task
 
-Use the active `g02.003` strict lane to decide the next bounded slice after
-projected-output provenance truth landed while nested TUI embedding and
-multi-process browser-manager drift stay explicitly bounded.
+Use `g02.004` as the active roadmap lane next. `g02.003` is shipped and
+released; the next product-shaping question is the Rhai boundary and pilot
+slice for Rust-first scripting.
