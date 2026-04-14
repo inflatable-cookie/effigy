@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/14-221500-effigy-rhai-dogfooding-cluster-implementation.md`](./2026-04/14-221500-effigy-rhai-dogfooding-cluster-implementation.md)
 - [`2026-04/14-124056-post-rhai-foundation-migration-boundary-decision.md`](./2026-04/14-124056-post-rhai-foundation-migration-boundary-decision.md)
 - [`2026-04/14-121750-rhai-script-step-foundation-implementation.md`](./2026-04/14-121750-rhai-script-step-foundation-implementation.md)
 - [`2026-04/14-193400-rust-native-scripting-boundary-decision.md`](./2026-04/14-193400-rust-native-scripting-boundary-decision.md)

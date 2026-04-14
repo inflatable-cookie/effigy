@@ -6,7 +6,6 @@
 "install:local" = "cargo install --path . --root ./.local-install --force"
 "link:local" = [{ rhai = "scripts/rhai/install-local-bin-links.rhai" }]
 "bootstrap:local" = [{ task = "install:local" }, { task = "link:local" }]
-"smoke:release" = "./scripts/check-release-smoke.sh ./target/release/effigy"
 "dist:metadata" = "cargo run --bin effigy -- distribution validate-metadata"
 "qa:docs:links" = "cargo run --bin effigy -- docs check-links"
 "qa:docs:examples" = "cargo run --bin effigy -- docs check-json-examples"
@@ -52,3 +51,6 @@
 "dist:preflight:smoke" = "cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture"
 health = [{ task = "qa:docs" }, { task = "qa:json" }]
 qa = [{ task = "test" }, { task = "qa:docs" }, { task = "qa:json" }]
+
+[tasks."smoke:release"]
+run = [{ rhai = "scripts/rhai/check-release-smoke.rhai" }]

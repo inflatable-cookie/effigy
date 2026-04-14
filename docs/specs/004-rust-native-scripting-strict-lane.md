@@ -39,15 +39,17 @@ The active strict lane is:
 - make Jetstream's “full migration target” posture explicit instead of letting
   Python linger by inertia
 
-This lane now has a shipped script-step foundation. The next question is
-migration order, not whether Effigy should support Rhai at all.
+This lane now has a shipped script-step foundation and a first substantial
+Effigy dogfooding cluster. The next question is the next bounded migration
+slice, not whether Effigy should support Rhai at all.
 
 ## Current Posture
 
 `strict-ready`
 
-The Rhai foundation is shipped. The next valid move is an Effigy-only
-dogfooding migration batch before any cross-repo pilot.
+The Effigy dogfooding cluster is shipped. The next valid move is a bounded
+decision about the next migration slice, with the lifecycle/signal gap called
+out explicitly instead of papered over.
 
 ## Batch Model
 
@@ -76,5 +78,5 @@ for the current mixed-runtime script surfaces.
 
 ## Next Task
 
-Execute the active `g02.004` ready card to migrate a meaningful cluster of
-remaining Effigy shell-glue tasks onto file-backed Rhai scripts.
+Execute the active `g02.004` ready card to decide the next Rhai migration slice
+from the shipped Effigy dogfooding results.

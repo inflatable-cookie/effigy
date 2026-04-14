@@ -12,11 +12,18 @@ During v0.x, MINOR bumps may include breaking changes.
   path/file helpers, JSON/TOML helpers, structured subprocess execution, and
   task invocation so Rust-first repos can start replacing shell glue without
   taking a Bun dependency just for task scripting.
+- Extend the first Rhai host API with `now_utc()` and `make_temp_dir(prefix)`,
+  so first-party repo automation can stamp artifacts and build short-lived
+  working directories without shelling out to `date` or `mktemp`.
 
 ### Changed
 - Migrate Effigy's `link:local` task from a shell script to a file-backed Rhai
   step so the new embedded scripting path is exercised by a real repo-local
   operator task instead of a synthetic fixture.
+- Migrate Effigy's `smoke:release` task and `browser-proof-report` demo off
+  shell entrypoints and onto file-backed Rhai scripts so the first dogfooding
+  cluster exercises both operator tasks and demo runners while leaving
+  `lifecycle-window` as the honest signal-handling gap for a later Rhai slice.
 
 ## [0.2.13] - 2026-04-13
 

@@ -14,12 +14,12 @@ Current milestones:
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
 - [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
 - [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (complete; shipped and released in `v0.2.13`, including the demo registry, browser, live terminal, query/history surfaces, concurrent-runner projection, and real-project consumer proof)
-- [`004-rust-native-scripting-surface-contract.md`](./004-rust-native-scripting-surface-contract.md) (in progress; the scripting policy split, Rhai v1 boundary, and script-step foundation are now shipped, with the next slice narrowed to Effigy dogfooding before any cross-repo pilot)
+- [`004-rust-native-scripting-surface-contract.md`](./004-rust-native-scripting-surface-contract.md) (in progress; the scripting policy split, Rhai v1 boundary, script-step foundation, and first Effigy dogfooding cluster are now shipped, with the next slice narrowed to a bounded post-dogfooding decision)
 
 Active strict planning lane:
 
 - [`../specs/004-rust-native-scripting-strict-lane.md`](../specs/004-rust-native-scripting-strict-lane.md)
-- [`../specs/batch-cards/089-implement-effigy-rhai-dogfooding-cluster.md`](../specs/batch-cards/089-implement-effigy-rhai-dogfooding-cluster.md)
+- [`../specs/batch-cards/090-decide-post-effigy-rhai-dogfooding-slice.md`](../specs/batch-cards/090-decide-post-effigy-rhai-dogfooding-slice.md)
 
 Rules:
 
@@ -29,5 +29,5 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.004` ready card to dogfood the shipped Rhai scripting
-surface inside Effigy with a meaningful migration cluster.
+Use the active `g02.004` ready card to decide the next Rhai slice from the
+shipped Effigy dogfooding results before any cross-repo pilot.
