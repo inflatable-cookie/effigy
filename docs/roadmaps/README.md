@@ -66,9 +66,9 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute the active ready card for `g02.004` to add the bounded long-running
-Rhai lifecycle support exposed by the Effigy dogfooding pass before any
-cross-repo pilot.
+Execute the active ready card for `g02.004` to decide whether the Rhai lane
+should pause cleanly on the shipped Effigy dogfooding boundary until the first
+external pilot becomes safe again.
 
 
 ## Historical language boundary

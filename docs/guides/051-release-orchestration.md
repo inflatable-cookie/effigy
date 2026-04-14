@@ -393,11 +393,12 @@ For Effigy itself:
   Rhai-backed wrapper that delegates to the built-in release commands
 - `scripts/check-release-install-from-tag.sh` is now a compatibility wrapper
   launcher into a Rhai-backed wrapper over `effigy release verify-install`
+- `scripts/check-release-smoke.sh` is also now a compatibility launcher into a
+  Rhai-backed smoke wrapper
 - `scripts/prepare-release.sh` still exists as a compatibility/backstop path
   until the wrapper-retirement criteria in guide `049` are satisfied
-- `scripts/check-release-smoke.sh` remains an intentional binary-artifact smoke
-  harness rather than a migration leftover, so it should not be retired on the
-  same schedule as the release wrappers
+- `scripts/check-linux-glibc-floor.sh` remains an intentional shell boundary
+  because it depends on Linux binary-inspection tooling
 
 ## 10) Current Limits
 

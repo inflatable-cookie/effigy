@@ -36,6 +36,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `scripts/check-release-install-from-tag.sh` so their real logic now lives in
   file-backed Rhai scripts, while the executable `.sh` entrypoints remain as
   minimal launchers for CI/docs compatibility.
+- Migrate Effigy's `scripts/install-local-bin-links.sh` and
+  `scripts/check-release-smoke.sh` onto the same Rhai-backed compatibility
+  launcher pattern, leaving only the genuinely shell-bound operator surfaces as
+  explicit permanent boundaries.
 
 ## [0.2.13] - 2026-04-13
 

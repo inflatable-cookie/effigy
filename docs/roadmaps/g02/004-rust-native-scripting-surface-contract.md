@@ -112,9 +112,8 @@ The key boundary is now settled:
   - frontend/build-tool replacement
   - full Python-analysis replacement in the first slice
 
-The remaining active question is whether the internal Effigy wrapper boundary
-should be converged fully before this lane pauses on a clean internal posture
-and waits for the external pilot boundary to become safe again.
+The remaining active question is whether the Rhai lane should now pause on a
+clean internal posture until an external pilot boundary becomes safe again.
 
 ## Migration Classification
 
@@ -125,6 +124,7 @@ Migrate early.
 Shipped first targets:
 
 - `scripts/install-local-bin-links.sh`
+- `scripts/check-release-smoke.sh`
 - `smoke:release`
 - `browser-proof-report`
 - `lifecycle-window`
@@ -168,5 +168,5 @@ This milestone is ready to execute only when Effigy has:
 
 ## Next Task
 
-Use the active `g02.004` strict lane to finish the remaining Effigy-only
-wrapper-boundary cleanup while the external pilot remains deferred.
+Use the active `g02.004` strict lane to decide whether Effigy dogfooding is
+now complete enough to pause cleanly until an external pilot is safe again.
