@@ -46,8 +46,8 @@ are explicit.
 
 `strict-ready`
 
-The next valid move is a planning decision batch. Release work is complete; the
-old demo lane is no longer the active governing lane.
+The Rhai boundary is settled. The next valid move is the first implementation
+slice for the script-step foundation.
 
 ## Batch Model
 
@@ -76,5 +76,5 @@ for the current mixed-runtime script surfaces.
 
 ## Next Task
 
-Execute the active `g02.004` ready card to decide the Rhai boundary and pilot
-slice for Rust-first repos, with Jetstream treated as a full migration target.
+Execute the active `g02.004` ready card to implement the Rhai script-step
+foundation and migrate one small Effigy shell-glue task as pilot proof.

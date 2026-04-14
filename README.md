@@ -338,5 +338,5 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.004` ready card to decide the Rhai boundary and pilot
-slice for Rust-first repos.
+Use the active `g02.004` ready card to implement the Rhai script-step
+foundation and migrate one small Effigy shell-glue task as pilot proof.

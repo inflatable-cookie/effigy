@@ -36,14 +36,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g02/001-bootstrap-command-and-clone-contract.md` started the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up, and is now complete: released plus live-pilot validated on `loophole` and `songsprout`.
 - `g02/002-manifest-composition-and-override-contract.md` defines the general split-manifest model so features do not invent their own file-loading semantics, and its foundation plus inspectability are already shipped.
 - `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy; the lane shipped and released in `v0.2.13`, including registry loading, inspection, lifecycle control, one-demo history, attached and PTY-backed terminal runner semantics, browser demo tabs, browser terminal replay/input/resize consumption, concurrent-runner session plus interaction projection, browser-owned live attached terminal sessions for browser-launched run-backed interactive demos, bounded single-process concurrent-runner browser live-session parity, runner-owned concurrent-runtime projection-shape truth, projected-runtime process summary truth, and projected-output provenance truth.
-- `g02/004-rust-native-scripting-surface-contract.md` is the next active milestone and defines the scripting policy split between Rust-first repos and web-oriented repos, plus the Rhai boundary and pilot order for Effigy-native scripting.
+- `g02/004-rust-native-scripting-surface-contract.md` is the active milestone and defines the scripting policy split between Rust-first repos and web-oriented repos, plus the Rhai boundary and pilot order for Effigy-native scripting. The boundary is settled; the next slice is the Rhai script-step foundation and one Effigy pilot migration.
 
 ## Active Strict Lane
 
 - `g02.004` is the active roadmap milestone.
 - `docs/specs/004-rust-native-scripting-strict-lane.md` is the active
   strict planning lane around that roadmap.
-- `docs/specs/batch-cards/086-decide-rust-native-scripting-boundary-and-pilot-slice.md`
+- `docs/specs/batch-cards/087-implement-rhai-script-step-foundation.md`
   is the current ready card.
 
 ## Research Program
@@ -66,8 +66,8 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute the active ready card for `g02.004` to decide the Rhai boundary and
-pilot slice for Rust-first repos.
+Execute the active ready card for `g02.004` to implement the Rhai script-step
+foundation and migrate one small Effigy shell-glue task as pilot proof.
 
 
 ## Historical language boundary

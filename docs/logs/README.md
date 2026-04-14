@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/14-193400-rust-native-scripting-boundary-decision.md`](./2026-04/14-193400-rust-native-scripting-boundary-decision.md)
 - [`2026-04/14-191500-rust-native-scripting-lane-activation.md`](./2026-04/14-191500-rust-native-scripting-lane-activation.md)
 - [`2026-04/13-103457-demo-browser-terminal-path-convergence-closeout.md`](./2026-04/13-103457-demo-browser-terminal-path-convergence-closeout.md)
 - [`2026-04/12-235800-demo-browser-terminal-path-convergence-recovery.md`](./2026-04/12-235800-demo-browser-terminal-path-convergence-recovery.md)

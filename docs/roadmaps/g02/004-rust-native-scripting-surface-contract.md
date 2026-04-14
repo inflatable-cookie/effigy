@@ -1,6 +1,6 @@
 # g02.004 Rust-Native Scripting Surface Contract
 
-Status: planned
+Status: in progress
 Updated: 2026-04-14
 
 ## Goal
@@ -94,14 +94,54 @@ not distort frontend/build tooling just to make the repo “pure”.
 
 ## Contract Questions To Settle
 
-- what is the minimum Rhai host API Effigy should expose in v1?
-- should Rhai scripts live inline in manifests, in `.rhai` files, or both?
-- how should scripts invoke other Effigy tasks and built-ins?
-- what filesystem, env, process, and JSON/TOML capabilities are allowed in v1?
-- how should errors, traces, and operator output be shaped?
-- what is the migration order across `effigy`, `keepsake`, and `jetstream`?
-- how much of Jetstream's current Python analysis surface should move directly
-  to Rhai, and how much first needs Rust-native helper APIs?
+The key boundary is now settled:
+
+- Rhai v1 should support both inline and file-backed scripts
+- Rhai v1 should expose:
+  - logging
+  - args access
+  - env read
+  - path helpers
+  - file read/write/exists/create-dir
+  - JSON/TOML parse + stringify helpers
+  - structured subprocess execution without shell parsing
+  - task invocation helpers where useful
+- Rhai v1 should not attempt:
+  - arbitrary shell emulation
+  - network APIs
+  - frontend/build-tool replacement
+  - full Python-analysis replacement in the first slice
+
+The remaining active question is implementation order and proof shape, not the
+high-level product split.
+
+## Migration Classification
+
+### Effigy
+
+Migrate early.
+
+Best first targets:
+
+- `scripts/install-local-bin-links.sh`
+- small docs/demo/report helpers
+
+### Keepsake
+
+Migrate after the Effigy pilot proves the host API.
+
+Best early targets:
+
+- `tools/release-candidate.sh`
+- REAPER smoke orchestration wrappers
+
+### Jetstream
+
+Still a full migration target, but in two layers:
+
+- first migrate bash orchestration and QA wrappers
+- then migrate analysis tools once Rust helper capability exists behind the
+  Rhai surface
 
 ## Out Of Scope
 
@@ -121,6 +161,5 @@ This milestone is ready to execute only when Effigy has:
 
 ## Next Task
 
-Use the active `g02.004` strict lane to decide the Rhai boundary and pilot
-slice for Rust-first repos, with Jetstream explicitly treated as a full
-migration target rather than a permanent Python exception.
+Use the active `g02.004` strict lane to implement the Rhai script-step
+foundation and migrate one small Effigy shell-glue task as pilot proof.
