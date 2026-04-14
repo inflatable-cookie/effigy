@@ -157,8 +157,10 @@ That is enough to make the distribution surface meaningfully less
 Effigy-specific without widening prematurely into every channel and closeout
 policy in one batch.
 
+The next explicit decision is also now settled: do one more internal widening
+batch across publish/summary/closeout commands before any consumer proof.
+
 ## Next Task
 
-Use the active `g02.005` strict lane to decide whether the next slice should
-widen manifest-driven coverage across more distribution commands or move to a
-bounded consumer-proof adoption batch.
+Use the active `g02.005` strict lane to widen manifest-driven coverage across
+the publish/summary/closeout path before any consumer-proof adoption batch.
