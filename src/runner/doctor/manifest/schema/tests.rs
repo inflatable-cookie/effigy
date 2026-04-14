@@ -6,7 +6,7 @@ use super::validate_manifest_schema;
 use crate::runner::doctor::report::DoctorState;
 
 #[test]
-fn validate_manifest_schema_accepts_docs_policy_bootstrap_and_release_sections() {
+fn validate_manifest_schema_accepts_docs_policy_bootstrap_distribution_and_release_sections() {
     let manifest: Value = toml::from_str(
         r###"
 [catalog]
@@ -37,6 +37,19 @@ repo = "git@github.com:inflatable-cookie/aura.git"
 branch = "main"
 setup = ["install"]
 required = true
+
+[distribution.package]
+name = "effigy"
+repo-url = "https://github.com/inflatable-cookie/effigy.git"
+brew-formula = "inflatable-cookie/effigy/effigy"
+
+[distribution.preflight]
+docs-task = "qa:docs"
+smoke-task = "dist:preflight:smoke"
+
+[distribution.metadata]
+required-docs = ["docs/guides/010-path-installation-and-release.md"]
+required-files = ["scripts/check-linux-glibc-floor.sh"]
 
 [release]
 version-file = "Cargo.toml"

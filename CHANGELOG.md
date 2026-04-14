@@ -19,6 +19,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `sleep_ms(...)`, and `append_file(...)` so long-running repo-local scripts
   can react cleanly to stop requests, emit heartbeats, and append lifecycle
   evidence without falling back to shell loops.
+- Add an optional `[distribution]` manifest section covering package identity,
+  preflight task selection, and metadata requirements so native distribution
+  commands can start serving other repos without hardcoding Effigy's exact
+  release policy.
 
 ### Changed
 - Migrate Effigy's `link:local` task from a shell script to a file-backed Rhai
@@ -51,6 +55,11 @@ During v0.x, MINOR bumps may include breaking changes.
   built-ins, so distribution orchestration now lives inside Effigy's defined
   command surface instead of depending on shell-script entrypoints for publish
   and validation flow.
+- Make `effigy distribution validate-metadata` and
+  `effigy distribution preflight` read optional manifest-driven distribution
+  policy, so cross-repo adoption can override package identity, required
+  evidence files, and preflight task names without forking Effigy's
+  self-hosting defaults.
 
 ## [0.2.13] - 2026-04-13
 

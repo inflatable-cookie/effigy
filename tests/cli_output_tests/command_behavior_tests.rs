@@ -3307,6 +3307,118 @@ fn cli_distribution_preflight_json_writes_summary_when_smoke_skipped() {
 }
 
 #[test]
+fn cli_distribution_preflight_uses_manifest_distribution_preflight_tasks() {
+    let root = temp_workspace("distribution-preflight-manifest-policy");
+    fs::create_dir_all(root.join(".github/workflows")).expect("mkdir workflows");
+    fs::create_dir_all(root.join("docs/guides")).expect("mkdir guides");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
+
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"example-tool\"\nversion = \"0.2.5\"\nlicense = \"MIT\"\ndescription = \"fixture\"\nedition = \"2021\"\n",
+    )
+    .expect("write cargo manifest");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[distribution.package]
+name = "example-tool"
+
+[distribution.preflight]
+docs-task = "docs:verify"
+smoke-task = "proof:smoke"
+
+[distribution.metadata]
+required-docs = ["docs/guides/release.md"]
+required-files = [".github/workflows/release-binaries.yml", "scripts/check-linux-glibc-floor.sh"]
+
+[tasks."docs:verify"]
+run = "printf docs-ok"
+
+[tasks."proof:smoke"]
+run = "printf smoke-ok"
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join(".github/workflows/release-binaries.yml"),
+        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./scripts/check-linux-glibc-floor.sh ./effigy-${{ matrix.target }} 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
+    )
+    .expect("write workflow");
+    fs::write(root.join("docs/guides/release.md"), "# Guide\n").expect("write guide");
+    fs::write(
+        root.join("scripts/check-linux-glibc-floor.sh"),
+        "#!/bin/sh\nexit 0\n",
+    )
+    .expect("write glibc script");
+
+    let output = run_json_cli_command(&root, &["distribution", "preflight", "--tag", "v0.2.5"]);
+    let parsed = parse_stdout_json(&output);
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(parsed["result"]["docs_status"], "ok");
+    assert_eq!(parsed["result"]["metadata_status"], "ok");
+    assert_eq!(parsed["result"]["smoke_status"], "ok");
+}
+
+#[test]
+fn cli_distribution_validate_metadata_uses_manifest_distribution_requirements() {
+    let root = temp_workspace("distribution-metadata-manifest-policy");
+    fs::create_dir_all(root.join(".github/workflows")).expect("mkdir workflows");
+    fs::create_dir_all(root.join("docs/guides")).expect("mkdir guides");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
+
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"example-tool\"\nversion = \"0.2.5\"\nlicense = \"MIT\"\ndescription = \"fixture\"\nedition = \"2021\"\n",
+    )
+    .expect("write cargo manifest");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[distribution.package]
+name = "example-tool"
+
+[distribution.metadata]
+required-docs = ["docs/guides/release.md"]
+required-files = [".github/workflows/release-binaries.yml", "scripts/check-linux-glibc-floor.sh"]
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join(".github/workflows/release-binaries.yml"),
+        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./scripts/check-linux-glibc-floor.sh ./effigy-${{ matrix.target }} 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
+    )
+    .expect("write workflow");
+    fs::write(root.join("docs/guides/release.md"), "# Guide\n").expect("write guide");
+    fs::write(
+        root.join("scripts/check-linux-glibc-floor.sh"),
+        "#!/bin/sh\nexit 0\n",
+    )
+    .expect("write glibc script");
+
+    let output = run_json_cli_command(
+        &root,
+        &["distribution", "validate-metadata", "--tag", "v0.2.5"],
+    );
+    let parsed = parse_stdout_json(&output);
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(parsed["result"]["package"]["name"], "example-tool");
+    assert_eq!(
+        parsed["result"]["required_docs"],
+        serde_json::json!(["docs/guides/release.md"])
+    );
+    assert_eq!(
+        parsed["result"]["required_files"],
+        serde_json::json!([
+            ".github/workflows/release-binaries.yml",
+            "scripts/check-linux-glibc-floor.sh"
+        ])
+    );
+}
+
+#[test]
 fn cli_distribution_generate_closeout_json_writes_report() {
     let root = temp_workspace("distribution-generate-closeout");
     let artifacts = root.join("artifacts");

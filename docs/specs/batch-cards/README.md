@@ -102,9 +102,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`096-implement-effigy-wrapper-convergence-boundary.md`](./096-implement-effigy-wrapper-convergence-boundary.md) (complete)
 - [`097-decide-rhai-lane-pause-boundary.md`](./097-decide-rhai-lane-pause-boundary.md) (complete)
 - [`098-decide-post-native-distribution-rhai-boundary.md`](./098-decide-post-native-distribution-rhai-boundary.md) (complete)
-- [`099-implement-manifest-driven-distribution-contract-foundation.md`](./099-implement-manifest-driven-distribution-contract-foundation.md) (ready)
+- [`099-implement-manifest-driven-distribution-contract-foundation.md`](./099-implement-manifest-driven-distribution-contract-foundation.md) (complete)
+- [`100-decide-post-distribution-foundation-slice.md`](./100-decide-post-distribution-foundation-slice.md) (ready)
 
 ## Next Task
 
-Execute the active ready card for `g02.005` to implement the minimal optional
-manifest-driven distribution contract foundation.
+Execute the active ready card for `g02.005` to decide whether the optional
+distribution surface should widen internal command coverage first or move to
+one bounded consumer proof.

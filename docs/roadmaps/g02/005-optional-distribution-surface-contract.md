@@ -78,7 +78,7 @@ Repos should be able to opt into config for:
 
 ## Likely Manifest Shape
 
-The next implementation slice should define a minimal optional surface around:
+The first implementation slice should define a minimal optional surface around:
 
 ```toml
 [distribution]
@@ -104,9 +104,15 @@ dir = "artifacts/distribution"
 owner = "release"
 ```
 
-That shape is illustrative, not final. The contract should stay small enough
-to be practical and broad enough to avoid hardcoding Effigy's own release
-choices into every repo.
+That broader shape is still the likely direction, but the first shipped
+contract should stay narrower:
+
+- `[distribution.package]`
+- `[distribution.preflight]`
+- `[distribution.metadata]`
+
+That keeps the batch small enough to prove optional cross-repo reuse before
+the surface widens into fuller channel and closeout policy.
 
 ## Documentation Requirement
 
@@ -137,8 +143,22 @@ This milestone is ready to execute only when Effigy has:
 - a dedicated front-door guide for distribution adoption
 - a ready batch card for the first manifest-driven implementation slice
 
+## Current State
+
+The first manifest-driven foundation is now shipped:
+
+- optional `[distribution.package]`
+- optional `[distribution.preflight]`
+- optional `[distribution.metadata]`
+- manifest-driven policy in `distribution validate-metadata`
+- manifest-driven policy in `distribution preflight`
+
+That is enough to make the distribution surface meaningfully less
+Effigy-specific without widening prematurely into every channel and closeout
+policy in one batch.
+
 ## Next Task
 
-Use the new strict lane to implement the minimal manifest-driven distribution
-foundation so the current Effigy-self-hosting built-ins become an honest,
-optional cross-repo surface.
+Use the active `g02.005` strict lane to decide whether the next slice should
+widen manifest-driven coverage across more distribution commands or move to a
+bounded consumer-proof adoption batch.

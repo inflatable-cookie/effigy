@@ -1,6 +1,6 @@
 # 099 Implement Manifest-Driven Distribution Contract Foundation
 
-Status: ready
+Status: complete
 Updated: 2026-04-14
 Roadmap: `g02.005`
 Spec: `docs/specs/005-optional-distribution-surface-strict-lane.md`
@@ -45,6 +45,6 @@ than mostly Effigy-self-hosting policy.
 
 ## Next Task
 
-After this batch, decide whether the next slice should widen manifest-driven
-distribution coverage across more commands or focus on one concrete consumer
-adoption proof.
+Use the next decision batch to choose whether the optional distribution lane
+should widen command coverage internally first or move straight to one bounded
+consumer-proof adoption.
