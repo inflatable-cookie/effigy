@@ -6909,30 +6909,10 @@ mod tests {
                     "cargo run --bin effigy -- distribution validate-metadata"
                 ),
                 ("qa", "cargo run --bin effigy -- qa:ci"),
-                (
-                    "smoke",
-                    "./scripts/check-release-smoke.sh ./target/release/effigy"
-                ),
+                ("smoke", "cargo run --bin effigy -- smoke:release"),
                 ("test", "cargo test"),
             ]
         );
-
-        let gate_script = std::fs::read_to_string(root.join("scripts/check-release-gates.sh"))
-            .expect("read gate script");
-        assert!(gate_script.contains("__rhai-step"));
-        assert!(gate_script.contains("scripts/rhai/check-release-gates.rhai"));
-        assert!(gate_script.contains("--repo-root"));
-        assert!(gate_script.contains("--task-name"));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-
-            let gate_mode = std::fs::metadata(root.join("scripts/check-release-gates.sh"))
-                .expect("gate script metadata")
-                .permissions()
-                .mode();
-            assert_ne!(gate_mode & 0o111, 0, "gate script should stay executable");
-        }
 
         let manifest_source =
             std::fs::read_to_string(root.join("effigy.toml")).expect("read effigy manifest");
@@ -6941,26 +6921,9 @@ mod tests {
         let release_manifest = std::fs::read_to_string(root.join("release/effigy.release.toml"))
             .expect("read release manifest");
         assert!(release_manifest.contains("sync-files = [\"Cargo.lock\"]"));
-
-        let verify_script =
-            std::fs::read_to_string(root.join("scripts/check-release-install-from-tag.sh"))
-                .expect("read verify-install script");
-        assert!(verify_script.contains("__rhai-step"));
-        assert!(verify_script.contains("scripts/rhai/check-release-install-from-tag.rhai"));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-
-            let verify_mode =
-                std::fs::metadata(root.join("scripts/check-release-install-from-tag.sh"))
-                    .expect("verify script metadata")
-                    .permissions()
-                    .mode();
-            assert_ne!(
-                verify_mode & 0o111,
-                0,
-                "verify-install script should stay executable"
-            );
-        }
+        assert!(!root.join("scripts/check-release-gates.sh").exists());
+        assert!(!root.join("scripts/check-release-install-from-tag.sh").exists());
+        assert!(!root.join("scripts/check-release-smoke.sh").exists());
+        assert!(!root.join("scripts/prepare-release.sh").exists());
     }
 }

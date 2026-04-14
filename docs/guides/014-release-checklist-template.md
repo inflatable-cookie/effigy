@@ -62,7 +62,6 @@ Owner: `name/team`
 
 - [ ] Operator path chosen explicitly:
   - [ ] built-in commands are the primary path for this release
-  - [ ] legacy wrappers are used only if an external tool or migration drill requires them
 - [ ] Prepared-state apply succeeds:
   - [ ] `effigy release prepare --yes --check-gates`
 - [ ] Execute preflight succeeds:
@@ -70,10 +69,6 @@ Owner: `name/team`
 - [ ] Human approval recorded before irreversible step.
 - [ ] Final execute succeeds:
   - [ ] `effigy release execute --yes`
-- [ ] Compatibility wrappers remain available only as backup channels until one successful live built-in release is complete:
-  - [ ] `./scripts/prepare-release.sh`
-  - [ ] `./scripts/check-release-gates.sh`
-  - [ ] `./scripts/check-release-install-from-tag.sh --tag v0.__.__`
 
 ## 5) Channel Artifacts
 
@@ -117,32 +112,6 @@ Owner: `name/team`
 - [ ] Release approved by owner.
 - [ ] Release announcement sent.
 - [ ] Backlog/roadmap status updated.
-
-## 9) Wrapper Retirement Record
-
-Fill this only when evaluating whether the release compatibility wrappers should
-be retired.
-
-Canonical template:
-- [`053-release-wrapper-retirement-record-template.md`](./053-release-wrapper-retirement-record-template.md)
-
-- [ ] This release is part of a wrapper-retirement evaluation window.
-- [ ] Prior built-in release in comparison window recorded: `v0.__.__`
-- [ ] Built-in `prepare` + `execute` path used for both releases.
-- [ ] No wrapper fallback was required across the evaluation window.
-- [ ] Hosted workflows stayed green across the evaluation window:
-  - [ ] `CI`
-  - [ ] `JSON Contracts`
-  - [ ] `Release Binaries`
-- [ ] Tag install validation stayed green across the evaluation window:
-  - [ ] `effigy release verify-install --tag v0.__.__`
-- [ ] No active CI/docs/downstream contract still points to wrapper scripts as
-      the primary entrypoint.
-- [ ] Maintainer decision recorded in the dated release checkpoint log:
-  - [ ] keep wrappers for another release cycle
-  - [ ] retire `scripts/prepare-release.sh`
-  - [ ] retire `scripts/check-release-gates.sh`
-  - [ ] retire `scripts/check-release-install-from-tag.sh`
 
 ---
 

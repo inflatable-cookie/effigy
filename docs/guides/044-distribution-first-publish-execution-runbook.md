@@ -51,7 +51,7 @@ execution steps plus per-step log capture.
 ### Tag Install Validation
 
 ```bash
-./scripts/check-release-install-from-tag.sh --tag vX.Y.Z
+effigy release verify-install --tag vX.Y.Z
 ```
 
 ### Crates.io Install Validation

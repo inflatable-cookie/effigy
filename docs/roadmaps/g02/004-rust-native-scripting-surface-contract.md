@@ -123,8 +123,7 @@ Migrate early.
 
 Shipped first targets:
 
-- `scripts/install-local-bin-links.sh`
-- `scripts/check-release-smoke.sh`
+- `link:local`
 - `smoke:release`
 - `browser-proof-report`
 - `lifecycle-window`

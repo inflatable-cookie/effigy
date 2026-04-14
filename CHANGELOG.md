@@ -40,6 +40,12 @@ During v0.x, MINOR bumps may include breaking changes.
   `scripts/check-release-smoke.sh` onto the same Rhai-backed compatibility
   launcher pattern, leaving only the genuinely shell-bound operator surfaces as
   explicit permanent boundaries.
+- Retire Effigy's compatibility-only shell entrypoints
+  `scripts/install-local-bin-links.sh`, `scripts/check-release-smoke.sh`,
+  `scripts/check-release-gates.sh`, `scripts/check-release-install-from-tag.sh`,
+  and `scripts/prepare-release.sh`, so the repo now points directly at native
+  Effigy tasks and built-in release commands instead of preserving legacy shell
+  entrypoints for migration safety.
 
 ## [0.2.13] - 2026-04-13
 

@@ -90,15 +90,6 @@ Release: vX.Y.Z
   - [ ] `Release Binaries`
 - Tag install validation green on both releases:
   - [ ] `effigy release verify-install`
-- Any active CI/docs/downstream contract still points to wrapper scripts:
-  - [ ] no
-  - [ ] yes, list them explicitly
-- Maintainer decision:
-  - [ ] keep wrappers for another release cycle
-  - [ ] retire `scripts/prepare-release.sh`
-  - [ ] retire `scripts/check-release-gates.sh`
-  - [ ] retire `scripts/check-release-install-from-tag.sh`
-- Decision owner: `name/team`
 - Notes:
 
 ## Risks / Follow-ups

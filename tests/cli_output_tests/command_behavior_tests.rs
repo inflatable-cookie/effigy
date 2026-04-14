@@ -1,4 +1,3 @@
-use effigy::changelog;
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
@@ -207,98 +206,6 @@ fn cargo_check_quiet(root: &std::path::Path) {
         .output()
         .expect("run cargo check");
     assert!(output.status.success(), "cargo check failed: {output:?}");
-}
-
-fn install_prepare_release_script(root: &std::path::Path) -> std::path::PathBuf {
-    let scripts = root.join("scripts");
-    fs::create_dir_all(&scripts).expect("mkdir scripts");
-    let source =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/prepare-release.sh");
-    let destination = scripts.join("prepare-release.sh");
-    fs::copy(&source, &destination).expect("copy prepare-release script");
-    let mut perms = fs::metadata(&destination)
-        .expect("stat prepare-release script")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&destination, perms).expect("chmod prepare-release script");
-    destination
-}
-
-fn install_release_wrapper_scripts(root: &std::path::Path) -> std::path::PathBuf {
-    let scripts = root.join("scripts");
-    let rhai_scripts = scripts.join("rhai");
-    fs::create_dir_all(&scripts).expect("mkdir scripts");
-    fs::create_dir_all(&rhai_scripts).expect("mkdir rhai scripts");
-    let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts");
-    for name in [
-        "check-release-gates.sh",
-        "check-release-install-from-tag.sh",
-    ] {
-        let destination = scripts.join(name);
-        fs::copy(source_root.join(name), &destination).expect("copy wrapper script");
-        let mut perms = fs::metadata(&destination)
-            .expect("stat wrapper script")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&destination, perms).expect("chmod wrapper script");
-    }
-    for name in [
-        "check-release-gates.rhai",
-        "check-release-install-from-tag.rhai",
-    ] {
-        fs::copy(source_root.join("rhai").join(name), rhai_scripts.join(name))
-            .expect("copy rhai wrapper script");
-    }
-    scripts
-}
-
-fn install_effigy_cargo_shim(root: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
-    let shim_bin = root.join("shim-bin");
-    fs::create_dir_all(&shim_bin).expect("mkdir shim bin");
-    let log_path = root.join("cargo-effigy-run.log");
-    let cargo_path = std::process::Command::new("sh")
-        .args(["-lc", "command -v cargo"])
-        .output()
-        .expect("resolve cargo path");
-    assert!(
-        cargo_path.status.success(),
-        "failed to resolve cargo path: {cargo_path:?}"
-    );
-    let real_cargo = String::from_utf8(cargo_path.stdout)
-        .expect("utf8 cargo path")
-        .trim()
-        .to_owned();
-    let shim_path = shim_bin.join("cargo");
-    fs::write(
-        &shim_path,
-        format!(
-            "#!/usr/bin/env bash\nset -euo pipefail\nif [[ \"$#\" -ge 4 && \"$1\" == \"run\" && \"$2\" == \"--bin\" && \"$3\" == \"effigy\" && \"$4\" == \"--\" ]]; then\n  shift 4\n  printf '%s\\n' \"$*\" >> \"{}\"\n  exec \"{}\" \"$@\"\nfi\nexec \"{}\" \"$@\"\n",
-            log_path.display(),
-            env!("CARGO_BIN_EXE_effigy"),
-            real_cargo
-        ),
-    )
-    .expect("write cargo shim");
-    let mut perms = fs::metadata(&shim_path)
-        .expect("stat cargo shim")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&shim_path, perms).expect("chmod cargo shim");
-    let effigy_path = shim_bin.join("effigy");
-    fs::write(
-        &effigy_path,
-        format!(
-            "#!/usr/bin/env bash\nset -euo pipefail\nexec \"{}\" \"$@\"\n",
-            env!("CARGO_BIN_EXE_effigy")
-        ),
-    )
-    .expect("write effigy shim");
-    let mut effigy_perms = fs::metadata(&effigy_path)
-        .expect("stat effigy shim")
-        .permissions();
-    effigy_perms.set_mode(0o755);
-    fs::set_permissions(&effigy_path, effigy_perms).expect("chmod effigy shim");
-    (shim_bin, log_path)
 }
 
 fn write_demo_manifest_fixture(root: &std::path::Path) {
@@ -3350,11 +3257,7 @@ fn cli_distribution_preflight_json_writes_summary_when_smoke_skipped() {
         fs::write(root.join("docs/guides").join(guide), "# Guide\n").expect("write guide");
     }
 
-    for script in [
-        "check-linux-glibc-floor.sh",
-        "check-release-install-from-tag.sh",
-        "check-distribution-first-publish.sh",
-    ] {
+    for script in ["check-linux-glibc-floor.sh", "check-distribution-first-publish.sh"] {
         fs::write(root.join("scripts").join(script), "#!/bin/sh\nexit 0\n").expect("write script");
     }
 
@@ -3547,30 +3450,6 @@ fn cli_distribution_artifact_pipeline_smoke_fixture_passes() {
     assert!(rendered.contains("# Distribution Acceptance Closeout (v0.1.0)"));
     assert!(rendered.contains("- Homebrew evidence included: true."));
     assert!(rendered.contains("- 08-homebrew-upgrade.log"));
-}
-
-fn run_release_wrapper(
-    root: &std::path::Path,
-    script_name: &str,
-    args: &[&str],
-) -> (std::process::Output, String) {
-    let scripts = install_release_wrapper_scripts(root);
-    let (shim_bin, log_path) = install_effigy_cargo_shim(root);
-    let path = format!(
-        "{}:{}",
-        shim_bin.display(),
-        std::env::var("PATH").expect("PATH")
-    );
-    let output = Command::new("bash")
-        .arg(scripts.join(script_name))
-        .args(args)
-        .current_dir(root)
-        .env("NO_COLOR", "1")
-        .env("PATH", path)
-        .output()
-        .expect("run wrapper script");
-    let log = fs::read_to_string(log_path).unwrap_or_default();
-    (output, log)
 }
 
 fn run_cli_command_with_input(
@@ -3995,52 +3874,6 @@ fn cli_release_gates_json_mode_stops_after_first_failure() {
 }
 
 #[test]
-fn cli_release_gate_wrapper_matches_builtin_no_tag_path() {
-    let root = temp_workspace("cli-release-gate-wrapper-no-tag");
-    fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"fixture\"\nversion = \"0.2.4\"\nedition = \"2021\"\n",
-    )
-    .expect("write cargo manifest");
-    fs::write(
-        root.join("CHANGELOG.md"),
-        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- Validate gate wrapper parity\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
-    )
-    .expect("write changelog");
-    fs::write(
-        root.join("effigy.toml"),
-        "[release]\n[release.gates]\nformat = \"printf format-ok\"\nsmoke = \"printf smoke-ok >&2\"\n",
-    )
-    .expect("write manifest");
-
-    let builtin_output = run_json_cli_command(&root, &["release", "gates"]);
-    let builtin = parse_stdout_json(&builtin_output);
-    assert!(
-        builtin_output.status.success(),
-        "builtin gates should succeed"
-    );
-    assert_eq!(builtin["result"]["passed"], true);
-    assert_eq!(builtin["result"]["configured_gate_count"], 2);
-
-    let (wrapper_output, cargo_log) = run_release_wrapper(&root, "check-release-gates.sh", &[]);
-    assert!(wrapper_output.status.success(), "wrapper should succeed");
-    let stdout = String::from_utf8(wrapper_output.stdout).expect("utf8 wrapper stdout");
-    assert!(stdout.contains("[check] release gates"), "got: {stdout}");
-    assert!(stdout.contains("Release Gates"), "got: {stdout}");
-    assert!(
-        stdout.contains("[info] skipping tag install validation (no --tag provided)"),
-        "got: {stdout}"
-    );
-    assert!(
-        stdout.contains("[ok] release gates passed"),
-        "got: {stdout}"
-    );
-
-    let lines = cargo_log.lines().collect::<Vec<_>>();
-    assert_eq!(lines, vec![format!("release gates --repo {}", root.display())]);
-}
-
-#[test]
 fn cli_release_verify_install_json_mode_installs_and_checks_tagged_binary() {
     let root = temp_workspace("cli-release-verify-install-json-success");
     let repo = temp_workspace("cli-release-verify-install-repo");
@@ -4082,56 +3915,6 @@ fn cli_release_verify_install_json_mode_installs_and_checks_tagged_binary() {
         "installed binary completion candidates check"
     );
     assert_eq!(results[6]["passed"], true);
-}
-
-#[test]
-fn cli_release_verify_install_wrapper_matches_builtin_tagged_path() {
-    let root = temp_workspace("cli-release-verify-install-wrapper-success");
-    let repo = temp_workspace("cli-release-verify-install-wrapper-repo");
-    let repo_url = write_fake_effigy_install_repo(&repo, "v0.1.0");
-
-    let builtin_output = run_json_cli_command(
-        &root,
-        &[
-            "release",
-            "verify-install",
-            "--tag",
-            "v0.1.0",
-            "--repo-url",
-            &repo_url,
-        ],
-    );
-    let builtin = parse_stdout_json(&builtin_output);
-    assert!(
-        builtin_output.status.success(),
-        "builtin verify-install should succeed"
-    );
-    assert_eq!(builtin["result"]["verified"], true);
-    assert_eq!(builtin["result"]["configured_check_count"], 7);
-
-    let (wrapper_output, cargo_log) = run_release_wrapper(
-        &root,
-        "check-release-install-from-tag.sh",
-        &["--tag", "v0.1.0", "--repo-url", &repo_url],
-    );
-    assert!(wrapper_output.status.success(), "wrapper should succeed");
-    let stdout = String::from_utf8(wrapper_output.stdout).expect("utf8 wrapper stdout");
-    assert!(
-        stdout.contains("Release Install Verification"),
-        "got: {stdout}"
-    );
-    assert!(stdout.contains("Tag: v0.1.0"), "got: {stdout}");
-    assert!(stdout.contains("Verified: yes"), "got: {stdout}");
-
-    let lines = cargo_log.lines().collect::<Vec<_>>();
-    assert_eq!(
-        lines,
-        vec![format!(
-            "release verify-install --repo {} --tag v0.1.0 --repo-url {}",
-            root.display(),
-            repo_url
-        )]
-    );
 }
 
 #[test]
@@ -5143,70 +4926,6 @@ fn cli_release_prepare_yes_json_mode_syncs_configured_cargo_lock() {
     assert!(cargo_toml.contains("version = \"0.2.5\""));
     assert!(changelog.contains("## [0.2.5] - "));
     assert_ne!(lock_before, lock_after, "Cargo.lock should be regenerated");
-}
-
-#[test]
-fn cli_release_prepare_yes_matches_prepare_release_script_outputs_on_cargo_fixture() {
-    if !cfg!(target_os = "macos") {
-        return;
-    }
-
-    let effigy_root = temp_workspace("cli-release-prepare-effigy-parity");
-    let script_root = temp_workspace("cli-release-prepare-script-parity");
-    write_cargo_release_prepare_fixture(&effigy_root, true);
-    write_cargo_release_prepare_fixture(&script_root, true);
-    cargo_check_quiet(&effigy_root);
-    cargo_check_quiet(&script_root);
-
-    let prepare_script = install_prepare_release_script(&script_root);
-    let script_output = Command::new("bash")
-        .arg(&prepare_script)
-        .arg("--apply")
-        .current_dir(&script_root)
-        .env("TZ", "UTC")
-        .output()
-        .expect("run prepare-release script");
-    assert!(
-        script_output.status.success(),
-        "prepare-release.sh should succeed: {script_output:?}"
-    );
-
-    let effigy_output = run_json_cli_command(&effigy_root, &["release", "prepare", "--yes"]);
-    let parsed = parse_stdout_json(&effigy_output);
-    assert!(effigy_output.status.success());
-    assert_eq!(parsed["result"]["prepared"], true);
-
-    let effigy_cargo =
-        fs::read_to_string(effigy_root.join("Cargo.toml")).expect("read effigy cargo");
-    let script_cargo =
-        fs::read_to_string(script_root.join("Cargo.toml")).expect("read script cargo");
-    let effigy_changelog =
-        fs::read_to_string(effigy_root.join("CHANGELOG.md")).expect("read effigy changelog");
-    let script_changelog =
-        fs::read_to_string(script_root.join("CHANGELOG.md")).expect("read script changelog");
-    let effigy_lock = fs::read_to_string(effigy_root.join("Cargo.lock")).expect("read effigy lock");
-    let script_lock = fs::read_to_string(script_root.join("Cargo.lock")).expect("read script lock");
-
-    assert!(effigy_cargo.contains("version = \"0.2.5\""));
-    assert!(script_cargo.contains("version = \"0.2.5\""));
-
-    let effigy_parsed = changelog::parse(&effigy_changelog).expect("parse effigy changelog");
-    let script_parsed = changelog::parse(&script_changelog).expect("parse script changelog");
-    assert_eq!(
-        changelog::extract_version(&effigy_parsed, "0.2.5"),
-        changelog::extract_version(&script_parsed, "0.2.5")
-    );
-    assert!(effigy_parsed.unreleased().is_some());
-    assert!(script_parsed.unreleased().is_some());
-    assert_eq!(
-        effigy_parsed
-            .latest_version()
-            .and_then(|release| release.version.clone()),
-        script_parsed
-            .latest_version()
-            .and_then(|release| release.version.clone())
-    );
-    assert_eq!(effigy_lock, script_lock);
 }
 
 #[test]

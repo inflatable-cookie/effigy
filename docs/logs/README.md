@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/15-013500-release-wrapper-retirement-and-native-cutover.md`](./2026-04/15-013500-release-wrapper-retirement-and-native-cutover.md)
 - [`2026-04/15-004500-effigy-wrapper-convergence-boundary-implementation.md`](./2026-04/15-004500-effigy-wrapper-convergence-boundary-implementation.md)
 - [`2026-04/15-001300-post-release-wrapper-rhai-slice-decision.md`](./2026-04/15-001300-post-release-wrapper-rhai-slice-decision.md)
 - [`2026-04/15-000500-effigy-rhai-release-wrapper-cluster-implementation.md`](./2026-04/15-000500-effigy-rhai-release-wrapper-cluster-implementation.md)

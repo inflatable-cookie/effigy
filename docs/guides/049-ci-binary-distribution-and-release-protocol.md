@@ -221,34 +221,10 @@ Current command surface:
 - `effigy release verify-install` is available as the built-in tag-install
   validation command. It installs the tagged binary from git into a temporary
   root and checks the installed binary against a fixture repo before succeeding.
-- `scripts/check-release-gates.sh` and
-  `scripts/check-release-install-from-tag.sh` are now compatibility wrappers
-  over the built-in `effigy release gates` and `effigy release verify-install`
-  surfaces. Their operator logic now lives in file-backed Rhai scripts while
-  the executable `.sh` files remain as compatibility launchers. They remain
-  for migration safety, not as the preferred operator entrypoints, and their
-  no-tag/tagged paths are covered by parity tests against the built-in release
-  commands.
-- `scripts/prepare-release.sh` is also a compatibility fallback. Keep it
-  available as a backup path until maintainers explicitly retire it under the
-  release-wrapper criteria below.
-- Release-wrapper retirement criteria for `scripts/prepare-release.sh`,
-  `scripts/check-release-gates.sh`, and
-  `scripts/check-release-install-from-tag.sh`:
-  - at least two consecutive real Effigy releases completed through the built-in
-    `effigy release ...` flow without falling back to the wrapper path
-  - the corresponding hosted workflows and install validation checks stayed
-    green on those releases
-  - no active CI, docs, or downstream operator contract still requires the
-    script path as the primary entrypoint
-- Some shell entrypoints remain as compatibility launchers even though their
-  real logic now lives in Rhai-backed scripts. That currently includes
-  `scripts/check-release-smoke.sh` and `scripts/install-local-bin-links.sh`.
 - Permanent shell boundaries are different: keep
   `scripts/check-distribution-first-publish.sh`,
-  `scripts/check-linux-glibc-floor.sh`, `scripts/effigy-dev`, and
-  `scripts/prepare-release.sh` unless their external-binary, platform-tooling,
-  or legacy-backstop responsibilities change materially.
+  `scripts/check-linux-glibc-floor.sh`, and `scripts/effigy-dev` unless their
+  external-binary or platform-tooling responsibilities change materially.
 - The built-in release flow has now completed local rehearsal, hosted
   rehearsal, and a real production Effigy release through the built-in
   prepare/execute path, including real GitHub tag-triggered workflow execution.
@@ -349,19 +325,12 @@ Current command surface:
      to perform the irreversible release step non-interactively. If push fails,
      Effigy keeps the prepared state file and refuses to re-tag on retry.
    - Run `effigy release verify-install --tag <TAG> [--repo-url <URL>]` when
-     you need the built-in equivalent of release tag install validation before
-     retiring the legacy shell helper.
-   - The legacy shell entrypoints still work, but they now delegate to the
-     built-in release commands. Prefer the built-ins directly for manual runs so
-     validation and operator output stay on the supported path.
+     you need tag-install validation.
    - Treat the built-in release previews as the source of truth for version
      selection:
      - `effigy release status --check-gates`
      - `effigy release simulate`
      - `effigy release prepare --plan`
-   - Use `./scripts/prepare-release.sh` only as a backup compatibility path
-     when an external tool or migration drill explicitly requires the legacy
-     script entrypoint.
    - If the human specifies a version, use it.
    - If the human says "patch" or "minor", compute the next version from the
      current release version and changelog state surfaced by the built-in
@@ -380,9 +349,6 @@ Current command surface:
    - Review versioned install examples in user-facing docs, especially the root
      `README.md`, and refresh any explicit release tags so the front door does
      not lag the newly prepared version.
-   - Use `./scripts/prepare-release.sh --apply` only as a backup compatibility
-     path when the built-in command cannot be used for migration or external
-     tooling reasons.
    - Review the changes. If the human specified a different version than the
      built-in suggestion, use the built-in custom-version path instead:
      `effigy release prepare --yes --check-gates --version X.Y.Z`
@@ -399,8 +365,7 @@ Current command surface:
 4. **Run release gates.**
    - Run `effigy release gates` when the repo has `[release.gates]` configured
      and you want the built-in sequential fail-fast gate runner.
-   - Otherwise execute `effigy release gates` (or the compatibility
-     fallback `cargo qa-release` / underlying scripts).
+   - Otherwise execute `effigy release gates` (or `cargo qa-release`).
    - All gates must pass. If any fail, fix the issue and re-run.
    - Do not proceed until gates pass cleanly.
 
@@ -424,7 +389,7 @@ Current command surface:
 
 - Treat the release gate pipeline as the single source of truth for publish
   readiness
-- Use `effigy release gates` (or the underlying scripts) to validate before
+- Use `effigy release gates` to validate before
   any release action
 - Reference exact version numbers, never floating references
 - Update consumer CI snippets to use the pattern in Section 5a
@@ -451,7 +416,7 @@ Current command surface:
 ### 7c) What Agents May Do Autonomously
 
 - Read and reference release documentation
-- Run release gate checks locally (`effigy release gates`, smoke scripts)
+- Run release gate checks locally (`effigy release gates`, `smoke:release`)
 - Draft release notes for human review
 - Use `effigy changelog extract` as the preferred release-note baseline
   generator before any workflow-level cutover
@@ -476,10 +441,8 @@ Workflow changes still require explicit human approval.
 The release command surface is shipped in the codebase. The remaining open work
 in this protocol is intentionally human-gated adoption work:
 
-- deciding when to retire `scripts/prepare-release.sh` and
-  `scripts/check-release-gates.sh`
-- deciding whether any remaining wrapper-oriented docs should be reduced now
-  that the built-in workflow is live
+- keeping release docs, gate config, and operator guidance pointed at the
+  built-in release commands
 - continuing release monitoring and adoption follow-through after the first
   production built-in release
 
