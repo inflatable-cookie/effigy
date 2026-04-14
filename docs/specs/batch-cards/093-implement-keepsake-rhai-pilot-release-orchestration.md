@@ -1,6 +1,6 @@
 # 093 Implement Keepsake Rhai Pilot Release Orchestration
 
-Status: ready
+Status: superseded
 Updated: 2026-04-14
 Roadmap: `g02.004`
 Spec: `docs/specs/004-rust-native-scripting-strict-lane.md`
@@ -43,6 +43,6 @@ into the heavier REAPER smoke wrappers.
 
 ## Next Task
 
-After this batch, decide whether the current Rhai host API is now sufficient
-for broader external migration or whether the next slice must add one more
-bounded capability before REAPER/Jetstream-class orchestration is honest.
+Keepsake is temporarily deferred while parallel Windows-VM work is active there.
+Return to this card only after the external-repo boundary is safe again or a
+later decision explicitly revives the pilot.
