@@ -89,9 +89,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`083-prepare-demo-release-readiness-checkpoint.md`](./083-prepare-demo-release-readiness-checkpoint.md) (complete)
 - [`084-decide-demo-release-execution-readiness.md`](./084-decide-demo-release-execution-readiness.md) (complete)
 - [`085-execute-demo-release-protocol.md`](./085-execute-demo-release-protocol.md) (complete)
-- [`086-decide-rust-native-scripting-boundary-and-pilot-slice.md`](./086-decide-rust-native-scripting-boundary-and-pilot-slice.md) (ready)
+- [`086-decide-rust-native-scripting-boundary-and-pilot-slice.md`](./086-decide-rust-native-scripting-boundary-and-pilot-slice.md) (complete)
+- [`087-implement-rhai-script-step-foundation.md`](./087-implement-rhai-script-step-foundation.md) (ready)
 
 ## Next Task
 
-Execute the active ready card for `g02.004` to decide the Rhai boundary and
-pilot slice for Rust-first repos.
+Execute the active ready card for `g02.004` to implement the Rhai script-step
+foundation and migrate one small Effigy shell-glue task as pilot proof.

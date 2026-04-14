@@ -1,6 +1,6 @@
 # 086 Decide Rust-Native Scripting Boundary And Pilot Slice
 
-Status: ready
+Status: complete
 Updated: 2026-04-14
 Roadmap: `g02.004`
 Spec: `docs/specs/004-rust-native-scripting-strict-lane.md`
@@ -44,6 +44,6 @@ bounded pilot slice for Rust-first repos.
 
 ## Next Task
 
-If the boundary settles cleanly, open the first implementation card for a
-minimal Rhai-backed Effigy script step aimed at replacing shell glue in
-Rust-first repos.
+The boundary settled cleanly. Use
+[`087-implement-rhai-script-step-foundation.md`](./087-implement-rhai-script-step-foundation.md)
+next.
