@@ -95,9 +95,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`089-implement-effigy-rhai-dogfooding-cluster.md`](./089-implement-effigy-rhai-dogfooding-cluster.md) (complete)
 - [`090-decide-post-effigy-rhai-dogfooding-slice.md`](./090-decide-post-effigy-rhai-dogfooding-slice.md) (complete)
 - [`091-implement-rhai-long-running-lifecycle-support.md`](./091-implement-rhai-long-running-lifecycle-support.md) (complete)
-- [`092-decide-post-rhai-long-running-lifecycle-slice.md`](./092-decide-post-rhai-long-running-lifecycle-slice.md) (ready)
+- [`092-decide-post-rhai-long-running-lifecycle-slice.md`](./092-decide-post-rhai-long-running-lifecycle-slice.md) (complete)
+- [`093-implement-keepsake-rhai-pilot-release-orchestration.md`](./093-implement-keepsake-rhai-pilot-release-orchestration.md) (ready)
 
 ## Next Task
 
-Execute the active ready card for `g02.004` to decide the next bounded Rhai
-migration slice after the shipped long-running lifecycle support.
+Execute the active ready card for `g02.004` to run the first external Rhai
+pilot in Keepsake.

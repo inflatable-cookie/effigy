@@ -1,6 +1,6 @@
 # 092 Decide Post-Rhai Long-Running Lifecycle Slice
 
-Status: ready
+Status: complete
 Updated: 2026-04-14
 Roadmap: `g02.004`
 Spec: `docs/specs/004-rust-native-scripting-strict-lane.md`

@@ -40,17 +40,17 @@ The active strict lane is:
   Python linger by inertia
 
 This lane now has a shipped script-step foundation, a first substantial Effigy
-dogfooding cluster, and one honest stop-aware long-running Rhai demo. The next
-question is whether Effigy dogfooding is now sufficient to widen into the first
-external pilot.
+dogfooding cluster, one honest stop-aware long-running Rhai demo, and an
+explicit widening decision. The next question is whether the first external
+pilot lands cleanly or exposes the next real host-API gap.
 
 ## Current Posture
 
 `strict-ready`
 
-The long-running lifecycle slice is shipped. The next valid move is the
-post-lifecycle decision card so the lane can choose whether to stay inside
-Effigy dogfooding or widen into the first external pilot.
+The long-running lifecycle slice is shipped and the widening decision is made.
+The next valid move is the first bounded Keepsake pilot, not another general
+debate about scripting policy.
 
 ## Batch Model
 
@@ -79,5 +79,5 @@ for the current mixed-runtime script surfaces.
 
 ## Next Task
 
-Execute the active `g02.004` ready card to decide the next bounded migration
-slice after the shipped long-running Rhai lifecycle support.
+Execute the active `g02.004` ready card to run the first external Rhai pilot in
+Keepsake through the bounded release-orchestration migration.
