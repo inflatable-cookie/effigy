@@ -241,10 +241,14 @@ Current command surface:
     green on those releases
   - no active CI, docs, or downstream operator contract still requires the
     script path as the primary entrypoint
+- Some shell entrypoints remain as compatibility launchers even though their
+  real logic now lives in Rhai-backed scripts. That currently includes
+  `scripts/check-release-smoke.sh` and `scripts/install-local-bin-links.sh`.
 - Permanent shell boundaries are different: keep
-  `scripts/check-release-smoke.sh`, `scripts/check-distribution-first-publish.sh`,
-  `scripts/effigy-dev`, and `scripts/install-local-bin-links.sh` unless their
-  external-binary or local-machine responsibilities change materially.
+  `scripts/check-distribution-first-publish.sh`,
+  `scripts/check-linux-glibc-floor.sh`, `scripts/effigy-dev`, and
+  `scripts/prepare-release.sh` unless their external-binary, platform-tooling,
+  or legacy-backstop responsibilities change materially.
 - The built-in release flow has now completed local rehearsal, hosted
   rehearsal, and a real production Effigy release through the built-in
   prepare/execute path, including real GitHub tag-triggered workflow execution.

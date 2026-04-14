@@ -19,5 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to finish the remaining Effigy-only wrapper
-convergence work while the first external pilot boundary is still unsafe.
+Use the active spec lane to decide whether the Rhai lane should now pause
+cleanly on the shipped Effigy dogfooding boundary until the first external
+pilot becomes safe again.

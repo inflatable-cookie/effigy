@@ -1,6 +1,6 @@
 # 096 Implement Effigy Wrapper Convergence Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-15
 Roadmap: `g02.004`
 Spec: `docs/specs/004-rust-native-scripting-strict-lane.md`
@@ -49,6 +49,5 @@ wrapper surface, so the repo cleanly distinguishes:
 
 ## Next Task
 
-After this batch, decide whether the Effigy Rhai dogfooding lane is complete
-enough to pause on a clean internal boundary until the first external pilot is
-safe again.
+Decide whether the Effigy Rhai dogfooding lane is complete enough to pause on a
+clean internal boundary until the first external pilot is safe again.
