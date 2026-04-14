@@ -39,20 +39,20 @@ The active strict lane is:
 - make Jetstream's “full migration target” posture explicit instead of letting
   Python linger by inertia
 
-This lane now has a shipped script-step foundation, a first substantial Effigy
-dogfooding cluster, and one honest stop-aware long-running Rhai demo. The
-first external pilot was selected, then temporarily deferred because the target
-repo is actively changing elsewhere. The next question is whether one more
-Effigy-only operator-facing batch can broaden dogfooding enough to reopen that
-external boundary cleanly.
+This lane now has a shipped script-step foundation, a substantial Effigy
+dogfooding surface across tasks, demos, long-running lifecycle, and release
+compatibility wrappers. The first external pilot was selected, then temporarily
+deferred because the target repo is actively changing elsewhere. The next
+question is whether this broadened Effigy-only dogfooding is now enough to
+reopen that external boundary cleanly.
 
 ## Current Posture
 
 `strict-ready`
 
-The Keepsake pilot is temporarily deferred. The next valid move is the bounded
-Effigy-only release-wrapper cluster, not a stale external pilot and not another
-general debate about scripting policy.
+The Keepsake pilot is temporarily deferred. The release-wrapper cluster is now
+shipped. The next valid move is the post-wrapper decision card, not a stale
+external pilot and not another general debate about scripting policy.
 
 ## Batch Model
 
@@ -81,5 +81,5 @@ for the current mixed-runtime script surfaces.
 
 ## Next Task
 
-Execute the active `g02.004` ready card to migrate the Effigy release-wrapper
-cluster onto Rhai while the external pilot boundary is temporarily unsafe.
+Execute the active `g02.004` ready card to decide whether the broadened Effigy
+dogfooding surface is now enough to reopen the external pilot boundary.

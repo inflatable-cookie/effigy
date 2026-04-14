@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/15-000500-effigy-rhai-release-wrapper-cluster-implementation.md`](./2026-04/15-000500-effigy-rhai-release-wrapper-cluster-implementation.md)
 - [`2026-04/14-235900-keepsake-pilot-deferral-recovery.md`](./2026-04/14-235900-keepsake-pilot-deferral-recovery.md)
 - [`2026-04/14-235200-post-rhai-long-running-lifecycle-slice-decision.md`](./2026-04/14-235200-post-rhai-long-running-lifecycle-slice-decision.md)
 - [`2026-04/14-233500-rhai-long-running-lifecycle-support-implementation.md`](./2026-04/14-233500-rhai-long-running-lifecycle-support-implementation.md)

@@ -6919,11 +6919,10 @@ mod tests {
 
         let gate_script = std::fs::read_to_string(root.join("scripts/check-release-gates.sh"))
             .expect("read gate script");
-        assert!(gate_script.contains("release gates --repo"));
-        assert!(gate_script.contains("release verify-install --repo"));
-        assert!(gate_script.contains("--tag"));
-        assert!(gate_script.contains("--repo-url"));
-        assert!(gate_script.contains("skipping tag install validation"));
+        assert!(gate_script.contains("__rhai-step"));
+        assert!(gate_script.contains("scripts/rhai/check-release-gates.rhai"));
+        assert!(gate_script.contains("--repo-root"));
+        assert!(gate_script.contains("--task-name"));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -6946,7 +6945,8 @@ mod tests {
         let verify_script =
             std::fs::read_to_string(root.join("scripts/check-release-install-from-tag.sh"))
                 .expect("read verify-install script");
-        assert!(verify_script.contains("release verify-install"));
+        assert!(verify_script.contains("__rhai-step"));
+        assert!(verify_script.contains("scripts/rhai/check-release-install-from-tag.rhai"));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

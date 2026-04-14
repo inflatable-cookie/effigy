@@ -112,8 +112,8 @@ The key boundary is now settled:
   - frontend/build-tool replacement
   - full Python-analysis replacement in the first slice
 
-The remaining active question is whether one more Effigy-only operator-facing
-dogfooding batch should land before the first external pilot is reopened.
+The remaining active question is whether the broadened Effigy-only dogfooding
+surface is now enough to reopen the first external pilot.
 
 ## Migration Classification
 
@@ -167,6 +167,5 @@ This milestone is ready to execute only when Effigy has:
 
 ## Next Task
 
-Use the active `g02.004` strict lane to keep broadening Effigy dogfooding while
-the external pilot is temporarily deferred, then reopen the Keepsake boundary
-from a fresh ready card.
+Use the active `g02.004` strict lane to decide whether the current Effigy-only
+dogfooding breadth is sufficient to reopen the external pilot boundary.

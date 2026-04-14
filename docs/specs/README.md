@@ -19,6 +19,5 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to keep Rhai dogfooding moving inside Effigy while the
-first external pilot is temporarily deferred, then reopen the external boundary
-from a clean ready card.
+Use the active spec lane to decide whether the broadened Effigy-only Rhai
+dogfooding surface is now enough to reopen the first external pilot boundary.

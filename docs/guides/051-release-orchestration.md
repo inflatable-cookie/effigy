@@ -389,10 +389,10 @@ Recommended migration direction:
 
 For Effigy itself:
 
-- `scripts/check-release-gates.sh` is now a compatibility wrapper over built-in
-  release commands
+- `scripts/check-release-gates.sh` is now a compatibility launcher into a
+  Rhai-backed wrapper that delegates to the built-in release commands
 - `scripts/check-release-install-from-tag.sh` is now a compatibility wrapper
-  over `effigy release verify-install`
+  launcher into a Rhai-backed wrapper over `effigy release verify-install`
 - `scripts/prepare-release.sh` still exists as a compatibility/backstop path
   until the wrapper-retirement criteria in guide `049` are satisfied
 - `scripts/check-release-smoke.sh` remains an intentional binary-artifact smoke
