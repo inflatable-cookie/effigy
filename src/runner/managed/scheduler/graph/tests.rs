@@ -8,9 +8,11 @@ fn command_step(run: &str) -> ManifestManagedRunStep {
 }
 
 fn table_step(id: Option<&str>, depends_on: &[&str]) -> ManifestManagedRunStep {
-    ManifestManagedRunStep::Step(ManifestManagedRunStepTable {
+    ManifestManagedRunStep::Step(Box::new(ManifestManagedRunStepTable {
         run: Some("printf ok".to_owned()),
         task: None,
+        rhai: None,
+        rhai_file: None,
         env: None,
         env_file: None,
         id: id.map(str::to_owned),
@@ -19,7 +21,7 @@ fn table_step(id: Option<&str>, depends_on: &[&str]) -> ManifestManagedRunStep {
         retry: None,
         retry_delay_ms: None,
         fail_fast: None,
-    })
+    }))
 }
 
 #[test]

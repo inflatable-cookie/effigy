@@ -37,7 +37,7 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
                     std::process::exit(1);
                 }
             }
-            if context.suppress_header {
+            if context.emit_json_envelope {
                 emit_json_envelope_error(
                     1,
                     context.command_kind,

@@ -57,7 +57,7 @@ pub(in crate::runner) enum ManifestManagedRun {
 #[serde(untagged)]
 pub(in crate::runner) enum ManifestManagedRunStep {
     Command(String),
-    Step(ManifestManagedRunStepTable),
+    Step(Box<ManifestManagedRunStepTable>),
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -67,6 +67,10 @@ pub(in crate::runner) struct ManifestManagedRunStepTable {
     pub(in crate::runner) run: Option<String>,
     #[serde(default)]
     pub(in crate::runner) task: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) rhai: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) rhai_file: Option<String>,
     #[serde(default)]
     pub(in crate::runner) env: Option<ManifestRunStepEnv>,
     #[serde(default)]

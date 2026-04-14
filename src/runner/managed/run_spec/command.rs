@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use serde_json;
+
 use super::super::super::util::shell_quote;
 use super::RunSpecContext;
 use crate::runner::error::RunnerError;
@@ -15,6 +17,53 @@ pub(super) fn render_task_command(command: &str, context: RunSpecContext<'_>) ->
 
 pub(super) fn render_step_command(command: &str, context: RunSpecContext<'_>) -> String {
     render_command_template(command, context.repo_root, context.args_rendered)
+}
+
+pub(super) fn render_rhai_step_invocation(
+    context: RunSpecContext<'_>,
+    inline_script: Option<&str>,
+    file_script: Option<&str>,
+) -> Result<String, RunnerError> {
+    let executable = resolve_effigy_invocation_prefix()?;
+    let args_json = serde_json::to_string(context.args_raw)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let mut env_pairs = vec![
+        (
+            "EFFIGY_INTERNAL_SUPPRESS_HEADER",
+            shell_quote("1"),
+        ),
+        (
+            "EFFIGY_RHAI_ARGS_JSON",
+            shell_quote(&args_json),
+        ),
+        (
+            "EFFIGY_RHAI_TASK_NAME",
+            shell_quote(context.task_name),
+        ),
+        (
+            "EFFIGY_RHAI_REPO_ROOT",
+            shell_quote(&context.repo_root.display().to_string()),
+        ),
+    ];
+
+    let command = if let Some(script) = inline_script {
+        env_pairs.push(("EFFIGY_RHAI_INLINE", shell_quote(script)));
+        "__rhai-step".to_owned()
+    } else if let Some(path) = file_script {
+        format!("__rhai-step --file {}", shell_quote(path))
+    } else {
+        return Err(RunnerError::task_invocation(format!(
+            "task `{}` Rhai run step is invalid: missing both `rhai` and `rhai_file`",
+            context.task_name
+        )));
+    };
+
+    let env_rendered = env_pairs
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<String>>()
+        .join(" ");
+    Ok(format!("env {env_rendered} {executable} {command}"))
 }
 
 pub(super) fn render_builtin_task_reference_invocation(

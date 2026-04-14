@@ -79,8 +79,24 @@ pub enum Command {
     Tasks(TasksArgs),
     /// Manifest-defined task invocation.
     Task(TaskInvocation),
+    /// Internal Rhai-backed script runner used by manifest steps.
+    #[doc(hidden)]
+    InternalRhai(InternalRhaiArgs),
     /// Help topic request.
     Help(HelpTopic),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
+pub struct InternalRhaiArgs {
+    pub source: InternalRhaiSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
+pub enum InternalRhaiSource {
+    Inline,
+    File(PathBuf),
 }
 
 /// Help topics supported by the built-in help renderer.

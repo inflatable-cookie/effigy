@@ -4,6 +4,7 @@ use super::super::diagnostics::SchemaContext;
 use super::super::tables::validate_allowed_keys;
 use super::super::values::{
     validate_optional_boolean_field, validate_optional_integer_field,
+    validate_optional_non_empty_string_field,
     validate_optional_non_empty_string_or_array_field,
     validate_optional_non_empty_string_or_table_string_values_field,
     validate_optional_string_array_field,
@@ -23,6 +24,8 @@ pub(in crate::runner::doctor::manifest::schema) fn validate_run_step_table(
         &[
             "run",
             "task",
+            "rhai",
+            "rhai_file",
             "env",
             "env_file",
             "id",
@@ -56,6 +59,16 @@ pub(in crate::runner::doctor::manifest::schema) fn validate_run_step_table(
         context,
         step_table.get("fail_fast"),
         &format!("{step_path}.fail_fast"),
+    );
+    validate_optional_non_empty_string_field(
+        context,
+        step_table.get("rhai"),
+        &format!("{step_path}.rhai"),
+    );
+    validate_optional_non_empty_string_field(
+        context,
+        step_table.get("rhai_file"),
+        &format!("{step_path}.rhai_file"),
     );
     validate_env_table(context, &step_path, step_table.get("env"));
     validate_env_file(context, &step_path, step_table.get("env_file"));

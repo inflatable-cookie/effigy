@@ -1460,6 +1460,7 @@ fn render_demo_run_command(
             task_env_file: None,
             env_profiles: &loaded.manifest.env,
             args_rendered: "",
+            args_raw: &[],
             repo_root,
             catalogs: &catalogs,
             task_scope_cwd: repo_root,

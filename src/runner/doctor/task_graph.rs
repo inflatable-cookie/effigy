@@ -33,6 +33,7 @@ where
                     match step {
                         ManifestManagedRunStep::Command(command) => visit(command),
                         ManifestManagedRunStep::Step(table) => {
+                            let table = table.as_ref();
                             if let Some(run) = table.run.as_ref() {
                                 visit(run);
                             }
@@ -59,6 +60,7 @@ where
             ManifestManagedRun::Sequence(steps) => {
                 for step in steps {
                     if let ManifestManagedRunStep::Step(table) = step {
+                        let table = table.as_ref();
                         if let Some(reference) = table.task.as_deref() {
                             visit(reference);
                         }

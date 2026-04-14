@@ -19,5 +19,5 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to implement the Rhai script-step foundation and
-migrate one small Effigy shell-glue task as pilot proof.
+Use the active spec lane to decide the next Rhai migration slice after the
+script-step foundation.

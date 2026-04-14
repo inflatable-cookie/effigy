@@ -43,6 +43,8 @@ Good fragment shapes:
 - `effigy.docs.toml` for docs policy and docs helper tasks
 - `demos/effigy.demos.toml` for `[demos.*]` entries and tightly related demo
   helpers
+- `scripts/effigy.scripting.toml` for Rhai-backed task clusters in Rust-first
+  repos
 - `effigy.local.toml` for local-only overrides when the repo explicitly wants
   them
 
@@ -134,6 +136,34 @@ Use inline `run = [ ... ]` when the proof sequence belongs to the demo itself.
 
 Keep a separate task only when it is genuinely reusable outside that one demo.
 
+## 5b) Put Rhai Script Clusters In Their Own Fragment
+
+A Rust-first repo can use a focused scripting fragment too:
+
+```toml
+[manifest]
+include = ["scripts/effigy.scripting.toml"]
+```
+
+Then in `scripts/effigy.scripting.toml`:
+
+```toml
+[tasks.link:local]
+run = [{ rhai_file = "scripts/rhai/install-local-bin-links.rhai" }]
+```
+
+This keeps Rhai-backed automation visible without bloating the root manifest or
+reintroducing shell wrappers.
+
+Use this when:
+
+- the repo is Rust-first
+- the scripts are really Effigy-native task glue
+- you want scripting ownership to live under `scripts/`
+
+For the Rhai host API and v1 limits, use
+[`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md).
+
 ## 6) Keep Shared Helpers Shared
 
 Composition is not just about moving things out. It is also about keeping
@@ -183,6 +213,7 @@ After this guide, you should be able to:
 - [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+- [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md)
 
 ## Next Step
 

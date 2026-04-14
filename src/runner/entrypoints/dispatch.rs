@@ -9,6 +9,7 @@ use super::super::docs_command::run_docs;
 use super::super::doctor::run_doctor;
 use super::super::execute::run_manifest_task;
 use super::super::release_command::run_release;
+use super::super::script_command::run_internal_rhai;
 use super::super::tasks_command::run_tasks;
 use crate::runner::error::RunnerError;
 
@@ -25,6 +26,7 @@ pub(super) fn run_command(cmd: Command) -> Result<String, RunnerError> {
         Command::Release(args) => run_release(args),
         Command::Doctor(args) => run_doctor(args),
         Command::Tasks(args) => run_tasks(args),
+        Command::InternalRhai(args) => run_internal_rhai(args),
         Command::Task(task) => run_manifest_task(&task),
     }
 }

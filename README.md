@@ -320,6 +320,12 @@ Use these surfaces before continuing scripting-boundary work:
 - [`docs/specs/README.md`](./docs/specs/README.md)
 - [`docs/contracts/001-working-rules.md`](./docs/contracts/001-working-rules.md)
 
+Current scripting front doors:
+
+- [`docs/guides/061-rhai-script-steps-guide.md`](./docs/guides/061-rhai-script-steps-guide.md)
+- [`docs/guides/059-manifest-composition-guide.md`](./docs/guides/059-manifest-composition-guide.md)
+- [`docs/guides/022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
+
 ## Repository Layout
 
 ```text
@@ -338,5 +344,6 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.004` ready card to implement the Rhai script-step
-foundation and migrate one small Effigy shell-glue task as pilot proof.
+Use the active `g02.004` ready card to decide the next Rhai migration slice
+after the script-step foundation: more Effigy shell-glue migration, a Keepsake
+pilot, or the first Jetstream orchestration migration boundary.

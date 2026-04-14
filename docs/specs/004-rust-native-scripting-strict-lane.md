@@ -39,15 +39,15 @@ The active strict lane is:
 - make Jetstream's “full migration target” posture explicit instead of letting
   Python linger by inertia
 
-This lane does not start implementation until the Rhai boundary and pilot slice
-are explicit.
+This lane now has a shipped script-step foundation. The next question is
+migration order, not whether Effigy should support Rhai at all.
 
 ## Current Posture
 
 `strict-ready`
 
-The Rhai boundary is settled. The next valid move is the first implementation
-slice for the script-step foundation.
+The Rhai foundation is shipped. The next valid move is deciding which migration
+slice should follow it.
 
 ## Batch Model
 
@@ -76,5 +76,5 @@ for the current mixed-runtime script surfaces.
 
 ## Next Task
 
-Execute the active `g02.004` ready card to implement the Rhai script-step
-foundation and migrate one small Effigy shell-glue task as pilot proof.
+Execute the active `g02.004` ready card to decide the next post-foundation Rhai
+migration slice.

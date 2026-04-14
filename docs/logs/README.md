@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/14-121750-rhai-script-step-foundation-implementation.md`](./2026-04/14-121750-rhai-script-step-foundation-implementation.md)
 - [`2026-04/14-193400-rust-native-scripting-boundary-decision.md`](./2026-04/14-193400-rust-native-scripting-boundary-decision.md)
 - [`2026-04/14-191500-rust-native-scripting-lane-activation.md`](./2026-04/14-191500-rust-native-scripting-lane-activation.md)
 - [`2026-04/13-103457-demo-browser-terminal-path-convergence-closeout.md`](./2026-04/13-103457-demo-browser-terminal-path-convergence-closeout.md)
