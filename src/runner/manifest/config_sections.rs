@@ -506,6 +506,50 @@ fn default_bootstrap_child_required() -> bool {
 #[derive(Debug, serde::Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestDistributionConfig {
+    #[serde(default)]
+    pub(in crate::runner) package: Option<ManifestDistributionPackageConfig>,
+    #[serde(default)]
+    pub(in crate::runner) preflight: Option<ManifestDistributionPreflightConfig>,
+    #[serde(default)]
+    pub(in crate::runner) metadata: Option<ManifestDistributionMetadataConfig>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestDistributionPackageConfig {
+    #[serde(default)]
+    pub(in crate::runner) name: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) repo_url: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) brew_formula: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestDistributionPreflightConfig {
+    #[serde(default)]
+    pub(in crate::runner) docs_task: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) smoke_task: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestDistributionMetadataConfig {
+    #[serde(default)]
+    pub(in crate::runner) required_docs: Option<Vec<String>>,
+    #[serde(default)]
+    pub(in crate::runner) required_files: Option<Vec<String>>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
 pub(in crate::runner) struct ManifestReleaseConfig {
     #[serde(default)]
     pub(in crate::runner) version_file: Option<String>,

@@ -120,6 +120,36 @@ pub(super) fn package_manager_lines(profile: ConfigDocProfile) -> Vec<&'static s
     ]
 }
 
+fn distribution_section_comment(profile: ConfigDocProfile) -> &'static str {
+    match profile {
+        ConfigDocProfile::Reference => {
+            "# Optional distribution policy for repos that want to harness Effigy's built-in distribution commands."
+        }
+        ConfigDocProfile::Schema => {
+            "# Optional distribution policy for repos that want to harness Effigy's built-in distribution commands."
+        }
+    }
+}
+
+pub(super) fn distribution_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
+    vec![
+        "[distribution.package]",
+        distribution_section_comment(profile),
+        "name = \"my-tool\"",
+        "repo-url = \"https://github.com/example/my-tool.git\"",
+        "brew-formula = \"example/tap/my-tool\"",
+        "",
+        "[distribution.preflight]",
+        "docs-task = \"qa:docs\"",
+        "smoke-task = \"dist:preflight:smoke\"",
+        "",
+        "[distribution.metadata]",
+        "required-docs = [\"docs/guides/installation.md\", \"docs/guides/release.md\"]",
+        "required-files = [\".github/workflows/release-binaries.yml\", \"scripts/check-linux-glibc-floor.sh\"]",
+        "",
+    ]
+}
+
 fn demos_section_comment(profile: ConfigDocProfile) -> &'static str {
     match profile {
         ConfigDocProfile::Reference => {

@@ -10,19 +10,55 @@ use serde_json::json;
 use toml::Value as TomlValue;
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
+use crate::runner::manifest::{
+    load_task_manifest, ManifestDistributionConfig, ManifestDistributionMetadataConfig,
+    ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
+};
 use crate::{DistributionArgs, DistributionSubcommand};
 
 use super::error::RunnerError;
+
+const DEFAULT_PACKAGE_NAME: &str = "effigy";
+const DEFAULT_REPO_URL: &str = "https://github.com/inflatable-cookie/effigy.git";
+const DEFAULT_BREW_FORMULA: &str = "inflatable-cookie/effigy/effigy";
+const DEFAULT_DOCS_TASK: &str = "qa:docs";
+const DEFAULT_SMOKE_TASK: &str = "dist:preflight:smoke";
+const DEFAULT_REQUIRED_DOCS: [&str; 5] = [
+    "docs/guides/010-path-installation-and-release.md",
+    "docs/guides/014-release-checklist-template.md",
+    "docs/guides/041-distribution-ci-pinning-and-wrapper-migration.md",
+    "docs/guides/042-homebrew-tap-and-release-automation.md",
+    "docs/guides/044-distribution-first-publish-execution-runbook.md",
+];
+const DEFAULT_REQUIRED_FILES: [&str; 2] = [
+    ".github/workflows/release-binaries.yml",
+    "scripts/check-linux-glibc-floor.sh",
+];
+
+#[derive(Debug, Clone)]
+struct EffectiveDistributionPolicy {
+    package_name: String,
+    repo_url: String,
+    brew_formula: String,
+    docs_task: String,
+    smoke_task: String,
+    required_docs: Vec<String>,
+    required_files: Vec<String>,
+}
 
 pub(super) fn run_distribution(args: DistributionArgs) -> Result<String, RunnerError> {
     let cwd = current_working_dir()?;
     let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
     let repo_root = resolved.resolved_root;
+    let distribution_policy = load_distribution_policy(&repo_root)?;
 
     match args.subcommand {
-        DistributionSubcommand::ValidateMetadata { tag } => {
-            run_validate_metadata(&repo_root, tag.as_deref(), args.output_json)
-        }
+        DistributionSubcommand::ValidateMetadata { tag } => run_validate_metadata(
+            &repo_root,
+            &distribution_policy,
+            tag.as_deref(),
+            args.output_json,
+        ),
         DistributionSubcommand::CheckGlibcFloor {
             binary_path,
             max_glibc,
@@ -38,6 +74,7 @@ pub(super) fn run_distribution(args: DistributionArgs) -> Result<String, RunnerE
             output_path,
         } => run_preflight(
             &repo_root,
+            &distribution_policy,
             tag.as_deref(),
             skip_docs,
             skip_smoke,
@@ -55,6 +92,7 @@ pub(super) fn run_distribution(args: DistributionArgs) -> Result<String, RunnerE
             artifacts_dir,
         } => run_first_publish(
             &repo_root,
+            &distribution_policy,
             &tag,
             crate_version.as_deref(),
             &repo_url,
@@ -104,8 +142,8 @@ pub(super) fn run_distribution(args: DistributionArgs) -> Result<String, RunnerE
             &tag,
             &resolve_repo_input(&repo_root, artifacts_dir),
             crate_version.as_deref(),
-            &repo_url,
-            &brew_formula,
+            &effective_repo_url(&distribution_policy, &repo_url),
+            &effective_brew_formula(&distribution_policy, &brew_formula),
             homebrew_executed,
             &log_files,
             args.output_json,
@@ -115,6 +153,7 @@ pub(super) fn run_distribution(args: DistributionArgs) -> Result<String, RunnerE
 
 fn run_preflight(
     repo_root: &Path,
+    distribution_policy: &EffectiveDistributionPolicy,
     tag: Option<&str>,
     skip_docs: bool,
     skip_smoke: bool,
@@ -125,15 +164,15 @@ fn run_preflight(
     let mut smoke_status = "skipped";
 
     if !skip_docs {
-        run_effigy_task(repo_root, "qa:docs")?;
+        run_effigy_task(repo_root, &distribution_policy.docs_task)?;
         docs_status = "ok";
     }
 
-    let _ = run_validate_metadata(repo_root, tag, false)?;
+    let _ = run_validate_metadata(repo_root, distribution_policy, tag, false)?;
     let metadata_status = "ok";
 
     if !skip_smoke {
-        run_effigy_task(repo_root, "dist:preflight:smoke")?;
+        run_effigy_task(repo_root, &distribution_policy.smoke_task)?;
         smoke_status = "ok";
     }
 
@@ -245,6 +284,7 @@ fn run_check_glibc_floor(
 
 fn run_first_publish(
     repo_root: &Path,
+    distribution_policy: &EffectiveDistributionPolicy,
     tag: &str,
     crate_version: Option<&str>,
     repo_url: &str,
@@ -261,6 +301,8 @@ fn run_first_publish(
     }
 
     let crate_version = crate_version.unwrap_or_else(|| tag.trim_start_matches('v'));
+    let repo_url = effective_repo_url(distribution_policy, repo_url);
+    let brew_formula = effective_brew_formula(distribution_policy, brew_formula);
     let (artifacts_dir, cleanup_artifacts_dir) = if let Some(path) = artifacts_dir {
         std::fs::create_dir_all(&path)
             .map_err(|err| RunnerError::task_invocation_failed_write(&path, err))?;
@@ -279,8 +321,8 @@ fn run_first_publish(
         repo_root,
         tag,
         crate_version,
-        repo_url,
-        brew_formula,
+        &repo_url,
+        &brew_formula,
         skip_homebrew,
         &artifacts_dir,
         &work_dir,
@@ -296,6 +338,7 @@ fn run_first_publish(
 
 fn run_validate_metadata(
     repo_root: &Path,
+    distribution_policy: &EffectiveDistributionPolicy,
     tag: Option<&str>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
@@ -335,24 +378,18 @@ fn run_validate_metadata(
         Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$").expect("semver regex");
     let tag_re = Regex::new(r"^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$").expect("tag regex");
 
-    let required_docs = [
-        "docs/guides/010-path-installation-and-release.md",
-        "docs/guides/014-release-checklist-template.md",
-        "docs/guides/041-distribution-ci-pinning-and-wrapper-migration.md",
-        "docs/guides/042-homebrew-tap-and-release-automation.md",
-        "docs/guides/044-distribution-first-publish-execution-runbook.md",
-    ];
-    let required_files = [
-        ".github/workflows/release-binaries.yml",
-        "scripts/check-linux-glibc-floor.sh",
-    ];
+    let required_docs = &distribution_policy.required_docs;
+    let required_files = &distribution_policy.required_files;
     let workflow_path = repo_root.join(".github/workflows/release-binaries.yml");
     let workflow = std::fs::read_to_string(&workflow_path)
         .map_err(|err| RunnerError::task_invocation_failed_read(&workflow_path, err))?;
 
     let mut errors = Vec::new();
-    if name != "effigy" {
-        errors.push(format!("expected package name `effigy`, got `{name}`"));
+    if name != distribution_policy.package_name {
+        errors.push(format!(
+            "expected package name `{}`, got `{name}`",
+            distribution_policy.package_name
+        ));
     }
     if !semver_re.is_match(&version) {
         errors.push(format!("package version is not semver-like: `{version}`"));
@@ -1049,6 +1086,114 @@ fn resolve_repo_input(repo_root: &Path, path: PathBuf) -> PathBuf {
     }
 }
 
+fn load_distribution_policy(repo_root: &Path) -> Result<EffectiveDistributionPolicy, RunnerError> {
+    let manifest_path = repo_root.join("effigy.toml");
+    let distribution = if manifest_path.is_file() {
+        load_task_manifest(&manifest_path)?.distribution
+    } else {
+        None
+    };
+    Ok(EffectiveDistributionPolicy::from_manifest(distribution))
+}
+
+impl EffectiveDistributionPolicy {
+    fn from_manifest(config: Option<ManifestDistributionConfig>) -> Self {
+        let package = config.as_ref().and_then(|config| config.package.as_ref());
+        let preflight = config.as_ref().and_then(|config| config.preflight.as_ref());
+        let metadata = config.as_ref().and_then(|config| config.metadata.as_ref());
+        Self {
+            package_name: package_name_from_config(package),
+            repo_url: repo_url_from_config(package),
+            brew_formula: brew_formula_from_config(package),
+            docs_task: docs_task_from_config(preflight),
+            smoke_task: smoke_task_from_config(preflight),
+            required_docs: required_docs_from_config(metadata),
+            required_files: required_files_from_config(metadata),
+        }
+    }
+}
+
+fn package_name_from_config(config: Option<&ManifestDistributionPackageConfig>) -> String {
+    config
+        .and_then(|config| config.name.as_ref())
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_PACKAGE_NAME.to_owned())
+}
+
+fn repo_url_from_config(config: Option<&ManifestDistributionPackageConfig>) -> String {
+    config
+        .and_then(|config| config.repo_url.as_ref())
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_REPO_URL.to_owned())
+}
+
+fn brew_formula_from_config(config: Option<&ManifestDistributionPackageConfig>) -> String {
+    config
+        .and_then(|config| config.brew_formula.as_ref())
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_BREW_FORMULA.to_owned())
+}
+
+fn docs_task_from_config(config: Option<&ManifestDistributionPreflightConfig>) -> String {
+    config
+        .and_then(|config| config.docs_task.as_ref())
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_DOCS_TASK.to_owned())
+}
+
+fn smoke_task_from_config(config: Option<&ManifestDistributionPreflightConfig>) -> String {
+    config
+        .and_then(|config| config.smoke_task.as_ref())
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_SMOKE_TASK.to_owned())
+}
+
+fn required_docs_from_config(config: Option<&ManifestDistributionMetadataConfig>) -> Vec<String> {
+    config
+        .and_then(|config| config.required_docs.clone())
+        .unwrap_or_else(|| {
+            DEFAULT_REQUIRED_DOCS
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect()
+        })
+}
+
+fn required_files_from_config(config: Option<&ManifestDistributionMetadataConfig>) -> Vec<String> {
+    config
+        .and_then(|config| config.required_files.clone())
+        .unwrap_or_else(|| {
+            DEFAULT_REQUIRED_FILES
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect()
+        })
+}
+
+fn effective_repo_url(distribution_policy: &EffectiveDistributionPolicy, repo_url: &str) -> String {
+    if repo_url == DEFAULT_REPO_URL {
+        distribution_policy.repo_url.clone()
+    } else {
+        repo_url.to_owned()
+    }
+}
+
+fn effective_brew_formula(
+    distribution_policy: &EffectiveDistributionPolicy,
+    brew_formula: &str,
+) -> String {
+    if brew_formula == DEFAULT_BREW_FORMULA {
+        distribution_policy.brew_formula.clone()
+    } else {
+        brew_formula.to_owned()
+    }
+}
+
 fn find_log_by_pattern(artifacts_dir: &Path, pattern: &str) -> Option<PathBuf> {
     let mut matches = std::fs::read_dir(artifacts_dir)
         .ok()?
@@ -1070,7 +1215,9 @@ fn find_log_by_pattern(artifacts_dir: &Path, pattern: &str) -> Option<PathBuf> {
 mod tests {
     use super::{
         command_exists, find_log_by_pattern, run_preflight, run_validate_artifacts,
-        run_validate_metadata, run_write_summary,
+        run_validate_metadata, run_write_summary, EffectiveDistributionPolicy,
+        DEFAULT_BREW_FORMULA, DEFAULT_DOCS_TASK, DEFAULT_PACKAGE_NAME, DEFAULT_REPO_URL,
+        DEFAULT_REQUIRED_DOCS, DEFAULT_REQUIRED_FILES, DEFAULT_SMOKE_TASK,
     };
     use std::fs;
 
@@ -1139,7 +1286,8 @@ mod tests {
     #[test]
     fn current_repo_distribution_metadata_requires_only_workflow_bound_glibc_script() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        run_validate_metadata(root, Some("v0.2.13"), false).expect("metadata should pass");
+        run_validate_metadata(root, &default_distribution_policy(), Some("v0.2.13"), false)
+            .expect("metadata should pass");
         assert!(
             !root
                 .join("scripts/check-distribution-first-publish.sh")
@@ -1156,6 +1304,7 @@ mod tests {
     fn preflight_recommends_native_first_publish_command() {
         let output = run_preflight(
             std::path::Path::new("."),
+            &default_distribution_policy(),
             Some("v0.2.13"),
             true,
             true,
@@ -1190,5 +1339,23 @@ mod tests {
         }
 
         assert!(command_exists(fake_bin.to_str().expect("utf8 path")));
+    }
+
+    fn default_distribution_policy() -> EffectiveDistributionPolicy {
+        EffectiveDistributionPolicy {
+            package_name: DEFAULT_PACKAGE_NAME.to_owned(),
+            repo_url: DEFAULT_REPO_URL.to_owned(),
+            brew_formula: DEFAULT_BREW_FORMULA.to_owned(),
+            docs_task: DEFAULT_DOCS_TASK.to_owned(),
+            smoke_task: DEFAULT_SMOKE_TASK.to_owned(),
+            required_docs: DEFAULT_REQUIRED_DOCS
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
+            required_files: DEFAULT_REQUIRED_FILES
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
+        }
     }
 }

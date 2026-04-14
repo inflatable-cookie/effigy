@@ -40,6 +40,11 @@ The Rhai lane is paused on a clean internal boundary. Native distribution
 cutover is shipped strongly enough that the next valid move is optional
 distribution productization, not more scripting churn.
 
+The first manifest-driven foundation is now shipped for package identity,
+preflight tasks, and metadata requirements. The next valid move is an explicit
+decision on whether to widen internal command coverage or prove the surface in
+one consumer repo.
+
 ## Batch Model
 
 - planning stays in this spec plus the roadmap
@@ -66,6 +71,6 @@ hardcoded release policy.
 
 ## Next Task
 
-Execute the active `g02.005` ready card to implement the minimal
-manifest-driven distribution contract foundation and establish the cross-repo
-docs front door.
+Execute the active `g02.005` ready card to decide whether the next
+distribution slice should widen internal command coverage or move to one
+bounded consumer proof.

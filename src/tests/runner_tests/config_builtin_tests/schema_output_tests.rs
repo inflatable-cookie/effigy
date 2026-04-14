@@ -14,6 +14,9 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
             "Canonical strict-valid effigy.toml schema template",
             "[manifest]",
             "include = [",
+            "[distribution.package]",
+            "repo-url = \"https://github.com/example/my-tool.git\"",
+            "[distribution.preflight]",
             "[demos.login-smoke]",
             "proof = \"Verify the default local login journey succeeds end to end.\"",
             "covers = [\"auth.login\"]",
@@ -41,6 +44,7 @@ fn run_manifest_task_builtin_config_schema_minimal_prints_starter_template() {
         &[
             "Minimal strict-valid effigy.toml starter",
             "[manifest]",
+            "[distribution.package]",
             "[demos.login-smoke]",
             "[package_manager]",
             "[test.runners]",

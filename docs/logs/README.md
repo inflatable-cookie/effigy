@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/14-230500-manifest-driven-distribution-foundation-implementation.md`](./2026-04/14-230500-manifest-driven-distribution-foundation-implementation.md)
 - [`2026-04/14-185601-optional-distribution-surface-planning.md`](./2026-04/14-185601-optional-distribution-surface-planning.md)
 - [`2026-04/14-175313-native-distribution-cutover-and-rhai-boundary.md`](./2026-04/14-175313-native-distribution-cutover-and-rhai-boundary.md)
 - [`2026-04/15-013500-release-wrapper-retirement-and-native-cutover.md`](./2026-04/15-013500-release-wrapper-retirement-and-native-cutover.md)

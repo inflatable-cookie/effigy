@@ -19,7 +19,9 @@ pub(in crate::runner) use composition::{
 };
 pub(super) use config_sections::{
     ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy, ManifestDemoConfig,
-    ManifestDemoMode, ManifestDemoStatus, ManifestDocsPolicyConfig, ManifestEnvSchemaConfig,
+    ManifestDemoMode, ManifestDemoStatus, ManifestDistributionConfig,
+    ManifestDistributionMetadataConfig, ManifestDistributionPackageConfig,
+    ManifestDistributionPreflightConfig, ManifestDocsPolicyConfig, ManifestEnvSchemaConfig,
     ManifestPackageManagerConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
 };
 use task_defs::deserialize_tasks;
@@ -53,6 +55,8 @@ pub(super) struct TaskManifest {
     pub(super) docs_policy: Option<ManifestDocsPolicyConfig>,
     #[serde(default)]
     pub(super) bootstrap: Option<ManifestBootstrapConfig>,
+    #[serde(default)]
+    pub(super) distribution: Option<ManifestDistributionConfig>,
     #[serde(default)]
     pub(super) release: Option<ManifestReleaseConfig>,
     #[serde(default)]

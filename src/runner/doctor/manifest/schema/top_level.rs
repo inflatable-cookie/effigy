@@ -13,6 +13,7 @@ pub(super) fn validate_top_level_keys(
         "demos",
         "docs_policy",
         "bootstrap",
+        "distribution",
         "env",
         "package_manager",
         "release",

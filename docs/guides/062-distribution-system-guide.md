@@ -29,6 +29,35 @@ Some of those commands are already broadly reusable. Others still reflect
 Effigy's self-hosting defaults and are being moved toward a manifest-driven
 optional contract.
 
+## Minimal Manifest Contract
+
+Repos can now start shaping distribution policy in `effigy.toml` with an
+optional `[distribution]` section.
+
+```toml
+[distribution.package]
+name = "my-tool"
+repo-url = "https://github.com/example/my-tool.git"
+brew-formula = "example/tap/my-tool"
+
+[distribution.preflight]
+docs-task = "qa:docs"
+smoke-task = "dist:preflight:smoke"
+
+[distribution.metadata]
+required-docs = ["docs/guides/installation.md", "docs/guides/release.md"]
+required-files = [".github/workflows/release-binaries.yml", "scripts/check-linux-glibc-floor.sh"]
+```
+
+This first contract intentionally stays narrow:
+
+- package identity defaults
+- preflight task names
+- metadata file requirements
+
+That is enough to make `validate-metadata` and `preflight` repo-configurable
+without forcing a full release-orchestration model on every repo.
+
 ## Use Levels
 
 ### Use One Primitive Only

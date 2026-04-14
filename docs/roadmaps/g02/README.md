@@ -15,12 +15,12 @@ Current milestones:
 - [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
 - [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (complete; shipped and released in `v0.2.13`, including the demo registry, browser, live terminal, query/history surfaces, concurrent-runner projection, and real-project consumer proof)
 - [`004-rust-native-scripting-surface-contract.md`](./004-rust-native-scripting-surface-contract.md) (paused; the scripting policy split, Rhai v1 boundary, script-step foundation, long-running lifecycle support, release-wrapper convergence, and native distribution cutover are shipped strongly enough to pause while external pilots are deferred)
-- [`005-optional-distribution-surface-contract.md`](./005-optional-distribution-surface-contract.md) (in progress; native distribution commands now exist, and the next product step is making that surface optional and manifest-driven for other repos)
+- [`005-optional-distribution-surface-contract.md`](./005-optional-distribution-surface-contract.md) (in progress; the first manifest-driven distribution foundation is shipped for package identity, preflight tasks, and metadata requirements, and the next decision is whether to widen command coverage or run a bounded consumer proof)
 
 Active strict planning lane:
 
 - [`../specs/005-optional-distribution-surface-strict-lane.md`](../specs/005-optional-distribution-surface-strict-lane.md)
-- [`../specs/batch-cards/099-implement-manifest-driven-distribution-contract-foundation.md`](../specs/batch-cards/099-implement-manifest-driven-distribution-contract-foundation.md)
+- [`../specs/batch-cards/100-decide-post-distribution-foundation-slice.md`](../specs/batch-cards/100-decide-post-distribution-foundation-slice.md)
 
 Rules:
 
@@ -30,6 +30,6 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.005` ready card to implement the minimal manifest-driven
-distribution contract foundation so native distribution built-ins become a
-reusable optional surface for other repos.
+Use the active `g02.005` ready card to decide whether the optional
+distribution surface should widen internal command coverage first or move to
+one bounded consumer proof.
