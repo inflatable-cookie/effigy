@@ -74,10 +74,14 @@ fn run_manifest_task_run_array_rhai_steps_support_args_and_runtime_helpers() {
         r#"
 let stamp = now_utc();
 let scratch = make_temp_dir("rhai-runtime-helper");
+let pid = process_id().to_string();
 write_file("stamp.txt", stamp);
 write_file("arg.txt", args[0].to_string());
 write_file("scratch.txt", scratch);
 write_lines("lines.txt", ["one", "two"]);
+append_file("append.txt", "alpha\n");
+append_file("append.txt", "beta\n");
+write_file("pid.txt", pid);
 if !path_exists(scratch) {
     throw "scratch dir was not created";
 }
@@ -105,6 +109,12 @@ run = [{ rhai = "scripts/rhai/helpers.rhai" }]
     assert!(stamp.ends_with('Z'), "expected UTC timestamp: {stamp}");
     assert_file_text_equals(&root.join("arg.txt"), "helper-ok");
     assert_file_text_equals(&root.join("lines.txt"), "one\ntwo\n");
+    assert_file_text_equals(&root.join("append.txt"), "alpha\nbeta\n");
+    let pid = fs::read_to_string(root.join("pid.txt")).expect("read pid");
+    assert!(
+        pid.trim().parse::<u32>().is_ok(),
+        "expected numeric pid output: {pid}"
+    );
     let scratch = fs::read_to_string(root.join("scratch.txt")).expect("read scratch dir");
     assert!(
         !std::path::Path::new(scratch.trim()).exists(),

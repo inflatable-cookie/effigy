@@ -15,6 +15,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Extend the first Rhai host API with `now_utc()` and `make_temp_dir(prefix)`,
   so first-party repo automation can stamp artifacts and build short-lived
   working directories without shelling out to `date` or `mktemp`.
+- Extend the Rhai host API with `stop_requested()`, `process_id()`,
+  `sleep_ms(...)`, and `append_file(...)` so long-running repo-local scripts
+  can react cleanly to stop requests, emit heartbeats, and append lifecycle
+  evidence without falling back to shell loops.
 
 ### Changed
 - Migrate Effigy's `link:local` task from a shell script to a file-backed Rhai
@@ -22,8 +26,11 @@ During v0.x, MINOR bumps may include breaking changes.
   operator task instead of a synthetic fixture.
 - Migrate Effigy's `smoke:release` task and `browser-proof-report` demo off
   shell entrypoints and onto file-backed Rhai scripts so the first dogfooding
-  cluster exercises both operator tasks and demo runners while leaving
-  `lifecycle-window` as the honest signal-handling gap for a later Rhai slice.
+  cluster exercises both operator tasks and demo runners.
+- Migrate Effigy's `lifecycle-window` demo from its shell loop onto a Rhai
+  script and prefer attached-stream transport for interactive Rhai-backed runs,
+  so stop-aware long-running demos can finish their cleanup path and persist
+  terminated lifecycle artifacts without relying on the macOS PTY wrapper.
 
 ## [0.2.13] - 2026-04-13
 

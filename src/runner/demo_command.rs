@@ -2740,7 +2740,7 @@ fn execute_run_backed_demo(
     run_command: &str,
     output_json: bool,
 ) -> Result<DemoExecutionAttempt, RunnerError> {
-    let launch_mode = resolve_demo_launch_mode(mode, output_json);
+    let launch_mode = resolve_demo_launch_mode(mode, output_json, run_command);
     let attached_terminal = launch_mode.attached_terminal();
     let initial_terminal_size = initial_terminal_size_for_launch_mode(launch_mode);
     let input_handoff_path = launch_mode
@@ -2971,18 +2971,29 @@ fn browser_terminal_size_override() -> Option<(u16, u16)> {
     Some((cols, rows))
 }
 
-fn resolve_demo_launch_mode(mode: ManifestDemoMode, output_json: bool) -> DemoLaunchMode {
+fn resolve_demo_launch_mode(
+    mode: ManifestDemoMode,
+    output_json: bool,
+    run_command: &str,
+) -> DemoLaunchMode {
     if output_json {
         return DemoLaunchMode::DetachedJson;
     }
     if !demo_mode_prefers_attached_terminal(mode) {
         return DemoLaunchMode::DetachedJson;
     }
+    if run_command_prefers_stream_transport(run_command) {
+        return DemoLaunchMode::AttachedStream;
+    }
     if demo_runtime_supports_pty() {
         DemoLaunchMode::AttachedPty
     } else {
         DemoLaunchMode::AttachedStream
     }
+}
+
+fn run_command_prefers_stream_transport(run_command: &str) -> bool {
+    run_command.contains("__rhai-step")
 }
 
 #[cfg(target_os = "macos")]

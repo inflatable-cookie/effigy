@@ -27,3 +27,4 @@ semver = "1"
 zeroize = "1"
 regex = "1"
 rhai = { version = "1", features = ["serde"] }
+signal-hook = "0.3"

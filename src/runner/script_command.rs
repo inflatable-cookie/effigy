@@ -3,9 +3,14 @@ use std::process::Command as ProcessCommand;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{thread, time::Duration};
 
 use chrono::Utc;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Position, Scope};
+#[cfg(unix)]
+use signal_hook::consts::signal::{SIGINT, SIGTERM};
+#[cfg(unix)]
+use signal_hook::flag as signal_flag;
 
 use crate::{InternalRhaiArgs, TaskInvocation};
 
@@ -23,6 +28,7 @@ struct ScriptContext {
     cwd: PathBuf,
     repo_root: PathBuf,
     task_name: String,
+    stop_requested: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub(in crate::runner) fn run_internal_rhai(args: InternalRhaiArgs) -> Result<String, RunnerError> {
@@ -30,6 +36,7 @@ pub(in crate::runner) fn run_internal_rhai(args: InternalRhaiArgs) -> Result<Str
         cwd: std::env::current_dir().map_err(RunnerError::Cwd)?,
         repo_root: PathBuf::from(required_env(EFFIGY_RHAI_REPO_ROOT)?),
         task_name: required_env(EFFIGY_RHAI_TASK_NAME)?,
+        stop_requested: install_stop_requested_flag()?,
     };
     let script = load_script(&args, &context)?;
     let script_args = load_script_args()?;
@@ -79,8 +86,18 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>) {
     engine.register_fn("env", |name: ImmutableString| -> String {
         std::env::var(name.as_str()).unwrap_or_default()
     });
+    let stop_context = context.clone();
+    engine.register_fn("stop_requested", move || -> bool {
+        stop_context.stop_requested.load(Ordering::Relaxed)
+    });
     engine.register_fn("now_utc", || -> String {
         Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    });
+    engine.register_fn("process_id", || -> i64 { i64::from(std::process::id()) });
+    engine.register_fn("sleep_ms", |millis: i64| {
+        if millis > 0 {
+            thread::sleep(Duration::from_millis(millis as u64));
+        }
     });
     engine.register_fn("path_join", |base: ImmutableString, child: ImmutableString| -> String {
         PathBuf::from(base.as_str())
@@ -128,6 +145,38 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>) {
                 })?;
             }
             std::fs::write(&path, contents.as_str()).map_err(|error| {
+                rhai_runtime_error(format!(
+                    "{}",
+                    RunnerError::task_invocation_failed_write(&path, error)
+                ))
+            })
+        },
+    );
+    let file_context = context.clone();
+    engine.register_fn(
+        "append_file",
+        move |path: ImmutableString, contents: ImmutableString| -> Result<(), Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    rhai_runtime_error(format!(
+                        "{}",
+                        RunnerError::task_invocation_failed_write(parent, error)
+                    ))
+                })?;
+            }
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|error| {
+                    rhai_runtime_error(format!(
+                        "{}",
+                        RunnerError::task_invocation_failed_write(&path, error)
+                    ))
+                })?;
+            use std::io::Write;
+            file.write_all(contents.as_bytes()).map_err(|error| {
                 rhai_runtime_error(format!(
                     "{}",
                     RunnerError::task_invocation_failed_write(&path, error)
@@ -390,6 +439,19 @@ fn allocate_temp_dir(prefix: &str) -> Result<PathBuf, RunnerError> {
     Err(RunnerError::task_invocation(format!(
         "failed to allocate unique temp dir for {sanitized}"
     )))
+}
+
+fn install_stop_requested_flag(
+) -> Result<Arc<std::sync::atomic::AtomicBool>, RunnerError> {
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    #[cfg(unix)]
+    {
+        signal_flag::register(SIGTERM, Arc::clone(&flag))
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        signal_flag::register(SIGINT, Arc::clone(&flag))
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    }
+    Ok(flag)
 }
 
 fn rhai_runtime_error(message: String) -> Box<EvalAltResult> {
