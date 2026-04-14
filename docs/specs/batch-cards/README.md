@@ -91,9 +91,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`085-execute-demo-release-protocol.md`](./085-execute-demo-release-protocol.md) (complete)
 - [`086-decide-rust-native-scripting-boundary-and-pilot-slice.md`](./086-decide-rust-native-scripting-boundary-and-pilot-slice.md) (complete)
 - [`087-implement-rhai-script-step-foundation.md`](./087-implement-rhai-script-step-foundation.md) (complete)
-- [`088-decide-post-rhai-foundation-migration-slice.md`](./088-decide-post-rhai-foundation-migration-slice.md) (ready)
+- [`088-decide-post-rhai-foundation-migration-slice.md`](./088-decide-post-rhai-foundation-migration-slice.md) (complete)
+- [`089-implement-effigy-rhai-dogfooding-cluster.md`](./089-implement-effigy-rhai-dogfooding-cluster.md) (ready)
 
 ## Next Task
 
-Execute the active ready card for `g02.004` to decide the next Rhai migration
-slice after the script-step foundation.
+Execute the active ready card for `g02.004` to dogfood the Rhai scripting
+surface inside Effigy with a meaningful migration cluster.

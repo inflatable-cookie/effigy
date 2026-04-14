@@ -19,5 +19,5 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to decide the next Rhai migration slice after the
-script-step foundation.
+Use the active spec lane to dogfood the Rhai scripting surface inside Effigy
+before starting a cross-repo pilot.
