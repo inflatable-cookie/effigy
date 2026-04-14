@@ -390,6 +390,8 @@ Recommended migration direction:
 For Effigy itself:
 
 - `smoke:release` is the repo's native binary-artifact smoke task
+- `effigy distribution first-publish` is the repo's native publish/install
+  orchestration entrypoint
 - `scripts/check-linux-glibc-floor.sh` remains an intentional shell boundary
   because it depends on Linux binary-inspection tooling
 

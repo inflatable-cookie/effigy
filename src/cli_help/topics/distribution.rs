@@ -16,7 +16,9 @@ pub(crate) fn render_distribution_help<R: Renderer>(renderer: &mut R) -> UiResul
         renderer,
         &[
             "effigy distribution validate-metadata [--repo <PATH>] [--tag <TAG>] [--json]",
+            "effigy distribution check-glibc-floor [--repo <PATH>] --binary <PATH> --max-glibc <VER> [--json]",
             "effigy distribution preflight [--repo <PATH>] [--tag <TAG>] [--skip-docs] [--skip-smoke] [--output <PATH>] [--json]",
+            "effigy distribution first-publish [--repo <PATH>] --tag <TAG> [--crate-version <VER>] [--repo-url <URL>] [--brew-formula <NAME>] [--skip-homebrew] [--artifacts-dir <DIR>] [--json]",
             "effigy distribution validate-artifacts [--repo <PATH>] --artifacts-dir <DIR> [--expect-homebrew] [--json]",
             "effigy distribution generate-closeout [--repo <PATH>] --tag <TAG> --artifacts-dir <DIR> [--output <PATH>] [--owner <NAME>] [--expect-homebrew] [--json]",
             "effigy distribution write-summary [--repo <PATH>] --tag <TAG> --artifacts-dir <DIR> [--crate-version <VER>] [--repo-url <URL>] [--brew-formula <NAME>] [--homebrew-executed] [--log-file <NAME>]... [--json]",
@@ -31,6 +33,11 @@ pub(crate) fn render_distribution_help<R: Renderer>(renderer: &mut R) -> UiResul
                 "--tag <TAG>",
                 "Release tag used for metadata validation or closeout output",
             ),
+            (
+                "--binary <PATH>",
+                "Built binary inspected for GLIBC requirements",
+            ),
+            ("--max-glibc <VER>", "Maximum allowed GLIBC version"),
             (
                 "--artifacts-dir <DIR>",
                 "Artifact directory containing first-publish logs",
@@ -53,6 +60,10 @@ pub(crate) fn render_distribution_help<R: Renderer>(renderer: &mut R) -> UiResul
                 "Owner label written into the generated closeout log",
             ),
             (
+                "--skip-homebrew",
+                "Skip Homebrew install and upgrade checks",
+            ),
+            (
                 "--log-file <NAME>",
                 "Append one captured log filename to the summary contract",
             ),
@@ -66,7 +77,9 @@ pub(crate) fn render_distribution_help<R: Renderer>(renderer: &mut R) -> UiResul
         "commands",
         &[
             "effigy distribution validate-metadata --tag v0.2.5",
+            "effigy distribution check-glibc-floor --binary ./effigy-x86_64-unknown-linux-gnu --max-glibc 2.35",
             "effigy distribution preflight --tag v0.2.5 --output ./artifacts/distribution-preflight-v0.2.5.env",
+            "effigy distribution first-publish --tag v0.2.5 --artifacts-dir ./artifacts/distribution-v0.2.5",
             "effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-v0.2.5",
             "effigy distribution generate-closeout --tag v0.2.5 --artifacts-dir ./artifacts/distribution-v0.2.5",
             "effigy distribution write-summary --tag v0.2.5 --artifacts-dir ./artifacts/distribution-v0.2.5 --homebrew-executed --log-file 01-tag-install-validation.log",

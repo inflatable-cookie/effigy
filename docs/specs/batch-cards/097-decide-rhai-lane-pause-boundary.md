@@ -1,7 +1,7 @@
 # 097 Decide Rhai Lane Pause Boundary
 
-Status: ready
-Updated: 2026-04-15
+Status: complete
+Updated: 2026-04-14
 Roadmap: `g02.004`
 Spec: `docs/specs/004-rust-native-scripting-strict-lane.md`
 
@@ -37,6 +37,5 @@ dogfooding boundary until an external pilot repo becomes safe again.
 
 ## Next Task
 
-After this batch, either pause the Rhai lane cleanly on the Effigy dogfooding
-boundary or open one last explicit internal card if a concrete remaining gap
-still exists.
+Decision was “one last explicit internal card”, which led directly into native
+distribution cutover work instead of a lane pause.

@@ -40,20 +40,21 @@ The active strict lane is:
   Python linger by inertia
 
 This lane now has a shipped script-step foundation and a substantial Effigy
-dogfooding surface across tasks, demos, long-running lifecycle, and release
-orchestration. The first external pilot was selected, then deferred for
-repo-boundary safety reasons rather than missing capability. The internal
-wrapper-retirement batch is now shipped as well. The next question is whether
-the lane should pause cleanly on that internal boundary until an external pilot
-becomes safe again.
+dogfooding surface across tasks, demos, long-running lifecycle, release
+orchestration, and native distribution cutover. The first external pilot was
+selected, then deferred for repo-boundary safety reasons rather than missing
+capability. The next question is whether the lane should pause cleanly on that
+internal boundary until an external pilot becomes safe again, or whether the
+workflow-bound glibc guard still justifies one more internal batch.
 
 ## Current Posture
 
 `strict-ready`
 
-The Keepsake pilot is temporarily deferred. Effigy wrapper retirement is now
-shipped, and the next valid move is an explicit pause-or-reopen decision, not
-a stale external pilot and not another general debate about scripting policy.
+The Keepsake pilot is temporarily deferred. Effigy wrapper retirement and
+native distribution cutover are now shipped. The next valid move is an
+explicit pause-or-reopen decision from this boundary, not a stale external
+pilot and not another general debate about scripting policy.
 
 ## Batch Model
 
@@ -83,5 +84,5 @@ for the current mixed-runtime script surfaces.
 ## Next Task
 
 Execute the active `g02.004` ready card to decide whether the Rhai lane should
-pause cleanly on its internal Effigy dogfooding boundary until the external
-pilot becomes safe again.
+pause cleanly after native distribution cutover, or whether the workflow-bound
+glibc guard earns one final internal batch.

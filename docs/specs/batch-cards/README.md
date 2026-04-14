@@ -100,10 +100,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`094-implement-effigy-rhai-release-wrapper-cluster.md`](./094-implement-effigy-rhai-release-wrapper-cluster.md) (complete)
 - [`095-decide-post-release-wrapper-rhai-slice.md`](./095-decide-post-release-wrapper-rhai-slice.md) (complete)
 - [`096-implement-effigy-wrapper-convergence-boundary.md`](./096-implement-effigy-wrapper-convergence-boundary.md) (complete)
-- [`097-decide-rhai-lane-pause-boundary.md`](./097-decide-rhai-lane-pause-boundary.md) (ready)
+- [`097-decide-rhai-lane-pause-boundary.md`](./097-decide-rhai-lane-pause-boundary.md) (complete)
+- [`098-decide-post-native-distribution-rhai-boundary.md`](./098-decide-post-native-distribution-rhai-boundary.md) (ready)
 
 ## Next Task
 
 Execute the active ready card for `g02.004` to decide whether the Rhai lane
-should pause cleanly on the shipped Effigy dogfooding boundary until the
-external pilot becomes safe again.
+should pause cleanly after native distribution cutover, or whether the
+workflow-bound glibc guard earns one final internal batch.

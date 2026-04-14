@@ -27,18 +27,9 @@ pub(super) fn render_rhai_step_invocation(
     let args_json = serde_json::to_string(context.args_raw)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let env_pairs = vec![
-        (
-            "EFFIGY_INTERNAL_SUPPRESS_HEADER",
-            shell_quote("1"),
-        ),
-        (
-            "EFFIGY_RHAI_ARGS_JSON",
-            shell_quote(&args_json),
-        ),
-        (
-            "EFFIGY_RHAI_TASK_NAME",
-            shell_quote(context.task_name),
-        ),
+        ("EFFIGY_INTERNAL_SUPPRESS_HEADER", shell_quote("1")),
+        ("EFFIGY_RHAI_ARGS_JSON", shell_quote(&args_json)),
+        ("EFFIGY_RHAI_TASK_NAME", shell_quote(context.task_name)),
         (
             "EFFIGY_RHAI_REPO_ROOT",
             shell_quote(&context.repo_root.display().to_string()),

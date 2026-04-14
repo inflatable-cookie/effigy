@@ -4,8 +4,7 @@ use super::super::diagnostics::SchemaContext;
 use super::super::tables::validate_allowed_keys;
 use super::super::values::{
     validate_optional_boolean_field, validate_optional_integer_field,
-    validate_optional_non_empty_string_field,
-    validate_optional_non_empty_string_or_array_field,
+    validate_optional_non_empty_string_field, validate_optional_non_empty_string_or_array_field,
     validate_optional_non_empty_string_or_table_string_values_field,
     validate_optional_string_array_field,
 };

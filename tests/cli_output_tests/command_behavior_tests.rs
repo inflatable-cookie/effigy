@@ -3257,9 +3257,11 @@ fn cli_distribution_preflight_json_writes_summary_when_smoke_skipped() {
         fs::write(root.join("docs/guides").join(guide), "# Guide\n").expect("write guide");
     }
 
-    for script in ["check-linux-glibc-floor.sh", "check-distribution-first-publish.sh"] {
-        fs::write(root.join("scripts").join(script), "#!/bin/sh\nexit 0\n").expect("write script");
-    }
+    fs::write(
+        root.join("scripts/check-linux-glibc-floor.sh"),
+        "#!/bin/sh\nexit 0\n",
+    )
+    .expect("write glibc script");
 
     let summary_path = root.join("artifacts/distribution-preflight-v0.2.5.env");
     let output = run_json_cli_command(
@@ -3282,6 +3284,10 @@ fn cli_distribution_preflight_json_writes_summary_when_smoke_skipped() {
     assert_eq!(
         parsed["result"]["schema"],
         "effigy.distribution.preflight.v1"
+    );
+    assert_eq!(
+        parsed["result"]["next_command"],
+        "effigy distribution first-publish --tag v0.2.5 --artifacts-dir ./artifacts/distribution-v0.2.5"
     );
     assert_eq!(parsed["result"]["ok"], true);
     assert_eq!(parsed["result"]["tag"], "v0.2.5");

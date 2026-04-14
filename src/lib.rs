@@ -473,6 +473,13 @@ pub enum DistributionSubcommand {
         /// Optional tag override.
         tag: Option<String>,
     },
+    /// Check a built Linux binary against the maximum allowed GLIBC version.
+    CheckGlibcFloor {
+        /// Built binary to inspect.
+        binary_path: PathBuf,
+        /// Maximum allowed GLIBC version.
+        max_glibc: String,
+    },
     /// Run non-publish distribution readiness checks and optionally write a summary.
     Preflight {
         /// Optional tag override for metadata alignment checks.
@@ -483,6 +490,21 @@ pub enum DistributionSubcommand {
         skip_smoke: bool,
         /// Optional summary output path.
         output_path: Option<PathBuf>,
+    },
+    /// Run the first-publish validation/orchestration flow and capture logs.
+    FirstPublish {
+        /// Release tag used for the publish cycle.
+        tag: String,
+        /// Optional crate version override.
+        crate_version: Option<String>,
+        /// Repo URL used for tag install validation.
+        repo_url: String,
+        /// Homebrew formula reference.
+        brew_formula: String,
+        /// Whether Homebrew checks should be skipped.
+        skip_homebrew: bool,
+        /// Optional artifact directory override.
+        artifacts_dir: Option<PathBuf>,
     },
     /// Validate artifact log bundles from first-publish runs.
     ValidateArtifacts {

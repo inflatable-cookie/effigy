@@ -46,6 +46,11 @@ During v0.x, MINOR bumps may include breaking changes.
   and `scripts/prepare-release.sh`, so the repo now points directly at native
   Effigy tasks and built-in release commands instead of preserving legacy shell
   entrypoints for migration safety.
+- Replace Effigy's remaining first-publish release wrapper with native
+  `effigy distribution first-publish` and `effigy distribution check-glibc-floor`
+  built-ins, so distribution orchestration now lives inside Effigy's defined
+  command surface instead of depending on shell-script entrypoints for publish
+  and validation flow.
 
 ## [0.2.13] - 2026-04-13
 

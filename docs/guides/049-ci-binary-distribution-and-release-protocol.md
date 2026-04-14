@@ -221,9 +221,8 @@ Current command surface:
 - `effigy release verify-install` is available as the built-in tag-install
   validation command. It installs the tagged binary from git into a temporary
   root and checks the installed binary against a fixture repo before succeeding.
-- Permanent shell boundaries are different: keep
-  `scripts/check-distribution-first-publish.sh`,
-  `scripts/check-linux-glibc-floor.sh`, and `scripts/effigy-dev` unless their
+- Remaining shell boundaries are different: keep
+  `scripts/check-linux-glibc-floor.sh` and `scripts/effigy-dev` unless their
   external-binary or platform-tooling responsibilities change materially.
 - The built-in release flow has now completed local rehearsal, hosted
   rehearsal, and a real production Effigy release through the built-in
