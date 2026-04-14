@@ -20,11 +20,13 @@ pages only when you need more detail.
    surface.
 6. [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md) for
    Effigy-native scripting in Rust-first repos.
-7. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) for copy-paste
+7. [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
+   for optional distribution built-ins and cross-repo adoption posture.
+8. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) for copy-paste
    `effigy.toml` patterns.
-8. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for
+9. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for
    the full command and flag surface.
-9. [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md) when the
+10. [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md) when the
    job is "clone this repo here and bring it up."
 
 ## By Goal
@@ -103,6 +105,7 @@ If the goal is full repo adoption:
 
 ### I want built-in release workflows
 
+- [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
 - [`051-release-orchestration.md`](./051-release-orchestration.md)
 - [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
@@ -171,6 +174,7 @@ Details:
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 - [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md)
+- [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
@@ -213,6 +217,7 @@ Details:
 - [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
 - [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+- [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
 
 ## Standards Used In These Guides
 

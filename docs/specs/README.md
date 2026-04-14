@@ -14,11 +14,11 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Active Spec Set
 
-- [`004-rust-native-scripting-strict-lane.md`](./004-rust-native-scripting-strict-lane.md)
+- [`005-optional-distribution-surface-strict-lane.md`](./005-optional-distribution-surface-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 ## Next Task
 
-Use the active spec lane to decide whether the Rhai lane should now pause
-cleanly after native Effigy distribution cutover, or whether the
-workflow-bound glibc guard earns one final internal batch first.
+Use the active spec lane to implement the minimal manifest-driven distribution
+contract foundation so the current native distribution built-ins become an
+honest optional cross-repo surface.

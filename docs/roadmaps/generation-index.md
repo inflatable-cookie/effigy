@@ -24,11 +24,13 @@ Updated: 2026-04-11
 - `027` captures the release orchestration milestone.
 - `028` captures the completed script-surface reduction and built-ins milestone.
 - `029` captures the active Northstar + Effigy consumer adoption and product-boundary milestone.
-- `g02`
+  - `g02`
   - Starts a new product cycle after the implementation/consolidation-heavy `g01` sequence.
   - `001` captures the stateless bootstrap command and clone contract milestone, now complete: released and live-pilot validated on `loophole` and `songsprout`.
   - `002` captures the manifest composition and override contract; the foundation and inspectability surface are now shipped strongly enough for downstream planning to depend on.
-  - `003` captures the active demo harness model and runner/browser contract so proof verification becomes a first-class Effigy surface; registry/inspection, the first `demo run` slice, and lifecycle targeting are now shipped.
+  - `003` captures the demo harness model and runner/browser contract; it is complete and released in `v0.2.13`.
+  - `004` captures the Rust-native scripting surface; it is paused after the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached a clean internal boundary.
+  - `005` captures the optional distribution surface; it is the active lane for turning Effigy's native distribution built-ins into a manifest-driven, reusable cross-repo feature.
 
 ## Research Roadmaps
 

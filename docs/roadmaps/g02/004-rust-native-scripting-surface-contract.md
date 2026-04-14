@@ -1,6 +1,6 @@
 # g02.004 Rust-Native Scripting Surface Contract
 
-Status: in progress
+Status: paused
 Updated: 2026-04-14
 
 ## Goal
@@ -112,10 +112,9 @@ The key boundary is now settled:
   - frontend/build-tool replacement
   - full Python-analysis replacement in the first slice
 
-The remaining active question is whether the Rhai lane should now pause on a
-clean internal posture after native distribution cutover, or whether the
-workflow-bound glibc guard still earns one final internal batch before the
-lane waits on an external pilot boundary.
+That active question is now settled. The Rhai lane is paused on a clean
+internal posture after native distribution cutover, and the next product
+question has been split into its own optional distribution lane.
 
 ## Migration Classification
 
@@ -171,7 +170,6 @@ This milestone is ready to execute only when Effigy has:
 
 ## Next Task
 
-Use the active `g02.004` strict lane to decide whether Effigy dogfooding is
-now complete enough to pause cleanly after native distribution cutover, or
-whether the workflow-bound glibc guard should be the final internal cutover
-batch before the lane waits on an external pilot.
+Resume this milestone only when a safe external Rhai pilot is back in scope or
+another internal scripting capability gap appears that is not better handled
+inside the optional distribution lane.
