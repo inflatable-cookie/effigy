@@ -112,8 +112,8 @@ The key boundary is now settled:
   - frontend/build-tool replacement
   - full Python-analysis replacement in the first slice
 
-The remaining active question is the next migration boundary after the shipped
-long-running lifecycle support, not the high-level product split.
+The remaining active question is whether the first external pilot confirms the
+current host API or exposes one more bounded capability gap.
 
 ## Migration Classification
 
@@ -130,7 +130,7 @@ Shipped first targets:
 
 ### Keepsake
 
-Migrate after the Effigy pilot proves the host API.
+First external pilot.
 
 Best early targets:
 
@@ -167,6 +167,6 @@ This milestone is ready to execute only when Effigy has:
 
 ## Next Task
 
-Use the active `g02.004` strict lane to decide whether the shipped Effigy Rhai
-dogfooding surface is now broad enough for the first external pilot or still
-needs one more Effigy-only batch.
+Use the active `g02.004` strict lane to execute the bounded Keepsake pilot and
+use that result to decide whether the current Rhai host API is broad enough
+for heavier external migrations.

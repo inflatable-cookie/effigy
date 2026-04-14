@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to decide whether the shipped long-running Rhai
-lifecycle support is enough to widen into the first external pilot or whether
-one more Effigy-only dogfooding slice is still justified.
+Use the active spec lane to run the first external Rhai pilot in Keepsake and
+use that result to decide whether the current host API is broad enough for
+heavier external migrations.
