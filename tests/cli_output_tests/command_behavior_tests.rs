@@ -226,7 +226,9 @@ fn install_prepare_release_script(root: &std::path::Path) -> std::path::PathBuf 
 
 fn install_release_wrapper_scripts(root: &std::path::Path) -> std::path::PathBuf {
     let scripts = root.join("scripts");
+    let rhai_scripts = scripts.join("rhai");
     fs::create_dir_all(&scripts).expect("mkdir scripts");
+    fs::create_dir_all(&rhai_scripts).expect("mkdir rhai scripts");
     let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts");
     for name in [
         "check-release-gates.sh",
@@ -239,6 +241,13 @@ fn install_release_wrapper_scripts(root: &std::path::Path) -> std::path::PathBuf
             .permissions();
         perms.set_mode(0o755);
         fs::set_permissions(&destination, perms).expect("chmod wrapper script");
+    }
+    for name in [
+        "check-release-gates.rhai",
+        "check-release-install-from-tag.rhai",
+    ] {
+        fs::copy(source_root.join("rhai").join(name), rhai_scripts.join(name))
+            .expect("copy rhai wrapper script");
     }
     scripts
 }
@@ -275,6 +284,20 @@ fn install_effigy_cargo_shim(root: &std::path::Path) -> (std::path::PathBuf, std
         .permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&shim_path, perms).expect("chmod cargo shim");
+    let effigy_path = shim_bin.join("effigy");
+    fs::write(
+        &effigy_path,
+        format!(
+            "#!/usr/bin/env bash\nset -euo pipefail\nexec \"{}\" \"$@\"\n",
+            env!("CARGO_BIN_EXE_effigy")
+        ),
+    )
+    .expect("write effigy shim");
+    let mut effigy_perms = fs::metadata(&effigy_path)
+        .expect("stat effigy shim")
+        .permissions();
+    effigy_perms.set_mode(0o755);
+    fs::set_permissions(&effigy_path, effigy_perms).expect("chmod effigy shim");
     (shim_bin, log_path)
 }
 
@@ -4013,9 +4036,8 @@ fn cli_release_gate_wrapper_matches_builtin_no_tag_path() {
         "got: {stdout}"
     );
 
-    let expected = format!("release gates --repo {}", root.display());
     let lines = cargo_log.lines().collect::<Vec<_>>();
-    assert_eq!(lines, vec![expected.as_str()]);
+    assert_eq!(lines, vec![format!("release gates --repo {}", root.display())]);
 }
 
 #[test]
@@ -4101,13 +4123,15 @@ fn cli_release_verify_install_wrapper_matches_builtin_tagged_path() {
     assert!(stdout.contains("Tag: v0.1.0"), "got: {stdout}");
     assert!(stdout.contains("Verified: yes"), "got: {stdout}");
 
-    let expected = format!(
-        "release verify-install --repo {} --tag v0.1.0 --repo-url {}",
-        root.display(),
-        repo_url
-    );
     let lines = cargo_log.lines().collect::<Vec<_>>();
-    assert_eq!(lines, vec![expected.as_str()]);
+    assert_eq!(
+        lines,
+        vec![format!(
+            "release verify-install --repo {} --tag v0.1.0 --repo-url {}",
+            root.display(),
+            repo_url
+        )]
+    );
 }
 
 #[test]

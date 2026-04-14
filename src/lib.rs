@@ -90,6 +90,9 @@ pub enum Command {
 #[doc(hidden)]
 pub struct InternalRhaiArgs {
     pub file: PathBuf,
+    pub repo_root: Option<PathBuf>,
+    pub task_name: Option<String>,
+    pub args: Vec<String>,
 }
 
 /// Help topics supported by the built-in help renderer.

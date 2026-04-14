@@ -31,6 +31,11 @@ During v0.x, MINOR bumps may include breaking changes.
   script and prefer attached-stream transport for interactive Rhai-backed runs,
   so stop-aware long-running demos can finish their cleanup path and persist
   terminated lifecycle artifacts without relying on the macOS PTY wrapper.
+- Migrate Effigy's compatibility release wrappers
+  `scripts/check-release-gates.sh` and
+  `scripts/check-release-install-from-tag.sh` so their real logic now lives in
+  file-backed Rhai scripts, while the executable `.sh` entrypoints remain as
+  minimal launchers for CI/docs compatibility.
 
 ## [0.2.13] - 2026-04-13
 

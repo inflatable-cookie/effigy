@@ -34,12 +34,12 @@ struct ScriptContext {
 pub(in crate::runner) fn run_internal_rhai(args: InternalRhaiArgs) -> Result<String, RunnerError> {
     let context = ScriptContext {
         cwd: std::env::current_dir().map_err(RunnerError::Cwd)?,
-        repo_root: PathBuf::from(required_env(EFFIGY_RHAI_REPO_ROOT)?),
-        task_name: required_env(EFFIGY_RHAI_TASK_NAME)?,
+        repo_root: required_repo_root(&args)?,
+        task_name: required_task_name(&args)?,
         stop_requested: install_stop_requested_flag()?,
     };
     let script = load_script(&args, &context)?;
-    let script_args = load_script_args()?;
+    let script_args = load_script_args_for_internal(&args)?;
     execute_rhai_script(&context, &script, &script_args)?;
     Ok(String::new())
 }
@@ -51,8 +51,37 @@ fn load_script(args: &InternalRhaiArgs, context: &ScriptContext) -> Result<Strin
 }
 
 fn load_script_args() -> Result<Vec<String>, RunnerError> {
+    // Kept for managed/task-backed Rhai steps that pass args through env.
     let raw = required_env(EFFIGY_RHAI_ARGS_JSON)?;
     serde_json::from_str(&raw).map_err(|error| RunnerError::task_invocation(error.to_string()))
+}
+
+fn required_repo_root(args: &InternalRhaiArgs) -> Result<PathBuf, RunnerError> {
+    if let Some(path) = &args.repo_root {
+        Ok(path.clone())
+    } else {
+        Ok(PathBuf::from(required_env(EFFIGY_RHAI_REPO_ROOT)?))
+    }
+}
+
+fn required_task_name(args: &InternalRhaiArgs) -> Result<String, RunnerError> {
+    if let Some(task_name) = &args.task_name {
+        Ok(task_name.clone())
+    } else {
+        required_env(EFFIGY_RHAI_TASK_NAME)
+    }
+}
+
+fn load_script_args_for_internal(args: &InternalRhaiArgs) -> Result<Vec<String>, RunnerError> {
+    if args.args.is_empty() {
+        match load_script_args() {
+            Ok(values) => Ok(values),
+            Err(_) if args.repo_root.is_some() || args.task_name.is_some() => Ok(Vec::new()),
+            Err(error) => Err(error),
+        }
+    } else {
+        Ok(args.args.clone())
+    }
 }
 
 fn execute_rhai_script(

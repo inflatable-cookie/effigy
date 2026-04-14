@@ -44,6 +44,9 @@ where
 {
     let mut args = args.into_iter();
     let mut file = None;
+    let mut repo_root = None;
+    let mut task_name = None;
+    let mut script_args = Vec::new();
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -56,8 +59,30 @@ where
                 )?;
                 file = Some(PathBuf::from(value));
             }
+            "--repo-root" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--repo-root".to_owned(),
+                    },
+                )?;
+                repo_root = Some(PathBuf::from(value));
+            }
+            "--task-name" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--task-name".to_owned(),
+                    },
+                )?;
+                task_name = Some(value);
+            }
+            "--" => {
+                script_args.extend(args);
+                break;
+            }
             other if other.starts_with('-') => return Err(unknown_argument(other)),
-            _ => return Err(unknown_argument(arg)),
+            other => script_args.push(other.to_owned()),
         }
     }
 
@@ -67,7 +92,12 @@ where
         });
     };
 
-    Ok(Command::InternalRhai(InternalRhaiArgs { file }))
+    Ok(Command::InternalRhai(InternalRhaiArgs {
+        file,
+        repo_root,
+        task_name,
+        args: script_args,
+    }))
 }
 
 fn parse_version_command<I>(args: I) -> Result<Command, CliParseError>

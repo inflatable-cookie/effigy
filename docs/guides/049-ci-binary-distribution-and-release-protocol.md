@@ -224,9 +224,11 @@ Current command surface:
 - `scripts/check-release-gates.sh` and
   `scripts/check-release-install-from-tag.sh` are now compatibility wrappers
   over the built-in `effigy release gates` and `effigy release verify-install`
-  surfaces. They remain for migration safety, not as the preferred operator
-  entrypoints, and their no-tag/tagged paths are now covered by parity tests
-  against the built-in release commands.
+  surfaces. Their operator logic now lives in file-backed Rhai scripts while
+  the executable `.sh` files remain as compatibility launchers. They remain
+  for migration safety, not as the preferred operator entrypoints, and their
+  no-tag/tagged paths are covered by parity tests against the built-in release
+  commands.
 - `scripts/prepare-release.sh` is also a compatibility fallback. Keep it
   available as a backup path until maintainers explicitly retire it under the
   release-wrapper criteria below.
