@@ -19,6 +19,5 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to implement the minimal manifest-driven distribution
-contract foundation so the current native distribution built-ins become an
-honest optional cross-repo surface.
+Use the active spec lane to decide whether the widened optional distribution
+surface is now honest enough for one consumer-proof adoption batch.

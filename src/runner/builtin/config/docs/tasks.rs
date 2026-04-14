@@ -139,6 +139,10 @@ pub(super) fn distribution_lines(profile: ConfigDocProfile) -> Vec<&'static str>
         "repo-url = \"https://github.com/example/my-tool.git\"",
         "brew-formula = \"example/tap/my-tool\"",
         "",
+        "[distribution.publish]",
+        "binary-name = \"my-tool\"",
+        "registry-label = \"registry\"",
+        "",
         "[distribution.preflight]",
         "docs-task = \"qa:docs\"",
         "smoke-task = \"dist:preflight:smoke\"",
@@ -146,6 +150,11 @@ pub(super) fn distribution_lines(profile: ConfigDocProfile) -> Vec<&'static str>
         "[distribution.metadata]",
         "required-docs = [\"docs/guides/installation.md\", \"docs/guides/release.md\"]",
         "required-files = [\".github/workflows/release-binaries.yml\", \"scripts/check-linux-glibc-floor.sh\"]",
+        "",
+        "[distribution.closeout]",
+        "owner = \"release\"",
+        "related = \"docs/roadmaps/distribution.md\"",
+        "next-step = \"Review the captured evidence and publish your repo's release sign-off notes.\"",
         "",
     ]
 }

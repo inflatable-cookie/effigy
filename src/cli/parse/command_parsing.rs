@@ -1615,7 +1615,7 @@ where
     let mut tag: Option<String> = None;
     let mut artifacts_dir: Option<PathBuf> = None;
     let mut output_path: Option<PathBuf> = None;
-    let mut owner = "Effigy".to_owned();
+    let mut owner = "release".to_owned();
     let mut expect_homebrew = false;
 
     while let Some(arg) = args.next() {

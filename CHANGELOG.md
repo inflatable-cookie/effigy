@@ -60,6 +60,11 @@ During v0.x, MINOR bumps may include breaking changes.
   policy, so cross-repo adoption can override package identity, required
   evidence files, and preflight task names without forking Effigy's
   self-hosting defaults.
+- Widen the optional `[distribution]` contract with publish identity and
+  closeout defaults, so `distribution first-publish`,
+  `distribution write-summary`, and `distribution generate-closeout` can serve
+  other repos with manifest-driven package/binary/registry naming and generic
+  closeout text instead of hardcoded Effigy-shaped defaults.
 
 ## [0.2.13] - 2026-04-13
 

@@ -16,7 +16,7 @@ pub(super) fn validate_distribution_section(
         context,
         "distribution",
         distribution_table,
-        &["package", "preflight", "metadata"],
+        &["package", "publish", "preflight", "metadata", "closeout"],
     );
 
     if let Some(package) = distribution_table.get("package") {
@@ -25,6 +25,14 @@ pub(super) fn validate_distribution_section(
             "distribution.package",
             package,
             &["name", "repo-url", "brew-formula"],
+        );
+    }
+    if let Some(publish) = distribution_table.get("publish") {
+        validate_known_string_table(
+            context,
+            "distribution.publish",
+            publish,
+            &["binary-name", "registry-label"],
         );
     }
     if let Some(preflight) = distribution_table.get("preflight") {
@@ -79,6 +87,14 @@ pub(super) fn validate_distribution_section(
                 }
             }
         }
+    }
+    if let Some(closeout) = distribution_table.get("closeout") {
+        validate_known_string_table(
+            context,
+            "distribution.closeout",
+            closeout,
+            &["owner", "related", "next-step"],
+        );
     }
 }
 

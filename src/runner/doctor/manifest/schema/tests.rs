@@ -43,6 +43,10 @@ name = "effigy"
 repo-url = "https://github.com/inflatable-cookie/effigy.git"
 brew-formula = "inflatable-cookie/effigy/effigy"
 
+[distribution.publish]
+binary-name = "effigy"
+registry-label = "crates.io"
+
 [distribution.preflight]
 docs-task = "qa:docs"
 smoke-task = "dist:preflight:smoke"
@@ -50,6 +54,11 @@ smoke-task = "dist:preflight:smoke"
 [distribution.metadata]
 required-docs = ["docs/guides/010-path-installation-and-release.md"]
 required-files = ["scripts/check-linux-glibc-floor.sh"]
+
+[distribution.closeout]
+owner = "release"
+related = "docs/roadmaps/backlog/distribution-channels.md"
+next-step = "Review evidence and publish release sign-off notes."
 
 [release]
 version-file = "Cargo.toml"

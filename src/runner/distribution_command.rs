@@ -10,6 +10,9 @@ use serde_json::json;
 use toml::Value as TomlValue;
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
+use crate::runner::manifest::config_sections::{
+    ManifestDistributionCloseoutConfig, ManifestDistributionPublishConfig,
+};
 use crate::runner::manifest::{
     load_task_manifest, ManifestDistributionConfig, ManifestDistributionMetadataConfig,
     ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
@@ -21,8 +24,13 @@ use super::error::RunnerError;
 const DEFAULT_PACKAGE_NAME: &str = "effigy";
 const DEFAULT_REPO_URL: &str = "https://github.com/inflatable-cookie/effigy.git";
 const DEFAULT_BREW_FORMULA: &str = "inflatable-cookie/effigy/effigy";
+const DEFAULT_BINARY_NAME: &str = "effigy";
+const DEFAULT_REGISTRY_LABEL: &str = "crates.io";
 const DEFAULT_DOCS_TASK: &str = "qa:docs";
 const DEFAULT_SMOKE_TASK: &str = "dist:preflight:smoke";
+const DEFAULT_CLOSEOUT_OWNER: &str = "release";
+const DEFAULT_CLOSEOUT_NEXT_STEP: &str =
+    "Review the captured evidence and publish release sign-off notes in your repo's chosen workflow.";
 const DEFAULT_REQUIRED_DOCS: [&str; 5] = [
     "docs/guides/010-path-installation-and-release.md",
     "docs/guides/014-release-checklist-template.md",
@@ -38,12 +46,17 @@ const DEFAULT_REQUIRED_FILES: [&str; 2] = [
 #[derive(Debug, Clone)]
 struct EffectiveDistributionPolicy {
     package_name: String,
+    binary_name: String,
+    registry_label: String,
     repo_url: String,
     brew_formula: String,
     docs_task: String,
     smoke_task: String,
     required_docs: Vec<String>,
     required_files: Vec<String>,
+    closeout_owner: String,
+    closeout_related: Option<String>,
+    closeout_next_step: String,
 }
 
 pub(super) fn run_distribution(args: DistributionArgs) -> Result<String, RunnerError> {
@@ -108,6 +121,7 @@ pub(super) fn run_distribution(args: DistributionArgs) -> Result<String, RunnerE
             expect_homebrew,
         } => run_validate_artifacts(
             &repo_root,
+            &distribution_policy,
             &resolve_repo_input(&repo_root, artifacts_dir),
             expect_homebrew,
             args.output_json,
@@ -120,6 +134,7 @@ pub(super) fn run_distribution(args: DistributionArgs) -> Result<String, RunnerE
             expect_homebrew,
         } => run_generate_closeout(
             &repo_root,
+            &distribution_policy,
             &tag,
             &resolve_repo_input(&repo_root, artifacts_dir),
             output_path
@@ -139,6 +154,7 @@ pub(super) fn run_distribution(args: DistributionArgs) -> Result<String, RunnerE
             log_files,
         } => run_write_summary(
             &repo_root,
+            &distribution_policy,
             &tag,
             &resolve_repo_input(&repo_root, artifacts_dir),
             crate_version.as_deref(),
@@ -319,6 +335,7 @@ fn run_first_publish(
 
     let result = run_first_publish_inner(
         repo_root,
+        distribution_policy,
         tag,
         crate_version,
         &repo_url,
@@ -479,6 +496,7 @@ fn run_validate_metadata(
 
 fn run_validate_artifacts(
     repo_root: &Path,
+    distribution_policy: &EffectiveDistributionPolicy,
     artifacts_dir: &Path,
     expect_homebrew: bool,
     output_json: bool,
@@ -490,27 +508,17 @@ fn run_validate_artifacts(
             artifacts_dir.display()
         )));
     }
-    let base_patterns = [
-        ("tag install validation", "tag-install-validation"),
-        ("crates.io install", "crates-io-install-validation"),
-        ("crates.io binary help", "crates-io-binary-help"),
-        ("crates.io binary json tasks", "crates-io-binary-json-tasks"),
-    ];
-    let homebrew_patterns = [
-        ("homebrew install", "homebrew-install"),
-        ("homebrew binary help", "homebrew-binary-help"),
-        ("homebrew binary json tasks", "homebrew-binary-json-tasks"),
-        ("homebrew upgrade", "homebrew-upgrade"),
-    ];
+    let base_patterns = base_artifact_patterns(distribution_policy);
+    let homebrew_patterns = homebrew_artifact_patterns();
 
     let mut found = Vec::new();
     let mut missing = Vec::new();
     for (label, pattern) in base_patterns.into_iter().chain(if expect_homebrew {
-        homebrew_patterns.into_iter().collect::<Vec<_>>()
+        homebrew_patterns
     } else {
         Vec::new()
     }) {
-        match find_log_by_pattern(artifacts_dir, pattern) {
+        match find_log_by_pattern(artifacts_dir, &pattern) {
             Some(path) => found.push(json!({
                 "label": label,
                 "pattern": pattern,
@@ -562,6 +570,7 @@ fn run_validate_artifacts(
 
 fn run_generate_closeout(
     repo_root: &Path,
+    distribution_policy: &EffectiveDistributionPolicy,
     tag: &str,
     artifacts_dir: &Path,
     output_path: Option<PathBuf>,
@@ -593,7 +602,13 @@ fn run_generate_closeout(
             == Some("1");
     }
 
-    let _ = run_validate_artifacts(repo_root, artifacts_dir, inferred_expect_homebrew, false)?;
+    let _ = run_validate_artifacts(
+        repo_root,
+        distribution_policy,
+        artifacts_dir,
+        inferred_expect_homebrew,
+        false,
+    )?;
 
     let mut log_files = std::fs::read_dir(artifacts_dir)
         .map_err(|err| RunnerError::task_invocation_failed_read(artifacts_dir, err))?
@@ -609,10 +624,15 @@ fn run_generate_closeout(
         )));
     }
 
+    let homebrew_patterns = homebrew_artifact_patterns();
     let has_homebrew_logs = log_files.iter().any(|path| {
         path.file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.contains("homebrew"))
+            .is_some_and(|name| {
+                homebrew_patterns
+                    .iter()
+                    .any(|(_, pattern)| name.contains(pattern))
+            })
     });
 
     let now = Local::now();
@@ -631,7 +651,13 @@ fn run_generate_closeout(
             .map_err(|err| RunnerError::task_invocation_failed_write(parent, err))?;
     }
 
+    let owner = effective_closeout_owner(distribution_policy, owner);
     let today = now.format("%F").to_string();
+    let related_line = distribution_policy
+        .closeout_related
+        .as_ref()
+        .map(|related| format!("Related: {related}\n"))
+        .unwrap_or_default();
     let evidence_lines = log_files
         .iter()
         .filter_map(|path| path.file_name().and_then(|name| name.to_str()))
@@ -639,9 +665,11 @@ fn run_generate_closeout(
         .collect::<Vec<_>>()
         .join("\n");
     let rendered = format!(
-        "# Distribution Acceptance Closeout ({tag})\n\nDate: {today}\nOwner: {owner}\nRelated roadmap: g01.backlog.distribution-channels\n\n## Scope\n\n- Capture publish-cycle distribution evidence from artifact logs.\n- Record acceptance-closeout outcomes for tag {tag}.\n\n## Inputs\n\n- release tag: {tag}\n- artifacts directory: {}\n- artifacts summary: {}\n\n## Evidence Logs\n\n{evidence_lines}\n\n## Outcomes\n\n- First-publish artifacts were captured and linked for closeout evidence.\n- Rust-native install path and CI-style install validation evidence are included in this log via artifact outputs.\n- Homebrew evidence included: {has_homebrew_logs}.\n\n## Risks / Follow-ups\n\n- If any expected channel log is missing, rerun `effigy distribution first-publish --tag {tag} --artifacts-dir <dir>` before final sign-off.\n- External channel state (crates.io availability, Homebrew tap CI, network reliability) still determines final release readiness.\n\n## Next Batch Recommendation\n\n- Reconcile acceptance checkboxes in docs/roadmaps/backlog/distribution-channels.md against this evidence and publish release sign-off notes.\n",
+        "# Distribution Acceptance Closeout ({tag})\n\nDate: {today}\nOwner: {owner}\n{related_line}\n## Scope\n\n- Capture publish-cycle distribution evidence from artifact logs.\n- Record acceptance-closeout outcomes for tag {tag}.\n\n## Inputs\n\n- release tag: {tag}\n- artifacts directory: {}\n- artifacts summary: {}\n\n## Evidence Logs\n\n{evidence_lines}\n\n## Outcomes\n\n- First-publish artifacts were captured and linked for closeout evidence.\n- Install validation evidence for `{}` is included in this closeout via artifact outputs.\n- Homebrew evidence included: {has_homebrew_logs}.\n\n## Risks / Follow-ups\n\n- If any expected channel log is missing, rerun `effigy distribution first-publish --tag {tag} --artifacts-dir <dir>` before final sign-off.\n- External distribution channel state still determines final release readiness.\n\n## Next Step\n\n- {}\n",
         artifacts_dir.display(),
         summary_path.display(),
+        distribution_policy.package_name,
+        distribution_policy.closeout_next_step,
     );
     std::fs::write(&output_path, &rendered)
         .map_err(|err| RunnerError::task_invocation_failed_write(&output_path, err))?;
@@ -654,6 +682,7 @@ fn run_generate_closeout(
         "artifacts_dir": artifacts_dir.display().to_string(),
         "output": output_path.display().to_string(),
         "owner": owner,
+        "related": distribution_policy.closeout_related,
         "has_homebrew_logs": has_homebrew_logs,
         "log_count": log_files.len(),
     });
@@ -665,6 +694,7 @@ fn run_generate_closeout(
 
 fn run_write_summary(
     repo_root: &Path,
+    distribution_policy: &EffectiveDistributionPolicy,
     tag: &str,
     artifacts_dir: &Path,
     crate_version: Option<&str>,
@@ -687,7 +717,10 @@ fn run_write_summary(
     let crate_version = crate_version.unwrap_or_else(|| tag.trim_start_matches('v'));
     let summary_path = artifacts_dir.join("distribution-summary.env");
     let rendered = format!(
-        "TAG={tag}\nCRATE_VERSION={crate_version}\nREPO_URL={repo_url}\nBREW_FORMULA={brew_formula}\nHOMEBREW_EXECUTED={}\nLOG_FILES={}\n",
+        "TAG={tag}\nPACKAGE_NAME={}\nBINARY_NAME={}\nREGISTRY_LABEL={}\nCRATE_VERSION={crate_version}\nREPO_URL={repo_url}\nBREW_FORMULA={brew_formula}\nHOMEBREW_EXECUTED={}\nLOG_FILES={}\n",
+        distribution_policy.package_name,
+        distribution_policy.binary_name,
+        distribution_policy.registry_label,
         if homebrew_executed { 1 } else { 0 },
         log_files.join(","),
     );
@@ -699,6 +732,9 @@ fn run_write_summary(
         "schema_version": 1,
         "ok": true,
         "tag": tag,
+        "package_name": distribution_policy.package_name,
+        "binary_name": distribution_policy.binary_name,
+        "registry_label": distribution_policy.registry_label,
         "crate_version": crate_version,
         "artifacts_dir": artifacts_dir.display().to_string(),
         "summary": summary_path.display().to_string(),
@@ -715,6 +751,7 @@ fn run_write_summary(
 
 fn run_first_publish_inner(
     repo_root: &Path,
+    distribution_policy: &EffectiveDistributionPolicy,
     tag: &str,
     crate_version: &str,
     repo_url: &str,
@@ -756,12 +793,15 @@ fn run_first_publish_inner(
         artifacts_dir,
         &mut step_index,
         &mut log_files,
-        &format!("crates.io install validation ({crate_version})"),
+        &format!(
+            "{} install validation ({crate_version})",
+            distribution_policy.registry_label
+        ),
         {
             let mut command = Command::new("cargo");
             command.args([
                 "install",
-                "effigy",
+                &distribution_policy.package_name,
                 "--version",
                 crate_version,
                 "--locked",
@@ -773,10 +813,12 @@ fn run_first_publish_inner(
         },
     )?;
 
-    let crate_bin = crate_install_root.join("bin/effigy");
+    let crate_bin = crate_install_root
+        .join("bin")
+        .join(&distribution_policy.binary_name);
     if !crate_bin.is_file() {
         return Err(RunnerError::task_invocation(format!(
-            "expected crates.io-installed binary at {}",
+            "expected installed binary at {}",
             crate_bin.display()
         )));
     }
@@ -785,7 +827,7 @@ fn run_first_publish_inner(
         artifacts_dir,
         &mut step_index,
         &mut log_files,
-        "crates.io binary help",
+        &format!("{} binary help", distribution_policy.registry_label),
         {
             let mut command = Command::new(&crate_bin);
             command.arg("--help");
@@ -796,7 +838,7 @@ fn run_first_publish_inner(
         artifacts_dir,
         &mut step_index,
         &mut log_files,
-        "crates.io binary json tasks",
+        &format!("{} binary json tasks", distribution_policy.registry_label),
         {
             let mut command = Command::new(&crate_bin);
             command.args(["--json", "tasks"]);
@@ -828,7 +870,7 @@ fn run_first_publish_inner(
             &mut log_files,
             "homebrew binary help",
             {
-                let mut command = Command::new("effigy");
+                let mut command = Command::new(&distribution_policy.binary_name);
                 command.arg("--help");
                 command
             },
@@ -839,7 +881,7 @@ fn run_first_publish_inner(
             &mut log_files,
             "homebrew binary json tasks",
             {
-                let mut command = Command::new("effigy");
+                let mut command = Command::new(&distribution_policy.binary_name);
                 command.args(["--json", "tasks"]);
                 command
             },
@@ -859,6 +901,7 @@ fn run_first_publish_inner(
 
     let _ = run_write_summary(
         repo_root,
+        distribution_policy,
         tag,
         artifacts_dir,
         Some(crate_version),
@@ -868,7 +911,13 @@ fn run_first_publish_inner(
         &log_files,
         false,
     )?;
-    let _ = run_validate_artifacts(repo_root, artifacts_dir, homebrew_executed, false)?;
+    let _ = run_validate_artifacts(
+        repo_root,
+        distribution_policy,
+        artifacts_dir,
+        homebrew_executed,
+        false,
+    )?;
     let summary_path = artifacts_dir.join("distribution-summary.env");
 
     let payload = json!({
@@ -876,6 +925,9 @@ fn run_first_publish_inner(
         "schema_version": 1,
         "ok": true,
         "tag": tag,
+        "package_name": distribution_policy.package_name,
+        "binary_name": distribution_policy.binary_name,
+        "registry_label": distribution_policy.registry_label,
         "crate_version": crate_version,
         "repo_url": repo_url,
         "brew_formula": brew_formula,
@@ -1099,16 +1151,24 @@ fn load_distribution_policy(repo_root: &Path) -> Result<EffectiveDistributionPol
 impl EffectiveDistributionPolicy {
     fn from_manifest(config: Option<ManifestDistributionConfig>) -> Self {
         let package = config.as_ref().and_then(|config| config.package.as_ref());
+        let publish = config.as_ref().and_then(|config| config.publish.as_ref());
         let preflight = config.as_ref().and_then(|config| config.preflight.as_ref());
         let metadata = config.as_ref().and_then(|config| config.metadata.as_ref());
+        let closeout = config.as_ref().and_then(|config| config.closeout.as_ref());
+        let package_name = package_name_from_config(package);
         Self {
-            package_name: package_name_from_config(package),
+            package_name: package_name.clone(),
+            binary_name: binary_name_from_config(publish, &package_name),
+            registry_label: registry_label_from_config(publish),
             repo_url: repo_url_from_config(package),
             brew_formula: brew_formula_from_config(package),
             docs_task: docs_task_from_config(preflight),
             smoke_task: smoke_task_from_config(preflight),
             required_docs: required_docs_from_config(metadata),
             required_files: required_files_from_config(metadata),
+            closeout_owner: closeout_owner_from_config(closeout),
+            closeout_related: closeout_related_from_config(closeout),
+            closeout_next_step: closeout_next_step_from_config(closeout),
         }
     }
 }
@@ -1135,6 +1195,31 @@ fn brew_formula_from_config(config: Option<&ManifestDistributionPackageConfig>) 
         .filter(|value| !value.trim().is_empty())
         .cloned()
         .unwrap_or_else(|| DEFAULT_BREW_FORMULA.to_owned())
+}
+
+fn binary_name_from_config(
+    config: Option<&ManifestDistributionPublishConfig>,
+    package_name: &str,
+) -> String {
+    config
+        .and_then(|config| config.binary_name.as_ref())
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| {
+            if package_name.trim().is_empty() {
+                DEFAULT_BINARY_NAME.to_owned()
+            } else {
+                package_name.to_owned()
+            }
+        })
+}
+
+fn registry_label_from_config(config: Option<&ManifestDistributionPublishConfig>) -> String {
+    config
+        .and_then(|config| config.registry_label.as_ref())
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_REGISTRY_LABEL.to_owned())
 }
 
 fn docs_task_from_config(config: Option<&ManifestDistributionPreflightConfig>) -> String {
@@ -1175,6 +1260,32 @@ fn required_files_from_config(config: Option<&ManifestDistributionMetadataConfig
         })
 }
 
+fn closeout_owner_from_config(config: Option<&ManifestDistributionCloseoutConfig>) -> String {
+    config
+        .and_then(|config| config.owner.as_ref())
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_CLOSEOUT_OWNER.to_owned())
+}
+
+fn closeout_related_from_config(
+    config: Option<&ManifestDistributionCloseoutConfig>,
+) -> Option<String> {
+    config
+        .and_then(|config| config.related.as_ref())
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn closeout_next_step_from_config(config: Option<&ManifestDistributionCloseoutConfig>) -> String {
+    config
+        .and_then(|config| config.next_step.as_ref())
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_CLOSEOUT_NEXT_STEP.to_owned())
+}
+
 fn effective_repo_url(distribution_policy: &EffectiveDistributionPolicy, repo_url: &str) -> String {
     if repo_url == DEFAULT_REPO_URL {
         distribution_policy.repo_url.clone()
@@ -1192,6 +1303,56 @@ fn effective_brew_formula(
     } else {
         brew_formula.to_owned()
     }
+}
+
+fn effective_closeout_owner(
+    distribution_policy: &EffectiveDistributionPolicy,
+    owner: &str,
+) -> String {
+    if owner == DEFAULT_CLOSEOUT_OWNER {
+        distribution_policy.closeout_owner.clone()
+    } else {
+        owner.to_owned()
+    }
+}
+
+fn base_artifact_patterns(
+    distribution_policy: &EffectiveDistributionPolicy,
+) -> Vec<(String, String)> {
+    let registry_slug = slugify(&distribution_policy.registry_label);
+    vec![
+        (
+            "tag install validation".to_owned(),
+            "tag-install-validation".to_owned(),
+        ),
+        (
+            format!("{} install", distribution_policy.registry_label),
+            format!("{registry_slug}-install-validation"),
+        ),
+        (
+            format!("{} binary help", distribution_policy.registry_label),
+            format!("{registry_slug}-binary-help"),
+        ),
+        (
+            format!("{} binary json tasks", distribution_policy.registry_label),
+            format!("{registry_slug}-binary-json-tasks"),
+        ),
+    ]
+}
+
+fn homebrew_artifact_patterns() -> Vec<(String, String)> {
+    vec![
+        ("homebrew install".to_owned(), "homebrew-install".to_owned()),
+        (
+            "homebrew binary help".to_owned(),
+            "homebrew-binary-help".to_owned(),
+        ),
+        (
+            "homebrew binary json tasks".to_owned(),
+            "homebrew-binary-json-tasks".to_owned(),
+        ),
+        ("homebrew upgrade".to_owned(), "homebrew-upgrade".to_owned()),
+    ]
 }
 
 fn find_log_by_pattern(artifacts_dir: &Path, pattern: &str) -> Option<PathBuf> {
@@ -1215,8 +1376,9 @@ fn find_log_by_pattern(artifacts_dir: &Path, pattern: &str) -> Option<PathBuf> {
 mod tests {
     use super::{
         command_exists, find_log_by_pattern, run_preflight, run_validate_artifacts,
-        run_validate_metadata, run_write_summary, EffectiveDistributionPolicy,
-        DEFAULT_BREW_FORMULA, DEFAULT_DOCS_TASK, DEFAULT_PACKAGE_NAME, DEFAULT_REPO_URL,
+        run_validate_metadata, run_write_summary, EffectiveDistributionPolicy, DEFAULT_BINARY_NAME,
+        DEFAULT_BREW_FORMULA, DEFAULT_CLOSEOUT_NEXT_STEP, DEFAULT_CLOSEOUT_OWNER,
+        DEFAULT_DOCS_TASK, DEFAULT_PACKAGE_NAME, DEFAULT_REGISTRY_LABEL, DEFAULT_REPO_URL,
         DEFAULT_REQUIRED_DOCS, DEFAULT_REQUIRED_FILES, DEFAULT_SMOKE_TASK,
     };
     use std::fs;
@@ -1250,8 +1412,14 @@ mod tests {
         ));
         fs::create_dir_all(&root).expect("mkdir");
         fs::write(root.join("01-tag-install-validation.log"), "ok\n").expect("write log");
-        let err = run_validate_artifacts(std::path::Path::new("."), &root, false, false)
-            .expect_err("should fail");
+        let err = run_validate_artifacts(
+            std::path::Path::new("."),
+            &default_distribution_policy(),
+            &root,
+            false,
+            false,
+        )
+        .expect_err("should fail");
         assert!(err.to_string().contains("crates.io install"));
     }
 
@@ -1267,6 +1435,7 @@ mod tests {
         fs::create_dir_all(&root).expect("mkdir");
         run_write_summary(
             std::path::Path::new("."),
+            &default_distribution_policy(),
             "v0.2.5",
             &root,
             None,
@@ -1344,6 +1513,8 @@ mod tests {
     fn default_distribution_policy() -> EffectiveDistributionPolicy {
         EffectiveDistributionPolicy {
             package_name: DEFAULT_PACKAGE_NAME.to_owned(),
+            binary_name: DEFAULT_BINARY_NAME.to_owned(),
+            registry_label: DEFAULT_REGISTRY_LABEL.to_owned(),
             repo_url: DEFAULT_REPO_URL.to_owned(),
             brew_formula: DEFAULT_BREW_FORMULA.to_owned(),
             docs_task: DEFAULT_DOCS_TASK.to_owned(),
@@ -1356,6 +1527,9 @@ mod tests {
                 .iter()
                 .map(|value| (*value).to_owned())
                 .collect(),
+            closeout_owner: DEFAULT_CLOSEOUT_OWNER.to_owned(),
+            closeout_related: None,
+            closeout_next_step: DEFAULT_CLOSEOUT_NEXT_STEP.to_owned(),
         }
     }
 }
