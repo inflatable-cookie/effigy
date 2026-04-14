@@ -1,0 +1,33 @@
+[demos.browser-proof-report]
+title = "Browser Proof Report"
+summary = "Generate a human-checkable snapshot of Effigy's own demo inventory, grouped query views, and inspect surface."
+proof = "Operator-visible proof that the shipped demo registry, query filters, grouping, and receipt-linked artifacts are usable on a real repo."
+owner = "effigy-product"
+mode = "headless"
+status = "ready"
+covers = ["effigy.demo.registry", "effigy.demo.browser-query"]
+tags = ["self-hosted", "proof-report"]
+run = "./scripts/demo/write-browser-proof-report.sh"
+artifacts = [
+  ".effigy/demo/artifacts/browser-proof-report/index.html",
+  ".effigy/demo/artifacts/browser-proof-report/list.txt",
+  ".effigy/demo/artifacts/browser-proof-report/grouped-by-gap.txt",
+  ".effigy/demo/artifacts/browser-proof-report/inspect-lifecycle-window.txt",
+]
+
+[demos.lifecycle-window]
+title = "Lifecycle Window"
+summary = "Hold a run-backed demo open until an operator stops it, while updating a small artifact directory in real time."
+proof = "Operator-visible proof that Effigy can expose active demo state, stoppability, and normalized terminal receipts for a real run-backed process."
+owner = "effigy-runtime"
+mode = "interactive"
+status = "ready"
+covers = ["effigy.demo.lifecycle", "effigy.demo.stop-rerun"]
+tags = ["self-hosted", "lifecycle"]
+run = "./scripts/demo/run-lifecycle-window.sh"
+artifacts = [
+  ".effigy/demo/artifacts/lifecycle-window/index.html",
+  ".effigy/demo/artifacts/lifecycle-window/status.txt",
+  ".effigy/demo/artifacts/lifecycle-window/heartbeat.txt",
+  ".effigy/demo/artifacts/lifecycle-window/events.log",
+]

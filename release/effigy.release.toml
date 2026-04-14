@@ -1,0 +1,13 @@
+[release]
+version-file = "Cargo.toml"
+changelog = "CHANGELOG.md"
+sync-files = ["Cargo.lock"]
+tag-format = "v{version}"
+
+[release.gates]
+format = "cargo fmt --all -- --check"
+test = "cargo test"
+qa = "cargo run --bin effigy -- qa:ci"
+build = "cargo build --release --bin effigy"
+smoke = "./scripts/check-release-smoke.sh ./target/release/effigy"
+metadata = "cargo run --bin effigy -- distribution validate-metadata"
