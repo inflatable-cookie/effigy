@@ -112,8 +112,8 @@ The key boundary is now settled:
   - frontend/build-tool replacement
   - full Python-analysis replacement in the first slice
 
-The remaining active question is the next bounded migration slice, not the
-high-level product split.
+The remaining active question is the bounded long-running lifecycle slice, not
+the high-level product split.
 
 ## Migration Classification
 
@@ -166,6 +166,6 @@ This milestone is ready to execute only when Effigy has:
 
 ## Next Task
 
-Use the active `g02.004` strict lane to decide whether the next Rhai slice is
-more Effigy dogfooding, a bounded host-API expansion for signal-aware
-lifecycle handling, or the first external pilot.
+Use the active `g02.004` strict lane to add the bounded long-running Rhai
+lifecycle support exposed by the first Effigy dogfooding cluster before any
+external pilot.

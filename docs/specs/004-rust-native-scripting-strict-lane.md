@@ -47,9 +47,9 @@ slice, not whether Effigy should support Rhai at all.
 
 `strict-ready`
 
-The Effigy dogfooding cluster is shipped. The next valid move is a bounded
-decision about the next migration slice, with the lifecycle/signal gap called
-out explicitly instead of papered over.
+The post-dogfooding decision is made. The next valid move is a bounded
+long-running lifecycle slice so Rhai can support signal-aware first-party
+scripts without pretending to be a full shell.
 
 ## Batch Model
 
@@ -78,5 +78,5 @@ for the current mixed-runtime script surfaces.
 
 ## Next Task
 
-Execute the active `g02.004` ready card to decide the next Rhai migration slice
-from the shipped Effigy dogfooding results.
+Execute the active `g02.004` ready card to add the bounded long-running Rhai
+lifecycle support exposed by the Effigy dogfooding pass.

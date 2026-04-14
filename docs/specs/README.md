@@ -19,5 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to choose the next Rhai slice from the shipped Effigy
-dogfooding results before widening into a cross-repo pilot.
+Use the active spec lane to add the bounded long-running Rhai lifecycle support
+exposed by the shipped Effigy dogfooding pass before widening into a
+cross-repo pilot.

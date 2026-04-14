@@ -1,6 +1,6 @@
 # 090 Decide Post-Effigy Rhai Dogfooding Slice
 
-Status: ready
+Status: complete
 Updated: 2026-04-14
 Roadmap: `g02.004`
 Spec: `docs/specs/004-rust-native-scripting-strict-lane.md`
@@ -40,5 +40,6 @@ batch instead of guessing at cross-repo rollout.
 
 ## Next Task
 
-After this decision lands, execute the chosen ready card immediately instead of
-reopening broad scripting strategy debate.
+This card is complete. Use
+[`091-implement-rhai-long-running-lifecycle-support.md`](./091-implement-rhai-long-running-lifecycle-support.md)
+next.
