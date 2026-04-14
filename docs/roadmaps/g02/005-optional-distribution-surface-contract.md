@@ -167,11 +167,12 @@ That is enough to make the distribution surface meaningfully less
 Effigy-specific across the publish/summary/closeout path without widening
 prematurely into every possible channel policy in one batch.
 
-The next explicit decision is whether this widened contract is now honest
-enough for one consumer-proof adoption, or whether one final internal policy
-gap still needs to be closed first.
+That decision is now settled: run one bounded consumer-proof adoption batch
+next. The current surface is honest enough for a real repo to adopt the
+optional manifest contract without pretending every distribution channel or
+workflow expectation is already universally abstracted.
 
 ## Next Task
 
-Use the active `g02.005` strict lane to decide whether the widened optional
-distribution surface is now ready for one consumer-proof adoption batch.
+Use the active `g02.005` strict lane to run one bounded consumer-proof
+adoption batch for the optional distribution surface.

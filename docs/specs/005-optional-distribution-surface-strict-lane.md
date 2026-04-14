@@ -51,8 +51,10 @@ That widening batch is now shipped too:
 - summary identity can be manifest-driven
 - closeout defaults can be manifest-driven
 
-The next valid move is now an explicit decision on whether that widened
-surface is honest enough for a consumer proof.
+That decision is now settled: the widened surface is honest enough for one
+bounded consumer proof, provided the proof stays focused on optional manifest
+adoption rather than claiming every distribution channel shape is already
+fully generic.
 
 ## Batch Model
 
@@ -80,6 +82,5 @@ hardcoded release policy.
 
 ## Next Task
 
-Execute the active `g02.005` ready card to decide whether the widened optional
-distribution surface is now honest enough for one consumer-proof adoption
-batch.
+Execute the active `g02.005` ready card to run one bounded consumer-proof
+adoption batch for the optional distribution surface.

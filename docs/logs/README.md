@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/14-235600-post-distribution-policy-widening-slice-decision.md`](./2026-04/14-235600-post-distribution-policy-widening-slice-decision.md)
 - [`2026-04/14-234800-distribution-policy-widening-for-publish-and-closeout-implementation.md`](./2026-04/14-234800-distribution-policy-widening-for-publish-and-closeout-implementation.md)
 - [`2026-04/14-233000-post-distribution-foundation-slice-decision.md`](./2026-04/14-233000-post-distribution-foundation-slice-decision.md)
 - [`2026-04/14-230500-manifest-driven-distribution-foundation-implementation.md`](./2026-04/14-230500-manifest-driven-distribution-foundation-implementation.md)
