@@ -19,6 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to run the first external Rhai pilot in Keepsake and
-use that result to decide whether the current host API is broad enough for
-heavier external migrations.
+Use the active spec lane to keep Rhai dogfooding moving inside Effigy while the
+first external pilot is temporarily deferred, then reopen the external boundary
+from a clean ready card.

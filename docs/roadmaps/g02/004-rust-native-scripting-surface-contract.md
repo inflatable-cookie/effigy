@@ -112,8 +112,8 @@ The key boundary is now settled:
   - frontend/build-tool replacement
   - full Python-analysis replacement in the first slice
 
-The remaining active question is whether the first external pilot confirms the
-current host API or exposes one more bounded capability gap.
+The remaining active question is whether one more Effigy-only operator-facing
+dogfooding batch should land before the first external pilot is reopened.
 
 ## Migration Classification
 
@@ -130,7 +130,7 @@ Shipped first targets:
 
 ### Keepsake
 
-First external pilot.
+First external pilot when the repo boundary is safe again.
 
 Best early targets:
 
@@ -167,6 +167,6 @@ This milestone is ready to execute only when Effigy has:
 
 ## Next Task
 
-Use the active `g02.004` strict lane to execute the bounded Keepsake pilot and
-use that result to decide whether the current Rhai host API is broad enough
-for heavier external migrations.
+Use the active `g02.004` strict lane to keep broadening Effigy dogfooding while
+the external pilot is temporarily deferred, then reopen the Keepsake boundary
+from a fresh ready card.
