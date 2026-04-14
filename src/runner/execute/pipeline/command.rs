@@ -36,6 +36,7 @@ pub(super) fn build_task_command(
             task_env_file: selection.task.env_file.as_ref(),
             env_profiles: &selection.catalog.manifest.env,
             args_rendered: &args_rendered,
+            args_raw: &preflight.runtime_args_exec.passthrough,
             repo_root: &selection.catalog.catalog_root,
             catalogs: &preflight.catalogs,
             task_scope_cwd: &selection.catalog.catalog_root,

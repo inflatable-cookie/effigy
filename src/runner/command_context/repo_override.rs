@@ -14,6 +14,7 @@ pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf>
         Command::Release(args) => args.repo_override.clone(),
         Command::Doctor(args) => args.repo_override.clone(),
         Command::Tasks(args) => args.repo_override.clone(),
+        Command::InternalRhai(_) => None,
         Command::Task(_) => super::task_repo_override(cmd),
         Command::Help(_) => None,
     }

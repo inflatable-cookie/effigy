@@ -40,6 +40,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Release(args) => args.output_json = true,
         Command::Tasks(args) => args.output_json = true,
         Command::Doctor(args) => args.output_json = true,
+        Command::InternalRhai(_) => {}
         Command::Help(_) => {}
     }
     cmd
@@ -61,6 +62,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Tasks(args) => args.output_json,
         Command::Doctor(args) => args.output_json,
         Command::Task(task) => task.args.iter().any(|arg| arg == "--json"),
+        Command::InternalRhai(_) => false,
         Command::Help(_) => false,
     }
 }

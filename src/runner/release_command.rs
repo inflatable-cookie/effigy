@@ -6937,7 +6937,11 @@ mod tests {
 
         let manifest_source =
             std::fs::read_to_string(root.join("effigy.toml")).expect("read effigy manifest");
-        assert!(manifest_source.contains("sync-files = [\"Cargo.lock\"]"));
+        assert!(manifest_source.contains("release/effigy.release.toml"));
+
+        let release_manifest = std::fs::read_to_string(root.join("release/effigy.release.toml"))
+            .expect("read release manifest");
+        assert!(release_manifest.contains("sync-files = [\"Cargo.lock\"]"));
 
         let verify_script =
             std::fs::read_to_string(root.join("scripts/check-release-install-from-tag.sh"))

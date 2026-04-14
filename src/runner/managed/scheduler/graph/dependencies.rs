@@ -39,7 +39,7 @@ fn step_dependencies(
         ManifestManagedRunStep::Step(table) => resolve_explicit_dependencies(
             task_name,
             table.id.as_deref(),
-            &table.depends_on,
+            table.depends_on.as_slice(),
             index,
             id_to_index,
         )?,

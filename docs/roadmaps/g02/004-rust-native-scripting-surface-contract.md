@@ -145,7 +145,7 @@ Still a full migration target, but in two layers:
 
 ## Out Of Scope
 
-- implementing Rhai support immediately
+- deciding the next migration slice before the foundation exists
 - removing Bun from web-oriented repos
 - solving all plugin/build ecosystem integration in the same batch
 - promising that every historical Python or shell script disappears in v1
@@ -161,5 +161,5 @@ This milestone is ready to execute only when Effigy has:
 
 ## Next Task
 
-Use the active `g02.004` strict lane to implement the Rhai script-step
-foundation and migrate one small Effigy shell-glue task as pilot proof.
+Use the active `g02.004` strict lane to choose the next migration slice after
+the shipped Rhai script-step foundation.

@@ -5,7 +5,8 @@ use crate::{
     ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs, DemoHistoryOutcome, DemoListGap,
     DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSubcommand, DistributionArgs,
     DistributionSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, HelpTopic,
-    ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
+    InternalRhaiArgs, InternalRhaiSource, ReleaseArgs, ReleaseSubcommand, TaskInvocation,
+    TasksArgs,
 };
 
 use super::value_parsing::{next_required_value, parse_pretty_bool, parse_repo_path};
@@ -32,9 +33,38 @@ where
         "release" => parse_release(args),
         "doctor" => parse_doctor(args),
         "tasks" | "catalogs" => parse_tasks(args),
+        "__rhai-step" => parse_internal_rhai_command(args),
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
     }
+}
+
+fn parse_internal_rhai_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut source = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--file" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--file".to_owned(),
+                    },
+                )?;
+                source = Some(InternalRhaiSource::File(PathBuf::from(value)));
+            }
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => return Err(unknown_argument(arg)),
+        }
+    }
+
+    Ok(Command::InternalRhai(InternalRhaiArgs {
+        source: source.unwrap_or(InternalRhaiSource::Inline),
+    }))
 }
 
 fn parse_version_command<I>(args: I) -> Result<Command, CliParseError>

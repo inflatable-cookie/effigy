@@ -33,6 +33,7 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
         Command::Doctor(_) => ("doctor", "doctor".to_owned()),
         Command::Tasks(_) => ("tasks", "tasks".to_owned()),
         Command::Task(task) => ("task", task.name.clone()),
+        Command::InternalRhai(_) => ("task", "__rhai-step".to_owned()),
     }
 }
 

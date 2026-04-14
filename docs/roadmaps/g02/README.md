@@ -14,12 +14,12 @@ Current milestones:
 - [`001-bootstrap-command-and-clone-contract.md`](./001-bootstrap-command-and-clone-contract.md) (complete; built-in released and live-pilot validated on `loophole` and `songsprout`)
 - [`002-manifest-composition-and-override-contract.md`](./002-manifest-composition-and-override-contract.md) (in progress; composition foundation and inspectability are now real product surface and no longer block downstream planning)
 - [`003-demo-harness-model-and-runner-contract.md`](./003-demo-harness-model-and-runner-contract.md) (complete; shipped and released in `v0.2.13`, including the demo registry, browser, live terminal, query/history surfaces, concurrent-runner projection, and real-project consumer proof)
-- [`004-rust-native-scripting-surface-contract.md`](./004-rust-native-scripting-surface-contract.md) (in progress; the scripting policy split and Rhai v1 boundary are settled, with Effigy chosen as the first pilot repo and Jetstream explicitly treated as a full migration target after the foundation lands)
+- [`004-rust-native-scripting-surface-contract.md`](./004-rust-native-scripting-surface-contract.md) (in progress; the scripting policy split, Rhai v1 boundary, and script-step foundation are now shipped, with the next question narrowed to the next migration slice)
 
 Active strict planning lane:
 
 - [`../specs/004-rust-native-scripting-strict-lane.md`](../specs/004-rust-native-scripting-strict-lane.md)
-- [`../specs/batch-cards/087-implement-rhai-script-step-foundation.md`](../specs/batch-cards/087-implement-rhai-script-step-foundation.md)
+- [`../specs/batch-cards/088-decide-post-rhai-foundation-migration-slice.md`](../specs/batch-cards/088-decide-post-rhai-foundation-migration-slice.md)
 
 Rules:
 
@@ -29,5 +29,5 @@ Rules:
 
 ## Next Task
 
-Use the active `g02.004` ready card to implement the Rhai script-step
-foundation and migrate one small Effigy shell-glue task as pilot proof.
+Use the active `g02.004` ready card to decide the next migration slice after
+the shipped Rhai script-step foundation.

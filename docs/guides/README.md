@@ -18,11 +18,13 @@ pages only when you need more detail.
 5. [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
    for moving a repo from demo scripts and wrapper tasks onto the native demo
    surface.
-6. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) for copy-paste
+6. [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md) for
+   Effigy-native scripting in Rust-first repos.
+7. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) for copy-paste
    `effigy.toml` patterns.
-7. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for
+8. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for
    the full command and flag surface.
-8. [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md) when the
+9. [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md) when the
    job is "clone this repo here and bring it up."
 
 ## By Goal
@@ -33,6 +35,7 @@ pages only when you need more detail.
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md)
 
 ### I want to clone a repo here and bring it up
 
@@ -59,6 +62,13 @@ pages only when you need more detail.
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
+
+### I want Effigy-native scripting for a Rust-first repo
+
+- [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md)
+- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 
 ### I want testing, watch mode, init, or migrate
 
@@ -160,6 +170,7 @@ Details:
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+- [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)

@@ -10,6 +10,8 @@ If you want the narrative front doors first, start with:
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md) for the demo system
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
   for `[manifest].include` and fragment layout
+- [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md) for
+  Effigy-native scripting in Rust-first repos
 
 
 ## Vision Alignment
@@ -260,6 +262,49 @@ run = [
 ```
 
 Use when you need dependency-aware orchestration, retry policy, and per-step timeouts.
+
+## 4a) Rhai Script Step For Rust-First Glue
+
+```toml
+[tasks.link:local]
+run = [{ rhai_file = "scripts/rhai/install-local-bin-links.rhai" }]
+```
+
+File-backed Rhai:
+
+```rhai
+let payload = #{ "task": task_name, "repo_root": repo_root };
+write_file("tmp/proof.json", json_stringify(payload));
+log("wrote tmp/proof.json");
+```
+
+Inline Rhai:
+
+```toml
+[tasks.report:stamp]
+run = [
+  {
+    rhai = '''
+      let status = run_process("cargo", ["fmt", "--all", "--check"]);
+      if !status["success"] {
+        throw status["stderr"];
+      }
+      log("fmt check passed");
+    '''
+  },
+]
+```
+
+Use this when:
+
+- the repo is Rust-first
+- the script is orchestration or repo glue
+- adding Bun or more shell wrapper surface would be noise
+
+Do not use this to fake shell pipelines or replace frontend build tooling.
+
+For the full host API and v1 limits, use
+[`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md).
 
 ## 4b) Run-Array Env Directives
 

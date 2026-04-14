@@ -6,6 +6,18 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- Add Rhai-backed manifest run steps through `rhai = "..."` and
+  `rhai_file = "..."`, with a first Effigy-native host API for args, env,
+  path/file helpers, JSON/TOML helpers, structured subprocess execution, and
+  task invocation so Rust-first repos can start replacing shell glue without
+  taking a Bun dependency just for task scripting.
+
+### Changed
+- Migrate Effigy's `link:local` task from a shell script to a file-backed Rhai
+  step so the new embedded scripting path is exercised by a real repo-local
+  operator task instead of a synthetic fixture.
+
 ## [0.2.13] - 2026-04-13
 
 ### Added

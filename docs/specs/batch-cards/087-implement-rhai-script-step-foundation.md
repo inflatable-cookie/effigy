@@ -1,6 +1,6 @@
 # 087 Implement Rhai Script Step Foundation
 
-Status: ready
+Status: complete
 Updated: 2026-04-14
 Roadmap: `g02.004`
 Spec: `docs/specs/004-rust-native-scripting-strict-lane.md`
@@ -52,9 +52,6 @@ external Bun or shell runtimes.
 
 ## Next Task
 
-After the foundation lands, decide the next migration slice between:
+Next card:
 
-- more Effigy shell-glue migration
-- Keepsake Rhai pilot migration
-- or Jetstream orchestration-only Rhai migration before deeper analysis-tool
-  replacement
+- [`088-decide-post-rhai-foundation-migration-slice.md`](./088-decide-post-rhai-foundation-migration-slice.md)

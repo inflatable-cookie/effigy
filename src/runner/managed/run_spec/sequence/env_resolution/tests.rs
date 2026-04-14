@@ -55,9 +55,11 @@ fn temp_repo(name: &str) -> PathBuf {
 }
 
 fn profile_step(profile_name: &str) -> ManifestManagedRunStep {
-    ManifestManagedRunStep::Step(ManifestManagedRunStepTable {
+    ManifestManagedRunStep::Step(Box::new(ManifestManagedRunStepTable {
         run: Some("printf ok".to_owned()),
         task: None,
+        rhai: None,
+        rhai_file: None,
         env: Some(ManifestRunStepEnv::Profile(profile_name.to_owned())),
         env_file: None,
         id: None,
@@ -66,7 +68,7 @@ fn profile_step(profile_name: &str) -> ManifestManagedRunStep {
         retry: None,
         retry_delay_ms: None,
         fail_fast: None,
-    })
+    }))
 }
 
 #[test]

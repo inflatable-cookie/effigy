@@ -128,6 +128,7 @@ fn render_selected_task_run(
             task_env_file: selection.task.env_file.as_ref(),
             env_profiles: &selection.catalog.manifest.env,
             args_rendered,
+            args_raw: &[],
             repo_root: &selection.catalog.catalog_root,
             catalogs,
             task_scope_cwd: &selection.catalog.catalog_root,

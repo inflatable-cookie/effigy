@@ -31,8 +31,11 @@ pub fn run_cli(raw_args: Vec<String>) {
         }
     };
     let cmd = apply_global_json_flag(parsed, global_json_mode);
-    let suppress_header = command_requests_json(&cmd, global_json_mode);
-    let emit_json_envelope = suppress_header;
+    let internal_suppress_header = std::env::var("EFFIGY_INTERNAL_SUPPRESS_HEADER")
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"));
+    let suppress_header = internal_suppress_header || command_requests_json(&cmd, global_json_mode);
+    let emit_json_envelope = !internal_suppress_header && suppress_header;
     let (command_kind, command_name) = command_kind_and_name(&cmd);
     let command_root = crate::runner::resolve_command_root(&cmd);
     let context = CliExecutionContext {
@@ -56,6 +59,7 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::Release(_)
         | Command::Doctor(_)
         | Command::Tasks(_)
+        | Command::InternalRhai(_)
         | Command::Task(_)) => run_and_render_command(&context, command),
     }
 }

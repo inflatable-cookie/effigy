@@ -69,6 +69,7 @@ impl StepEnvAccumulator {
         let ManifestManagedRunStep::Step(table) = step else {
             return Ok(());
         };
+        let table = table.as_ref();
         self.apply_run_step_env(
             task_name,
             table.env.as_ref(),
