@@ -1,6 +1,6 @@
 # 091 Implement Rhai Long-Running Lifecycle Support
 
-Status: ready
+Status: complete
 Updated: 2026-04-14
 Roadmap: `g02.004`
 Spec: `docs/specs/004-rust-native-scripting-strict-lane.md`
@@ -47,5 +47,5 @@ long-running shell glue without pretending Rhai should emulate a full shell.
 ## Next Task
 
 After this batch, decide whether Effigy Rhai dogfooding is complete enough to
-start the first Keepsake pilot or whether one more Effigy-only lifecycle/fidelity
+start the first Keepsake pilot or whether one more Effigy-only Rhai host-API
 slice is still justified.

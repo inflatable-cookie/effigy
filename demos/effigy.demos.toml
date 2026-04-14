@@ -24,7 +24,7 @@ mode = "interactive"
 status = "ready"
 covers = ["effigy.demo.lifecycle", "effigy.demo.stop-rerun"]
 tags = ["self-hosted", "lifecycle"]
-run = "./scripts/demo/run-lifecycle-window.sh"
+run = [{ rhai = "scripts/rhai/run-lifecycle-window.rhai" }]
 artifacts = [
   ".effigy/demo/artifacts/lifecycle-window/index.html",
   ".effigy/demo/artifacts/lifecycle-window/status.txt",

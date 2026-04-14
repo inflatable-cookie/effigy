@@ -39,17 +39,18 @@ The active strict lane is:
 - make Jetstream's “full migration target” posture explicit instead of letting
   Python linger by inertia
 
-This lane now has a shipped script-step foundation and a first substantial
-Effigy dogfooding cluster. The next question is the next bounded migration
-slice, not whether Effigy should support Rhai at all.
+This lane now has a shipped script-step foundation, a first substantial Effigy
+dogfooding cluster, and one honest stop-aware long-running Rhai demo. The next
+question is whether Effigy dogfooding is now sufficient to widen into the first
+external pilot.
 
 ## Current Posture
 
 `strict-ready`
 
-The post-dogfooding decision is made. The next valid move is a bounded
-long-running lifecycle slice so Rhai can support signal-aware first-party
-scripts without pretending to be a full shell.
+The long-running lifecycle slice is shipped. The next valid move is the
+post-lifecycle decision card so the lane can choose whether to stay inside
+Effigy dogfooding or widen into the first external pilot.
 
 ## Batch Model
 
@@ -78,5 +79,5 @@ for the current mixed-runtime script surfaces.
 
 ## Next Task
 
-Execute the active `g02.004` ready card to add the bounded long-running Rhai
-lifecycle support exposed by the Effigy dogfooding pass.
+Execute the active `g02.004` ready card to decide the next bounded migration
+slice after the shipped long-running Rhai lifecycle support.

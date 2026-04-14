@@ -112,8 +112,8 @@ The key boundary is now settled:
   - frontend/build-tool replacement
   - full Python-analysis replacement in the first slice
 
-The remaining active question is the bounded long-running lifecycle slice, not
-the high-level product split.
+The remaining active question is the next migration boundary after the shipped
+long-running lifecycle support, not the high-level product split.
 
 ## Migration Classification
 
@@ -126,6 +126,7 @@ Shipped first targets:
 - `scripts/install-local-bin-links.sh`
 - `smoke:release`
 - `browser-proof-report`
+- `lifecycle-window`
 
 ### Keepsake
 
@@ -166,6 +167,6 @@ This milestone is ready to execute only when Effigy has:
 
 ## Next Task
 
-Use the active `g02.004` strict lane to add the bounded long-running Rhai
-lifecycle support exposed by the first Effigy dogfooding cluster before any
-external pilot.
+Use the active `g02.004` strict lane to decide whether the shipped Effigy Rhai
+dogfooding surface is now broad enough for the first external pilot or still
+needs one more Effigy-only batch.
