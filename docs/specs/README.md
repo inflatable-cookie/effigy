@@ -19,5 +19,5 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to decide whether the widened optional distribution
-surface is now honest enough for one consumer-proof adoption batch.
+Use the active spec lane to run one bounded consumer-proof adoption batch for
+the optional distribution surface.

@@ -1,6 +1,6 @@
 # 102 Decide Post Distribution Policy Widening Slice
 
-Status: ready
+Status: complete
 Updated: 2026-04-14
 Roadmap: `g02.005`
 Spec: `docs/specs/005-optional-distribution-surface-strict-lane.md`
@@ -38,6 +38,5 @@ internal policy gap still needs to be closed first.
 
 ## Next Task
 
-After this decision, either run one bounded consumer-proof adoption batch for
-the optional distribution surface or execute one final internal gap-closure
-batch before pausing.
+After this decision, run one bounded consumer-proof adoption batch for the
+optional distribution surface.

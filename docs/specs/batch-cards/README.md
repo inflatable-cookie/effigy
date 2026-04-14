@@ -105,9 +105,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`099-implement-manifest-driven-distribution-contract-foundation.md`](./099-implement-manifest-driven-distribution-contract-foundation.md) (complete)
 - [`100-decide-post-distribution-foundation-slice.md`](./100-decide-post-distribution-foundation-slice.md) (complete)
 - [`101-implement-distribution-policy-widening-for-publish-and-closeout.md`](./101-implement-distribution-policy-widening-for-publish-and-closeout.md) (complete)
-- [`102-decide-post-distribution-policy-widening-slice.md`](./102-decide-post-distribution-policy-widening-slice.md) (ready)
+- [`102-decide-post-distribution-policy-widening-slice.md`](./102-decide-post-distribution-policy-widening-slice.md) (complete)
+- [`103-implement-consumer-proof-of-optional-distribution-surface.md`](./103-implement-consumer-proof-of-optional-distribution-surface.md) (ready)
 
 ## Next Task
 
-Execute the active ready card for `g02.005` to decide whether the widened
-optional distribution surface is ready for one consumer-proof batch.
+Execute the active ready card for `g02.005` to run one bounded consumer-proof
+batch for the optional distribution surface.
