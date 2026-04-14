@@ -46,8 +46,8 @@ migration order, not whether Effigy should support Rhai at all.
 
 `strict-ready`
 
-The Rhai foundation is shipped. The next valid move is deciding which migration
-slice should follow it.
+The Rhai foundation is shipped. The next valid move is an Effigy-only
+dogfooding migration batch before any cross-repo pilot.
 
 ## Batch Model
 
@@ -76,5 +76,5 @@ for the current mixed-runtime script surfaces.
 
 ## Next Task
 
-Execute the active `g02.004` ready card to decide the next post-foundation Rhai
-migration slice.
+Execute the active `g02.004` ready card to migrate a meaningful cluster of
+remaining Effigy shell-glue tasks onto file-backed Rhai scripts.

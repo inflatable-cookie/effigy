@@ -112,7 +112,7 @@ The key boundary is now settled:
   - frontend/build-tool replacement
   - full Python-analysis replacement in the first slice
 
-The remaining active question is implementation order and proof shape, not the
+The remaining active question is migration order and proof shape, not the
 high-level product split.
 
 ## Migration Classification
@@ -137,7 +137,11 @@ Best early targets:
 
 ### Jetstream
 
-Still a full migration target, but in two layers:
+Still a full migration target, but deferred for the current batch while active
+local work makes it the wrong immediate migration surface.
+
+When Jetstream returns to scope, the intended migration still happens in two
+layers:
 
 - first migrate bash orchestration and QA wrappers
 - then migrate analysis tools once Rust helper capability exists behind the
@@ -161,5 +165,5 @@ This milestone is ready to execute only when Effigy has:
 
 ## Next Task
 
-Use the active `g02.004` strict lane to choose the next migration slice after
-the shipped Rhai script-step foundation.
+Use the active `g02.004` strict lane to dogfood the shipped Rhai scripting
+surface inside Effigy before starting a cross-repo pilot.
