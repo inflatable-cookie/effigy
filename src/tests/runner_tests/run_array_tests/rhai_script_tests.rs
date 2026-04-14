@@ -64,3 +64,50 @@ run = [{ run = "printf invalid", rhai = "print(\"nope\")" }]
         &["define exactly one of `run`, `task`, or `rhai`"],
     );
 }
+
+#[test]
+fn run_manifest_task_run_array_rhai_steps_support_args_and_runtime_helpers() {
+    let root = temp_workspace("run-array-rhai-runtime-helpers");
+    fs::create_dir_all(root.join("scripts/rhai")).expect("mkdir rhai script dir");
+    fs::write(
+        root.join("scripts/rhai/helpers.rhai"),
+        r#"
+let stamp = now_utc();
+let scratch = make_temp_dir("rhai-runtime-helper");
+write_file("stamp.txt", stamp);
+write_file("arg.txt", args[0].to_string());
+write_file("scratch.txt", scratch);
+write_lines("lines.txt", ["one", "two"]);
+if !path_exists(scratch) {
+    throw "scratch dir was not created";
+}
+remove_path(scratch);
+"#,
+    )
+    .expect("write rhai script");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.validate]
+run = [{ rhai = "scripts/rhai/helpers.rhai" }]
+"#,
+    );
+
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "validate".to_owned(),
+            args: vec!["helper-ok".to_owned()],
+        },
+        root.clone(),
+    )
+    .expect("rhai helper task should run");
+
+    let stamp = fs::read_to_string(root.join("stamp.txt")).expect("read stamp");
+    assert!(stamp.ends_with('Z'), "expected UTC timestamp: {stamp}");
+    assert_file_text_equals(&root.join("arg.txt"), "helper-ok");
+    assert_file_text_equals(&root.join("lines.txt"), "one\ntwo\n");
+    let scratch = fs::read_to_string(root.join("scratch.txt")).expect("read scratch dir");
+    assert!(
+        !std::path::Path::new(scratch.trim()).exists(),
+        "scratch dir should be removed: {scratch}"
+    );
+}

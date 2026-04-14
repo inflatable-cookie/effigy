@@ -7,7 +7,7 @@ mode = "headless"
 status = "ready"
 covers = ["effigy.demo.registry", "effigy.demo.browser-query"]
 tags = ["self-hosted", "proof-report"]
-run = "./scripts/demo/write-browser-proof-report.sh"
+run = [{ rhai = "scripts/rhai/write-browser-proof-report.rhai" }]
 artifacts = [
   ".effigy/demo/artifacts/browser-proof-report/index.html",
   ".effigy/demo/artifacts/browser-proof-report/list.txt",

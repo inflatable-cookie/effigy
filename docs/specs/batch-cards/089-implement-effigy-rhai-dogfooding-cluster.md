@@ -1,6 +1,6 @@
 # 089 Implement Effigy Rhai Dogfooding Cluster
 
-Status: ready
+Status: complete
 Updated: 2026-04-14
 Roadmap: `g02.004`
 Spec: `docs/specs/004-rust-native-scripting-strict-lane.md`
@@ -47,8 +47,6 @@ cross-repo Rhai pilot starts.
 
 ## Next Task
 
-After the dogfooding cluster lands, decide whether the next slice is:
-
-- more Effigy dogfooding
-- the first Keepsake Rhai pilot
-- or a bounded Rhai host-API expansion earned by the Effigy migration gaps
+This card is complete. Use
+[`090-decide-post-effigy-rhai-dogfooding-slice.md`](./090-decide-post-effigy-rhai-dogfooding-slice.md)
+next.

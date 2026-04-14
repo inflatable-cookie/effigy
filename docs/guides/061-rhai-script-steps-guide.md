@@ -63,10 +63,13 @@ Current v1 helpers:
   - `task_name`
 - env and path helpers:
   - `env(name)`
+  - `now_utc()`
   - `path_join(base, child)`
 - file helpers:
+  - `make_temp_dir(prefix)`
   - `read_file(path)`
   - `write_file(path, contents)`
+  - `write_lines(path, lines_array)`
   - `path_exists(path)`
   - `is_file(path)`
   - `is_symlink(path)`
@@ -105,6 +108,13 @@ Structured process call:
 run = [{ rhai = "scripts/rhai/test-smoke.rhai" }]
 ```
 
+Ephemeral workspace and timestamp:
+
+```rhai
+let generated_at = now_utc();
+let scratch = make_temp_dir("repo-proof");
+```
+
 Nested task call:
 
 ```toml
@@ -137,6 +147,8 @@ Rhai v1 intentionally does not provide:
 - a frontend/build-tool replacement layer
 - a promise that every historical shell or Python script should disappear in
   one pass
+- signal-aware long-running process lifecycle helpers; those still need a later
+  host-API slice before demos like `lifecycle-window` can migrate cleanly
 
 That narrow boundary is deliberate. The product goal is “native scripting for
 repo glue,” not “Effigy becomes a replacement shell.”

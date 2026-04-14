@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::Utc;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Position, Scope};
 
 use crate::{InternalRhaiArgs, TaskInvocation};
@@ -13,6 +16,7 @@ use super::util::with_local_node_bin_path;
 const EFFIGY_RHAI_ARGS_JSON: &str = "EFFIGY_RHAI_ARGS_JSON";
 const EFFIGY_RHAI_TASK_NAME: &str = "EFFIGY_RHAI_TASK_NAME";
 const EFFIGY_RHAI_REPO_ROOT: &str = "EFFIGY_RHAI_REPO_ROOT";
+static RHAI_TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 struct ScriptContext {
@@ -75,6 +79,9 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>) {
     engine.register_fn("env", |name: ImmutableString| -> String {
         std::env::var(name.as_str()).unwrap_or_default()
     });
+    engine.register_fn("now_utc", || -> String {
+        Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    });
     engine.register_fn("path_join", |base: ImmutableString, child: ImmutableString| -> String {
         PathBuf::from(base.as_str())
             .join(child.as_str())
@@ -82,6 +89,20 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>) {
             .to_string()
     });
 
+    engine.register_fn(
+        "make_temp_dir",
+        move |prefix: ImmutableString| -> Result<String, Box<EvalAltResult>> {
+            let path = allocate_temp_dir(prefix.as_str())
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            std::fs::create_dir_all(&path).map_err(|error| {
+                rhai_runtime_error(format!(
+                    "{}",
+                    RunnerError::task_invocation_failed_write(&path, error)
+                ))
+            })?;
+            Ok(path.display().to_string())
+        },
+    );
     let file_context = context.clone();
     engine.register_fn(
         "read_file",
@@ -107,6 +128,35 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>) {
                 })?;
             }
             std::fs::write(&path, contents.as_str()).map_err(|error| {
+                rhai_runtime_error(format!(
+                    "{}",
+                    RunnerError::task_invocation_failed_write(&path, error)
+                ))
+            })
+        },
+    );
+    let file_context = context.clone();
+    engine.register_fn(
+        "write_lines",
+        move |path: ImmutableString, lines: Array| -> Result<(), Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    rhai_runtime_error(format!(
+                        "{}",
+                        RunnerError::task_invocation_failed_write(parent, error)
+                    ))
+                })?;
+            }
+            let rendered = dynamic_array_to_strings(&lines)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?
+                .join("\n");
+            let output = if rendered.is_empty() {
+                String::new()
+            } else {
+                format!("{rendered}\n")
+            };
+            std::fs::write(&path, output).map_err(|error| {
                 rhai_runtime_error(format!(
                     "{}",
                     RunnerError::task_invocation_failed_write(&path, error)
@@ -316,6 +366,30 @@ fn resolve_runtime_path(cwd: &Path, raw: &str) -> PathBuf {
     } else {
         cwd.join(path)
     }
+}
+
+fn allocate_temp_dir(prefix: &str) -> Result<PathBuf, RunnerError> {
+    let sanitized = if prefix.is_empty() {
+        "effigy-rhai"
+    } else {
+        prefix
+    };
+    let base = std::env::temp_dir();
+    let pid = std::process::id();
+    for _ in 0..256 {
+        let nonce = RHAI_TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+            .as_millis();
+        let candidate = base.join(format!("{sanitized}-{pid}-{millis}-{nonce}"));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err(RunnerError::task_invocation(format!(
+        "failed to allocate unique temp dir for {sanitized}"
+    )))
 }
 
 fn rhai_runtime_error(message: String) -> Box<EvalAltResult> {

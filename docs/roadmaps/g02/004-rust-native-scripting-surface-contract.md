@@ -112,7 +112,7 @@ The key boundary is now settled:
   - frontend/build-tool replacement
   - full Python-analysis replacement in the first slice
 
-The remaining active question is migration order and proof shape, not the
+The remaining active question is the next bounded migration slice, not the
 high-level product split.
 
 ## Migration Classification
@@ -121,10 +121,11 @@ high-level product split.
 
 Migrate early.
 
-Best first targets:
+Shipped first targets:
 
 - `scripts/install-local-bin-links.sh`
-- small docs/demo/report helpers
+- `smoke:release`
+- `browser-proof-report`
 
 ### Keepsake
 
@@ -165,5 +166,6 @@ This milestone is ready to execute only when Effigy has:
 
 ## Next Task
 
-Use the active `g02.004` strict lane to dogfood the shipped Rhai scripting
-surface inside Effigy before starting a cross-repo pilot.
+Use the active `g02.004` strict lane to decide whether the next Rhai slice is
+more Effigy dogfooding, a bounded host-API expansion for signal-aware
+lifecycle handling, or the first external pilot.
