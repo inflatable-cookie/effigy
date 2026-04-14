@@ -39,20 +39,21 @@ The active strict lane is:
 - make Jetstream's “full migration target” posture explicit instead of letting
   Python linger by inertia
 
-This lane now has a shipped script-step foundation, a substantial Effigy
+This lane now has a shipped script-step foundation and a substantial Effigy
 dogfooding surface across tasks, demos, long-running lifecycle, and release
-compatibility wrappers. The first external pilot was selected, then temporarily
-deferred because the target repo is actively changing elsewhere. The next
-question is whether this broadened Effigy-only dogfooding is now enough to
-reopen that external boundary cleanly.
+compatibility wrappers. The first external pilot was selected, then deferred
+for repo-boundary safety reasons rather than missing capability. The next
+question is whether one final Effigy-only wrapper-convergence batch should land
+before the lane pauses cleanly on an internal boundary.
 
 ## Current Posture
 
 `strict-ready`
 
-The Keepsake pilot is temporarily deferred. The release-wrapper cluster is now
-shipped. The next valid move is the post-wrapper decision card, not a stale
-external pilot and not another general debate about scripting policy.
+The Keepsake pilot is temporarily deferred. The release-wrapper cluster is
+shipped, and the next valid move is one final Effigy-only wrapper-convergence
+batch, not a stale external pilot and not another general debate about
+scripting policy.
 
 ## Batch Model
 
@@ -81,5 +82,5 @@ for the current mixed-runtime script surfaces.
 
 ## Next Task
 
-Execute the active `g02.004` ready card to decide whether the broadened Effigy
-dogfooding surface is now enough to reopen the external pilot boundary.
+Execute the active `g02.004` ready card to converge the remaining Effigy
+wrapper boundary while the external pilot remains unsafe.

@@ -98,9 +98,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`092-decide-post-rhai-long-running-lifecycle-slice.md`](./092-decide-post-rhai-long-running-lifecycle-slice.md) (complete)
 - [`093-implement-keepsake-rhai-pilot-release-orchestration.md`](./093-implement-keepsake-rhai-pilot-release-orchestration.md) (superseded)
 - [`094-implement-effigy-rhai-release-wrapper-cluster.md`](./094-implement-effigy-rhai-release-wrapper-cluster.md) (complete)
-- [`095-decide-post-release-wrapper-rhai-slice.md`](./095-decide-post-release-wrapper-rhai-slice.md) (ready)
+- [`095-decide-post-release-wrapper-rhai-slice.md`](./095-decide-post-release-wrapper-rhai-slice.md) (complete)
+- [`096-implement-effigy-wrapper-convergence-boundary.md`](./096-implement-effigy-wrapper-convergence-boundary.md) (ready)
 
 ## Next Task
 
-Execute the active ready card for `g02.004` to decide whether the broadened
-Effigy-only Rhai dogfooding surface is enough to reopen the external pilot.
+Execute the active ready card for `g02.004` to converge the remaining Effigy
+wrapper boundary while the external pilot is deferred.

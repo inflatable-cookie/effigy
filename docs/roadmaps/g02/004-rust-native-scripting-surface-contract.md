@@ -112,8 +112,9 @@ The key boundary is now settled:
   - frontend/build-tool replacement
   - full Python-analysis replacement in the first slice
 
-The remaining active question is whether the broadened Effigy-only dogfooding
-surface is now enough to reopen the first external pilot.
+The remaining active question is whether the internal Effigy wrapper boundary
+should be converged fully before this lane pauses on a clean internal posture
+and waits for the external pilot boundary to become safe again.
 
 ## Migration Classification
 
@@ -167,5 +168,5 @@ This milestone is ready to execute only when Effigy has:
 
 ## Next Task
 
-Use the active `g02.004` strict lane to decide whether the current Effigy-only
-dogfooding breadth is sufficient to reopen the external pilot boundary.
+Use the active `g02.004` strict lane to finish the remaining Effigy-only
+wrapper-boundary cleanup while the external pilot remains deferred.
