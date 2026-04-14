@@ -40,6 +40,10 @@ name = "my-tool"
 repo-url = "https://github.com/example/my-tool.git"
 brew-formula = "example/tap/my-tool"
 
+[distribution.publish]
+binary-name = "my-tool"
+registry-label = "registry"
+
 [distribution.preflight]
 docs-task = "qa:docs"
 smoke-task = "dist:preflight:smoke"
@@ -47,15 +51,23 @@ smoke-task = "dist:preflight:smoke"
 [distribution.metadata]
 required-docs = ["docs/guides/installation.md", "docs/guides/release.md"]
 required-files = [".github/workflows/release-binaries.yml", "scripts/check-linux-glibc-floor.sh"]
+
+[distribution.closeout]
+owner = "release"
+related = "docs/roadmaps/distribution.md"
+next-step = "Review the captured evidence and publish release sign-off notes."
 ```
 
-This first contract intentionally stays narrow:
+This contract is still intentionally bounded:
 
 - package identity defaults
+- publish identity defaults
 - preflight task names
 - metadata file requirements
+- closeout defaults
 
-That is enough to make `validate-metadata` and `preflight` repo-configurable
+That is enough to make `validate-metadata`, `preflight`, `first-publish`,
+`write-summary`, and `generate-closeout` meaningfully repo-configurable
 without forcing a full release-orchestration model on every repo.
 
 ## Use Levels
@@ -107,22 +119,25 @@ without inheriting Effigy's exact release policy.
 - `distribution validate-artifacts`
 - `distribution generate-closeout`
 - `distribution write-summary`
+- `distribution first-publish` when package/publish/closeout policy fits your repo
 
 ### Still Effigy-Biased Today
 
 - `distribution validate-metadata`
 - `distribution preflight`
-- `distribution first-publish`
 
 Those commands currently carry more Effigy-specific assumptions about things
-like docs, workflow expectations, and channel defaults. The active product
-direction is to move those assumptions behind optional manifest config.
+like docs, workflow expectations, and default preflight task names. The active
+product direction is to keep moving those assumptions behind optional manifest
+config instead of baking them into the command surface.
 
 ## Recommended Adoption Pattern
 
 1. Start with one reusable primitive.
-2. Add artifact validation and closeout generation if evidence matters.
-3. Adopt manifest-driven preflight and publish orchestration only if it fits
+2. Add publish identity and closeout defaults if your package/binary/channel
+   names differ from Effigy's self-hosting defaults.
+3. Add artifact validation and closeout generation if evidence matters.
+4. Adopt manifest-driven preflight and publish orchestration only if it fits
    your repo's release model.
 
 This keeps distribution support helpful instead of prescriptive.
@@ -138,12 +153,13 @@ This keeps distribution support helpful instead of prescriptive.
 
 ## Expected Outcome
 
-You should know which parts of the distribution surface are already useful
-today, which parts are still self-hosting-biased, and how the optional
-manifest-driven adoption path is intended to evolve.
+You should know which parts of the distribution surface are already reusable,
+which manifest sections now shape publish/closeout behavior, and which policy
+areas still remain intentionally repo-owned.
 
 ## Next Step
 
-If you want reusable distribution support across repos, implement the minimal
-manifest-driven `[distribution]` contract first, then widen command coverage
-from that foundation.
+If you want reusable distribution support across repos, start with the current
+optional `[distribution]` contract, then decide whether one consumer-proof
+adoption is now honest enough or whether one final internal policy widening
+slice is still warranted.

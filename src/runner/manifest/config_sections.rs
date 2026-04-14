@@ -510,9 +510,13 @@ pub(in crate::runner) struct ManifestDistributionConfig {
     #[serde(default)]
     pub(in crate::runner) package: Option<ManifestDistributionPackageConfig>,
     #[serde(default)]
+    pub(in crate::runner) publish: Option<ManifestDistributionPublishConfig>,
+    #[serde(default)]
     pub(in crate::runner) preflight: Option<ManifestDistributionPreflightConfig>,
     #[serde(default)]
     pub(in crate::runner) metadata: Option<ManifestDistributionMetadataConfig>,
+    #[serde(default)]
+    pub(in crate::runner) closeout: Option<ManifestDistributionCloseoutConfig>,
 }
 
 #[derive(Debug, serde::Deserialize, Default)]
@@ -525,6 +529,16 @@ pub(in crate::runner) struct ManifestDistributionPackageConfig {
     pub(in crate::runner) repo_url: Option<String>,
     #[serde(default)]
     pub(in crate::runner) brew_formula: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestDistributionPublishConfig {
+    #[serde(default)]
+    pub(in crate::runner) binary_name: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) registry_label: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, Default)]
@@ -545,6 +559,18 @@ pub(in crate::runner) struct ManifestDistributionMetadataConfig {
     pub(in crate::runner) required_docs: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::runner) required_files: Option<Vec<String>>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
+pub(in crate::runner) struct ManifestDistributionCloseoutConfig {
+    #[serde(default)]
+    pub(in crate::runner) owner: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) related: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) next_step: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, Default)]

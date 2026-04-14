@@ -1,6 +1,6 @@
 # 101 Implement Distribution Policy Widening For Publish And Closeout
 
-Status: ready
+Status: complete
 Updated: 2026-04-14
 Roadmap: `g02.005`
 Spec: `docs/specs/005-optional-distribution-surface-strict-lane.md`
@@ -42,6 +42,5 @@ meaningfully repo-configurable surface instead of a mostly Effigy-shaped one.
 
 ## Next Task
 
-After this batch, either run one bounded consumer proof of the optional
-distribution surface or record the last remaining internal policy gaps
-explicitly before pausing.
+After this batch, decide whether the widened optional distribution surface is
+now honest enough for one consumer-proof adoption batch.

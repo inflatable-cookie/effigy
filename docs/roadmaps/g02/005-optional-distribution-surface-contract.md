@@ -88,6 +88,10 @@ enabled = true
 name = "my-tool"
 repo = "https://github.com/example/my-tool"
 
+[distribution.publish]
+binary-name = "my-tool"
+registry-label = "registry"
+
 [distribution.preflight]
 tasks = ["qa:docs", "qa:ci"]
 
@@ -102,6 +106,7 @@ dir = "artifacts/distribution"
 
 [distribution.closeout]
 owner = "release"
+related = "docs/roadmaps/distribution.md"
 ```
 
 That broader shape is still the likely direction, but the first shipped
@@ -148,19 +153,25 @@ This milestone is ready to execute only when Effigy has:
 The first manifest-driven foundation is now shipped:
 
 - optional `[distribution.package]`
+- optional `[distribution.publish]`
 - optional `[distribution.preflight]`
 - optional `[distribution.metadata]`
+- optional `[distribution.closeout]`
 - manifest-driven policy in `distribution validate-metadata`
 - manifest-driven policy in `distribution preflight`
+- manifest-driven publish identity in `distribution first-publish`
+- manifest-driven summary identity in `distribution write-summary`
+- manifest-driven closeout defaults in `distribution generate-closeout`
 
 That is enough to make the distribution surface meaningfully less
-Effigy-specific without widening prematurely into every channel and closeout
-policy in one batch.
+Effigy-specific across the publish/summary/closeout path without widening
+prematurely into every possible channel policy in one batch.
 
-The next explicit decision is also now settled: do one more internal widening
-batch across publish/summary/closeout commands before any consumer proof.
+The next explicit decision is whether this widened contract is now honest
+enough for one consumer-proof adoption, or whether one final internal policy
+gap still needs to be closed first.
 
 ## Next Task
 
-Use the active `g02.005` strict lane to widen manifest-driven coverage across
-the publish/summary/closeout path before any consumer-proof adoption batch.
+Use the active `g02.005` strict lane to decide whether the widened optional
+distribution surface is now ready for one consumer-proof adoption batch.

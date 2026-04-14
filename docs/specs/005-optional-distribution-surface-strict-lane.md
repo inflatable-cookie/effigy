@@ -45,8 +45,14 @@ preflight tasks, and metadata requirements. The next valid move is an explicit
 decision on whether to widen internal command coverage or prove the surface in
 one consumer repo.
 
-That decision is now settled: do one more internal widening batch first, then
-reassess whether the surface is honest enough for a consumer proof.
+That widening batch is now shipped too:
+
+- publish identity can be manifest-driven
+- summary identity can be manifest-driven
+- closeout defaults can be manifest-driven
+
+The next valid move is now an explicit decision on whether that widened
+surface is honest enough for a consumer proof.
 
 ## Batch Model
 
@@ -74,5 +80,6 @@ hardcoded release policy.
 
 ## Next Task
 
-Execute the active `g02.005` ready card to widen manifest-driven policy across
-publish/summary/closeout commands before any consumer-proof adoption batch.
+Execute the active `g02.005` ready card to decide whether the widened optional
+distribution surface is now honest enough for one consumer-proof adoption
+batch.

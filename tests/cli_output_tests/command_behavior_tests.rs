@@ -3422,12 +3422,29 @@ required-files = [".github/workflows/release-binaries.yml", "scripts/check-linux
 fn cli_distribution_generate_closeout_json_writes_report() {
     let root = temp_workspace("distribution-generate-closeout");
     let artifacts = root.join("artifacts");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[distribution.package]
+name = "example-tool"
+
+[distribution.publish]
+binary-name = "example-tool"
+registry-label = "registry"
+
+[distribution.closeout]
+owner = "release-ops"
+related = "docs/roadmaps/distribution.md"
+next-step = "Review the captured evidence and publish sign-off notes."
+"#,
+    )
+    .expect("write manifest");
     fs::create_dir_all(&artifacts).expect("mkdir artifacts");
     for name in [
         "01-tag-install-validation.log",
-        "02-crates-io-install-validation.log",
-        "03-crates-io-binary-help.log",
-        "04-crates-io-binary-json-tasks.log",
+        "02-registry-install-validation.log",
+        "03-registry-binary-help.log",
+        "04-registry-binary-json-tasks.log",
     ] {
         fs::write(artifacts.join(name), "ok\n").expect("write log");
     }
@@ -3453,15 +3470,35 @@ fn cli_distribution_generate_closeout_json_writes_report() {
         "effigy.distribution.closeout.v1"
     );
     assert_eq!(parsed["result"]["ok"], true);
+    assert_eq!(parsed["result"]["owner"], "release-ops");
+    assert_eq!(parsed["result"]["related"], "docs/roadmaps/distribution.md");
     assert!(output_path.is_file());
     let rendered = fs::read_to_string(&output_path).expect("read closeout");
     assert!(rendered.contains("Distribution Acceptance Closeout (v0.2.5)"));
+    assert!(rendered.contains("Owner: release-ops"));
+    assert!(rendered.contains("Related: docs/roadmaps/distribution.md"));
+    assert!(rendered.contains("Install validation evidence for `example-tool`"));
+    assert!(rendered.contains("- Review the captured evidence and publish sign-off notes."));
 }
 
 #[test]
 fn cli_distribution_write_summary_json_writes_contract_file() {
     let root = temp_workspace("distribution-write-summary");
     let artifacts = root.join("artifacts");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[distribution.package]
+name = "example-tool"
+repo-url = "https://github.com/example/tool.git"
+brew-formula = "example/tap/example-tool"
+
+[distribution.publish]
+binary-name = "example-tool"
+registry-label = "registry"
+"#,
+    )
+    .expect("write manifest");
     fs::create_dir_all(&artifacts).expect("mkdir artifacts");
 
     let output = run_json_cli_command(
@@ -3484,10 +3521,16 @@ fn cli_distribution_write_summary_json_writes_contract_file() {
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["schema"], "effigy.distribution.summary.v1");
     assert_eq!(parsed["result"]["ok"], true);
+    assert_eq!(parsed["result"]["package_name"], "example-tool");
+    assert_eq!(parsed["result"]["binary_name"], "example-tool");
+    assert_eq!(parsed["result"]["registry_label"], "registry");
 
     let rendered =
         fs::read_to_string(artifacts.join("distribution-summary.env")).expect("read summary");
     assert!(rendered.contains("TAG=v0.2.5"));
+    assert!(rendered.contains("PACKAGE_NAME=example-tool"));
+    assert!(rendered.contains("BINARY_NAME=example-tool"));
+    assert!(rendered.contains("REGISTRY_LABEL=registry"));
     assert!(rendered.contains("CRATE_VERSION=0.2.5"));
     assert!(rendered.contains("HOMEBREW_EXECUTED=1"));
     assert!(rendered
