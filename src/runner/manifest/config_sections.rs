@@ -539,6 +539,10 @@ pub(in crate::runner) struct ManifestDistributionPublishConfig {
     pub(in crate::runner) binary_name: Option<String>,
     #[serde(default)]
     pub(in crate::runner) registry_label: Option<String>,
+    #[serde(default)]
+    pub(in crate::runner) verify_tag_install: Option<bool>,
+    #[serde(default)]
+    pub(in crate::runner) verify_binary_json_tasks: Option<bool>,
 }
 
 #[derive(Debug, serde::Deserialize, Default)]

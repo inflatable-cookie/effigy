@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: `g02`
-Updated: 2026-04-11
+Updated: 2026-04-15
 
 ## Generation history
 
@@ -30,7 +30,7 @@ Updated: 2026-04-11
   - `002` captures the manifest composition and override contract; the foundation and inspectability surface are now shipped strongly enough for downstream planning to depend on.
   - `003` captures the demo harness model and runner/browser contract; it is complete and released in `v0.2.13`.
   - `004` captures the Rust-native scripting surface; it is paused after the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached a clean internal boundary.
-  - `005` captures the optional distribution surface; it is the active lane for turning Effigy's native distribution built-ins into a manifest-driven, reusable cross-repo feature.
+  - `005` captures the optional distribution surface; it is now paused after one real consumer proof plus bounded widening made the metadata-validation, artifact-validation, and closeout boundary trustworthy, while the fuller published-consumer `first-publish` question stays explicitly deferred.
 
 ## Research Roadmaps
 

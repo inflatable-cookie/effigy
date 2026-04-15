@@ -43,6 +43,8 @@ brew-formula = "example/tap/my-tool"
 [distribution.publish]
 binary-name = "my-tool"
 registry-label = "registry"
+verify-tag-install = true
+verify-binary-json-tasks = true
 
 [distribution.preflight]
 docs-task = "qa:docs"
@@ -62,6 +64,7 @@ This contract is still intentionally bounded:
 
 - package identity defaults
 - publish identity defaults
+- optional publish verification toggles for Effigy-specific install probes
 - preflight task names
 - metadata file requirements
 - closeout defaults
@@ -69,6 +72,10 @@ This contract is still intentionally bounded:
 That is enough to make `validate-metadata`, `preflight`, `first-publish`,
 `write-summary`, and `generate-closeout` meaningfully repo-configurable
 without forcing a full release-orchestration model on every repo.
+
+When a repo adopts `[distribution]`, `validate-metadata` no longer assumes
+Effigy's default workflow/docs package-quality gate unless the repo explicitly
+opts into that metadata policy.
 
 ## Use Levels
 
@@ -116,28 +123,43 @@ without inheriting Effigy's exact release policy.
 ### Strongly Reusable Today
 
 - `distribution check-glibc-floor`
+- `distribution validate-metadata` when package identity and file expectations
+  are declared through the manifest instead of inherited from Effigy's
+  self-hosting defaults
 - `distribution validate-artifacts`
 - `distribution generate-closeout`
 - `distribution write-summary`
-- `distribution first-publish` when package/publish/closeout policy fits your repo
+- `distribution first-publish` when package/publish/closeout policy fits your
+  repo and any Effigy-specific install probes are either supported or disabled
+  through `[distribution.publish]`
+
+The current consumer proof in `convergence` shows that `validate-artifacts`
+and `generate-closeout` already compose credibly with repo-owned
+`[distribution.package]`, `[distribution.publish]`, and
+`[distribution.closeout]` policy even outside Effigy's self-hosting release
+flow.
 
 ### Still Effigy-Biased Today
 
-- `distribution validate-metadata`
 - `distribution preflight`
+- `distribution first-publish` for repos that need a non-Cargo install source
+  or a broader publish-orchestration model than the current built-in matrix
 
 Those commands currently carry more Effigy-specific assumptions about things
-like docs, workflow expectations, and default preflight task names. The active
-product direction is to keep moving those assumptions behind optional manifest
-config instead of baking them into the command surface.
+like docs and smoke task shape, Cargo-centric publish/install flow, and the
+exact built-in verification matrix. The active product direction is to keep
+moving those assumptions behind optional manifest config instead of baking them
+into the command surface.
 
 ## Recommended Adoption Pattern
 
 1. Start with one reusable primitive.
 2. Add publish identity and closeout defaults if your package/binary/channel
    names differ from Effigy's self-hosting defaults.
-3. Add artifact validation and closeout generation if evidence matters.
-4. Adopt manifest-driven preflight and publish orchestration only if it fits
+3. Disable `verify-tag-install` or `verify-binary-json-tasks` if your consumer
+   repo does not expose Effigy's install or CLI probe shape.
+4. Add artifact validation and closeout generation if evidence matters.
+5. Adopt manifest-driven preflight and publish orchestration only if it fits
    your repo's release model.
 
 This keeps distribution support helpful instead of prescriptive.
@@ -160,6 +182,6 @@ areas still remain intentionally repo-owned.
 ## Next Step
 
 If you want reusable distribution support across repos, start with the current
-optional `[distribution]` contract, then decide whether one consumer-proof
-adoption is now honest enough or whether one final internal policy widening
-slice is still warranted.
+optional `[distribution]` contract for metadata validation, artifact evidence,
+and closeout first, then decide whether another published-consumer proof is
+needed before widening the full first-publish orchestration path again.

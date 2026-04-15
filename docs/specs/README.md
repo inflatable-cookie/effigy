@@ -19,5 +19,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Use the active spec lane to run one bounded consumer-proof adoption batch for
-the optional distribution surface.
+The optional distribution spec lane is paused. Reopen it only when a real
+published-consumer need justifies widening the deferred `first-publish`
+boundary.

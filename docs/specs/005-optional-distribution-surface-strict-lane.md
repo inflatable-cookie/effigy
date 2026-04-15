@@ -1,7 +1,7 @@
 # 005 Optional Distribution Surface Strict Lane
 
-Status: active
-Updated: 2026-04-14
+Status: paused
+Updated: 2026-04-15
 Roadmap: `g02.005`
 
 ## Context
@@ -34,27 +34,51 @@ The active strict lane is:
 
 ## Current Posture
 
-`strict-ready`
+`strict-paused`
 
 The Rhai lane is paused on a clean internal boundary. Native distribution
 cutover is shipped strongly enough that the next valid move is optional
 distribution productization, not more scripting churn.
 
 The first manifest-driven foundation is now shipped for package identity,
-preflight tasks, and metadata requirements. The next valid move is an explicit
-decision on whether to widen internal command coverage or prove the surface in
-one consumer repo.
+preflight tasks, and metadata requirements.
 
-That widening batch is now shipped too:
+That widening batch shipped too:
 
 - publish identity can be manifest-driven
 - summary identity can be manifest-driven
 - closeout defaults can be manifest-driven
 
-That decision is now settled: the widened surface is honest enough for one
-bounded consumer proof, provided the proof stays focused on optional manifest
-adoption rather than claiming every distribution channel shape is already
-fully generic.
+That consumer proof shipped too:
+
+- `convergence` adopted minimal `[distribution]` package/publish/closeout
+  policy
+- `distribution validate-artifacts` passed against real consumer proof logs
+- `distribution generate-closeout` produced a repo-owned closeout cleanly
+- `distribution validate-metadata` still failed on Effigy-specific workflow
+  assumptions
+- the fuller `distribution first-publish` path still assumes an
+  Effigy-compatible CLI self-inspection shape
+
+That widening batch is now shipped too:
+
+- manifest-adopting repos no longer inherit Effigy's workflow/docs/package
+  metadata checks by default in `distribution validate-metadata`
+- manifest-adopting repos can disable `verify-tag-install` and
+  `verify-binary-json-tasks` in `[distribution.publish]`
+- the `convergence` proof now passes `validate-metadata`,
+  `validate-artifacts`, and `generate-closeout` against the widened contract
+
+That decision is now settled too:
+
+- the current optional boundary is strong enough to pause credibly
+- metadata validation, artifact validation, and closeout evidence are proven in
+  a real consumer repo
+- the remaining full `first-publish` question is now an explicit deferred
+  published-consumer limit, not a hidden product gap
+
+The lane is therefore paused on a trustworthy boundary instead of forcing one
+more proof batch just to chase a narrower published-install workflow question.
 
 ## Batch Model
 
@@ -82,5 +106,6 @@ hardcoded release policy.
 
 ## Next Task
 
-Execute the active `g02.005` ready card to run one bounded consumer-proof
-adoption batch for the optional distribution surface.
+Keep `g02.005` paused on the current optional distribution boundary until a
+real published-consumer need justifies reopening the fuller `first-publish`
+question.

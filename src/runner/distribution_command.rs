@@ -45,9 +45,12 @@ const DEFAULT_REQUIRED_FILES: [&str; 2] = [
 
 #[derive(Debug, Clone)]
 struct EffectiveDistributionPolicy {
+    manifest_adopted: bool,
     package_name: String,
     binary_name: String,
     registry_label: String,
+    verify_tag_install: bool,
+    verify_binary_json_tasks: bool,
     repo_url: String,
     brew_formula: String,
     docs_task: String,
@@ -365,27 +368,34 @@ fn run_validate_metadata(
     let cargo: TomlValue = cargo.parse().map_err(|err| {
         RunnerError::task_invocation_failed_parse(&repo_root.join("Cargo.toml"), err)
     })?;
-    let package = cargo
-        .get("package")
+    let package = cargo.get("package").and_then(TomlValue::as_table);
+    let workspace_package = cargo
+        .get("workspace")
         .and_then(TomlValue::as_table)
-        .ok_or_else(|| RunnerError::task_invocation("Cargo.toml is missing [package] metadata"))?;
+        .and_then(|workspace| workspace.get("package"))
+        .and_then(TomlValue::as_table);
+    let package_metadata = package.or(workspace_package).ok_or_else(|| {
+        RunnerError::task_invocation(
+            "Cargo.toml is missing [package] or [workspace.package] metadata",
+        )
+    })?;
 
-    let name = package
+    let name = package_metadata
         .get("name")
         .and_then(TomlValue::as_str)
-        .unwrap_or_default()
+        .unwrap_or(&distribution_policy.package_name)
         .to_owned();
-    let version = package
+    let version = package_metadata
         .get("version")
         .and_then(TomlValue::as_str)
         .unwrap_or_default()
         .to_owned();
-    let license = package
+    let license = package_metadata
         .get("license")
         .and_then(TomlValue::as_str)
         .unwrap_or_default()
         .to_owned();
-    let description = package
+    let description = package_metadata
         .get("description")
         .and_then(TomlValue::as_str)
         .unwrap_or_default()
@@ -397,10 +407,6 @@ fn run_validate_metadata(
 
     let required_docs = &distribution_policy.required_docs;
     let required_files = &distribution_policy.required_files;
-    let workflow_path = repo_root.join(".github/workflows/release-binaries.yml");
-    let workflow = std::fs::read_to_string(&workflow_path)
-        .map_err(|err| RunnerError::task_invocation_failed_read(&workflow_path, err))?;
-
     let mut errors = Vec::new();
     if name != distribution_policy.package_name {
         errors.push(format!(
@@ -411,10 +417,10 @@ fn run_validate_metadata(
     if !semver_re.is_match(&version) {
         errors.push(format!("package version is not semver-like: `{version}`"));
     }
-    if license.is_empty() {
+    if !distribution_policy.manifest_adopted && license.is_empty() {
         errors.push("package license is empty".to_owned());
     }
-    if description.is_empty() {
+    if !distribution_policy.manifest_adopted && package.is_some() && description.is_empty() {
         errors.push("package description is empty".to_owned());
     }
     if let Some(tag) = tag {
@@ -432,28 +438,33 @@ fn run_validate_metadata(
             errors.push(format!("required file is missing: {path}"));
         }
     }
-    for (needle, description) in [
-        ("name: Release Binaries", "release workflow name"),
-        ("Create GitHub Release", "GitHub Release job wiring"),
-        ("Update Homebrew tap", "Homebrew automation job wiring"),
-        ("      - \"v*\"", "tag trigger wiring"),
-        (
-            "          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04",
-            "x86_64 Linux release baseline pinning",
-        ),
-        (
-            "          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04",
-            "aarch64 Linux release baseline pinning",
-        ),
-        (
-            "./scripts/check-linux-glibc-floor.sh ./effigy-${{ matrix.target }} 2.35",
-            "Linux glibc compatibility guard",
-        ),
-    ] {
-        if !workflow.contains(needle) {
-            errors.push(format!(
-                "expected {description} in .github/workflows/release-binaries.yml"
-            ));
+    if !distribution_policy.manifest_adopted {
+        let workflow_path = repo_root.join(".github/workflows/release-binaries.yml");
+        let workflow = std::fs::read_to_string(&workflow_path)
+            .map_err(|err| RunnerError::task_invocation_failed_read(&workflow_path, err))?;
+        for (needle, description) in [
+            ("name: Release Binaries", "release workflow name"),
+            ("Create GitHub Release", "GitHub Release job wiring"),
+            ("Update Homebrew tap", "Homebrew automation job wiring"),
+            ("      - \"v*\"", "tag trigger wiring"),
+            (
+                "          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04",
+                "x86_64 Linux release baseline pinning",
+            ),
+            (
+                "          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04",
+                "aarch64 Linux release baseline pinning",
+            ),
+            (
+                "./scripts/check-linux-glibc-floor.sh ./effigy-${{ matrix.target }} 2.35",
+                "Linux glibc compatibility guard",
+            ),
+        ] {
+            if !workflow.contains(needle) {
+                errors.push(format!(
+                    "expected {description} in .github/workflows/release-binaries.yml"
+                ));
+            }
         }
     }
 
@@ -509,7 +520,7 @@ fn run_validate_artifacts(
         )));
     }
     let base_patterns = base_artifact_patterns(distribution_policy);
-    let homebrew_patterns = homebrew_artifact_patterns();
+    let homebrew_patterns = homebrew_artifact_patterns(distribution_policy);
 
     let mut found = Vec::new();
     let mut missing = Vec::new();
@@ -624,7 +635,7 @@ fn run_generate_closeout(
         )));
     }
 
-    let homebrew_patterns = homebrew_artifact_patterns();
+    let homebrew_patterns = homebrew_artifact_patterns(distribution_policy);
     let has_homebrew_logs = log_files.iter().any(|path| {
         path.file_name()
             .and_then(|name| name.to_str())
@@ -767,26 +778,28 @@ fn run_first_publish_inner(
     let homebrew_status: String;
 
     let effigy_bin = std::env::current_exe().map_err(RunnerError::Cwd)?;
-    run_logged_step(
-        artifacts_dir,
-        &mut step_index,
-        &mut log_files,
-        "tag install validation",
-        {
-            let mut command = Command::new(&effigy_bin);
-            command.args([
-                "release",
-                "verify-install",
-                "--repo",
-                &repo_root.display().to_string(),
-                "--tag",
-                tag,
-                "--repo-url",
-                repo_url,
-            ]);
-            command
-        },
-    )?;
+    if distribution_policy.verify_tag_install {
+        run_logged_step(
+            artifacts_dir,
+            &mut step_index,
+            &mut log_files,
+            "tag install validation",
+            {
+                let mut command = Command::new(&effigy_bin);
+                command.args([
+                    "release",
+                    "verify-install",
+                    "--repo",
+                    &repo_root.display().to_string(),
+                    "--tag",
+                    tag,
+                    "--repo-url",
+                    repo_url,
+                ]);
+                command
+            },
+        )?;
+    }
 
     let crate_install_root = work_dir.join("crates-install-root");
     run_logged_step(
@@ -834,17 +847,19 @@ fn run_first_publish_inner(
             command
         },
     )?;
-    run_logged_step(
-        artifacts_dir,
-        &mut step_index,
-        &mut log_files,
-        &format!("{} binary json tasks", distribution_policy.registry_label),
-        {
-            let mut command = Command::new(&crate_bin);
-            command.args(["--json", "tasks"]);
-            command
-        },
-    )?;
+    if distribution_policy.verify_binary_json_tasks {
+        run_logged_step(
+            artifacts_dir,
+            &mut step_index,
+            &mut log_files,
+            &format!("{} binary json tasks", distribution_policy.registry_label),
+            {
+                let mut command = Command::new(&crate_bin);
+                command.args(["--json", "tasks"]);
+                command
+            },
+        )?;
+    }
 
     if skip_homebrew {
         homebrew_status = "skipped (--skip-homebrew)".to_owned();
@@ -875,17 +890,19 @@ fn run_first_publish_inner(
                 command
             },
         )?;
-        run_logged_step(
-            artifacts_dir,
-            &mut step_index,
-            &mut log_files,
-            "homebrew binary json tasks",
-            {
-                let mut command = Command::new(&distribution_policy.binary_name);
-                command.args(["--json", "tasks"]);
-                command
-            },
-        )?;
+        if distribution_policy.verify_binary_json_tasks {
+            run_logged_step(
+                artifacts_dir,
+                &mut step_index,
+                &mut log_files,
+                "homebrew binary json tasks",
+                {
+                    let mut command = Command::new(&distribution_policy.binary_name);
+                    command.args(["--json", "tasks"]);
+                    command
+                },
+            )?;
+        }
         run_logged_step(
             artifacts_dir,
             &mut step_index,
@@ -1150,6 +1167,7 @@ fn load_distribution_policy(repo_root: &Path) -> Result<EffectiveDistributionPol
 
 impl EffectiveDistributionPolicy {
     fn from_manifest(config: Option<ManifestDistributionConfig>) -> Self {
+        let manifest_adopted = config.is_some();
         let package = config.as_ref().and_then(|config| config.package.as_ref());
         let publish = config.as_ref().and_then(|config| config.publish.as_ref());
         let preflight = config.as_ref().and_then(|config| config.preflight.as_ref());
@@ -1157,15 +1175,18 @@ impl EffectiveDistributionPolicy {
         let closeout = config.as_ref().and_then(|config| config.closeout.as_ref());
         let package_name = package_name_from_config(package);
         Self {
+            manifest_adopted,
             package_name: package_name.clone(),
             binary_name: binary_name_from_config(publish, &package_name),
             registry_label: registry_label_from_config(publish),
+            verify_tag_install: verify_tag_install_from_config(publish),
+            verify_binary_json_tasks: verify_binary_json_tasks_from_config(publish),
             repo_url: repo_url_from_config(package),
             brew_formula: brew_formula_from_config(package),
             docs_task: docs_task_from_config(preflight),
             smoke_task: smoke_task_from_config(preflight),
-            required_docs: required_docs_from_config(metadata),
-            required_files: required_files_from_config(metadata),
+            required_docs: required_docs_from_config(metadata, manifest_adopted),
+            required_files: required_files_from_config(metadata, manifest_adopted),
             closeout_owner: closeout_owner_from_config(closeout),
             closeout_related: closeout_related_from_config(closeout),
             closeout_next_step: closeout_next_step_from_config(closeout),
@@ -1222,6 +1243,20 @@ fn registry_label_from_config(config: Option<&ManifestDistributionPublishConfig>
         .unwrap_or_else(|| DEFAULT_REGISTRY_LABEL.to_owned())
 }
 
+fn verify_tag_install_from_config(config: Option<&ManifestDistributionPublishConfig>) -> bool {
+    config
+        .and_then(|config| config.verify_tag_install)
+        .unwrap_or(true)
+}
+
+fn verify_binary_json_tasks_from_config(
+    config: Option<&ManifestDistributionPublishConfig>,
+) -> bool {
+    config
+        .and_then(|config| config.verify_binary_json_tasks)
+        .unwrap_or(true)
+}
+
 fn docs_task_from_config(config: Option<&ManifestDistributionPreflightConfig>) -> String {
     config
         .and_then(|config| config.docs_task.as_ref())
@@ -1238,10 +1273,16 @@ fn smoke_task_from_config(config: Option<&ManifestDistributionPreflightConfig>) 
         .unwrap_or_else(|| DEFAULT_SMOKE_TASK.to_owned())
 }
 
-fn required_docs_from_config(config: Option<&ManifestDistributionMetadataConfig>) -> Vec<String> {
+fn required_docs_from_config(
+    config: Option<&ManifestDistributionMetadataConfig>,
+    manifest_adopted: bool,
+) -> Vec<String> {
     config
         .and_then(|config| config.required_docs.clone())
         .unwrap_or_else(|| {
+            if manifest_adopted {
+                return Vec::new();
+            }
             DEFAULT_REQUIRED_DOCS
                 .iter()
                 .map(|value| (*value).to_owned())
@@ -1249,10 +1290,16 @@ fn required_docs_from_config(config: Option<&ManifestDistributionMetadataConfig>
         })
 }
 
-fn required_files_from_config(config: Option<&ManifestDistributionMetadataConfig>) -> Vec<String> {
+fn required_files_from_config(
+    config: Option<&ManifestDistributionMetadataConfig>,
+    manifest_adopted: bool,
+) -> Vec<String> {
     config
         .and_then(|config| config.required_files.clone())
         .unwrap_or_else(|| {
+            if manifest_adopted {
+                return Vec::new();
+            }
             DEFAULT_REQUIRED_FILES
                 .iter()
                 .map(|value| (*value).to_owned())
@@ -1320,11 +1367,14 @@ fn base_artifact_patterns(
     distribution_policy: &EffectiveDistributionPolicy,
 ) -> Vec<(String, String)> {
     let registry_slug = slugify(&distribution_policy.registry_label);
-    vec![
-        (
+    let mut patterns = Vec::new();
+    if distribution_policy.verify_tag_install {
+        patterns.push((
             "tag install validation".to_owned(),
             "tag-install-validation".to_owned(),
-        ),
+        ));
+    }
+    patterns.extend([
         (
             format!("{} install", distribution_policy.registry_label),
             format!("{registry_slug}-install-validation"),
@@ -1333,26 +1383,34 @@ fn base_artifact_patterns(
             format!("{} binary help", distribution_policy.registry_label),
             format!("{registry_slug}-binary-help"),
         ),
-        (
+    ]);
+    if distribution_policy.verify_binary_json_tasks {
+        patterns.push((
             format!("{} binary json tasks", distribution_policy.registry_label),
             format!("{registry_slug}-binary-json-tasks"),
-        ),
-    ]
+        ));
+    }
+    patterns
 }
 
-fn homebrew_artifact_patterns() -> Vec<(String, String)> {
-    vec![
+fn homebrew_artifact_patterns(
+    distribution_policy: &EffectiveDistributionPolicy,
+) -> Vec<(String, String)> {
+    let mut patterns = vec![
         ("homebrew install".to_owned(), "homebrew-install".to_owned()),
         (
             "homebrew binary help".to_owned(),
             "homebrew-binary-help".to_owned(),
         ),
-        (
+        ("homebrew upgrade".to_owned(), "homebrew-upgrade".to_owned()),
+    ];
+    if distribution_policy.verify_binary_json_tasks {
+        patterns.push((
             "homebrew binary json tasks".to_owned(),
             "homebrew-binary-json-tasks".to_owned(),
-        ),
-        ("homebrew upgrade".to_owned(), "homebrew-upgrade".to_owned()),
-    ]
+        ));
+    }
+    patterns
 }
 
 fn find_log_by_pattern(artifacts_dir: &Path, pattern: &str) -> Option<PathBuf> {
@@ -1453,6 +1511,53 @@ mod tests {
     }
 
     #[test]
+    fn validate_artifacts_respects_optional_tag_and_json_checks() {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-distribution-artifacts-optional-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("mkdir");
+        fs::write(root.join("01-local-install-validation.log"), "ok\n").expect("write install");
+        fs::write(root.join("02-local-binary-help.log"), "ok\n").expect("write help");
+        let mut policy = default_distribution_policy();
+        policy.registry_label = "local".to_owned();
+        policy.verify_tag_install = false;
+        policy.verify_binary_json_tasks = false;
+
+        run_validate_artifacts(std::path::Path::new("."), &policy, &root, false, false)
+            .expect("artifact validation should pass");
+    }
+
+    #[test]
+    fn validate_metadata_skips_effigy_defaults_when_manifest_is_adopted() {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-distribution-metadata-manifest-adopted-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("mkdir");
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"example-tool\"\nversion = \"0.2.5\"\nedition = \"2021\"\n",
+        )
+        .expect("write cargo");
+        let mut policy = default_distribution_policy();
+        policy.manifest_adopted = true;
+        policy.package_name = "example-tool".to_owned();
+        policy.binary_name = "example-tool".to_owned();
+        policy.required_docs = Vec::new();
+        policy.required_files = Vec::new();
+
+        run_validate_metadata(&root, &policy, Some("v0.2.5"), false)
+            .expect("metadata validation should pass");
+    }
+
+    #[test]
     fn current_repo_distribution_metadata_requires_only_workflow_bound_glibc_script() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         run_validate_metadata(root, &default_distribution_policy(), Some("v0.2.13"), false)
@@ -1512,9 +1617,12 @@ mod tests {
 
     fn default_distribution_policy() -> EffectiveDistributionPolicy {
         EffectiveDistributionPolicy {
+            manifest_adopted: false,
             package_name: DEFAULT_PACKAGE_NAME.to_owned(),
             binary_name: DEFAULT_BINARY_NAME.to_owned(),
             registry_label: DEFAULT_REGISTRY_LABEL.to_owned(),
+            verify_tag_install: true,
+            verify_binary_json_tasks: true,
             repo_url: DEFAULT_REPO_URL.to_owned(),
             brew_formula: DEFAULT_BREW_FORMULA.to_owned(),
             docs_task: DEFAULT_DOCS_TASK.to_owned(),
