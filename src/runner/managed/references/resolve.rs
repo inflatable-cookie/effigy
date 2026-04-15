@@ -91,7 +91,10 @@ where
         );
     }
 
-    if selection.task.mode.is_some() || has_concurrent_schema(selection.task) {
+    if selection.task.mode.is_some()
+        || has_concurrent_schema(selection.task)
+        || selection.task.container_session.is_some()
+    {
         return render_builtin_reference_invocation(selector_rendered, args_rendered);
     }
 

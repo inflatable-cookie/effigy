@@ -1,11 +1,16 @@
 //! CLI command handler for `effigy docs` subcommands.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use regex::Regex;
+use effigy_docs_policy::{
+    check_contains, check_forbidden, check_headings, check_paths, check_workflow_paths,
+    collect_index_markdown_links, collect_link_check_files, collect_markdown_children,
+    extract_fenced_json_blocks, extract_h2_section, extract_lead_verb,
+    first_non_empty_section_line, insert_log_index_entry, load_next_action_allowlist,
+    normalize_log_index_relative_path, resolve_docs_index_spec, resolve_docs_next_action_spec,
+    resolve_repo_input, scan_markdown_links, DocsPolicyError,
+};
 use serde_json::json;
-use walkdir::WalkDir;
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
 use crate::runner::manifest::{load_task_manifest, ManifestDocsPolicyConfig};
@@ -13,12 +18,9 @@ use crate::{DocsArgs, DocsBlockRequirement, DocsSubcommand};
 
 use super::error::RunnerError;
 
-const DEFAULT_LINK_FILES: &[&str] = &["README.md"];
-const DEFAULT_LINK_DOCS_DIR: &str = "docs";
 const DEFAULT_JSON_EXAMPLES_FILE: &str = "docs/guides/026-json-payload-examples.md";
 const DEFAULT_JSON_EXAMPLES_SECTION: &str = "Completion Candidates";
 const DEFAULT_LOGS_DIR: &str = "docs/logs";
-const DEFAULT_LOGS_INDEX: &str = "docs/logs/README.md";
 const DEFAULT_WORKFLOW_DOCS_DIR: &str = "docs";
 
 pub(super) fn run_docs(args: DocsArgs) -> Result<String, RunnerError> {
@@ -256,24 +258,8 @@ fn run_check_headings(
         ));
     }
 
-    let files = paths
-        .iter()
-        .map(|path| resolve_repo_input(repo_root, path.clone()))
-        .collect::<Vec<_>>();
-    let mut findings = Vec::new();
-    for file in &files {
-        let content = std::fs::read_to_string(file)
-            .map_err(|err| RunnerError::task_invocation_failed_read(file, err))?;
-        for heading in required_headings {
-            if !content.lines().any(|line| line.trim() == heading.trim()) {
-                findings.push(json!({
-                    "file": file.display().to_string(),
-                    "kind": "missing-heading",
-                    "heading": heading,
-                }));
-            }
-        }
-    }
+    let (files, findings) =
+        check_headings(repo_root, paths, required_headings).map_err(map_docs_policy_error)?;
 
     if output_json {
         let payload = json!({
@@ -282,7 +268,13 @@ fn run_check_headings(
             "ok": findings.is_empty(),
             "files": files.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
             "required_headings": required_headings,
-            "findings": findings,
+            "findings": findings.iter().map(|finding| {
+                json!({
+                    "file": finding.file.display().to_string(),
+                    "kind": "missing-heading",
+                    "heading": finding.heading,
+                })
+            }).collect::<Vec<_>>(),
         });
         return if payload["ok"] == true {
             Ok(payload.to_string())
@@ -299,8 +291,8 @@ fn run_check_headings(
     for finding in findings {
         output.push_str(&format!(
             "missing heading `{}` in {}\n",
-            finding["heading"].as_str().unwrap_or_default(),
-            finding["file"].as_str().unwrap_or_default()
+            finding.heading,
+            finding.file.display()
         ));
     }
     Err(RunnerError::task_invocation(output.trim_end().to_owned()))
@@ -323,24 +315,8 @@ fn run_check_contains(
         ));
     }
 
-    let files = paths
-        .iter()
-        .map(|path| resolve_repo_input(repo_root, path.clone()))
-        .collect::<Vec<_>>();
-    let mut findings = Vec::new();
-    for file in &files {
-        let content = std::fs::read_to_string(file)
-            .map_err(|err| RunnerError::task_invocation_failed_read(file, err))?;
-        for needle in required_text {
-            if !content.contains(needle) {
-                findings.push(json!({
-                    "file": file.display().to_string(),
-                    "kind": "missing-text",
-                    "needle": needle,
-                }));
-            }
-        }
-    }
+    let (files, findings) =
+        check_contains(repo_root, paths, required_text).map_err(map_docs_policy_error)?;
 
     if output_json {
         let payload = json!({
@@ -349,7 +325,13 @@ fn run_check_contains(
             "ok": findings.is_empty(),
             "files": files.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
             "required_text": required_text,
-            "findings": findings,
+            "findings": findings.iter().map(|finding| {
+                json!({
+                    "file": finding.file.display().to_string(),
+                    "kind": "missing-text",
+                    "needle": finding.needle,
+                })
+            }).collect::<Vec<_>>(),
         });
         return if payload["ok"] == true {
             Ok(payload.to_string())
@@ -366,8 +348,8 @@ fn run_check_contains(
     for finding in findings {
         output.push_str(&format!(
             "missing text `{}` in {}\n",
-            finding["needle"].as_str().unwrap_or_default(),
-            finding["file"].as_str().unwrap_or_default()
+            finding.needle,
+            finding.file.display()
         ));
     }
     Err(RunnerError::task_invocation(output.trim_end().to_owned()))
@@ -384,20 +366,7 @@ fn run_check_paths(
         ));
     }
 
-    let resolved_paths = paths
-        .iter()
-        .map(|path| resolve_repo_input(repo_root, path.clone()))
-        .collect::<Vec<_>>();
-    let findings = resolved_paths
-        .iter()
-        .filter(|path| !path.exists())
-        .map(|path| {
-            json!({
-                "path": path.display().to_string(),
-                "kind": "missing-path",
-            })
-        })
-        .collect::<Vec<_>>();
+    let (resolved_paths, findings) = check_paths(repo_root, paths);
 
     if output_json {
         let payload = json!({
@@ -405,7 +374,15 @@ fn run_check_paths(
             "schema_version": 1,
             "ok": findings.is_empty(),
             "paths": resolved_paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
-            "findings": findings,
+            "findings": findings
+                .iter()
+                .map(|finding| {
+                    json!({
+                        "path": finding.path.display().to_string(),
+                        "kind": "missing-path",
+                    })
+                })
+                .collect::<Vec<_>>(),
         });
         return if payload["ok"] == true {
             Ok(payload.to_string())
@@ -420,10 +397,7 @@ fn run_check_paths(
 
     let mut output = String::new();
     for finding in findings {
-        output.push_str(&format!(
-            "missing path {}\n",
-            finding["path"].as_str().unwrap_or_default()
-        ));
+        output.push_str(&format!("missing path {}\n", finding.path.display()));
     }
     Err(RunnerError::task_invocation(output.trim_end().to_owned()))
 }
@@ -445,24 +419,8 @@ fn run_check_forbidden(
         ));
     }
 
-    let files = paths
-        .iter()
-        .map(|path| resolve_repo_input(repo_root, path.clone()))
-        .collect::<Vec<_>>();
-    let mut findings = Vec::new();
-    for file in &files {
-        let content = std::fs::read_to_string(file)
-            .map_err(|err| RunnerError::task_invocation_failed_read(file, err))?;
-        for needle in forbidden_text {
-            if content.contains(needle) {
-                findings.push(json!({
-                    "file": file.display().to_string(),
-                    "kind": "forbidden-text",
-                    "needle": needle,
-                }));
-            }
-        }
-    }
+    let (files, findings) =
+        check_forbidden(repo_root, paths, forbidden_text).map_err(map_docs_policy_error)?;
 
     if output_json {
         let payload = json!({
@@ -471,7 +429,13 @@ fn run_check_forbidden(
             "ok": findings.is_empty(),
             "files": files.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
             "forbidden_text": forbidden_text,
-            "findings": findings,
+            "findings": findings.iter().map(|finding| {
+                json!({
+                    "file": finding.file.display().to_string(),
+                    "kind": "forbidden-text",
+                    "needle": finding.needle,
+                })
+            }).collect::<Vec<_>>(),
         });
         return if payload["ok"] == true {
             Ok(payload.to_string())
@@ -488,8 +452,8 @@ fn run_check_forbidden(
     for finding in findings {
         output.push_str(&format!(
             "forbidden text `{}` in {}\n",
-            finding["needle"].as_str().unwrap_or_default(),
-            finding["file"].as_str().unwrap_or_default()
+            finding.needle,
+            finding.file.display()
         ));
     }
     Err(RunnerError::task_invocation(output.trim_end().to_owned()))
@@ -502,7 +466,15 @@ fn run_check_index(
     index_override: Option<&PathBuf>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let spec = resolve_docs_index_spec(repo_root, policy_index, dir_override, index_override)?;
+    let policy = load_docs_policy_config(repo_root)?;
+    let spec = resolve_docs_index_spec(
+        repo_root,
+        &policy,
+        policy_index,
+        dir_override,
+        index_override,
+    )
+    .map_err(map_docs_policy_error)?;
 
     if !spec.dir.is_dir() {
         return Err(RunnerError::task_invocation(format!(
@@ -518,7 +490,8 @@ fn run_check_index(
     }
 
     let all_docs = collect_markdown_children(&spec.dir, &spec.exclude);
-    let indexed = collect_index_markdown_links(&spec.index, spec.section.as_deref())?;
+    let indexed = collect_index_markdown_links(&spec.index, spec.section.as_deref())
+        .map_err(map_docs_policy_error)?;
     let missing = all_docs.difference(&indexed).cloned().collect::<Vec<_>>();
     let extra = indexed.difference(&all_docs).cloned().collect::<Vec<_>>();
 
@@ -567,65 +540,6 @@ fn run_check_index(
     Err(RunnerError::task_invocation(output.trim_end().to_owned()))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DocsIndexSpec {
-    policy_name: Option<String>,
-    dir: PathBuf,
-    index: PathBuf,
-    section: Option<String>,
-    exclude: Vec<String>,
-}
-
-fn resolve_docs_index_spec(
-    repo_root: &Path,
-    policy_index: Option<&str>,
-    dir_override: Option<&PathBuf>,
-    index_override: Option<&PathBuf>,
-) -> Result<DocsIndexSpec, RunnerError> {
-    let policy = load_docs_policy_config(repo_root)?;
-    let configured =
-        policy_index.and_then(|name| policy.indexes.get(name).map(|entry| (name, entry)));
-
-    if let Some(name) = policy_index {
-        if configured.is_none() {
-            let available = policy.indexes.keys().cloned().collect::<Vec<_>>();
-            let suffix = if available.is_empty() {
-                "no `[docs_policy.indexes]` entries are configured".to_owned()
-            } else {
-                format!("available indexes: {}", available.join(", "))
-            };
-            return Err(RunnerError::task_invocation(format!(
-                "unknown docs policy index `{name}` in `effigy.toml`; {suffix}"
-            )));
-        }
-    }
-
-    let dir = resolve_repo_input(
-        repo_root,
-        dir_override
-            .cloned()
-            .or_else(|| configured.map(|(_, entry)| PathBuf::from(entry.dir.clone())))
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_LOGS_DIR)),
-    );
-    let index = resolve_repo_input(
-        repo_root,
-        index_override
-            .cloned()
-            .or_else(|| configured.map(|(_, entry)| PathBuf::from(entry.file.clone())))
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_LOGS_INDEX)),
-    );
-
-    Ok(DocsIndexSpec {
-        policy_name: policy_index.map(ToOwned::to_owned),
-        dir,
-        index,
-        section: configured.and_then(|(_, entry)| entry.section.clone()),
-        exclude: configured
-            .map(|(_, entry)| entry.exclude.clone())
-            .unwrap_or_default(),
-    })
-}
-
 fn load_docs_policy_config(repo_root: &Path) -> Result<ManifestDocsPolicyConfig, RunnerError> {
     let manifest_path = repo_root.join("effigy.toml");
     if !manifest_path.is_file() {
@@ -636,24 +550,18 @@ fn load_docs_policy_config(repo_root: &Path) -> Result<ManifestDocsPolicyConfig,
         .unwrap_or_default())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DocsNextActionSpec {
-    policy_name: Option<String>,
-    index: DocsIndexSpec,
-    heading: String,
-    heading_without_hashes: String,
-    allowlist_file: PathBuf,
-}
-
 fn run_check_next_action(
     repo_root: &Path,
     policy_name: Option<&str>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let spec = resolve_docs_next_action_spec(repo_root, policy_name)?;
-    let referenced =
-        collect_index_markdown_links(&spec.index.index, spec.index.section.as_deref())?;
-    let allowlist = load_next_action_allowlist(&spec.allowlist_file)?;
+    let policy = load_docs_policy_config(repo_root)?;
+    let spec = resolve_docs_next_action_spec(repo_root, &policy, policy_name)
+        .map_err(map_docs_policy_error)?;
+    let referenced = collect_index_markdown_links(&spec.index.index, spec.index.section.as_deref())
+        .map_err(map_docs_policy_error)?;
+    let allowlist =
+        load_next_action_allowlist(&spec.allowlist_file).map_err(map_docs_policy_error)?;
     let mut findings = Vec::new();
 
     for relative in referenced {
@@ -741,75 +649,12 @@ fn run_check_next_action(
     Err(RunnerError::task_invocation(output.trim_end().to_owned()))
 }
 
-fn resolve_docs_next_action_spec(
-    repo_root: &Path,
-    policy_name: Option<&str>,
-) -> Result<DocsNextActionSpec, RunnerError> {
-    let policy = load_docs_policy_config(repo_root)?;
-    let name = policy_name.unwrap_or("vision");
-    let Some(entry) = policy.next_actions.get(name) else {
-        let available = policy.next_actions.keys().cloned().collect::<Vec<_>>();
-        let suffix = if available.is_empty() {
-            "no `[docs_policy.next_actions]` entries are configured".to_owned()
-        } else {
-            format!("available next-action policies: {}", available.join(", "))
-        };
-        return Err(RunnerError::task_invocation(format!(
-            "unknown docs next-action policy `{name}` in `effigy.toml`; {suffix}"
-        )));
-    };
-
-    let heading_without_hashes = entry
-        .heading
-        .trim()
-        .trim_start_matches('#')
-        .trim()
-        .to_owned();
-    if heading_without_hashes.is_empty() {
-        return Err(RunnerError::task_invocation(format!(
-            "invalid docs next-action heading for policy `{name}`: heading cannot be empty"
-        )));
-    }
-
-    Ok(DocsNextActionSpec {
-        policy_name: Some(name.to_owned()),
-        index: resolve_docs_index_spec(repo_root, Some(&entry.index), None, None)?,
-        heading: format!("## {heading_without_hashes}"),
-        heading_without_hashes,
-        allowlist_file: resolve_repo_input(repo_root, PathBuf::from(&entry.allowlist_file)),
-    })
-}
-
-fn load_next_action_allowlist(path: &Path) -> Result<BTreeSet<String>, RunnerError> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|err| RunnerError::task_invocation_failed_read(path, err))?;
-    let mut verbs = BTreeSet::new();
-    for line in content.lines() {
-        let trimmed = line
-            .split('#')
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_lowercase();
-        if !trimmed.is_empty() {
-            verbs.insert(trimmed);
-        }
-    }
-    if verbs.is_empty() {
-        return Err(RunnerError::task_invocation(format!(
-            "actionable verb allowlist is empty: {}",
-            path.display()
-        )));
-    }
-    Ok(verbs)
-}
-
 fn run_add_log_index(
     repo_root: &Path,
     log_path: &Path,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let index_path = repo_root.join(DEFAULT_LOGS_INDEX);
+    let index_path = repo_root.join("docs/logs/README.md");
     if !index_path.is_file() {
         return Err(RunnerError::task_invocation(format!(
             "logs index not found: {}",
@@ -817,7 +662,8 @@ fn run_add_log_index(
         )));
     }
 
-    let relative_path = normalize_log_index_relative_path(log_path)?;
+    let relative_path =
+        normalize_log_index_relative_path(log_path).map_err(map_docs_policy_error)?;
     let resolved_log_path = repo_root.join(DEFAULT_LOGS_DIR).join(&relative_path);
     if !resolved_log_path.is_file() {
         return Err(RunnerError::task_invocation(format!(
@@ -875,47 +721,8 @@ fn run_check_workflow_paths(
     }
 
     let default_logs_dir = repo_root.join(DEFAULT_LOGS_DIR);
-    let workflow_re = Regex::new(r"\.github(-bak)?/workflows/[A-Za-z0-9._-]+\.ya?ml")
-        .expect("workflow path regex");
-    let mut findings = Vec::new();
-
-    for path in collect_workflow_check_files(&dir, &default_logs_dir, dir_override.is_none()) {
-        let content = std::fs::read_to_string(&path)
-            .map_err(|err| RunnerError::task_invocation_failed_read(&path, err))?;
-        for (line_index, line) in content.lines().enumerate() {
-            for hit in workflow_re.find_iter(line) {
-                let workflow_path = hit.as_str();
-                let candidate = repo_root.join(workflow_path);
-                if candidate.is_file() {
-                    continue;
-                }
-
-                let mut reason = "missing workflow path".to_owned();
-                let mut suggestion = None;
-                if let Some(name) = workflow_path.strip_prefix(".github/workflows/") {
-                    let alt = format!(".github-bak/workflows/{name}");
-                    if repo_root.join(&alt).is_file() {
-                        reason = "stale workflow path".to_owned();
-                        suggestion = Some(alt);
-                    }
-                } else if let Some(name) = workflow_path.strip_prefix(".github-bak/workflows/") {
-                    let alt = format!(".github/workflows/{name}");
-                    if repo_root.join(&alt).is_file() {
-                        reason = "stale workflow path".to_owned();
-                        suggestion = Some(alt);
-                    }
-                }
-
-                findings.push(json!({
-                    "file": path.display().to_string(),
-                    "line": line_index + 1,
-                    "workflow_path": workflow_path,
-                    "reason": reason,
-                    "suggestion": suggestion,
-                }));
-            }
-        }
-    }
+    let findings = check_workflow_paths(repo_root, &dir, &default_logs_dir, dir_override.is_none())
+        .map_err(map_docs_policy_error)?;
 
     if output_json {
         let payload = json!({
@@ -923,7 +730,15 @@ fn run_check_workflow_paths(
             "schema_version": 1,
             "ok": findings.is_empty(),
             "dir": dir.display().to_string(),
-            "findings": findings,
+            "findings": findings.iter().map(|finding| {
+                json!({
+                    "file": finding.file.display().to_string(),
+                    "line": finding.line,
+                    "workflow_path": finding.workflow_path,
+                    "reason": finding.reason,
+                    "suggestion": finding.suggestion,
+                })
+            }).collect::<Vec<_>>(),
         });
         return if payload["ok"] == true {
             Ok(payload.to_string())
@@ -938,11 +753,11 @@ fn run_check_workflow_paths(
 
     let mut output = String::new();
     for finding in findings {
-        let file = finding["file"].as_str().unwrap_or_default();
-        let line = finding["line"].as_u64().unwrap_or_default();
-        let workflow_path = finding["workflow_path"].as_str().unwrap_or_default();
-        let reason = finding["reason"].as_str().unwrap_or_default();
-        if let Some(suggestion) = finding["suggestion"].as_str() {
+        let file = finding.file.display();
+        let line = finding.line;
+        let workflow_path = finding.workflow_path;
+        let reason = finding.reason;
+        if let Some(suggestion) = finding.suggestion {
             output.push_str(&format!(
                 "{reason} in {file}:{line}: {workflow_path} (use {suggestion})\n"
             ));
@@ -951,261 +766,6 @@ fn run_check_workflow_paths(
         }
     }
     Err(RunnerError::task_invocation(output.trim_end().to_owned()))
-}
-
-#[derive(Debug)]
-struct BrokenLink {
-    file: PathBuf,
-    target: String,
-    reason: String,
-}
-
-fn collect_link_check_files(repo_root: &Path, paths: &[PathBuf]) -> Vec<PathBuf> {
-    if !paths.is_empty() {
-        return paths
-            .iter()
-            .map(|path| resolve_repo_input(repo_root, path.clone()))
-            .filter(|path| path.is_file())
-            .collect();
-    }
-
-    let mut defaults = DEFAULT_LINK_FILES
-        .iter()
-        .map(|path| repo_root.join(path))
-        .filter(|path| path.is_file())
-        .collect::<Vec<_>>();
-
-    let docs_dir = repo_root.join(DEFAULT_LINK_DOCS_DIR);
-    if docs_dir.is_dir() {
-        defaults.extend(
-            WalkDir::new(docs_dir)
-                .min_depth(1)
-                .into_iter()
-                .filter_map(Result::ok)
-                .map(|entry| entry.into_path())
-                .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md")),
-        );
-    }
-    defaults.sort();
-    defaults.dedup();
-    defaults
-}
-
-fn scan_markdown_links(file: &Path) -> Result<Vec<BrokenLink>, BrokenLink> {
-    let content = std::fs::read_to_string(file).map_err(|err| BrokenLink {
-        file: file.to_path_buf(),
-        target: file.display().to_string(),
-        reason: err.to_string(),
-    })?;
-    let link_re = Regex::new(r"\[[^\]]+\]\(([^)]+)\)").expect("link regex");
-    let code_re = Regex::new(r"`[^`]*`").expect("inline code regex");
-    let mut in_fence = false;
-    let mut failures = Vec::new();
-
-    for line in content.lines() {
-        if line.trim_start().starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
-        let sanitized = code_re.replace_all(line, "");
-        for capture in link_re.captures_iter(&sanitized) {
-            let target = capture[1].to_owned();
-            if target.starts_with("http://")
-                || target.starts_with("https://")
-                || target.starts_with("mailto:")
-                || target.starts_with('#')
-            {
-                continue;
-            }
-            let stripped = target.split('#').next().unwrap_or_default().trim();
-            if stripped.is_empty() {
-                continue;
-            }
-            let resolved = file
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join(stripped);
-            if !resolved.exists() {
-                failures.push(BrokenLink {
-                    file: file.to_path_buf(),
-                    target: target.clone(),
-                    reason: "target does not exist".to_owned(),
-                });
-            }
-        }
-    }
-
-    Ok(failures)
-}
-
-fn resolve_repo_input(repo_root: &Path, path: PathBuf) -> PathBuf {
-    if path.is_absolute() {
-        path
-    } else {
-        repo_root.join(path)
-    }
-}
-
-fn normalize_log_index_relative_path(log_path: &Path) -> Result<String, RunnerError> {
-    let raw = log_path.to_string_lossy().replace('\\', "/");
-    let trimmed = raw.trim_start_matches("./");
-    let relative = trimmed
-        .strip_prefix("docs/logs/")
-        .unwrap_or(trimmed)
-        .to_owned();
-
-    if relative == "README.md" {
-        return Err(RunnerError::task_invocation(
-            "README.md is not a log artifact".to_owned(),
-        ));
-    }
-    if !relative.ends_with(".md") {
-        return Err(RunnerError::task_invocation(format!(
-            "log must be a .md file: {relative}"
-        )));
-    }
-    let path_re =
-        Regex::new(r"^[0-9]{4}-[0-9]{2}/[0-9]{2}-[0-9]{6}-.+\.md$").expect("logs path regex");
-    if !path_re.is_match(&relative) {
-        return Err(RunnerError::task_invocation(format!(
-            "log path must match YYYY-MM/DD-HHMMSS-slug.md: {relative}"
-        )));
-    }
-
-    Ok(relative)
-}
-
-fn insert_log_index_entry(index_contents: &str, entry: &str) -> String {
-    let marker = "## Archived Validation Logs";
-    if let Some(position) = index_contents.find(marker) {
-        let (before, after) = index_contents.split_at(position);
-        let mut output = String::new();
-        output.push_str(before);
-        output.push_str(entry);
-        output.push_str("\n\n");
-        output.push_str(after);
-        output
-    } else {
-        let mut output = index_contents.trim_end().to_owned();
-        output.push_str("\n\n");
-        output.push_str(entry);
-        output.push('\n');
-        output
-    }
-}
-
-fn collect_workflow_check_files(dir: &Path, logs_dir: &Path, exclude_logs: bool) -> Vec<PathBuf> {
-    let mut files = WalkDir::new(dir)
-        .min_depth(1)
-        .into_iter()
-        .filter_map(Result::ok)
-        .map(|entry| entry.into_path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
-        .filter(|path| !(exclude_logs && path.starts_with(logs_dir)))
-        .collect::<Vec<_>>();
-    files.sort();
-    files
-}
-
-fn normalize_section_title(title: &str) -> &str {
-    let trimmed = title.trim();
-    let rest = trimmed.trim_start_matches(|c: char| c.is_ascii_digit());
-    let rest = rest
-        .strip_prefix(") ")
-        .or_else(|| rest.strip_prefix(". "))
-        .unwrap_or(trimmed);
-    rest.trim()
-}
-
-fn extract_h2_section(content: &str, section_title: &str) -> Option<String> {
-    let mut in_section = false;
-    let mut lines = Vec::new();
-    let wanted = normalize_section_title(section_title);
-
-    for line in content.lines() {
-        if let Some(title) = line.strip_prefix("## ") {
-            let title = title.trim();
-            let normalized = normalize_section_title(title);
-            let is_match = normalized == wanted || normalized.starts_with(wanted);
-            if in_section && !is_match {
-                break;
-            }
-            if is_match {
-                in_section = true;
-            }
-        }
-        if in_section {
-            lines.push(line);
-        }
-    }
-
-    if lines.is_empty() {
-        None
-    } else {
-        Some(lines.join("\n"))
-    }
-}
-
-fn extract_fenced_json_blocks(section: &str) -> Vec<String> {
-    let mut blocks = Vec::new();
-    let mut current = Vec::new();
-    let mut in_block = false;
-
-    for line in section.lines() {
-        if line.trim() == "```json" {
-            in_block = true;
-            current.clear();
-            continue;
-        }
-        if in_block && line.trim() == "```" {
-            blocks.push(current.join("\n"));
-            current.clear();
-            in_block = false;
-            continue;
-        }
-        if in_block {
-            current.push(line);
-        }
-    }
-
-    blocks
-}
-
-fn first_non_empty_section_line(section: &str) -> Option<String> {
-    section
-        .lines()
-        .skip(1)
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn extract_lead_verb(line: &str) -> String {
-    let normalized = line
-        .trim_start()
-        .trim_start_matches(['-', '*', '+'])
-        .trim_start();
-    let normalized = if let Some(rest) = normalized.strip_prefix('(') {
-        rest.split_once(')')
-            .map(|(_, tail)| tail.trim_start())
-            .unwrap_or(normalized)
-    } else {
-        normalized
-    };
-    let normalized = normalized
-        .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.')
-        .trim_start();
-    normalized
-        .split_whitespace()
-        .next()
-        .unwrap_or_default()
-        .chars()
-        .take_while(|c| c.is_ascii_alphabetic())
-        .collect::<String>()
-        .to_lowercase()
 }
 
 fn default_json_example_requirements() -> Vec<String> {
@@ -1233,77 +793,29 @@ fn default_json_example_block_requirements() -> Vec<DocsBlockRequirement> {
     ]
 }
 
-fn collect_markdown_children(dir: &Path, exclude: &[String]) -> BTreeSet<String> {
-    WalkDir::new(dir)
-        .min_depth(1)
-        .into_iter()
-        .filter_map(Result::ok)
-        .map(|entry| entry.into_path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
-        .filter(|path| !path_matches_any_exclude(path, dir, exclude))
-        .filter_map(|path| {
-            path.strip_prefix(dir)
-                .ok()
-                .map(|relative| relative.to_path_buf())
-        })
-        .filter(|path| path.as_path() != Path::new("README.md"))
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
-        .collect()
-}
-
-fn collect_index_markdown_links(
-    index: &Path,
-    section: Option<&str>,
-) -> Result<BTreeSet<String>, RunnerError> {
-    let content = std::fs::read_to_string(index)
-        .map_err(|err| RunnerError::task_invocation_failed_read(index, err))?;
-    let content = if let Some(section_name) = section {
-        extract_h2_section(&content, section_name).ok_or_else(|| {
-            RunnerError::task_invocation(format!(
-                "section `{section_name}` not found in {}",
-                index.display()
-            ))
-        })?
-    } else {
-        content
-    };
-    let link_re = Regex::new(r"\((\./[^)]+\.md)\)").expect("index link regex");
-    let mut links = BTreeSet::new();
-    for capture in link_re.captures_iter(&content) {
-        let relative = capture[1].trim_start_matches("./");
-        links.insert(relative.replace('\\', "/"));
-    }
-    Ok(links)
-}
-
-fn path_matches_any_exclude(path: &Path, root: &Path, exclude: &[String]) -> bool {
-    let relative = match path.strip_prefix(root) {
-        Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
-        Err(_) => return false,
-    };
-    exclude
-        .iter()
-        .any(|pattern| path_matches_exclude(&relative, pattern))
-}
-
-fn path_matches_exclude(relative: &str, pattern: &str) -> bool {
-    let normalized = pattern.trim_start_matches("./").replace('\\', "/");
-    if let Some(prefix) = normalized.strip_suffix("/**") {
-        relative == prefix || relative.starts_with(&format!("{prefix}/"))
-    } else {
-        relative == normalized || relative.starts_with(&format!("{normalized}/"))
+fn map_docs_policy_error(error: DocsPolicyError) -> RunnerError {
+    match error {
+        DocsPolicyError::Io { path, error } => {
+            RunnerError::task_invocation_failed_read(&path, error)
+        }
+        DocsPolicyError::Message(message) => RunnerError::task_invocation(message),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
+    use super::map_docs_policy_error;
+    use effigy_docs_policy::{
         collect_index_markdown_links, collect_link_check_files, collect_markdown_children,
         collect_workflow_check_files, extract_fenced_json_blocks, extract_h2_section,
         extract_lead_verb, first_non_empty_section_line, insert_log_index_entry,
         normalize_log_index_relative_path, path_matches_exclude, resolve_docs_index_spec,
-        resolve_docs_next_action_spec, scan_markdown_links,
+        resolve_docs_next_action_spec, scan_markdown_links, DocsPolicyError,
     };
+    use effigy_manifest::config_sections::{
+        ManifestDocsPolicyIndexConfig, ManifestDocsPolicyNextActionConfig,
+    };
+    use effigy_manifest::ManifestDocsPolicyConfig;
     use std::{fs, path::Path};
 
     #[test]
@@ -1490,13 +1002,19 @@ mod tests {
                 .as_nanos()
         ));
         fs::create_dir_all(&root).expect("mkdir");
-        fs::write(
-            root.join("effigy.toml"),
-            "[docs_policy.indexes.vision]\nfile = \"docs/vision/README.md\"\ndir = \"docs/vision\"\nsection = \"Vision Artifacts\"\nexclude = [\"history/**\"]\n",
-        )
-        .expect("write manifest");
+        let mut policy = ManifestDocsPolicyConfig::default();
+        policy.indexes.insert(
+            "vision".to_owned(),
+            ManifestDocsPolicyIndexConfig {
+                file: "docs/vision/README.md".to_owned(),
+                dir: "docs/vision".to_owned(),
+                section: Some("Vision Artifacts".to_owned()),
+                exclude: vec!["history/**".to_owned()],
+            },
+        );
 
-        let spec = resolve_docs_index_spec(&root, Some("vision"), None, None).expect("spec");
+        let spec =
+            resolve_docs_index_spec(&root, &policy, Some("vision"), None, None).expect("spec");
         assert_eq!(spec.policy_name.as_deref(), Some("vision"));
         assert_eq!(spec.index, root.join("docs/vision/README.md"));
         assert_eq!(spec.dir, root.join("docs/vision"));
@@ -1527,13 +1045,26 @@ mod tests {
                 .as_nanos()
         ));
         fs::create_dir_all(root.join("docs/scripts/fixtures")).expect("mkdir");
-        fs::write(
-            root.join("effigy.toml"),
-            "[docs_policy.indexes.vision]\nfile = \"docs/vision/README.md\"\ndir = \"docs/vision\"\nsection = \"Vision Artifacts\"\n\n[docs_policy.next_actions.vision]\nindex = \"vision\"\nheading = \"## Next Task\"\nallowlist_file = \"docs/scripts/fixtures/verbs.txt\"\n",
-        )
-        .expect("write manifest");
+        let mut policy = ManifestDocsPolicyConfig::default();
+        policy.indexes.insert(
+            "vision".to_owned(),
+            ManifestDocsPolicyIndexConfig {
+                file: "docs/vision/README.md".to_owned(),
+                dir: "docs/vision".to_owned(),
+                section: Some("Vision Artifacts".to_owned()),
+                exclude: Vec::new(),
+            },
+        );
+        policy.next_actions.insert(
+            "vision".to_owned(),
+            ManifestDocsPolicyNextActionConfig {
+                index: "vision".to_owned(),
+                heading: "## Next Task".to_owned(),
+                allowlist_file: "docs/scripts/fixtures/verbs.txt".to_owned(),
+            },
+        );
 
-        let spec = resolve_docs_next_action_spec(&root, Some("vision")).expect("spec");
+        let spec = resolve_docs_next_action_spec(&root, &policy, Some("vision")).expect("spec");
         assert_eq!(spec.policy_name.as_deref(), Some("vision"));
         assert_eq!(spec.heading, "## Next Task");
         assert_eq!(spec.heading_without_hashes, "Next Task");
@@ -1542,5 +1073,11 @@ mod tests {
             root.join("docs/scripts/fixtures/verbs.txt")
         );
         assert_eq!(spec.index.policy_name.as_deref(), Some("vision"));
+    }
+
+    #[test]
+    fn map_docs_policy_error_preserves_user_facing_message_shape() {
+        let err = map_docs_policy_error(DocsPolicyError::Message("bad docs policy".to_owned()));
+        assert_eq!(err.to_string(), "bad docs policy");
     }
 }

@@ -1,6 +1,5 @@
-use std::path::PathBuf;
+use effigy_tasks::TaskRuntimeArgs;
 
-use super::super::super::model::catalog::TaskRuntimeArgs;
 use crate::runner::error::RunnerError;
 
 pub(super) fn normalize_builtin_test_suite(raw: &str) -> Option<&'static str> {
@@ -13,45 +12,5 @@ pub(super) fn normalize_builtin_test_suite(raw: &str) -> Option<&'static str> {
 }
 
 pub(super) fn parse_task_runtime_args(args: &[String]) -> Result<TaskRuntimeArgs, RunnerError> {
-    let mut repo: Option<PathBuf> = None;
-    let mut verbose_root = false;
-    let mut env_schema_override: Option<PathBuf> = None;
-    let mut passthrough: Vec<String> = Vec::new();
-    let mut i = 0usize;
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "--repo" {
-            let Some(value) = args.get(i + 1) else {
-                return Err(RunnerError::task_invocation(
-                    "task argument --repo requires a value",
-                ));
-            };
-            repo = Some(PathBuf::from(value));
-            i += 2;
-            continue;
-        }
-        if arg == "--env-schema" {
-            let Some(value) = args.get(i + 1) else {
-                return Err(RunnerError::task_invocation(
-                    "task argument --env-schema requires a value",
-                ));
-            };
-            env_schema_override = Some(PathBuf::from(value));
-            i += 2;
-            continue;
-        }
-        if arg == "--verbose-root" {
-            verbose_root = true;
-            i += 1;
-            continue;
-        }
-        passthrough.push(arg.clone());
-        i += 1;
-    }
-    Ok(TaskRuntimeArgs {
-        repo_override: repo,
-        verbose_root,
-        env_schema_override,
-        passthrough,
-    })
+    effigy_tasks::parse_task_runtime_args(args).map_err(RunnerError::task_invocation)
 }

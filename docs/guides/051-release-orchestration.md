@@ -26,6 +26,7 @@ If you are approaching the release flow for the first time, start with:
 effigy release simulate
 effigy release status --check-gates
 effigy release prepare --plan
+cargo run --bin effigy -- release:linux:rehearse
 ```
 
 Use the commands by intent:
@@ -36,6 +37,8 @@ Use the commands by intent:
 - `prepare` / `execute` text mode when a human is actively reviewing the flow
 - `prepare --yes` / `execute --yes` when non-interactive operation is required
 - `resume` when a prepared release needs to be inspected or recovered
+- `release:linux:rehearse` when pre-release prep should prove the Linux build
+  path locally before CI
 
 ## 1) Command Surface
 

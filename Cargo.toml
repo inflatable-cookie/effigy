@@ -1,3 +1,18 @@
+[workspace]
+members = [
+    "crates/effigy-core",
+    "crates/effigy-manifest",
+    "crates/effigy-tasks",
+    "crates/effigy-containers",
+    "crates/effigy-distribution",
+    "crates/effigy-release",
+    "crates/effigy-rhai",
+    "crates/effigy-demo",
+    "crates/effigy-docs-policy",
+    "crates/effigy-env",
+    "crates/effigy-doctor",
+]
+
 [package]
 name = "effigy"
 version = "0.2.13"
@@ -6,6 +21,17 @@ license = "MIT"
 description = "Unified task runner with nested catalog resolution"
 
 [dependencies]
+effigy-containers = { path = "crates/effigy-containers" }
+effigy-core = { path = "crates/effigy-core" }
+effigy-demo = { path = "crates/effigy-demo" }
+effigy-doctor = { path = "crates/effigy-doctor" }
+effigy-docs-policy = { path = "crates/effigy-docs-policy" }
+effigy-distribution = { path = "crates/effigy-distribution" }
+effigy-env = { path = "crates/effigy-env" }
+effigy-manifest = { path = "crates/effigy-manifest" }
+effigy-release = { path = "crates/effigy-release" }
+effigy-rhai = { path = "crates/effigy-rhai" }
+effigy-tasks = { path = "crates/effigy-tasks" }
 anstream = "0.6"
 anstyle = "1"
 indicatif = "0.18"

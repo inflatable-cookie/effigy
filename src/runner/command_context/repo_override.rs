@@ -10,6 +10,7 @@ pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf>
         Command::Docs(args) => args.repo_override.clone(),
         Command::Contracts(args) => args.repo_override.clone(),
         Command::Distribution(args) => args.repo_override.clone(),
+        Command::Container(args) => args.repo_override.clone(),
         Command::Bootstrap(_) => None,
         Command::Release(args) => args.repo_override.clone(),
         Command::Doctor(args) => args.repo_override.clone(),

@@ -1,109 +1,47 @@
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::path::Path;
 
-#[path = "manifest/composition.rs"]
-mod composition;
-#[path = "manifest/config_sections.rs"]
-pub(in crate::runner) mod config_sections;
-#[path = "manifest/task_defs.rs"]
-mod task_defs;
-#[path = "manifest/task_runtime.rs"]
-pub(in crate::runner) mod task_runtime;
-#[path = "manifest/test_config.rs"]
-mod test_config;
+use effigy_manifest::ManifestError;
 
-pub(in crate::runner) use composition::{
-    load_task_manifest_with_inspection, LoadedTaskManifest, ManifestCompositionEdge,
-    ManifestCompositionOverride, ManifestCompositionValueSource,
-};
-pub(super) use config_sections::{
-    ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy, ManifestDemoConfig,
-    ManifestDemoMode, ManifestDemoStatus, ManifestDistributionConfig,
-    ManifestDistributionMetadataConfig, ManifestDistributionPackageConfig,
-    ManifestDistributionPreflightConfig, ManifestDocsPolicyConfig, ManifestEnvSchemaConfig,
-    ManifestPackageManagerConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
-};
-use task_defs::deserialize_tasks;
-pub(super) use task_runtime::{
+use super::locking::model::LockScope;
+
+pub(in crate::runner) use effigy_manifest::{config_sections, task_runtime};
+pub(in crate::runner) use effigy_manifest::{
+    LoadedTaskManifest, ManifestBootstrapSubmodulesPolicy, ManifestCargoEnvMatchMode,
+    ManifestCompositionEdge, ManifestCompositionOverride, ManifestCompositionValueSource,
+    ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
+    ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus, ManifestDocsPolicyConfig,
     ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedRun, ManifestManagedRunStep,
-    ManifestTask,
+    ManifestTask, ManifestTestSuiteTeardownPolicy, TaskManifest,
 };
-use test_config::ManifestTestConfig;
-pub(super) use test_config::{ManifestCargoEnvMatchMode, ManifestTestSuiteTeardownPolicy};
 
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct TaskManifest {
-    #[serde(default)]
-    pub(super) catalog: Option<ManifestCatalog>,
-    #[serde(default)]
-    pub(super) defer: Option<ManifestDefer>,
-    #[serde(default)]
-    pub(super) env: BTreeMap<String, ManifestEnvEntry>,
-    #[serde(default)]
-    pub(super) test: Option<ManifestTestConfig>,
-    #[serde(default)]
-    pub(super) package_manager: Option<ManifestPackageManagerConfig>,
-    #[serde(default)]
-    pub(super) scan: Option<ManifestScanConfig>,
-    #[serde(default)]
-    pub(super) shell: Option<ManifestShellConfig>,
-    #[serde(default)]
-    pub(super) env_schema: Option<ManifestEnvSchemaConfig>,
-    #[serde(default)]
-    pub(super) docs_policy: Option<ManifestDocsPolicyConfig>,
-    #[serde(default)]
-    pub(super) bootstrap: Option<ManifestBootstrapConfig>,
-    #[serde(default)]
-    pub(super) distribution: Option<ManifestDistributionConfig>,
-    #[serde(default)]
-    pub(super) release: Option<ManifestReleaseConfig>,
-    #[serde(default)]
-    pub(super) demos: BTreeMap<String, ManifestDemoConfig>,
-    #[serde(default, deserialize_with = "deserialize_tasks")]
-    pub(super) tasks: BTreeMap<String, ManifestTask>,
+pub(super) fn load_task_manifest(manifest_path: &Path) -> Result<TaskManifest, super::RunnerError> {
+    effigy_manifest::load_task_manifest(manifest_path).map_err(map_manifest_error)
 }
 
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ManifestCatalog {
-    pub(super) alias: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ManifestDefer {
-    pub(super) run: String,
-    #[serde(default)]
-    pub(super) builtins: Vec<String>,
-}
-
-pub(in crate::runner) fn load_task_manifest(
+pub(in crate::runner) fn load_task_manifest_with_inspection(
     manifest_path: &Path,
-) -> Result<TaskManifest, super::RunnerError> {
-    Ok(load_task_manifest_with_inspection(manifest_path)?.manifest)
+) -> Result<LoadedTaskManifest, super::RunnerError> {
+    effigy_manifest::load_task_manifest_with_inspection(manifest_path).map_err(map_manifest_error)
 }
 
-impl TaskManifest {
-    pub(in crate::runner) fn validate(
-        &self,
-        manifest_path: &Path,
-    ) -> Result<(), super::RunnerError> {
-        for (demo_id, demo) in &self.demos {
-            demo.validate(manifest_path, demo_id)?;
-        }
-        Ok(())
+pub(super) fn task_lock_scope(task: &ManifestTask, task_name: &str) -> LockScope {
+    match task.lock.as_deref().map(str::trim) {
+        Some(name) if !name.is_empty() => LockScope::Shared(name.to_owned()),
+        _ => LockScope::Task(task_name.to_owned()),
     }
 }
 
-impl ManifestDefer {
-    pub(in crate::runner) fn explicitly_deferred_builtins(&self) -> BTreeSet<String> {
-        self.builtins
-            .iter()
-            .map(|name| name.trim())
-            .filter(|name| !name.is_empty())
-            .map(str::to_owned)
-            .collect::<BTreeSet<String>>()
+pub(super) fn map_manifest_error(error: ManifestError) -> super::RunnerError {
+    match error {
+        ManifestError::Read { path, error } => super::RunnerError::TaskManifestRead { path, error },
+        ManifestError::Parse { path, error } => {
+            super::RunnerError::TaskManifestParse { path, error }
+        }
+        ManifestError::Compose { path, detail } => {
+            super::RunnerError::TaskManifestCompose { path, detail }
+        }
+        ManifestError::Render { path, detail } => {
+            super::RunnerError::task_invocation_failed_render(&path, detail)
+        }
     }
 }

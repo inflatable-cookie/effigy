@@ -109,9 +109,52 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`103-implement-consumer-proof-of-optional-distribution-surface.md`](./103-implement-consumer-proof-of-optional-distribution-surface.md) (complete)
 - [`104-implement-consumer-driven-distribution-gap-widening.md`](./104-implement-consumer-driven-distribution-gap-widening.md) (complete)
 - [`105-decide-post-consumer-gap-widening-boundary.md`](./105-decide-post-consumer-gap-widening-boundary.md) (complete)
+- [`106-decide-colima-container-v1-contract.md`](./106-decide-colima-container-v1-contract.md) (complete)
+- [`107-implement-colima-container-foundation.md`](./107-implement-colima-container-foundation.md) (complete)
+- [`108-implement-attached-container-session-ux-and-task-composition.md`](./108-implement-attached-container-session-ux-and-task-composition.md) (complete)
+- [`109-decide-post-container-session-and-task-composition-boundary.md`](./109-decide-post-container-session-and-task-composition-boundary.md) (complete)
+- [`110-harden-real-machine-container-live-stop-and-closeout.md`](./110-harden-real-machine-container-live-stop-and-closeout.md) (complete)
+- [`111-implement-linux-release-rehearsal-container.md`](./111-implement-linux-release-rehearsal-container.md) (complete)
+- [`112-decide-post-linux-rehearsal-release-boundary.md`](./112-decide-post-linux-rehearsal-release-boundary.md) (complete)
+- [`113-implement-rhai-in-process-effigy-dispatch-and-container-helpers.md`](./113-implement-rhai-in-process-effigy-dispatch-and-container-helpers.md) (complete)
+- [`114-decide-post-rhai-dispatch-release-boundary.md`](./114-decide-post-rhai-dispatch-release-boundary.md) (complete)
+- [`115-implement-effigy-distribution-release-closure.md`](./115-implement-effigy-distribution-release-closure.md) (ready)
+- [`116-decide-domain-crate-boundaries-and-rhai-api-contract.md`](./116-decide-domain-crate-boundaries-and-rhai-api-contract.md) (complete)
+- [`117-implement-workspace-and-effigy-core-foundation.md`](./117-implement-workspace-and-effigy-core-foundation.md) (complete)
+- [`118-implement-effigy-tasks-foundation-extraction.md`](./118-implement-effigy-tasks-foundation-extraction.md) (complete)
+- [`119-implement-manifest-core-foundation-extraction.md`](./119-implement-manifest-core-foundation-extraction.md) (complete)
+- [`120-implement-release-cluster-foundation-extraction.md`](./120-implement-release-cluster-foundation-extraction.md) (complete)
+- [`121-implement-effigy-release-foundation-extraction.md`](./121-implement-effigy-release-foundation-extraction.md) (complete)
+- [`122-implement-effigy-release-state-and-projection-extraction.md`](./122-implement-effigy-release-state-and-projection-extraction.md) (complete)
+- [`123-implement-effigy-release-plan-and-projection-extraction.md`](./123-implement-effigy-release-plan-and-projection-extraction.md) (complete)
+- [`124-implement-effigy-release-state-persistence-and-orchestration-extraction.md`](./124-implement-effigy-release-state-persistence-and-orchestration-extraction.md) (complete)
+- [`125-decide-post-release-persistence-extraction-boundary.md`](./125-decide-post-release-persistence-extraction-boundary.md) (complete)
+- [`126-decide-modularization-boundary-before-v0-3-release-resumption.md`](./126-decide-modularization-boundary-before-v0-3-release-resumption.md) (complete)
+- [`127-implement-effigy-rhai-foundation-extraction.md`](./127-implement-effigy-rhai-foundation-extraction.md) (complete)
+- [`128-implement-effigy-demo-foundation-extraction.md`](./128-implement-effigy-demo-foundation-extraction.md) (complete)
+- [`129-implement-demo-browser-and-projection-foundation-extraction.md`](./129-implement-demo-browser-and-projection-foundation-extraction.md) (complete)
+- [`130-implement-demo-runtime-and-terminal-session-foundation-extraction.md`](./130-implement-demo-runtime-and-terminal-session-foundation-extraction.md) (complete)
+- [`131-decide-post-demo-runtime-and-terminal-session-extraction-boundary.md`](./131-decide-post-demo-runtime-and-terminal-session-extraction-boundary.md) (complete)
+- [`132-implement-effigy-docs-policy-foundation-extraction.md`](./132-implement-effigy-docs-policy-foundation-extraction.md) (complete)
+- [`133-decide-post-docs-policy-foundation-extraction-boundary.md`](./133-decide-post-docs-policy-foundation-extraction-boundary.md) (complete)
+- [`134-implement-effigy-docs-policy-qa-check-extraction.md`](./134-implement-effigy-docs-policy-qa-check-extraction.md) (complete)
+- [`135-decide-post-docs-policy-qa-check-extraction-boundary.md`](./135-decide-post-docs-policy-qa-check-extraction-boundary.md) (complete)
+- [`136-implement-effigy-env-foundation-extraction.md`](./136-implement-effigy-env-foundation-extraction.md) (complete)
+- [`137-decide-post-env-foundation-extraction-boundary.md`](./137-decide-post-env-foundation-extraction-boundary.md) (complete)
+- [`138-implement-effigy-doctor-foundation-extraction.md`](./138-implement-effigy-doctor-foundation-extraction.md) (complete)
+- [`139-decide-post-doctor-foundation-extraction-boundary.md`](./139-decide-post-doctor-foundation-extraction-boundary.md) (complete)
+- [`140-implement-effigy-doctor-report-and-projection-extraction.md`](./140-implement-effigy-doctor-report-and-projection-extraction.md) (complete)
+- [`141-decide-post-doctor-report-and-projection-extraction-boundary.md`](./141-decide-post-doctor-report-and-projection-extraction-boundary.md) (complete)
+- [`142-decide-modularization-pause-boundary-before-v0-3-release-resumption.md`](./142-decide-modularization-pause-boundary-before-v0-3-release-resumption.md) (complete)
+
+## Active Ready Card
+
+- [`115-implement-effigy-distribution-release-closure.md`](./115-implement-effigy-distribution-release-closure.md)
+
+## Recent Boundary Decision
+
+- [`142-decide-modularization-pause-boundary-before-v0-3-release-resumption.md`](./142-decide-modularization-pause-boundary-before-v0-3-release-resumption.md)
 
 ## Next Task
 
-`g02.005` is paused on a trustworthy optional distribution boundary. Reopen
-batch cards only if a real published-consumer need justifies widening the full
-`distribution first-publish` path again.
+Execute `115` to carry the release lane through bounded release closure.

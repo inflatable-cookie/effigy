@@ -4,10 +4,6 @@ pub(crate) fn read_utf8(path: &Path) -> Result<String, std::io::Error> {
     std::fs::read_to_string(path)
 }
 
-pub(crate) fn read_utf8_or_default(path: &Path) -> String {
-    read_utf8(path).unwrap_or_default()
-}
-
 pub(crate) fn parse_json<T>(raw: &str) -> Result<T, serde_json::Error>
 where
     T: serde::de::DeserializeOwned,

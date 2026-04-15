@@ -14,11 +14,15 @@ pub(in crate::runner) const EXPLICITLY_DEFERRABLE_COMMAND_BUILTINS: [&str; 7] = 
     "tasks",
 ];
 pub(in crate::runner) const IMPLICITLY_DEFERRED_COMMAND_BUILTINS: [&str; 1] = ["release"];
-pub(in crate::runner) const BUILTIN_TASKS: [(&str, &str); 12] = [
+pub(in crate::runner) const BUILTIN_TASKS: [(&str, &str); 13] = [
     ("help", "Show general help (same as --help)"),
     (
         "config",
         "Show supported project effigy.toml configuration keys and examples",
+    ),
+    (
+        "container",
+        "Operate manifest-defined Colima-backed container environments",
     ),
     (
         "doctor",

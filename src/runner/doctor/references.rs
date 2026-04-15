@@ -3,9 +3,9 @@ use std::path::Path;
 use super::super::catalog::select_catalog_and_task;
 use super::super::model::catalog::LoadedCatalog;
 use super::super::util::parse_task_reference_invocation;
-use super::contracts::{check_id, remediation};
 use super::report::DoctorState;
 use super::task_graph;
+use effigy_doctor::task_references;
 
 pub(super) fn check_task_references(catalogs: &[LoadedCatalog], state: &mut DoctorState) {
     let mut checker = ReferenceChecker::new(catalogs, state);
@@ -41,63 +41,45 @@ impl<'a, 'b> ReferenceChecker<'a, 'b> {
         let (selector, _) = match parse_task_reference_invocation(reference) {
             Ok(value) => value,
             Err(error) => {
-                self.push_resolution_error(
-                    format!(
-                        "{} task `{}` has invalid task reference `{}`: {}",
-                        manifest_path.display(),
-                        task_name,
-                        reference,
-                        error
-                    ),
-                    remediation::FIX_TASK_REFERENCE_SYNTAX,
+                task_references::add_invalid_reference_syntax(
+                    self.state,
+                    manifest_path,
+                    task_name,
+                    reference,
+                    &error.to_string(),
                 );
                 return;
             }
         };
 
-        if is_builtin_selector(&selector.task_name) {
+        if task_references::is_builtin_selector(&selector.task_name) {
             return;
         }
 
         let selection = match select_catalog_and_task(&selector, self.catalogs, reference_cwd) {
             Ok(selection) => selection,
             Err(error) => {
-                self.push_resolution_error(
-                    format!(
-                        "{} task `{}` references `{}` but resolution failed: {}",
-                        manifest_path.display(),
-                        task_name,
-                        reference,
-                        error
-                    ),
-                    remediation::UPDATE_TASK_REFERENCE_TARGET,
+                task_references::add_unresolved_reference(
+                    self.state,
+                    manifest_path,
+                    task_name,
+                    reference,
+                    &error.to_string(),
                 );
                 return;
             }
         };
 
-        if selection.task.run.is_none() {
-            self.push_resolution_error(
-                format!(
-                    "{} task `{}` references `{}` but target has no `run` command",
-                    manifest_path.display(),
-                    task_name,
-                    reference
-                ),
-                remediation::REFERENCE_RUNNABLE_TASK,
+        if selection.task.run.is_none()
+            && selection.task.mode.is_none()
+            && selection.task.container_session.is_none()
+        {
+            task_references::add_non_runnable_reference(
+                self.state,
+                manifest_path,
+                task_name,
+                reference,
             );
         }
     }
-
-    fn push_resolution_error(&mut self, evidence: String, remediation: &str) {
-        self.state
-            .add_check_error(check_id::TASK_REFERENCES_RESOLVE, evidence, remediation);
-    }
-}
-
-fn is_builtin_selector(task_name: &str) -> bool {
-    matches!(
-        task_name,
-        "help" | "config" | "doctor" | "test" | "tasks" | "catalogs"
-    )
 }

@@ -29,6 +29,10 @@ const SECTION_TASKS_CANONICAL_PREFIX: &[&str] = &[
     "  { run = \"my-admin-process\", start = 2, tab = 1 }",
     "]",
     "",
+    "[tasks.container-dev]",
+    "# Optional repo-owned task alias for an attached named container session.",
+    "container_session = \"web\"",
+    "",
     "[tasks.validate]",
     "# Example DAG-style run sequence with explicit step ids and dependencies.",
     "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
@@ -157,6 +161,50 @@ pub(super) fn distribution_lines(profile: ConfigDocProfile) -> Vec<&'static str>
         "owner = \"release\"",
         "related = \"docs/roadmaps/distribution.md\"",
         "next-step = \"Review the captured evidence and publish your repo's release sign-off notes.\"",
+        "",
+    ]
+}
+
+fn containers_section_comment(profile: ConfigDocProfile) -> &'static str {
+    match profile {
+        ConfigDocProfile::Reference => {
+            "# Optional named container environments for Colima-backed web/dev stacks."
+        }
+        ConfigDocProfile::Schema => {
+            "# Optional named container environments for Colima-backed web/dev stacks."
+        }
+    }
+}
+
+pub(super) fn containers_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
+    vec![
+        "[containers]",
+        containers_section_comment(profile),
+        "default = \"web\"",
+        "",
+        "[containers.web]",
+        "driver = \"colima\"",
+        "startup = \"attached\"",
+        "profile = \"default\"",
+        "compose_file = \"infra/dev/docker-compose.yml\"",
+        "project_name = \"my-app-dev\"",
+        "primary_service = \"app\"",
+        "",
+        "[containers.web.lifecycle]",
+        "on_task_exit = \"stop\"",
+        "shutdown = \"graceful\"",
+        "detach_timeout_secs = 10",
+        "",
+        "[containers.web.health]",
+        "check = \"http://localhost:8080/health\"",
+        "timeout_secs = 60",
+        "",
+        "[containers.web.host]",
+        "ports = [\"8080:80\", \"3306:3306\"]",
+        "mounts = [\"./:/workspace\"]",
+        "",
+        "[containers.web.ui]",
+        "tabs = [\"overview\", \"app\", \"db\", \"proxy\"]",
         "",
     ]
 }

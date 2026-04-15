@@ -12,7 +12,7 @@ pub(super) fn render_text(report: &DoctorReport, verbose: bool) -> Result<String
     renderer
         .section(text_blocks::DOCTOR_REPORT_HEADING)
         .map_err(map_render_error)?;
-    let sections = super::contracts::doctor_finding_sections(report);
+    let sections = effigy_doctor::doctor_finding_sections(report);
     let actionable_sections = sections
         .iter()
         .filter(|section| section.severity != DoctorSeverity::Info)
@@ -57,7 +57,7 @@ fn render_finding_group(
     scan_report_path: Option<&str>,
 ) -> Result<(), RunnerError> {
     renderer
-        .notice(section.severity.to_notice_level(), &section.check_id)
+        .notice(notice_level(section.severity), &section.check_id)
         .map_err(map_render_error)?;
 
     super::section_output::render_summary_rows(renderer, section, verbose, scan_report_path)?;
@@ -66,12 +66,20 @@ fn render_finding_group(
     Ok(())
 }
 
+fn notice_level(severity: DoctorSeverity) -> NoticeLevel {
+    match severity {
+        DoctorSeverity::Info => NoticeLevel::Info,
+        DoctorSeverity::Warning => NoticeLevel::Warning,
+        DoctorSeverity::Error => NoticeLevel::Error,
+    }
+}
+
 fn render_fix_actions(
     renderer: &mut PlainRenderer<Vec<u8>>,
     report: &DoctorReport,
 ) -> Result<(), RunnerError> {
     renderer.section("Fix Actions").map_err(map_render_error)?;
-    let rows = super::contracts::doctor_fixes_table_rows(report);
+    let rows = effigy_doctor::doctor_fixes_table_rows(report);
     renderer
         .table(&TableSpec::new(
             vec!["status".to_owned(), "fix".to_owned(), "detail".to_owned()],

@@ -1,7 +1,7 @@
 use super::prelude::{
-    parse_command, Command, ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode,
-    ContractsSubcommand, DistributionArgs, DistributionSubcommand, DocsArgs, DocsBlockRequirement,
-    DocsSubcommand, PathBuf,
+    parse_command, Command, ContainerArgs, ContainerSubcommand, ContractsArgs, ContractsCheckMode,
+    ContractsSelectionPrintMode, ContractsSubcommand, DistributionArgs, DistributionSubcommand,
+    DocsArgs, DocsBlockRequirement, DocsSubcommand, PathBuf,
 };
 
 #[test]
@@ -537,6 +537,86 @@ fn parse_distribution_write_summary_with_repeated_logs() {
             },
             repo_override: None,
             output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_up_without_name_uses_default_resolution_path() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "up".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--detach".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Up {
+                name: None,
+                attach: false,
+                detach: true,
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_logs_with_explicit_name_and_service() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "web".to_owned(),
+        "logs".to_owned(),
+        "--service".to_owned(),
+        "db".to_owned(),
+        "--follow".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Logs {
+                name: Some("web".to_owned()),
+                service: Some("db".to_owned()),
+                follow: true,
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_shell_with_command_override() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "web".to_owned(),
+        "shell".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--command".to_owned(),
+        "php artisan tinker".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Shell {
+                name: Some("web".to_owned()),
+                service: None,
+                command: Some("php artisan tinker".to_owned()),
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: false,
         })
     );
 }

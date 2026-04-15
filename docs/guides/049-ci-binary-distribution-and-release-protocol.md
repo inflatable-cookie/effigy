@@ -86,6 +86,8 @@ Linux GNU compatibility policy:
 - `scripts/check-linux-glibc-floor.sh` runs in the release build job and fails
   the workflow if a Linux artifact starts requiring a newer glibc symbol
   version
+- Effigy now also has one local rehearsal path for this on developer machines:
+  `cargo run --bin effigy -- release:linux:rehearse`
 
 Binary naming convention:
 

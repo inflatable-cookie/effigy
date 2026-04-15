@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
-use super::finalize::{build_report, finalize_fix_actions};
-use super::summary::{initialize_statuses, record_finding_status, summarize_statuses};
-use super::types::{DoctorFinding, DoctorFixAction, DoctorReport, DoctorSeverity, DoctorSummary};
+use super::{DoctorFinding, DoctorFixAction, DoctorReport, DoctorSeverity, DoctorSummary};
 
 pub(in crate::runner) struct DoctorState {
     pub(in crate::runner) findings: Vec<DoctorFinding>,
@@ -14,7 +12,7 @@ impl DoctorState {
     pub(in crate::runner) fn new() -> Self {
         Self {
             findings: Vec::new(),
-            statuses: initialize_statuses(),
+            statuses: effigy_doctor::DoctorState::new().statuses,
             fixes: Vec::new(),
         }
     }
@@ -95,11 +93,16 @@ impl DoctorState {
     }
 
     pub(in crate::runner) fn summarize(&self) -> DoctorSummary {
-        summarize_statuses(&self.statuses)
+        effigy_doctor::DoctorState {
+            findings: self.findings.clone(),
+            statuses: self.statuses.clone(),
+            fixes: self.fixes.clone(),
+        }
+        .summarize()
     }
 
     pub(in crate::runner) fn finalize_fix_actions(&mut self, should_fix: bool) {
-        finalize_fix_actions(&mut self.fixes, should_fix);
+        effigy_doctor::finalize_fix_actions(&mut self.fixes, should_fix);
     }
 
     pub(in crate::runner) fn into_report(
@@ -109,14 +112,20 @@ impl DoctorState {
         root_evidence: Vec<String>,
         root_warnings: Vec<String>,
     ) -> DoctorReport {
-        build_report(
+        effigy_doctor::DoctorReport {
             resolved_root,
             summary,
-            self.findings,
-            self.fixes,
+            findings: self.findings,
+            fixes: self.fixes,
             root_evidence,
             root_warnings,
-        )
+        }
+    }
+}
+
+impl effigy_doctor::FindingSink for DoctorState {
+    fn add_check_error(&mut self, check_id: &str, evidence: String, remediation: String) {
+        DoctorState::add_check_error(self, check_id, evidence, remediation);
     }
 }
 
@@ -125,6 +134,11 @@ fn add_state_finding(
     statuses: &mut HashMap<String, DoctorSeverity>,
     finding: DoctorFinding,
 ) {
-    record_finding_status(statuses, &finding);
+    let status = statuses
+        .entry(finding.check_id.clone())
+        .or_insert(DoctorSeverity::Info);
+    if finding.severity > *status {
+        *status = finding.severity;
+    }
     findings.push(finding);
 }

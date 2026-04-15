@@ -5,10 +5,11 @@ use super::super::super::locking::io::acquire_scopes;
 use super::super::context::ExecutionTaskContext;
 use super::super::preflight::ExecutionPreflight;
 use super::{super::cache_hit, super::process_run, command};
-use crate::env_schema::resolver::ResolvedEnv;
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
 use crate::runner::model::catalog::TaskSelection;
+use effigy_env::resolver::ResolvedEnv;
+use effigy_env::secret::SecretString;
 
 pub(super) fn run_standard_task(
     preflight: &ExecutionPreflight,
@@ -28,7 +29,10 @@ pub(super) fn run_standard_task(
 
     let _lock_guards = acquire_scopes(
         &preflight.resolved.resolved_root,
-        &[selection.task.lock_scope(&preflight.selector.task_name)],
+        &[crate::runner::manifest::task_lock_scope(
+            selection.task,
+            &preflight.selector.task_name,
+        )],
     )?;
 
     let cache_check = check_task_cache(
@@ -49,7 +53,7 @@ pub(super) fn run_standard_task(
         );
     }
 
-    let secret_pairs: Option<Vec<(&str, &crate::env_schema::secret::SecretString)>> =
+    let secret_pairs: Option<Vec<(&str, &SecretString)>> =
         env_schema_resolved.as_ref().map(|r| r.secret_env());
     let secret_ref = secret_pairs.as_deref();
 

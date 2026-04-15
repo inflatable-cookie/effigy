@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::env_schema::resolver::ResolvedEnv;
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
+use effigy_env::resolver::ResolvedEnv;
 
 pub(in crate::runner) fn resolve_catalog_env_schema(
     catalog_root: &Path,
@@ -53,7 +53,7 @@ pub(in crate::runner) fn resolve_catalog_env_schema(
 
     let exec_timeout = config.and_then(|c| c.exec_timeout).unwrap_or(30);
 
-    Ok(crate::env_schema::load_and_resolve(
+    Ok(effigy_env::load_and_resolve(
         &schema_path,
         &dotenv_overrides,
         Duration::from_secs(exec_timeout),

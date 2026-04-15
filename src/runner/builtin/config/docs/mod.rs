@@ -36,6 +36,10 @@ pub(super) fn distribution_lines(profile: ConfigDocProfile) -> Vec<&'static str>
     tasks::distribution_lines(profile)
 }
 
+pub(super) fn containers_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
+    tasks::containers_lines(profile)
+}
+
 pub(super) fn demos_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     tasks::demos_lines(profile)
 }

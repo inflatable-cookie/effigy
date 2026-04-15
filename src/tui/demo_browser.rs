@@ -11,6 +11,17 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
+#[cfg(test)]
+use effigy_demo::browser::{
+    DemoActionAvailability, DemoActionState, DemoActiveAttempt, DemoActiveTerminalSession,
+    DemoHistoryAttemptHistoryPayload, DemoLatestAttempt, DemoRuntimeBackend,
+    DemoRuntimeProjectedOutputProvenance, DemoRuntimeProjectedProcessSummary,
+    DemoRuntimeProjectionShape, DemoTerminalRecentOutput, DemoTerminalResize, DemoTerminalSize,
+};
+use effigy_demo::browser::{
+    DemoDetail, DemoHistoryAttempt, DemoHistoryPayload, DemoInspectPayload, DemoListPayload,
+    DemoSummary,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -18,7 +29,6 @@ use ratatui::symbols::line;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
-use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use crate::runner::{run_command, RunnerError};
@@ -3321,234 +3331,6 @@ impl QueryPromptKind {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct DemoListPayload {
-    #[serde(default)]
-    total_count: usize,
-    demos: Vec<DemoSummary>,
-    #[serde(default)]
-    groups: Option<Vec<DemoGroup>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DemoGroup {
-    label: String,
-    count: usize,
-    demos: Vec<DemoSummary>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoSummary {
-    id: String,
-    effective_status: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct DemoInspectPayload {
-    demo: DemoDetail,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoHistoryPayload {
-    attempt_history: DemoHistoryAttemptHistoryPayload,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoHistoryAttemptHistoryPayload {
-    #[allow(dead_code)]
-    path: Option<String>,
-    #[allow(dead_code)]
-    stored_count: usize,
-    #[allow(dead_code)]
-    filtered_count: usize,
-    #[allow(dead_code)]
-    displayed_count: usize,
-    #[allow(dead_code)]
-    count: usize,
-    #[allow(dead_code)]
-    limit: Option<usize>,
-    #[allow(dead_code)]
-    outcome: Option<String>,
-    parse_error: Option<String>,
-    attempts: Vec<DemoHistoryAttempt>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoHistoryAttempt {
-    ordinal: usize,
-    attempt_id: String,
-    outcome: String,
-    summary: Option<String>,
-    receipt_path: Option<String>,
-    artifacts: Vec<String>,
-    stdout_log_path: Option<String>,
-    stderr_log_path: Option<String>,
-    exit_code: Option<i32>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoDetail {
-    id: String,
-    title: String,
-    summary: String,
-    proof: String,
-    #[allow(dead_code)]
-    owner: String,
-    #[allow(dead_code)]
-    mode: String,
-    #[allow(dead_code)]
-    effective_status: String,
-    #[allow(dead_code)]
-    gap_class: String,
-    covers: Vec<String>,
-    tags: Vec<String>,
-    #[allow(dead_code)]
-    runtime_backend: DemoRuntimeBackend,
-    actions: DemoActionAvailability,
-    #[allow(dead_code)]
-    active_attempt: DemoActiveAttempt,
-    active_terminal_session: DemoActiveTerminalSession,
-    latest_attempt: DemoLatestAttempt,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoActionAvailability {
-    run: DemoActionState,
-    stop: DemoActionState,
-    rerun: DemoActionState,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoActionState {
-    available: bool,
-    reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoActiveAttempt {
-    #[allow(dead_code)]
-    state: String,
-    #[allow(dead_code)]
-    runtime_backend: Option<DemoRuntimeBackend>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoActiveTerminalSession {
-    available: bool,
-    #[allow(dead_code)]
-    state: String,
-    #[allow(dead_code)]
-    attempt_id: Option<String>,
-    #[allow(dead_code)]
-    runtime_backend: Option<DemoRuntimeBackend>,
-    transport: String,
-    #[allow(dead_code)]
-    pty: bool,
-    supports_input_forwarding: bool,
-    input_forwarding_reason: Option<String>,
-    #[allow(dead_code)]
-    nested_tui: bool,
-    terminal_size: DemoTerminalSize,
-    resize: DemoTerminalResize,
-    #[allow(dead_code)]
-    resize_handoff_path: Option<String>,
-    #[allow(dead_code)]
-    stdin_input_path: Option<String>,
-    stdout_log_path: Option<String>,
-    stderr_log_path: Option<String>,
-    #[allow(dead_code)]
-    output_available: bool,
-    recent_output: DemoTerminalRecentOutput,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoTerminalSize {
-    cols: Option<u16>,
-    rows: Option<u16>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoRuntimeBackend {
-    #[allow(dead_code)]
-    kind: String,
-    #[allow(dead_code)]
-    label: String,
-    #[allow(dead_code)]
-    flattened_projection: bool,
-    #[serde(default)]
-    projection_shape: DemoRuntimeProjectionShape,
-    #[serde(default)]
-    #[allow(dead_code)]
-    projected_process_summary: DemoRuntimeProjectedProcessSummary,
-    #[serde(default)]
-    #[allow(dead_code)]
-    projected_output_provenance: DemoRuntimeProjectedOutputProvenance,
-    #[allow(dead_code)]
-    capabilities: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct DemoRuntimeProjectionShape {
-    #[allow(dead_code)]
-    kind: String,
-    #[allow(dead_code)]
-    live_terminal_eligible: bool,
-    #[allow(dead_code)]
-    projected_multi_process: bool,
-    #[allow(dead_code)]
-    managed_process_count: Option<usize>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct DemoRuntimeProjectedProcessSummary {
-    #[allow(dead_code)]
-    present: bool,
-    #[allow(dead_code)]
-    managed_process_names: Vec<String>,
-    #[allow(dead_code)]
-    merged_output_from_multiple_processes: bool,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct DemoRuntimeProjectedOutputProvenance {
-    #[allow(dead_code)]
-    present: bool,
-    #[allow(dead_code)]
-    kind: String,
-    #[allow(dead_code)]
-    label: String,
-    #[allow(dead_code)]
-    source_attributed: bool,
-}
-
-impl DemoTerminalSize {
-    fn rendered(&self) -> Option<String> {
-        Some(format!("{}x{}", self.cols?, self.rows?))
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoTerminalResize {
-    available: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoTerminalRecentOutput {
-    stdout_lines: Vec<String>,
-    stderr_lines: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DemoLatestAttempt {
-    recorded: bool,
-    state: String,
-    artifacts: Vec<String>,
-    summary: Option<String>,
-    stdout_log_path: Option<String>,
-    stderr_log_path: Option<String>,
-    output_available: bool,
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -3558,6 +3340,7 @@ mod tests {
         layout::Constraint,
         style::{Color, Modifier},
     };
+    use serde_json::Value as JsonValue;
 
     use super::{
         action_menu_items_for_detail, artifacts_detail_render, browser_body_constraints,
@@ -3580,6 +3363,7 @@ mod tests {
         DemoSummary {
             id: id.to_owned(),
             effective_status: "ready".to_owned(),
+            ..Default::default()
         }
     }
 
@@ -3620,44 +3404,41 @@ mod tests {
             },
             active_attempt: super::DemoActiveAttempt {
                 state: "idle".to_owned(),
-                runtime_backend: None,
+                ..Default::default()
             },
             active_terminal_session: super::DemoActiveTerminalSession {
                 available: false,
                 state: "idle".to_owned(),
-                attempt_id: None,
-                runtime_backend: None,
                 transport: "none".to_owned(),
                 pty: false,
                 supports_input_forwarding: false,
                 input_forwarding_reason: Some(
                     "Input forwarding is not available for this active demo.".to_owned(),
                 ),
-                nested_tui: false,
                 terminal_size: super::DemoTerminalSize {
                     cols: None,
                     rows: None,
                 },
-                resize: super::DemoTerminalResize { available: false },
-                resize_handoff_path: None,
-                stdin_input_path: None,
-                stdout_log_path: None,
-                stderr_log_path: None,
+                resize: super::DemoTerminalResize {
+                    available: false,
+                    ..Default::default()
+                },
                 output_available: false,
                 recent_output: super::DemoTerminalRecentOutput {
                     stdout_lines: vec![],
                     stderr_lines: vec![],
                 },
+                ..Default::default()
             },
             latest_attempt: DemoLatestAttempt {
                 recorded: true,
                 state: "passed".to_owned(),
                 artifacts: artifacts.iter().map(|value| (*value).to_owned()).collect(),
                 summary: None,
-                stdout_log_path: None,
-                stderr_log_path: None,
                 output_available: false,
+                ..Default::default()
             },
+            ..Default::default()
         }
     }
 
@@ -4009,7 +3790,7 @@ mod tests {
             available: true,
             state: "running".to_owned(),
             attempt_id: Some("demo-123".to_owned()),
-            runtime_backend: Some(super::DemoRuntimeBackend {
+            runtime_backend: super::DemoRuntimeBackend {
                 kind: "run".to_owned(),
                 label: "run-backed".to_owned(),
                 flattened_projection: false,
@@ -4026,21 +3807,21 @@ mod tests {
                     "live-terminal-output".to_owned(),
                     "stop".to_owned(),
                 ],
-            }),
+            },
             transport: "stream".to_owned(),
             pty: false,
             supports_input_forwarding: false,
             input_forwarding_reason: Some(
                 "Input forwarding is not available for this active demo.".to_owned(),
             ),
-            nested_tui: false,
             terminal_size: super::DemoTerminalSize {
                 cols: Some(80),
                 rows: Some(24),
             },
-            resize: super::DemoTerminalResize { available: false },
-            resize_handoff_path: None,
-            stdin_input_path: None,
+            resize: super::DemoTerminalResize {
+                available: false,
+                ..Default::default()
+            },
             stdout_log_path: Some(".effigy/demo/logs/demo-123.stdout.log".to_owned()),
             stderr_log_path: Some(".effigy/demo/logs/demo-123.stderr.log".to_owned()),
             output_available: true,
@@ -4048,6 +3829,7 @@ mod tests {
                 stdout_lines: vec!["boot".to_owned(), "serve".to_owned()],
                 stderr_lines: vec!["warn".to_owned()],
             },
+            ..Default::default()
         };
 
         let repo_root = std::env::temp_dir().join(format!(
@@ -4147,7 +3929,7 @@ mod tests {
             available: true,
             state: "running".to_owned(),
             attempt_id: Some("demo-123".to_owned()),
-            runtime_backend: Some(super::DemoRuntimeBackend {
+            runtime_backend: super::DemoRuntimeBackend {
                 kind: "run".to_owned(),
                 label: "run-backed".to_owned(),
                 flattened_projection: false,
@@ -4165,28 +3947,28 @@ mod tests {
                     "stop".to_owned(),
                     "pty".to_owned(),
                 ],
-            }),
+            },
             transport: "pty".to_owned(),
             pty: true,
             supports_input_forwarding: false,
             input_forwarding_reason: Some(
                 "Input forwarding is not available for this active demo.".to_owned(),
             ),
-            nested_tui: false,
             terminal_size: super::DemoTerminalSize {
                 cols: Some(120),
                 rows: Some(32),
             },
-            resize: super::DemoTerminalResize { available: false },
-            resize_handoff_path: None,
-            stdin_input_path: None,
+            resize: super::DemoTerminalResize {
+                available: false,
+                ..Default::default()
+            },
             stdout_log_path: Some(".effigy/demo/logs/missing.stdout.log".to_owned()),
-            stderr_log_path: None,
             output_available: true,
             recent_output: super::DemoTerminalRecentOutput {
                 stdout_lines: vec!["snapshot-line".to_owned()],
                 stderr_lines: vec![],
             },
+            ..Default::default()
         };
 
         let rendered = terminal_detail_render(Path::new("/tmp/demo-repo"), &detail, None, true)
@@ -4205,6 +3987,14 @@ mod tests {
         let mut detail = detail_with_artifacts(&[]);
         detail.tags = vec!["self-hosted".to_owned()];
         let history = DemoHistoryPayload {
+            schema: String::new(),
+            schema_version: 1,
+            ok: true,
+            repo_root: String::new(),
+            query: JsonValue::Null,
+            demo: Default::default(),
+            active_attempt: Default::default(),
+            latest_attempt: Default::default(),
             attempt_history: DemoHistoryAttemptHistoryPayload {
                 path: None,
                 stored_count: 1,
@@ -4217,6 +4007,7 @@ mod tests {
                 attempts: vec![DemoHistoryAttempt {
                     ordinal: 1,
                     attempt_id: "demo-123".to_owned(),
+                    recorded_at_epoch_ms: 1,
                     outcome: "failed".to_owned(),
                     summary: Some("Proof artifact was missing.".to_owned()),
                     receipt_path: Some(".effigy/demo/history/demo-123.json".to_owned()),
@@ -4226,6 +4017,7 @@ mod tests {
                     exit_code: Some(1),
                 }],
             },
+            selected_attempt: None,
         };
 
         let rendered = history_detail_render(
@@ -4258,6 +4050,14 @@ mod tests {
         app.selected_demo_id = Some("demo".to_owned());
         app.detail_tab = DetailTab::History;
         app.history = Some(DemoHistoryPayload {
+            schema: String::new(),
+            schema_version: 1,
+            ok: true,
+            repo_root: String::new(),
+            query: JsonValue::Null,
+            demo: Default::default(),
+            active_attempt: Default::default(),
+            latest_attempt: Default::default(),
             attempt_history: DemoHistoryAttemptHistoryPayload {
                 path: None,
                 stored_count: 0,
@@ -4269,6 +4069,7 @@ mod tests {
                 parse_error: None,
                 attempts: vec![],
             },
+            selected_attempt: None,
         });
 
         let should_exit = app

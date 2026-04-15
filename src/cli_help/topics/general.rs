@@ -49,6 +49,11 @@ pub(crate) fn render_general_help<R: Renderer>(
             Some("distribution"),
         ),
         (
+            "effigy container",
+            "Operate manifest-defined Colima-backed container environments",
+            Some("container"),
+        ),
+        (
             "effigy bootstrap",
             "Clone/update a repo from a git URL and apply its repo-owned `[bootstrap]` contract",
             Some("bootstrap"),

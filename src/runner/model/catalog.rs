@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+pub(in crate::runner) use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
+
 use super::super::manifest::task_runtime::ManifestTask;
 use super::super::manifest::TaskManifest;
 
@@ -16,19 +18,6 @@ pub(in crate::runner) struct LoadedCatalog {
 }
 
 #[derive(Debug)]
-pub(in crate::runner) struct TaskSelector {
-    pub(in crate::runner) prefix: Option<String>,
-    pub(in crate::runner) task_name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::runner) enum CatalogSelectionMode {
-    ExplicitPrefix,
-    CwdNearest,
-    RootShallowest,
-}
-
-#[derive(Debug)]
 pub(in crate::runner) struct TaskSelection<'a> {
     pub(in crate::runner) catalog: &'a LoadedCatalog,
     pub(in crate::runner) task: &'a ManifestTask,
@@ -41,12 +30,4 @@ pub(in crate::runner) struct DeferredCommand {
     pub(in crate::runner) template: String,
     pub(in crate::runner) working_dir: PathBuf,
     pub(in crate::runner) source: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::runner) struct TaskRuntimeArgs {
-    pub(in crate::runner) repo_override: Option<PathBuf>,
-    pub(in crate::runner) verbose_root: bool,
-    pub(in crate::runner) env_schema_override: Option<PathBuf>,
-    pub(in crate::runner) passthrough: Vec<String>,
 }

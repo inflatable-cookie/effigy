@@ -1,0 +1,10 @@
+[package]
+name = "effigy-doctor"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Doctor policy contracts for Effigy"
+
+[dependencies]
+serde_json = "1"
+toml = "0.8"

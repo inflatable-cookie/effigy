@@ -392,6 +392,17 @@ dependencies = [
  "anstyle",
  "chrono",
  "crossterm 0.29.0",
+ "effigy-containers",
+ "effigy-core",
+ "effigy-demo",
+ "effigy-distribution",
+ "effigy-docs-policy",
+ "effigy-doctor",
+ "effigy-env",
+ "effigy-manifest",
+ "effigy-release",
+ "effigy-rhai",
+ "effigy-tasks",
  "globset",
  "ignore",
  "indexmap",
@@ -410,6 +421,98 @@ dependencies = [
  "vt100",
  "walkdir",
  "zeroize",
+]
+
+[[package]]
+name = "effigy-containers"
+version = "0.1.0"
+dependencies = [
+ "effigy-manifest",
+]
+
+[[package]]
+name = "effigy-core"
+version = "0.1.0"
+
+[[package]]
+name = "effigy-demo"
+version = "0.1.0"
+dependencies = [
+ "effigy-core",
+ "effigy-manifest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "effigy-distribution"
+version = "0.1.0"
+dependencies = [
+ "effigy-manifest",
+]
+
+[[package]]
+name = "effigy-docs-policy"
+version = "0.1.0"
+dependencies = [
+ "effigy-manifest",
+ "regex",
+ "walkdir",
+]
+
+[[package]]
+name = "effigy-doctor"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "toml",
+]
+
+[[package]]
+name = "effigy-env"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "zeroize",
+]
+
+[[package]]
+name = "effigy-manifest"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "effigy-release"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "effigy-manifest",
+ "semver",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "effigy-rhai"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "effigy-core",
+ "rhai",
+ "serde_json",
+ "signal-hook",
+ "toml",
+]
+
+[[package]]
+name = "effigy-tasks"
+version = "0.1.0"
+dependencies = [
+ "effigy-core",
 ]
 
 [[package]]

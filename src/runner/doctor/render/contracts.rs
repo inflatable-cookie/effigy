@@ -1,114 +1,7 @@
 use serde_json::json;
 
-use super::super::contracts::check_id as doctor_check_id;
-use super::super::report::{DoctorFinding, DoctorReport, DoctorSeverity};
-
-pub(super) struct DoctorFindingSection {
-    pub(super) check_id: String,
-    pub(super) severity: DoctorSeverity,
-    pub(super) evidence: Vec<String>,
-    pub(super) remediation: Vec<String>,
-    pub(super) auto_fix_available: bool,
-    pub(super) findings: Vec<DoctorSectionFinding>,
-    pub(super) root_resolution_trace: Vec<String>,
-    pub(super) root_resolution_warnings: Vec<String>,
-}
-
-pub(super) struct DoctorSectionFinding {
-    pub(super) severity: DoctorSeverity,
-    pub(super) evidence: String,
-    pub(super) remediation: String,
-    pub(super) fixable: bool,
-}
-
-pub(super) fn doctor_finding_sections(report: &DoctorReport) -> Vec<DoctorFindingSection> {
-    super::grouping::grouped_findings(&report.findings)
-        .into_iter()
-        .map(|(check_id, items)| {
-            let (evidence, remediation, auto_fix_available) = if is_scan_check_id(&check_id) {
-                scan_group_summary(&items)
-            } else {
-                super::grouping::summarize_group(&items)
-            };
-            let severity = super::grouping::group_max_severity(&items);
-            let findings = items
-                .iter()
-                .map(|item| DoctorSectionFinding {
-                    severity: item.severity,
-                    evidence: item.evidence.clone(),
-                    remediation: item.remediation.clone(),
-                    fixable: item.fixable,
-                })
-                .collect::<Vec<DoctorSectionFinding>>();
-            let (root_resolution_trace, root_resolution_warnings) =
-                root_resolution_section_details(&check_id, report);
-            DoctorFindingSection {
-                check_id,
-                severity,
-                evidence,
-                remediation,
-                auto_fix_available,
-                findings,
-                root_resolution_trace,
-                root_resolution_warnings,
-            }
-        })
-        .collect::<Vec<DoctorFindingSection>>()
-}
-
-fn is_scan_check_id(check_id: &str) -> bool {
-    matches!(
-        check_id,
-        doctor_check_id::SCAN_GOD_FILES
-            | doctor_check_id::SCAN_DUPLICATE_BLOCKS
-            | doctor_check_id::SCAN_COMMENT_RATIO
-            | doctor_check_id::SCAN_GENERATED_ASSETS
-            | doctor_check_id::SCAN_GENERATED_IN_SRC
-            | doctor_check_id::SCAN_ATTENTION_MARKERS
-            | doctor_check_id::SCAN_STALE_SUPPRESSIONS
-    )
-}
-
-fn scan_group_summary(items: &[&DoctorFinding]) -> (Vec<String>, Vec<String>, bool) {
-    let (warning_count, error_count) =
-        items
-            .iter()
-            .fold((0usize, 0usize), |(warn, err), item| match item.severity {
-                DoctorSeverity::Warning => (warn + 1, err),
-                DoctorSeverity::Error => (warn, err + 1),
-                DoctorSeverity::Info => (warn, err),
-            });
-    let mut remediation = Vec::<String>::new();
-    for item in items {
-        if !remediation.iter().any(|value| value == &item.remediation) {
-            remediation.push(item.remediation.clone());
-        }
-    }
-    (
-        vec![format!(
-            "{} scan findings detected (warning={}, error={}). See detail report for file-level entries.",
-            items.len(),
-            warning_count,
-            error_count
-        )],
-        remediation,
-        false,
-    )
-}
-
-pub(super) fn doctor_fixes_table_rows(report: &DoctorReport) -> Vec<Vec<String>> {
-    report
-        .fixes
-        .iter()
-        .map(|fix| {
-            vec![
-                fix.status.as_str().to_owned(),
-                fix.fix_id.clone(),
-                fix.detail.clone(),
-            ]
-        })
-        .collect::<Vec<Vec<String>>>()
-}
+use super::super::report::{DoctorReport, DoctorSeverity};
+pub(super) use effigy_doctor::DoctorFindingSection;
 
 pub(super) fn doctor_json_payload(
     report: &DoctorReport,
@@ -154,16 +47,6 @@ fn renderable_sections(sections: &[DoctorFindingSection]) -> Vec<&DoctorFindingS
         .iter()
         .filter(|section| section.severity != DoctorSeverity::Info)
         .collect::<Vec<&DoctorFindingSection>>()
-}
-
-fn root_resolution_section_details(
-    check_id: &str,
-    report: &DoctorReport,
-) -> (Vec<String>, Vec<String>) {
-    if check_id != doctor_check_id::WORKSPACE_ROOT_RESOLUTION {
-        return (Vec::new(), Vec::new());
-    }
-    (report.root_evidence.clone(), report.root_warnings.clone())
 }
 
 fn section_payloads(sections: &[&DoctorFindingSection]) -> Vec<serde_json::Value> {

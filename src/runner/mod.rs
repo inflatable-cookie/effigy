@@ -7,6 +7,7 @@ mod cache;
 mod catalog;
 mod changelog_command;
 mod command_context;
+mod container_command;
 mod contracts_command;
 mod deferral;
 mod demo_command;

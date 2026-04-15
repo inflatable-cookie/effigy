@@ -22,11 +22,13 @@ pages only when you need more detail.
    Effigy-native scripting in Rust-first repos.
 7. [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
    for optional distribution built-ins and cross-repo adoption posture.
-8. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) for copy-paste
+8. [`063-container-system-guide.md`](./063-container-system-guide.md) for
+   named Colima-backed local container environments.
+9. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) for copy-paste
    `effigy.toml` patterns.
-9. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for
+10. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for
    the full command and flag surface.
-10. [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md) when the
+11. [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md) when the
    job is "clone this repo here and bring it up."
 
 ## By Goal
@@ -50,6 +52,12 @@ pages only when you need more detail.
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+
+### I want a host-clean local web/dev environment
+
+- [`063-container-system-guide.md`](./063-container-system-guide.md)
+- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 
 ### I want to define or operate proof demos
 
@@ -175,6 +183,7 @@ Details:
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 - [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md)
 - [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
+- [`063-container-system-guide.md`](./063-container-system-guide.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)

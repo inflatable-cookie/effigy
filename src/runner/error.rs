@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
-use crate::env_schema::error::EnvSchemaError;
 use crate::path_error_text::{
     failed_to_parse_path, failed_to_read_path, failed_to_render_path, failed_to_write_path,
 };
 use crate::process_manager::ProcessManagerError;
 use crate::resolver::ResolveError;
 use crate::tasks::TaskError;
+use effigy_env::error::EnvSchemaError;
 
 #[path = "error/display.rs"]
 mod display;
