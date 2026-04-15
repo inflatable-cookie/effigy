@@ -34,23 +34,25 @@ Close the distribution lane properly by:
 
 ## Current Focus
 
-The release lane is active again.
+The release lane is no longer the active strict lane.
 
 The local Linux rehearsal proof and Rhai dispatch hardening are now shipped,
-and `115` is now the active release-closure batch again.
+and `115` remains the release-closure batch for when this lane resumes.
 
-The modularization prerequisite is now met:
+The modularization prerequisite is now treated as still open:
 
-- the shared backbone is real
-- the main release-blocking domain seams are extracted
-- the remaining large command files are now mostly shell/orchestration over
-  those extracted crates
+- the extracted domain crates are real
+- but the remaining CLI shell/help/parse surface is still large enough to
+  justify another crate-boundary decision
+- and the TUI/browser runtime surface is still large enough to justify one
+  more modularization pass instead of being treated as incidental adapter work
 
 So the current release posture is:
 
 - local Linux rehearsal is real
 - release closure is defined
-- actual release-readiness and execution resume now through `115`
+- actual release-readiness and execution resume only after `g02.010` settles
+  those remaining shell seams honestly
 
 Shipped proof already in place:
 
@@ -65,7 +67,7 @@ Shipped proof already in place:
 - the Linux rehearsal proof now runs through the live Effigy runtime instead of
   `cargo run --bin effigy`
 
-The next move inside this milestone is `115`.
+The next move inside this milestone is still `115`, but it is queued again.
 
 ## Exit Condition
 
@@ -75,5 +77,7 @@ it is no longer only an Effigy-local product claim.
 
 ## Next Task
 
-Execute
-[`115-implement-effigy-distribution-release-closure.md`](../../specs/batch-cards/115-implement-effigy-distribution-release-closure.md).
+Keep
+[`115-implement-effigy-distribution-release-closure.md`](../../specs/batch-cards/115-implement-effigy-distribution-release-closure.md)
+queued while `g02.010` resolves the remaining CLI and TUI shell-seam
+modularization question.

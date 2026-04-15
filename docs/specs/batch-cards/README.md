@@ -118,7 +118,7 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`112-decide-post-linux-rehearsal-release-boundary.md`](./112-decide-post-linux-rehearsal-release-boundary.md) (complete)
 - [`113-implement-rhai-in-process-effigy-dispatch-and-container-helpers.md`](./113-implement-rhai-in-process-effigy-dispatch-and-container-helpers.md) (complete)
 - [`114-decide-post-rhai-dispatch-release-boundary.md`](./114-decide-post-rhai-dispatch-release-boundary.md) (complete)
-- [`115-implement-effigy-distribution-release-closure.md`](./115-implement-effigy-distribution-release-closure.md) (ready)
+- [`115-implement-effigy-distribution-release-closure.md`](./115-implement-effigy-distribution-release-closure.md) (queued)
 - [`116-decide-domain-crate-boundaries-and-rhai-api-contract.md`](./116-decide-domain-crate-boundaries-and-rhai-api-contract.md) (complete)
 - [`117-implement-workspace-and-effigy-core-foundation.md`](./117-implement-workspace-and-effigy-core-foundation.md) (complete)
 - [`118-implement-effigy-tasks-foundation-extraction.md`](./118-implement-effigy-tasks-foundation-extraction.md) (complete)
@@ -146,15 +146,18 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`140-implement-effigy-doctor-report-and-projection-extraction.md`](./140-implement-effigy-doctor-report-and-projection-extraction.md) (complete)
 - [`141-decide-post-doctor-report-and-projection-extraction-boundary.md`](./141-decide-post-doctor-report-and-projection-extraction-boundary.md) (complete)
 - [`142-decide-modularization-pause-boundary-before-v0-3-release-resumption.md`](./142-decide-modularization-pause-boundary-before-v0-3-release-resumption.md) (complete)
+- [`143-decide-cli-shell-and-tui-modularization-follow-up.md`](./143-decide-cli-shell-and-tui-modularization-follow-up.md) (ready)
 
 ## Active Ready Card
 
-- [`115-implement-effigy-distribution-release-closure.md`](./115-implement-effigy-distribution-release-closure.md)
+- [`143-decide-cli-shell-and-tui-modularization-follow-up.md`](./143-decide-cli-shell-and-tui-modularization-follow-up.md)
 
 ## Recent Boundary Decision
 
 - [`142-decide-modularization-pause-boundary-before-v0-3-release-resumption.md`](./142-decide-modularization-pause-boundary-before-v0-3-release-resumption.md)
+- [`143-decide-cli-shell-and-tui-modularization-follow-up.md`](./143-decide-cli-shell-and-tui-modularization-follow-up.md)
 
 ## Next Task
 
-Execute `115` to carry the release lane through bounded release closure.
+Execute `143` to decide the next real CLI or TUI modularization seam before
+release closure resumes.

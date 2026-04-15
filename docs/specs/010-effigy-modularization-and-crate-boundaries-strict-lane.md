@@ -1,6 +1,6 @@
 # 010 Effigy Modularization And Crate Boundaries Strict Lane
 
-Status: paused
+Status: active
 Updated: 2026-04-15
 Roadmap: `g02.010`
 
@@ -38,10 +38,10 @@ The active strict lane is:
 
 ## Current Posture
 
-`strict-paused`
+`strict-active`
 
-`g02.010` is now paused on a trustworthy pre-`v0.3` boundary. `g02.007` is
-active again, and `115` is the active next move again.
+`g02.010` is active again. `g02.007` is queued again, and `115` is no longer
+the active next move.
 
 The first classification batch is now done.
 
@@ -407,7 +407,19 @@ This strict lane can pause once Effigy is architecturally complete enough that
 the `v0.3` release does not immediately freeze known unfinished
 modularization work.
 
+The previous pause decision is now explicitly reversed again:
+
+- the extracted domain crates are real and meaningful
+- but the remaining CLI shell/help/parse surface is still too large to call
+  merely incidental glue
+- and the TUI/browser runtime surface is still large enough to justify one
+  more crate-boundary decision instead of being hand-waved as adapter residue
+
+The next move is therefore another lane-level decision, focused on the
+remaining shell-facing seams rather than the already-extracted product
+domains.
+
 ## Next Task
 
-Paused. Reopen only if another domain seam proves large enough to justify a
-new modularization batch before or after `v0.3`.
+Execute
+[`143-decide-cli-shell-and-tui-modularization-follow-up.md`](./batch-cards/143-decide-cli-shell-and-tui-modularization-follow-up.md).

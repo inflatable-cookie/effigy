@@ -35,8 +35,8 @@ manifest, not to teach people more wrapper scripts.
 
 Current roadmap state:
 - [`g02.006` container environment contract](./docs/roadmaps/g02/006-colima-container-environment-contract.md) is paused on a trustworthy v1 boundary
-- [`g02.007` distribution release and consumer rollout](./docs/roadmaps/g02/007-distribution-release-and-consumer-rollout.md) is active again
-- [`g02.010` modularization and crate boundaries](./docs/roadmaps/g02/010-effigy-modularization-and-crate-boundaries.md) is paused on a trustworthy pre-`v0.3` boundary
+- [`g02.007` distribution release and consumer rollout](./docs/roadmaps/g02/007-distribution-release-and-consumer-rollout.md) is queued again behind the remaining shell-seam modularization question
+- [`g02.010` modularization and crate boundaries](./docs/roadmaps/g02/010-effigy-modularization-and-crate-boundaries.md) is active again
 - workspace plus `effigy-core` foundation is shipped
 - `effigy-tasks` foundation is shipped
 - `effigy-manifest` foundation is shipped
@@ -54,8 +54,9 @@ Current roadmap state:
 - post-doctor boundary decision is made
 - doctor report/projection extraction is shipped
 - remaining doctor shell is classified as orchestration work
-- modularization pause decision is complete
-- release closure is the active next batch again
+- modularization pause decision was reopened
+- CLI shell and TUI shell-seam decision is the active next batch
+- release closure is queued again
 
 ## Install
 
@@ -396,4 +397,4 @@ effigy/
 ## Next Task
 
 Execute
-[`115-implement-effigy-distribution-release-closure.md`](./docs/specs/batch-cards/115-implement-effigy-distribution-release-closure.md).
+[`143-decide-cli-shell-and-tui-modularization-follow-up.md`](./docs/specs/batch-cards/143-decide-cli-shell-and-tui-modularization-follow-up.md).

@@ -1,6 +1,6 @@
 # 007 Distribution Release And Consumer Rollout Strict Lane
 
-Status: active
+Status: queued
 Updated: 2026-04-15
 Roadmap: `g02.007`
 
@@ -8,8 +8,8 @@ Roadmap: `g02.007`
 
 The container lane is paused on a trustworthy v1 boundary.
 
-The modularization lane is now paused after meeting the higher
-architecture-complete bar the user wanted before release.
+The modularization lane is active again because the user does not consider the
+remaining CLI and TUI shell weight release-ready yet.
 
 The shipped distribution surface now has:
 
@@ -17,7 +17,8 @@ The shipped distribution surface now has:
 - in-process Rhai dispatch for the rehearsal path
 - one explicit release-closure card
 
-That prerequisite is now met, so release closure is active again.
+That prerequisite is no longer treated as met strongly enough, so release
+closure is queued again behind `g02.010`.
 
 ## Governing Refs
 
@@ -38,9 +39,9 @@ This strict lane remains responsible for:
 
 ## Current Posture
 
-`strict-active`
+`strict-queued`
 
-`g02.006` is paused. `g02.010` is paused. `g02.007` is active again.
+`g02.006` is paused. `g02.010` is active again. `g02.007` is queued again.
 
 The release-prep hardening chain is real:
 
@@ -56,8 +57,9 @@ The release-prep hardening chain is real:
 - `release:linux:rehearse` no longer re-enters through
   `cargo run --bin effigy`
 
-That closes the release-prep hardening detour, and the modularization bar is
-now satisfied enough to resume actual release closure.
+That closes the release-prep hardening detour, but release closure is queued
+again until the remaining CLI shell and TUI/browser modularization question is
+settled honestly.
 
 ## Batch Model
 
@@ -86,5 +88,7 @@ claims.
 
 ## Next Task
 
-Execute
-[`115-implement-effigy-distribution-release-closure.md`](./batch-cards/115-implement-effigy-distribution-release-closure.md).
+Keep
+[`115-implement-effigy-distribution-release-closure.md`](./batch-cards/115-implement-effigy-distribution-release-closure.md)
+queued while `g02.010` resolves the remaining shell-seam modularization
+boundary.

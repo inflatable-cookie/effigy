@@ -1,6 +1,6 @@
 # 115 Implement Effigy Distribution Release Closure
 
-Status: ready
+Status: queued
 Updated: 2026-04-15
 Roadmap: `g02.007`
 Spec: `docs/specs/007-distribution-release-and-consumer-rollout-strict-lane.md`
@@ -10,8 +10,8 @@ Spec: `docs/specs/007-distribution-release-and-consumer-rollout-strict-lane.md`
 Carry the shipped optional distribution surface through the actual Effigy
 release-closure batch now that the release-prep hardening work is complete.
 
-This card is active again now that the modularization bar for pre-`v0.3`
-release work is met.
+This card remains valid, but it is queued again because the remaining CLI
+shell and TUI/browser modularization seams are not yet judged release-ready.
 
 ## In Scope
 
