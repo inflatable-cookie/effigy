@@ -18,6 +18,8 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
             "repo-url = \"https://github.com/example/my-tool.git\"",
             "[distribution.publish]",
             "binary-name = \"my-tool\"",
+            "verify-tag-install = true",
+            "verify-binary-json-tasks = true",
             "[distribution.preflight]",
             "[distribution.closeout]",
             "[demos.login-smoke]",

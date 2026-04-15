@@ -142,6 +142,8 @@ pub(super) fn distribution_lines(profile: ConfigDocProfile) -> Vec<&'static str>
         "[distribution.publish]",
         "binary-name = \"my-tool\"",
         "registry-label = \"registry\"",
+        "verify-tag-install = true",
+        "verify-binary-json-tasks = true",
         "",
         "[distribution.preflight]",
         "docs-task = \"qa:docs\"",

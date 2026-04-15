@@ -65,6 +65,9 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/15-111500-post-consumer-gap-widening-boundary-decision.md`](./2026-04/15-111500-post-consumer-gap-widening-boundary-decision.md)
+- [`2026-04/15-101500-consumer-driven-distribution-gap-widening.md`](./2026-04/15-101500-consumer-driven-distribution-gap-widening.md)
+- [`2026-04/15-093000-consumer-proof-of-optional-distribution-surface.md`](./2026-04/15-093000-consumer-proof-of-optional-distribution-surface.md)
 - [`2026-04/14-235600-post-distribution-policy-widening-slice-decision.md`](./2026-04/14-235600-post-distribution-policy-widening-slice-decision.md)
 - [`2026-04/14-234800-distribution-policy-widening-for-publish-and-closeout-implementation.md`](./2026-04/14-234800-distribution-policy-widening-for-publish-and-closeout-implementation.md)
 - [`2026-04/14-233000-post-distribution-foundation-slice-decision.md`](./2026-04/14-233000-post-distribution-foundation-slice-decision.md)

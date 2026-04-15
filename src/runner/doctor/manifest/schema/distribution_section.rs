@@ -28,12 +28,46 @@ pub(super) fn validate_distribution_section(
         );
     }
     if let Some(publish) = distribution_table.get("publish") {
-        validate_known_string_table(
+        let Some(publish_table) =
+            require_table(context, "distribution.publish", publish, "expected table")
+        else {
+            return;
+        };
+        validate_allowed_keys(
             context,
             "distribution.publish",
-            publish,
-            &["binary-name", "registry-label"],
+            publish_table,
+            &[
+                "binary-name",
+                "registry-label",
+                "verify-tag-install",
+                "verify-binary-json-tasks",
+            ],
         );
+        for key in ["binary-name", "registry-label"] {
+            let Some(value) = publish_table.get(key) else {
+                continue;
+            };
+            if !value.is_str() {
+                context.unsupported_value(
+                    &format!("distribution.publish.{key}"),
+                    SchemaContext::value_type(value),
+                    "expected string",
+                );
+            }
+        }
+        for key in ["verify-tag-install", "verify-binary-json-tasks"] {
+            let Some(value) = publish_table.get(key) else {
+                continue;
+            };
+            if !value.is_bool() {
+                context.unsupported_value(
+                    &format!("distribution.publish.{key}"),
+                    SchemaContext::value_type(value),
+                    "expected boolean",
+                );
+            }
+        }
     }
     if let Some(preflight) = distribution_table.get("preflight") {
         validate_known_string_table(

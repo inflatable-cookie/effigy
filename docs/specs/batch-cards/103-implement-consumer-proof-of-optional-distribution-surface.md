@@ -1,7 +1,7 @@
 # 103 Implement Consumer Proof Of Optional Distribution Surface
 
-Status: ready
-Updated: 2026-04-14
+Status: complete
+Updated: 2026-04-15
 Roadmap: `g02.005`
 Spec: `docs/specs/005-optional-distribution-surface-strict-lane.md`
 
@@ -39,6 +39,6 @@ self-hosting defaults.
 
 ## Next Task
 
-After the consumer proof, either widen the optional distribution contract
-again for a named remaining gap or record that the current surface is strong
-enough to pause on a trustworthy boundary.
+Execute the follow-up ready card to widen the named consumer-proof gaps in
+`distribution validate-metadata` and `distribution first-publish` without
+reopening the whole distribution lane.

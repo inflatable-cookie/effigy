@@ -36,15 +36,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g02/001-bootstrap-command-and-clone-contract.md` started the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up, and is now complete: released plus live-pilot validated on `loophole` and `songsprout`.
 - `g02/002-manifest-composition-and-override-contract.md` defines the general split-manifest model so features do not invent their own file-loading semantics, and its foundation plus inspectability are already shipped.
 - `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy; the lane shipped and released in `v0.2.13`, including registry loading, inspection, lifecycle control, one-demo history, attached and PTY-backed terminal runner semantics, browser demo tabs, browser terminal replay/input/resize consumption, concurrent-runner session plus interaction projection, browser-owned live attached terminal sessions for browser-launched run-backed interactive demos, bounded single-process concurrent-runner browser live-session parity, runner-owned concurrent-runtime projection-shape truth, projected-runtime process summary truth, and projected-output provenance truth.
-- `g02/004-rust-native-scripting-surface-contract.md` is the active milestone and defines the scripting policy split between Rust-first repos and web-oriented repos, plus the Rhai boundary and pilot order for Effigy-native scripting. The Rhai script-step foundation and the first substantial Effigy dogfooding cluster are now shipped; the next slice is a bounded host-API expansion for signal-aware long-running scripts before any external pilot.
+- `g02/004-rust-native-scripting-surface-contract.md` is paused after the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached a clean internal boundary.
+- `g02/005-optional-distribution-surface-contract.md` is paused after one real consumer proof plus bounded widening made the optional distribution boundary trustworthy for metadata validation, artifact validation, and closeout evidence reuse.
 
 ## Active Strict Lane
 
-- `g02.004` is the active roadmap milestone.
-- `docs/specs/004-rust-native-scripting-strict-lane.md` is the active
-  strict planning lane around that roadmap.
-- `docs/specs/batch-cards/091-implement-rhai-long-running-lifecycle-support.md`
-  is the current ready card.
+- There is no active strict execution card at the moment.
+- `g02.004` and `g02.005` are both paused on trustworthy boundaries.
 
 ## Research Program
 
@@ -66,9 +64,8 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute the active ready card for `g02.004` to decide whether the Rhai lane
-should pause cleanly on the shipped Effigy dogfooding boundary until the first
-external pilot becomes safe again.
+Wait for the next explicit product priority before reopening a paused strict
+lane or promoting a new roadmap batch.
 
 
 ## Historical language boundary

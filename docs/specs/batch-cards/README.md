@@ -106,9 +106,12 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`100-decide-post-distribution-foundation-slice.md`](./100-decide-post-distribution-foundation-slice.md) (complete)
 - [`101-implement-distribution-policy-widening-for-publish-and-closeout.md`](./101-implement-distribution-policy-widening-for-publish-and-closeout.md) (complete)
 - [`102-decide-post-distribution-policy-widening-slice.md`](./102-decide-post-distribution-policy-widening-slice.md) (complete)
-- [`103-implement-consumer-proof-of-optional-distribution-surface.md`](./103-implement-consumer-proof-of-optional-distribution-surface.md) (ready)
+- [`103-implement-consumer-proof-of-optional-distribution-surface.md`](./103-implement-consumer-proof-of-optional-distribution-surface.md) (complete)
+- [`104-implement-consumer-driven-distribution-gap-widening.md`](./104-implement-consumer-driven-distribution-gap-widening.md) (complete)
+- [`105-decide-post-consumer-gap-widening-boundary.md`](./105-decide-post-consumer-gap-widening-boundary.md) (complete)
 
 ## Next Task
 
-Execute the active ready card for `g02.005` to run one bounded consumer-proof
-batch for the optional distribution surface.
+`g02.005` is paused on a trustworthy optional distribution boundary. Reopen
+batch cards only if a real published-consumer need justifies widening the full
+`distribution first-publish` path again.

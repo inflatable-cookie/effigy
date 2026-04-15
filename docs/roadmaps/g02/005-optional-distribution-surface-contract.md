@@ -1,7 +1,7 @@
 # g02.005 Optional Distribution Surface Contract
 
-Status: in progress
-Updated: 2026-04-14
+Status: paused
+Updated: 2026-04-15
 
 ## Goal
 
@@ -163,16 +163,42 @@ The first manifest-driven foundation is now shipped:
 - manifest-driven summary identity in `distribution write-summary`
 - manifest-driven closeout defaults in `distribution generate-closeout`
 
-That is enough to make the distribution surface meaningfully less
-Effigy-specific across the publish/summary/closeout path without widening
-prematurely into every possible channel policy in one batch.
+That was enough to justify one bounded consumer proof, and that proof is now
+done in `convergence`:
 
-That decision is now settled: run one bounded consumer-proof adoption batch
-next. The current surface is honest enough for a real repo to adopt the
-optional manifest contract without pretending every distribution channel or
-workflow expectation is already universally abstracted.
+- minimal consumer-owned `[distribution.package]`,
+  `[distribution.publish]`, and `[distribution.closeout]` policy was enough to
+  make `distribution validate-artifacts` and `distribution generate-closeout`
+  useful outside Effigy's self-hosting flow
+- `distribution validate-metadata` still assumes Effigy's
+  `.github/workflows/release-binaries.yml` layout
+- the fuller `distribution first-publish` path still assumes an
+  Effigy-compatible CLI self-inspection path such as `--json tasks`
+
+That widening batch is now done too:
+
+- manifest-adopting repos can validate metadata without inheriting Effigy's
+  workflow/docs/package-quality gate by default
+- publish verification can now move the `release verify-install` and
+  `--json tasks` probes behind explicit manifest policy
+- the `convergence` proof now passes `distribution validate-metadata`,
+  `distribution validate-artifacts`, and `distribution generate-closeout`
+  against the widened contract
+
+That means the optional surface is now credible for metadata validation,
+artifact validation, and closeout evidence in a real consumer.
+
+The remaining open question is narrower:
+
+- the full `first-publish` orchestration path still assumes a published Cargo
+  install path
+
+That limit is now explicit enough to defer honestly. It does not block the
+current optional distribution boundary from pausing because the proven reusable
+surface already covers the cross-repo validation and closeout layer this
+milestone set out to productize.
 
 ## Next Task
 
-Use the active `g02.005` strict lane to run one bounded consumer-proof
-adoption batch for the optional distribution surface.
+Keep `g02.005` paused until a real published-consumer adoption asks Effigy to
+reopen the fuller `distribution first-publish` orchestration path.

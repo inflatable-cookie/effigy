@@ -3315,7 +3315,7 @@ fn cli_distribution_preflight_uses_manifest_distribution_preflight_tasks() {
 
     fs::write(
         root.join("Cargo.toml"),
-        "[package]\nname = \"example-tool\"\nversion = \"0.2.5\"\nlicense = \"MIT\"\ndescription = \"fixture\"\nedition = \"2021\"\n",
+        "[package]\nname = \"example-tool\"\nversion = \"0.2.5\"\nedition = \"2021\"\n",
     )
     .expect("write cargo manifest");
     fs::write(
@@ -3419,6 +3419,36 @@ required-files = [".github/workflows/release-binaries.yml", "scripts/check-linux
 }
 
 #[test]
+fn cli_distribution_validate_metadata_skips_effigy_defaults_for_manifest_adopters() {
+    let root = temp_workspace("distribution-metadata-manifest-adopter");
+
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"example-tool\"\nversion = \"0.2.5\"\nlicense = \"MIT\"\ndescription = \"fixture\"\nedition = \"2021\"\n",
+    )
+    .expect("write cargo manifest");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[distribution.package]
+name = "example-tool"
+"#,
+    )
+    .expect("write manifest");
+
+    let output = run_json_cli_command(
+        &root,
+        &["distribution", "validate-metadata", "--tag", "v0.2.5"],
+    );
+    let parsed = parse_stdout_json(&output);
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(parsed["result"]["ok"], true);
+    assert_eq!(parsed["result"]["required_docs"], serde_json::json!([]));
+    assert_eq!(parsed["result"]["required_files"], serde_json::json!([]));
+}
+
+#[test]
 fn cli_distribution_generate_closeout_json_writes_report() {
     let root = temp_workspace("distribution-generate-closeout");
     let artifacts = root.join("artifacts");
@@ -3479,6 +3509,58 @@ next-step = "Review the captured evidence and publish sign-off notes."
     assert!(rendered.contains("Related: docs/roadmaps/distribution.md"));
     assert!(rendered.contains("Install validation evidence for `example-tool`"));
     assert!(rendered.contains("- Review the captured evidence and publish sign-off notes."));
+}
+
+#[test]
+fn cli_distribution_validate_artifacts_respects_publish_optional_checks() {
+    let root = temp_workspace("distribution-validate-artifacts-optional-checks");
+    let artifacts = root.join("artifacts");
+    fs::create_dir_all(&artifacts).expect("mkdir artifacts");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[distribution.package]
+name = "example-tool"
+
+[distribution.publish]
+binary-name = "example-tool"
+registry-label = "local cargo install"
+verify-tag-install = false
+verify-binary-json-tasks = false
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        artifacts.join("01-local-cargo-install-install-validation.log"),
+        "ok\n",
+    )
+    .expect("write install log");
+    fs::write(
+        artifacts.join("02-local-cargo-install-binary-help.log"),
+        "ok\n",
+    )
+    .expect("write help log");
+
+    let output = run_json_cli_command(
+        &root,
+        &[
+            "distribution",
+            "validate-artifacts",
+            "--artifacts-dir",
+            artifacts.to_str().expect("utf8 path"),
+        ],
+    );
+    let parsed = parse_stdout_json(&output);
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(parsed["result"]["ok"], true);
+    assert_eq!(
+        parsed["result"]["found"]
+            .as_array()
+            .expect("found array")
+            .len(),
+        2
+    );
 }
 
 #[test]
