@@ -1,0 +1,10 @@
+[package]
+name = "effigy-env"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Env schema and varlock contracts for Effigy"
+
+[dependencies]
+regex = "1"
+zeroize = "1"

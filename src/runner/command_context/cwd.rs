@@ -1,11 +1,13 @@
 use std::path::PathBuf;
 
+use effigy_core::repo;
+
 use crate::runner::error::RunnerError;
 
 pub(in crate::runner) fn current_working_dir() -> Result<PathBuf, RunnerError> {
-    std::env::current_dir().map_err(RunnerError::Cwd)
+    repo::current_working_dir().map_err(RunnerError::Cwd)
 }
 
 pub(in crate::runner) fn canonicalize_or_original(path: &PathBuf) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or(path.clone())
+    repo::canonicalize_or_original(path)
 }

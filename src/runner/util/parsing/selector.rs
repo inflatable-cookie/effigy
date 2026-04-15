@@ -1,33 +1,11 @@
-use super::super::super::model::catalog::TaskSelector;
+use effigy_tasks::TaskSelector;
+
 use crate::runner::error::RunnerError;
 
 pub(super) fn parse_task_selector(raw: &str) -> Result<TaskSelector, RunnerError> {
-    if let Some((prefix, task_name)) = raw.rsplit_once('/') {
-        if prefix.trim().is_empty() || task_name.trim().is_empty() {
-            return Err(RunnerError::task_invocation(
-                "task name must be `<task>` or `<catalog>/<task>`",
-            ));
-        }
-        return Ok(TaskSelector {
-            prefix: Some(prefix.trim().to_owned()),
-            task_name: task_name.trim().to_owned(),
-        });
-    }
-
-    if raw.trim().is_empty() {
-        return Err(RunnerError::task_invocation("task name is required"));
-    }
-
-    Ok(TaskSelector {
-        prefix: None,
-        task_name: raw.trim().to_owned(),
-    })
+    effigy_tasks::parse_task_selector(raw).map_err(RunnerError::task_invocation)
 }
 
 pub(super) fn render_task_selector(selector: &TaskSelector) -> String {
-    selector
-        .prefix
-        .as_ref()
-        .map(|prefix| format!("{prefix}/{}", selector.task_name))
-        .unwrap_or_else(|| selector.task_name.clone())
+    effigy_tasks::render_task_selector(selector)
 }

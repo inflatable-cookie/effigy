@@ -8,6 +8,7 @@ pub fn help_topic_label(topic: HelpTopic) -> &'static str {
         HelpTopic::Docs => "docs",
         HelpTopic::Contracts => "contracts",
         HelpTopic::Distribution => "distribution",
+        HelpTopic::Container => "container",
         HelpTopic::Bootstrap => "bootstrap",
         HelpTopic::Release => "release",
         HelpTopic::Doctor => "doctor",
@@ -28,6 +29,7 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
         Command::Docs(_) => ("docs", "docs".to_owned()),
         Command::Contracts(_) => ("contracts", "contracts".to_owned()),
         Command::Distribution(_) => ("distribution", "distribution".to_owned()),
+        Command::Container(_) => ("container", "container".to_owned()),
         Command::Bootstrap(_) => ("bootstrap", "bootstrap".to_owned()),
         Command::Release(_) => ("release", "release".to_owned()),
         Command::Doctor(_) => ("doctor", "doctor".to_owned()),
@@ -41,9 +43,10 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
 mod tests {
     use super::{command_kind_and_name, help_topic_label};
     use crate::{
-        BootstrapArgs, Command, ContractsArgs, ContractsSubcommand, DemoArgs, DemoListQuery,
-        DemoSubcommand, DistributionArgs, DistributionSubcommand, DoctorArgs, HelpTopic,
-        ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
+        BootstrapArgs, Command, ContainerArgs, ContainerSubcommand, ContractsArgs,
+        ContractsSubcommand, DemoArgs, DemoListQuery, DemoSubcommand, DistributionArgs,
+        DistributionSubcommand, DoctorArgs, HelpTopic, ReleaseArgs, ReleaseSubcommand,
+        TaskInvocation, TasksArgs,
     };
 
     #[test]
@@ -54,6 +57,7 @@ mod tests {
         assert_eq!(help_topic_label(HelpTopic::Docs), "docs");
         assert_eq!(help_topic_label(HelpTopic::Contracts), "contracts");
         assert_eq!(help_topic_label(HelpTopic::Distribution), "distribution");
+        assert_eq!(help_topic_label(HelpTopic::Container), "container");
         assert_eq!(help_topic_label(HelpTopic::Bootstrap), "bootstrap");
         assert_eq!(help_topic_label(HelpTopic::Release), "release");
         assert_eq!(help_topic_label(HelpTopic::Doctor), "doctor");
@@ -103,6 +107,11 @@ mod tests {
             plan: true,
             output_json: false,
         });
+        let container = Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Status { name: None },
+            repo_override: None,
+            output_json: false,
+        });
         let release = Command::Release(ReleaseArgs {
             subcommand: ReleaseSubcommand::Status { check_gates: false },
             repo_override: None,
@@ -141,6 +150,10 @@ mod tests {
         assert_eq!(
             command_kind_and_name(&distribution),
             ("distribution", "distribution".to_owned())
+        );
+        assert_eq!(
+            command_kind_and_name(&container),
+            ("container", "container".to_owned())
         );
         assert_eq!(
             command_kind_and_name(&bootstrap),

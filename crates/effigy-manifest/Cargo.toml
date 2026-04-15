@@ -1,0 +1,11 @@
+[package]
+name = "effigy-manifest"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Shared manifest contracts and composition for Effigy"
+
+[dependencies]
+indexmap = { version = "2", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

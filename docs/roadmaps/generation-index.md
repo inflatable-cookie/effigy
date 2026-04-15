@@ -31,6 +31,11 @@ Updated: 2026-04-15
   - `003` captures the demo harness model and runner/browser contract; it is complete and released in `v0.2.13`.
   - `004` captures the Rust-native scripting surface; it is paused after the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached a clean internal boundary.
   - `005` captures the optional distribution surface; it is now paused after one real consumer proof plus bounded widening made the metadata-validation, artifact-validation, and closeout boundary trustworthy, while the fuller published-consumer `first-publish` question stays explicitly deferred.
+  - `006` captures the Colima container environment surface; it is now paused after the shipped foundation, attached-session widening, repo-owned task composition, and real-machine live-stop hardening reached a trustworthy v1 boundary.
+  - `007` captures the distribution release and consumer rollout closure work for the shipped optional distribution surface; local Linux rehearsal plus Rhai runtime hardening are now real, and the actual release-closure card remains queued behind modularization before `v0.3`.
+  - `008` captures the remaining demo and manifest-import rollout across the intended repo cohort.
+  - `009` captures the vault-backed rollout of the already-shipped env-schema / varlock foundation.
+  - `010` captures Effigy's modularization and crate-boundary architecture lane, is now active, and has locked the first domain inventory, dependency rules, and Rhai adapter posture; `effigy-core`, `effigy-tasks`, and `effigy-manifest` are now shipped and release-cluster extraction is next.
 
 ## Research Roadmaps
 

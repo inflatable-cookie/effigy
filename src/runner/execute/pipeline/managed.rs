@@ -1,3 +1,4 @@
+use super::super::super::container_command::run_task_container_session;
 use super::super::super::locking::io::acquire_scopes;
 use super::super::super::locking::model::LockScope;
 use super::super::super::managed::command::resolve_managed_task_plan;
@@ -10,6 +11,22 @@ pub(super) fn run_managed_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
 ) -> Result<Option<String>, RunnerError> {
+    if let Some(container_session) = selection.task.container_session.as_deref() {
+        let repo_for_task = selection.catalog.catalog_root.clone();
+        let lock_scopes = vec![crate::runner::manifest::task_lock_scope(
+            selection.task,
+            &preflight.selector.task_name,
+        )];
+        let _lock_guards = acquire_scopes(&preflight.resolved.resolved_root, &lock_scopes)?;
+        return run_task_container_session(
+            &repo_for_task,
+            &preflight.selector.task_name,
+            Some(container_session),
+            preflight.output_json,
+        )
+        .map(Some);
+    }
+
     let Some(plan) = resolve_managed_task_plan(
         &preflight.selector,
         selection.catalog,
@@ -23,7 +40,10 @@ pub(super) fn run_managed_task(
     };
 
     let repo_for_task = selection.catalog.catalog_root.clone();
-    let mut lock_scopes = vec![selection.task.lock_scope(&preflight.selector.task_name)];
+    let mut lock_scopes = vec![crate::runner::manifest::task_lock_scope(
+        selection.task,
+        &preflight.selector.task_name,
+    )];
     if selection.task.mode.as_deref() == Some("tui") {
         lock_scopes.push(LockScope::Profile {
             task: preflight.selector.task_name.clone(),

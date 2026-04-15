@@ -8,6 +8,9 @@ pub(in crate::runner) fn task_run_preview(task: &ManifestTask) -> String {
             ManifestManagedRun::Sequence(steps) => format!("<sequence:{}>", steps.len()),
         };
     }
+    if let Some(container_session) = task.container_session.as_deref() {
+        return format!("<container:{container_session}>");
+    }
     if let Some(mode) = task.mode.as_ref() {
         return format!("<managed:{mode}>");
     }

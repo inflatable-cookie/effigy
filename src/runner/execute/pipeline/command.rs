@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
-use crate::env_schema::resolver::ResolvedEnv;
 use crate::runner::error::RunnerError;
 use crate::runner::execute::preflight::ExecutionPreflight;
 use crate::runner::managed::run_spec::{render_task_run_spec, RunSpecContext};
 use crate::runner::model::catalog::TaskSelection;
 use crate::runner::util::render_passthrough_args;
+use effigy_env::resolver::ResolvedEnv;
 
 pub(super) fn build_task_command(
     preflight: &ExecutionPreflight,

@@ -1,0 +1,11 @@
+[package]
+name = "effigy-docs-policy"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Docs policy and index contracts for Effigy"
+
+[dependencies]
+effigy-manifest = { path = "../effigy-manifest" }
+regex = "1"
+walkdir = "2"

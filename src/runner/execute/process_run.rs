@@ -1,8 +1,8 @@
 use super::super::cache::ops::update_task_cache_entry;
 use super::context::ExecutionTaskContext;
 use super::process::{build_shell_process, command_launch_error};
-use crate::env_schema::secret::SecretString;
 use crate::runner::error::RunnerError;
+use effigy_env::secret::SecretString;
 
 pub(super) fn run_task_process(
     output_json: bool,

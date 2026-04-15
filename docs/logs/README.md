@@ -65,6 +65,48 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/15-233028-modularization-pause-boundary-before-v0-3-release-resumption-decision.md`](./2026-04/15-233028-modularization-pause-boundary-before-v0-3-release-resumption-decision.md)
+
+- [`2026-04/16-050500-post-doctor-report-and-projection-boundary-decision.md`](./2026-04/16-050500-post-doctor-report-and-projection-boundary-decision.md)
+- [`2026-04/16-045000-effigy-doctor-report-and-projection-extraction.md`](./2026-04/16-045000-effigy-doctor-report-and-projection-extraction.md)
+- [`2026-04/16-042500-post-doctor-foundation-boundary-decision.md`](./2026-04/16-042500-post-doctor-foundation-boundary-decision.md)
+- [`2026-04/16-040500-effigy-doctor-foundation-extraction.md`](./2026-04/16-040500-effigy-doctor-foundation-extraction.md)
+- [`2026-04/16-033500-post-env-foundation-boundary-decision.md`](./2026-04/16-033500-post-env-foundation-boundary-decision.md)
+- [`2026-04/16-031500-effigy-env-foundation-extraction.md`](./2026-04/16-031500-effigy-env-foundation-extraction.md)
+- [`2026-04/15-231000-post-docs-policy-qa-boundary-decision.md`](./2026-04/15-231000-post-docs-policy-qa-boundary-decision.md)
+- [`2026-04/15-230000-effigy-docs-policy-qa-check-extraction.md`](./2026-04/15-230000-effigy-docs-policy-qa-check-extraction.md)
+- [`2026-04/15-225000-post-docs-policy-foundation-boundary-decision.md`](./2026-04/15-225000-post-docs-policy-foundation-boundary-decision.md)
+- [`2026-04/15-224000-effigy-docs-policy-foundation-extraction.md`](./2026-04/15-224000-effigy-docs-policy-foundation-extraction.md)
+- [`2026-04/15-222500-post-demo-runtime-and-terminal-session-boundary-decision.md`](./2026-04/15-222500-post-demo-runtime-and-terminal-session-boundary-decision.md)
+- [`2026-04/15-221500-demo-runtime-and-terminal-session-foundation-extraction.md`](./2026-04/15-221500-demo-runtime-and-terminal-session-foundation-extraction.md)
+- [`2026-04/16-011500-effigy-release-state-persistence-and-orchestration-extraction.md`](./2026-04/16-011500-effigy-release-state-persistence-and-orchestration-extraction.md)
+- [`2026-04/16-013500-post-release-persistence-extraction-boundary-decision.md`](./2026-04/16-013500-post-release-persistence-extraction-boundary-decision.md)
+- [`2026-04/16-015500-modularization-boundary-before-v0-3-release-resumption-decision.md`](./2026-04/16-015500-modularization-boundary-before-v0-3-release-resumption-decision.md)
+- [`2026-04/16-021500-modularization-lane-reopen-for-rhai-foundation-extraction.md`](./2026-04/16-021500-modularization-lane-reopen-for-rhai-foundation-extraction.md)
+- [`2026-04/16-024500-effigy-rhai-foundation-extraction.md`](./2026-04/16-024500-effigy-rhai-foundation-extraction.md)
+- [`2026-04/15-214107-effigy-demo-foundation-extraction.md`](./2026-04/15-214107-effigy-demo-foundation-extraction.md)
+- [`2026-04/15-215935-demo-browser-and-projection-foundation-extraction.md`](./2026-04/15-215935-demo-browser-and-projection-foundation-extraction.md)
+- [`2026-04/16-001500-effigy-release-plan-and-projection-extraction.md`](./2026-04/16-001500-effigy-release-plan-and-projection-extraction.md)
+- [`2026-04/15-235900-effigy-release-state-and-projection-extraction.md`](./2026-04/15-235900-effigy-release-state-and-projection-extraction.md)
+- [`2026-04/15-234500-effigy-release-foundation-extraction.md`](./2026-04/15-234500-effigy-release-foundation-extraction.md)
+- [`2026-04/15-231500-release-cluster-foundation-extraction.md`](./2026-04/15-231500-release-cluster-foundation-extraction.md)
+- [`2026-04/15-224500-manifest-core-foundation-extraction.md`](./2026-04/15-224500-manifest-core-foundation-extraction.md)
+- [`2026-04/15-221000-effigy-tasks-foundation-extraction.md`](./2026-04/15-221000-effigy-tasks-foundation-extraction.md)
+- [`2026-04/15-214500-workspace-and-effigy-core-foundation.md`](./2026-04/15-214500-workspace-and-effigy-core-foundation.md)
+- [`2026-04/15-212500-domain-crate-boundaries-and-rhai-api-contract-decision.md`](./2026-04/15-212500-domain-crate-boundaries-and-rhai-api-contract-decision.md)
+- [`2026-04/15-210500-modularization-lane-activation-before-v0-3-release.md`](./2026-04/15-210500-modularization-lane-activation-before-v0-3-release.md)
+- [`2026-04/15-203500-post-rhai-dispatch-release-boundary-decision.md`](./2026-04/15-203500-post-rhai-dispatch-release-boundary-decision.md)
+- [`2026-04/15-201500-rhai-in-process-effigy-dispatch-and-container-helpers.md`](./2026-04/15-201500-rhai-in-process-effigy-dispatch-and-container-helpers.md)
+- [`2026-04/15-194500-post-linux-rehearsal-release-boundary-decision.md`](./2026-04/15-194500-post-linux-rehearsal-release-boundary-decision.md)
+- [`2026-04/15-193000-linux-release-rehearsal-container-implementation.md`](./2026-04/15-193000-linux-release-rehearsal-container-implementation.md)
+- [`2026-04/15-191500-distribution-release-lane-activation-and-linux-rehearsal-container-plan.md`](./2026-04/15-191500-distribution-release-lane-activation-and-linux-rehearsal-container-plan.md)
+- [`2026-04/15-184500-container-live-stop-hardening-and-pause-boundary.md`](./2026-04/15-184500-container-live-stop-hardening-and-pause-boundary.md)
+- [`2026-04/15-181500-post-container-session-and-task-composition-boundary-decision.md`](./2026-04/15-181500-post-container-session-and-task-composition-boundary-decision.md)
+- [`2026-04/15-182500-container-lane-reopen-for-live-stop-hardening.md`](./2026-04/15-182500-container-lane-reopen-for-live-stop-hardening.md)
+- [`2026-04/15-173500-attached-container-session-ux-and-task-composition.md`](./2026-04/15-173500-attached-container-session-ux-and-task-composition.md)
+- [`2026-04/15-165500-colima-container-foundation-and-contact-patch-consumer-proof.md`](./2026-04/15-165500-colima-container-foundation-and-contact-patch-consumer-proof.md)
+- [`2026-04/15-131500-colima-container-v1-contract-decision.md`](./2026-04/15-131500-colima-container-v1-contract-decision.md)
+- [`2026-04/15-123000-container-contract-and-four-milestone-sequence-planning.md`](./2026-04/15-123000-container-contract-and-four-milestone-sequence-planning.md)
 - [`2026-04/15-111500-post-consumer-gap-widening-boundary-decision.md`](./2026-04/15-111500-post-consumer-gap-widening-boundary-decision.md)
 - [`2026-04/15-101500-consumer-driven-distribution-gap-widening.md`](./2026-04/15-101500-consumer-driven-distribution-gap-widening.md)
 - [`2026-04/15-093000-consumer-proof-of-optional-distribution-surface.md`](./2026-04/15-093000-consumer-proof-of-optional-distribution-surface.md)
@@ -425,6 +467,4 @@ Batch: <batch-slug>
 ## Next Task
 
 Keep the active evidence window aligned to the current strict lane so the next
-batch stays anchored on explicit human-approved release execution instead of
-widening back into implementation churn or silently skipping release protocol
-requirements.
+batch stays anchored on the active release lane now that `115` is resumed.

@@ -14,11 +14,11 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Active Spec Set
 
-- [`005-optional-distribution-surface-strict-lane.md`](./005-optional-distribution-surface-strict-lane.md)
+- [`010-effigy-modularization-and-crate-boundaries-strict-lane.md`](./010-effigy-modularization-and-crate-boundaries-strict-lane.md)
+- [`007-distribution-release-and-consumer-rollout-strict-lane.md`](./007-distribution-release-and-consumer-rollout-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 ## Next Task
 
-The optional distribution spec lane is paused. Reopen it only when a real
-published-consumer need justifies widening the deferred `first-publish`
-boundary.
+Execute
+[`batch-cards/115-implement-effigy-distribution-release-closure.md`](./batch-cards/115-implement-effigy-distribution-release-closure.md).

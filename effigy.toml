@@ -4,6 +4,7 @@ alias = "effigy"
 [manifest]
 include = [
   "tasks/effigy.tasks.toml",
+  "containers/effigy.containers.toml",
   "demos/effigy.demos.toml",
   "docs/effigy.docs.toml",
   "quality/effigy.scan.toml",

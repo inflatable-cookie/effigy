@@ -38,11 +38,17 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy; the lane shipped and released in `v0.2.13`, including registry loading, inspection, lifecycle control, one-demo history, attached and PTY-backed terminal runner semantics, browser demo tabs, browser terminal replay/input/resize consumption, concurrent-runner session plus interaction projection, browser-owned live attached terminal sessions for browser-launched run-backed interactive demos, bounded single-process concurrent-runner browser live-session parity, runner-owned concurrent-runtime projection-shape truth, projected-runtime process summary truth, and projected-output provenance truth.
 - `g02/004-rust-native-scripting-surface-contract.md` is paused after the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached a clean internal boundary.
 - `g02/005-optional-distribution-surface-contract.md` is paused after one real consumer proof plus bounded widening made the optional distribution boundary trustworthy for metadata validation, artifact validation, and closeout evidence reuse.
+- `g02/006-colima-container-environment-contract.md` is now paused after the real-machine `colima nerdctl` live-stop and closeout path was hardened strongly enough to stop carrying a deferred warning.
+- `g02/007-distribution-release-and-consumer-rollout.md` remains in progress and is active again now that the modularization prerequisite is met.
+- `g02/010-effigy-modularization-and-crate-boundaries.md` is paused on a trustworthy pre-`v0.3` boundary after the backbone plus major domain crate seams were extracted strongly enough to stop blocking release closure.
+- `g02/008-demo-and-manifest-import-rollout.md` queues the remaining demo and manifest-import adoption work across the intended cohort.
+- `g02/009-vault-backed-varlock-rollout.md` queues the vault-backed rollout for the shipped env-schema / varlock foundation.
 
 ## Active Strict Lane
 
-- There is no active strict execution card at the moment.
-- `g02.004` and `g02.005` are both paused on trustworthy boundaries.
+- `g02.007`
+- active ready card: `115-implement-effigy-distribution-release-closure.md`
+- paused modularization lane: `g02.010`
 
 ## Research Program
 
@@ -64,8 +70,8 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Wait for the next explicit product priority before reopening a paused strict
-lane or promoting a new roadmap batch.
+Execute `115` to carry the active release lane through bounded release
+closure.
 
 
 ## Historical language boundary

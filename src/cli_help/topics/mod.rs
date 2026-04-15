@@ -1,5 +1,6 @@
 mod bootstrap;
 mod changelog;
+mod container;
 mod contracts;
 mod demo;
 mod distribution;
@@ -16,6 +17,7 @@ mod watch;
 
 pub(crate) use bootstrap::render_bootstrap_help;
 pub(crate) use changelog::render_changelog_help;
+pub(crate) use container::render_container_help;
 pub(crate) use contracts::render_contracts_help;
 pub(crate) use demo::render_demo_help;
 pub(crate) use distribution::render_distribution_help;

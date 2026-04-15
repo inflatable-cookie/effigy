@@ -12,6 +12,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy docs"));
     assert!(rendered.contains("effigy contracts"));
     assert!(rendered.contains("effigy distribution"));
+    assert!(rendered.contains("effigy container"));
     assert!(rendered.contains("effigy bootstrap"));
     assert!(rendered.contains("effigy release"));
     assert!(rendered.contains("effigy scan"));
@@ -134,6 +135,23 @@ fn render_distribution_help_shows_validation_options() {
     assert!(rendered.contains("--output <PATH>"));
     assert!(rendered.contains("--owner <NAME>"));
     assert!(rendered.contains("--log-file <NAME>"));
+}
+
+#[test]
+fn render_container_help_shows_runtime_options() {
+    let rendered = render_help_text(HelpTopic::Container);
+    assert!(rendered.contains("container Help"));
+    assert!(rendered.contains("effigy container up"));
+    assert!(rendered.contains("effigy container <NAME> up"));
+    assert!(rendered.contains("effigy container <NAME> logs"));
+    assert!(rendered.contains("effigy container <NAME> shell"));
+    assert!(rendered.contains("effigy container <NAME> reset"));
+    assert!(rendered.contains("--attach"));
+    assert!(rendered.contains("--detach"));
+    assert!(rendered.contains("--service <NAME>"));
+    assert!(rendered.contains("--command <CMD>"));
+    assert!(rendered.contains("--follow"));
+    assert!(rendered.contains("attached sessions shut the environment down on owner exit"));
 }
 
 #[test]

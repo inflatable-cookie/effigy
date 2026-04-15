@@ -1,66 +1,40 @@
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::{thread, time::Duration};
 
-use chrono::Utc;
-use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Position, Scope};
-#[cfg(unix)]
-use signal_hook::consts::signal::{SIGINT, SIGTERM};
-#[cfg(unix)]
-use signal_hook::flag as signal_flag;
+use effigy_rhai::{
+    execute_rhai_script, install_stop_requested_flag, load_script, load_script_args_from_env,
+    required_env, EffigyCommandError, HostCallbacks, ScriptContext, EFFIGY_RHAI_REPO_ROOT,
+    EFFIGY_RHAI_TASK_NAME,
+};
 
-use crate::{InternalRhaiArgs, TaskInvocation};
+use crate::{
+    apply_global_json_flag, parse_command, strip_global_json_flags, ContainerArgs,
+    ContainerSubcommand, InternalRhaiArgs, TaskInvocation,
+};
 
 use super::error::RunnerError;
 use super::execute::run_manifest_task_with_cwd;
-use super::util::with_local_node_bin_path;
-
-const EFFIGY_RHAI_ARGS_JSON: &str = "EFFIGY_RHAI_ARGS_JSON";
-const EFFIGY_RHAI_TASK_NAME: &str = "EFFIGY_RHAI_TASK_NAME";
-const EFFIGY_RHAI_REPO_ROOT: &str = "EFFIGY_RHAI_REPO_ROOT";
-static RHAI_TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-#[derive(Clone)]
-struct ScriptContext {
-    cwd: PathBuf,
-    repo_root: PathBuf,
-    task_name: String,
-    stop_requested: Arc<std::sync::atomic::AtomicBool>,
-}
-
 pub(in crate::runner) fn run_internal_rhai(args: InternalRhaiArgs) -> Result<String, RunnerError> {
     let context = ScriptContext {
         cwd: std::env::current_dir().map_err(RunnerError::Cwd)?,
         repo_root: required_repo_root(&args)?,
         task_name: required_task_name(&args)?,
-        stop_requested: install_stop_requested_flag()?,
+        stop_requested: install_stop_requested_flag().map_err(map_rhai_error)?,
     };
-    let script = load_script(&args, &context)?;
+    let script = load_script(&args.file, &context.cwd).map_err(map_rhai_error)?;
     let script_args = load_script_args_for_internal(&args)?;
-    execute_rhai_script(&context, &script, &script_args)?;
+    execute_rhai_script(&context, &script, &script_args, &host_callbacks())
+        .map_err(map_rhai_error)?;
     Ok(String::new())
-}
-
-fn load_script(args: &InternalRhaiArgs, context: &ScriptContext) -> Result<String, RunnerError> {
-    let resolved = resolve_script_path(&context.cwd, &args.file);
-    std::fs::read_to_string(&resolved)
-        .map_err(|error| RunnerError::task_invocation_failed_read(&resolved, error))
-}
-
-fn load_script_args() -> Result<Vec<String>, RunnerError> {
-    // Kept for managed/task-backed Rhai steps that pass args through env.
-    let raw = required_env(EFFIGY_RHAI_ARGS_JSON)?;
-    serde_json::from_str(&raw).map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
 fn required_repo_root(args: &InternalRhaiArgs) -> Result<PathBuf, RunnerError> {
     if let Some(path) = &args.repo_root {
         Ok(path.clone())
     } else {
-        Ok(PathBuf::from(required_env(EFFIGY_RHAI_REPO_ROOT)?))
+        Ok(PathBuf::from(
+            required_env(EFFIGY_RHAI_REPO_ROOT).map_err(map_rhai_error)?,
+        ))
     }
 }
 
@@ -68,442 +42,126 @@ fn required_task_name(args: &InternalRhaiArgs) -> Result<String, RunnerError> {
     if let Some(task_name) = &args.task_name {
         Ok(task_name.clone())
     } else {
-        required_env(EFFIGY_RHAI_TASK_NAME)
+        required_env(EFFIGY_RHAI_TASK_NAME).map_err(map_rhai_error)
     }
 }
 
 fn load_script_args_for_internal(args: &InternalRhaiArgs) -> Result<Vec<String>, RunnerError> {
     if args.args.is_empty() {
-        match load_script_args() {
+        match load_script_args_from_env() {
             Ok(values) => Ok(values),
             Err(_) if args.repo_root.is_some() || args.task_name.is_some() => Ok(Vec::new()),
-            Err(error) => Err(error),
+            Err(error) => Err(map_rhai_error(error)),
         }
     } else {
         Ok(args.args.clone())
     }
 }
 
-fn execute_rhai_script(
-    context: &ScriptContext,
-    script: &str,
-    script_args: &[String],
-) -> Result<(), RunnerError> {
-    let context = Arc::new(context.clone());
-    let mut engine = Engine::new();
-    register_host_api(&mut engine, context.clone());
-
-    let mut scope = Scope::new();
-    scope.push_constant(
-        "args",
-        script_args
-            .iter()
-            .cloned()
-            .map(Into::into)
-            .collect::<Array>(),
-    );
-    scope.push_constant("cwd", context.cwd.display().to_string());
-    scope.push_constant("repo_root", context.repo_root.display().to_string());
-    scope.push_constant("task_name", context.task_name.clone());
-
-    engine
-        .run_with_scope(&mut scope, script)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>) {
-    engine.register_fn("log", |message: ImmutableString| {
-        println!("{message}");
-    });
-    engine.register_fn("log_warn", |message: ImmutableString| {
-        eprintln!("{message}");
-    });
-
-    engine.register_fn("env", |name: ImmutableString| -> String {
-        std::env::var(name.as_str()).unwrap_or_default()
-    });
-    let stop_context = context.clone();
-    engine.register_fn("stop_requested", move || -> bool {
-        stop_context.stop_requested.load(Ordering::Relaxed)
-    });
-    engine.register_fn("now_utc", || -> String {
-        Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
-    });
-    engine.register_fn("process_id", || -> i64 { i64::from(std::process::id()) });
-    engine.register_fn("sleep_ms", |millis: i64| {
-        if millis > 0 {
-            thread::sleep(Duration::from_millis(millis as u64));
-        }
-    });
-    engine.register_fn(
-        "path_join",
-        |base: ImmutableString, child: ImmutableString| -> String {
-            PathBuf::from(base.as_str())
-                .join(child.as_str())
-                .display()
-                .to_string()
-        },
-    );
-
-    engine.register_fn(
-        "make_temp_dir",
-        move |prefix: ImmutableString| -> Result<String, Box<EvalAltResult>> {
-            let path = allocate_temp_dir(prefix.as_str())
-                .map_err(|error| rhai_runtime_error(error.to_string()))?;
-            std::fs::create_dir_all(&path).map_err(|error| {
-                rhai_runtime_error(format!(
-                    "{}",
-                    RunnerError::task_invocation_failed_write(&path, error)
-                ))
-            })?;
-            Ok(path.display().to_string())
-        },
-    );
-    let file_context = context.clone();
-    engine.register_fn(
-        "read_file",
-        move |path: ImmutableString| -> Result<String, Box<EvalAltResult>> {
-            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
-            std::fs::read_to_string(&path).map_err(|error| {
-                rhai_runtime_error(format!(
-                    "{}",
-                    RunnerError::task_invocation_failed_read(&path, error)
-                ))
-            })
-        },
-    );
-    let file_context = context.clone();
-    engine.register_fn(
-        "write_file",
-        move |path: ImmutableString, contents: ImmutableString| -> Result<(), Box<EvalAltResult>> {
-            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|error| {
-                    rhai_runtime_error(format!(
-                        "{}",
-                        RunnerError::task_invocation_failed_write(parent, error)
-                    ))
-                })?;
-            }
-            std::fs::write(&path, contents.as_str()).map_err(|error| {
-                rhai_runtime_error(format!(
-                    "{}",
-                    RunnerError::task_invocation_failed_write(&path, error)
-                ))
-            })
-        },
-    );
-    let file_context = context.clone();
-    engine.register_fn(
-        "append_file",
-        move |path: ImmutableString, contents: ImmutableString| -> Result<(), Box<EvalAltResult>> {
-            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|error| {
-                    rhai_runtime_error(format!(
-                        "{}",
-                        RunnerError::task_invocation_failed_write(parent, error)
-                    ))
-                })?;
-            }
-            let mut file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-                .map_err(|error| {
-                    rhai_runtime_error(format!(
-                        "{}",
-                        RunnerError::task_invocation_failed_write(&path, error)
-                    ))
-                })?;
-            use std::io::Write;
-            file.write_all(contents.as_bytes()).map_err(|error| {
-                rhai_runtime_error(format!(
-                    "{}",
-                    RunnerError::task_invocation_failed_write(&path, error)
-                ))
-            })
-        },
-    );
-    let file_context = context.clone();
-    engine.register_fn(
-        "write_lines",
-        move |path: ImmutableString, lines: Array| -> Result<(), Box<EvalAltResult>> {
-            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|error| {
-                    rhai_runtime_error(format!(
-                        "{}",
-                        RunnerError::task_invocation_failed_write(parent, error)
-                    ))
-                })?;
-            }
-            let rendered = dynamic_array_to_strings(&lines)
-                .map_err(|error| rhai_runtime_error(error.to_string()))?
-                .join("\n");
-            let output = if rendered.is_empty() {
-                String::new()
-            } else {
-                format!("{rendered}\n")
-            };
-            std::fs::write(&path, output).map_err(|error| {
-                rhai_runtime_error(format!(
-                    "{}",
-                    RunnerError::task_invocation_failed_write(&path, error)
-                ))
-            })
-        },
-    );
-    let file_context = context.clone();
-    engine.register_fn("path_exists", move |path: ImmutableString| -> bool {
-        resolve_runtime_path(&file_context.cwd, path.as_str()).exists()
-    });
-    let file_context = context.clone();
-    engine.register_fn("is_file", move |path: ImmutableString| -> bool {
-        resolve_runtime_path(&file_context.cwd, path.as_str()).is_file()
-    });
-    let file_context = context.clone();
-    engine.register_fn(
-        "is_symlink",
-        move |path: ImmutableString| -> Result<bool, Box<EvalAltResult>> {
-            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
-            std::fs::symlink_metadata(&path)
-                .map(|metadata| metadata.file_type().is_symlink())
-                .or_else(|error| {
-                    if error.kind() == std::io::ErrorKind::NotFound {
-                        Ok(false)
-                    } else {
-                        Err(error)
-                    }
-                })
-                .map_err(|error| {
-                    rhai_runtime_error(format!(
-                        "{}",
-                        RunnerError::task_invocation_failed_read(&path, error)
-                    ))
-                })
-        },
-    );
-    let file_context = context.clone();
-    engine.register_fn(
-        "create_dir",
-        move |path: ImmutableString| -> Result<(), Box<EvalAltResult>> {
-            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
-            std::fs::create_dir_all(&path).map_err(|error| {
-                rhai_runtime_error(format!(
-                    "{}",
-                    RunnerError::task_invocation_failed_write(&path, error)
-                ))
-            })
-        },
-    );
-    let file_context = context.clone();
-    engine.register_fn(
-        "remove_path",
-        move |path: ImmutableString| -> Result<(), Box<EvalAltResult>> {
-            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
-            match std::fs::symlink_metadata(&path) {
-                Ok(metadata) => {
-                    if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
-                        std::fs::remove_dir_all(&path)
-                    } else {
-                        std::fs::remove_file(&path)
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error),
-            }
-            .map_err(|error| {
-                rhai_runtime_error(format!(
-                    "{}",
-                    RunnerError::task_invocation_failed_write(&path, error)
-                ))
-            })
-        },
-    );
-    let file_context = context.clone();
-    engine.register_fn(
-        "create_symlink",
-        move |target: ImmutableString, link: ImmutableString| -> Result<(), Box<EvalAltResult>> {
-            let target = resolve_runtime_path(&file_context.cwd, target.as_str());
-            let link = resolve_runtime_path(&file_context.cwd, link.as_str());
-            #[cfg(unix)]
-            {
-                std::os::unix::fs::symlink(&target, &link).map_err(|error| {
-                    rhai_runtime_error(format!(
-                        "{}",
-                        RunnerError::task_invocation_failed_write(&link, error)
-                    ))
-                })
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = target;
-                let _ = link;
-                Err(rhai_runtime_error(
-                    "Rhai symlink helpers are only supported on unix hosts".to_owned(),
-                ))
-            }
-        },
-    );
-
-    engine.register_fn(
-        "json_parse",
-        |raw: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
-            let value: serde_json::Value = serde_json::from_str(raw.as_str())
-                .map_err(|error| rhai_runtime_error(error.to_string()))?;
-            rhai::serde::to_dynamic(value).map_err(|error| rhai_runtime_error(error.to_string()))
-        },
-    );
-    engine.register_fn(
-        "json_stringify",
-        |value: Dynamic| -> Result<String, Box<EvalAltResult>> {
-            let decoded: serde_json::Value = rhai::serde::from_dynamic(&value)
-                .map_err(|error| rhai_runtime_error(error.to_string()))?;
-            serde_json::to_string_pretty(&decoded)
-                .map_err(|error| rhai_runtime_error(error.to_string()))
-        },
-    );
-    engine.register_fn(
-        "toml_parse",
-        |raw: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
-            let value: toml::Value = toml::from_str(raw.as_str())
-                .map_err(|error| rhai_runtime_error(error.to_string()))?;
-            rhai::serde::to_dynamic(value).map_err(|error| rhai_runtime_error(error.to_string()))
-        },
-    );
-    engine.register_fn(
-        "toml_stringify",
-        |value: Dynamic| -> Result<String, Box<EvalAltResult>> {
-            let decoded: toml::Value = rhai::serde::from_dynamic(&value)
-                .map_err(|error| rhai_runtime_error(error.to_string()))?;
-            toml::to_string_pretty(&decoded).map_err(|error| rhai_runtime_error(error.to_string()))
-        },
-    );
-
-    let process_context = context.clone();
-    engine.register_fn(
-        "run_process",
-        move |program: ImmutableString, args: Array| -> Result<Map, Box<EvalAltResult>> {
-            let mut process = ProcessCommand::new(program.as_str());
-            process.args(dynamic_array_to_strings(&args)?);
-            process.current_dir(&process_context.cwd);
-            with_local_node_bin_path(&mut process, &process_context.cwd);
-            let output = process
-                .output()
-                .map_err(|error| rhai_runtime_error(error.to_string()))?;
-            Ok(process_result_map(output))
-        },
-    );
-
-    let task_context = context;
-    engine.register_fn(
-        "run_task",
-        move |task: ImmutableString, args: Array| -> Result<String, Box<EvalAltResult>> {
+fn host_callbacks() -> HostCallbacks {
+    HostCallbacks {
+        run_task: Arc::new(|cwd, task, args| {
             let invocation = TaskInvocation {
-                name: task.to_string(),
-                args: dynamic_array_to_strings(&args)?,
+                name: task.to_owned(),
+                args: args.to_vec(),
             };
-            run_manifest_task_with_cwd(&invocation, task_context.cwd.clone())
-                .map_err(|error| rhai_runtime_error(error.to_string()))
-        },
-    );
-}
-
-fn process_result_map(output: std::process::Output) -> Map {
-    let mut map = Map::new();
-    map.insert(
-        "status".into(),
-        Dynamic::from_int(output.status.code().unwrap_or(-1).into()),
-    );
-    map.insert(
-        "success".into(),
-        Dynamic::from_bool(output.status.success()),
-    );
-    map.insert(
-        "stdout".into(),
-        String::from_utf8_lossy(&output.stdout).to_string().into(),
-    );
-    map.insert(
-        "stderr".into(),
-        String::from_utf8_lossy(&output.stderr).to_string().into(),
-    );
-    map
-}
-
-fn dynamic_array_to_strings(args: &Array) -> Result<Vec<String>, Box<EvalAltResult>> {
-    args.iter()
-        .map(|value| {
-            if value.is_string() {
-                Ok(value.clone_cast::<String>())
-            } else {
-                Ok(value.to_string())
-            }
-        })
-        .collect()
-}
-
-fn required_env(key: &str) -> Result<String, RunnerError> {
-    std::env::var(key).map_err(|_| {
-        RunnerError::task_invocation(format!(
-            "missing internal Rhai environment variable `{key}`"
-        ))
-    })
-}
-
-fn resolve_script_path(cwd: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        cwd.join(path)
+            run_manifest_task_with_cwd(&invocation, cwd.to_path_buf())
+                .map_err(|error| error.to_string())
+        }),
+        run_effigy: Arc::new(|repo_root, args, force_json| {
+            run_effigy_command(repo_root, args, force_json).map_err(|error| EffigyCommandError {
+                message: error.to_string(),
+                rendered_output: error.rendered_output().unwrap_or_default().to_owned(),
+            })
+        }),
+        container_up: Arc::new(|repo_root, name, detach| {
+            run_container_helper(
+                repo_root,
+                ContainerSubcommand::Up {
+                    name: Some(name.to_owned()),
+                    attach: !detach,
+                    detach,
+                },
+            )
+            .map_err(|error| error.to_string())
+        }),
+        container_down: Arc::new(|repo_root, name| {
+            run_container_helper(
+                repo_root,
+                ContainerSubcommand::Down {
+                    name: Some(name.to_owned()),
+                },
+            )
+            .map_err(|error| error.to_string())
+        }),
+        container_shell: Arc::new(|repo_root, name, command| {
+            run_container_helper(
+                repo_root,
+                ContainerSubcommand::Shell {
+                    name: Some(name.to_owned()),
+                    service: None,
+                    command: Some(command.to_owned()),
+                },
+            )
+            .map_err(|error| error.to_string())
+        }),
     }
 }
 
-fn resolve_runtime_path(cwd: &Path, raw: &str) -> PathBuf {
-    let path = Path::new(raw);
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        cwd.join(path)
-    }
+fn run_effigy_command(
+    repo_root: &Path,
+    args: &[String],
+    force_json: bool,
+) -> Result<String, RunnerError> {
+    let (stripped_args, requested_json) = strip_global_json_flags(args.to_vec());
+    let mut command = parse_command(stripped_args)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    command = apply_global_json_flag(command, force_json || requested_json);
+    apply_default_repo_override(&mut command, repo_root);
+    crate::runner::run_command(command)
 }
 
-fn allocate_temp_dir(prefix: &str) -> Result<PathBuf, RunnerError> {
-    let sanitized = if prefix.is_empty() {
-        "effigy-rhai"
-    } else {
-        prefix
-    };
-    let base = std::env::temp_dir();
-    let pid = std::process::id();
-    for _ in 0..256 {
-        let nonce = RHAI_TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-            .as_millis();
-        let candidate = base.join(format!("{sanitized}-{pid}-{millis}-{nonce}"));
-        if !candidate.exists() {
-            return Ok(candidate);
+fn apply_default_repo_override(command: &mut crate::Command, repo_root: &Path) {
+    let repo_root = repo_root.to_path_buf();
+    match command {
+        crate::Command::Demo(args) if args.repo_override.is_none() => {
+            args.repo_override = Some(repo_root)
         }
+        crate::Command::Docs(args) if args.repo_override.is_none() => {
+            args.repo_override = Some(repo_root)
+        }
+        crate::Command::Contracts(args) if args.repo_override.is_none() => {
+            args.repo_override = Some(repo_root)
+        }
+        crate::Command::Distribution(args) if args.repo_override.is_none() => {
+            args.repo_override = Some(repo_root)
+        }
+        crate::Command::Container(args) if args.repo_override.is_none() => {
+            args.repo_override = Some(repo_root)
+        }
+        crate::Command::Release(args) if args.repo_override.is_none() => {
+            args.repo_override = Some(repo_root)
+        }
+        crate::Command::Doctor(args) if args.repo_override.is_none() => {
+            args.repo_override = Some(repo_root)
+        }
+        crate::Command::Tasks(args) if args.repo_override.is_none() => {
+            args.repo_override = Some(repo_root)
+        }
+        _ => {}
     }
-    Err(RunnerError::task_invocation(format!(
-        "failed to allocate unique temp dir for {sanitized}"
-    )))
+}
+fn run_container_helper(
+    repo_root: &Path,
+    subcommand: ContainerSubcommand,
+) -> Result<String, RunnerError> {
+    crate::runner::run_command(crate::Command::Container(ContainerArgs {
+        subcommand,
+        repo_override: Some(repo_root.to_path_buf()),
+        output_json: false,
+    }))
 }
 
-fn install_stop_requested_flag() -> Result<Arc<std::sync::atomic::AtomicBool>, RunnerError> {
-    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    #[cfg(unix)]
-    {
-        signal_flag::register(SIGTERM, Arc::clone(&flag))
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        signal_flag::register(SIGINT, Arc::clone(&flag))
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    }
-    Ok(flag)
-}
-
-fn rhai_runtime_error(message: String) -> Box<EvalAltResult> {
-    EvalAltResult::ErrorRuntime(message.into(), Position::NONE).into()
+fn map_rhai_error(error: impl std::fmt::Display) -> RunnerError {
+    RunnerError::task_invocation(error.to_string())
 }

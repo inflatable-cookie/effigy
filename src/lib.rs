@@ -22,16 +22,15 @@ pub mod changelog;
 mod cli;
 mod data_loading;
 pub mod env_schema;
-mod fs_probe;
-mod path_error_text;
-mod path_probe;
 pub mod process_manager;
-pub mod resolver;
 pub mod runner;
 pub mod tasks;
 pub mod testing;
 pub mod tui;
 pub mod ui;
+
+pub use effigy_core::resolver;
+pub(crate) use effigy_core::{fs_probe, path_error_text, path_probe};
 
 pub use cli::entrypoint::run_cli;
 pub use cli::execution_context::CliExecutionContext;
@@ -69,6 +68,8 @@ pub enum Command {
     Contracts(ContractsArgs),
     /// Built-in distribution validation/reporting command family.
     Distribution(DistributionArgs),
+    /// Built-in container environment command family.
+    Container(ContainerArgs),
     /// Built-in repo bootstrap planning/execution command family.
     Bootstrap(BootstrapArgs),
     /// Built-in release command family.
@@ -110,6 +111,8 @@ pub enum HelpTopic {
     Contracts,
     /// Distribution help.
     Distribution,
+    /// Container help.
+    Container,
     /// Bootstrap help.
     Bootstrap,
     /// Release help.
@@ -448,6 +451,17 @@ pub struct DistributionArgs {
     pub output_json: bool,
 }
 
+/// Parsed arguments for the built-in container command family.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerArgs {
+    /// Which container subcommand should run.
+    pub subcommand: ContainerSubcommand,
+    /// Optional repository root override.
+    pub repo_override: Option<PathBuf>,
+    /// Whether the command should render JSON-compatible output.
+    pub output_json: bool,
+}
+
 /// Parsed arguments for the built-in bootstrap command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootstrapArgs {
@@ -542,6 +556,53 @@ pub enum DistributionSubcommand {
         homebrew_executed: bool,
         /// Captured log filenames in execution order.
         log_files: Vec<String>,
+    },
+}
+
+/// Supported reusable container subcommands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContainerSubcommand {
+    /// Bring one named or default container environment up.
+    Up {
+        /// Optional manifest container name.
+        name: Option<String>,
+        /// Whether attached mode should be forced.
+        attach: bool,
+        /// Whether detached mode should be forced.
+        detach: bool,
+    },
+    /// Tear one named or default container environment down.
+    Down {
+        /// Optional manifest container name.
+        name: Option<String>,
+    },
+    /// Report the current state of one named or default container environment.
+    Status {
+        /// Optional manifest container name.
+        name: Option<String>,
+    },
+    /// Render logs for one named or default container environment.
+    Logs {
+        /// Optional manifest container name.
+        name: Option<String>,
+        /// Optional explicit service override.
+        service: Option<String>,
+        /// Whether the logs command should follow live output.
+        follow: bool,
+    },
+    /// Open a shell inside the primary or selected service.
+    Shell {
+        /// Optional manifest container name.
+        name: Option<String>,
+        /// Optional explicit service override.
+        service: Option<String>,
+        /// Shell command to execute inside the target service.
+        command: Option<String>,
+    },
+    /// Reset one named or default container environment by removing runtime state.
+    Reset {
+        /// Optional manifest container name.
+        name: Option<String>,
     },
 }
 

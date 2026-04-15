@@ -7,6 +7,8 @@
 "link:local" = [{ rhai = "scripts/rhai/install-local-bin-links.rhai" }]
 "bootstrap:local" = [{ task = "install:local" }, { task = "link:local" }]
 "dist:metadata" = "cargo run --bin effigy -- distribution validate-metadata"
+"release:linux:env" = { container_session = "linux-release" }
+"release:linux:rehearse" = [{ rhai = "scripts/rhai/rehearse-linux-release-container.rhai" }]
 "qa:docs:links" = "cargo run --bin effigy -- docs check-links"
 "qa:docs:examples" = "cargo run --bin effigy -- docs check-json-examples"
 "qa:docs:index" = "cargo run --bin effigy -- docs check-index"

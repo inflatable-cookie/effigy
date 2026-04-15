@@ -29,6 +29,33 @@ manifest, not to teach people more wrapper scripts.
 - Provide optional distribution primitives so repos can adopt artifact
   validation, closeout generation, publish checks, or fuller distribution
   orchestration without inheriting one mandatory release protocol.
+- Provide a first bounded container surface so web-heavy repos can define named
+  Colima-backed local environments instead of installing databases and service
+  stacks directly on the host machine.
+
+Current roadmap state:
+- [`g02.006` container environment contract](./docs/roadmaps/g02/006-colima-container-environment-contract.md) is paused on a trustworthy v1 boundary
+- [`g02.007` distribution release and consumer rollout](./docs/roadmaps/g02/007-distribution-release-and-consumer-rollout.md) is active again
+- [`g02.010` modularization and crate boundaries](./docs/roadmaps/g02/010-effigy-modularization-and-crate-boundaries.md) is paused on a trustworthy pre-`v0.3` boundary
+- workspace plus `effigy-core` foundation is shipped
+- `effigy-tasks` foundation is shipped
+- `effigy-manifest` foundation is shipped
+- `effigy-demo` foundation is shipped
+- demo browser/projection extraction is shipped
+- demo runtime/session extraction is shipped
+- post-demo boundary decision is made
+- docs-policy extraction is shipped
+- post-docs boundary decision is made
+- docs-policy QA check extraction is shipped
+- post-docs QA boundary decision is made
+- `effigy-env` foundation extraction is shipped
+- post-env boundary decision is made
+- `effigy-doctor` foundation extraction is shipped
+- post-doctor boundary decision is made
+- doctor report/projection extraction is shipped
+- remaining doctor shell is classified as orchestration work
+- modularization pause decision is complete
+- release closure is the active next batch again
 
 ## Install
 
@@ -156,6 +183,23 @@ stack.
 When one `effigy.toml` starts carrying too many unrelated concerns, split it
 with `[manifest].include = [...]` and use `effigy config --inspect` to verify
 the effective merged result before relying on it in CI or docs-policy flows.
+
+### Keep web-service dependencies off the host
+
+Use the container surface when a repo needs databases, queues, blob stores, or
+other local services but you do not want to install that stack directly on the
+machine.
+
+```bash
+effigy container up
+effigy container status
+effigy container down
+effigy dev:services
+```
+
+Details:
+- [`063-container-system-guide.md`](./docs/guides/063-container-system-guide.md)
+- [`025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
 
 ### Inspect proof demos
 
@@ -317,20 +361,21 @@ cargo qa-release
 
 ## Current Planning Posture
 
-Effigy's active product lane is `g02.005`.
+Effigy's active product lane is `g02.006`.
 
-Use these surfaces before continuing optional distribution work:
+Use these surfaces before continuing container-environment work:
 
 - [`docs/roadmaps/README.md`](./docs/roadmaps/README.md)
-- [`docs/roadmaps/g02/005-optional-distribution-surface-contract.md`](./docs/roadmaps/g02/005-optional-distribution-surface-contract.md)
-- [`docs/specs/README.md`](./docs/specs/README.md)
+- [`docs/roadmaps/g02/006-colima-container-environment-contract.md`](./docs/roadmaps/g02/006-colima-container-environment-contract.md)
+- [`docs/specs/006-colima-container-environment-strict-lane.md`](./docs/specs/006-colima-container-environment-strict-lane.md)
+- [`docs/specs/batch-cards/107-implement-colima-container-foundation.md`](./docs/specs/batch-cards/107-implement-colima-container-foundation.md)
 - [`docs/contracts/001-working-rules.md`](./docs/contracts/001-working-rules.md)
 
-Current distribution front doors:
+Queued follow-on milestones:
 
-- [`docs/guides/062-distribution-system-guide.md`](./docs/guides/062-distribution-system-guide.md)
-- [`docs/guides/059-manifest-composition-guide.md`](./docs/guides/059-manifest-composition-guide.md)
-- [`docs/guides/022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
+- [`docs/roadmaps/g02/007-distribution-release-and-consumer-rollout.md`](./docs/roadmaps/g02/007-distribution-release-and-consumer-rollout.md)
+- [`docs/roadmaps/g02/008-demo-and-manifest-import-rollout.md`](./docs/roadmaps/g02/008-demo-and-manifest-import-rollout.md)
+- [`docs/roadmaps/g02/009-vault-backed-varlock-rollout.md`](./docs/roadmaps/g02/009-vault-backed-varlock-rollout.md)
 
 ## Repository Layout
 
@@ -350,6 +395,5 @@ effigy/
 
 ## Next Task
 
-Use the active `g02.004` ready card to decide the next Rhai migration slice
-after the script-step foundation: more Effigy shell-glue migration, a Keepsake
-pilot, or the first Jetstream orchestration migration boundary.
+Execute
+[`115-implement-effigy-distribution-release-closure.md`](./docs/specs/batch-cards/115-implement-effigy-distribution-release-closure.md).

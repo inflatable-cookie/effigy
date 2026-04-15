@@ -6715,3 +6715,666 @@ fn cli_implicit_legacy_release_bypasses_builtin_release_command_by_default() {
     let deferred = fs::read_to_string(&marker).expect("read deferred");
     assert_eq!(deferred, "release|prepare --plan");
 }
+
+fn write_executable(path: &std::path::Path, contents: &str) {
+    fs::write(path, contents).expect("write executable");
+    let mut perms = fs::metadata(path).expect("stat executable").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).expect("chmod executable");
+}
+
+fn write_container_fixture(root: &std::path::Path, health_check: Option<&str>, mount: &str) {
+    write_container_fixture_with_task(root, health_check, mount, false);
+}
+
+fn write_container_fixture_with_task(
+    root: &std::path::Path,
+    health_check: Option<&str>,
+    mount: &str,
+    include_task: bool,
+) {
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::create_dir_all(root.join("app")).expect("mkdir app dir");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:3.20\n    command: [\"sh\", \"-lc\", \"sleep 3600\"]\n",
+    )
+    .expect("write compose file");
+
+    let health_block = health_check.map_or(String::new(), |check| {
+        format!("\n[containers.web.health]\ncheck = \"{check}\"\ntimeout_secs = 2\n")
+    });
+    let task_block = if include_task {
+        "\n[tasks.dev]\ncontainer_session = \"web\"\n"
+    } else {
+        ""
+    };
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "attached"
+profile = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+project_name = "fixture-web-dev"
+primary_service = "app"
+
+[containers.web.lifecycle]
+on_task_exit = "stop"
+shutdown = "graceful"
+detach_timeout_secs = 1
+{health_block}
+[containers.web.host]
+ports = ["8080:80", "3306:3306"]
+mounts = ["{mount}"]
+{task_block}
+"#
+        ),
+    )
+    .expect("write container manifest");
+}
+
+fn install_fake_container_runtime(
+    root: &std::path::Path,
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    let colima_state = root.join("colima-running");
+    let colima = bin_dir.join("colima");
+    let docker = bin_dir.join("docker");
+
+    write_executable(
+        &colima,
+        r#"#!/bin/sh
+set -eu
+printf "%s\n" "$*" >> "$EFFIGY_TEST_COLIMA_ARGS_FILE"
+if [ "${1:-}" = "status" ]; then
+  if [ -f "$EFFIGY_TEST_COLIMA_STATE_FILE" ]; then
+    printf "Running\n"
+  else
+    printf "Stopped\n"
+  fi
+  exit 0
+fi
+if [ "${1:-}" = "start" ]; then
+  if [ -n "${EFFIGY_TEST_COLIMA_START_DELAY_SECS:-}" ]; then
+    sleep "$EFFIGY_TEST_COLIMA_START_DELAY_SECS"
+  fi
+  : > "$EFFIGY_TEST_COLIMA_STATE_FILE"
+  printf "started\n"
+  exit 0
+fi
+case "$*" in
+  *"nerdctl --profile "*)
+    subcmd=""
+    for arg in "$@"; do
+      case "$arg" in
+        up|down|ps|logs|exec|kill)
+          subcmd="$arg"
+          break
+          ;;
+      esac
+    done
+    case "$subcmd" in
+      up)
+        printf "compose-up\n"
+        ;;
+      ps)
+        printf "NAME                STATUS\napp                 running\n"
+        ;;
+      logs)
+        case "$*" in
+          *"--follow"*)
+            : > "$EFFIGY_TEST_LOG_FOLLOW_FILE"
+            if [ -n "${EFFIGY_TEST_ORPHAN_FILE:-}" ]; then
+              sh -c 'trap "" TERM INT; sleep 3; printf orphaned > "$EFFIGY_TEST_ORPHAN_FILE"' &
+            fi
+            while true; do
+              sleep 1
+            done
+            ;;
+          *)
+            printf "app log line\n"
+            ;;
+        esac
+        ;;
+      exec)
+        printf "exec-ok\n"
+        ;;
+      down)
+        printf "compose-down\n"
+        ;;
+      kill)
+        printf "compose-kill\n"
+        ;;
+      *)
+        printf "unexpected colima nerdctl invocation: %s\n" "$*" >&2
+        exit 1
+        ;;
+    esac
+    exit 0
+    ;;
+esac
+printf "unexpected colima invocation: %s\n" "$*" >&2
+exit 1
+"#,
+    );
+
+    write_executable(
+        &docker,
+        r#"#!/bin/sh
+set -eu
+printf "%s\n" "$*" >> "$EFFIGY_TEST_DOCKER_ARGS_FILE"
+subcmd=""
+for arg in "$@"; do
+  case "$arg" in
+    up|down|ps|logs|exec|kill)
+      subcmd="$arg"
+      break
+      ;;
+  esac
+done
+case "$subcmd" in
+  up)
+    printf "compose-up\n"
+    ;;
+  ps)
+    printf "NAME                STATUS\napp                 running\n"
+    ;;
+  logs)
+    case "$*" in
+      *"--follow"*)
+        : > "$EFFIGY_TEST_LOG_FOLLOW_FILE"
+        while true; do
+          sleep 1
+        done
+        ;;
+      *)
+        printf "app log line\n"
+        ;;
+    esac
+    ;;
+  exec)
+    printf "exec-ok\n"
+    ;;
+  down)
+    printf "compose-down\n"
+    ;;
+  kill)
+    printf "compose-kill\n"
+    ;;
+  *)
+    printf "unexpected docker invocation: %s\n" "$*" >&2
+    exit 1
+    ;;
+esac
+"#,
+    );
+
+    (bin_dir, colima_state)
+}
+
+#[test]
+fn cli_container_status_json_reports_default_container_contract() {
+    let root = temp_workspace("container-status");
+    write_container_fixture(&root, None, "./app:/workspace");
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("status")
+        .arg("--repo")
+        .arg(&root)
+        .arg("--json")
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "status failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.container.status.v1");
+    assert_eq!(parsed["result"]["container"], "web");
+    assert_eq!(parsed["result"]["primary_service"], "app");
+    assert_eq!(parsed["result"]["colima_running"], false);
+    assert_eq!(parsed["result"]["ports"][0], "8080:80");
+    assert_eq!(parsed["result"]["mounts"][0], "./app:/workspace");
+}
+
+#[test]
+fn cli_container_up_detached_starts_colima_and_reports_ready() {
+    let root = temp_workspace("container-up-detached");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind health");
+    let port = listener.local_addr().expect("addr").port();
+    write_container_fixture(
+        &root,
+        Some(&format!("tcp://127.0.0.1:{port}")),
+        "./app:/workspace",
+    );
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("up")
+        .arg("--repo")
+        .arg(&root)
+        .arg("--detach")
+        .arg("--json")
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "up failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.container.up.v1");
+    assert_eq!(parsed["result"]["attach_mode"], "detached");
+    assert_eq!(parsed["result"]["colima_started"], true);
+    assert_eq!(parsed["result"]["health"], "ready");
+    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
+    assert!(docker_invocations.contains("compose -f"));
+    assert!(docker_invocations.contains(" up -d"));
+}
+
+#[test]
+fn cli_container_attached_session_stops_environment_on_sigint() {
+    let root = temp_workspace("container-up-attached");
+    write_container_fixture(&root, None, "./app:/workspace");
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+
+    let child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("up")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn effigy");
+
+    wait_for_path_exists(
+        &log_follow,
+        Duration::from_secs(3),
+        "attached log follow marker",
+    );
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(child.id() as i32),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .expect("send sigint");
+
+    let output = child.wait_with_output().expect("wait output");
+    assert!(output.status.success(), "attached up failed: {output:?}");
+    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
+    assert!(docker_invocations.contains("logs --follow"));
+    assert!(docker_invocations.contains("down --remove-orphans"));
+}
+
+#[test]
+fn cli_container_attached_stream_session_reports_operator_overview() {
+    let root = temp_workspace("container-up-stream-overview");
+    write_container_fixture(&root, None, "./app:/workspace");
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+
+    let child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("up")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_CONTAINER_STREAM", "1")
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn effigy");
+
+    wait_for_path_exists(
+        &log_follow,
+        Duration::from_secs(3),
+        "attached stream log follow marker",
+    );
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(child.id() as i32),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .expect("send sigint");
+
+    let output = child.wait_with_output().expect("wait output");
+    assert!(
+        output.status.success(),
+        "attached stream failed: {output:?}"
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("[container] web"), "got: {stdout}");
+    assert!(
+        stdout.contains("owner_task: <direct-command>"),
+        "got: {stdout}"
+    );
+    assert!(stdout.contains("shutdown_on_exit: stop"), "got: {stdout}");
+}
+
+#[test]
+fn cli_container_attached_session_handles_sigint_during_startup() {
+    let root = temp_workspace("container-up-startup-sigint");
+    write_container_fixture(&root, None, "./app:/workspace");
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+
+    let child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("up")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_CONTAINER_STREAM", "1")
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .env("EFFIGY_TEST_COLIMA_START_DELAY_SECS", "3")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn effigy");
+
+    std::thread::sleep(Duration::from_millis(800));
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(child.id() as i32),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .expect("send sigint");
+
+    let output = child.wait_with_output().expect("wait output");
+    assert!(output.status.success(), "startup sigint failed: {output:?}");
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(
+        stdout.contains("attached container session for `web` finished (signal)"),
+        "got: {stdout}"
+    );
+    let docker_invocations = fs::read_to_string(&docker_args).unwrap_or_default();
+    assert!(
+        !docker_invocations.contains("logs --follow"),
+        "startup stop should happen before log attach"
+    );
+}
+
+#[test]
+fn cli_task_container_session_stops_environment_on_sigint() {
+    let root = temp_workspace("task-container-session");
+    write_container_fixture_with_task(&root, None, "./app:/workspace", true);
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+
+    let child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("dev")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_CONTAINER_STREAM", "1")
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn effigy");
+
+    wait_for_path_exists(
+        &log_follow,
+        Duration::from_secs(3),
+        "task container log follow marker",
+    );
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(child.id() as i32),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .expect("send sigint");
+
+    let output = child.wait_with_output().expect("wait output");
+    assert!(
+        output.status.success(),
+        "task container session failed: {output:?}"
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("owner_task: dev"), "got: {stdout}");
+    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
+    assert!(docker_invocations.contains("logs --follow"));
+    assert!(docker_invocations.contains("down --remove-orphans"));
+}
+
+#[test]
+fn cli_container_attached_session_terminates_log_process_group() {
+    let root = temp_workspace("container-up-process-group-stop");
+    write_container_fixture(&root, None, "./app:/workspace");
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let orphan_file = root.join("orphaned.log");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+
+    let child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("up")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_CONTAINER_STREAM", "1")
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .env("EFFIGY_TEST_ORPHAN_FILE", &orphan_file)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn effigy");
+
+    wait_for_path_exists(
+        &log_follow,
+        Duration::from_secs(3),
+        "attached process-group log follow marker",
+    );
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(child.id() as i32),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .expect("send sigint");
+
+    let output = child.wait_with_output().expect("wait output");
+    assert!(output.status.success(), "attached up failed: {output:?}");
+    std::thread::sleep(Duration::from_secs(4));
+    assert!(
+        !orphan_file.exists(),
+        "expected orphan background process to be terminated"
+    );
+}
+
+#[test]
+fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
+    let root = temp_workspace("container-colima-nerdctl");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind health");
+    let port = listener.local_addr().expect("addr").port();
+    write_container_fixture(
+        &root,
+        Some(&format!("tcp://127.0.0.1:{port}")),
+        "./app:/workspace",
+    );
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    fs::remove_file(bin_dir.join("docker")).expect("remove docker shim");
+    let colima_args = root.join("colima-args.log");
+    let docker_args = root.join("docker-args.log");
+    let log_follow = root.join("log-follow.marker");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("up")
+        .arg("--repo")
+        .arg(&root)
+        .arg("--detach")
+        .arg("--json")
+        .env("NO_COLOR", "1")
+        .env("PATH", bin_dir.display().to_string())
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "fallback up failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.container.up.v1");
+    let invocations = fs::read_to_string(&colima_args).expect("read colima args");
+    assert!(invocations.contains("start --profile dev --runtime containerd"));
+    assert!(invocations.contains("nerdctl --profile dev -- compose"));
+}
+
+#[test]
+fn cli_container_shell_command_runs_via_sh_lc() {
+    let root = temp_workspace("container-shell-command");
+    write_container_fixture(&root, None, "./app:/workspace");
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+
+    fs::write(&colima_state, "running\n").expect("seed colima state");
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("web")
+        .arg("shell")
+        .arg("--repo")
+        .arg(&root)
+        .arg("--command")
+        .arg("printf shell-ok")
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "shell failed: {output:?}");
+    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
+    assert!(
+        docker_invocations.contains("exec app sh -lc printf shell-ok"),
+        "got: {docker_invocations}"
+    );
+}
+
+#[test]
+fn cli_container_rejects_mounts_that_escape_repo_root() {
+    let root = temp_workspace("container-invalid-mount");
+    fs::create_dir_all(root.join("../outside")).expect("mkdir outside");
+    write_container_fixture(&root, None, "../outside:/workspace");
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("status")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    assert!(!output.status.success(), "expected invalid mount failure");
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(stderr.contains("escapes the repo root"), "got: {stderr}");
+}

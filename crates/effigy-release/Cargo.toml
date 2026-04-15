@@ -1,0 +1,13 @@
+[package]
+name = "effigy-release"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Release configuration and gate execution contracts for Effigy"
+
+[dependencies]
+effigy-manifest = { path = "../effigy-manifest" }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

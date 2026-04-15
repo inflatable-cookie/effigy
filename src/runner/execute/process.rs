@@ -2,8 +2,8 @@ use std::process::Command as ProcessCommand;
 
 use super::super::util::with_local_node_bin_path;
 use super::context::ExecutionTaskContext;
-use crate::env_schema::secret::SecretString;
 use crate::runner::error::RunnerError;
+use effigy_env::secret::SecretString;
 
 pub(super) fn build_shell_process(
     context: &ExecutionTaskContext<'_>,

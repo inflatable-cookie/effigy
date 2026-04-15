@@ -12,14 +12,32 @@ use std::sync::{
 };
 use std::thread;
 use std::time::Duration;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use effigy_demo::browser::{
+    DemoHistoryAttemptHistoryPayload, DemoHistoryDemo, DemoHistoryPayload, DemoInspectPayload,
+    DemoListPayload,
+};
+use effigy_demo::runtime::{
+    runtime_backend_label, DemoActiveAttempt, DemoActiveTerminalSession, DemoRuntimeBackend,
+    DemoRuntimeProjectedOutputProvenance, DemoRuntimeProjectedProcessSummary,
+    DemoRuntimeProjectionShape, DemoTerminalInputForwarding, DemoTerminalRecentOutput,
+    DemoTerminalResize, DemoTerminalSize, DemoTerminalTransport,
+};
+use effigy_demo::{
+    append_attempt_history as append_demo_attempt_history, build_attempt_id, display_repo_path,
+    effective_active_attempt_path, effective_input_handoff_path, effective_output_log_path,
+    effective_receipt_path, effective_resize_handoff_path,
+    load_attempt_history as load_demo_attempt_history,
+    load_latest_attempt as load_demo_latest_attempt, now_epoch_ms, render_active_attempt_path,
+    DemoAttemptHistory, DemoAttemptRecord, DemoHistoricalAttempt, DemoLatestAttempt,
+};
 #[cfg(unix)]
 use nix::errno::Errno;
 #[cfg(unix)]
 use nix::sys::signal::{self, Signal};
 #[cfg(unix)]
 use nix::unistd::{setpgid, Pid};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 
@@ -46,11 +64,6 @@ use crate::{
 use super::error::RunnerError;
 use super::render::{encode_json, render_utf8, text_renderer};
 
-const DEMO_RECEIPTS_DIR: &str = ".effigy/demo/receipts";
-const DEMO_ACTIVE_DIR: &str = ".effigy/demo/active";
-const DEMO_LOGS_DIR: &str = ".effigy/demo/logs";
-const DEMO_HISTORY_DIR: &str = ".effigy/demo/history";
-const DEMO_ATTEMPT_HISTORY_LIMIT: usize = 10;
 const DEMO_ACTIVE_TERMINAL_RECENT_LINES: usize = 8;
 const DEMO_INPUT_POLL_INTERVAL_MS: u64 = 40;
 const DEMO_MANAGED_EVENT_POLL_INTERVAL_MS: u64 = 100;
@@ -160,19 +173,31 @@ fn render_demo_list(
         .map(|group_by| build_demo_groups(&demos, group_by));
 
     if output_json {
+        let payload = DemoListPayload {
+            schema: "effigy.demo.list.v1".to_owned(),
+            schema_version: 1,
+            ok: true,
+            repo_root: repo_root.display().to_string(),
+            query: demo_list_query_to_json(query),
+            group_by: query.group_by.map(|value| value.as_str().to_owned()),
+            count: demos.len(),
+            total_count: loaded.manifest.demos.len(),
+            groups: groups
+                .as_ref()
+                .map(|groups| {
+                    groups
+                        .iter()
+                        .map(|group| browser_payload_from_json(group.to_json(), "demo list group"))
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?,
+            demos: demos
+                .iter()
+                .map(|demo| browser_payload_from_json(demo.to_json_summary(), "demo list summary"))
+                .collect::<Result<Vec<_>, _>>()?,
+        };
         return encode_json(
-            &json!({
-                "schema": "effigy.demo.list.v1",
-                "schema_version": 1,
-                "ok": true,
-                "repo_root": repo_root.display().to_string(),
-                "query": demo_list_query_to_json(query),
-                "group_by": query.group_by.map(|value| value.as_str()),
-                "count": demos.len(),
-                "total_count": loaded.manifest.demos.len(),
-                "groups": groups.as_ref().map(|groups| groups.iter().map(DemoGroup::to_json).collect::<Vec<_>>()),
-                "demos": demos.iter().map(DemoRecord::to_json_summary).collect::<Vec<_>>(),
-            }),
+            &browser_payload_to_json(&payload, "demo list payload")?,
             true,
         );
     }
@@ -236,14 +261,15 @@ fn render_demo_inspect(
 
     let record = build_demo_record(repo_root, loaded, demo_id, demo)?;
     if output_json {
+        let payload = DemoInspectPayload {
+            schema: "effigy.demo.inspect.v1".to_owned(),
+            schema_version: 1,
+            ok: true,
+            repo_root: repo_root.display().to_string(),
+            demo: browser_payload_from_json(record.to_json_detail(), "demo inspect detail")?,
+        };
         return encode_json(
-            &json!({
-                "schema": "effigy.demo.inspect.v1",
-                "schema_version": 1,
-                "ok": true,
-                "repo_root": repo_root.display().to_string(),
-                "demo": record.to_json_detail(),
-            }),
+            &browser_payload_to_json(&payload, "demo inspect payload")?,
             true,
         );
     }
@@ -292,23 +318,35 @@ fn render_demo_inspect(
     renderer.text("")?;
 
     renderer.section("Active Attempt")?;
-    renderer.key_values(&record.active_attempt.to_key_values())?;
+    renderer.key_values(&active_attempt_key_values(&record.active_attempt))?;
     renderer.text("")?;
 
     renderer.section("Active Terminal Session")?;
-    renderer.key_values(&record.active_terminal_session.to_key_values())?;
-    if !record.active_terminal_session.recent_stdout.is_empty() {
+    renderer.key_values(&active_terminal_session_key_values(
+        &record.active_terminal_session,
+    ))?;
+    if !record
+        .active_terminal_session
+        .recent_output
+        .stdout_lines
+        .is_empty()
+    {
         renderer.text("")?;
         renderer.bullet_list(
             "recent-stdout",
-            &record.active_terminal_session.recent_stdout,
+            &record.active_terminal_session.recent_output.stdout_lines,
         )?;
     }
-    if !record.active_terminal_session.recent_stderr.is_empty() {
+    if !record
+        .active_terminal_session
+        .recent_output
+        .stderr_lines
+        .is_empty()
+    {
         renderer.text("")?;
         renderer.bullet_list(
             "recent-stderr",
-            &record.active_terminal_session.recent_stderr,
+            &record.active_terminal_session.recent_output.stderr_lines,
         )?;
     }
     renderer.text("")?;
@@ -438,43 +476,60 @@ fn render_demo_history(
     };
 
     if output_json {
-        return encode_json(
-            &json!({
-                "schema": "effigy.demo.history.v1",
-                "schema_version": 1,
-                "ok": true,
-                "repo_root": repo_root.display().to_string(),
-                "query": {
-                    "demo_id": demo_id,
-                    "limit": limit,
-                    "outcome": outcome.map(DemoHistoryOutcome::as_str),
-                    "attempt_id": selected_attempt_id,
-                    "ordinal": selected_attempt_ordinal,
-                },
-                "demo": {
-                    "id": record.id,
-                    "title": record.title,
-                    "owner": record.owner,
-                    "entrypoint": record.entrypoint.to_json(),
-                    "defined_in": record.primary_source,
-                },
-                "active_attempt": record.active_attempt.to_json(),
-                "latest_attempt": record.latest_attempt.to_json(),
-                "attempt_history": {
-                    "path": record.attempt_history.path,
-                    "stored_count": stored_count,
-                    "filtered_count": filtered_count,
-                    "displayed_count": displayed_count,
-                    "count": displayed_count,
-                    "limit": limit,
-                    "outcome": outcome.map(DemoHistoryOutcome::as_str),
-                    "parse_error": record.attempt_history.parse_error,
-                    "attempts": displayed_attempts.iter().enumerate().map(|(index, attempt)| {
-                        history_attempt_to_json(index + 1, attempt)
-                    }).collect::<Vec<_>>(),
-                },
-                "selected_attempt": selected_attempt.map(DemoHistoricalAttempt::to_json),
+        let payload = DemoHistoryPayload {
+            schema: "effigy.demo.history.v1".to_owned(),
+            schema_version: 1,
+            ok: true,
+            repo_root: repo_root.display().to_string(),
+            query: json!({
+                "demo_id": demo_id,
+                "limit": limit,
+                "outcome": outcome.map(DemoHistoryOutcome::as_str),
+                "attempt_id": selected_attempt_id,
+                "ordinal": selected_attempt_ordinal,
             }),
+            demo: DemoHistoryDemo {
+                id: record.id.clone(),
+                title: record.title.clone(),
+                owner: record.owner.clone(),
+                entrypoint: browser_payload_from_json(
+                    record.entrypoint.to_json(),
+                    "demo history entrypoint",
+                )?,
+                defined_in: record.primary_source.clone(),
+            },
+            active_attempt: browser_payload_from_json(
+                record.active_attempt.to_json(),
+                "demo history active attempt",
+            )?,
+            latest_attempt: browser_payload_from_json(
+                record.latest_attempt.to_json(),
+                "demo history latest attempt",
+            )?,
+            attempt_history: DemoHistoryAttemptHistoryPayload {
+                path: record.attempt_history.path.clone(),
+                stored_count,
+                filtered_count,
+                displayed_count,
+                count: displayed_count,
+                limit,
+                outcome: outcome.map(|value| value.as_str().to_owned()),
+                parse_error: record.attempt_history.parse_error.clone(),
+                attempts: displayed_attempts
+                    .iter()
+                    .enumerate()
+                    .map(|(index, attempt)| {
+                        browser_payload_from_json(
+                            history_attempt_to_json(index + 1, attempt),
+                            "demo history attempt",
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
+            selected_attempt: selected_attempt.cloned(),
+        };
+        return encode_json(
+            &browser_payload_to_json(&payload, "demo history payload")?,
             true,
         );
     }
@@ -540,7 +595,7 @@ fn render_demo_history(
     renderer.text("")?;
 
     renderer.section("Active Attempt")?;
-    renderer.key_values(&record.active_attempt.to_key_values())?;
+    renderer.key_values(&active_attempt_key_values(&record.active_attempt))?;
     renderer.text("")?;
 
     renderer.section("Recent Attempts")?;
@@ -1367,6 +1422,244 @@ fn availability_label(available: bool, reason: Option<&str>) -> String {
     }
 }
 
+fn active_attempt_key_values(active_attempt: &DemoActiveAttempt) -> Vec<KeyValue> {
+    let runtime_backend = active_attempt.runtime_backend();
+    let mut values = vec![
+        KeyValue::new("state", active_attempt.state.clone()),
+        KeyValue::new("runtime-backend", runtime_backend.label.clone()),
+        KeyValue::new(
+            "runtime-flattened",
+            if active_attempt.flattened_runtime_projection {
+                "yes"
+            } else {
+                "no"
+            },
+        ),
+        KeyValue::new(
+            "runtime-capabilities",
+            runtime_backend.rendered_capabilities(),
+        ),
+        KeyValue::new(
+            "runtime-shape",
+            runtime_backend.projection_shape.rendered_label().to_owned(),
+        ),
+        KeyValue::new(
+            "runtime-live-terminal",
+            if runtime_backend.projection_shape.live_terminal_eligible {
+                "yes"
+            } else {
+                "no"
+            },
+        ),
+        KeyValue::new(
+            "stoppable",
+            if active_attempt.stoppable {
+                "yes".to_owned()
+            } else {
+                "no".to_owned()
+            },
+        ),
+        KeyValue::new(
+            "state-path",
+            active_attempt
+                .state_path
+                .clone()
+                .unwrap_or_else(|| "<none>".to_owned()),
+        ),
+    ];
+    if let Some(attempt_id) = &active_attempt.attempt_id {
+        values.push(KeyValue::new("attempt-id", attempt_id.clone()));
+    }
+    if let Some(owner_pid) = active_attempt.owner_pid {
+        values.push(KeyValue::new("owner-pid", owner_pid.to_string()));
+    }
+    if let Some(target_pid) = active_attempt.target_pid {
+        values.push(KeyValue::new("target-pid", target_pid.to_string()));
+    }
+    if let Some(started_at_epoch_ms) = active_attempt.started_at_epoch_ms {
+        values.push(KeyValue::new(
+            "started-at-epoch-ms",
+            started_at_epoch_ms.to_string(),
+        ));
+    }
+    if let (Some(kind), Some(value)) = (
+        &active_attempt.entrypoint_kind,
+        &active_attempt.entrypoint_value,
+    ) {
+        values.push(KeyValue::new("entrypoint", format!("{kind}:{value}")));
+    }
+    if let Some(command) = &active_attempt.command {
+        values.push(KeyValue::new("command", command.clone()));
+    }
+    if let Some(count) = active_attempt.managed_process_count {
+        values.push(KeyValue::new("managed-process-count", count.to_string()));
+    }
+    if runtime_backend.projected_process_summary.present {
+        values.push(KeyValue::new(
+            "managed-processes",
+            runtime_backend.projected_process_summary.rendered_names(),
+        ));
+        values.push(KeyValue::new(
+            "runtime-merged-output",
+            if runtime_backend
+                .projected_process_summary
+                .merged_output_from_multiple_processes
+            {
+                "yes"
+            } else {
+                "no"
+            },
+        ));
+        values.push(KeyValue::new(
+            "runtime-output-provenance",
+            runtime_backend
+                .projected_output_provenance
+                .rendered_label()
+                .to_owned(),
+        ));
+    }
+    if let Some(stdout_log_path) = &active_attempt.stdout_log_path {
+        values.push(KeyValue::new("stdout-log", stdout_log_path.clone()));
+    }
+    if let Some(stderr_log_path) = &active_attempt.stderr_log_path {
+        values.push(KeyValue::new("stderr-log", stderr_log_path.clone()));
+    }
+    if let Some(parse_error) = &active_attempt.parse_error {
+        values.push(KeyValue::new("parse-error", parse_error.clone()));
+    }
+    values
+}
+
+fn active_terminal_session_key_values(session: &DemoActiveTerminalSession) -> Vec<KeyValue> {
+    let mut values = vec![
+        KeyValue::new("state", session.state.clone()),
+        KeyValue::new("runtime-backend", session.runtime_backend.label.clone()),
+        KeyValue::new(
+            "runtime-flattened",
+            if session.runtime_backend.flattened_projection {
+                "yes"
+            } else {
+                "no"
+            },
+        ),
+        KeyValue::new(
+            "runtime-capabilities",
+            session.runtime_backend.rendered_capabilities(),
+        ),
+        KeyValue::new(
+            "runtime-shape",
+            session
+                .runtime_backend
+                .projection_shape
+                .rendered_label()
+                .to_owned(),
+        ),
+        KeyValue::new(
+            "runtime-live-terminal",
+            if session
+                .runtime_backend
+                .projection_shape
+                .live_terminal_eligible
+            {
+                "yes"
+            } else {
+                "no"
+            },
+        ),
+        KeyValue::new("transport", session.transport.clone()),
+        KeyValue::new("pty", if session.pty { "yes" } else { "no" }),
+        KeyValue::new(
+            "input-forwarding",
+            if session.input_forwarding.available {
+                "yes".to_owned()
+            } else {
+                availability_label(false, session.input_forwarding_reason.as_deref())
+            },
+        ),
+        KeyValue::new(
+            "input-command",
+            session.input_forwarding.command_template.clone(),
+        ),
+        KeyValue::new(
+            "terminal-size",
+            session
+                .terminal_size
+                .rendered()
+                .unwrap_or_else(|| "<unknown>".to_owned()),
+        ),
+        KeyValue::new(
+            "resize",
+            if session.resize.available {
+                "yes".to_owned()
+            } else {
+                availability_label(false, session.resize.reason.as_deref())
+            },
+        ),
+        KeyValue::new("resize-command", session.resize.command_template.clone()),
+        KeyValue::new("nested-tui", if session.nested_tui { "yes" } else { "no" }),
+        KeyValue::new(
+            "output-available",
+            if session.output_available {
+                "yes"
+            } else {
+                "no"
+            },
+        ),
+    ];
+    if let Some(attempt_id) = &session.attempt_id {
+        values.push(KeyValue::new("attempt-id", attempt_id.clone()));
+    }
+    if let Some(stdin_input_path) = &session.stdin_input_path {
+        values.push(KeyValue::new("stdin-input", stdin_input_path.clone()));
+    }
+    if let Some(resize_handoff_path) = &session.resize_handoff_path {
+        values.push(KeyValue::new("resize-handoff", resize_handoff_path.clone()));
+    }
+    if let Some(stdout_log_path) = &session.stdout_log_path {
+        values.push(KeyValue::new("stdout-log", stdout_log_path.clone()));
+    }
+    if let Some(stderr_log_path) = &session.stderr_log_path {
+        values.push(KeyValue::new("stderr-log", stderr_log_path.clone()));
+    }
+    if let Some(count) = session
+        .runtime_backend
+        .projection_shape
+        .managed_process_count
+    {
+        values.push(KeyValue::new("managed-process-count", count.to_string()));
+    }
+    if session.runtime_backend.projected_process_summary.present {
+        values.push(KeyValue::new(
+            "managed-processes",
+            session
+                .runtime_backend
+                .projected_process_summary
+                .rendered_names(),
+        ));
+        values.push(KeyValue::new(
+            "runtime-merged-output",
+            if session
+                .runtime_backend
+                .projected_process_summary
+                .merged_output_from_multiple_processes
+            {
+                "yes"
+            } else {
+                "no"
+            },
+        ));
+        values.push(KeyValue::new(
+            "runtime-output-provenance",
+            session
+                .runtime_backend
+                .projected_output_provenance
+                .rendered_label()
+                .to_owned(),
+        ));
+    }
+    values
+}
+
 fn build_demo_record(
     repo_root: &Path,
     loaded: &LoadedTaskManifest,
@@ -1475,118 +1768,16 @@ fn load_latest_attempt(
     demo_id: &str,
     demo: &ManifestDemoConfig,
 ) -> Result<DemoLatestAttempt, RunnerError> {
-    let receipt_path = effective_receipt_path(repo_root, demo_id, demo);
-    let mut artifacts = demo.artifacts.clone();
-    let rendered_receipt_path = display_repo_path(&receipt_path, repo_root);
-    if !receipt_path.exists() {
-        return Ok(DemoLatestAttempt {
-            recorded: false,
-            receipt_path: Some(rendered_receipt_path),
-            outcome: None,
-            summary: None,
-            stale: false,
-            artifacts,
-            stdout_log_path: None,
-            stderr_log_path: None,
-            parse_error: None,
-        });
-    }
-
-    let content = fs::read_to_string(&receipt_path)
-        .map_err(|error| RunnerError::task_invocation_failed_read(&receipt_path, error))?;
-    let parsed = match serde_json::from_str::<JsonValue>(&content) {
-        Ok(parsed) => parsed,
-        Err(error) => {
-            return Ok(DemoLatestAttempt {
-                recorded: true,
-                receipt_path: Some(rendered_receipt_path),
-                outcome: None,
-                summary: None,
-                stale: false,
-                artifacts,
-                stdout_log_path: None,
-                stderr_log_path: None,
-                parse_error: Some(error.to_string()),
-            });
-        }
-    };
-
-    if let Some(receipt_artifacts) = parsed.get("artifacts").and_then(normalize_artifact_refs) {
-        for artifact in receipt_artifacts {
-            if !artifacts.contains(&artifact) {
-                artifacts.push(artifact);
-            }
-        }
-    }
-
-    Ok(DemoLatestAttempt {
-        recorded: true,
-        receipt_path: Some(rendered_receipt_path),
-        outcome: parsed
-            .get("status")
-            .and_then(JsonValue::as_str)
-            .map(str::to_owned),
-        summary: parsed
-            .get("summary")
-            .and_then(JsonValue::as_str)
-            .map(str::to_owned),
-        stale: parsed
-            .get("stale")
-            .and_then(JsonValue::as_bool)
-            .unwrap_or(false)
-            || parsed
-                .get("freshness")
-                .and_then(JsonValue::as_str)
-                .is_some_and(|value| value.eq_ignore_ascii_case("stale")),
-        artifacts,
-        stdout_log_path: parsed
-            .get("stdout_log_path")
-            .and_then(JsonValue::as_str)
-            .map(str::to_owned),
-        stderr_log_path: parsed
-            .get("stderr_log_path")
-            .and_then(JsonValue::as_str)
-            .map(str::to_owned),
-        parse_error: None,
-    })
+    load_demo_latest_attempt(repo_root, demo_id, demo)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
 fn load_attempt_history(
     repo_root: &Path,
     demo_id: &str,
 ) -> Result<DemoAttemptHistory, RunnerError> {
-    let path = effective_attempt_history_path(repo_root, demo_id);
-    let rendered_path = display_repo_path(&path, repo_root);
-    if !path.exists() {
-        return Ok(DemoAttemptHistory {
-            path: Some(rendered_path),
-            attempts: Vec::new(),
-            parse_error: None,
-        });
-    }
-
-    let content = fs::read_to_string(&path)
-        .map_err(|error| RunnerError::task_invocation_failed_read(&path, error))?;
-    let parsed = match serde_json::from_str::<PersistedDemoAttemptHistory>(&content) {
-        Ok(parsed) => parsed,
-        Err(error) => {
-            return Ok(DemoAttemptHistory {
-                path: Some(rendered_path),
-                attempts: Vec::new(),
-                parse_error: Some(error.to_string()),
-            });
-        }
-    };
-
-    Ok(DemoAttemptHistory {
-        path: Some(rendered_path),
-        attempts: parsed
-            .attempts
-            .into_iter()
-            .map(DemoHistoricalAttempt::from_persisted)
-            .collect(),
-        parse_error: None,
-    })
+    load_demo_attempt_history(repo_root, demo_id)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
 fn load_active_attempt(repo_root: &Path, demo_id: &str) -> Result<DemoActiveAttempt, RunnerError> {
@@ -1658,9 +1849,9 @@ fn load_active_terminal_session(
             rows: active_attempt.terminal_rows,
         },
         resize: if active_attempt.supports_resize {
-            DemoTerminalResizeForwarding::available()
+            DemoTerminalResize::available()
         } else {
-            DemoTerminalResizeForwarding::unavailable(
+            DemoTerminalResize::unavailable(
                 "terminal resize handoff is not exposed through the current demo runtime"
                     .to_owned(),
             )
@@ -1670,18 +1861,20 @@ fn load_active_terminal_session(
         stdout_log_path: stdout_log_path.clone(),
         stderr_log_path: stderr_log_path.clone(),
         output_available: stdout_log_path.is_some() || stderr_log_path.is_some(),
-        recent_stdout: stdout_log_path
-            .as_deref()
-            .map(|path| {
-                read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES)
-            })
-            .unwrap_or_default(),
-        recent_stderr: stderr_log_path
-            .as_deref()
-            .map(|path| {
-                read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES)
-            })
-            .unwrap_or_default(),
+        recent_output: DemoTerminalRecentOutput {
+            stdout_lines: stdout_log_path
+                .as_deref()
+                .map(|path| {
+                    read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES)
+                })
+                .unwrap_or_default(),
+            stderr_lines: stderr_log_path
+                .as_deref()
+                .map(|path| {
+                    read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES)
+                })
+                .unwrap_or_default(),
+        },
     }
 }
 
@@ -1854,30 +2047,6 @@ fn infer_managed_process_count(record: &PersistedDemoActiveAttempt) -> Option<us
     None
 }
 
-fn runtime_projection_shape_for_active_attempt(
-    active_attempt: &DemoActiveAttempt,
-) -> DemoRuntimeProjectionShape {
-    match active_attempt.projection_shape_kind.as_str() {
-        "single-terminal" => {
-            DemoRuntimeProjectionShape::single_terminal(active_attempt.managed_process_count)
-        }
-        "projected-multi-process" => DemoRuntimeProjectionShape::projected_multi_process(
-            active_attempt.managed_process_count,
-        ),
-        _ => DemoRuntimeProjectionShape::none(),
-    }
-}
-
-fn runtime_projected_process_summary_for_active_attempt(
-    active_attempt: &DemoActiveAttempt,
-) -> DemoRuntimeProjectedProcessSummary {
-    if active_attempt.managed_process_names.is_empty() {
-        DemoRuntimeProjectedProcessSummary::none()
-    } else {
-        DemoRuntimeProjectedProcessSummary::from_names(active_attempt.managed_process_names.clone())
-    }
-}
-
 fn infer_projected_output_provenance_kind(record: &PersistedDemoActiveAttempt) -> &str {
     if let Some(kind) = record.projected_output_provenance_kind.as_deref() {
         return kind;
@@ -1895,27 +2064,6 @@ fn infer_projected_output_provenance_kind(record: &PersistedDemoActiveAttempt) -
     "flattened-unlabeled"
 }
 
-fn runtime_projected_output_provenance_for_active_attempt(
-    active_attempt: &DemoActiveAttempt,
-) -> DemoRuntimeProjectedOutputProvenance {
-    match active_attempt.projected_output_provenance_kind.as_str() {
-        "single-source" => DemoRuntimeProjectedOutputProvenance::single_source(),
-        "source-attributed" => DemoRuntimeProjectedOutputProvenance::source_attributed(),
-        "flattened-unlabeled" => DemoRuntimeProjectedOutputProvenance::flattened_unlabeled(),
-        _ => DemoRuntimeProjectedOutputProvenance::none(),
-    }
-}
-
-fn runtime_backend_label(kind: &str) -> &'static str {
-    match kind {
-        "task" => "task-backed",
-        "run" => "run-backed",
-        "concurrent-runner" => "concurrent-runner-backed",
-        "none" => "none",
-        _ => "custom-runtime",
-    }
-}
-
 fn read_active_attempt_record(
     repo_root: &Path,
     demo_id: &str,
@@ -1929,25 +2077,6 @@ fn read_active_attempt_record(
     let parsed = serde_json::from_str::<PersistedDemoActiveAttempt>(&content)
         .map_err(|error| RunnerError::task_invocation_failed_parse(&path, error))?;
     Ok(Some(parsed))
-}
-
-fn normalize_artifact_refs(value: &JsonValue) -> Option<Vec<String>> {
-    let entries = value.as_array()?;
-    let mut rendered = Vec::new();
-    for entry in entries {
-        match entry {
-            JsonValue::String(path) if !path.trim().is_empty() => rendered.push(path.clone()),
-            JsonValue::Object(map) => {
-                if let Some(path) = map.get("path").and_then(JsonValue::as_str) {
-                    if !path.trim().is_empty() {
-                        rendered.push(path.to_owned());
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    Some(rendered)
 }
 
 fn read_recent_output_lines(repo_root: &Path, rendered_path: &str, limit: usize) -> Vec<String> {
@@ -3522,113 +3651,26 @@ fn write_latest_attempt_receipt(
     Ok(())
 }
 
-fn effective_receipt_path(repo_root: &Path, demo_id: &str, demo: &ManifestDemoConfig) -> PathBuf {
-    if let Some(path) = &demo.receipt {
-        return repo_root.join(path);
-    }
-    repo_root
-        .join(DEMO_RECEIPTS_DIR)
-        .join(format!("{}.json", sanitize_demo_id_for_filename(demo_id)))
-}
-
-fn effective_active_attempt_path(repo_root: &Path, demo_id: &str) -> PathBuf {
-    repo_root
-        .join(DEMO_ACTIVE_DIR)
-        .join(format!("{}.json", sanitize_demo_id_for_filename(demo_id)))
-}
-
-fn effective_attempt_history_path(repo_root: &Path, demo_id: &str) -> PathBuf {
-    repo_root
-        .join(DEMO_HISTORY_DIR)
-        .join(format!("{}.json", sanitize_demo_id_for_filename(demo_id)))
-}
-
-fn effective_output_log_path(repo_root: &Path, demo_id: &str, stream: &str) -> PathBuf {
-    repo_root.join(DEMO_LOGS_DIR).join(format!(
-        "{}.{}.log",
-        sanitize_demo_id_for_filename(demo_id),
-        stream
-    ))
-}
-
-fn effective_input_handoff_path(repo_root: &Path, demo_id: &str) -> PathBuf {
-    repo_root.join(DEMO_ACTIVE_DIR).join(format!(
-        "{}.stdin.log",
-        sanitize_demo_id_for_filename(demo_id)
-    ))
-}
-
-fn effective_resize_handoff_path(repo_root: &Path, demo_id: &str) -> PathBuf {
-    repo_root.join(DEMO_ACTIVE_DIR).join(format!(
-        "{}.resize.jsonl",
-        sanitize_demo_id_for_filename(demo_id)
-    ))
-}
-
-fn render_active_attempt_path(repo_root: &Path, demo_id: &str) -> String {
-    display_repo_path(
-        &effective_active_attempt_path(repo_root, demo_id),
-        repo_root,
-    )
-}
-
 fn append_attempt_history(
     repo_root: &Path,
     demo_id: &str,
     demo: &ManifestDemoConfig,
     attempt: &DemoExecutionAttempt,
 ) -> Result<(), RunnerError> {
-    let path = effective_attempt_history_path(repo_root, demo_id);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| RunnerError::task_invocation_failed_write(parent, error))?;
-    }
-
-    let mut history = if path.exists() {
-        let content = fs::read_to_string(&path)
-            .map_err(|error| RunnerError::task_invocation_failed_read(&path, error))?;
-        serde_json::from_str::<PersistedDemoAttemptHistory>(&content)
-            .map_err(|error| RunnerError::task_invocation_failed_parse(&path, error))?
-    } else {
-        PersistedDemoAttemptHistory::new(demo_id)
-    };
-
-    history.push(PersistedDemoHistoricalAttempt::from_execution(
+    append_demo_attempt_history(
+        repo_root,
         demo_id,
         demo,
-        attempt,
-        display_repo_path(&effective_receipt_path(repo_root, demo_id, demo), repo_root),
-    ));
-
-    let rendered = serde_json::to_string_pretty(&history)
-        .map_err(|error| RunnerError::task_invocation_failed_render(&path, error))?;
-    fs::write(&path, rendered)
-        .map_err(|error| RunnerError::task_invocation_failed_write(&path, error))
-}
-
-fn build_attempt_id(demo_id: &str) -> String {
-    format!(
-        "{}-{}",
-        sanitize_demo_id_for_filename(demo_id),
-        now_epoch_ms()
+        &DemoAttemptRecord {
+            outcome: attempt.outcome.clone(),
+            summary: attempt.summary.clone(),
+            stdout_log_path: attempt.stdout_log_path.clone(),
+            stderr_log_path: attempt.stderr_log_path.clone(),
+            exit_code: attempt.exit_code,
+            recorded_at_epoch_ms: attempt.recorded_at_epoch_ms,
+        },
     )
-}
-
-fn sanitize_demo_id_for_filename(demo_id: &str) -> String {
-    demo_id
-        .chars()
-        .map(|ch| match ch {
-            '/' | '\\' | ':' => '_',
-            _ => ch,
-        })
-        .collect()
-}
-
-fn now_epoch_ms() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or(0)
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
 fn persist_demo_attempt_logs(
@@ -3704,13 +3746,6 @@ fn display_status(
     }
 }
 
-fn display_repo_path(path: &Path, repo_root: &Path) -> String {
-    path.strip_prefix(repo_root)
-        .unwrap_or(path)
-        .display()
-        .to_string()
-}
-
 fn demo_error(
     output_json: bool,
     schema: &str,
@@ -3730,6 +3765,28 @@ fn demo_error(
         return Err(RunnerError::CommandJsonFailure { rendered });
     }
     Err(RunnerError::task_invocation(message))
+}
+
+fn browser_payload_from_json<T: DeserializeOwned>(
+    value: JsonValue,
+    context: &str,
+) -> Result<T, RunnerError> {
+    serde_json::from_value(value).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to build shared demo browser payload for {context}: {error}"
+        ))
+    })
+}
+
+fn browser_payload_to_json<T: Serialize>(
+    value: &T,
+    context: &str,
+) -> Result<JsonValue, RunnerError> {
+    serde_json::to_value(value).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to render shared demo browser payload for {context}: {error}"
+        ))
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -4039,229 +4096,6 @@ impl DemoEntrypoint {
     }
 }
 
-#[derive(Debug, Clone)]
-struct DemoRuntimeBackend {
-    kind: String,
-    label: String,
-    flattened_projection: bool,
-    projection_shape: DemoRuntimeProjectionShape,
-    projected_process_summary: DemoRuntimeProjectedProcessSummary,
-    projected_output_provenance: DemoRuntimeProjectedOutputProvenance,
-    capabilities: Vec<String>,
-}
-
-impl DemoRuntimeBackend {
-    fn none() -> Self {
-        Self {
-            kind: "none".to_owned(),
-            label: "none".to_owned(),
-            flattened_projection: false,
-            projection_shape: DemoRuntimeProjectionShape::none(),
-            projected_process_summary: DemoRuntimeProjectedProcessSummary::none(),
-            projected_output_provenance: DemoRuntimeProjectedOutputProvenance::none(),
-            capabilities: Vec::new(),
-        }
-    }
-
-    fn from_entrypoint(entrypoint: &DemoEntrypoint) -> Self {
-        match entrypoint {
-            DemoEntrypoint::Task(_) => Self {
-                kind: "task".to_owned(),
-                label: "task-backed".to_owned(),
-                flattened_projection: false,
-                projection_shape: DemoRuntimeProjectionShape::none(),
-                projected_process_summary: DemoRuntimeProjectedProcessSummary::none(),
-                projected_output_provenance: DemoRuntimeProjectedOutputProvenance::none(),
-                capabilities: Vec::new(),
-            },
-            DemoEntrypoint::Run(_) => Self {
-                kind: "run".to_owned(),
-                label: "run-backed".to_owned(),
-                flattened_projection: false,
-                projection_shape: DemoRuntimeProjectionShape::single_terminal(None),
-                projected_process_summary: DemoRuntimeProjectedProcessSummary::none(),
-                projected_output_provenance: DemoRuntimeProjectedOutputProvenance::none(),
-                capabilities: vec![
-                    "active-terminal-session".to_owned(),
-                    "browser-live-attach".to_owned(),
-                    "live-terminal-output".to_owned(),
-                    "stop".to_owned(),
-                ],
-            },
-        }
-    }
-
-    fn rendered_capabilities(&self) -> String {
-        if self.capabilities.is_empty() {
-            "none".to_owned()
-        } else {
-            self.capabilities.join(", ")
-        }
-    }
-
-    fn to_json(&self) -> JsonValue {
-        json!({
-            "kind": self.kind,
-            "label": self.label,
-            "flattened_projection": self.flattened_projection,
-            "projection_shape": self.projection_shape.to_json(),
-            "projected_process_summary": self.projected_process_summary.to_json(),
-            "projected_output_provenance": self.projected_output_provenance.to_json(),
-            "capabilities": self.capabilities,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct DemoRuntimeProjectionShape {
-    kind: String,
-    live_terminal_eligible: bool,
-    projected_multi_process: bool,
-    managed_process_count: Option<usize>,
-}
-
-impl DemoRuntimeProjectionShape {
-    fn none() -> Self {
-        Self {
-            kind: "none".to_owned(),
-            live_terminal_eligible: false,
-            projected_multi_process: false,
-            managed_process_count: None,
-        }
-    }
-
-    fn single_terminal(managed_process_count: Option<usize>) -> Self {
-        Self {
-            kind: "single-terminal".to_owned(),
-            live_terminal_eligible: true,
-            projected_multi_process: false,
-            managed_process_count,
-        }
-    }
-
-    fn projected_multi_process(managed_process_count: Option<usize>) -> Self {
-        Self {
-            kind: "projected-multi-process".to_owned(),
-            live_terminal_eligible: false,
-            projected_multi_process: true,
-            managed_process_count,
-        }
-    }
-
-    fn rendered_label(&self) -> &str {
-        &self.kind
-    }
-
-    fn to_json(&self) -> JsonValue {
-        json!({
-            "kind": self.kind,
-            "live_terminal_eligible": self.live_terminal_eligible,
-            "projected_multi_process": self.projected_multi_process,
-            "managed_process_count": self.managed_process_count,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct DemoRuntimeProjectedProcessSummary {
-    present: bool,
-    managed_process_names: Vec<String>,
-    merged_output_from_multiple_processes: bool,
-}
-
-impl DemoRuntimeProjectedProcessSummary {
-    fn none() -> Self {
-        Self {
-            present: false,
-            managed_process_names: Vec::new(),
-            merged_output_from_multiple_processes: false,
-        }
-    }
-
-    fn from_names(managed_process_names: Vec<String>) -> Self {
-        Self {
-            present: !managed_process_names.is_empty(),
-            merged_output_from_multiple_processes: managed_process_names.len() > 1,
-            managed_process_names,
-        }
-    }
-
-    fn rendered_names(&self) -> String {
-        if self.managed_process_names.is_empty() {
-            "none".to_owned()
-        } else {
-            self.managed_process_names.join(", ")
-        }
-    }
-
-    fn to_json(&self) -> JsonValue {
-        json!({
-            "present": self.present,
-            "managed_process_names": self.managed_process_names,
-            "merged_output_from_multiple_processes": self.merged_output_from_multiple_processes,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct DemoRuntimeProjectedOutputProvenance {
-    present: bool,
-    kind: String,
-    label: String,
-    source_attributed: bool,
-}
-
-impl DemoRuntimeProjectedOutputProvenance {
-    fn none() -> Self {
-        Self {
-            present: false,
-            kind: "none".to_owned(),
-            label: "none".to_owned(),
-            source_attributed: false,
-        }
-    }
-
-    fn single_source() -> Self {
-        Self {
-            present: true,
-            kind: "single-source".to_owned(),
-            label: "single-source".to_owned(),
-            source_attributed: false,
-        }
-    }
-
-    fn flattened_unlabeled() -> Self {
-        Self {
-            present: true,
-            kind: "flattened-unlabeled".to_owned(),
-            label: "flattened-unlabeled".to_owned(),
-            source_attributed: false,
-        }
-    }
-
-    fn source_attributed() -> Self {
-        Self {
-            present: true,
-            kind: "source-attributed".to_owned(),
-            label: "source-attributed".to_owned(),
-            source_attributed: true,
-        }
-    }
-
-    fn rendered_label(&self) -> &str {
-        &self.label
-    }
-
-    fn to_json(&self) -> JsonValue {
-        json!({
-            "present": self.present,
-            "kind": self.kind,
-            "label": self.label,
-            "source_attributed": self.source_attributed,
-        })
-    }
-}
-
 fn demo_runtime_backend(
     repo_root: &Path,
     loaded: &LoadedTaskManifest,
@@ -4327,10 +4161,13 @@ fn demo_runtime_backend_from_entrypoint(
                     capabilities,
                 }
             } else {
-                DemoRuntimeBackend::from_entrypoint(entrypoint)
+                match entrypoint {
+                    DemoEntrypoint::Task(_) => DemoRuntimeBackend::task(),
+                    DemoEntrypoint::Run(_) => DemoRuntimeBackend::run(),
+                }
             }
         }
-        DemoEntrypoint::Run(_) => DemoRuntimeBackend::from_entrypoint(entrypoint),
+        DemoEntrypoint::Run(_) => DemoRuntimeBackend::run(),
     }
 }
 
@@ -4402,688 +4239,6 @@ impl DemoLogPaths {
 }
 
 #[derive(Debug, Clone)]
-struct DemoActiveAttempt {
-    active: bool,
-    state: String,
-    attempt_id: Option<String>,
-    state_path: Option<String>,
-    owner_pid: Option<u32>,
-    target_pid: Option<u32>,
-    stoppable: bool,
-    started_at_epoch_ms: Option<u128>,
-    entrypoint_kind: Option<String>,
-    entrypoint_value: Option<String>,
-    command: Option<String>,
-    runtime_backend_kind: String,
-    flattened_runtime_projection: bool,
-    browser_live_attach_supported: bool,
-    projection_shape_kind: String,
-    managed_process_count: Option<usize>,
-    managed_process_names: Vec<String>,
-    projected_output_provenance_kind: String,
-    terminal_transport: DemoTerminalTransport,
-    supports_input_forwarding: bool,
-    supports_resize: bool,
-    nested_tui: bool,
-    terminal_cols: Option<u16>,
-    terminal_rows: Option<u16>,
-    resize_handoff_path: Option<String>,
-    stdin_input_path: Option<String>,
-    stdout_log_path: Option<String>,
-    stderr_log_path: Option<String>,
-    parse_error: Option<String>,
-}
-
-impl DemoActiveAttempt {
-    fn inactive(state_path: Option<String>) -> Self {
-        Self {
-            active: false,
-            state: "not-active".to_owned(),
-            attempt_id: None,
-            state_path,
-            owner_pid: None,
-            target_pid: None,
-            stoppable: false,
-            started_at_epoch_ms: None,
-            entrypoint_kind: None,
-            entrypoint_value: None,
-            command: None,
-            runtime_backend_kind: "none".to_owned(),
-            flattened_runtime_projection: false,
-            browser_live_attach_supported: false,
-            projection_shape_kind: "none".to_owned(),
-            managed_process_count: None,
-            managed_process_names: Vec::new(),
-            projected_output_provenance_kind: "none".to_owned(),
-            terminal_transport: DemoTerminalTransport::None,
-            supports_input_forwarding: false,
-            supports_resize: false,
-            nested_tui: false,
-            terminal_cols: None,
-            terminal_rows: None,
-            resize_handoff_path: None,
-            stdin_input_path: None,
-            stdout_log_path: None,
-            stderr_log_path: None,
-            parse_error: None,
-        }
-    }
-
-    fn state_label(&self) -> &str {
-        &self.state
-    }
-
-    fn runtime_backend(&self) -> DemoRuntimeBackend {
-        if !self.active {
-            return DemoRuntimeBackend::none();
-        }
-        let mut capabilities = Vec::new();
-        if matches!(
-            self.runtime_backend_kind.as_str(),
-            "run" | "concurrent-runner"
-        ) {
-            capabilities.push("active-terminal-session".to_owned());
-            capabilities.push("live-terminal-output".to_owned());
-            if self.stoppable {
-                capabilities.push("stop".to_owned());
-            }
-            if self.browser_live_attach_supported {
-                capabilities.push("browser-live-attach".to_owned());
-            }
-            if self.supports_input_forwarding {
-                capabilities.push("input-forwarding".to_owned());
-            }
-            if self.supports_resize {
-                capabilities.push("resize".to_owned());
-            }
-            if self.terminal_transport == DemoTerminalTransport::Pty {
-                capabilities.push("pty".to_owned());
-            }
-        }
-        DemoRuntimeBackend {
-            kind: self.runtime_backend_kind.clone(),
-            label: runtime_backend_label(&self.runtime_backend_kind).to_owned(),
-            flattened_projection: self.flattened_runtime_projection,
-            projection_shape: runtime_projection_shape_for_active_attempt(self),
-            projected_process_summary: runtime_projected_process_summary_for_active_attempt(self),
-            projected_output_provenance: runtime_projected_output_provenance_for_active_attempt(
-                self,
-            ),
-            capabilities,
-        }
-    }
-
-    fn to_key_values(&self) -> Vec<KeyValue> {
-        let mut values = vec![
-            KeyValue::new("state", self.state.clone()),
-            KeyValue::new("runtime-backend", self.runtime_backend().label.clone()),
-            KeyValue::new(
-                "runtime-flattened",
-                if self.flattened_runtime_projection {
-                    "yes"
-                } else {
-                    "no"
-                },
-            ),
-            KeyValue::new(
-                "runtime-capabilities",
-                self.runtime_backend().rendered_capabilities(),
-            ),
-            KeyValue::new(
-                "runtime-shape",
-                self.runtime_backend()
-                    .projection_shape
-                    .rendered_label()
-                    .to_owned(),
-            ),
-            KeyValue::new(
-                "runtime-live-terminal",
-                if self
-                    .runtime_backend()
-                    .projection_shape
-                    .live_terminal_eligible
-                {
-                    "yes"
-                } else {
-                    "no"
-                },
-            ),
-            KeyValue::new(
-                "stoppable",
-                if self.stoppable {
-                    "yes".to_owned()
-                } else {
-                    "no".to_owned()
-                },
-            ),
-            KeyValue::new(
-                "state-path",
-                self.state_path
-                    .clone()
-                    .unwrap_or_else(|| "<none>".to_owned()),
-            ),
-        ];
-        if let Some(attempt_id) = &self.attempt_id {
-            values.push(KeyValue::new("attempt-id", attempt_id.clone()));
-        }
-        if let Some(owner_pid) = self.owner_pid {
-            values.push(KeyValue::new("owner-pid", owner_pid.to_string()));
-        }
-        if let Some(target_pid) = self.target_pid {
-            values.push(KeyValue::new("target-pid", target_pid.to_string()));
-        }
-        if let Some(started_at_epoch_ms) = self.started_at_epoch_ms {
-            values.push(KeyValue::new(
-                "started-at-epoch-ms",
-                started_at_epoch_ms.to_string(),
-            ));
-        }
-        if let (Some(kind), Some(value)) = (&self.entrypoint_kind, &self.entrypoint_value) {
-            values.push(KeyValue::new("entrypoint", format!("{kind}:{value}")));
-        }
-        if let Some(command) = &self.command {
-            values.push(KeyValue::new("command", command.clone()));
-        }
-        if let Some(count) = self.managed_process_count {
-            values.push(KeyValue::new("managed-process-count", count.to_string()));
-        }
-        if !self
-            .runtime_backend()
-            .projected_process_summary
-            .managed_process_names
-            .is_empty()
-        {
-            values.push(KeyValue::new(
-                "managed-processes",
-                self.runtime_backend()
-                    .projected_process_summary
-                    .rendered_names(),
-            ));
-            values.push(KeyValue::new(
-                "runtime-merged-output",
-                if self
-                    .runtime_backend()
-                    .projected_process_summary
-                    .merged_output_from_multiple_processes
-                {
-                    "yes"
-                } else {
-                    "no"
-                },
-            ));
-            values.push(KeyValue::new(
-                "runtime-output-provenance",
-                self.runtime_backend()
-                    .projected_output_provenance
-                    .rendered_label()
-                    .to_owned(),
-            ));
-        }
-        if let Some(stdout_log_path) = &self.stdout_log_path {
-            values.push(KeyValue::new("stdout-log", stdout_log_path.clone()));
-        }
-        if let Some(stderr_log_path) = &self.stderr_log_path {
-            values.push(KeyValue::new("stderr-log", stderr_log_path.clone()));
-        }
-        if let Some(parse_error) = &self.parse_error {
-            values.push(KeyValue::new("parse-error", parse_error.clone()));
-        }
-        values
-    }
-
-    fn to_json(&self) -> JsonValue {
-        json!({
-            "active": self.active,
-            "state": self.state,
-            "attempt_id": self.attempt_id,
-            "state_path": self.state_path,
-            "owner_pid": self.owner_pid,
-            "target_pid": self.target_pid,
-            "stoppable": self.stoppable,
-            "started_at_epoch_ms": self.started_at_epoch_ms,
-            "entrypoint": {
-                "kind": self.entrypoint_kind,
-                "value": self.entrypoint_value,
-            },
-            "command": self.command,
-            "runtime_backend": self.runtime_backend().to_json(),
-            "terminal_transport": self.terminal_transport.rendered(),
-            "supports_input_forwarding": self.supports_input_forwarding,
-            "supports_resize": self.supports_resize,
-            "nested_tui": self.nested_tui,
-            "terminal_size": {
-                "cols": self.terminal_cols,
-                "rows": self.terminal_rows,
-            },
-            "resize_handoff_path": self.resize_handoff_path,
-            "stdin_input_path": self.stdin_input_path,
-            "stdout_log_path": self.stdout_log_path,
-            "stderr_log_path": self.stderr_log_path,
-            "output_available": self.stdout_log_path.is_some() || self.stderr_log_path.is_some(),
-            "parse_error": self.parse_error,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DemoTerminalTransport {
-    None,
-    Stream,
-    Pty,
-}
-
-impl DemoTerminalTransport {
-    fn rendered(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Stream => "stream",
-            Self::Pty => "pty",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct DemoActiveTerminalSession {
-    available: bool,
-    state: String,
-    attempt_id: Option<String>,
-    runtime_backend: DemoRuntimeBackend,
-    transport: String,
-    pty: bool,
-    supports_input_forwarding: bool,
-    input_forwarding_reason: Option<String>,
-    input_forwarding: DemoTerminalInputForwarding,
-    nested_tui: bool,
-    terminal_size: DemoTerminalSize,
-    resize: DemoTerminalResizeForwarding,
-    resize_handoff_path: Option<String>,
-    stdin_input_path: Option<String>,
-    stdout_log_path: Option<String>,
-    stderr_log_path: Option<String>,
-    output_available: bool,
-    recent_stdout: Vec<String>,
-    recent_stderr: Vec<String>,
-}
-
-impl DemoActiveTerminalSession {
-    fn inactive() -> Self {
-        Self {
-            available: false,
-            state: "none".to_owned(),
-            attempt_id: None,
-            runtime_backend: DemoRuntimeBackend::none(),
-            transport: "none".to_owned(),
-            pty: false,
-            supports_input_forwarding: false,
-            input_forwarding_reason: Some(
-                "no active demo terminal session is currently available".to_owned(),
-            ),
-            input_forwarding: DemoTerminalInputForwarding::unavailable(
-                "no active demo terminal session is currently available".to_owned(),
-            ),
-            nested_tui: false,
-            terminal_size: DemoTerminalSize {
-                cols: None,
-                rows: None,
-            },
-            resize: DemoTerminalResizeForwarding::unavailable(
-                "no active demo terminal session is currently available".to_owned(),
-            ),
-            resize_handoff_path: None,
-            stdin_input_path: None,
-            stdout_log_path: None,
-            stderr_log_path: None,
-            output_available: false,
-            recent_stdout: Vec::new(),
-            recent_stderr: Vec::new(),
-        }
-    }
-
-    fn to_key_values(&self) -> Vec<KeyValue> {
-        let mut values = vec![
-            KeyValue::new("state", self.state.clone()),
-            KeyValue::new("runtime-backend", self.runtime_backend.label.clone()),
-            KeyValue::new(
-                "runtime-flattened",
-                if self.runtime_backend.flattened_projection {
-                    "yes"
-                } else {
-                    "no"
-                },
-            ),
-            KeyValue::new(
-                "runtime-capabilities",
-                self.runtime_backend.rendered_capabilities(),
-            ),
-            KeyValue::new(
-                "runtime-shape",
-                self.runtime_backend
-                    .projection_shape
-                    .rendered_label()
-                    .to_owned(),
-            ),
-            KeyValue::new(
-                "runtime-live-terminal",
-                if self.runtime_backend.projection_shape.live_terminal_eligible {
-                    "yes"
-                } else {
-                    "no"
-                },
-            ),
-            KeyValue::new("transport", self.transport.clone()),
-            KeyValue::new("pty", if self.pty { "yes" } else { "no" }),
-            KeyValue::new(
-                "input-forwarding",
-                if self.input_forwarding.available {
-                    "yes".to_owned()
-                } else {
-                    availability_label(false, self.input_forwarding_reason.as_deref())
-                },
-            ),
-            KeyValue::new(
-                "input-command",
-                self.input_forwarding.command_template.clone(),
-            ),
-            KeyValue::new(
-                "terminal-size",
-                self.terminal_size
-                    .rendered()
-                    .unwrap_or_else(|| "<unknown>".to_owned()),
-            ),
-            KeyValue::new(
-                "resize",
-                if self.resize.available {
-                    "yes".to_owned()
-                } else {
-                    availability_label(false, self.resize.reason.as_deref())
-                },
-            ),
-            KeyValue::new("resize-command", self.resize.command_template.clone()),
-            KeyValue::new("nested-tui", if self.nested_tui { "yes" } else { "no" }),
-            KeyValue::new(
-                "output-available",
-                if self.output_available { "yes" } else { "no" },
-            ),
-        ];
-        if let Some(attempt_id) = &self.attempt_id {
-            values.push(KeyValue::new("attempt-id", attempt_id.clone()));
-        }
-        if let Some(stdin_input_path) = &self.stdin_input_path {
-            values.push(KeyValue::new("stdin-input", stdin_input_path.clone()));
-        }
-        if let Some(resize_handoff_path) = &self.resize_handoff_path {
-            values.push(KeyValue::new("resize-handoff", resize_handoff_path.clone()));
-        }
-        if let Some(stdout_log_path) = &self.stdout_log_path {
-            values.push(KeyValue::new("stdout-log", stdout_log_path.clone()));
-        }
-        if let Some(stderr_log_path) = &self.stderr_log_path {
-            values.push(KeyValue::new("stderr-log", stderr_log_path.clone()));
-        }
-        if let Some(count) = self.runtime_backend.projection_shape.managed_process_count {
-            values.push(KeyValue::new("managed-process-count", count.to_string()));
-        }
-        if self.runtime_backend.projected_process_summary.present {
-            values.push(KeyValue::new(
-                "managed-processes",
-                self.runtime_backend
-                    .projected_process_summary
-                    .rendered_names(),
-            ));
-            values.push(KeyValue::new(
-                "runtime-merged-output",
-                if self
-                    .runtime_backend
-                    .projected_process_summary
-                    .merged_output_from_multiple_processes
-                {
-                    "yes"
-                } else {
-                    "no"
-                },
-            ));
-            values.push(KeyValue::new(
-                "runtime-output-provenance",
-                self.runtime_backend
-                    .projected_output_provenance
-                    .rendered_label()
-                    .to_owned(),
-            ));
-        }
-        values
-    }
-
-    fn to_json(&self) -> JsonValue {
-        json!({
-            "available": self.available,
-            "state": self.state,
-            "attempt_id": self.attempt_id,
-            "runtime_backend": self.runtime_backend.to_json(),
-            "transport": self.transport,
-            "pty": self.pty,
-            "supports_input_forwarding": self.supports_input_forwarding,
-            "input_forwarding_reason": self.input_forwarding_reason,
-            "input_forwarding": self.input_forwarding.to_json(),
-            "nested_tui": self.nested_tui,
-            "terminal_size": self.terminal_size.to_json(),
-            "resize": self.resize.to_json(),
-            "resize_handoff_path": self.resize_handoff_path,
-            "stdin_input_path": self.stdin_input_path,
-            "stdout_log_path": self.stdout_log_path,
-            "stderr_log_path": self.stderr_log_path,
-            "output_available": self.output_available,
-            "recent_output": {
-                "stdout_lines": self.recent_stdout,
-                "stderr_lines": self.recent_stderr,
-            },
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct DemoTerminalSize {
-    cols: Option<u16>,
-    rows: Option<u16>,
-}
-
-impl DemoTerminalSize {
-    fn rendered(&self) -> Option<String> {
-        Some(format!("{}x{}", self.cols?, self.rows?))
-    }
-
-    fn to_json(&self) -> JsonValue {
-        json!({
-            "cols": self.cols,
-            "rows": self.rows,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct DemoTerminalInputForwarding {
-    available: bool,
-    reason: Option<String>,
-    mode: String,
-    append_newline_supported: bool,
-    command_template: String,
-}
-
-impl DemoTerminalInputForwarding {
-    fn unavailable(reason: String) -> Self {
-        Self {
-            available: false,
-            reason: Some(reason),
-            mode: "text".to_owned(),
-            append_newline_supported: true,
-            command_template: "effigy demo input <DEMO_ID> --text <TEXT> [--append-newline]"
-                .to_owned(),
-        }
-    }
-
-    fn available() -> Self {
-        Self {
-            available: true,
-            reason: None,
-            mode: "text".to_owned(),
-            append_newline_supported: true,
-            command_template: "effigy demo input <DEMO_ID> --text <TEXT> [--append-newline]"
-                .to_owned(),
-        }
-    }
-
-    fn to_json(&self) -> JsonValue {
-        json!({
-            "available": self.available,
-            "reason": self.reason,
-            "mode": self.mode,
-            "append_newline_supported": self.append_newline_supported,
-            "command_template": self.command_template,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct DemoTerminalResizeForwarding {
-    available: bool,
-    reason: Option<String>,
-    mode: String,
-    command_template: String,
-}
-
-impl DemoTerminalResizeForwarding {
-    fn unavailable(reason: String) -> Self {
-        Self {
-            available: false,
-            reason: Some(reason),
-            mode: "cells".to_owned(),
-            command_template: "effigy demo resize <DEMO_ID> --cols <COLS> --rows <ROWS>".to_owned(),
-        }
-    }
-
-    fn available() -> Self {
-        Self {
-            available: true,
-            reason: None,
-            mode: "cells".to_owned(),
-            command_template: "effigy demo resize <DEMO_ID> --cols <COLS> --rows <ROWS>".to_owned(),
-        }
-    }
-
-    fn to_json(&self) -> JsonValue {
-        json!({
-            "available": self.available,
-            "reason": self.reason,
-            "mode": self.mode,
-            "command_template": self.command_template,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct DemoLatestAttempt {
-    recorded: bool,
-    receipt_path: Option<String>,
-    outcome: Option<String>,
-    summary: Option<String>,
-    stale: bool,
-    artifacts: Vec<String>,
-    stdout_log_path: Option<String>,
-    stderr_log_path: Option<String>,
-    parse_error: Option<String>,
-}
-
-impl DemoLatestAttempt {
-    fn state_label(&self) -> &'static str {
-        if self.recorded {
-            "recorded"
-        } else {
-            "no-recorded-attempt"
-        }
-    }
-
-    fn to_json(&self) -> JsonValue {
-        json!({
-            "recorded": self.recorded,
-            "state": self.state_label(),
-            "receipt_path": self.receipt_path,
-            "receipt_present": self.receipt_path.is_some(),
-            "outcome": self.outcome,
-            "summary": self.summary,
-            "freshness": if self.stale { "stale" } else { "current" },
-            "stale": self.stale,
-            "artifact_count": self.artifacts.len(),
-            "artifacts": self.artifacts,
-            "stdout_log_path": self.stdout_log_path,
-            "stderr_log_path": self.stderr_log_path,
-            "output_available": self.stdout_log_path.is_some() || self.stderr_log_path.is_some(),
-            "parse_error": self.parse_error,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct DemoAttemptHistory {
-    path: Option<String>,
-    attempts: Vec<DemoHistoricalAttempt>,
-    parse_error: Option<String>,
-}
-
-impl DemoAttemptHistory {
-    fn to_json(&self) -> JsonValue {
-        json!({
-            "path": self.path,
-            "count": self.attempts.len(),
-            "attempts": self.attempts.iter().map(DemoHistoricalAttempt::to_json).collect::<Vec<_>>(),
-            "parse_error": self.parse_error,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct DemoHistoricalAttempt {
-    attempt_id: String,
-    recorded_at_epoch_ms: u128,
-    outcome: String,
-    summary: Option<String>,
-    receipt_path: Option<String>,
-    artifacts: Vec<String>,
-    stdout_log_path: Option<String>,
-    stderr_log_path: Option<String>,
-    exit_code: Option<i32>,
-}
-
-impl DemoHistoricalAttempt {
-    fn from_persisted(value: PersistedDemoHistoricalAttempt) -> Self {
-        Self {
-            attempt_id: value.attempt_id,
-            recorded_at_epoch_ms: value.recorded_at_epoch_ms,
-            outcome: value.outcome,
-            summary: value.summary,
-            receipt_path: value.receipt_path,
-            artifacts: value.artifacts,
-            stdout_log_path: value.stdout_log_path,
-            stderr_log_path: value.stderr_log_path,
-            exit_code: value.exit_code,
-        }
-    }
-
-    fn to_json(&self) -> JsonValue {
-        json!({
-            "attempt_id": self.attempt_id,
-            "recorded_at_epoch_ms": self.recorded_at_epoch_ms,
-            "outcome": self.outcome,
-            "summary": self.summary,
-            "receipt_path": self.receipt_path,
-            "artifact_count": self.artifacts.len(),
-            "artifacts": self.artifacts,
-            "stdout_log_path": self.stdout_log_path,
-            "stderr_log_path": self.stderr_log_path,
-            "exit_code": self.exit_code,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
 struct DemoExecutionAttempt {
     ok: bool,
     outcome: String,
@@ -5117,68 +4272,6 @@ impl DemoExecutionAttempt {
             "stderr_log_path": self.stderr_log_path,
             "recorded_at_epoch_ms": self.recorded_at_epoch_ms,
         })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PersistedDemoAttemptHistory {
-    schema: String,
-    schema_version: u8,
-    demo_id: String,
-    attempts: Vec<PersistedDemoHistoricalAttempt>,
-}
-
-impl PersistedDemoAttemptHistory {
-    fn new(demo_id: &str) -> Self {
-        Self {
-            schema: "effigy.demo.attempt-history.v1".to_owned(),
-            schema_version: 1,
-            demo_id: demo_id.to_owned(),
-            attempts: Vec::new(),
-        }
-    }
-
-    fn push(&mut self, attempt: PersistedDemoHistoricalAttempt) {
-        self.attempts.insert(0, attempt);
-        self.attempts.truncate(DEMO_ATTEMPT_HISTORY_LIMIT);
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PersistedDemoHistoricalAttempt {
-    attempt_id: String,
-    recorded_at_epoch_ms: u128,
-    outcome: String,
-    summary: Option<String>,
-    receipt_path: Option<String>,
-    artifacts: Vec<String>,
-    stdout_log_path: Option<String>,
-    stderr_log_path: Option<String>,
-    exit_code: Option<i32>,
-}
-
-impl PersistedDemoHistoricalAttempt {
-    fn from_execution(
-        demo_id: &str,
-        demo: &ManifestDemoConfig,
-        attempt: &DemoExecutionAttempt,
-        receipt_path: String,
-    ) -> Self {
-        Self {
-            attempt_id: format!(
-                "{}-{}",
-                sanitize_demo_id_for_filename(demo_id),
-                attempt.recorded_at_epoch_ms
-            ),
-            recorded_at_epoch_ms: attempt.recorded_at_epoch_ms,
-            outcome: attempt.outcome.clone(),
-            summary: attempt.summary.clone(),
-            receipt_path: Some(receipt_path),
-            artifacts: demo.artifacts.clone(),
-            stdout_log_path: attempt.stdout_log_path.clone(),
-            stderr_log_path: attempt.stderr_log_path.clone(),
-            exit_code: attempt.exit_code,
-        }
     }
 }
 
@@ -5266,42 +4359,17 @@ mod tests {
         append_demo_terminal_input, append_demo_terminal_resize, browser_terminal_size_override,
         load_active_attempt, read_recent_output_lines, render_demo_execute_text,
         terminated_demo_attempt, wrap_pty_shell_command, write_active_attempt_record,
-        DemoActiveAttempt, DemoActiveTerminalSession, DemoAttemptHistory, DemoEntrypoint,
-        DemoLatestAttempt, DemoLogPaths, DemoRecord, DemoRuntimeBackend, DemoTerminalTransport,
-        PersistedDemoActiveAttempt, PersistedDemoActivePhase, PersistedDemoAttemptHistory,
-        PersistedDemoHistoricalAttempt, PersistedDemoTerminalTransport, DEMO_ATTEMPT_HISTORY_LIMIT,
-        DEMO_BROWSER_TERMINAL_COLS_ENV, DEMO_BROWSER_TERMINAL_ROWS_ENV,
+        DemoActiveAttempt, DemoActiveTerminalSession, DemoEntrypoint, DemoLogPaths, DemoRecord,
+        DemoRuntimeBackend, DemoTerminalTransport, PersistedDemoActiveAttempt,
+        PersistedDemoActivePhase, PersistedDemoTerminalTransport, DEMO_BROWSER_TERMINAL_COLS_ENV,
+        DEMO_BROWSER_TERMINAL_ROWS_ENV,
     };
     use crate::runner::manifest::{ManifestDemoMode, ManifestDemoStatus, ManifestManagedRun};
+    use effigy_demo::{DemoAttemptHistory, DemoLatestAttempt};
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},
     };
-
-    #[test]
-    fn demo_attempt_history_push_keeps_newest_entries_within_limit() {
-        let mut history = PersistedDemoAttemptHistory::new("demo");
-        for index in 0..(DEMO_ATTEMPT_HISTORY_LIMIT + 2) {
-            history.push(PersistedDemoHistoricalAttempt {
-                attempt_id: format!("attempt-{index}"),
-                recorded_at_epoch_ms: index as u128,
-                outcome: "passed".to_owned(),
-                summary: None,
-                receipt_path: None,
-                artifacts: Vec::new(),
-                stdout_log_path: None,
-                stderr_log_path: None,
-                exit_code: Some(0),
-            });
-        }
-
-        assert_eq!(history.attempts.len(), DEMO_ATTEMPT_HISTORY_LIMIT);
-        assert_eq!(history.attempts[0].attempt_id, "attempt-11");
-        assert_eq!(
-            history.attempts[DEMO_ATTEMPT_HISTORY_LIMIT - 1].attempt_id,
-            "attempt-2"
-        );
-    }
 
     #[test]
     fn load_active_attempt_preserves_stop_requested_record_until_owner_clears_it() {
@@ -5528,9 +4596,7 @@ mod tests {
             sources: vec!["effigy.toml".to_owned()],
             primary_source: "effigy.toml".to_owned(),
             gap_class: "existing",
-            runtime_backend: DemoRuntimeBackend::from_entrypoint(&DemoEntrypoint::Run(
-                ManifestManagedRun::Command("printf demo".to_owned()),
-            )),
+            runtime_backend: DemoRuntimeBackend::run(),
             active_attempt: DemoActiveAttempt::inactive(None),
             active_terminal_session: DemoActiveTerminalSession::inactive(),
             latest_attempt: DemoLatestAttempt {

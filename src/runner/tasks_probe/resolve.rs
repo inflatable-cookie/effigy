@@ -127,7 +127,7 @@ fn lock_scopes_for_task(
     task: &ManifestTask,
     profile: Option<&str>,
 ) -> Vec<String> {
-    let mut scopes = vec![task.lock_scope(task_name).label()];
+    let mut scopes = vec![crate::runner::manifest::task_lock_scope(task, task_name).label()];
     if task.mode.as_deref() == Some("tui") {
         let profile_name = profile.unwrap_or(DEFAULT_MANAGED_PROFILE);
         scopes.push(format!("profile:{task_name}/{profile_name}"));

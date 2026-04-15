@@ -12,6 +12,16 @@ During v0.x, MINOR bumps may include breaking changes.
   path/file helpers, JSON/TOML helpers, structured subprocess execution, and
   task invocation so Rust-first repos can start replacing shell glue without
   taking a Bun dependency just for task scripting.
+- Add the first bounded `effigy container` surface with manifest-defined
+  `[containers]` registries, named/default container resolution, Colima-backed
+  compose bring-up/down/status/logs/shell/reset commands, explicit
+  host-port/mount policy, attached owner-exit shutdown, and a no-Docker host
+  fallback through `colima nerdctl` for machines that only have Colima
+  installed.
+- Add attached container session widening on top of that foundation, including
+  multi-tab container TUI sessions for `effigy container up`, stream-mode
+  overview fallback for non-interactive runs, and repo-owned task aliases via
+  `container_session = "..."`.
 - Extend the first Rhai host API with `now_utc()` and `make_temp_dir(prefix)`,
   so first-party repo automation can stamp artifacts and build short-lived
   working directories without shelling out to `date` or `mktemp`.
@@ -23,6 +33,13 @@ During v0.x, MINOR bumps may include breaking changes.
   preflight task selection, and metadata requirements so native distribution
   commands can start serving other repos without hardcoding Effigy's exact
   release policy.
+- Add an Effigy-owned `linux-release` container plus `release:linux:rehearse`
+  and `release:linux:env` tasks, so pre-release prep can build, smoke-test,
+  and GLIBC-check the Linux binary locally through the shipped container
+  surface before relying on CI.
+- Add in-process Rhai host helpers `run_effigy(...)`, `run_effigy_json(...)`,
+  and first typed container helpers so repo-local scripts can call Effigy
+  built-ins without shelling back through `cargo run --bin effigy`.
 
 ### Changed
 - Migrate Effigy's `link:local` task from a shell script to a file-backed Rhai
@@ -65,6 +82,13 @@ During v0.x, MINOR bumps may include breaking changes.
   `distribution write-summary`, and `distribution generate-closeout` can serve
   other repos with manifest-driven package/binary/registry naming and generic
   closeout text instead of hardcoded Effigy-shaped defaults.
+- Harden attached container stop and closeout behavior so startup-phase stop
+  requests and nested log-follow subprocess trees now route through one
+  reliable shutdown path on real Colima-backed consumer sessions.
+- Make `effigy container shell --command <CMD>` run a real shell command string
+  via `sh -lc` instead of treating the whole command as one argv token.
+- Move `release:linux:rehearse` off `cargo run --bin effigy` subprocess
+  re-entry and onto the running Effigy process through the new Rhai host API.
 
 ## [0.2.13] - 2026-04-13
 
