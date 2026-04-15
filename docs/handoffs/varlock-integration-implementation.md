@@ -27,9 +27,9 @@ Implement a Rust-based @env-spec parser and resolver that integrates Varlock-sty
 
 ## Inputs
 
-- Research docs: `/Users/betterthanclay/Dev/projects/effigy/docs/research/tool-dossiers/varlock.md`
-- Track 16 synthesis: `/Users/betterthanclay/Dev/projects/effigy/docs/research/value-tracks/16-secure-secrets-management.md`
-- Translation memo 016c: `/Users/betterthanclay/Dev/projects/effigy/docs/research/translation-memos/016c-varlock-integration.md`
+- Research docs: `~/Dev/projects/effigy/docs/research/tool-dossiers/varlock.md`
+- Track 16 synthesis: `~/Dev/projects/effigy/docs/research/value-tracks/16-secure-secrets-management.md`
+- Translation memo 016c: `~/Dev/projects/effigy/docs/research/translation-memos/016c-varlock-integration.md`
 - @env-spec RFC: https://github.com/dmno-dev/varlock/discussions/17
 
 ## Constraints
@@ -44,50 +44,50 @@ Implement a Rust-based @env-spec parser and resolver that integrates Varlock-sty
 ## Deliverables
 
 ### 1. Parser Module
-`/Users/betterthanclay/Dev/projects/effigy/src/env/parser.rs`
+`~/Dev/projects/effigy/src/env/parser.rs`
 - @env-spec grammar implementation
 - AST types for schema representation
 - Error types for parse failures
 
 ### 2. Resolution Engine
-`/Users/betterthanclay/Dev/projects/effigy/src/env/resolver.rs`
+`~/Dev/projects/effigy/src/env/resolver.rs`
 - Async resolution of `exec()` commands
 - Template interpolation (`${VAR}`)
 - Environment variable fallback
 - Caching of resolved values
 
 ### 3. Security Types
-`/Users/betterthanclay/Dev/projects/effigy/src/env/secret.rs`
+`~/Dev/projects/effigy/src/env/secret.rs`
 - `SecretString` with `zeroize::Zeroize`
 - `EnvValue` enum (Plain vs Secret)
 - Redaction for Display/Debug
 
 ### 4. Validation
-`/Users/betterthanclay/Dev/projects/effigy/src/env/validator.rs`
+`~/Dev/projects/effigy/src/env/validator.rs`
 - Type validators (port, url, enum, string constraints)
 - Pattern matching with regex
 - Custom validation errors
 
 ### 5. Integration
-`/Users/betterthanclay/Dev/projects/effigy/src/env/mod.rs`
+`~/Dev/projects/effigy/src/env/mod.rs`
 - Public API for Effigy runtime
 - `ResolvedEnv` container
 - Detection of `.env.schema`
 
 ### 6. Runtime Integration
-`/Users/betterthanclay/Dev/projects/effigy/src/runtime.rs` (modifications)
+`~/Dev/projects/effigy/src/runtime.rs` (modifications)
 - Load env during runtime initialization
 - Pass env vars to task execution
 - Internal access for conditional logic
 
 ### 7. Configuration
-`/Users/betterthanclay/Dev/projects/effigy/src/config/env.rs` (new)
+`~/Dev/projects/effigy/src/config/env.rs` (new)
 - `[env]` section in effigy.toml
 - Enable/disable varlock integration
 - Schema path override
 
 ### 8. Tests
-`/Users/betterthanclay/Dev/projects/effigy/tests/env_*.rs`
+`~/Dev/projects/effigy/tests/env_*.rs`
 - Parser tests
 - Resolver tests (with mocked exec)
 - Secret handling tests
@@ -160,7 +160,7 @@ effigy run dev
 ## Completion Protocol
 
 1. Update `updated:` metadata in this file when complete
-2. Create log entry in `/Users/betterthanclay/Dev/projects/effigy/logs/2026-03-07-varlock-integration.md`
+2. Create log entry in `~/Dev/projects/effigy/logs/2026-03-07-varlock-integration.md`
 3. Summarize outcomes and any unresolved risks:
    - Performance of exec() resolution (cache strategy)
    - Security audit of SecretString implementation

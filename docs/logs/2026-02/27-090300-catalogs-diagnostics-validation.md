@@ -15,7 +15,7 @@ Validate the built-in `catalogs` diagnostics command across:
 ## Commands
 
 All commands executed from:
-`/Users/betterthanclay/Dev/projects/effigy`
+`~/Dev/projects/effigy`
 
 ```bash
 cargo run --quiet --bin effigy -- catalogs --resolve farmyard/api
@@ -55,7 +55,7 @@ Text probe excerpt:
 ```text
 Resolution Probe: farmyard/api
 catalog: farmyard
-catalog-root: /Users/betterthanclay/Dev/projects/acowtancy/farmyard
+catalog-root: ~/Dev/projects/acowtancy/farmyard
 task: api
 evidence:
 - selected catalog via explicit prefix `farmyard`
@@ -68,7 +68,7 @@ Pretty JSON probe excerpt:
   "selector": "farmyard/api",
   "status": "ok",
   "catalog": "farmyard",
-  "catalog_root": "/Users/betterthanclay/Dev/projects/acowtancy/farmyard",
+  "catalog_root": "~/Dev/projects/acowtancy/farmyard",
   "task": "api",
   "evidence": [
     "selected catalog via explicit prefix `farmyard`"
@@ -80,7 +80,7 @@ Pretty JSON probe excerpt:
 Compact JSON probe excerpt:
 
 ```json
-{"resolve":{"selector":"farmyard/api","status":"ok","catalog":"farmyard","catalog_root":"/Users/betterthanclay/Dev/projects/acowtancy/farmyard","task":"api","evidence":["selected catalog via explicit prefix `farmyard`"],"error":null}}
+{"resolve":{"selector":"farmyard/api","status":"ok","catalog":"farmyard","catalog_root":"~/Dev/projects/acowtancy/farmyard","task":"api","evidence":["selected catalog via explicit prefix `farmyard`"],"error":null}}
 ```
 
 ## Conclusion

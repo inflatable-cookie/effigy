@@ -5,7 +5,7 @@ Owner: Platform
 
 ## Summary
 
-Scanned the repositories under `/Users/betterthanclay/Dev/projects` to assess
+Scanned the repositories under `~/Dev/projects` to assess
 current adoption of Effigy, Northstar-style documentation structure, and
 agent-facing execution contracts.
 
@@ -21,22 +21,22 @@ Most consuming repos have some of the pieces, but not the combined package:
 
 ## Scan Scope
 
-- `/Users/betterthanclay/Dev/projects/acowtancy`
-- `/Users/betterthanclay/Dev/projects/compli-me`
-- `/Users/betterthanclay/Dev/projects/contact-patch`
-- `/Users/betterthanclay/Dev/projects/convergence`
-- `/Users/betterthanclay/Dev/projects/effigy`
-- `/Users/betterthanclay/Dev/projects/finch`
-- `/Users/betterthanclay/Dev/projects/jetstream`
-- `/Users/betterthanclay/Dev/projects/loophole`
-- `/Users/betterthanclay/Dev/projects/monkey`
-- `/Users/betterthanclay/Dev/projects/northstar`
-- `/Users/betterthanclay/Dev/projects/nucleus`
-- `/Users/betterthanclay/Dev/projects/pug`
-- `/Users/betterthanclay/Dev/projects/signal`
-- `/Users/betterthanclay/Dev/projects/songsprout`
-- `/Users/betterthanclay/Dev/projects/underlay`
-- `/Users/betterthanclay/Dev/projects/underlay-reference`
+- `~/Dev/projects/acowtancy`
+- `~/Dev/projects/compli-me`
+- `~/Dev/projects/contact-patch`
+- `~/Dev/projects/convergence`
+- `~/Dev/projects/effigy`
+- `~/Dev/projects/finch`
+- `~/Dev/projects/jetstream`
+- `~/Dev/projects/loophole`
+- `~/Dev/projects/monkey`
+- `~/Dev/projects/northstar`
+- `~/Dev/projects/nucleus`
+- `~/Dev/projects/pug`
+- `~/Dev/projects/signal`
+- `~/Dev/projects/songsprout`
+- `~/Dev/projects/underlay`
+- `~/Dev/projects/underlay-reference`
 
 ## Quantitative Snapshot
 

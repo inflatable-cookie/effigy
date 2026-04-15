@@ -23,7 +23,7 @@ same bounded window.
 ## Cohort
 
 - validated consumer repo:
-  [`signal`](</Users/betterthanclay/Dev/projects/signal>)
+  [`signal`](<~/Dev/projects/signal>)
 - second consumer repo:
   not completed in this batch
 
@@ -31,7 +31,7 @@ same bounded window.
 
 - promoted Signal’s current demo pack into native Effigy demo registry entries
 - extracted the Signal demo surface into a dedicated included manifest fragment:
-  [`demos/effigy.demos.toml`](</Users/betterthanclay/Dev/projects/signal/demos/effigy.demos.toml>)
+  [`demos/effigy.demos.toml`](<~/Dev/projects/signal/demos/effigy.demos.toml>)
 - removed per-demo wrapper tasks by letting demos carry inline `run = [ ... ]`
   sequences directly
 - exercised shipped Effigy surfaces against Signal:

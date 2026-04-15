@@ -15,15 +15,15 @@ Related roadmap: 001 - Effigy Foundation
 - Added release checklist and smoke matrix for direct binary + wrapper modes.
 
 ## Validation
-- command: `cargo test` (in `/Users/betterthanclay/Dev/projects/effigy`)
+- command: `cargo test` (in `~/Dev/projects/effigy`)
   - result: pass (21 tests).
 - command: `cargo install --path . --root ./.local-install --force`
   - result: pass (`effigy` installed to `./.local-install/bin/effigy`).
 - command: `./.local-install/bin/effigy --help`
   - result: pass (usage output shown).
-- command: `PATH="/Users/betterthanclay/Dev/projects/effigy/.local-install/bin:$PATH" effigy repo-pulse` (in `/Users/betterthanclay/Dev/projects/acowtancy`)
+- command: `PATH="~/Dev/projects/effigy/.local-install/bin:$PATH" effigy repo-pulse` (in `~/Dev/projects/acowtancy`)
   - result: pass (pulse report rendered).
-- command: `bun effigy tasks` (in `/Users/betterthanclay/Dev/projects/acowtancy`)
+- command: `bun effigy tasks` (in `~/Dev/projects/acowtancy`)
   - result: pass (catalogs/tasks listed through cargo-run wrapper).
 
 ## Risks / Follow-ups

@@ -95,8 +95,8 @@ Validated with a mix of product and live-repo proof:
   using current Loophole root files as the temporary source repo
 - `target/debug/effigy --json bootstrap <temp-root.git> --path <temp>/songsprout`
   using current Songsprout root files as the temporary source repo
-- `target/debug/effigy tasks --repo /Users/betterthanclay/Dev/projects/loophole`
-- `target/debug/effigy tasks --repo /Users/betterthanclay/Dev/projects/songsprout`
+- `target/debug/effigy tasks --repo ~/Dev/projects/loophole`
+- `target/debug/effigy tasks --repo ~/Dev/projects/songsprout`
 
 ## Decision
 

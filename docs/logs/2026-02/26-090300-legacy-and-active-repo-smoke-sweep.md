@@ -6,8 +6,8 @@ Related roadmap: 002-deferral-fallback-system
 
 ## Scope
 - Validate direct source-run usage (`cargo run --manifest-path ... --bin effigy -- ...`) against:
-- `/Users/betterthanclay/Dev/legacy/sites/r7-playground` (legacy PHP-effigy project)
-- `/Users/betterthanclay/Dev/projects/acowtancy` (active effigy-catalog workspace)
+- `~/Dev/legacy/sites/r7-playground` (legacy PHP-effigy project)
+- `~/Dev/projects/acowtancy` (active effigy-catalog workspace)
 - Confirm expected behavior for:
 - built-in task (`repo-pulse`)
 - catalog listing (`tasks`)
@@ -20,17 +20,17 @@ Related roadmap: 002-deferral-fallback-system
 - generalized `composer.json` root marker support
 
 ## Validation
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- repo-pulse --repo /Users/betterthanclay/Dev/legacy/sites/r7-playground`
+- command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- repo-pulse --repo ~/Dev/legacy/sites/r7-playground`
   - result: exit 0, pulse report rendered, root markers include `package.json, composer.json, .git`.
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- tasks --repo /Users/betterthanclay/Dev/legacy/sites/r7-playground`
+- command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- tasks --repo ~/Dev/legacy/sites/r7-playground`
   - result: exit 1, expected error: no `effigy.toml` catalogs found.
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- version --repo /Users/betterthanclay/Dev/legacy/sites/r7-playground`
+- command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- version --repo ~/Dev/legacy/sites/r7-playground`
   - result: exit 0, implicit fallback executed legacy global effigy (`Effigy : v0.10.11`).
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- repo-pulse`
+- command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- repo-pulse`
   - result: exit 0, pulse report rendered, root markers include `package.json, .git`.
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- tasks`
+- command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- tasks`
   - result: exit 0, catalogs and tasks rendered (acowtancy/cream/dairy/farmyard).
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- version`
+- command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- version`
   - result: exit 1, expected unresolved-task error, no deferral engaged.
 
 ## Risks / Follow-ups

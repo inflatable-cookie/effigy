@@ -18,7 +18,7 @@ Validate versioned JSON schema contracts for top-level commands:
 ## Commands
 
 All commands executed from:
-`/Users/betterthanclay/Dev/projects/effigy`
+`~/Dev/projects/effigy`
 
 ```bash
 cargo run --quiet --bin effigy -- --json tasks
@@ -69,7 +69,7 @@ cargo run --quiet --bin effigy -- --json test
 {
   "schema": "effigy.repo-pulse.v1",
   "schema_version": 1,
-  "repo": "/Users/betterthanclay/Dev/projects/effigy",
+  "repo": "~/Dev/projects/effigy",
   "evidence_count": 7,
   "risk_count": 0
 }

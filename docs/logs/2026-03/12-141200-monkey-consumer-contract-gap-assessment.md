@@ -2,7 +2,7 @@
 
 Date: 2026-03-12
 Owner: Platform
-Target repo: `/Users/betterthanclay/Dev/projects/monkey`
+Target repo: `~/Dev/projects/monkey`
 Reference contract:
 [`../guides/056-northstar-effigy-consumer-repo-contract.md`](../guides/056-northstar-effigy-consumer-repo-contract.md)
 

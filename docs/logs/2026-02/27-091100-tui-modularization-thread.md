@@ -46,11 +46,11 @@ Consolidated the TUI modularization effort into one thread with architecture out
 
 ### Interactive TUI checks (PTY)
 
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- dev`
-  - cwd: `/Users/betterthanclay/Dev/projects/acowtancy`
+- command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- dev`
+  - cwd: `~/Dev/projects/acowtancy`
   - result: starts multiprocess TUI with expected tabs (`dairy/dev`, `cream/dev`, `farmyard/api`, `farmyard/jobs`, `shell`), processes stream output, Ctrl+C exits cleanly, per-process summary printed.
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- test --tui`
-  - cwd: `/Users/betterthanclay/Dev/projects/effigy`
+- command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- test --tui`
+  - cwd: `~/Dev/projects/effigy`
   - result: starts TUI test runner, displays test output stream, Ctrl+C exits cleanly, summary + test results rendered.
 
 ## Validation

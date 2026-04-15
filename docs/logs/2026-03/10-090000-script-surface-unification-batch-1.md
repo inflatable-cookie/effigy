@@ -16,10 +16,10 @@ Related roadmap: post-M1 hardening / script-surface unification batch 1
 ## Changes
 
 - Completed script-surface inventory across:
-  - `/Users/betterthanclay/Dev/projects/effigy/scripts/*.sh`
-  - `/Users/betterthanclay/Dev/projects/effigy/docs/scripts/*.sh`
-  - `/Users/betterthanclay/Dev/projects/effigy/.cargo/config.toml`
-  - `/Users/betterthanclay/Dev/projects/effigy/.github-bak/workflows/*.yml`
+  - `~/Dev/projects/effigy/scripts/*.sh`
+  - `~/Dev/projects/effigy/docs/scripts/*.sh`
+  - `~/Dev/projects/effigy/.cargo/config.toml`
+  - `~/Dev/projects/effigy/.github-bak/workflows/*.yml`
 - Built a per-surface decision matrix with disposition and rationale.
 - Locked batch-1 execution waves and explicit carry-forward items.
 
@@ -89,8 +89,8 @@ Rationale:
 ## Wave 1 Execution Checkpoint (2026-03-05)
 
 - Updated canonical operator guidance to prefer cargo/Effigy entrypoints:
-  - `/Users/betterthanclay/Dev/projects/effigy/README.md`
-  - `/Users/betterthanclay/Dev/projects/effigy/docs/guides/024-ci-and-automation-recipes.md`
+  - `~/Dev/projects/effigy/README.md`
+  - `~/Dev/projects/effigy/docs/guides/024-ci-and-automation-recipes.md`
 - Compatibility scripts remain documented, but now explicitly framed as wrapper surfaces for CI/release tooling.
 - Remaining in batch 1:
   - wrapper-policy pass (delegation annotations + divergence checks)

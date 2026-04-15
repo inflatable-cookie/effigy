@@ -6,8 +6,8 @@ Validate new built-in `health` fallback behavior and prefixed routing in a real 
 
 ## Environment
 
-- Workspace: `/Users/betterthanclay/Dev/projects/acowtancy`
-- Effigy invocation: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- ...`
+- Workspace: `~/Dev/projects/acowtancy`
+- Effigy invocation: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- ...`
 - Date: 2026-02-27
 
 ## Commands and Outcomes
