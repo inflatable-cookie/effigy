@@ -10,7 +10,7 @@ Close roadmap 002 by validating current deferral behavior and completing migrati
 
 ## Validation
 
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- version --repo /Users/betterthanclay/Dev/legacy/sites/r7-playground`
+- command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- version --repo ~/Dev/legacy/sites/r7-playground`
   - result: pass; unresolved request deferred to legacy PHP Effigy and returned `Effigy : v0.10.11`.
 
 - command: `cargo test -q`

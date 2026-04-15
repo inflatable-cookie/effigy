@@ -38,7 +38,7 @@ root or a docs-only authority repo at initial adoption time.
 ## Validation
 
 Validated directly against the native built-in docs surface with
-`/Users/betterthanclay/.local/bin/effigy`:
+`~/.local/bin/effigy`:
 
 - `effigy docs check-links` in `acowtancy/ledger`
 - `effigy docs check-index --policy-index vision` in `acowtancy/ledger`

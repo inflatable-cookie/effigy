@@ -17,25 +17,25 @@ Carry the Northstar + Effigy productization work from aligned source-of-truth do
 
 ## Inputs
 
-- `/Users/betterthanclay/Dev/projects/effigy/docs/roadmaps/g01/029-northstar-effigy-consumer-adoption-kit.md`
-- `/Users/betterthanclay/Dev/projects/effigy/docs/logs/2026-03/12-235900-source-of-truth-consolidation.md`
-- `/Users/betterthanclay/Dev/projects/effigy/docs/guides/056-northstar-effigy-consumer-repo-contract.md`
-- `/Users/betterthanclay/Dev/projects/northstar/skills/northstar-effigy/SKILL.md`
-- `/Users/betterthanclay/Dev/projects/northstar/skills/northstar-handoff/SKILL.md`
-- `/Users/betterthanclay/.codex/skills/northstar-effigy/SKILL.md`
-- `/Users/betterthanclay/.codex/skills/northstar-handoff/SKILL.md`
+- `~/Dev/projects/effigy/docs/roadmaps/g01/029-northstar-effigy-consumer-adoption-kit.md`
+- `~/Dev/projects/effigy/docs/logs/2026-03/12-235900-source-of-truth-consolidation.md`
+- `~/Dev/projects/effigy/docs/guides/056-northstar-effigy-consumer-repo-contract.md`
+- `~/Dev/projects/northstar/skills/northstar-effigy/SKILL.md`
+- `~/Dev/projects/northstar/skills/northstar-handoff/SKILL.md`
+- `~/.codex/skills/northstar-effigy/SKILL.md`
+- `~/.codex/skills/northstar-handoff/SKILL.md`
 
 ## Constraints
 
-- Follow the repo instructions in `/Users/betterthanclay/Dev/projects/effigy/AGENTS.md`.
+- Follow the repo instructions in `~/Dev/projects/effigy/AGENTS.md`.
 - Keep the product boundary intact: the skill layer owns bootstrap/scaffolding, Effigy owns reusable validation/runtime/release surfaces.
 - Do not reintroduce current-directory `--repo .` teaching in docs, skills, or examples.
 - Keep work in meaningful batches and leave one clear next task at the end.
 
 ## Deliverables
 
-- `/Users/betterthanclay/Dev/projects/effigy/docs/logs/2026-03/12-235950-northstar-effigy-productization-handoff.md`
-- `/Users/betterthanclay/Dev/projects/effigy/docs/logs/README.md`
+- `~/Dev/projects/effigy/docs/logs/2026-03/12-235950-northstar-effigy-productization-handoff.md`
+- `~/Dev/projects/effigy/docs/logs/README.md`
 - any touched source-of-truth docs or skill files needed to resolve gaps found during installed-skill dogfooding
 
 ## Acceptance Criteria

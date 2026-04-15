@@ -36,8 +36,8 @@ into the heavier REAPER smoke wrappers.
 
 ## Validation
 
-- `cargo run --bin effigy -- tasks --repo /Users/betterthanclay/Dev/projects/keepsake`
-- `cargo run --bin effigy -- release:candidate:alpha --repo /Users/betterthanclay/Dev/projects/keepsake`
+- `cargo run --bin effigy -- tasks --repo ~/Dev/projects/keepsake`
+- `cargo run --bin effigy -- release:candidate:alpha --repo ~/Dev/projects/keepsake`
 - `cargo run --bin effigy -- qa:docs`
 - `git diff --check`
 

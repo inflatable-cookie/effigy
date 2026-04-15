@@ -6,8 +6,8 @@ Validate foundational built-in routing behavior in a real workspace (`acowtancy`
 
 ## Environment
 
-- Workspace: `/Users/betterthanclay/Dev/projects/acowtancy`
-- Effigy binary (dev): `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- ...`
+- Workspace: `~/Dev/projects/acowtancy`
+- Effigy binary (dev): `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- ...`
 - Date: 2026-02-27
 
 ## Commands and Outcomes

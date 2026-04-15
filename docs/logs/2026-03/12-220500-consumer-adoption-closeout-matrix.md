@@ -11,7 +11,7 @@ Completed the final landscape classification after the released `effigy v0.2.6`
 consumer pilots.
 
 The broad migration sweep is no longer an open-ended queue. The repos under
-`/Users/betterthanclay/Dev/projects` now fall into a small set of explicit
+`~/Dev/projects` now fall into a small set of explicit
 states:
 
 - fully adopted on the Northstar + Effigy consumer contract

@@ -55,7 +55,7 @@ This roadmap is complete as the changelog-library foundation for Effigy.
 The implementation ships in `src/changelog.rs` plus the supporting parser,
 formatter, validator, analyzer, extractor, CLI command, and integration tests.
 The Northstar profile source remains upstream in
-`/Users/betterthanclay/Dev/projects/northstar/bundle-docs/research/specifications/northstar-changelog-profile.md`,
+`~/Dev/projects/northstar/bundle-docs/research/specifications/northstar-changelog-profile.md`,
 and the older script/workflow migration items are now tracked as part of
 roadmap `027` instead of blocking changelog-library closeout here.
 

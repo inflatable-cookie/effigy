@@ -10,24 +10,24 @@ Validate deterministic suite selection behavior across mixed-suite repositories 
 
 ## Validation Matrix
 
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- test smoke`
-  - cwd: `/Users/betterthanclay/Dev/projects/acowtancy`
+- command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- test smoke`
+  - cwd: `~/Dev/projects/acowtancy`
   - result: fails with expected ambiguity error (`cargo-nextest, vitest`) and explicit remediation to provide suite token.
 
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- test --plan`
-  - cwd: `/Users/betterthanclay/Dev/projects/underlay`
+- command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- test --plan`
+  - cwd: `~/Dev/projects/underlay`
   - result: detects mixed suites (`vitest`, `cargo-nextest`) and shows ordered fallback chain/evidence.
 
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- test smoke`
-  - cwd: `/Users/betterthanclay/Dev/projects/underlay`
+- command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- test smoke`
+  - cwd: `~/Dev/projects/underlay`
   - result: fails with expected ambiguity error for named invocation in mixed-suite context.
 
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- test vitest smoke`
-  - cwd: `/Users/betterthanclay/Dev/projects/underlay`
+- command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- test vitest smoke`
+  - cwd: `~/Dev/projects/underlay`
   - result: executes selected suite only (`root/vitest`), no cross-suite fanout; returned non-zero because no test files matched the filter, with expected no-match hint.
 
-- command: `cargo run --manifest-path /Users/betterthanclay/Dev/projects/effigy/Cargo.toml --bin effigy -- farmyard/test --plan`
-  - cwd: `/Users/betterthanclay/Dev/projects/acowtancy`
+- command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- farmyard/test --plan`
+  - cwd: `~/Dev/projects/acowtancy`
   - result: prefixed routing resolves to `farmyard` target root and selects `cargo-nextest` deterministically.
 
 ## Findings
