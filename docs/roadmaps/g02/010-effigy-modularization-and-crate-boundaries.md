@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Paused
+Status: In Progress
 Owner: Platform
 Created: 2026-04-15
 Depends on: 002, 004, 005, 006, 007, 025, 027
@@ -613,7 +613,26 @@ That post-doctor report boundary decision is now made too:
 This milestone can pause once Effigy is architecturally complete enough that
 `v0.3` does not immediately freeze known unfinished modularization work.
 
+### 5.8 Remaining Shell-Seam Reassessment
+
+The previous pause decision is now reversed again.
+
+The extracted domain crates are real, but two remaining seams are still too
+large to dismiss as incidental glue:
+
+- CLI shell/help/parse
+  - `src/lib.rs`
+  - `src/cli/parse/command_parsing.rs`
+  - `src/cli_help/*`
+- TUI/browser runtime
+  - `src/tui/demo_browser.rs`
+  - the supporting multiprocess TUI/runtime tree
+
+Those are both bounded enough to justify one more modularization decision
+before `v0.3`, rather than pretending the remaining `src/` weight is only
+adapter cleanup.
+
 ## Next Task
 
-Paused. Reopen only if another domain seam proves large enough to justify a
-new modularization batch before or after `v0.3`.
+Execute
+[`143-decide-cli-shell-and-tui-modularization-follow-up.md`](../../specs/batch-cards/143-decide-cli-shell-and-tui-modularization-follow-up.md).

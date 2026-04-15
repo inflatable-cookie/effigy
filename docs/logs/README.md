@@ -65,6 +65,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/15-233714-modularization-lane-reopen-for-cli-and-tui-shell-seams.md`](./2026-04/15-233714-modularization-lane-reopen-for-cli-and-tui-shell-seams.md)
 - [`2026-04/15-233028-modularization-pause-boundary-before-v0-3-release-resumption-decision.md`](./2026-04/15-233028-modularization-pause-boundary-before-v0-3-release-resumption-decision.md)
 
 - [`2026-04/16-050500-post-doctor-report-and-projection-boundary-decision.md`](./2026-04/16-050500-post-doctor-report-and-projection-boundary-decision.md)

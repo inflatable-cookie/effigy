@@ -15,10 +15,10 @@ lane needs tighter execution grammar than the roadmap alone provides.
 ## Active Spec Set
 
 - [`010-effigy-modularization-and-crate-boundaries-strict-lane.md`](./010-effigy-modularization-and-crate-boundaries-strict-lane.md)
-- [`007-distribution-release-and-consumer-rollout-strict-lane.md`](./007-distribution-release-and-consumer-rollout-strict-lane.md)
+- [`007-distribution-release-and-consumer-rollout-strict-lane.md`](./007-distribution-release-and-consumer-rollout-strict-lane.md) (queued)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 ## Next Task
 
 Execute
-[`batch-cards/115-implement-effigy-distribution-release-closure.md`](./batch-cards/115-implement-effigy-distribution-release-closure.md).
+[`batch-cards/143-decide-cli-shell-and-tui-modularization-follow-up.md`](./batch-cards/143-decide-cli-shell-and-tui-modularization-follow-up.md).
