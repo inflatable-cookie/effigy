@@ -213,6 +213,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     let dns_handle = tokio::spawn(run_dns_server(
         config.dns.clone(),
         Arc::clone(&shared_table),
+        Arc::clone(&stats),
         shutdown_rx.clone(),
     ));
 
