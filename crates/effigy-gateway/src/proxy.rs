@@ -31,6 +31,8 @@ use tokio::io::copy_bidirectional;
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, error, info, warn};
 
+use serde_json;
+
 use crate::routes::RouteTable;
 
 /// Configuration for the reverse proxy.
@@ -266,6 +268,69 @@ fn is_benign_connection_error(e: &hyper::Error) -> bool {
     false
 }
 
+/// Handle gateway internal endpoints (/_effigy/*).
+///
+/// These endpoints are served directly by the proxy, not forwarded to
+/// any upstream. They provide health checks and status information.
+fn handle_gateway_endpoint(
+    req: &Request<Incoming>,
+    route_table: &Arc<RwLock<RouteTable>>,
+) -> Option<Response<ProxyBody>> {
+    let path = req.uri().path();
+
+    if !path.starts_with("/_effigy/") {
+        return None;
+    }
+
+    match path {
+        "/_effigy/health" => {
+            let body = r#"{"status":"ok"}"#;
+            Some(
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/json")
+                    .header("x-effigy-gateway", "true")
+                    .body(full_body(Bytes::from(body)))
+                    .unwrap(),
+            )
+        }
+        "/_effigy/routes" => {
+            let table = route_table.read().expect("route table lock poisoned");
+            let routes: Vec<serde_json::Value> = table
+                .all_routes()
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "domain": r.domain,
+                        "target": r.target,
+                        "tls": r.tls,
+                        "project": r.project,
+                        "registered": r.registered.to_rfc3339(),
+                    })
+                })
+                .collect();
+
+            let body = serde_json::json!({
+                "count": routes.len(),
+                "routes": routes,
+            });
+
+            Some(
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/json")
+                    .header("x-effigy-gateway", "true")
+                    .body(full_body(Bytes::from(body.to_string())))
+                    .unwrap(),
+            )
+        }
+        _ => Some(error_response(
+            StatusCode::NOT_FOUND,
+            &format!("Unknown gateway endpoint: {path}"),
+        )),
+    }
+}
+
 /// Handle a single HTTP request by routing it to the correct upstream.
 async fn handle_request(
     req: Request<Incoming>,
@@ -273,6 +338,11 @@ async fn handle_request(
     peer_addr: SocketAddr,
     config: &ProxyConfig,
 ) -> Result<Response<ProxyBody>, hyper::Error> {
+    // Gateway internal endpoints (/_effigy/*).
+    if let Some(response) = handle_gateway_endpoint(&req, route_table) {
+        return Ok(response);
+    }
+
     // Extract the Host header.
     let host = extract_host(&req);
 

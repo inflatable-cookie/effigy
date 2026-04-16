@@ -255,6 +255,125 @@ async fn proxy_returns_no_route_page() {
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
 }
 
+// --- Gateway internal endpoints ──────────────────────────────────────
+
+#[tokio::test]
+async fn gateway_health_endpoint() {
+    let proxy_port = available_port().await;
+    let shared = Arc::new(RwLock::new(RouteTable::new()));
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    let proxy_config = ProxyConfig {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
+        tls_bind_addr: None,
+        connect_timeout: std::time::Duration::from_secs(5),
+        response_timeout: std::time::Duration::from_secs(30),
+    };
+
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("http://127.0.0.1:{proxy_port}/_effigy/health"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
+}
+
+#[tokio::test]
+async fn gateway_routes_endpoint() {
+    let proxy_port = available_port().await;
+
+    let mut table = RouteTable::new();
+    table.upsert(test_route("app.test", "127.0.0.1:8080"));
+    table.upsert(test_route("api.test", "127.0.0.1:3000"));
+    let shared = Arc::new(RwLock::new(table));
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    let proxy_config = ProxyConfig {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
+        tls_bind_addr: None,
+        connect_timeout: std::time::Duration::from_secs(5),
+        response_timeout: std::time::Duration::from_secs(30),
+    };
+
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("http://127.0.0.1:{proxy_port}/_effigy/routes"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "application/json"
+    );
+
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["count"], 2);
+    let routes = body["routes"].as_array().unwrap();
+    let domains: Vec<&str> = routes
+        .iter()
+        .map(|r| r["domain"].as_str().unwrap())
+        .collect();
+    assert!(domains.contains(&"app.test"));
+    assert!(domains.contains(&"api.test"));
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
+}
+
+#[tokio::test]
+async fn gateway_unknown_endpoint_returns_404() {
+    let proxy_port = available_port().await;
+    let shared = Arc::new(RwLock::new(RouteTable::new()));
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    let proxy_config = ProxyConfig {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
+        tls_bind_addr: None,
+        connect_timeout: std::time::Duration::from_secs(5),
+        response_timeout: std::time::Duration::from_secs(30),
+    };
+
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!(
+            "http://127.0.0.1:{proxy_port}/_effigy/nonexistent"
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 404);
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
+}
+
+// --- Proxy: error handling ───────────────────────────────────────────
+
 #[tokio::test]
 async fn proxy_returns_bad_gateway_for_unreachable_upstream() {
     let proxy_port = available_port().await;
