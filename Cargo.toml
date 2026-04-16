@@ -2,6 +2,7 @@
 members = [
     "crates/effigy-changelog",
     "crates/effigy-catalog",
+    "crates/effigy-gateway",
     "crates/effigy-cli",
     "crates/effigy-core",
     "crates/effigy-manifest",
