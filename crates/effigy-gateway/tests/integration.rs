@@ -9,6 +9,7 @@ use std::sync::{Arc, RwLock};
 use effigy_gateway::dns::{run_dns_server, DnsConfig};
 use effigy_gateway::proxy::{run_proxy_server, ProxyConfig};
 use effigy_gateway::routes::{Route, RouteSource, RouteTable};
+use effigy_gateway::stats::GatewayStats;
 
 use chrono::Utc;
 use tokio::sync::watch;
@@ -188,10 +189,11 @@ async fn proxy_routes_to_correct_upstream() {
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
+        max_request_body: 0,
     };
 
     // Start proxy.
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Make a request through the proxy.
@@ -227,9 +229,10 @@ async fn proxy_returns_no_route_page() {
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
+        max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -268,9 +271,10 @@ async fn gateway_health_endpoint() {
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
+        max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -304,9 +308,10 @@ async fn gateway_routes_endpoint() {
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
+        max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -352,16 +357,15 @@ async fn gateway_unknown_endpoint_returns_404() {
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
+        max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
     let response = client
-        .get(format!(
-            "http://127.0.0.1:{proxy_port}/_effigy/nonexistent"
-        ))
+        .get(format!("http://127.0.0.1:{proxy_port}/_effigy/nonexistent"))
         .send()
         .await
         .unwrap();
@@ -391,9 +395,10 @@ async fn proxy_returns_bad_gateway_for_unreachable_upstream() {
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(1),
         response_timeout: std::time::Duration::from_secs(30),
+        max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -422,24 +427,19 @@ async fn proxy_response_timeout_returns_bad_gateway() {
     let proxy_port = available_port().await;
 
     // Start a server that accepts connections but never responds.
-    let listener =
-        tokio::net::TcpListener::bind(format!("127.0.0.1:{upstream_port}"))
-            .await
-            .unwrap();
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{upstream_port}"))
+        .await
+        .unwrap();
     tokio::spawn(async move {
         if let Ok((stream, _)) = listener.accept().await {
             let io = TokioIo::new(stream);
-            let service = service_fn(
-                |_req: hyper::Request<hyper::body::Incoming>| async move {
-                    // Hang forever.
-                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                    Ok::<_, hyper::Error>(
-                        hyper::Response::new(
-                            http_body_util::Full::new(hyper::body::Bytes::new()),
-                        ),
-                    )
-                },
-            );
+            let service = service_fn(|_req: hyper::Request<hyper::body::Incoming>| async move {
+                // Hang forever.
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                Ok::<_, hyper::Error>(hyper::Response::new(http_body_util::Full::new(
+                    hyper::body::Bytes::new(),
+                )))
+            });
             let _ = http1::Builder::new().serve_connection(io, service).await;
         }
     });
@@ -459,9 +459,10 @@ async fn proxy_response_timeout_returns_bad_gateway() {
         connect_timeout: std::time::Duration::from_secs(5),
         // Very short response timeout to test quickly.
         response_timeout: std::time::Duration::from_millis(200),
+        max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::builder()
@@ -477,10 +478,7 @@ async fn proxy_response_timeout_returns_bad_gateway() {
 
     assert_eq!(response.status(), 502);
     let body = response.text().await.unwrap();
-    assert!(
-        body.contains("timeout"),
-        "should mention timeout: {body}"
-    );
+    assert!(body.contains("timeout"), "should mention timeout: {body}");
 
     let _ = shutdown_tx.send(true);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
@@ -556,9 +554,10 @@ async fn proxy_forwards_post_body() {
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
+        max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -609,9 +608,10 @@ async fn proxy_forwards_large_body() {
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
+        max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // 100KB body.
@@ -657,9 +657,10 @@ async fn proxy_multiple_concurrent_requests() {
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
+        max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // 5 concurrent requests.
@@ -739,9 +740,10 @@ async fn proxy_preserves_response_status_and_headers() {
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
         response_timeout: std::time::Duration::from_secs(30),
+        max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();

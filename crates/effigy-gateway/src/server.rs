@@ -22,6 +22,7 @@ use crate::dns::{run_dns_server, DnsConfig};
 use crate::error::GatewayError;
 use crate::proxy::{run_proxy_server, run_tls_proxy_server, ProxyConfig};
 use crate::routes::{LiveRouteTable, RouteTable};
+use crate::stats::GatewayStats;
 use crate::tls::TlsConfig;
 
 /// Configuration for the full gateway.
@@ -179,6 +180,9 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     let live_table = LiveRouteTable::new(config.route_table_path.clone())?;
     let shared_table = live_table.shared_table();
 
+    // Create stats tracker.
+    let stats = Arc::new(GatewayStats::new());
+
     // Create shutdown channel.
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -215,6 +219,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     let proxy_handle = tokio::spawn(run_proxy_server(
         config.proxy.clone(),
         Arc::clone(&shared_table),
+        Arc::clone(&stats),
         shutdown_rx.clone(),
     ));
 
@@ -242,6 +247,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
                             tls_addr,
                             arc_config,
                             Arc::clone(&shared_table),
+                            Arc::clone(&stats),
                             config.proxy.clone(),
                             shutdown_rx,
                         )))
