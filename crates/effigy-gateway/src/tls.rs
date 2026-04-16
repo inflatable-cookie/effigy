@@ -75,10 +75,7 @@ impl TlsConfig {
     /// Generate a certificate for the given domain.
     ///
     /// Returns the paths to the certificate and key files.
-    pub fn generate_cert(
-        &self,
-        domain: &str,
-    ) -> Result<CertPaths, GatewayError> {
+    pub fn generate_cert(&self, domain: &str) -> Result<CertPaths, GatewayError> {
         std::fs::create_dir_all(&self.certs_dir).map_err(|e| GatewayError::TlsError {
             domain: domain.to_string(),
             reason: format!("failed to create certs directory: {e}"),
@@ -121,10 +118,7 @@ impl TlsConfig {
     }
 
     /// Load a certificate and key from disk for use with rustls.
-    pub fn load_cert(
-        &self,
-        domain: &str,
-    ) -> Result<CertPaths, GatewayError> {
+    pub fn load_cert(&self, domain: &str) -> Result<CertPaths, GatewayError> {
         let cert_path = self.certs_dir.join(format!("{domain}.pem"));
         let key_path = self.certs_dir.join(format!("{domain}-key.pem"));
 

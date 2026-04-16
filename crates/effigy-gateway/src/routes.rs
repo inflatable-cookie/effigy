@@ -76,12 +76,11 @@ impl RouteTable {
             return Ok(Self::new());
         }
 
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            GatewayError::RouteTableReadError {
+        let content =
+            std::fs::read_to_string(path).map_err(|e| GatewayError::RouteTableReadError {
                 path: path.to_path_buf(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         serde_json::from_str(&content).map_err(|e| GatewayError::RouteTableParseError {
             path: path.to_path_buf(),
@@ -101,12 +100,11 @@ impl RouteTable {
             })?;
         }
 
-        let content = serde_json::to_string_pretty(self).map_err(|e| {
-            GatewayError::RouteTableWriteError {
+        let content =
+            serde_json::to_string_pretty(self).map_err(|e| GatewayError::RouteTableWriteError {
                 path: path.to_path_buf(),
                 reason: format!("failed to serialize: {e}"),
-            }
-        })?;
+            })?;
 
         // Write to a temp file in the same directory, then rename.
         // This ensures atomic replacement.
@@ -269,11 +267,16 @@ mod tests {
     #[test]
     fn duplicate_registration_fails() {
         let mut table = RouteTable::new();
-        table.register(test_route("myapp.test", "127.0.0.1:8080")).unwrap();
+        table
+            .register(test_route("myapp.test", "127.0.0.1:8080"))
+            .unwrap();
 
         let result = table.register(test_route("myapp.test", "127.0.0.1:9090"));
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), GatewayError::DuplicateRoute { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            GatewayError::DuplicateRoute { .. }
+        ));
     }
 
     #[test]
@@ -289,7 +292,9 @@ mod tests {
     #[test]
     fn deregister_removes_route() {
         let mut table = RouteTable::new();
-        table.register(test_route("myapp.test", "127.0.0.1:8080")).unwrap();
+        table
+            .register(test_route("myapp.test", "127.0.0.1:8080"))
+            .unwrap();
 
         let removed = table.deregister("myapp.test").unwrap();
         assert_eq!(removed.target, "127.0.0.1:8080");
@@ -301,7 +306,10 @@ mod tests {
         let mut table = RouteTable::new();
         let result = table.deregister("nonexistent.test");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), GatewayError::RouteNotFound { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            GatewayError::RouteNotFound { .. }
+        ));
     }
 
     #[test]

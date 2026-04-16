@@ -52,12 +52,13 @@ pub async fn run_dns_server(
     route_table: Arc<RwLock<RouteTable>>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), crate::GatewayError> {
-    let socket = UdpSocket::bind(config.bind_addr)
-        .await
-        .map_err(|e| crate::GatewayError::DnsBindError {
-            addr: config.bind_addr.to_string(),
-            reason: e.to_string(),
-        })?;
+    let socket =
+        UdpSocket::bind(config.bind_addr)
+            .await
+            .map_err(|e| crate::GatewayError::DnsBindError {
+                addr: config.bind_addr.to_string(),
+                reason: e.to_string(),
+            })?;
 
     debug!(addr = %config.bind_addr, tld = %config.tld, "DNS resolver started");
 
@@ -122,8 +123,20 @@ fn handle_dns_query(
     response.set_recursion_available(false);
 
     let mut answered = false;
+    let mut matched_tld = false;
 
     for query in request.queries() {
+        // We only serve A records. But if the query is for our TLD
+        // (even for AAAA), we mark it as matched so we return NoError
+        // instead of Refused. This prevents slow dual-stack lookups
+        // in browsers that try AAAA first.
+        let query_name = query.name().to_string();
+        let query_domain = query_name.trim_end_matches('.').to_lowercase();
+        let tld_check = &config.tld;
+        if query_domain.ends_with(&format!(".{tld_check}")) || query_domain == *tld_check {
+            matched_tld = true;
+        }
+
         if query.query_type() != RecordType::A {
             continue;
         }
@@ -136,8 +149,7 @@ fn handle_dns_query(
 
         // Check if this domain ends with our TLD.
         let tld = &config.tld;
-        let matches_tld = domain.ends_with(&format!(".{tld}"))
-            || domain == *tld;
+        let matches_tld = domain.ends_with(&format!(".{tld}")) || domain == *tld;
 
         if !matches_tld {
             continue;
@@ -153,11 +165,7 @@ fn handle_dns_query(
         if has_route {
             debug!(domain = %domain, "DNS: resolving to {}", config.resolve_to);
 
-            let record = Record::from_rdata(
-                name.clone(),
-                60,
-                RData::A(A(config.resolve_to)),
-            );
+            let record = Record::from_rdata(name.clone(), 60, RData::A(A(config.resolve_to)));
             response.add_answer(record);
             answered = true;
         } else {
@@ -176,11 +184,14 @@ fn handle_dns_query(
         }
     }
 
-    if !answered {
-        // No matching queries — refuse.
-        response.set_response_code(ResponseCode::Refused);
-    } else {
+    if answered || matched_tld {
+        // Either we have an answer, or the query was for our TLD (even
+        // if we don't have A records for it, e.g., AAAA queries).
+        // Return NoError so browsers don't retry with different strategies.
         response.set_response_code(ResponseCode::NoError);
+    } else {
+        // Not our TLD — refuse.
+        response.set_response_code(ResponseCode::Refused);
     }
 
     // Copy the original questions into the response.
@@ -285,7 +296,9 @@ mod tests {
         let response_bytes = handle_dns_query(&query, &config, &table).unwrap();
         let response = Message::from_bytes(&response_bytes).unwrap();
 
-        // AAAA query for .test domain — no A answers, refused.
+        // AAAA query for .test domain — no A answers, but NoError
+        // (not Refused) to prevent slow dual-stack browser lookups.
+        assert_eq!(response.response_code(), ResponseCode::NoError);
         assert_eq!(response.answers().len(), 0);
     }
 
