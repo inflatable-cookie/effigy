@@ -13,6 +13,7 @@
 //!   and other hop-by-hop headers from proxied requests/responses.
 //! - **Error pages**: Returns helpful HTML when no route is registered.
 
+use std::error::Error as StdError;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -520,8 +521,6 @@ fn no_route_response(host: &str) -> Response<ProxyBody> {
         .body(full_body(Bytes::from(body)))
         .unwrap()
 }
-
-use std::error::Error as StdError;
 
 #[cfg(test)]
 mod tests {
