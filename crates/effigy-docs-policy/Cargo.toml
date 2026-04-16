@@ -8,4 +8,5 @@ description = "Docs policy and index contracts for Effigy"
 [dependencies]
 effigy-manifest = { path = "../effigy-manifest" }
 regex = "1"
+serde_json = "1"
 walkdir = "2"

@@ -8,10 +8,10 @@ pub(in crate::runner) use effigy_manifest::{config_sections, task_runtime};
 pub(in crate::runner) use effigy_manifest::{
     LoadedTaskManifest, ManifestBootstrapSubmodulesPolicy, ManifestCargoEnvMatchMode,
     ManifestCompositionEdge, ManifestCompositionOverride, ManifestCompositionValueSource,
-    ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
-    ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus, ManifestDocsPolicyConfig,
-    ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedRun, ManifestManagedRunStep,
-    ManifestTask, ManifestTestSuiteTeardownPolicy, TaskManifest,
+    ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestDemoConfig, ManifestDemoMode,
+    ManifestDemoStatus, ManifestDocsPolicyConfig, ManifestEnvEntry, ManifestEnvFileDirective,
+    ManifestManagedRun, ManifestManagedRunStep, ManifestTask, ManifestTestSuiteTeardownPolicy,
+    TaskManifest,
 };
 
 pub(super) fn load_task_manifest(manifest_path: &Path) -> Result<TaskManifest, super::RunnerError> {

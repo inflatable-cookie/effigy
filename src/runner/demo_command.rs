@@ -13,6 +13,14 @@ use effigy_demo::browser::{
     DemoHistoryAttemptHistoryPayload, DemoHistoryDemo, DemoHistoryPayload, DemoInspectPayload,
     DemoListPayload,
 };
+use effigy_demo::projection::{
+    active_attempt_key_values as crate_active_attempt_key_values,
+    active_terminal_session_key_values as crate_active_terminal_session_key_values,
+    availability_label as crate_availability_label,
+    demo_action_key_values as crate_demo_action_key_values,
+    demo_table_spec as crate_demo_table_spec,
+    recent_attempts_table_spec as crate_recent_attempts_table_spec,
+};
 use effigy_demo::runtime::{
     DemoActiveAttempt, DemoActiveTerminalSession, DemoConcurrentRuntimeState, DemoRuntimeBackend,
     DemoTerminalInputForwarding, DemoTerminalRecentOutput, DemoTerminalResize, DemoTerminalSize,
@@ -25,7 +33,8 @@ use effigy_demo::{
     clear_resize_handoff as demo_clear_resize_handoff, concurrent_runner_input_target_process,
     concurrent_runner_projected_output_provenance, concurrent_runner_projection_shape,
     concurrent_runner_runtime_backend, current_terminal_size, demo_mode_prefers_attached_terminal,
-    display_repo_path, failed_demo_attempt as build_failed_demo_attempt,
+    demo_run_preview as crate_demo_run_preview, derive_gap_class, display_repo_path,
+    failed_demo_attempt as build_failed_demo_attempt,
     find_historical_attempt as find_extracted_historical_attempt,
     history_attempt_to_json as history_attempt_to_json_value,
     history_attempts_with_limit as history_attempts_with_limit_slice,
@@ -775,7 +784,7 @@ fn render_demo_stop(
     };
 
     let active_attempt = load_active_attempt(repo_root, demo_id)?;
-    match demo_entrypoint(demo) {
+    match DemoEntrypoint::from_manifest(demo) {
         DemoEntrypoint::Task(task_name) => {
             if active_attempt.runtime_backend_kind != "concurrent-runner" {
                 return demo_error(
@@ -1249,71 +1258,14 @@ fn demo_list_query_to_key_values(query: &DemoListQuery) -> Vec<KeyValue> {
 }
 
 fn demo_table_spec(demos: &[&DemoRecord]) -> TableSpec {
-    TableSpec::new(
-        vec![
-            "ID".to_owned(),
-            "Title".to_owned(),
-            "Owner".to_owned(),
-            "Mode".to_owned(),
-            "Status".to_owned(),
-            "Gap".to_owned(),
-            "Actions".to_owned(),
-            "Entrypoint".to_owned(),
-        ],
-        demos
-            .iter()
-            .map(|demo| {
-                vec![
-                    demo.id.clone(),
-                    demo.title.clone(),
-                    demo.owner.clone(),
-                    demo.mode.as_str().to_owned(),
-                    demo.effective_status(),
-                    demo.gap_class.to_owned(),
-                    demo.actions().summary_label(),
-                    demo.entrypoint.render_compact(),
-                ]
-            })
-            .collect(),
-    )
+    crate_demo_table_spec(demos)
 }
 
 fn recent_attempts_table_spec<T>(attempts: &[T]) -> TableSpec
 where
     T: Borrow<DemoHistoricalAttempt>,
 {
-    TableSpec::new(
-        vec![
-            "#".to_owned(),
-            "Attempt ID".to_owned(),
-            "Recorded".to_owned(),
-            "Status".to_owned(),
-            "Summary".to_owned(),
-            "Receipt".to_owned(),
-        ],
-        attempts
-            .iter()
-            .enumerate()
-            .map(|attempt| {
-                let (index, attempt) = attempt;
-                let attempt = attempt.borrow();
-                vec![
-                    (index + 1).to_string(),
-                    attempt.attempt_id.clone(),
-                    attempt.recorded_at_epoch_ms.to_string(),
-                    attempt.outcome.clone(),
-                    attempt
-                        .summary
-                        .clone()
-                        .unwrap_or_else(|| "<none>".to_owned()),
-                    attempt
-                        .receipt_path
-                        .clone()
-                        .unwrap_or_else(|| "<none>".to_owned()),
-                ]
-            })
-            .collect(),
-    )
+    crate_recent_attempts_table_spec(attempts)
 }
 
 fn history_attempt_to_json(ordinal: usize, attempt: &DemoHistoricalAttempt) -> JsonValue {
@@ -1346,30 +1298,11 @@ fn build_demo_groups<'a>(demos: &'a [DemoRecord], group_by: DemoListGroupBy) -> 
 }
 
 fn availability_label(available: bool, reason: Option<&str>) -> String {
-    if available {
-        "yes".to_owned()
-    } else if let Some(reason) = reason {
-        format!("no ({reason})")
-    } else {
-        "no".to_owned()
-    }
+    crate_availability_label(available, reason)
 }
 
 fn demo_action_key_values(actions: &DemoActionAvailability) -> Vec<KeyValue> {
-    vec![
-        KeyValue::new(
-            "run",
-            availability_label(actions.run_available, actions.run_reason.as_deref()),
-        ),
-        KeyValue::new(
-            "stop",
-            availability_label(actions.stop_available, actions.stop_reason.as_deref()),
-        ),
-        KeyValue::new(
-            "rerun",
-            availability_label(actions.rerun_available, actions.rerun_reason.as_deref()),
-        ),
-    ]
+    crate_demo_action_key_values(actions)
 }
 
 fn demo_record_group_by(group_by: DemoListGroupBy) -> DemoRecordGroupBy {
@@ -1397,242 +1330,15 @@ fn demo_matches_query(record: &DemoRecord, query: &DemoListQuery) -> bool {
 }
 
 fn active_attempt_key_values(active_attempt: &DemoActiveAttempt) -> Vec<KeyValue> {
-    let runtime_backend = active_attempt.runtime_backend();
-    let mut values = vec![
-        KeyValue::new("state", active_attempt.state.clone()),
-        KeyValue::new("runtime-backend", runtime_backend.label.clone()),
-        KeyValue::new(
-            "runtime-flattened",
-            if active_attempt.flattened_runtime_projection {
-                "yes"
-            } else {
-                "no"
-            },
-        ),
-        KeyValue::new(
-            "runtime-capabilities",
-            runtime_backend.rendered_capabilities(),
-        ),
-        KeyValue::new(
-            "runtime-shape",
-            runtime_backend.projection_shape.rendered_label().to_owned(),
-        ),
-        KeyValue::new(
-            "runtime-live-terminal",
-            if runtime_backend.projection_shape.live_terminal_eligible {
-                "yes"
-            } else {
-                "no"
-            },
-        ),
-        KeyValue::new(
-            "stoppable",
-            if active_attempt.stoppable {
-                "yes".to_owned()
-            } else {
-                "no".to_owned()
-            },
-        ),
-        KeyValue::new(
-            "state-path",
-            active_attempt
-                .state_path
-                .clone()
-                .unwrap_or_else(|| "<none>".to_owned()),
-        ),
-    ];
-    if let Some(attempt_id) = &active_attempt.attempt_id {
-        values.push(KeyValue::new("attempt-id", attempt_id.clone()));
-    }
-    if let Some(owner_pid) = active_attempt.owner_pid {
-        values.push(KeyValue::new("owner-pid", owner_pid.to_string()));
-    }
-    if let Some(target_pid) = active_attempt.target_pid {
-        values.push(KeyValue::new("target-pid", target_pid.to_string()));
-    }
-    if let Some(started_at_epoch_ms) = active_attempt.started_at_epoch_ms {
-        values.push(KeyValue::new(
-            "started-at-epoch-ms",
-            started_at_epoch_ms.to_string(),
-        ));
-    }
-    if let (Some(kind), Some(value)) = (
-        &active_attempt.entrypoint_kind,
-        &active_attempt.entrypoint_value,
-    ) {
-        values.push(KeyValue::new("entrypoint", format!("{kind}:{value}")));
-    }
-    if let Some(command) = &active_attempt.command {
-        values.push(KeyValue::new("command", command.clone()));
-    }
-    if let Some(count) = active_attempt.managed_process_count {
-        values.push(KeyValue::new("managed-process-count", count.to_string()));
-    }
-    if runtime_backend.projected_process_summary.present {
-        values.push(KeyValue::new(
-            "managed-processes",
-            runtime_backend.projected_process_summary.rendered_names(),
-        ));
-        values.push(KeyValue::new(
-            "runtime-merged-output",
-            if runtime_backend
-                .projected_process_summary
-                .merged_output_from_multiple_processes
-            {
-                "yes"
-            } else {
-                "no"
-            },
-        ));
-        values.push(KeyValue::new(
-            "runtime-output-provenance",
-            runtime_backend
-                .projected_output_provenance
-                .rendered_label()
-                .to_owned(),
-        ));
-    }
-    if let Some(stdout_log_path) = &active_attempt.stdout_log_path {
-        values.push(KeyValue::new("stdout-log", stdout_log_path.clone()));
-    }
-    if let Some(stderr_log_path) = &active_attempt.stderr_log_path {
-        values.push(KeyValue::new("stderr-log", stderr_log_path.clone()));
-    }
-    if let Some(parse_error) = &active_attempt.parse_error {
-        values.push(KeyValue::new("parse-error", parse_error.clone()));
-    }
-    values
+    crate_active_attempt_key_values(active_attempt)
 }
 
 fn active_terminal_session_key_values(session: &DemoActiveTerminalSession) -> Vec<KeyValue> {
-    let mut values = vec![
-        KeyValue::new("state", session.state.clone()),
-        KeyValue::new("runtime-backend", session.runtime_backend.label.clone()),
-        KeyValue::new(
-            "runtime-flattened",
-            if session.runtime_backend.flattened_projection {
-                "yes"
-            } else {
-                "no"
-            },
-        ),
-        KeyValue::new(
-            "runtime-capabilities",
-            session.runtime_backend.rendered_capabilities(),
-        ),
-        KeyValue::new(
-            "runtime-shape",
-            session
-                .runtime_backend
-                .projection_shape
-                .rendered_label()
-                .to_owned(),
-        ),
-        KeyValue::new(
-            "runtime-live-terminal",
-            if session
-                .runtime_backend
-                .projection_shape
-                .live_terminal_eligible
-            {
-                "yes"
-            } else {
-                "no"
-            },
-        ),
-        KeyValue::new("transport", session.transport.clone()),
-        KeyValue::new("pty", if session.pty { "yes" } else { "no" }),
-        KeyValue::new(
-            "input-forwarding",
-            if session.input_forwarding.available {
-                "yes".to_owned()
-            } else {
-                availability_label(false, session.input_forwarding_reason.as_deref())
-            },
-        ),
-        KeyValue::new(
-            "input-command",
-            session.input_forwarding.command_template.clone(),
-        ),
-        KeyValue::new(
-            "terminal-size",
-            session
-                .terminal_size
-                .rendered()
-                .unwrap_or_else(|| "<unknown>".to_owned()),
-        ),
-        KeyValue::new(
-            "resize",
-            if session.resize.available {
-                "yes".to_owned()
-            } else {
-                availability_label(false, session.resize.reason.as_deref())
-            },
-        ),
-        KeyValue::new("resize-command", session.resize.command_template.clone()),
-        KeyValue::new("nested-tui", if session.nested_tui { "yes" } else { "no" }),
-        KeyValue::new(
-            "output-available",
-            if session.output_available {
-                "yes"
-            } else {
-                "no"
-            },
-        ),
-    ];
-    if let Some(attempt_id) = &session.attempt_id {
-        values.push(KeyValue::new("attempt-id", attempt_id.clone()));
-    }
-    if let Some(stdin_input_path) = &session.stdin_input_path {
-        values.push(KeyValue::new("stdin-input", stdin_input_path.clone()));
-    }
-    if let Some(resize_handoff_path) = &session.resize_handoff_path {
-        values.push(KeyValue::new("resize-handoff", resize_handoff_path.clone()));
-    }
-    if let Some(stdout_log_path) = &session.stdout_log_path {
-        values.push(KeyValue::new("stdout-log", stdout_log_path.clone()));
-    }
-    if let Some(stderr_log_path) = &session.stderr_log_path {
-        values.push(KeyValue::new("stderr-log", stderr_log_path.clone()));
-    }
-    if let Some(count) = session
-        .runtime_backend
-        .projection_shape
-        .managed_process_count
-    {
-        values.push(KeyValue::new("managed-process-count", count.to_string()));
-    }
-    if session.runtime_backend.projected_process_summary.present {
-        values.push(KeyValue::new(
-            "managed-processes",
-            session
-                .runtime_backend
-                .projected_process_summary
-                .rendered_names(),
-        ));
-        values.push(KeyValue::new(
-            "runtime-merged-output",
-            if session
-                .runtime_backend
-                .projected_process_summary
-                .merged_output_from_multiple_processes
-            {
-                "yes"
-            } else {
-                "no"
-            },
-        ));
-        values.push(KeyValue::new(
-            "runtime-output-provenance",
-            session
-                .runtime_backend
-                .projected_output_provenance
-                .rendered_label()
-                .to_owned(),
-        ));
-    }
-    values
+    crate_active_terminal_session_key_values(session)
 }
+
+// active_attempt_key_values and active_terminal_session_key_values body
+// moved to effigy_demo::projection; stubs above forward to crate.
 
 fn build_demo_record(
     repo_root: &Path,
@@ -1641,7 +1347,7 @@ fn build_demo_record(
     demo: &ManifestDemoConfig,
 ) -> Result<DemoRecord, RunnerError> {
     let sources = demo_sources_for_id(repo_root, loaded, demo_id);
-    let entrypoint = demo_entrypoint(demo);
+    let entrypoint = DemoEntrypoint::from_manifest(demo);
     let primary_source = sources
         .first()
         .cloned()
@@ -1694,22 +1400,8 @@ fn demo_sources_for_id(
         .collect::<Vec<_>>()
 }
 
-fn demo_entrypoint(demo: &ManifestDemoConfig) -> DemoEntrypoint {
-    if let Some(task) = &demo.task {
-        DemoEntrypoint::Task(task.clone())
-    } else if let Some(run) = &demo.run {
-        DemoEntrypoint::Run(run.clone())
-    } else {
-        DemoEntrypoint::Run(ManifestManagedRun::Command("<invalid>".to_owned()))
-    }
-}
-
-fn demo_run_preview(run: &ManifestManagedRun) -> String {
-    match run {
-        ManifestManagedRun::Command(command) => command.clone(),
-        ManifestManagedRun::Sequence(steps) => format!("<sequence:{}>", steps.len()),
-    }
-}
+// demo_entrypoint moved to DemoEntrypoint::from_manifest in effigy-demo
+// demo_run_preview moved to effigy_demo::demo_run_preview
 
 fn render_demo_run_command(
     repo_root: &Path,
@@ -1815,68 +1507,17 @@ fn load_active_terminal_session(
     repo_root: &Path,
     active_attempt: &DemoActiveAttempt,
 ) -> DemoActiveTerminalSession {
-    if !active_attempt.active {
-        return DemoActiveTerminalSession::inactive();
-    }
-
-    let stdout_log_path = active_attempt.stdout_log_path.clone();
-    let stderr_log_path = active_attempt.stderr_log_path.clone();
-    let runtime_backend = active_attempt.runtime_backend();
-    let input_forwarding_reason = (!active_attempt.supports_input_forwarding)
-        .then_some("input forwarding is not exposed through the current demo runtime".to_owned());
-    DemoActiveTerminalSession {
-        available: true,
-        state: "live".to_owned(),
-        attempt_id: active_attempt.attempt_id.clone(),
-        runtime_backend,
-        transport: active_attempt.terminal_transport.rendered().to_owned(),
-        pty: matches!(
-            active_attempt.terminal_transport,
-            DemoTerminalTransport::Pty
-        ),
-        supports_input_forwarding: active_attempt.supports_input_forwarding,
-        input_forwarding_reason: input_forwarding_reason.clone(),
-        input_forwarding: if active_attempt.supports_input_forwarding {
-            DemoTerminalInputForwarding::available()
-        } else {
-            DemoTerminalInputForwarding::unavailable(
-                input_forwarding_reason
-                    .expect("reason exists when input forwarding is unavailable"),
-            )
-        },
-        nested_tui: active_attempt.nested_tui,
-        terminal_size: DemoTerminalSize {
-            cols: active_attempt.terminal_cols,
-            rows: active_attempt.terminal_rows,
-        },
-        resize: if active_attempt.supports_resize {
-            DemoTerminalResize::available()
-        } else {
-            DemoTerminalResize::unavailable(
-                "terminal resize handoff is not exposed through the current demo runtime"
-                    .to_owned(),
-            )
-        },
-        resize_handoff_path: active_attempt.resize_handoff_path.clone(),
-        stdin_input_path: active_attempt.stdin_input_path.clone(),
-        stdout_log_path: stdout_log_path.clone(),
-        stderr_log_path: stderr_log_path.clone(),
-        output_available: stdout_log_path.is_some() || stderr_log_path.is_some(),
-        recent_output: DemoTerminalRecentOutput {
-            stdout_lines: stdout_log_path
-                .as_deref()
-                .map(|path| {
-                    read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES)
-                })
-                .unwrap_or_default(),
-            stderr_lines: stderr_log_path
-                .as_deref()
-                .map(|path| {
-                    read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES)
-                })
-                .unwrap_or_default(),
-        },
-    }
+    let stdout_lines = active_attempt
+        .stdout_log_path
+        .as_deref()
+        .map(|path| read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES))
+        .unwrap_or_default();
+    let stderr_lines = active_attempt
+        .stderr_log_path
+        .as_deref()
+        .map(|path| read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES))
+        .unwrap_or_default();
+    DemoActiveTerminalSession::from_active_attempt(active_attempt, stdout_lines, stderr_lines)
 }
 
 fn update_active_terminal_resize(
@@ -1917,12 +1558,12 @@ fn execute_demo_attempt(
     demo: &ManifestDemoConfig,
     output_json: bool,
 ) -> Result<DemoExecutionAttempt, RunnerError> {
-    match demo_entrypoint(demo) {
+    match DemoEntrypoint::from_manifest(demo) {
         DemoEntrypoint::Task(task_name) => {
             execute_task_backed_demo(repo_root, demo_id, &task_name, demo.mode, output_json)
         }
         DemoEntrypoint::Run(run_spec) => {
-            let entrypoint_value = demo_run_preview(&run_spec);
+            let entrypoint_value = crate_demo_run_preview(&run_spec);
             let rendered_command = render_demo_run_command(repo_root, loaded, demo_id, &run_spec)?;
             execute_run_backed_demo(
                 repo_root,
@@ -2892,20 +2533,7 @@ fn pid_is_alive(pid: u32) -> bool {
     pid != 0
 }
 
-fn derive_gap_class(status: ManifestDemoStatus, stale: bool) -> &'static str {
-    if stale {
-        return "stale";
-    }
-    match status {
-        ManifestDemoStatus::Planned => "planned",
-        ManifestDemoStatus::Missing => "missing",
-        ManifestDemoStatus::Broken => "broken",
-        ManifestDemoStatus::Ready
-        | ManifestDemoStatus::Running
-        | ManifestDemoStatus::Passed
-        | ManifestDemoStatus::Failed => "existing",
-    }
-}
+// derive_gap_class moved to effigy_demo::records
 
 fn demo_error(
     output_json: bool,

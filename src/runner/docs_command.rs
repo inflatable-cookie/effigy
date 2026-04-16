@@ -4,11 +4,13 @@ use std::path::{Path, PathBuf};
 
 use effigy_docs_policy::{
     check_contains, check_forbidden, check_headings, check_paths, check_workflow_paths,
+    checks::{
+        check_next_action, default_json_example_block_requirements,
+        default_json_example_requirements, validate_json_examples,
+    },
     collect_index_markdown_links, collect_link_check_files, collect_markdown_children,
-    extract_fenced_json_blocks, extract_h2_section, extract_lead_verb,
-    first_non_empty_section_line, insert_log_index_entry, load_next_action_allowlist,
-    normalize_log_index_relative_path, resolve_docs_index_spec, resolve_docs_next_action_spec,
-    resolve_repo_input, scan_markdown_links, DocsPolicyError,
+    insert_log_index_entry, normalize_log_index_relative_path, resolve_docs_index_spec,
+    resolve_docs_next_action_spec, resolve_repo_input, scan_markdown_links, DocsPolicyError,
 };
 use serde_json::json;
 
@@ -159,86 +161,54 @@ fn run_check_json_examples(
     } else {
         required_override.to_vec()
     };
-    let required_blocks = if required_blocks_override.is_empty() {
+    let required_blocks_tuples: Vec<(usize, String)> = if required_blocks_override.is_empty() {
         default_json_example_block_requirements()
     } else {
-        required_blocks_override.to_vec()
+        required_blocks_override
+            .iter()
+            .map(|r| (r.block_index, r.needle.clone()))
+            .collect()
     };
 
     let content = std::fs::read_to_string(&file)
         .map_err(|err| RunnerError::task_invocation_failed_read(&file, err))?;
-    let section = extract_h2_section(&content, section_title).ok_or_else(|| {
-        RunnerError::task_invocation(format!(
-            "section `{section_title}` not found in {}",
-            file.display()
-        ))
-    })?;
-    let blocks = extract_fenced_json_blocks(&section);
 
-    let mut failures = Vec::new();
-    if blocks.len() < min_blocks {
-        failures.push(format!(
-            "expected at least {min_blocks} JSON example block(s), found {}",
-            blocks.len()
-        ));
-    }
-
-    for needle in &required {
-        for (index, block) in blocks.iter().enumerate() {
-            if !block.contains(needle) {
-                failures.push(format!(
-                    "missing `{needle}` in JSON example block #{}",
-                    index + 1
-                ));
-            }
-        }
-    }
-
-    for requirement in &required_blocks {
-        let block = blocks.get(requirement.block_index.saturating_sub(1));
-        match block {
-            Some(block) if block.contains(&requirement.needle) => {}
-            Some(_) => failures.push(format!(
-                "missing `{}` in JSON example block #{}",
-                requirement.needle, requirement.block_index
-            )),
-            None => failures.push(format!(
-                "required JSON example block #{} is missing",
-                requirement.block_index
-            )),
-        }
-    }
+    let result = validate_json_examples(
+        &content,
+        &file.display().to_string(),
+        section_title,
+        min_blocks,
+        &required,
+        &required_blocks_tuples,
+    );
 
     if output_json {
         let payload = json!({
             "schema": "effigy.docs.json-examples.v1",
             "schema_version": 1,
-            "ok": failures.is_empty(),
-            "file": file.display().to_string(),
-            "section": section_title,
-            "block_count": blocks.len(),
-            "min_blocks": min_blocks,
-            "required": required,
-            "required_blocks": required_blocks.iter().map(|requirement| {
-                json!({
-                    "block_index": requirement.block_index,
-                    "needle": requirement.needle,
-                })
+            "ok": result.ok,
+            "file": result.file,
+            "section": result.section,
+            "block_count": result.block_count,
+            "min_blocks": result.min_blocks,
+            "required": result.required,
+            "required_blocks": required_blocks_tuples.iter().map(|(idx, needle)| {
+                json!({ "block_index": idx, "needle": needle })
             }).collect::<Vec<_>>(),
-            "failures": failures,
+            "failures": result.failures,
         });
-        return if payload["ok"] == true {
+        return if result.ok {
             Ok(payload.to_string())
         } else {
             Err(RunnerError::task_invocation(payload.to_string()))
         };
     }
 
-    if failures.is_empty() {
+    if result.ok {
         return Ok("examples json check passed".to_owned());
     }
 
-    Err(RunnerError::task_invocation(failures.join("\n")))
+    Err(RunnerError::task_invocation(result.failures.join("\n")))
 }
 
 fn run_check_headings(
@@ -558,62 +528,8 @@ fn run_check_next_action(
     let policy = load_docs_policy_config(repo_root)?;
     let spec = resolve_docs_next_action_spec(repo_root, &policy, policy_name)
         .map_err(map_docs_policy_error)?;
-    let referenced = collect_index_markdown_links(&spec.index.index, spec.index.section.as_deref())
-        .map_err(map_docs_policy_error)?;
-    let allowlist =
-        load_next_action_allowlist(&spec.allowlist_file).map_err(map_docs_policy_error)?;
-    let mut findings = Vec::new();
 
-    for relative in referenced {
-        let file = spec.index.dir.join(&relative);
-        if !file.is_file() {
-            findings.push(json!({
-                "file": file.display().to_string(),
-                "relative": relative,
-                "kind": "missing-file",
-                "message": format!("missing indexed markdown file: {}", file.display()),
-            }));
-            continue;
-        }
-
-        let content = std::fs::read_to_string(&file)
-            .map_err(|err| RunnerError::task_invocation_failed_read(&file, err))?;
-        let Some(section) = extract_h2_section(&content, &spec.heading_without_hashes) else {
-            findings.push(json!({
-                "file": file.display().to_string(),
-                "relative": relative,
-                "kind": "missing-heading",
-                "message": format!("missing `{}` section in {}", spec.heading, file.display()),
-            }));
-            continue;
-        };
-        let Some(first_line) = first_non_empty_section_line(&section) else {
-            findings.push(json!({
-                "file": file.display().to_string(),
-                "relative": relative,
-                "kind": "empty-section",
-                "message": format!("empty `{}` section in {}", spec.heading, file.display()),
-            }));
-            continue;
-        };
-        let verb = extract_lead_verb(&first_line);
-        if verb.is_empty() || !allowlist.contains(&verb) {
-            findings.push(json!({
-                "file": file.display().to_string(),
-                "relative": relative,
-                "kind": "non-actionable",
-                "message": format!(
-                    "non-actionable `{}` lead verb in {}: `{}`",
-                    spec.heading,
-                    file.display(),
-                    first_line
-                ),
-                "line": first_line,
-                "verb": verb,
-                "allowlist_file": spec.allowlist_file.display().to_string(),
-            }));
-        }
-    }
+    let findings = check_next_action(&spec).map_err(map_docs_policy_error)?;
 
     if output_json {
         let payload = json!({
@@ -625,9 +541,9 @@ fn run_check_next_action(
             "index": spec.index.index.display().to_string(),
             "dir": spec.index.dir.display().to_string(),
             "allowlist_file": spec.allowlist_file.display().to_string(),
-            "findings": findings,
+            "findings": findings.iter().map(|f| f.to_json()).collect::<Vec<_>>(),
         });
-        return if payload["ok"] == true {
+        return if findings.is_empty() {
             Ok(payload.to_string())
         } else {
             Err(RunnerError::task_invocation(payload.to_string()))
@@ -642,8 +558,8 @@ fn run_check_next_action(
     }
 
     let mut output = String::new();
-    for finding in findings {
-        output.push_str(finding["message"].as_str().unwrap_or_default());
+    for finding in &findings {
+        output.push_str(&finding.message);
         output.push('\n');
     }
     Err(RunnerError::task_invocation(output.trim_end().to_owned()))
@@ -768,30 +684,8 @@ fn run_check_workflow_paths(
     Err(RunnerError::task_invocation(output.trim_end().to_owned()))
 }
 
-fn default_json_example_requirements() -> Vec<String> {
-    vec![
-        "\"schema\": \"effigy.completion.candidates.v1\"".to_owned(),
-        "\"schema_version\": 1".to_owned(),
-        "\"cache_state\":".to_owned(),
-        "\"cache_age_ms\":".to_owned(),
-        "\"cache_ttl_ms\":".to_owned(),
-        "\"effective_cache_ttl_ms\":".to_owned(),
-        "\"cache_ttl_source\":".to_owned(),
-    ]
-}
-
-fn default_json_example_block_requirements() -> Vec<DocsBlockRequirement> {
-    vec![
-        DocsBlockRequirement {
-            block_index: 1,
-            needle: "\"cache_state\": \"hit\"".to_owned(),
-        },
-        DocsBlockRequirement {
-            block_index: 2,
-            needle: "\"cache_hit\": false".to_owned(),
-        },
-    ]
-}
+// default_json_example_requirements and default_json_example_block_requirements
+// moved to effigy_docs_policy::checks
 
 fn map_docs_policy_error(error: DocsPolicyError) -> RunnerError {
     match error {

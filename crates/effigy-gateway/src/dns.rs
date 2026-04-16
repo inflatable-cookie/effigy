@@ -366,7 +366,10 @@ mod tests {
 
         let cache = DnsCache::new(Duration::from_secs(2));
         let (response_bytes, resolved) = handle_dns_query(&query, &config, &table, &cache);
-        assert!(!resolved, "unregistered domain should not count as resolved");
+        assert!(
+            !resolved,
+            "unregistered domain should not count as resolved"
+        );
         let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
 
         // Should still resolve (proxy will show error page).
@@ -472,8 +475,7 @@ mod tests {
         // Second query should use the cache (even if we clear the
         // route table, the cached result is still valid).
         let empty_table = Arc::new(RwLock::new(RouteTable::new()));
-        let (resp2, resolved2) =
-            handle_dns_query(&query, &config, &empty_table, &cache);
+        let (resp2, resolved2) = handle_dns_query(&query, &config, &empty_table, &cache);
         assert!(resolved2, "should resolve from cache");
         assert!(resp2.is_some());
     }

@@ -1,0 +1,9 @@
+[package]
+name = "effigy-bootstrap"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Bootstrap request resolution and execution contracts for Effigy"
+
+[dependencies]
+effigy-manifest = { path = "../effigy-manifest" }

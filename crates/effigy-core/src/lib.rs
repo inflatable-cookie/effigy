@@ -3,3 +3,4 @@ pub mod path_error_text;
 pub mod path_probe;
 pub mod repo;
 pub mod resolver;
+pub mod widgets;
