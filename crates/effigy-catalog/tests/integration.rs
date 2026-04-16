@@ -557,10 +557,7 @@ fn validate_compose_structure(yaml: &str) -> serde_yaml::Value {
 
     // If volumes key exists, it must be a mapping.
     if let Some(volumes) = doc.get("volumes") {
-        assert!(
-            volumes.is_mapping(),
-            "volumes is not a mapping:\n{yaml}"
-        );
+        assert!(volumes.is_mapping(), "volumes is not a mapping:\n{yaml}");
     }
 
     doc
@@ -570,13 +567,12 @@ fn validate_compose_structure(yaml: &str) -> serde_yaml::Value {
 fn validate_service(doc: &serde_yaml::Value, name: &str) -> serde_yaml::Value {
     let services = doc.get("services").unwrap();
     let svc = services.get(name).unwrap_or_else(|| {
-        panic!("service '{name}' not found in compose. Available: {:?}",
-            services.as_mapping().unwrap().keys().collect::<Vec<_>>())
+        panic!(
+            "service '{name}' not found in compose. Available: {:?}",
+            services.as_mapping().unwrap().keys().collect::<Vec<_>>()
+        )
     });
-    assert!(
-        svc.is_mapping(),
-        "service '{name}' is not a mapping"
-    );
+    assert!(svc.is_mapping(), "service '{name}' is not a mapping");
     svc.clone()
 }
 
@@ -674,8 +670,14 @@ fn assembled_yaml_is_structurally_valid_compose() {
     let app = validate_service(&doc, "app");
     assert!(app.get("build").is_some(), "app missing 'build'");
     assert!(app.get("volumes").is_some(), "app missing 'volumes'");
-    assert!(app.get("working_dir").is_some(), "app missing 'working_dir'");
-    assert!(app.get("environment").is_some(), "app missing 'environment'");
+    assert!(
+        app.get("working_dir").is_some(),
+        "app missing 'working_dir'"
+    );
+    assert!(
+        app.get("environment").is_some(),
+        "app missing 'environment'"
+    );
 
     // PHP extensions should be in the build args.
     let build_args = app.get("build").unwrap().get("args").unwrap();
@@ -705,7 +707,10 @@ fn assembled_yaml_is_structurally_valid_compose() {
     assert!(db.get("image").is_some(), "db missing 'image'");
     let db_image = db.get("image").unwrap().as_str().unwrap();
     assert!(db_image.contains("mariadb"), "db image should be mariadb");
-    assert!(db_image.contains("10.11"), "db image should use version 10.11");
+    assert!(
+        db_image.contains("10.11"),
+        "db image should use version 10.11"
+    );
 
     let db_env = db.get("environment").unwrap();
     assert_eq!(
@@ -726,11 +731,9 @@ fn assembled_yaml_is_structurally_valid_compose() {
     // 3. Validate volumes section.
     let volumes = doc.get("volumes").unwrap().as_mapping().unwrap();
     assert!(
-        volumes.keys().any(|k| {
-            k.as_str()
-                .map(|s| s.contains("db-data"))
-                .unwrap_or(false)
-        }),
+        volumes
+            .keys()
+            .any(|k| { k.as_str().map(|s| s.contains("db-data")).unwrap_or(false) }),
         "should have a mariadb data volume"
     );
 
@@ -794,14 +797,8 @@ fn php_with_both_mariadb_and_redis_produces_valid_depends_on() {
 
     // Should have a single depends_on with both db and cache.
     let depends = app.get("depends_on").unwrap();
-    assert!(
-        depends.get("db").is_some(),
-        "app should depend on db"
-    );
-    assert!(
-        depends.get("cache").is_some(),
-        "app should depend on cache"
-    );
+    assert!(depends.get("db").is_some(), "app should depend on db");
+    assert!(depends.get("cache").is_some(), "app should depend on cache");
 }
 
 #[test]
@@ -815,10 +812,7 @@ fn rust_postgres_stack_assembles_correctly() {
             catalog: "postgres".to_string(),
             params: {
                 let mut p = HashMap::new();
-                p.insert(
-                    "version".to_string(),
-                    toml::Value::String("16".to_string()),
-                );
+                p.insert("version".to_string(), toml::Value::String("16".to_string()));
                 p.insert(
                     "database".to_string(),
                     toml::Value::String("myapp".to_string()),
@@ -919,4 +913,297 @@ fn single_service_assembles_without_volumes() {
     validate_service(&doc, "cache");
     assert!(result.volumes.is_empty());
     assert!(doc.get("volumes").is_none());
+}
+
+// --- End-to-end: full pipeline write to disk and validate ─────────────
+
+/// End-to-end test: assemble a realistic PHP stack, write all artifacts
+/// to disk, and verify the compose file is structurally valid and the
+/// supporting files (Dockerfiles, nginx configs) all exist.
+#[test]
+fn end_to_end_php_stack_written_to_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("infra/dev");
+
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+    let output = ComposeOutput::new(output_dir.clone());
+
+    // Simulate a real PHP client project with the full service stack.
+    let services = vec![
+        ServiceDeclaration {
+            name: "app".to_string(),
+            catalog: "php-fpm".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "version".to_string(),
+                    toml::Value::String("8.3".to_string()),
+                );
+                p.insert(
+                    "extensions".to_string(),
+                    toml::Value::Array(vec![
+                        toml::Value::String("pdo_mysql".to_string()),
+                        toml::Value::String("gd".to_string()),
+                        toml::Value::String("redis".to_string()),
+                        toml::Value::String("memcached".to_string()),
+                        toml::Value::String("intl".to_string()),
+                        toml::Value::String("exif".to_string()),
+                        toml::Value::String("zip".to_string()),
+                        toml::Value::String("bcmath".to_string()),
+                    ]),
+                );
+                p.insert(
+                    "document_root".to_string(),
+                    toml::Value::String("public".to_string()),
+                );
+                p.insert(
+                    "node_version".to_string(),
+                    toml::Value::String("20".to_string()),
+                );
+                p
+            },
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "web".to_string(),
+            catalog: "nginx".to_string(),
+            params: HashMap::new(),
+            variant: Some("default".to_string()),
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "db".to_string(),
+            catalog: "mariadb".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "version".to_string(),
+                    toml::Value::String("10.11".to_string()),
+                );
+                p.insert(
+                    "database".to_string(),
+                    toml::Value::String("client_app".to_string()),
+                );
+                p.insert(
+                    "root_password".to_string(),
+                    toml::Value::String("localdev".to_string()),
+                );
+                p
+            },
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "cache".to_string(),
+            catalog: "redis".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "sessions".to_string(),
+            catalog: "memcached".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert("memory".to_string(), toml::Value::Integer(128));
+                p
+            },
+            variant: None,
+            config: None,
+        },
+    ];
+
+    let manifest_content = r#"
+[containers.web]
+driver = "colima"
+context = "dev"
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+extensions = ["pdo_mysql", "gd", "redis", "memcached", "intl", "exif", "zip", "bcmath"]
+node_version = "20"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+
+[containers.web.services.db]
+catalog = "mariadb"
+version = "10.11"
+database = "client_app"
+root_password = "localdev"
+
+[containers.web.services.cache]
+catalog = "redis"
+
+[containers.web.services.sessions]
+catalog = "memcached"
+memory = 128
+"#;
+
+    // 1. Assemble.
+    let assembly = assembler
+        .assemble(&services, "client-project", ".")
+        .unwrap();
+
+    // 2. Write to disk.
+    let write_result = output.write(&assembly, manifest_content).unwrap();
+    assert!(write_result.regenerated);
+
+    // 3. Verify compose file exists and is valid YAML.
+    let compose_path = write_result.compose_path;
+    assert!(compose_path.exists());
+    let compose_content = std::fs::read_to_string(&compose_path).unwrap();
+    let doc = validate_compose_structure(&compose_content);
+
+    // 4. Verify all 5 services are present.
+    for svc in &["app", "web", "db", "cache", "sessions"] {
+        validate_service(&doc, svc);
+    }
+
+    // 5. Verify Dockerfile was written.
+    assert!(write_result.dockerfile_paths.contains_key("app"));
+    let dockerfile_path = &write_result.dockerfile_paths["app"];
+    assert!(dockerfile_path.exists());
+    let dockerfile_content = std::fs::read_to_string(dockerfile_path).unwrap();
+    assert!(
+        dockerfile_content.contains("install-php-extensions"),
+        "Dockerfile should use install-php-extensions"
+    );
+    assert!(
+        dockerfile_content.contains("composer"),
+        "Dockerfile should install Composer"
+    );
+    assert!(
+        dockerfile_content.contains("NODE_VERSION"),
+        "Dockerfile should support Node.js"
+    );
+
+    // 6. Verify nginx config was written.
+    assert!(write_result.config_paths.contains_key("web.conf"));
+    let config_path = &write_result.config_paths["web.conf"];
+    assert!(config_path.exists());
+    let config_content = std::fs::read_to_string(config_path).unwrap();
+    assert!(
+        config_content.contains("fastcgi_pass"),
+        "nginx config should have fastcgi_pass"
+    );
+    assert!(
+        config_content.contains("try_files"),
+        "nginx config should have try_files for front controller"
+    );
+    assert!(
+        config_content.contains("gzip on"),
+        "nginx config should enable gzip"
+    );
+
+    // 7. Verify the compose YAML has correct service configurations.
+    let app = validate_service(&doc, "app");
+
+    // PHP build args should include all extensions.
+    let build_args = app.get("build").unwrap().get("args").unwrap();
+    let ext_val = build_args.get("EXTENSIONS").unwrap().as_str().unwrap();
+    for ext in &[
+        "pdo_mysql", "gd", "redis", "memcached", "intl", "exif", "zip", "bcmath",
+    ] {
+        assert!(
+            ext_val.contains(ext),
+            "extensions should include {ext}: {ext_val}"
+        );
+    }
+
+    // Node.js build arg should be present.
+    let node_val = build_args.get("NODE_VERSION").unwrap().as_str().unwrap();
+    assert_eq!(node_val, "20");
+
+    // MariaDB should have correct env vars.
+    let db = validate_service(&doc, "db");
+    let db_env = db.get("environment").unwrap();
+    assert_eq!(
+        db_env.get("MYSQL_DATABASE").unwrap().as_str().unwrap(),
+        "client_app"
+    );
+    assert_eq!(
+        db_env.get("MYSQL_ROOT_PASSWORD").unwrap().as_str().unwrap(),
+        "localdev"
+    );
+
+    // MariaDB should have a healthcheck.
+    assert!(
+        db.get("healthcheck").is_some(),
+        "MariaDB should have a healthcheck"
+    );
+
+    // Volumes should include MariaDB data.
+    assert_eq!(assembly.volumes.len(), 1);
+    assert_eq!(assembly.volumes[0].name, "client-project-db-data");
+    assert!(assembly.volumes[0].persist);
+
+    // 8. Verify second write is cached.
+    let write2 = output.write(&assembly, manifest_content).unwrap();
+    assert!(!write2.regenerated);
+
+    // 9. Verify changed manifest triggers regeneration.
+    let write3 = output
+        .write(&assembly, "# changed manifest content")
+        .unwrap();
+    assert!(write3.regenerated);
+}
+
+/// End-to-end test: eject from catalog and verify standalone compose file.
+#[test]
+fn end_to_end_eject_produces_standalone_compose() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("infra/dev");
+
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+    let output = ComposeOutput::new(output_dir.clone());
+
+    let services = vec![
+        ServiceDeclaration {
+            name: "app".to_string(),
+            catalog: "php-fpm".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "db".to_string(),
+            catalog: "mariadb".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+    ];
+
+    let assembly = assembler.assemble(&services, "test", ".").unwrap();
+    output.write(&assembly, "manifest").unwrap();
+
+    // Eject.
+    let eject_result = output.eject().unwrap();
+
+    // The permanent docker-compose.yml should be valid.
+    let content = std::fs::read_to_string(&eject_result.compose_path).unwrap();
+    let doc = validate_compose_structure(&content);
+    validate_service(&doc, "app");
+    validate_service(&doc, "db");
+
+    // Generated files should be cleaned up.
+    assert!(!output.generated_compose_path().exists());
+
+    // Permanent file should be at docker-compose.yml.
+    assert_eq!(
+        eject_result
+            .compose_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "docker-compose.yml"
+    );
 }

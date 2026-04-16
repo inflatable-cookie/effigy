@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Planned
+Status: In Progress (port registry shipped in effigy-gateway, integration deferred)
 Owner: Platform
 Created: 2026-04-16
 Depends on: 011, 014
