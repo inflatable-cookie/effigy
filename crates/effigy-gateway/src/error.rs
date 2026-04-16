@@ -53,6 +53,19 @@ pub enum GatewayError {
     #[error("gateway is already running (PID {pid})")]
     AlreadyRunning { pid: u32 },
 
+    /// Port range conflicts with an existing allocation.
+    #[error(
+        "port range {base}–{} for project '{project}' conflicts with \
+         existing allocation for '{conflicting_project}'",
+        base + range
+    )]
+    PortConflict {
+        project: String,
+        conflicting_project: String,
+        base: u16,
+        range: u16,
+    },
+
     /// Gateway is not running.
     #[error("gateway is not running")]
     NotRunning,

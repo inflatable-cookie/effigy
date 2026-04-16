@@ -20,8 +20,9 @@ use tracing::{debug, error, info};
 
 use crate::dns::{run_dns_server, DnsConfig};
 use crate::error::GatewayError;
-use crate::proxy::{run_proxy_server, ProxyConfig};
+use crate::proxy::{run_proxy_server, run_tls_proxy_server, ProxyConfig};
 use crate::routes::{LiveRouteTable, RouteTable};
+use crate::tls::TlsConfig;
 
 /// Configuration for the full gateway.
 #[derive(Debug, Clone)]
@@ -31,6 +32,9 @@ pub struct GatewayConfig {
 
     /// HTTP proxy configuration.
     pub proxy: ProxyConfig,
+
+    /// TLS configuration. If Some, HTTPS proxy is enabled.
+    pub tls: Option<TlsConfig>,
 
     /// Path to the route table JSON file.
     pub route_table_path: PathBuf,
@@ -47,6 +51,7 @@ impl GatewayConfig {
         Self {
             dns: DnsConfig::default(),
             proxy: ProxyConfig::default(),
+            tls: None,
             route_table_path: gateway_dir.join("routes.json"),
             pid_file_path: gateway_dir.join("gateway.pid"),
         }
@@ -62,6 +67,15 @@ impl GatewayConfig {
     /// Use a custom TLD.
     pub fn with_tld(mut self, tld: String) -> Self {
         self.dns.tld = tld;
+        self
+    }
+
+    /// Enable HTTPS with TLS certificates from the given directory.
+    ///
+    /// Also sets the HTTPS bind address on the proxy config.
+    pub fn with_tls(mut self, certs_dir: PathBuf, https_addr: SocketAddr) -> Self {
+        self.tls = Some(TlsConfig::new(certs_dir));
+        self.proxy.tls_bind_addr = Some(https_addr);
         self
     }
 }
@@ -181,9 +195,12 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     let watcher_path = config.route_table_path.clone();
     let _watcher = setup_file_watcher(&watcher_path, watcher_table)?;
 
+    let has_tls = config.proxy.tls_bind_addr.is_some() && config.tls.is_some();
+
     info!(
         dns = %config.dns.bind_addr,
         proxy = %config.proxy.bind_addr,
+        tls = has_tls,
         tld = %config.dns.tld,
         "gateway starting"
     );
@@ -198,10 +215,70 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     let proxy_handle = tokio::spawn(run_proxy_server(
         config.proxy.clone(),
         Arc::clone(&shared_table),
-        shutdown_rx,
+        shutdown_rx.clone(),
     ));
 
-    // Wait for either to finish (typically both stop on shutdown).
+    // Optionally start the HTTPS proxy.
+    let tls_handle = if let (Some(tls_addr), Some(tls_config)) =
+        (config.proxy.tls_bind_addr, &config.tls)
+    {
+        // Build a rustls ServerConfig from all TLS-enabled route certs.
+        // For now, use a single wildcard cert if available, or generate
+        // certs on route registration. The initial implementation loads
+        // a default cert and serves it for all domains.
+        let tls_routes: Vec<_> = {
+            let table = shared_table.read().expect("route table lock poisoned");
+            table
+                .all_routes()
+                .iter()
+                .filter(|r| r.tls)
+                .cloned()
+                .cloned()
+                .collect()
+        };
+
+        if tls_routes.is_empty() {
+            info!("HTTPS enabled but no TLS routes registered — HTTPS listener deferred");
+            None
+        } else {
+            // Use the first TLS-enabled domain's cert. In a more complete
+            // implementation, we'd use rustls's SNI resolver to serve
+            // per-domain certs.
+            let first_domain = &tls_routes[0].domain;
+            match tls_config.load_cert(first_domain) {
+                Ok(cert_paths) => {
+                    match crate::tls::load_rustls_config(&cert_paths.cert, &cert_paths.key) {
+                        Ok(server_config) => {
+                            let arc_config = std::sync::Arc::new(server_config);
+                            Some(tokio::spawn(run_tls_proxy_server(
+                                tls_addr,
+                                arc_config,
+                                Arc::clone(&shared_table),
+                                config.proxy.clone(),
+                                shutdown_rx,
+                            )))
+                        }
+                        Err(e) => {
+                            error!(error = %e, "failed to load TLS config — HTTPS disabled");
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        domain = %first_domain,
+                        error = %e,
+                        "TLS cert not found — run `effigy gateway setup-tls` first"
+                    );
+                    None
+                }
+            }
+        }
+    } else {
+        None
+    };
+
+    // Wait for any server task to finish (typically all stop on shutdown).
     tokio::select! {
         result = dns_handle => {
             if let Err(e) = result {
@@ -211,6 +288,18 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
         result = proxy_handle => {
             if let Err(e) = result {
                 error!(error = %e, "proxy server task failed");
+            }
+        }
+        result = async {
+            if let Some(handle) = tls_handle {
+                handle.await
+            } else {
+                // No TLS handle — never resolves, so the other branches win.
+                std::future::pending().await
+            }
+        } => {
+            if let Err(e) = result {
+                error!(error = %e, "HTTPS server task failed");
             }
         }
     }

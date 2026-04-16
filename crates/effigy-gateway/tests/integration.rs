@@ -118,7 +118,7 @@ async fn dns_resolves_registered_domain_end_to_end() {
 
     // Send a DNS query.
     use hickory_proto::op::{Message, MessageType, OpCode, Query};
-    use hickory_proto::rr::{Name, RecordType, RData};
+    use hickory_proto::rr::{Name, RData, RecordType};
     use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
     use std::str::FromStr;
 
@@ -185,6 +185,7 @@ async fn proxy_routes_to_correct_upstream() {
 
     let proxy_config = ProxyConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
+        tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
     };
 
@@ -222,6 +223,7 @@ async fn proxy_returns_no_route_page() {
 
     let proxy_config = ProxyConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
+        tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
     };
 
@@ -242,7 +244,10 @@ async fn proxy_returns_no_route_page() {
         "response should have x-effigy-gateway header"
     );
     let body = response.text().await.unwrap();
-    assert!(body.contains("unknown.test"), "body should mention domain: {body}");
+    assert!(
+        body.contains("unknown.test"),
+        "body should mention domain: {body}"
+    );
 
     let _ = shutdown_tx.send(true);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
@@ -255,16 +260,14 @@ async fn proxy_returns_bad_gateway_for_unreachable_upstream() {
     let dead_port = available_port().await;
 
     let mut table = RouteTable::new();
-    table.upsert(test_route(
-        "dead.test",
-        &format!("127.0.0.1:{dead_port}"),
-    ));
+    table.upsert(test_route("dead.test", &format!("127.0.0.1:{dead_port}")));
     let shared = Arc::new(RwLock::new(table));
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let proxy_config = ProxyConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
+        tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(1),
     };
 

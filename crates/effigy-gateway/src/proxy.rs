@@ -18,6 +18,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use tokio_rustls;
+
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::body::{Bytes, Incoming};
 use hyper::header::{HeaderName, HeaderValue, CONNECTION, HOST, UPGRADE};
@@ -37,6 +39,10 @@ pub struct ProxyConfig {
     /// Address to bind the HTTP proxy (e.g., "127.0.0.1:80").
     pub bind_addr: SocketAddr,
 
+    /// Address to bind the HTTPS proxy (e.g., "127.0.0.1:443").
+    /// If None, HTTPS is disabled.
+    pub tls_bind_addr: Option<SocketAddr>,
+
     /// Timeout for connecting to upstream targets.
     pub connect_timeout: Duration,
 }
@@ -45,6 +51,7 @@ impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
             bind_addr: SocketAddr::from(([127, 0, 0, 1], 80)),
+            tls_bind_addr: None,
             connect_timeout: Duration::from_secs(5),
         }
     }
@@ -140,6 +147,95 @@ pub async fn run_proxy_server(
             _ = shutdown.changed() => {
                 if *shutdown.borrow() {
                     info!("HTTP proxy shutting down");
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Run the HTTPS reverse proxy server with TLS termination.
+///
+/// Uses `tokio-rustls` to accept TLS connections. Certificates are loaded
+/// per-domain from the provided certificate directory. The SNI hostname
+/// determines which certificate to serve.
+///
+/// Blocks until the shutdown signal fires.
+pub async fn run_tls_proxy_server(
+    bind_addr: SocketAddr,
+    tls_config: Arc<rustls::ServerConfig>,
+    route_table: Arc<RwLock<RouteTable>>,
+    proxy_config: ProxyConfig,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<(), crate::GatewayError> {
+    let tls_acceptor = tokio_rustls::TlsAcceptor::from(tls_config);
+
+    let listener = TcpListener::bind(bind_addr).await.map_err(|e| {
+        crate::GatewayError::ProxyBindError {
+            addr: bind_addr.to_string(),
+            reason: format!("HTTPS bind failed: {e}"),
+        }
+    })?;
+
+    info!(addr = %bind_addr, "HTTPS proxy started");
+
+    loop {
+        tokio::select! {
+            result = listener.accept() => {
+                match result {
+                    Ok((stream, peer_addr)) => {
+                        let acceptor = tls_acceptor.clone();
+                        let table = Arc::clone(&route_table);
+                        let cfg = proxy_config.clone();
+                        tokio::spawn(async move {
+                            // Perform TLS handshake.
+                            let tls_stream = match acceptor.accept(stream).await {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    debug!(
+                                        error = %e,
+                                        peer = %peer_addr,
+                                        "TLS handshake failed"
+                                    );
+                                    return;
+                                }
+                            };
+
+                            let io = TokioIo::new(tls_stream);
+                            let service = service_fn(move |req| {
+                                let table = Arc::clone(&table);
+                                let cfg = cfg.clone();
+                                async move {
+                                    handle_request(req, &table, peer_addr, &cfg).await
+                                }
+                            });
+
+                            if let Err(e) = http1::Builder::new()
+                                .preserve_header_case(true)
+                                .serve_connection(io, service)
+                                .with_upgrades()
+                                .await
+                            {
+                                if !is_benign_connection_error(&e) {
+                                    debug!(
+                                        error = %e,
+                                        peer = %peer_addr,
+                                        "HTTPS connection error"
+                                    );
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!(error = %e, "HTTPS: failed to accept connection");
+                    }
+                }
+            }
+            _ = shutdown.changed() => {
+                if *shutdown.borrow() {
+                    info!("HTTPS proxy shutting down");
                     break;
                 }
             }

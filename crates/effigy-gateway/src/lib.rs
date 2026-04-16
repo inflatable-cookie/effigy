@@ -25,6 +25,7 @@
 
 pub mod dns;
 pub mod error;
+pub mod ports;
 pub mod proxy;
 pub mod resolver_setup;
 pub mod routes;
