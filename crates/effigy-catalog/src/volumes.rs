@@ -1,0 +1,391 @@
+//! Volume lifecycle management.
+//!
+//! Docker named volumes persist data across container restarts. This module
+//! provides the logic layer for volume management operations:
+//!
+//! - **List**: Enumerate volumes with sizes and metadata.
+//! - **Export**: Archive a volume's contents to a tar file.
+//! - **Import**: Restore a volume from a tar archive.
+//! - **Classification**: Determine which volumes are data (persist across
+//!   reset) vs ephemeral.
+//!
+//! Actual Docker CLI invocations are described as command specs — the caller
+//! is responsible for execution. This keeps the module testable without
+//! requiring Docker.
+
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+
+use crate::assembly::VolumeInfo;
+
+/// A volume as seen by the management layer (enriched with runtime info).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedVolume {
+    /// Docker volume name.
+    pub name: String,
+
+    /// Which service declared this volume.
+    pub service: String,
+
+    /// Whether this volume should survive `container reset --keep-data`.
+    pub persist: bool,
+
+    /// Size in bytes, if known (populated from Docker inspect).
+    pub size_bytes: Option<u64>,
+
+    /// Mount point inside the container.
+    pub mount_point: Option<String>,
+}
+
+impl ManagedVolume {
+    /// Create from a VolumeInfo (catalog assembly output).
+    pub fn from_volume_info(info: &VolumeInfo) -> Self {
+        Self {
+            name: info.name.clone(),
+            service: info.service.clone(),
+            persist: info.persist,
+            size_bytes: None,
+            mount_point: None,
+        }
+    }
+}
+
+/// Classification of volumes for reset operations.
+#[derive(Debug, Clone)]
+pub struct VolumeClassification {
+    /// Volumes to remove (ephemeral).
+    pub remove: Vec<String>,
+
+    /// Volumes to keep (persistent data).
+    pub keep: Vec<String>,
+}
+
+/// Classify volumes for a reset operation.
+///
+/// `keep_data` corresponds to the `--keep-data` flag on `container reset`.
+/// When true, volumes marked `persist = true` are kept.
+pub fn classify_for_reset(
+    volumes: &[ManagedVolume],
+    keep_data: bool,
+) -> VolumeClassification {
+    let mut remove = Vec::new();
+    let mut keep = Vec::new();
+
+    for vol in volumes {
+        if keep_data && vol.persist {
+            keep.push(vol.name.clone());
+        } else {
+            remove.push(vol.name.clone());
+        }
+    }
+
+    VolumeClassification { remove, keep }
+}
+
+/// A command specification for Docker CLI volume operations.
+///
+/// These are pure data descriptions of what command to run. The caller
+/// executes them via `std::process::Command` or equivalent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockerCommand {
+    /// The command program (typically "docker").
+    pub program: String,
+
+    /// Command arguments.
+    pub args: Vec<String>,
+
+    /// Human-readable description for progress reporting.
+    pub description: String,
+}
+
+impl DockerCommand {
+    fn docker(args: Vec<String>, description: impl Into<String>) -> Self {
+        Self {
+            program: "docker".to_string(),
+            args,
+            description: description.into(),
+        }
+    }
+}
+
+/// Build the command to list Docker volumes matching a project prefix.
+pub fn list_volumes_command(project_name: &str) -> DockerCommand {
+    DockerCommand::docker(
+        vec![
+            "volume".to_string(),
+            "ls".to_string(),
+            "--filter".to_string(),
+            format!("name={project_name}-"),
+            "--format".to_string(),
+            "{{.Name}}\t{{.Driver}}\t{{.Labels}}".to_string(),
+        ],
+        format!("List volumes for project '{project_name}'"),
+    )
+}
+
+/// Build the command to inspect a Docker volume (for size and metadata).
+pub fn inspect_volume_command(volume_name: &str) -> DockerCommand {
+    DockerCommand::docker(
+        vec![
+            "volume".to_string(),
+            "inspect".to_string(),
+            volume_name.to_string(),
+        ],
+        format!("Inspect volume '{volume_name}'"),
+    )
+}
+
+/// Build the command to export a Docker volume to a tar file.
+///
+/// Uses a temporary Alpine container to tar the volume contents.
+pub fn export_volume_command(
+    volume_name: &str,
+    output_path: &Path,
+) -> DockerCommand {
+    let output_dir = output_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_string_lossy()
+        .to_string();
+    let output_filename = output_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    DockerCommand::docker(
+        vec![
+            "run".to_string(),
+            "--rm".to_string(),
+            "-v".to_string(),
+            format!("{volume_name}:/source:ro"),
+            "-v".to_string(),
+            format!("{output_dir}:/output"),
+            "alpine:latest".to_string(),
+            "tar".to_string(),
+            "czf".to_string(),
+            format!("/output/{output_filename}"),
+            "-C".to_string(),
+            "/source".to_string(),
+            ".".to_string(),
+        ],
+        format!("Export volume '{volume_name}' to {}", output_path.display()),
+    )
+}
+
+/// Build the command to import a tar file into a Docker volume.
+///
+/// Uses a temporary Alpine container to extract the tar into the volume.
+pub fn import_volume_command(
+    volume_name: &str,
+    input_path: &Path,
+) -> DockerCommand {
+    let input_dir = input_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_string_lossy()
+        .to_string();
+    let input_filename = input_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    DockerCommand::docker(
+        vec![
+            "run".to_string(),
+            "--rm".to_string(),
+            "-v".to_string(),
+            format!("{volume_name}:/target"),
+            "-v".to_string(),
+            format!("{input_dir}:/input:ro"),
+            "alpine:latest".to_string(),
+            "tar".to_string(),
+            "xzf".to_string(),
+            format!("/input/{input_filename}"),
+            "-C".to_string(),
+            "/target".to_string(),
+        ],
+        format!(
+            "Import {} into volume '{volume_name}'",
+            input_path.display()
+        ),
+    )
+}
+
+/// Build the command to remove a Docker volume.
+pub fn remove_volume_command(volume_name: &str) -> DockerCommand {
+    DockerCommand::docker(
+        vec![
+            "volume".to_string(),
+            "rm".to_string(),
+            volume_name.to_string(),
+        ],
+        format!("Remove volume '{volume_name}'"),
+    )
+}
+
+/// Build commands for a reset operation based on volume classification.
+pub fn reset_commands(classification: &VolumeClassification) -> Vec<DockerCommand> {
+    classification
+        .remove
+        .iter()
+        .map(|name| remove_volume_command(name))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_volumes() -> Vec<ManagedVolume> {
+        vec![
+            ManagedVolume {
+                name: "proj-db-data".to_string(),
+                service: "db".to_string(),
+                persist: true,
+                size_bytes: None,
+                mount_point: Some("/var/lib/mysql".to_string()),
+            },
+            ManagedVolume {
+                name: "proj-cache-data".to_string(),
+                service: "cache".to_string(),
+                persist: false,
+                size_bytes: None,
+                mount_point: None,
+            },
+            ManagedVolume {
+                name: "proj-search-data".to_string(),
+                service: "search".to_string(),
+                persist: true,
+                size_bytes: None,
+                mount_point: None,
+            },
+        ]
+    }
+
+    // ── Classification ───────────────────────────────────────────────
+
+    #[test]
+    fn reset_without_keep_data_removes_all() {
+        let vols = test_volumes();
+        let class = classify_for_reset(&vols, false);
+        assert_eq!(class.remove.len(), 3);
+        assert!(class.keep.is_empty());
+    }
+
+    #[test]
+    fn reset_with_keep_data_preserves_persistent() {
+        let vols = test_volumes();
+        let class = classify_for_reset(&vols, true);
+        assert_eq!(class.remove.len(), 1);
+        assert_eq!(class.remove[0], "proj-cache-data");
+        assert_eq!(class.keep.len(), 2);
+        assert!(class.keep.contains(&"proj-db-data".to_string()));
+        assert!(class.keep.contains(&"proj-search-data".to_string()));
+    }
+
+    #[test]
+    fn empty_volumes_produce_empty_classification() {
+        let class = classify_for_reset(&[], true);
+        assert!(class.remove.is_empty());
+        assert!(class.keep.is_empty());
+    }
+
+    // ── Command specs ────────────────────────────────────────────────
+
+    #[test]
+    fn list_volumes_command_format() {
+        let cmd = list_volumes_command("my-project");
+        assert_eq!(cmd.program, "docker");
+        assert!(cmd.args.contains(&"volume".to_string()));
+        assert!(cmd.args.contains(&"ls".to_string()));
+        assert!(cmd.args.iter().any(|a| a.contains("my-project-")));
+    }
+
+    #[test]
+    fn inspect_volume_command_format() {
+        let cmd = inspect_volume_command("my-project-db-data");
+        assert_eq!(cmd.program, "docker");
+        assert!(cmd.args.contains(&"inspect".to_string()));
+        assert!(cmd.args.contains(&"my-project-db-data".to_string()));
+    }
+
+    #[test]
+    fn export_volume_command_format() {
+        let cmd = export_volume_command(
+            "my-project-db-data",
+            Path::new("/tmp/backup.tar.gz"),
+        );
+        assert_eq!(cmd.program, "docker");
+        assert!(cmd.args.contains(&"run".to_string()));
+        assert!(cmd.args.contains(&"--rm".to_string()));
+        // Volume mount for source.
+        assert!(cmd.args.iter().any(|a| a.contains("my-project-db-data:/source")));
+        // Output mount.
+        assert!(cmd.args.iter().any(|a| a.contains("/tmp:/output")));
+        // Tar command.
+        assert!(cmd.args.contains(&"czf".to_string()));
+        assert!(cmd.args.iter().any(|a| a.contains("backup.tar.gz")));
+    }
+
+    #[test]
+    fn import_volume_command_format() {
+        let cmd = import_volume_command(
+            "my-project-db-data",
+            Path::new("/tmp/backup.tar.gz"),
+        );
+        assert_eq!(cmd.program, "docker");
+        assert!(cmd.args.contains(&"run".to_string()));
+        // Volume mount for target.
+        assert!(cmd.args.iter().any(|a| a.contains("my-project-db-data:/target")));
+        // Input mount (read-only).
+        assert!(cmd.args.iter().any(|a| a.contains("/tmp:/input:ro")));
+        // Tar extract.
+        assert!(cmd.args.contains(&"xzf".to_string()));
+    }
+
+    #[test]
+    fn remove_volume_command_format() {
+        let cmd = remove_volume_command("my-project-db-data");
+        assert_eq!(cmd.program, "docker");
+        assert!(cmd.args.contains(&"volume".to_string()));
+        assert!(cmd.args.contains(&"rm".to_string()));
+        assert!(cmd.args.contains(&"my-project-db-data".to_string()));
+    }
+
+    #[test]
+    fn reset_commands_from_classification() {
+        let vols = test_volumes();
+        let class = classify_for_reset(&vols, true);
+        let cmds = reset_commands(&class);
+        // Only the non-persistent volume should be removed.
+        assert_eq!(cmds.len(), 1);
+        assert!(cmds[0].args.contains(&"proj-cache-data".to_string()));
+    }
+
+    #[test]
+    fn reset_commands_all_volumes() {
+        let vols = test_volumes();
+        let class = classify_for_reset(&vols, false);
+        let cmds = reset_commands(&class);
+        assert_eq!(cmds.len(), 3);
+    }
+
+    // ── ManagedVolume construction ───────────────────────────────────
+
+    #[test]
+    fn from_volume_info() {
+        let info = VolumeInfo {
+            name: "proj-db-data".to_string(),
+            persist: true,
+            service: "db".to_string(),
+        };
+        let managed = ManagedVolume::from_volume_info(&info);
+        assert_eq!(managed.name, "proj-db-data");
+        assert!(managed.persist);
+        assert_eq!(managed.service, "db");
+        assert!(managed.size_bytes.is_none());
+    }
+}
