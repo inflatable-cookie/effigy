@@ -337,7 +337,12 @@ mod tests {
         let eject_result = output.eject().unwrap();
         assert!(eject_result.compose_path.exists());
         assert_eq!(
-            eject_result.compose_path.file_name().unwrap().to_str().unwrap(),
+            eject_result
+                .compose_path
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap(),
             "docker-compose.yml"
         );
 

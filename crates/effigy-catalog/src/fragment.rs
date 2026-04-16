@@ -293,11 +293,7 @@ impl CatalogResolver {
     /// and any config variants to `<target_dir>/<fragment_name>/`.
     ///
     /// Returns the path to the extracted fragment directory.
-    pub fn extract(
-        &self,
-        name: &str,
-        target_dir: &Path,
-    ) -> Result<PathBuf, CatalogError> {
+    pub fn extract(&self, name: &str, target_dir: &Path) -> Result<PathBuf, CatalogError> {
         // Always extract from the bundled catalog, regardless of overrides.
         let fragment = Self::load_from_embedded(name)?;
         let fragment_dir = target_dir.join(name);

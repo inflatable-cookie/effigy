@@ -65,10 +65,7 @@ pub struct VolumeClassification {
 ///
 /// `keep_data` corresponds to the `--keep-data` flag on `container reset`.
 /// When true, volumes marked `persist = true` are kept.
-pub fn classify_for_reset(
-    volumes: &[ManagedVolume],
-    keep_data: bool,
-) -> VolumeClassification {
+pub fn classify_for_reset(volumes: &[ManagedVolume], keep_data: bool) -> VolumeClassification {
     let mut remove = Vec::new();
     let mut keep = Vec::new();
 
@@ -139,10 +136,7 @@ pub fn inspect_volume_command(volume_name: &str) -> DockerCommand {
 /// Build the command to export a Docker volume to a tar file.
 ///
 /// Uses a temporary Alpine container to tar the volume contents.
-pub fn export_volume_command(
-    volume_name: &str,
-    output_path: &Path,
-) -> DockerCommand {
+pub fn export_volume_command(volume_name: &str, output_path: &Path) -> DockerCommand {
     let output_dir = output_path
         .parent()
         .unwrap_or(Path::new("."))
@@ -177,10 +171,7 @@ pub fn export_volume_command(
 /// Build the command to import a tar file into a Docker volume.
 ///
 /// Uses a temporary Alpine container to extract the tar into the volume.
-pub fn import_volume_command(
-    volume_name: &str,
-    input_path: &Path,
-) -> DockerCommand {
+pub fn import_volume_command(volume_name: &str, input_path: &Path) -> DockerCommand {
     let input_dir = input_path
         .parent()
         .unwrap_or(Path::new("."))
@@ -314,15 +305,15 @@ mod tests {
 
     #[test]
     fn export_volume_command_format() {
-        let cmd = export_volume_command(
-            "my-project-db-data",
-            Path::new("/tmp/backup.tar.gz"),
-        );
+        let cmd = export_volume_command("my-project-db-data", Path::new("/tmp/backup.tar.gz"));
         assert_eq!(cmd.program, "docker");
         assert!(cmd.args.contains(&"run".to_string()));
         assert!(cmd.args.contains(&"--rm".to_string()));
         // Volume mount for source.
-        assert!(cmd.args.iter().any(|a| a.contains("my-project-db-data:/source")));
+        assert!(cmd
+            .args
+            .iter()
+            .any(|a| a.contains("my-project-db-data:/source")));
         // Output mount.
         assert!(cmd.args.iter().any(|a| a.contains("/tmp:/output")));
         // Tar command.
@@ -332,14 +323,14 @@ mod tests {
 
     #[test]
     fn import_volume_command_format() {
-        let cmd = import_volume_command(
-            "my-project-db-data",
-            Path::new("/tmp/backup.tar.gz"),
-        );
+        let cmd = import_volume_command("my-project-db-data", Path::new("/tmp/backup.tar.gz"));
         assert_eq!(cmd.program, "docker");
         assert!(cmd.args.contains(&"run".to_string()));
         // Volume mount for target.
-        assert!(cmd.args.iter().any(|a| a.contains("my-project-db-data:/target")));
+        assert!(cmd
+            .args
+            .iter()
+            .any(|a| a.contains("my-project-db-data:/target")));
         // Input mount (read-only).
         assert!(cmd.args.iter().any(|a| a.contains("/tmp:/input:ro")));
         // Tar extract.

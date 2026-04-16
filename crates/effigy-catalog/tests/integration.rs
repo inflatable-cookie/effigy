@@ -26,6 +26,12 @@ fn list_bundled_fragments() {
     assert!(names.contains(&"postgres"), "missing postgres: {names:?}");
     assert!(names.contains(&"redis"), "missing redis: {names:?}");
     assert!(names.contains(&"memcached"), "missing memcached: {names:?}");
+    assert!(names.contains(&"mailpit"), "missing mailpit: {names:?}");
+    assert!(names.contains(&"minio"), "missing minio: {names:?}");
+    assert!(
+        names.contains(&"elasticsearch"),
+        "missing elasticsearch: {names:?}"
+    );
 
     // All should be bundled source.
     for f in &fragments {
@@ -913,6 +919,191 @@ fn single_service_assembles_without_volumes() {
     validate_service(&doc, "cache");
     assert!(result.volumes.is_empty());
     assert!(doc.get("volumes").is_none());
+}
+
+// --- Additional service fragments ─────────────────────────────────────
+
+#[test]
+fn mailpit_fragment_assembles() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "mail".to_string(),
+        catalog: "mailpit".to_string(),
+        params: HashMap::new(),
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler.assemble(&services, "test", ".").unwrap();
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let mail = validate_service(&doc, "mail");
+
+    let image = mail.get("image").unwrap().as_str().unwrap();
+    assert!(image.contains("mailpit"), "image should be mailpit: {image}");
+    assert!(mail.get("ports").is_some(), "mailpit should expose ports");
+    assert!(
+        mail.get("healthcheck").is_some(),
+        "mailpit should have a healthcheck"
+    );
+}
+
+#[test]
+fn minio_fragment_assembles_with_volume() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "storage".to_string(),
+        catalog: "minio".to_string(),
+        params: HashMap::new(),
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler.assemble(&services, "test", ".").unwrap();
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let storage = validate_service(&doc, "storage");
+
+    let image = storage.get("image").unwrap().as_str().unwrap();
+    assert!(image.contains("minio"), "image should be minio: {image}");
+    assert!(
+        storage.get("healthcheck").is_some(),
+        "minio should have a healthcheck"
+    );
+
+    // Should have a persistent volume.
+    assert_eq!(result.volumes.len(), 1);
+    assert!(result.volumes[0].persist);
+    assert_eq!(result.volumes[0].name, "test-storage-data");
+}
+
+#[test]
+fn elasticsearch_fragment_assembles_with_resource_limits() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "search".to_string(),
+        catalog: "elasticsearch".to_string(),
+        params: {
+            let mut p = HashMap::new();
+            p.insert(
+                "version".to_string(),
+                toml::Value::String("8.15.0".to_string()),
+            );
+            p
+        },
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler.assemble(&services, "test", ".").unwrap();
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let search = validate_service(&doc, "search");
+
+    let image = search.get("image").unwrap().as_str().unwrap();
+    assert!(
+        image.contains("elasticsearch:8.15.0"),
+        "image should be elasticsearch:8.15.0: {image}"
+    );
+    assert!(
+        search.get("healthcheck").is_some(),
+        "elasticsearch should have a healthcheck"
+    );
+
+    // Should have a persistent volume.
+    assert_eq!(result.volumes.len(), 1);
+    assert!(result.volumes[0].persist);
+
+    // Should have resource limits.
+    assert!(
+        search.get("deploy").is_some(),
+        "elasticsearch should have deploy/resource limits"
+    );
+}
+
+#[test]
+fn full_stack_with_all_services() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![
+        ServiceDeclaration {
+            name: "app".to_string(),
+            catalog: "php-fpm".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "web".to_string(),
+            catalog: "nginx".to_string(),
+            params: HashMap::new(),
+            variant: Some("default".to_string()),
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "db".to_string(),
+            catalog: "mariadb".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "cache".to_string(),
+            catalog: "redis".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "sessions".to_string(),
+            catalog: "memcached".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "mail".to_string(),
+            catalog: "mailpit".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "storage".to_string(),
+            catalog: "minio".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "search".to_string(),
+            catalog: "elasticsearch".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+    ];
+
+    let result = assembler.assemble(&services, "full-stack", ".").unwrap();
+    let doc = validate_compose_structure(&result.compose_yaml);
+
+    // All 8 services should be present.
+    for name in &[
+        "app", "web", "db", "cache", "sessions", "mail", "storage", "search",
+    ] {
+        validate_service(&doc, name);
+    }
+
+    // Should have volumes for db, storage, and search.
+    assert_eq!(result.volumes.len(), 3);
+    let vol_names: Vec<&str> = result.volumes.iter().map(|v| v.name.as_str()).collect();
+    assert!(vol_names.iter().any(|n| n.contains("db")));
+    assert!(vol_names.iter().any(|n| n.contains("storage")));
+    assert!(vol_names.iter().any(|n| n.contains("search")));
 }
 
 // --- End-to-end: full pipeline write to disk and validate ─────────────
