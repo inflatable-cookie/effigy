@@ -133,18 +133,13 @@ impl ComposeAssembler {
             )?;
 
             // Render the template.
-            let rendered = self.renderer.render(
-                &fragment.compose_template,
-                &ctx,
-                &fragment.name,
-            )?;
+            let rendered =
+                self.renderer
+                    .render(&fragment.compose_template, &ctx, &fragment.name)?;
 
             // Parse the rendered YAML and extract the service definition.
             let service_def = Self::extract_service_definition(&rendered, name, &fragment.name)?;
-            merged_services.insert(
-                YamlValue::String(name.clone()),
-                service_def,
-            );
+            merged_services.insert(YamlValue::String(name.clone()), service_def);
 
             // Collect Dockerfiles.
             if let Some(ref dockerfile) = fragment.dockerfile {
@@ -205,14 +200,15 @@ impl ComposeAssembler {
                 reason: "rendered template missing top-level 'services' key".to_string(),
             })?;
 
-        let service_def = services
-            .get(expected_name)
-            .ok_or_else(|| CatalogError::TemplateRenderError {
-                name: fragment_name.to_string(),
-                reason: format!(
-                    "rendered template missing service '{expected_name}' under 'services'"
-                ),
-            })?;
+        let service_def =
+            services
+                .get(expected_name)
+                .ok_or_else(|| CatalogError::TemplateRenderError {
+                    name: fragment_name.to_string(),
+                    reason: format!(
+                        "rendered template missing service '{expected_name}' under 'services'"
+                    ),
+                })?;
 
         Ok(service_def.clone())
     }
@@ -382,10 +378,7 @@ default = [3306]
         let yaml = "services:\n  app:\n    image: php:8.3\n    ports:\n      - '9000:9000'\n";
         let def = ComposeAssembler::extract_service_definition(yaml, "app", "test").unwrap();
         assert!(def.get("image").is_some());
-        assert_eq!(
-            def.get("image").unwrap().as_str().unwrap(),
-            "php:8.3"
-        );
+        assert_eq!(def.get("image").unwrap().as_str().unwrap(), "php:8.3");
     }
 
     #[test]
@@ -453,6 +446,9 @@ default = [3306]
         let assembler = ComposeAssembler::new(resolver);
         let result = assembler.assemble(&[], "test", ".");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), CatalogError::EmptyServiceList));
+        assert!(matches!(
+            result.unwrap_err(),
+            CatalogError::EmptyServiceList
+        ));
     }
 }

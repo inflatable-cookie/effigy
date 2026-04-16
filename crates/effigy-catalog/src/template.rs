@@ -95,9 +95,7 @@ impl TemplateRenderer {
                     service: service_name.to_string(),
                     param: name.to_string(),
                     expected: "non-reserved name".to_string(),
-                    actual: format!(
-                        "'{name}' is reserved (collides with system context field)"
-                    ),
+                    actual: format!("'{name}' is reserved (collides with system context field)"),
                 });
             }
         }

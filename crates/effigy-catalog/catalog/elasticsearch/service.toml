@@ -1,0 +1,27 @@
+[service]
+name = "elasticsearch"
+description = "Elasticsearch search and analytics engine"
+
+[params.version]
+type = "string"
+default = "8.15.0"
+description = "Elasticsearch version"
+
+[params.java_opts]
+type = "string"
+default = "-Xms512m -Xmx512m"
+description = "JVM heap size (keep reasonable for local dev)"
+
+[capabilities]
+exec_target = true
+shell = "/bin/bash"
+
+[volumes.data]
+mount = "/usr/share/elasticsearch/data"
+named = true
+persist = true
+description = "Search index data"
+
+[ports]
+default = [9200]
+description = "HTTP API port"

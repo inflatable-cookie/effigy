@@ -1,0 +1,42 @@
+[service]
+name = "minio"
+description = "S3-compatible object storage for local development"
+
+[params.version]
+type = "string"
+default = "latest"
+description = "MinIO version tag"
+
+[params.root_user]
+type = "string"
+default = "minioadmin"
+description = "Root user for MinIO access"
+
+[params.root_password]
+type = "string"
+default = "minioadmin"
+description = "Root password for MinIO access"
+
+[params.api_port]
+type = "integer"
+default = 9000
+description = "S3 API port"
+
+[params.console_port]
+type = "integer"
+default = 9001
+description = "MinIO web console port"
+
+[capabilities]
+exec_target = true
+shell = "/bin/sh"
+
+[volumes.data]
+mount = "/data"
+named = true
+persist = true
+description = "Object storage data"
+
+[ports]
+default = [9000, 9001]
+description = "S3 API (9000) and web console (9001)"

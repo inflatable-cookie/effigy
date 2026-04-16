@@ -1,0 +1,15 @@
+services:
+  {{ service_name }}:
+    image: axllent/mailpit:{{ version }}
+    ports:
+      - "{{ smtp_port }}:1025"
+      - "{{ ui_port }}:8025"
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8025/"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

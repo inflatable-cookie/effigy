@@ -1,0 +1,21 @@
+services:
+  {{ service_name }}:
+    image: elasticsearch:{{ version }}
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "{{ java_opts }}"
+    ports:
+      - "9200:9200"
+    volumes:
+      - {{ project_name }}-{{ service_name }}-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
