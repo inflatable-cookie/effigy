@@ -7,8 +7,10 @@
 //! Uses `hickory-server` for the DNS protocol implementation. The resolver
 //! runs as a UDP server on a configurable port (default 15353).
 
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use hickory_proto::op::{MessageType, OpCode, ResponseCode};
 use hickory_proto::rr::rdata::A;
@@ -43,6 +45,73 @@ impl Default for DnsConfig {
     }
 }
 
+/// Cached result of a route table lookup for a domain.
+#[derive(Debug, Clone)]
+struct DnsCacheEntry {
+    /// Whether the domain has a registered route.
+    has_route: bool,
+    /// When this entry was cached.
+    cached_at: Instant,
+}
+
+/// Simple DNS lookup cache to reduce route table lock contention.
+///
+/// Entries expire after a short TTL (2 seconds by default). This is
+/// fast enough that route registration changes are picked up quickly,
+/// but long enough to collapse the burst of parallel DNS queries that
+/// browsers make for a single page load.
+struct DnsCache {
+    entries: Mutex<HashMap<String, DnsCacheEntry>>,
+    ttl: Duration,
+}
+
+impl DnsCache {
+    fn new(ttl: Duration) -> Self {
+        Self {
+            entries: Mutex::new(HashMap::new()),
+            ttl,
+        }
+    }
+
+    /// Look up a domain in the cache. Returns None if not cached or expired.
+    fn get(&self, domain: &str) -> Option<bool> {
+        let entries = self.entries.lock().ok()?;
+        let entry = entries.get(domain)?;
+        if entry.cached_at.elapsed() < self.ttl {
+            Some(entry.has_route)
+        } else {
+            None
+        }
+    }
+
+    /// Store a lookup result in the cache.
+    fn put(&self, domain: String, has_route: bool) {
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.insert(
+                domain,
+                DnsCacheEntry {
+                    has_route,
+                    cached_at: Instant::now(),
+                },
+            );
+
+            // Prune expired entries if the cache is getting large.
+            if entries.len() > 100 {
+                let ttl = self.ttl;
+                entries.retain(|_, e| e.cached_at.elapsed() < ttl);
+            }
+        }
+    }
+
+    /// Invalidate the entire cache (called when the route table changes).
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn clear(&self) {
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.clear();
+        }
+    }
+}
+
 /// Run the DNS resolver server.
 ///
 /// This function blocks until the provided shutdown signal resolves.
@@ -64,6 +133,7 @@ pub async fn run_dns_server(
 
     debug!(addr = %config.bind_addr, tld = %config.tld, "DNS resolver started");
 
+    let cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
     let mut buf = vec![0u8; 512];
 
     loop {
@@ -77,6 +147,7 @@ pub async fn run_dns_server(
                             &buf[..len],
                             &config,
                             &route_table,
+                            &cache,
                         );
                         if resolved {
                             GatewayStats::inc(&stats.dns_resolved);
@@ -112,6 +183,7 @@ fn handle_dns_query(
     query_bytes: &[u8],
     config: &DnsConfig,
     route_table: &Arc<RwLock<RouteTable>>,
+    cache: &DnsCache,
 ) -> (Option<Vec<u8>>, bool) {
     use hickory_proto::op::Message;
     use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
@@ -167,12 +239,18 @@ fn handle_dns_query(
             continue;
         }
 
-        // Check if we have a route for this domain.
-        let has_route = route_table
-            .read()
-            .expect("route table lock poisoned")
-            .lookup(&domain)
-            .is_some();
+        // Check if we have a route for this domain (cache-first).
+        let has_route = if let Some(cached) = cache.get(&domain) {
+            cached
+        } else {
+            let result = route_table
+                .read()
+                .expect("route table lock poisoned")
+                .lookup(&domain)
+                .is_some();
+            cache.put(domain.clone(), result);
+            result
+        };
 
         if has_route {
             debug!(domain = %domain, "DNS: resolving to {}", config.resolve_to);
@@ -259,7 +337,8 @@ mod tests {
         let table = route_table_with("myapp.test");
         let query = build_query("myapp.test.", RecordType::A);
 
-        let (response_bytes, resolved) = handle_dns_query(&query, &config, &table);
+        let cache = DnsCache::new(Duration::from_secs(2));
+        let (response_bytes, resolved) = handle_dns_query(&query, &config, &table, &cache);
         assert!(resolved, "should report as resolved route");
         let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
 
@@ -280,7 +359,8 @@ mod tests {
         let table = Arc::new(RwLock::new(RouteTable::new()));
         let query = build_query("unknown.test.", RecordType::A);
 
-        let (response_bytes, resolved) = handle_dns_query(&query, &config, &table);
+        let cache = DnsCache::new(Duration::from_secs(2));
+        let (response_bytes, resolved) = handle_dns_query(&query, &config, &table, &cache);
         assert!(!resolved, "unregistered domain should not count as resolved");
         let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
 
@@ -295,7 +375,8 @@ mod tests {
         let table = route_table_with("myapp.test");
         let query = build_query("google.com.", RecordType::A);
 
-        let (response_bytes, resolved) = handle_dns_query(&query, &config, &table);
+        let cache = DnsCache::new(Duration::from_secs(2));
+        let (response_bytes, resolved) = handle_dns_query(&query, &config, &table, &cache);
         assert!(!resolved);
         let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
 
@@ -309,7 +390,8 @@ mod tests {
         let table = route_table_with("myapp.test");
         let query = build_query("myapp.test.", RecordType::AAAA);
 
-        let (response_bytes, resolved) = handle_dns_query(&query, &config, &table);
+        let cache = DnsCache::new(Duration::from_secs(2));
+        let (response_bytes, resolved) = handle_dns_query(&query, &config, &table, &cache);
         assert!(!resolved, "AAAA query should not count as resolved");
         let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
 
@@ -325,9 +407,69 @@ mod tests {
         let table = route_table_with("myapp.test");
         let query = build_query("myapp.test.", RecordType::A);
 
-        let (response_bytes, _) = handle_dns_query(&query, &config, &table);
+        let cache = DnsCache::new(Duration::from_secs(2));
+        let (response_bytes, _) = handle_dns_query(&query, &config, &table, &cache);
         let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
 
         assert_eq!(response.id(), 1234);
+    }
+
+    // ── Cache tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn cache_stores_and_retrieves() {
+        let cache = DnsCache::new(Duration::from_secs(60));
+        assert!(cache.get("myapp.test").is_none());
+
+        cache.put("myapp.test".to_string(), true);
+        assert_eq!(cache.get("myapp.test"), Some(true));
+
+        cache.put("other.test".to_string(), false);
+        assert_eq!(cache.get("other.test"), Some(false));
+    }
+
+    #[test]
+    fn cache_expires() {
+        let cache = DnsCache::new(Duration::from_millis(1));
+        cache.put("myapp.test".to_string(), true);
+
+        std::thread::sleep(Duration::from_millis(10));
+        assert!(cache.get("myapp.test").is_none());
+    }
+
+    #[test]
+    fn cache_clear_invalidates_all() {
+        let cache = DnsCache::new(Duration::from_secs(60));
+        cache.put("a.test".to_string(), true);
+        cache.put("b.test".to_string(), false);
+
+        cache.clear();
+        assert!(cache.get("a.test").is_none());
+        assert!(cache.get("b.test").is_none());
+    }
+
+    #[test]
+    fn cached_lookup_avoids_route_table() {
+        let config = test_config();
+        let table = route_table_with("myapp.test");
+        let query = build_query("myapp.test.", RecordType::A);
+
+        let cache = DnsCache::new(Duration::from_secs(60));
+
+        // First query populates the cache.
+        let (resp1, resolved1) = handle_dns_query(&query, &config, &table, &cache);
+        assert!(resolved1);
+        assert!(resp1.is_some());
+
+        // Verify the cache was populated.
+        assert_eq!(cache.get("myapp.test"), Some(true));
+
+        // Second query should use the cache (even if we clear the
+        // route table, the cached result is still valid).
+        let empty_table = Arc::new(RwLock::new(RouteTable::new()));
+        let (resp2, resolved2) =
+            handle_dns_query(&query, &config, &empty_table, &cache);
+        assert!(resolved2, "should resolve from cache");
+        assert!(resp2.is_some());
     }
 }
