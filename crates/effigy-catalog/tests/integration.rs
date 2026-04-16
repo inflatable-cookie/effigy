@@ -32,6 +32,7 @@ fn list_bundled_fragments() {
         names.contains(&"elasticsearch"),
         "missing elasticsearch: {names:?}"
     );
+    assert!(names.contains(&"node"), "missing node: {names:?}");
 
     // All should be bundled source.
     for f in &fragments {
@@ -1010,6 +1011,57 @@ fn nginx_config_resolves_document_root() {
 }
 
 // --- Additional service fragments ─────────────────────────────────────
+
+#[test]
+fn node_fragment_assembles_with_modules_volume() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![
+        ServiceDeclaration {
+            name: "app".to_string(),
+            catalog: "node".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "command".to_string(),
+                    toml::Value::String("npm run dev".to_string()),
+                );
+                p.insert("port".to_string(), toml::Value::Integer(5173));
+                p
+            },
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "db".to_string(),
+            catalog: "postgres".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+    ];
+
+    let result = assembler.assemble(&services, "frontend", ".").unwrap();
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let app = validate_service(&doc, "app");
+
+    let image = app.get("image").unwrap().as_str().unwrap();
+    assert!(image.contains("node:"), "image should be node: {image}");
+
+    // Should have a node_modules named volume to avoid platform conflicts.
+    assert!(
+        result.volumes.iter().any(|v| v.name.contains("node-modules")),
+        "should have node_modules volume: {:?}",
+        result.volumes
+    );
+
+    // Should depend on postgres.
+    assert!(
+        app.get("depends_on").is_some(),
+        "node app should depend on postgres"
+    );
+}
 
 #[test]
 fn mailpit_fragment_assembles() {

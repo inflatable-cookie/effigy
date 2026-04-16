@@ -18,7 +18,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::watch;
 use tracing::{debug, error, info};
 
-use crate::dns::{run_dns_server, DnsConfig};
+use crate::dns::{run_dns_server, DnsCache, DnsConfig};
 use crate::error::GatewayError;
 use crate::proxy::{run_proxy_server, run_tls_proxy_server, ProxyConfig};
 use crate::routes::{LiveRouteTable, RouteTable};
@@ -183,6 +183,9 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     // Create stats tracker.
     let stats = Arc::new(GatewayStats::new());
 
+    // Create DNS lookup cache (shared with file watcher for invalidation).
+    let dns_cache = Arc::new(DnsCache::new(std::time::Duration::from_secs(2)));
+
     // Create shutdown channel.
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -195,9 +198,12 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     });
 
     // Set up file watcher for route table.
+    // When routes change, the watcher reloads the table and clears the
+    // DNS cache so new routes are picked up immediately.
     let watcher_table = Arc::clone(&shared_table);
+    let watcher_cache = Arc::clone(&dns_cache);
     let watcher_path = config.route_table_path.clone();
-    let _watcher = setup_file_watcher(&watcher_path, watcher_table)?;
+    let _watcher = setup_file_watcher(&watcher_path, watcher_table, watcher_cache)?;
 
     let has_tls = config.proxy.tls_bind_addr.is_some() && config.tls.is_some();
 
@@ -214,6 +220,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
         config.dns.clone(),
         Arc::clone(&shared_table),
         Arc::clone(&stats),
+        Arc::clone(&dns_cache),
         shutdown_rx.clone(),
     ));
 
@@ -300,6 +307,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
 fn setup_file_watcher(
     path: &PathBuf,
     table: Arc<RwLock<RouteTable>>,
+    dns_cache: Arc<DnsCache>,
 ) -> Result<RecommendedWatcher, GatewayError> {
     let watched_path = path.clone();
 
@@ -314,7 +322,10 @@ fn setup_file_watcher(
                             Ok(new_table) => {
                                 let mut guard = table.write().expect("route table lock poisoned");
                                 *guard = new_table;
-                                debug!("route table reloaded successfully");
+                                // Invalidate DNS cache so new routes are
+                                // resolved immediately.
+                                dns_cache.clear();
+                                debug!("route table reloaded, DNS cache cleared");
                             }
                             Err(e) => {
                                 error!(error = %e, "failed to reload route table");

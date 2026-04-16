@@ -112,7 +112,8 @@ async fn dns_resolves_registered_domain_end_to_end() {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     // Start DNS server.
-    let dns_handle = tokio::spawn(run_dns_server(config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
+    let dns_cache = Arc::new(effigy_gateway::dns::DnsCache::new(std::time::Duration::from_secs(2)));
+    let dns_handle = tokio::spawn(run_dns_server(config, shared, Arc::new(GatewayStats::new()), dns_cache, shutdown_rx));
 
     // Give the server a moment to bind.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
