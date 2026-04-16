@@ -1,0 +1,37 @@
+[service]
+name = "node"
+description = "Node.js application server for frontend or full-stack JavaScript projects"
+
+[params.version]
+type = "string"
+default = "22"
+description = "Node.js major version (e.g., 18, 20, 22)"
+
+[params.working_dir]
+type = "string"
+default = "/app"
+description = "Container working directory where the repo is mounted"
+
+[params.command]
+type = "string"
+default = "npm run dev"
+description = "Command to run (e.g., 'npm run dev', 'yarn dev', 'pnpm dev')"
+
+[params.port]
+type = "integer"
+default = 3000
+description = "Application port inside the container"
+
+[capabilities]
+exec_target = true
+shell = "/bin/bash"
+
+[volumes.node-modules]
+mount = "/app/node_modules"
+named = true
+persist = false
+description = "Node modules — kept in a named volume to avoid host/container platform conflicts"
+
+[ports]
+default = [3000]
+description = "Application HTTP port"

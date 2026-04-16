@@ -47,7 +47,7 @@ impl Default for DnsConfig {
 
 /// Cached result of a route table lookup for a domain.
 #[derive(Debug, Clone)]
-struct DnsCacheEntry {
+pub(crate) struct DnsCacheEntry {
     /// Whether the domain has a registered route.
     has_route: bool,
     /// When this entry was cached.
@@ -60,13 +60,17 @@ struct DnsCacheEntry {
 /// fast enough that route registration changes are picked up quickly,
 /// but long enough to collapse the burst of parallel DNS queries that
 /// browsers make for a single page load.
-struct DnsCache {
+///
+/// Shared between the DNS server and the route table file watcher so
+/// the watcher can invalidate the cache when routes change.
+pub struct DnsCache {
     entries: Mutex<HashMap<String, DnsCacheEntry>>,
     ttl: Duration,
 }
 
 impl DnsCache {
-    fn new(ttl: Duration) -> Self {
+    /// Create a new cache with the given TTL.
+    pub fn new(ttl: Duration) -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
             ttl,
@@ -74,7 +78,7 @@ impl DnsCache {
     }
 
     /// Look up a domain in the cache. Returns None if not cached or expired.
-    fn get(&self, domain: &str) -> Option<bool> {
+    pub fn get(&self, domain: &str) -> Option<bool> {
         let entries = self.entries.lock().ok()?;
         let entry = entries.get(domain)?;
         if entry.cached_at.elapsed() < self.ttl {
@@ -85,7 +89,7 @@ impl DnsCache {
     }
 
     /// Store a lookup result in the cache.
-    fn put(&self, domain: String, has_route: bool) {
+    pub fn put(&self, domain: String, has_route: bool) {
         if let Ok(mut entries) = self.entries.lock() {
             entries.insert(
                 domain,
@@ -103,9 +107,10 @@ impl DnsCache {
         }
     }
 
-    /// Invalidate the entire cache (called when the route table changes).
-    #[cfg_attr(not(test), allow(dead_code))]
-    fn clear(&self) {
+    /// Invalidate the entire cache.
+    ///
+    /// Called by the route table file watcher when routes change.
+    pub fn clear(&self) {
         if let Ok(mut entries) = self.entries.lock() {
             entries.clear();
         }
@@ -121,6 +126,7 @@ pub async fn run_dns_server(
     config: DnsConfig,
     route_table: Arc<RwLock<RouteTable>>,
     stats: Arc<GatewayStats>,
+    dns_cache: Arc<DnsCache>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), crate::GatewayError> {
     let socket =
@@ -133,7 +139,6 @@ pub async fn run_dns_server(
 
     debug!(addr = %config.bind_addr, tld = %config.tld, "DNS resolver started");
 
-    let cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
     let mut buf = vec![0u8; 512];
 
     loop {
@@ -147,7 +152,7 @@ pub async fn run_dns_server(
                             &buf[..len],
                             &config,
                             &route_table,
-                            &cache,
+                            &dns_cache,
                         );
                         if resolved {
                             GatewayStats::inc(&stats.dns_resolved);
