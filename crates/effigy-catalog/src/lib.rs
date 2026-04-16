@@ -18,6 +18,7 @@ pub mod fragment;
 pub mod output;
 pub mod schema;
 pub mod template;
+pub mod volumes;
 
 pub use assembly::ComposeAssembler;
 pub use error::CatalogError;
