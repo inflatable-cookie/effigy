@@ -729,6 +729,98 @@ effigy exec composer require foo    # ad-hoc commands
 # close TUI -> clean shutdown -> machine is clean
 ```
 
+## Implementation Status
+
+All library crates are shipped as isolated workspace members with no
+dependency on other effigy crates. Integration into the runner happens
+after `g02.010` modularization completes.
+
+### effigy-catalog (g02.011 — complete, 65 tests)
+
+Crate: `crates/effigy-catalog/`
+
+Modules:
+
+| Module | What it does |
+|--------|-------------|
+| `schema.rs` | `service.toml` parsing — parameter types, defaults, capabilities, volumes |
+| `fragment.rs` | Fragment loading from 3 layers (project-local > user-global > embedded), extract API |
+| `template.rs` | Jinja2 rendering via minijinja, parameter validation, context building |
+| `assembly.rs` | Compose assembly via serde_yaml — fragment rendering, YAML merge, volume/service wiring |
+| `output.rs` | File writing with checksum caching, Docker Compose multi-file args, eject flow |
+| `volumes.rs` | Volume classification for reset, Docker CLI command specs for list/export/import |
+
+Bundled fragments (9):
+
+| Fragment | Notes |
+|----------|-------|
+| `php-fpm` | `install-php-extensions`, Composer, optional Node.js, dev PHP config |
+| `nginx` | 4 config variants (default, laravel, spa, wordpress), gzip, security headers |
+| `mariadb` | utf8mb4, healthcheck, InnoDB tuning |
+| `postgres` | healthcheck, shared_buffers tuning |
+| `redis` | Alpine-based, minimal |
+| `memcached` | Configurable memory limit |
+| `mailpit` | SMTP catch-all with web UI |
+| `minio` | S3-compatible storage with persistent volume |
+| `elasticsearch` | Single-node, memory-limited, persistent index |
+
+### effigy-gateway (g02.014 + g02.016 — in progress, 69 tests)
+
+Crate: `crates/effigy-gateway/`
+
+Modules:
+
+| Module | What it does |
+|--------|-------------|
+| `routes.rs` | Route table with atomic JSON persistence, live reload via RwLock |
+| `dns.rs` | UDP DNS resolver on hickory-proto, `*.test` A records, AAAA graceful handling |
+| `proxy.rs` | Streaming HTTP/HTTPS reverse proxy, WebSocket upgrade, hop-by-hop stripping, forwarding headers |
+| `tls.rs` | mkcert certificate generation/loading, rustls ServerConfig builder |
+| `server.rs` | Coordinated DNS+HTTP+HTTPS+watcher lifecycle, PID files, signal handling |
+| `ports.rs` | Port allocation registry with gap filling, conflict detection, service offset map |
+| `registration.rs` | Atomic route register/deregister for container lifecycle events |
+| `resolver_setup.rs` | macOS `/etc/resolver/` file management |
+
+### effigy-exec (g02.012 — in progress, 53 tests)
+
+Crate: `crates/effigy-exec/`
+
+Modules:
+
+| Module | What it does |
+|--------|-------------|
+| `routing.rs` | Host vs container decision engine, host-native allowlist, task overrides |
+| `cwd.rs` | Bidirectional host↔container path translation |
+| `alias.rs` | Named exec aliases with multi-word command support |
+| `detection.rs` | Container capability probing, handoff vs raw-exec strategy, capability cache |
+
+### Integration Path
+
+When `g02.010` finishes, these crates wire into the runner:
+
+1. **Manifest schema**: add `services`, `context`, `exec`, `dns`, `data`
+   sections to `[containers]` config.
+2. **Catalog dispatch**: when a container has `services` instead of
+   `compose_file`, call `effigy-catalog` to assemble compose.
+3. **Route registration**: on `container up`, call
+   `effigy-gateway::registration::register_route`. On `container down`,
+   call `deregister_route`.
+4. **Exec routing**: before task execution, call
+   `effigy-exec::routing::route()` to determine host vs container target.
+5. **CLI commands**: add `effigy exec`, `effigy gateway`, `effigy catalog`
+   subcommands.
+6. **Port allocation**: when `host.ports` are omitted, allocate from
+   `effigy-gateway::ports::PortRegistry`.
+
+### Test Coverage
+
+| Crate | Unit | Integration | Total |
+|-------|------|-------------|-------|
+| effigy-catalog | 36 | 29 | 65 |
+| effigy-gateway | 65 | 4 | 69 |
+| effigy-exec | 53 | 0 | 53 |
+| **Total** | **154** | **33** | **187** |
+
 ## Related Guides
 
 - `docs/guides/063-container-system-guide.md` — v1 container operator guide
@@ -736,11 +828,8 @@ effigy exec composer require foo    # ad-hoc commands
 - `docs/guides/050-env-schema-integration.md` — environment variable handling
 - `docs/guides/012-dev-process-manager-tui.md` — TUI process manager
 
-## Next Step
-
-Execution starts from `g02.011` roadmap and
-`docs/specs/011-service-catalog-and-compose-assembly-strict-lane.md`.
-
 ## Next Task
 
-Activate `g02.011` and begin with Batch 1 of the strict lane spec.
+Library crates are ready for integration. Remaining pre-integration work:
+gateway SNI resolver for multi-domain HTTPS, and `g02.013` dev front door
+library logic. Integration into the runner starts after `g02.010` completes.
