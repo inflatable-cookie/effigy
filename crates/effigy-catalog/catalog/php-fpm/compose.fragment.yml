@@ -1,0 +1,25 @@
+services:
+  {{ service_name }}:
+    build:
+      context: {{ repo_root }}
+      dockerfile: {{ catalog_path }}/Dockerfile
+      args:
+        PHP_VERSION: "{{ version }}"
+{% if extensions %}
+        EXTENSIONS: "{{ extensions | join(' ') }}"
+{% endif %}
+    volumes:
+      - {{ repo_root }}:{{ working_dir }}
+    working_dir: {{ working_dir }}
+    environment:
+      DOCUMENT_ROOT: "{{ document_root }}"
+{% if services.mariadb %}
+    depends_on:
+      {{ services.mariadb.name }}:
+        condition: service_started
+{% endif %}
+{% if services.postgres %}
+    depends_on:
+      {{ services.postgres.name }}:
+        condition: service_started
+{% endif %}

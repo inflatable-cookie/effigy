@@ -1,0 +1,6 @@
+services:
+  {{ service_name }}:
+    image: memcached:{{ version }}-alpine
+    command: ["memcached", "-m", "{{ memory }}"]
+    ports:
+      - "11211:11211"

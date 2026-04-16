@@ -1,0 +1,13 @@
+services:
+  {{ service_name }}:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - {{ repo_root }}:{{ working_dir }}:ro
+      - ./{{ service_name }}.conf:/etc/nginx/conf.d/default.conf:ro
+{% if services["php-fpm"] %}
+    depends_on:
+      {{ services["php-fpm"].name }}:
+        condition: service_started
+{% endif %}

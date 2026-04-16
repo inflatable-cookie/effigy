@@ -1,0 +1,20 @@
+[service]
+name = "nginx"
+description = "Nginx web server / reverse proxy"
+
+[params.document_root]
+type = "string"
+default = "public"
+description = "Document root relative to repo root"
+
+[params.working_dir]
+type = "string"
+default = "/var/www/html"
+description = "Container working directory (must match the app service)"
+
+[ports]
+default = [80]
+description = "HTTP port"
+
+[depends_on]
+optional = ["php-fpm"]

@@ -1,0 +1,5 @@
+services:
+  {{ service_name }}:
+    image: redis:{{ version }}-alpine
+    ports:
+      - "6379:6379"

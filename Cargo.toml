@@ -1,8 +1,12 @@
 [workspace]
 members = [
+    "crates/effigy-changelog",
+    "crates/effigy-catalog",
+    "crates/effigy-cli",
     "crates/effigy-core",
     "crates/effigy-manifest",
     "crates/effigy-tasks",
+    "crates/effigy-tui",
     "crates/effigy-containers",
     "crates/effigy-distribution",
     "crates/effigy-release",
@@ -21,6 +25,8 @@ license = "MIT"
 description = "Unified task runner with nested catalog resolution"
 
 [dependencies]
+effigy-changelog = { path = "crates/effigy-changelog" }
+effigy-cli = { path = "crates/effigy-cli" }
 effigy-containers = { path = "crates/effigy-containers" }
 effigy-core = { path = "crates/effigy-core" }
 effigy-demo = { path = "crates/effigy-demo" }
@@ -32,6 +38,7 @@ effigy-manifest = { path = "crates/effigy-manifest" }
 effigy-release = { path = "crates/effigy-release" }
 effigy-rhai = { path = "crates/effigy-rhai" }
 effigy-tasks = { path = "crates/effigy-tasks" }
+effigy-tui = { path = "crates/effigy-tui" }
 anstream = "0.6"
 anstyle = "1"
 indicatif = "0.18"

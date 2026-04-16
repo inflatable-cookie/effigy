@@ -1,0 +1,17 @@
+[service]
+name = "memcached"
+description = "Memcached distributed memory caching"
+
+[params.version]
+type = "string"
+default = "1.6"
+description = "Memcached version"
+
+[params.memory]
+type = "integer"
+default = 64
+description = "Maximum memory in MB"
+
+[ports]
+default = [11211]
+description = "Memcached protocol port"
