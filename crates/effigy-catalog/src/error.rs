@@ -60,6 +60,14 @@ pub enum CatalogError {
     #[error("config file not found: {path}")]
     ConfigFileNotFound { path: PathBuf },
 
+    /// No services were declared.
+    #[error("no services declared — at least one service is required")]
+    EmptyServiceList,
+
+    /// Duplicate service name in declarations.
+    #[error("duplicate service name '{name}' — each service must have a unique name")]
+    DuplicateServiceName { name: String },
+
     /// An I/O error occurred.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

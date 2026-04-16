@@ -286,6 +286,52 @@ impl CatalogResolver {
             }
         }
     }
+
+    /// Extract a bundled fragment to a target directory for customization.
+    ///
+    /// Writes `service.toml`, `compose.fragment.yml`, optional `Dockerfile`,
+    /// and any config variants to `<target_dir>/<fragment_name>/`.
+    ///
+    /// Returns the path to the extracted fragment directory.
+    pub fn extract(
+        &self,
+        name: &str,
+        target_dir: &Path,
+    ) -> Result<PathBuf, CatalogError> {
+        // Always extract from the bundled catalog, regardless of overrides.
+        let fragment = Self::load_from_embedded(name)?;
+        let fragment_dir = target_dir.join(name);
+
+        std::fs::create_dir_all(&fragment_dir)?;
+
+        // service.toml
+        let service_toml_key = format!("{name}/service.toml");
+        if let Some(data) = BundledCatalog::get(&service_toml_key) {
+            std::fs::write(fragment_dir.join("service.toml"), data.data.as_ref())?;
+        }
+
+        // compose.fragment.yml
+        std::fs::write(
+            fragment_dir.join("compose.fragment.yml"),
+            &fragment.compose_template,
+        )?;
+
+        // Dockerfile
+        if let Some(ref dockerfile) = fragment.dockerfile {
+            std::fs::write(fragment_dir.join("Dockerfile"), dockerfile)?;
+        }
+
+        // Config variants
+        if !fragment.config_variants.is_empty() {
+            let configs_dir = fragment_dir.join("configs");
+            std::fs::create_dir_all(&configs_dir)?;
+            for (variant_name, content) in &fragment.config_variants {
+                std::fs::write(configs_dir.join(format!("{variant_name}.conf")), content)?;
+            }
+        }
+
+        Ok(fragment_dir)
+    }
 }
 
 /// Summary info for a catalog fragment (for listing).

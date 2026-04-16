@@ -15,11 +15,13 @@
 pub mod assembly;
 pub mod error;
 pub mod fragment;
+pub mod output;
 pub mod schema;
 pub mod template;
 
 pub use assembly::ComposeAssembler;
 pub use error::CatalogError;
 pub use fragment::{CatalogFragment, CatalogResolver};
+pub use output::ComposeOutput;
 pub use schema::{ParamSchema, ParamType, ServiceSchema};
 pub use template::TemplateRenderer;

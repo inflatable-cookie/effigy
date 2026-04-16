@@ -34,7 +34,7 @@ The active strict lane is:
 
 `active`
 
-Batches 1–4 are complete:
+Batches 1–6 are complete:
 
 - Batch 1 (fragment format decision) settled in
   `docs/specs/batch-cards/200-decide-service-catalog-fragment-format.md`:
@@ -43,19 +43,25 @@ Batches 1–4 are complete:
 - Batch 2 (crate foundation) shipped: `crates/effigy-catalog` exists as an
   isolated workspace member with fragment loading from embedded assets,
   `service.toml` parsing, parameter validation, and template rendering.
-  11 unit tests pass.
 - Batch 3 (compose assembly engine) shipped: multi-fragment assembly with
   networking, volume declarations, depends_on, and override file support.
 - Batch 4 (bundled service fragments) shipped: php-fpm (with Dockerfile),
   nginx (with default/laravel/spa config variants), mariadb, postgres,
-  redis, memcached. 9 integration tests pass including a full LEMP stack
-  assembly.
+  redis, memcached.
+- Batch 5 (catalog override and inspection) shipped: three-layer override
+  precedence (project-local > user-global > bundled) with tests proving
+  each layer wins correctly. `extract` API writes bundled fragments to disk
+  for customization. `list` API shows all fragments with source layer.
+- Batch 6 (eject and compose file management) shipped: `ComposeOutput`
+  module handles generated file writing with manifest checksum caching,
+  Docker Compose multi-file args for override support, and `eject` flow
+  that copies generated files to permanent locations and cleans up.
 
-20 total tests pass. Clippy clean.
+36 total tests pass (19 unit + 17 integration). Clippy clean.
 
 The design is documented in
 `docs/architecture/020-container-infrastructure-design.md`. Next move is
-Batch 5: catalog override and inspection APIs.
+Batch 7: end-to-end proof with a real PHP project.
 
 ## Isolation Constraint
 
