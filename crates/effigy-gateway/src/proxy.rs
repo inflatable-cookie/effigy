@@ -45,6 +45,10 @@ pub struct ProxyConfig {
 
     /// Timeout for connecting to upstream targets.
     pub connect_timeout: Duration,
+
+    /// Timeout for receiving a response from upstream after connecting.
+    /// Protects against hung upstream processes.
+    pub response_timeout: Duration,
 }
 
 impl Default for ProxyConfig {
@@ -53,6 +57,7 @@ impl Default for ProxyConfig {
             bind_addr: SocketAddr::from(([127, 0, 0, 1], 80)),
             tls_bind_addr: None,
             connect_timeout: Duration::from_secs(5),
+            response_timeout: Duration::from_secs(300), // 5 min — generous for debugging
         }
     }
 }
@@ -172,12 +177,13 @@ pub async fn run_tls_proxy_server(
 ) -> Result<(), crate::GatewayError> {
     let tls_acceptor = tokio_rustls::TlsAcceptor::from(tls_config);
 
-    let listener = TcpListener::bind(bind_addr).await.map_err(|e| {
-        crate::GatewayError::ProxyBindError {
-            addr: bind_addr.to_string(),
-            reason: format!("HTTPS bind failed: {e}"),
-        }
-    })?;
+    let listener =
+        TcpListener::bind(bind_addr)
+            .await
+            .map_err(|e| crate::GatewayError::ProxyBindError {
+                addr: bind_addr.to_string(),
+                reason: format!("HTTPS bind failed: {e}"),
+            })?;
 
     info!(addr = %bind_addr, "HTTPS proxy started");
 
@@ -367,8 +373,17 @@ async fn forward_request(
     strip_hop_by_hop_headers(req.headers_mut());
     add_forwarding_headers(req.headers_mut(), original_host, peer_addr);
 
-    // Send and stream the response back.
-    let response = sender.send_request(req).await?;
+    // Send request and wait for response headers with timeout.
+    let response = tokio::time::timeout(
+        config.response_timeout,
+        sender.send_request(req),
+    )
+    .await
+    .map_err(|_| format!(
+        "upstream response timeout after {:?}",
+        config.response_timeout
+    ))?
+    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
 
     // Strip hop-by-hop headers from response.
     let (mut parts, body) = response.into_parts();

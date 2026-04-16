@@ -187,6 +187,7 @@ async fn proxy_routes_to_correct_upstream() {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
+        response_timeout: std::time::Duration::from_secs(30),
     };
 
     // Start proxy.
@@ -225,6 +226,7 @@ async fn proxy_returns_no_route_page() {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
+        response_timeout: std::time::Duration::from_secs(30),
     };
 
     let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
@@ -269,6 +271,7 @@ async fn proxy_returns_bad_gateway_for_unreachable_upstream() {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(1),
+        response_timeout: std::time::Duration::from_secs(30),
     };
 
     let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
@@ -285,6 +288,80 @@ async fn proxy_returns_bad_gateway_for_unreachable_upstream() {
     assert_eq!(response.status(), 502);
     let body = response.text().await.unwrap();
     assert!(body.contains("Failed to connect"), "body: {body}");
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
+}
+
+#[tokio::test]
+async fn proxy_response_timeout_returns_bad_gateway() {
+    use hyper::server::conn::http1;
+    use hyper::service::service_fn;
+    use hyper_util::rt::TokioIo;
+
+    let upstream_port = available_port().await;
+    let proxy_port = available_port().await;
+
+    // Start a server that accepts connections but never responds.
+    let listener =
+        tokio::net::TcpListener::bind(format!("127.0.0.1:{upstream_port}"))
+            .await
+            .unwrap();
+    tokio::spawn(async move {
+        if let Ok((stream, _)) = listener.accept().await {
+            let io = TokioIo::new(stream);
+            let service = service_fn(
+                |_req: hyper::Request<hyper::body::Incoming>| async move {
+                    // Hang forever.
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    Ok::<_, hyper::Error>(
+                        hyper::Response::new(
+                            http_body_util::Full::new(hyper::body::Bytes::new()),
+                        ),
+                    )
+                },
+            );
+            let _ = http1::Builder::new().serve_connection(io, service).await;
+        }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let mut table = RouteTable::new();
+    table.upsert(test_route(
+        "slow.test",
+        &format!("127.0.0.1:{upstream_port}"),
+    ));
+    let shared = Arc::new(RwLock::new(table));
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let proxy_config = ProxyConfig {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
+        tls_bind_addr: None,
+        connect_timeout: std::time::Duration::from_secs(5),
+        // Very short response timeout to test quickly.
+        response_timeout: std::time::Duration::from_millis(200),
+    };
+
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let response = client
+        .get(format!("http://127.0.0.1:{proxy_port}/"))
+        .header("host", "slow.test")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 502);
+    let body = response.text().await.unwrap();
+    assert!(
+        body.contains("timeout"),
+        "should mention timeout: {body}"
+    );
 
     let _ = shutdown_tx.send(true);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
@@ -310,38 +387,28 @@ async fn start_body_echo_server(port: u16) -> tokio::task::JoinHandle<()> {
             if let Ok((stream, _)) = listener.accept().await {
                 let io = TokioIo::new(stream);
                 tokio::spawn(async move {
-                    let service = service_fn(
-                        |req: Request<hyper::body::Incoming>| async move {
-                            let method = req.method().to_string();
-                            let content_type = req
-                                .headers()
-                                .get("content-type")
-                                .and_then(|v| v.to_str().ok())
-                                .unwrap_or("none")
-                                .to_string();
+                    let service = service_fn(|req: Request<hyper::body::Incoming>| async move {
+                        let method = req.method().to_string();
+                        let content_type = req
+                            .headers()
+                            .get("content-type")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("none")
+                            .to_string();
 
-                            let body_bytes = req
-                                .into_body()
-                                .collect()
-                                .await
-                                .unwrap()
-                                .to_bytes();
-                            let body_len = body_bytes.len();
-                            let body_str =
-                                String::from_utf8_lossy(&body_bytes).to_string();
+                        let body_bytes = req.into_body().collect().await.unwrap().to_bytes();
+                        let body_len = body_bytes.len();
+                        let body_str = String::from_utf8_lossy(&body_bytes).to_string();
 
-                            let response_body = format!(
-                                "method={method}\n\
+                        let response_body = format!(
+                            "method={method}\n\
                                  content-type={content_type}\n\
                                  body-length={body_len}\n\
                                  body={body_str}\n"
-                            );
+                        );
 
-                            Ok::<_, hyper::Error>(Response::new(Full::new(
-                                Bytes::from(response_body),
-                            )))
-                        },
-                    );
+                        Ok::<_, hyper::Error>(Response::new(Full::new(Bytes::from(response_body))))
+                    });
                     let _ = http1::Builder::new().serve_connection(io, service).await;
                 });
             }
@@ -369,6 +436,7 @@ async fn proxy_forwards_post_body() {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
+        response_timeout: std::time::Duration::from_secs(30),
     };
 
     let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
@@ -421,6 +489,7 @@ async fn proxy_forwards_large_body() {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
+        response_timeout: std::time::Duration::from_secs(30),
     };
 
     let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
@@ -468,6 +537,7 @@ async fn proxy_multiple_concurrent_requests() {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
+        response_timeout: std::time::Duration::from_secs(30),
     };
 
     let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
@@ -516,25 +586,22 @@ async fn proxy_preserves_response_status_and_headers() {
     let proxy_port = available_port().await;
 
     // Server that returns custom status + headers.
-    let listener =
-        tokio::net::TcpListener::bind(format!("127.0.0.1:{upstream_port}"))
-            .await
-            .unwrap();
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{upstream_port}"))
+        .await
+        .unwrap();
     tokio::spawn(async move {
         if let Ok((stream, _)) = listener.accept().await {
             let io = TokioIo::new(stream);
-            let service = service_fn(
-                |_req: hyper::Request<hyper::body::Incoming>| async move {
-                    Ok::<_, hyper::Error>(
-                        Response::builder()
-                            .status(201)
-                            .header("x-custom-response", "hello")
-                            .header("content-type", "application/json")
-                            .body(Full::new(Bytes::from(r#"{"ok":true}"#)))
-                            .unwrap(),
-                    )
-                },
-            );
+            let service = service_fn(|_req: hyper::Request<hyper::body::Incoming>| async move {
+                Ok::<_, hyper::Error>(
+                    Response::builder()
+                        .status(201)
+                        .header("x-custom-response", "hello")
+                        .header("content-type", "application/json")
+                        .body(Full::new(Bytes::from(r#"{"ok":true}"#)))
+                        .unwrap(),
+                )
+            });
             let _ = http1::Builder::new().serve_connection(io, service).await;
         }
     });
@@ -552,6 +619,7 @@ async fn proxy_preserves_response_status_and_headers() {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
         tls_bind_addr: None,
         connect_timeout: std::time::Duration::from_secs(5),
+        response_timeout: std::time::Duration::from_secs(30),
     };
 
     let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
@@ -567,11 +635,21 @@ async fn proxy_preserves_response_status_and_headers() {
 
     assert_eq!(response.status(), 201);
     assert_eq!(
-        response.headers().get("x-custom-response").unwrap().to_str().unwrap(),
+        response
+            .headers()
+            .get("x-custom-response")
+            .unwrap()
+            .to_str()
+            .unwrap(),
         "hello"
     );
     assert_eq!(
-        response.headers().get("content-type").unwrap().to_str().unwrap(),
+        response
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap(),
         "application/json"
     );
     let body = response.text().await.unwrap();

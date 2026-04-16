@@ -219,43 +219,42 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     ));
 
     // Optionally start the HTTPS proxy.
-    let tls_handle = if let (Some(tls_addr), Some(tls_config)) =
-        (config.proxy.tls_bind_addr, &config.tls)
-    {
-        // Build an SNI resolver that serves the right cert per domain.
-        match crate::tls::build_sni_resolver_from_dir(&tls_config.certs_dir) {
-            Ok(resolver) => {
-                if resolver.cert_count() == 0 {
-                    info!(
-                        "HTTPS enabled but no certificates found in {} — \
+    let tls_handle =
+        if let (Some(tls_addr), Some(tls_config)) = (config.proxy.tls_bind_addr, &config.tls) {
+            // Build an SNI resolver that serves the right cert per domain.
+            match crate::tls::build_sni_resolver_from_dir(&tls_config.certs_dir) {
+                Ok(resolver) => {
+                    if resolver.cert_count() == 0 {
+                        info!(
+                            "HTTPS enabled but no certificates found in {} — \
                          run `effigy gateway setup-tls` first",
-                        tls_config.certs_dir.display()
-                    );
+                            tls_config.certs_dir.display()
+                        );
+                        None
+                    } else {
+                        info!(
+                            certs = resolver.cert_count(),
+                            "loaded TLS certificates for HTTPS"
+                        );
+                        let server_config = resolver.into_server_config();
+                        let arc_config = std::sync::Arc::new(server_config);
+                        Some(tokio::spawn(run_tls_proxy_server(
+                            tls_addr,
+                            arc_config,
+                            Arc::clone(&shared_table),
+                            config.proxy.clone(),
+                            shutdown_rx,
+                        )))
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "failed to load TLS certs — HTTPS disabled");
                     None
-                } else {
-                    info!(
-                        certs = resolver.cert_count(),
-                        "loaded TLS certificates for HTTPS"
-                    );
-                    let server_config = resolver.into_server_config();
-                    let arc_config = std::sync::Arc::new(server_config);
-                    Some(tokio::spawn(run_tls_proxy_server(
-                        tls_addr,
-                        arc_config,
-                        Arc::clone(&shared_table),
-                        config.proxy.clone(),
-                        shutdown_rx,
-                    )))
                 }
             }
-            Err(e) => {
-                error!(error = %e, "failed to load TLS certs — HTTPS disabled");
-                None
-            }
-        }
-    } else {
-        None
-    };
+        } else {
+            None
+        };
 
     // Wait for any server task to finish (typically all stop on shutdown).
     tokio::select! {
