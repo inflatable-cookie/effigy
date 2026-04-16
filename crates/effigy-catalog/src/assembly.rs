@@ -146,9 +146,16 @@ impl ComposeAssembler {
                 all_dockerfiles.insert(name.clone(), dockerfile.clone());
             }
 
-            // Resolve and collect config files.
+            // Resolve and render config files through the template engine.
+            // Config files can use the same template variables as compose
+            // fragments (e.g., {{ services["php-fpm"].name }} for fastcgi_pass).
             if let Some(config_content) = self.resolve_config(decl, fragment)? {
-                all_configs.insert(format!("{name}.conf"), config_content);
+                let rendered_config = self.renderer.render(
+                    &config_content,
+                    &ctx,
+                    &format!("{}-config", fragment.name),
+                )?;
+                all_configs.insert(format!("{name}.conf"), rendered_config);
             }
 
             // Collect volume declarations from schema.

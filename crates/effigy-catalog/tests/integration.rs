@@ -921,6 +921,94 @@ fn single_service_assembles_without_volumes() {
     assert!(doc.get("volumes").is_none());
 }
 
+// --- Config file templating ───────────────────────────────────────────
+
+#[test]
+fn nginx_config_resolves_php_service_name() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    // Name the PHP service "php" instead of the conventional "app".
+    let services = vec![
+        ServiceDeclaration {
+            name: "php".to_string(),
+            catalog: "php-fpm".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "web".to_string(),
+            catalog: "nginx".to_string(),
+            params: HashMap::new(),
+            variant: Some("default".to_string()),
+            config: None,
+        },
+    ];
+
+    let result = assembler.assemble(&services, "test", ".").unwrap();
+
+    // The nginx config should reference "php:9000", not "app:9000".
+    let config = &result.config_files["web.conf"];
+    assert!(
+        config.contains("php:9000"),
+        "nginx config should resolve PHP service name to 'php', got:\n{config}"
+    );
+    assert!(
+        !config.contains("app:9000"),
+        "nginx config should NOT contain hardcoded 'app:9000'"
+    );
+}
+
+#[test]
+fn nginx_config_resolves_document_root() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![
+        ServiceDeclaration {
+            name: "app".to_string(),
+            catalog: "php-fpm".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "document_root".to_string(),
+                    toml::Value::String("web".to_string()),
+                );
+                p
+            },
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "web".to_string(),
+            catalog: "nginx".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "document_root".to_string(),
+                    toml::Value::String("web".to_string()),
+                );
+                p
+            },
+            variant: Some("default".to_string()),
+            config: None,
+        },
+    ];
+
+    let result = assembler.assemble(&services, "test", ".").unwrap();
+
+    let config = &result.config_files["web.conf"];
+    assert!(
+        config.contains("/var/www/html/web"),
+        "nginx root should use configured document_root 'web', got:\n{config}"
+    );
+    assert!(
+        !config.contains("/var/www/html/public"),
+        "nginx root should NOT contain default 'public'"
+    );
+}
+
 // --- Additional service fragments ─────────────────────────────────────
 
 #[test]
@@ -941,7 +1029,10 @@ fn mailpit_fragment_assembles() {
     let mail = validate_service(&doc, "mail");
 
     let image = mail.get("image").unwrap().as_str().unwrap();
-    assert!(image.contains("mailpit"), "image should be mailpit: {image}");
+    assert!(
+        image.contains("mailpit"),
+        "image should be mailpit: {image}"
+    );
     assert!(mail.get("ports").is_some(), "mailpit should expose ports");
     assert!(
         mail.get("healthcheck").is_some(),
@@ -1299,7 +1390,14 @@ memory = 128
     let build_args = app.get("build").unwrap().get("args").unwrap();
     let ext_val = build_args.get("EXTENSIONS").unwrap().as_str().unwrap();
     for ext in &[
-        "pdo_mysql", "gd", "redis", "memcached", "intl", "exif", "zip", "bcmath",
+        "pdo_mysql",
+        "gd",
+        "redis",
+        "memcached",
+        "intl",
+        "exif",
+        "zip",
+        "bcmath",
     ] {
         assert!(
             ext_val.contains(ext),
