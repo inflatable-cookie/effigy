@@ -222,56 +222,35 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     let tls_handle = if let (Some(tls_addr), Some(tls_config)) =
         (config.proxy.tls_bind_addr, &config.tls)
     {
-        // Build a rustls ServerConfig from all TLS-enabled route certs.
-        // For now, use a single wildcard cert if available, or generate
-        // certs on route registration. The initial implementation loads
-        // a default cert and serves it for all domains.
-        let tls_routes: Vec<_> = {
-            let table = shared_table.read().expect("route table lock poisoned");
-            table
-                .all_routes()
-                .iter()
-                .filter(|r| r.tls)
-                .cloned()
-                .cloned()
-                .collect()
-        };
-
-        if tls_routes.is_empty() {
-            info!("HTTPS enabled but no TLS routes registered — HTTPS listener deferred");
-            None
-        } else {
-            // Use the first TLS-enabled domain's cert. In a more complete
-            // implementation, we'd use rustls's SNI resolver to serve
-            // per-domain certs.
-            let first_domain = &tls_routes[0].domain;
-            match tls_config.load_cert(first_domain) {
-                Ok(cert_paths) => {
-                    match crate::tls::load_rustls_config(&cert_paths.cert, &cert_paths.key) {
-                        Ok(server_config) => {
-                            let arc_config = std::sync::Arc::new(server_config);
-                            Some(tokio::spawn(run_tls_proxy_server(
-                                tls_addr,
-                                arc_config,
-                                Arc::clone(&shared_table),
-                                config.proxy.clone(),
-                                shutdown_rx,
-                            )))
-                        }
-                        Err(e) => {
-                            error!(error = %e, "failed to load TLS config — HTTPS disabled");
-                            None
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!(
-                        domain = %first_domain,
-                        error = %e,
-                        "TLS cert not found — run `effigy gateway setup-tls` first"
+        // Build an SNI resolver that serves the right cert per domain.
+        match crate::tls::build_sni_resolver_from_dir(&tls_config.certs_dir) {
+            Ok(resolver) => {
+                if resolver.cert_count() == 0 {
+                    info!(
+                        "HTTPS enabled but no certificates found in {} — \
+                         run `effigy gateway setup-tls` first",
+                        tls_config.certs_dir.display()
                     );
                     None
+                } else {
+                    info!(
+                        certs = resolver.cert_count(),
+                        "loaded TLS certificates for HTTPS"
+                    );
+                    let server_config = resolver.into_server_config();
+                    let arc_config = std::sync::Arc::new(server_config);
+                    Some(tokio::spawn(run_tls_proxy_server(
+                        tls_addr,
+                        arc_config,
+                        Arc::clone(&shared_table),
+                        config.proxy.clone(),
+                        shutdown_rx,
+                    )))
                 }
+            }
+            Err(e) => {
+                error!(error = %e, "failed to load TLS certs — HTTPS disabled");
+                None
             }
         }
     } else {
