@@ -57,11 +57,34 @@ Batches 1–6 are complete:
   Docker Compose multi-file args for override support, and `eject` flow
   that copies generated files to permanent locations and cleans up.
 
-36 total tests pass (19 unit + 17 integration). Clippy clean.
+All 7 batches complete. 48 total tests (25 unit + 23 integration). Clippy
+clean.
+
+Batch 7 (end-to-end proof) delivered through the structural YAML validation
+tests: full 5-service LEMP stack assembly verified by parsing output back
+through serde_yaml and validating service definitions, build args,
+depends_on relationships, volumes, Dockerfiles, and config files.
+
+Post-batch hardening (production quality):
+- PHP Dockerfile rewritten to use `install-php-extensions` (community
+  standard), dev-tuned PHP config, optional Node.js, Composer
+- nginx configs: 4 variants (default, laravel, spa, wordpress) with
+  gzip, security headers, proper fastcgi timeouts (300s), sensitive file
+  blocking
+- MariaDB/Postgres: healthchecks, charset/tuning via command args
 
 The design is documented in
-`docs/architecture/020-container-infrastructure-design.md`. Next move is
-Batch 7: end-to-end proof with a real PHP project.
+`docs/architecture/020-container-infrastructure-design.md`.
+
+Parallel crate work also shipped for `g02.012` and `g02.014`:
+- `crates/effigy-exec` (38 tests): routing engine, CWD mapping, exec aliases
+- `crates/effigy-gateway` (45 tests): DNS, streaming proxy, WebSocket,
+  route table, TLS, macOS resolver
+
+## Exit Condition
+
+This strict lane is complete. The `effigy-catalog` crate is a functional,
+tested library ready for integration after `g02.010` completes.
 
 ## Isolation Constraint
 

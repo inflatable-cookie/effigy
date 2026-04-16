@@ -22,10 +22,14 @@
 
 pub mod alias;
 pub mod cwd;
+pub mod detection;
 pub mod error;
 pub mod routing;
 
 pub use alias::{ExecAlias, ExecAliasTable};
 pub use cwd::CwdMapper;
+pub use detection::{
+    CapabilityCache, ContainerCapabilities, ExecStrategy,
+};
 pub use error::ExecError;
 pub use routing::{ExecContext, ExecTarget, RoutingDecision};
