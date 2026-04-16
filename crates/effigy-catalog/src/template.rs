@@ -80,8 +80,27 @@ impl TemplateRenderer {
             validated.insert(name.clone(), value);
         }
 
-        // Warn about (but allow) unknown params — they might be for overrides.
-        // In the future we can make this stricter.
+        // Reject parameter names that collide with system context fields.
+        // These are reserved names in the template context.
+        const RESERVED: &[&str] = &[
+            "service_name",
+            "services",
+            "repo_root",
+            "catalog_path",
+            "project_name",
+        ];
+        for name in validated.keys() {
+            if RESERVED.contains(&name.as_str()) {
+                return Err(CatalogError::ParamTypeMismatch {
+                    service: service_name.to_string(),
+                    param: name.to_string(),
+                    expected: "non-reserved name".to_string(),
+                    actual: format!(
+                        "'{name}' is reserved (collides with system context field)"
+                    ),
+                });
+            }
+        }
 
         Ok(TemplateContext {
             params: validated,

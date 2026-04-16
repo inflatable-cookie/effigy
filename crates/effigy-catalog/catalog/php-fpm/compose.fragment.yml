@@ -13,13 +13,22 @@ services:
     working_dir: {{ working_dir }}
     environment:
       DOCUMENT_ROOT: "{{ document_root }}"
-{% if services.mariadb %}
+{% if services.mariadb or services.postgres or services.redis or services.memcached %}
     depends_on:
+{% endif %}
+{% if services.mariadb %}
       {{ services.mariadb.name }}:
         condition: service_started
 {% endif %}
 {% if services.postgres %}
-    depends_on:
       {{ services.postgres.name }}:
+        condition: service_started
+{% endif %}
+{% if services.redis %}
+      {{ services.redis.name }}:
+        condition: service_started
+{% endif %}
+{% if services.memcached %}
+      {{ services.memcached.name }}:
         condition: service_started
 {% endif %}

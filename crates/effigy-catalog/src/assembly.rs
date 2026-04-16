@@ -3,11 +3,17 @@
 //! The assembler takes a set of service declarations, resolves fragments from
 //! the catalog, validates parameters, renders templates, and produces a single
 //! `docker-compose.yml` with proper networking and volume declarations.
+//!
+//! YAML correctness is ensured by parsing each rendered fragment into a
+//! `serde_yaml::Value` tree, structurally merging the service definitions,
+//! and serializing the final compose document. This avoids fragile string
+//! concatenation and guarantees valid YAML output.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use indexmap::IndexMap;
+use serde_yaml::Value as YamlValue;
 
 use crate::error::CatalogError;
 use crate::fragment::{CatalogFragment, CatalogResolver};
@@ -85,10 +91,19 @@ impl ComposeAssembler {
         project_name: &str,
         repo_root: &str,
     ) -> Result<AssemblyResult, CatalogError> {
-        // 1. Resolve all fragments.
+        if services.is_empty() {
+            return Err(CatalogError::EmptyServiceList);
+        }
+
+        // 1. Resolve all fragments and check for duplicate service names.
         let mut fragments: IndexMap<String, (ServiceDeclaration, CatalogFragment)> =
             IndexMap::new();
         for decl in services {
+            if fragments.contains_key(&decl.name) {
+                return Err(CatalogError::DuplicateServiceName {
+                    name: decl.name.clone(),
+                });
+            }
             let fragment = self.resolver.resolve(&decl.catalog)?;
             fragments.insert(decl.name.clone(), (decl.clone(), fragment));
         }
@@ -96,21 +111,19 @@ impl ComposeAssembler {
         // 2. Build sibling service map for cross-references.
         let siblings = Self::build_sibling_map(&fragments);
 
-        // 3. Render each fragment.
-        let mut rendered_services: Vec<String> = Vec::new();
+        // 3. Render each fragment, parse the YAML, and collect artifacts.
+        let mut merged_services = serde_yaml::Mapping::new();
         let mut all_dockerfiles: HashMap<String, String> = HashMap::new();
         let mut all_configs: HashMap<String, String> = HashMap::new();
         let mut all_volumes: Vec<VolumeInfo> = Vec::new();
 
         for (name, (decl, fragment)) in &fragments {
-            // Build system context for this fragment.
             let system = SystemContext {
                 repo_root: repo_root.to_string(),
-                catalog_path: self.fragment_build_context_path(name),
+                catalog_path: Self::fragment_build_context_path(name),
                 project_name: project_name.to_string(),
             };
 
-            // Build template context.
             let ctx = TemplateRenderer::build_context(
                 &fragment.schema,
                 name,
@@ -119,11 +132,19 @@ impl ComposeAssembler {
                 &system,
             )?;
 
-            // Render the compose fragment.
-            let rendered =
-                self.renderer
-                    .render(&fragment.compose_template, &ctx, &fragment.name)?;
-            rendered_services.push(rendered);
+            // Render the template.
+            let rendered = self.renderer.render(
+                &fragment.compose_template,
+                &ctx,
+                &fragment.name,
+            )?;
+
+            // Parse the rendered YAML and extract the service definition.
+            let service_def = Self::extract_service_definition(&rendered, name, &fragment.name)?;
+            merged_services.insert(
+                YamlValue::String(name.clone()),
+                service_def,
+            );
 
             // Collect Dockerfiles.
             if let Some(ref dockerfile) = fragment.dockerfile {
@@ -135,7 +156,7 @@ impl ComposeAssembler {
                 all_configs.insert(format!("{name}.conf"), config_content);
             }
 
-            // Collect volume declarations.
+            // Collect volume declarations from schema.
             for (vol_key, vol_schema) in &fragment.schema.volumes {
                 let vol_name = format!("{project_name}-{name}-{vol_key}");
                 all_volumes.push(VolumeInfo {
@@ -146,14 +167,94 @@ impl ComposeAssembler {
             }
         }
 
-        // 4. Assemble the final compose YAML.
-        let compose_yaml = self.assemble_yaml(&rendered_services, &all_volumes)?;
+        // 4. Build the final compose document.
+        let compose_yaml = Self::build_compose_document(merged_services, &all_volumes)?;
 
         Ok(AssemblyResult {
             compose_yaml,
             dockerfiles: all_dockerfiles,
             config_files: all_configs,
             volumes: all_volumes,
+        })
+    }
+
+    /// Parse a rendered fragment's YAML and extract the service definition.
+    ///
+    /// Fragments produce YAML with a `services:` top-level key containing
+    /// exactly one service. This function extracts that service definition
+    /// as a `serde_yaml::Value`.
+    fn extract_service_definition(
+        rendered: &str,
+        expected_name: &str,
+        fragment_name: &str,
+    ) -> Result<YamlValue, CatalogError> {
+        let parsed: YamlValue = serde_yaml::from_str(rendered).map_err(|e| {
+            CatalogError::TemplateRenderError {
+                name: fragment_name.to_string(),
+                reason: format!(
+                    "rendered template produced invalid YAML: {e}\n--- rendered output ---\n{rendered}"
+                ),
+            }
+        })?;
+
+        // Navigate into services.<name>.
+        let services = parsed
+            .get("services")
+            .ok_or_else(|| CatalogError::TemplateRenderError {
+                name: fragment_name.to_string(),
+                reason: "rendered template missing top-level 'services' key".to_string(),
+            })?;
+
+        let service_def = services
+            .get(expected_name)
+            .ok_or_else(|| CatalogError::TemplateRenderError {
+                name: fragment_name.to_string(),
+                reason: format!(
+                    "rendered template missing service '{expected_name}' under 'services'"
+                ),
+            })?;
+
+        Ok(service_def.clone())
+    }
+
+    /// Build the final compose YAML document from merged services and volumes.
+    fn build_compose_document(
+        services: serde_yaml::Mapping,
+        volumes: &[VolumeInfo],
+    ) -> Result<String, CatalogError> {
+        let mut doc = serde_yaml::Mapping::new();
+
+        // Services section.
+        doc.insert(
+            YamlValue::String("services".to_string()),
+            YamlValue::Mapping(services),
+        );
+
+        // Volumes section.
+        if !volumes.is_empty() {
+            let mut vol_map = serde_yaml::Mapping::new();
+            for vol in volumes {
+                let mut vol_def = serde_yaml::Mapping::new();
+                vol_def.insert(
+                    YamlValue::String("driver".to_string()),
+                    YamlValue::String("local".to_string()),
+                );
+                vol_map.insert(
+                    YamlValue::String(vol.name.clone()),
+                    YamlValue::Mapping(vol_def),
+                );
+            }
+            doc.insert(
+                YamlValue::String("volumes".to_string()),
+                YamlValue::Mapping(vol_map),
+            );
+        }
+
+        serde_yaml::to_string(&YamlValue::Mapping(doc)).map_err(|e| {
+            CatalogError::TemplateRenderError {
+                name: "<assembly>".to_string(),
+                reason: format!("failed to serialize final compose document: {e}"),
+            }
         })
     }
 
@@ -164,26 +265,19 @@ impl ComposeAssembler {
         let mut siblings = HashMap::new();
 
         for (name, (decl, fragment)) in fragments {
+            let sibling = SiblingService {
+                name: name.clone(),
+                catalog: decl.catalog.clone(),
+                port: fragment.schema.ports.default.first().copied(),
+            };
+
             // Register under the catalog name so fragments can reference
             // by type (e.g., `services.mariadb`).
-            siblings.insert(
-                decl.catalog.clone(),
-                SiblingService {
-                    name: name.clone(),
-                    catalog: decl.catalog.clone(),
-                    port: fragment.schema.ports.default.first().copied(),
-                },
-            );
+            siblings.insert(decl.catalog.clone(), sibling.clone());
 
-            // Also register under the service name for direct references.
-            siblings.insert(
-                name.clone(),
-                SiblingService {
-                    name: name.clone(),
-                    catalog: decl.catalog.clone(),
-                    port: fragment.schema.ports.default.first().copied(),
-                },
-            );
+            // Also register under the service name for direct references
+            // (e.g., `services.db`).
+            siblings.insert(name.clone(), sibling);
         }
 
         siblings
@@ -210,7 +304,8 @@ impl ComposeAssembler {
             if let Some(content) = fragment.config_variants.get(variant) {
                 return Ok(Some(content.clone()));
             }
-            let available: Vec<String> = fragment.config_variants.keys().cloned().collect();
+            let mut available: Vec<String> = fragment.config_variants.keys().cloned().collect();
+            available.sort();
             return Err(CatalogError::VariantNotFound {
                 name: fragment.name.clone(),
                 variant: variant.clone(),
@@ -226,56 +321,11 @@ impl ComposeAssembler {
         Ok(None)
     }
 
-    /// Assemble the final YAML from rendered service fragments and volumes.
-    fn assemble_yaml(
-        &self,
-        rendered_services: &[String],
-        volumes: &[VolumeInfo],
-    ) -> Result<String, CatalogError> {
-        let mut yaml = String::new();
-
-        // Services section — rendered fragments already contain `services:`
-        // prefixes. We need to merge them under a single `services:` key.
-        yaml.push_str("services:\n");
-        for rendered in rendered_services {
-            // Strip any leading `services:\n` prefix from the fragment
-            // and indent the service definition.
-            let content = rendered
-                .trim_start_matches("services:")
-                .trim_start_matches('\n');
-            // Ensure consistent indentation.
-            for line in content.lines() {
-                if line.trim().is_empty() {
-                    yaml.push('\n');
-                } else {
-                    // Ensure at least 2-space indentation for service entries.
-                    if !line.starts_with("  ") && !line.is_empty() {
-                        yaml.push_str("  ");
-                    }
-                    yaml.push_str(line);
-                    yaml.push('\n');
-                }
-            }
-            yaml.push('\n');
-        }
-
-        // Volumes section.
-        if !volumes.is_empty() {
-            yaml.push_str("volumes:\n");
-            for vol in volumes {
-                yaml.push_str(&format!("  {}:\n", vol.name));
-                yaml.push_str("    driver: local\n");
-            }
-        }
-
-        Ok(yaml)
-    }
-
     /// Build context path for Dockerfile references.
     ///
     /// When the assembler writes Dockerfiles to the build directory, this
     /// returns the relative path that the compose file should reference.
-    fn fragment_build_context_path(&self, service_name: &str) -> String {
+    fn fragment_build_context_path(service_name: &str) -> String {
         format!(".effigy-catalog/{service_name}")
     }
 }
@@ -283,16 +333,11 @@ impl ComposeAssembler {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Integration tests require bundled catalog fragments.
-    // These will be added in Batch 4 when fragments are written.
-    // For now, test the helper functions.
+    use crate::fragment::{CatalogFragment, FragmentSource};
+    use crate::schema::ServiceSchema;
 
     #[test]
     fn sibling_map_builds_correctly() {
-        use crate::fragment::{CatalogFragment, FragmentSource};
-        use crate::schema::ServiceSchema;
-
         let schema_str = r#"
 [service]
 name = "mariadb"
@@ -330,5 +375,84 @@ default = [3306]
         // Accessible by service name.
         assert!(siblings.contains_key("db"));
         assert_eq!(siblings["db"].catalog, "mariadb");
+    }
+
+    #[test]
+    fn extract_service_definition_from_valid_yaml() {
+        let yaml = "services:\n  app:\n    image: php:8.3\n    ports:\n      - '9000:9000'\n";
+        let def = ComposeAssembler::extract_service_definition(yaml, "app", "test").unwrap();
+        assert!(def.get("image").is_some());
+        assert_eq!(
+            def.get("image").unwrap().as_str().unwrap(),
+            "php:8.3"
+        );
+    }
+
+    #[test]
+    fn extract_service_definition_rejects_invalid_yaml() {
+        let yaml = "not: valid: yaml: {{{{";
+        let result = ComposeAssembler::extract_service_definition(yaml, "app", "test");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn extract_service_definition_rejects_missing_services_key() {
+        let yaml = "app:\n  image: php:8.3\n";
+        let result = ComposeAssembler::extract_service_definition(yaml, "app", "test");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_compose_document_with_volumes() {
+        let mut services = serde_yaml::Mapping::new();
+        let mut app = serde_yaml::Mapping::new();
+        app.insert(
+            YamlValue::String("image".to_string()),
+            YamlValue::String("test:latest".to_string()),
+        );
+        services.insert(
+            YamlValue::String("app".to_string()),
+            YamlValue::Mapping(app),
+        );
+
+        let volumes = vec![VolumeInfo {
+            name: "test-data".to_string(),
+            persist: true,
+            service: "db".to_string(),
+        }];
+
+        let yaml = ComposeAssembler::build_compose_document(services, &volumes).unwrap();
+        assert!(yaml.contains("services:"));
+        assert!(yaml.contains("app:"));
+        assert!(yaml.contains("volumes:"));
+        assert!(yaml.contains("test-data:"));
+        assert!(yaml.contains("driver: local"));
+    }
+
+    #[test]
+    fn build_compose_document_without_volumes() {
+        let mut services = serde_yaml::Mapping::new();
+        let mut app = serde_yaml::Mapping::new();
+        app.insert(
+            YamlValue::String("image".to_string()),
+            YamlValue::String("test:latest".to_string()),
+        );
+        services.insert(
+            YamlValue::String("app".to_string()),
+            YamlValue::Mapping(app),
+        );
+
+        let yaml = ComposeAssembler::build_compose_document(services, &[]).unwrap();
+        assert!(yaml.contains("services:"));
+        assert!(!yaml.contains("volumes:"));
+    }
+
+    #[test]
+    fn empty_service_list_rejected() {
+        let resolver = CatalogResolver::new(None, None);
+        let assembler = ComposeAssembler::new(resolver);
+        let result = assembler.assemble(&[], "test", ".");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CatalogError::EmptyServiceList));
     }
 }
