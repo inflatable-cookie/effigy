@@ -1,0 +1,84 @@
+##
+## Effigy Compose Override Example
+##
+## Place a file named `compose.override.yml` in `infra/dev/` alongside
+## the generated compose file. Docker Compose will automatically merge
+## it on top of the generated configuration.
+##
+## This is the escape hatch for project-specific customizations that
+## don't fit the catalog parameters. The generated compose file handles
+## the common case; the override handles the exceptions.
+##
+## Copy this file to `infra/dev/compose.override.yml` and uncomment
+## the sections you need.
+##
+
+services:
+
+  ## ── Xdebug for PHP debugging ─────────────────────────────────────
+  ## Adds Xdebug environment variables to the PHP service.
+  ## Requires `xdebug` in the extensions list in effigy.toml.
+  # app:
+  #   environment:
+  #     XDEBUG_MODE: "debug"
+  #     XDEBUG_CONFIG: "client_host=host.docker.internal client_port=9003"
+  #     XDEBUG_TRIGGER: "yes"
+
+  ## ── Custom PHP configuration ─────────────────────────────────────
+  ## Mount a custom php.ini fragment for project-specific settings.
+  # app:
+  #   volumes:
+  #     - ./php-custom.ini:/usr/local/etc/php/conf.d/99-custom.ini:ro
+
+  ## ── Custom MySQL/MariaDB configuration ───────────────────────────
+  ## Mount a custom my.cnf for specific MySQL tuning.
+  # db:
+  #   volumes:
+  #     - ./my-custom.cnf:/etc/mysql/conf.d/custom.cnf:ro
+
+  ## ── Extra environment variables ──────────────────────────────────
+  ## Add application environment variables that aren't in the catalog.
+  # app:
+  #   environment:
+  #     APP_ENV: "local"
+  #     APP_DEBUG: "true"
+  #     APP_KEY: "base64:your-app-key-here"
+  #     DB_CONNECTION: "mysql"
+  #     DB_HOST: "db"
+  #     DB_PORT: "3306"
+  #     DB_DATABASE: "app"
+  #     DB_USERNAME: "root"
+  #     DB_PASSWORD: "secret"
+  #     CACHE_DRIVER: "redis"
+  #     REDIS_HOST: "cache"
+  #     SESSION_DRIVER: "memcached"
+  #     MEMCACHED_HOST: "sessions"
+  #     MAIL_MAILER: "smtp"
+  #     MAIL_HOST: "mail"
+  #     MAIL_PORT: "1025"
+
+  ## ── Additional services ──────────────────────────────────────────
+  ## Add services not in the catalog.
+  # rabbitmq:
+  #   image: rabbitmq:3-management-alpine
+  #   ports:
+  #     - "5672:5672"
+  #     - "15672:15672"
+  #   environment:
+  #     RABBITMQ_DEFAULT_USER: "guest"
+  #     RABBITMQ_DEFAULT_PASS: "guest"
+
+  ## ── Volume mounts for media or assets ────────────────────────────
+  ## Mount additional host directories into the container.
+  # app:
+  #   volumes:
+  #     - ../../storage/app/public:/var/www/html/storage/app/public
+
+  ## ── Port overrides ───────────────────────────────────────────────
+  ## Change the host-side ports if the defaults conflict.
+  # web:
+  #   ports:
+  #     - "8080:80"
+  # db:
+  #   ports:
+  #     - "33060:3306"
