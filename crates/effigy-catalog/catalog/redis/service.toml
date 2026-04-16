@@ -1,0 +1,16 @@
+[service]
+name = "redis"
+description = "Redis in-memory data store"
+
+[params.version]
+type = "string"
+default = "7"
+description = "Redis major version"
+
+[capabilities]
+exec_target = true
+shell = "/bin/sh"
+
+[ports]
+default = [6379]
+description = "Redis protocol port"

@@ -1,0 +1,30 @@
+[service]
+name = "php-fpm"
+description = "PHP-FPM application server"
+
+[params.version]
+type = "string"
+default = "8.3"
+description = "PHP version (e.g., 7.4, 8.0, 8.1, 8.2, 8.3)"
+
+[params.extensions]
+type = "list"
+default = []
+description = "PHP extensions to install via docker-php-ext-install and pecl"
+
+[params.document_root]
+type = "string"
+default = "public"
+description = "Document root relative to repo root"
+
+[params.working_dir]
+type = "string"
+default = "/var/www/html"
+description = "Container working directory where the repo is mounted"
+
+[capabilities]
+exec_target = true
+shell = "/bin/bash"
+
+[depends_on]
+optional = ["mariadb", "postgres", "redis", "memcached"]

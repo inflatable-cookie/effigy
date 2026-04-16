@@ -55,6 +55,9 @@ pages only when you need more detail.
 
 ### I want a host-clean local web/dev environment
 
+- [`../architecture/020-container-infrastructure-design.md`](../architecture/020-container-infrastructure-design.md)
+  for the full architecture design (service catalog, transparent execution,
+  gateway, data lifecycle).
 - [`063-container-system-guide.md`](./063-container-system-guide.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)

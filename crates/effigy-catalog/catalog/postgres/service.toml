@@ -1,0 +1,32 @@
+[service]
+name = "postgres"
+description = "PostgreSQL database server"
+
+[params.version]
+type = "string"
+default = "16"
+description = "PostgreSQL version"
+
+[params.database]
+type = "string"
+default = "app"
+description = "Default database name"
+
+[params.password]
+type = "string"
+default = "secret"
+description = "Superuser password (local dev only)"
+
+[capabilities]
+exec_target = true
+shell = "/bin/bash"
+
+[volumes.data]
+mount = "/var/lib/postgresql/data"
+named = true
+persist = true
+description = "Database storage"
+
+[ports]
+default = [5432]
+description = "PostgreSQL protocol port"

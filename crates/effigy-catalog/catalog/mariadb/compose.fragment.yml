@@ -1,0 +1,10 @@
+services:
+  {{ service_name }}:
+    image: mariadb:{{ version }}
+    environment:
+      MYSQL_ROOT_PASSWORD: "{{ root_password }}"
+      MYSQL_DATABASE: "{{ database }}"
+    ports:
+      - "3306:3306"
+    volumes:
+      - {{ project_name }}-{{ service_name }}-data:/var/lib/mysql
