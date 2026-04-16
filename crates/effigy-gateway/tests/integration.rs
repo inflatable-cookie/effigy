@@ -376,6 +376,90 @@ async fn gateway_unknown_endpoint_returns_404() {
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
 }
 
+// --- Stats verification ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn stats_endpoint_tracks_requests() {
+    let upstream_port = available_port().await;
+    let proxy_port = available_port().await;
+
+    let _echo = start_echo_server(upstream_port).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let mut table = RouteTable::new();
+    table.upsert(test_route(
+        "myapp.test",
+        &format!("127.0.0.1:{upstream_port}"),
+    ));
+    let shared = Arc::new(RwLock::new(table));
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let proxy_config = ProxyConfig {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
+        tls_bind_addr: None,
+        connect_timeout: std::time::Duration::from_secs(5),
+        response_timeout: std::time::Duration::from_secs(30),
+        max_request_body: 0,
+    };
+
+    let proxy_handle = tokio::spawn(run_proxy_server(
+        proxy_config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        shutdown_rx,
+    ));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client = reqwest::Client::new();
+
+    // Make a proxied request.
+    let _ = client
+        .get(format!("http://127.0.0.1:{proxy_port}/test"))
+        .header("host", "myapp.test")
+        .send()
+        .await
+        .unwrap();
+
+    // Make a no-route request.
+    let _ = client
+        .get(format!("http://127.0.0.1:{proxy_port}/test"))
+        .header("host", "unknown.test")
+        .send()
+        .await
+        .unwrap();
+
+    // Check stats.
+    let response = client
+        .get(format!("http://127.0.0.1:{proxy_port}/_effigy/stats"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let stats: serde_json::Value = response.json().await.unwrap();
+
+    // http_requests should be at least 3 (proxied + no-route + stats itself).
+    assert!(
+        stats["http_requests"].as_u64().unwrap() >= 3,
+        "expected >= 3 http_requests, got: {stats}"
+    );
+    assert!(
+        stats["proxied_requests"].as_u64().unwrap() >= 1,
+        "expected >= 1 proxied_requests, got: {stats}"
+    );
+    assert!(
+        stats["no_route_requests"].as_u64().unwrap() >= 1,
+        "expected >= 1 no_route_requests, got: {stats}"
+    );
+    assert!(
+        stats["uptime_secs"].as_f64().unwrap() > 0.0,
+        "uptime should be positive"
+    );
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
+}
+
 // --- Proxy: error handling ───────────────────────────────────────────
 
 #[tokio::test]
