@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Planned
+Status: In Progress (effigy-exec crate shipped, awaiting runner integration)
 Owner: Platform
 Created: 2026-04-16
 Depends on: 006, 011
