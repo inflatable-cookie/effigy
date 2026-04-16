@@ -764,7 +764,7 @@ Bundled fragments (9):
 | `minio` | S3-compatible storage with persistent volume |
 | `elasticsearch` | Single-node, memory-limited, persistent index |
 
-### effigy-gateway (g02.014 + g02.016 — in progress, 69 tests)
+### effigy-gateway (g02.014 + g02.016 — in progress, 88 tests)
 
 Crate: `crates/effigy-gateway/`
 
@@ -773,15 +773,16 @@ Modules:
 | Module | What it does |
 |--------|-------------|
 | `routes.rs` | Route table with atomic JSON persistence, live reload via RwLock |
-| `dns.rs` | UDP DNS resolver on hickory-proto, `*.test` A records, AAAA graceful handling |
-| `proxy.rs` | Streaming HTTP/HTTPS reverse proxy, WebSocket upgrade, hop-by-hop stripping, forwarding headers |
-| `tls.rs` | mkcert certificate generation/loading, rustls ServerConfig builder |
+| `dns.rs` | UDP DNS resolver on hickory-proto, `*.test` A records, AAAA handling, query stats |
+| `proxy.rs` | Streaming HTTP/HTTPS proxy, WebSocket, body limits, response timeout, graceful drain |
+| `tls.rs` | mkcert certs, rustls config, SNI resolver for multi-domain HTTPS |
 | `server.rs` | Coordinated DNS+HTTP+HTTPS+watcher lifecycle, PID files, signal handling |
 | `ports.rs` | Port allocation registry with gap filling, conflict detection, service offset map |
 | `registration.rs` | Atomic route register/deregister for container lifecycle events |
 | `resolver_setup.rs` | macOS `/etc/resolver/` file management |
+| `stats.rs` | Atomic request/DNS counters, uptime tracking, JSON serialization |
 
-### effigy-exec (g02.012 — in progress, 53 tests)
+### effigy-exec (g02.012 — in progress, 70 tests)
 
 Crate: `crates/effigy-exec/`
 
@@ -793,6 +794,7 @@ Modules:
 | `cwd.rs` | Bidirectional host↔container path translation |
 | `alias.rs` | Named exec aliases with multi-word command support |
 | `detection.rs` | Container capability probing, handoff vs raw-exec strategy, capability cache |
+| `health.rs` | Health check parsing, polling state machine, ready-state tracking |
 
 ### Integration Path
 
@@ -816,10 +818,10 @@ When `g02.010` finishes, these crates wire into the runner:
 
 | Crate | Unit | Integration | Total |
 |-------|------|-------------|-------|
-| effigy-catalog | 36 | 29 | 65 |
-| effigy-gateway | 65 | 4 | 69 |
-| effigy-exec | 53 | 0 | 53 |
-| **Total** | **154** | **33** | **187** |
+| effigy-catalog | 36 | 31 | 67 |
+| effigy-gateway | 74 | 14 | 88 |
+| effigy-exec | 70 | 0 | 70 |
+| **Total** | **180** | **45** | **225** |
 
 ## Related Guides
 
