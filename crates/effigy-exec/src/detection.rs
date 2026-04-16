@@ -92,10 +92,7 @@ impl ExecStrategy {
                 working_dir,
                 command,
             } => {
-                let mut result = vec![
-                    "-w".to_string(),
-                    working_dir.clone(),
-                ];
+                let mut result = vec!["-w".to_string(), working_dir.clone()];
                 result.extend(command.iter().cloned());
                 result
             }
@@ -170,19 +167,28 @@ impl CapabilityCache {
 
     /// Store capabilities for a container.
     pub fn put(&self, container_key: String, capabilities: ContainerCapabilities) {
-        let mut entries = self.entries.write().expect("capability cache lock poisoned");
+        let mut entries = self
+            .entries
+            .write()
+            .expect("capability cache lock poisoned");
         entries.insert(container_key, capabilities);
     }
 
     /// Invalidate all cached entries.
     pub fn clear(&self) {
-        let mut entries = self.entries.write().expect("capability cache lock poisoned");
+        let mut entries = self
+            .entries
+            .write()
+            .expect("capability cache lock poisoned");
         entries.clear();
     }
 
     /// Invalidate a specific container's cached entry.
     pub fn invalidate(&self, container_key: &str) {
-        let mut entries = self.entries.write().expect("capability cache lock poisoned");
+        let mut entries = self
+            .entries
+            .write()
+            .expect("capability cache lock poisoned");
         entries.remove(container_key);
     }
 }
@@ -392,10 +398,7 @@ mod tests {
             command: vec!["php".to_string(), "artisan".to_string(), "test".to_string()],
         };
         let args = strategy.compose_exec_args();
-        assert_eq!(
-            args,
-            vec!["-w", "/var/www/html", "php", "artisan", "test"]
-        );
+        assert_eq!(args, vec!["-w", "/var/www/html", "php", "artisan", "test"]);
     }
 
     // ── Capability cache ─────────────────────────────────────────────

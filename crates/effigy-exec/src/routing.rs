@@ -145,17 +145,10 @@ pub fn route(
 
     // 6. Default → dev-context container.
     if !context.container_running {
-        return RoutingDecision::not_running(
-            container,
-            "dev-context container is not running",
-        );
+        return RoutingDecision::not_running(container, "dev-context container is not running");
     }
 
-    RoutingDecision::container(
-        container,
-        service,
-        "routed to dev-context container",
-    )
+    RoutingDecision::container(container, service, "routed to dev-context container")
 }
 
 /// The full routing decision with explanation.

@@ -24,12 +24,12 @@ pub mod alias;
 pub mod cwd;
 pub mod detection;
 pub mod error;
+pub mod health;
 pub mod routing;
 
 pub use alias::{ExecAlias, ExecAliasTable};
 pub use cwd::CwdMapper;
-pub use detection::{
-    CapabilityCache, ContainerCapabilities, ExecStrategy,
-};
+pub use detection::{CapabilityCache, ContainerCapabilities, ExecStrategy};
 pub use error::ExecError;
+pub use health::{HealthCheck, HealthCheckConfig, HealthPoller, HealthState};
 pub use routing::{ExecContext, ExecTarget, RoutingDecision};

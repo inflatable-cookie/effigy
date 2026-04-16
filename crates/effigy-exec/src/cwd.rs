@@ -144,7 +144,10 @@ mod tests {
         let m = mapper();
         let result = m.host_to_container(Path::new("/Users/tom/other-project"));
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ExecError::CwdOutsideRepo { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            ExecError::CwdOutsideRepo { .. }
+        ));
     }
 
     #[test]
@@ -168,9 +171,7 @@ mod tests {
     #[test]
     fn container_to_host_root() {
         let m = mapper();
-        let host = m
-            .container_to_host(Path::new("/var/www/html"))
-            .unwrap();
+        let host = m.container_to_host(Path::new("/var/www/html")).unwrap();
         assert_eq!(host, PathBuf::from("/Users/tom/projects/client"));
     }
 
@@ -187,10 +188,7 @@ mod tests {
         let subdir = dir.path().join("src/app");
         std::fs::create_dir_all(&subdir).unwrap();
 
-        let m = CwdMapper::new(
-            dir.path().to_path_buf(),
-            PathBuf::from("/workspace"),
-        );
+        let m = CwdMapper::new(dir.path().to_path_buf(), PathBuf::from("/workspace"));
 
         let result = m.host_to_container(&subdir).unwrap();
         assert_eq!(result, PathBuf::from("/workspace/src/app"));
