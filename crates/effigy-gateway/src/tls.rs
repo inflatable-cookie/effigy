@@ -304,7 +304,10 @@ impl SniCertResolver {
 
     /// Number of registered certificates.
     pub fn cert_count(&self) -> usize {
-        self.certs.read().expect("cert resolver lock poisoned").len()
+        self.certs
+            .read()
+            .expect("cert resolver lock poisoned")
+            .len()
     }
 
     /// Check if a domain has a registered certificate.
@@ -358,9 +361,7 @@ impl ResolvesServerCert for SniCertResolver {
 ///
 /// Scans the directory for `<domain>.pem` and `<domain>-key.pem` pairs.
 /// Each pair is loaded and registered under the domain name.
-pub fn build_sni_resolver_from_dir(
-    certs_dir: &Path,
-) -> Result<SniCertResolver, GatewayError> {
+pub fn build_sni_resolver_from_dir(certs_dir: &Path) -> Result<SniCertResolver, GatewayError> {
     let resolver = SniCertResolver::new();
 
     if !certs_dir.is_dir() {
@@ -429,8 +430,7 @@ mod tests {
 
     #[test]
     fn sni_resolver_from_nonexistent_dir() {
-        let resolver =
-            build_sni_resolver_from_dir(Path::new("/nonexistent/certs")).unwrap();
+        let resolver = build_sni_resolver_from_dir(Path::new("/nonexistent/certs")).unwrap();
         assert_eq!(resolver.cert_count(), 0);
     }
 

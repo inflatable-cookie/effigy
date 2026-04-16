@@ -112,12 +112,11 @@ impl PortRegistry {
             return Ok(Self::new());
         }
 
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            GatewayError::RouteTableReadError {
+        let content =
+            std::fs::read_to_string(path).map_err(|e| GatewayError::RouteTableReadError {
                 path: path.to_path_buf(),
                 reason: format!("port registry: {e}"),
-            }
-        })?;
+            })?;
 
         serde_json::from_str(&content).map_err(|e| GatewayError::RouteTableParseError {
             path: path.to_path_buf(),
@@ -134,12 +133,11 @@ impl PortRegistry {
             })?;
         }
 
-        let content = serde_json::to_string_pretty(self).map_err(|e| {
-            GatewayError::RouteTableWriteError {
+        let content =
+            serde_json::to_string_pretty(self).map_err(|e| GatewayError::RouteTableWriteError {
                 path: path.to_path_buf(),
                 reason: format!("port registry serialize: {e}"),
-            }
-        })?;
+            })?;
 
         let temp_path = path.with_extension("json.tmp");
         std::fs::write(&temp_path, &content).map_err(|e| GatewayError::RouteTableWriteError {
@@ -164,11 +162,7 @@ impl PortRegistry {
     ///
     /// If the project already has an allocation, returns it unchanged.
     /// Otherwise, finds the next available base port and allocates a range.
-    pub fn allocate(
-        &mut self,
-        project_name: &str,
-        project_path: &str,
-    ) -> &PortAllocation {
+    pub fn allocate(&mut self, project_name: &str, project_path: &str) -> &PortAllocation {
         if self.allocations.contains_key(project_name) {
             return &self.allocations[project_name];
         }
@@ -214,8 +208,7 @@ impl PortRegistry {
             }
         }
 
-        self.allocations
-            .insert(project_name.to_string(), proposed);
+        self.allocations.insert(project_name.to_string(), proposed);
         Ok(&self.allocations[project_name])
     }
 
@@ -449,10 +442,10 @@ mod tests {
     #[test]
     fn auto_allocate_fills_gaps() {
         let mut reg = PortRegistry::new();
-        reg.allocate("a", "/a");  // 8100-8199
-        reg.allocate("b", "/b");  // 8200-8299
-        reg.allocate("c", "/c");  // 8300-8399
-        reg.deallocate("b");       // Free 8200-8299
+        reg.allocate("a", "/a"); // 8100-8199
+        reg.allocate("b", "/b"); // 8200-8299
+        reg.allocate("c", "/c"); // 8300-8399
+        reg.deallocate("b"); // Free 8200-8299
 
         let d = reg.allocate("d", "/d");
         assert_eq!(d.base, 8200); // Should fill the gap.

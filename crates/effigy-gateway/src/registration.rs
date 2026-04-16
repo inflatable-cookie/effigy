@@ -66,10 +66,7 @@ pub fn register_route(
 ///
 /// Loads the route table, removes the route, and saves atomically.
 /// Returns Ok even if the route wasn't found (idempotent teardown).
-pub fn deregister_route(
-    route_table_path: &Path,
-    domain: &str,
-) -> Result<(), GatewayError> {
+pub fn deregister_route(route_table_path: &Path, domain: &str) -> Result<(), GatewayError> {
     let mut table = RouteTable::load(route_table_path)?;
 
     // Ignore not-found errors — idempotent teardown.
@@ -245,8 +242,7 @@ mod tests {
         )
         .unwrap();
 
-        let count =
-            deregister_project_routes(&path, "/projects/myapp").unwrap();
+        let count = deregister_project_routes(&path, "/projects/myapp").unwrap();
         assert_eq!(count, 2);
 
         let table = RouteTable::load(&path).unwrap();
@@ -256,14 +252,7 @@ mod tests {
 
     #[test]
     fn build_registration_with_default_port() {
-        let reg = build_registration(
-            "myapp.test",
-            "myapp",
-            "/projects/myapp",
-            8080,
-            false,
-            None,
-        );
+        let reg = build_registration("myapp.test", "myapp", "/projects/myapp", 8080, false, None);
         assert_eq!(reg.domain, "myapp.test");
         assert_eq!(reg.target, "127.0.0.1:8080");
         assert!(!reg.tls);
@@ -288,14 +277,7 @@ mod tests {
 
     #[test]
     fn build_registration_with_tls() {
-        let reg = build_registration(
-            "myapp.dev",
-            "myapp",
-            "/projects/myapp",
-            8080,
-            true,
-            None,
-        );
+        let reg = build_registration("myapp.dev", "myapp", "/projects/myapp", 8080, true, None);
         assert!(reg.tls);
     }
 }
