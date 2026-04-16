@@ -1,5 +1,15 @@
+use std::collections::BTreeSet;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
+
+use crate::DemoStateError;
+
+pub const DEMO_MANAGED_EVENT_POLL_INTERVAL_MS: u64 = 100;
+pub const DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT: usize = 3;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DemoRuntimeBackend {
@@ -259,6 +269,218 @@ impl DemoTerminalSize {
             "cols": self.cols,
             "rows": self.rows,
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct DemoConcurrentRuntimeState {
+    pub stdout: String,
+    pub stderr: String,
+    stdout_log: Option<fs::File>,
+    stderr_log: Option<fs::File>,
+    pub exit_count: usize,
+    pub drained_after_exit: usize,
+    pub non_zero_exits: Vec<(String, String)>,
+    shutdown_on_exit_processes: BTreeSet<String>,
+    input_target_process: Option<String>,
+    input_handoff_path: Option<PathBuf>,
+    input_forwarded_bytes: usize,
+    pub stop_requested: bool,
+    mirror_output: bool,
+}
+
+impl DemoConcurrentRuntimeState {
+    pub fn new(
+        stdout_log_path: Option<&Path>,
+        stderr_log_path: Option<&Path>,
+        shutdown_on_exit_processes: BTreeSet<String>,
+        input_target_process: Option<String>,
+        input_handoff_path: Option<PathBuf>,
+        mirror_output: bool,
+    ) -> Result<Self, DemoStateError> {
+        Ok(Self {
+            stdout: String::new(),
+            stderr: String::new(),
+            stdout_log: open_append_file(stdout_log_path)?,
+            stderr_log: open_append_file(stderr_log_path)?,
+            exit_count: 0,
+            drained_after_exit: 0,
+            non_zero_exits: Vec::new(),
+            shutdown_on_exit_processes,
+            input_target_process,
+            input_handoff_path,
+            input_forwarded_bytes: 0,
+            stop_requested: false,
+            mirror_output,
+        })
+    }
+
+    pub fn record_stdout(&mut self, process: &str, payload: &str) -> Result<(), DemoStateError> {
+        let rendered = format!("[{process}] {payload}\n");
+        self.stdout.push_str(&rendered);
+        if self.mirror_output {
+            print!("{rendered}");
+            std::io::stdout()
+                .flush()
+                .map_err(|error| DemoStateError::new(error.to_string()))?;
+        }
+        if let Some(file) = self.stdout_log.as_mut() {
+            file.write_all(rendered.as_bytes())
+                .and_then(|_| file.flush())
+                .map_err(|error| DemoStateError::new(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub fn record_stderr(&mut self, process: &str, payload: &str) -> Result<(), DemoStateError> {
+        let rendered = format!("[{process} stderr] {payload}\n");
+        self.stderr.push_str(&rendered);
+        if self.mirror_output {
+            eprint!("{rendered}");
+            std::io::stderr()
+                .flush()
+                .map_err(|error| DemoStateError::new(error.to_string()))?;
+        }
+        if let Some(file) = self.stderr_log.as_mut() {
+            file.write_all(rendered.as_bytes())
+                .and_then(|_| file.flush())
+                .map_err(|error| DemoStateError::new(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub fn record_exit(&mut self, process: &str, payload: &str) -> bool {
+        self.exit_count += 1;
+        if payload != "exit=0" {
+            self.non_zero_exits
+                .push((process.to_owned(), payload.to_owned()));
+        }
+        self.shutdown_on_exit_processes.contains(process)
+    }
+
+    pub fn record_idle_tick(&mut self, expected: usize) {
+        if self.exit_count >= expected {
+            self.drained_after_exit += 1;
+        }
+    }
+
+    pub fn reset_drain_after_activity(&mut self) {
+        if self.exit_count > 0 {
+            self.drained_after_exit = 0;
+        }
+    }
+
+    pub fn pending_input_chunk(
+        &mut self,
+    ) -> Result<Option<(String, String, usize)>, DemoStateError> {
+        let Some(path) = self.input_handoff_path.as_deref() else {
+            return Ok(None);
+        };
+        let Some(process) = self.input_target_process.as_deref() else {
+            return Ok(None);
+        };
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(_) => return Ok(None),
+        };
+        if bytes.len() < self.input_forwarded_bytes {
+            self.input_forwarded_bytes = 0;
+        }
+        if bytes.len() == self.input_forwarded_bytes {
+            return Ok(None);
+        }
+        let chunk = &bytes[self.input_forwarded_bytes..];
+        Ok(Some((
+            process.to_owned(),
+            String::from_utf8_lossy(chunk).into_owned(),
+            bytes.len(),
+        )))
+    }
+
+    pub fn mark_input_forwarded(&mut self, new_len: usize) {
+        self.input_forwarded_bytes = new_len;
+    }
+}
+
+fn open_append_file(path: Option<&Path>) -> Result<Option<fs::File>, DemoStateError> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    Ok(Some(
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|error| DemoStateError::new(error.to_string()))?,
+    ))
+}
+
+pub fn render_non_zero_exits(processes: &[(String, String)]) -> String {
+    processes
+        .iter()
+        .map(|(process, payload)| format!("{process} {payload}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+pub fn concurrent_runner_projection_shape(process_count: usize) -> DemoRuntimeProjectionShape {
+    if process_count == 1 {
+        DemoRuntimeProjectionShape::single_terminal(Some(1))
+    } else {
+        DemoRuntimeProjectionShape::projected_multi_process(Some(process_count))
+    }
+}
+
+pub fn concurrent_runner_projected_process_summary(
+    managed_process_names: Vec<String>,
+) -> DemoRuntimeProjectedProcessSummary {
+    DemoRuntimeProjectedProcessSummary::from_names(managed_process_names)
+}
+
+pub fn concurrent_runner_projected_output_provenance(
+    process_count: usize,
+) -> DemoRuntimeProjectedOutputProvenance {
+    match process_count {
+        1 => DemoRuntimeProjectedOutputProvenance::single_source(),
+        count if count > 1 => DemoRuntimeProjectedOutputProvenance::flattened_unlabeled(),
+        _ => DemoRuntimeProjectedOutputProvenance::none(),
+    }
+}
+
+pub fn concurrent_runner_input_target_process(process_names: &[String]) -> Option<String> {
+    if process_names.len() == 1 {
+        return process_names.first().cloned();
+    }
+    None
+}
+
+pub fn concurrent_runner_supports_browser_live_attach(process_names: &[String]) -> bool {
+    concurrent_runner_input_target_process(process_names).is_some()
+}
+
+pub fn concurrent_runner_runtime_backend(managed_process_names: Vec<String>) -> DemoRuntimeBackend {
+    let process_count = managed_process_names.len();
+    let mut capabilities = vec![
+        "active-terminal-session".to_owned(),
+        "live-terminal-output".to_owned(),
+    ];
+    if concurrent_runner_supports_browser_live_attach(&managed_process_names) {
+        capabilities.push("browser-live-attach".to_owned());
+    }
+    DemoRuntimeBackend {
+        kind: "concurrent-runner".to_owned(),
+        label: runtime_backend_label("concurrent-runner").to_owned(),
+        flattened_projection: true,
+        projection_shape: if process_count > 0 {
+            concurrent_runner_projection_shape(process_count)
+        } else {
+            DemoRuntimeProjectionShape::projected_multi_process(None)
+        },
+        projected_process_summary: concurrent_runner_projected_process_summary(
+            managed_process_names,
+        ),
+        projected_output_provenance: concurrent_runner_projected_output_provenance(process_count),
+        capabilities,
     }
 }
 

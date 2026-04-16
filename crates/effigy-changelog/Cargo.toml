@@ -1,0 +1,9 @@
+[package]
+name = "effigy-changelog"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Northstar changelog parsing, formatting, validation, and analysis for Effigy"
+
+[dependencies]
+semver = "1"

@@ -10,6 +10,7 @@ Built-in Tasks
 ──────────────
 - help : Show general help (same as --help)
 - config : Show supported project effigy.toml configuration keys and examples
+- container : Operate manifest-defined Colima-backed container environments
 - doctor : Built-in remedial health checks for environment, manifests, and task references
 - test : Built-in test runner detection, supports <catalog>/test fallback, optional --plan
 - tasks : List discovered catalogs and available tasks

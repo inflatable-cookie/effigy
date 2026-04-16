@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: `g02`
-Updated: 2026-04-15
+Updated: 2026-04-16
 
 ## Generation history
 
@@ -32,10 +32,10 @@ Updated: 2026-04-15
   - `004` captures the Rust-native scripting surface; it is paused after the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached a clean internal boundary.
   - `005` captures the optional distribution surface; it is now paused after one real consumer proof plus bounded widening made the metadata-validation, artifact-validation, and closeout boundary trustworthy, while the fuller published-consumer `first-publish` question stays explicitly deferred.
   - `006` captures the Colima container environment surface; it is now paused after the shipped foundation, attached-session widening, repo-owned task composition, and real-machine live-stop hardening reached a trustworthy v1 boundary.
-  - `007` captures the distribution release and consumer rollout closure work for the shipped optional distribution surface; local Linux rehearsal plus Rhai runtime hardening are now real, but the actual release-closure card is queued again while `010` reassesses the remaining CLI and TUI shell seams before `v0.3`.
+  - `007` captures the distribution release and consumer rollout closure work for the shipped optional distribution surface; local Linux rehearsal plus Rhai runtime hardening are now real, but the actual release-closure card is queued again while `010` continues shrinking the remaining TUI shell before `v0.3`.
   - `008` captures the remaining demo and manifest-import rollout across the intended repo cohort.
   - `009` captures the vault-backed rollout of the already-shipped env-schema / varlock foundation.
-  - `010` captures Effigy's modularization and crate-boundary architecture lane, remains active, and has already shipped the backbone plus the main product-domain crates; the current question is whether the remaining CLI shell/help/parse and TUI/browser runtime seams justify one more crate-boundary pass before release closure resumes.
+  - `010` captures Effigy's modularization and crate-boundary architecture lane, remains active, and has already shipped the backbone plus the main product-domain crates; the CLI shell, TUI/browser seams, demo seam, and changelog workspace seam are now extracted, and the current question is whether the remaining release shell is finally honest enough for release closure to resume.
 
 ## Research Roadmaps
 

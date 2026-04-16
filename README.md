@@ -36,7 +36,7 @@ manifest, not to teach people more wrapper scripts.
 Current roadmap state:
 - [`g02.006` container environment contract](./docs/roadmaps/g02/006-colima-container-environment-contract.md) is paused on a trustworthy v1 boundary
 - [`g02.007` distribution release and consumer rollout](./docs/roadmaps/g02/007-distribution-release-and-consumer-rollout.md) is queued again behind the remaining shell-seam modularization question
-- [`g02.010` modularization and crate boundaries](./docs/roadmaps/g02/010-effigy-modularization-and-crate-boundaries.md) is active again
+- [`g02.010` modularization and crate boundaries](./docs/roadmaps/g02/010-effigy-modularization-and-crate-boundaries.md) is active again, with the changelog workspace seam now extracted
 - workspace plus `effigy-core` foundation is shipped
 - `effigy-tasks` foundation is shipped
 - `effigy-manifest` foundation is shipped
@@ -55,7 +55,11 @@ Current roadmap state:
 - doctor report/projection extraction is shipped
 - remaining doctor shell is classified as orchestration work
 - modularization pause decision was reopened
-- CLI shell and TUI shell-seam decision is the active next batch
+- CLI shell foundation extraction is shipped
+- first TUI shell-seam extraction is shipped
+- multiprocess TUI/runtime foundation extraction is shipped
+- demo-browser TUI foundation extraction is shipped
+- demo-browser terminal/live-session extraction is the active next batch
 - release closure is queued again
 
 ## Install
@@ -397,4 +401,4 @@ effigy/
 ## Next Task
 
 Execute
-[`143-decide-cli-shell-and-tui-modularization-follow-up.md`](./docs/specs/batch-cards/143-decide-cli-shell-and-tui-modularization-follow-up.md).
+[`182-decide-post-changelog-workspace-extraction-boundary.md`](./docs/specs/batch-cards/182-decide-post-changelog-workspace-extraction-boundary.md).

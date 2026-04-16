@@ -39,15 +39,15 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g02/004-rust-native-scripting-surface-contract.md` is paused after the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached a clean internal boundary.
 - `g02/005-optional-distribution-surface-contract.md` is paused after one real consumer proof plus bounded widening made the optional distribution boundary trustworthy for metadata validation, artifact validation, and closeout evidence reuse.
 - `g02/006-colima-container-environment-contract.md` is now paused after the real-machine `colima nerdctl` live-stop and closeout path was hardened strongly enough to stop carrying a deferred warning.
-- `g02/007-distribution-release-and-consumer-rollout.md` remains in progress, but release closure is queued again while the remaining CLI and TUI shell seams are reassessed.
-- `g02/010-effigy-modularization-and-crate-boundaries.md` is active again because the remaining CLI parse/help shell and TUI/browser runtime surfaces still look large enough to justify more crate-boundary work before `v0.3`.
+- `g02/007-distribution-release-and-consumer-rollout.md` remains in progress, but release closure is queued again while the remaining TUI shell is still being reduced.
+- `g02/010-effigy-modularization-and-crate-boundaries.md` is active again because the remaining shell seams are still not clean enough for release; the CLI shell slice, TUI/browser slices, the demo seam, and the changelog workspace seam are now extracted, the release seam is narrower again, and the next move is the post-changelog boundary decision.
 - `g02/008-demo-and-manifest-import-rollout.md` queues the remaining demo and manifest-import adoption work across the intended cohort.
 - `g02/009-vault-backed-varlock-rollout.md` queues the vault-backed rollout for the shipped env-schema / varlock foundation.
 
 ## Active Strict Lane
 
 - `g02.010`
-- active ready card: `143-decide-cli-shell-and-tui-modularization-follow-up.md`
+- active ready card: `182-decide-post-changelog-workspace-extraction-boundary.md`
 - queued release card: `115-implement-effigy-distribution-release-closure.md`
 
 ## Research Program
@@ -70,8 +70,8 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute `143` to settle the remaining CLI and TUI shell-seam modularization
-boundary before release closure resumes.
+Execute `182` to decide whether the remaining release shell is now honest
+enough to pause or still needs one final bounded extraction.
 
 
 ## Historical language boundary

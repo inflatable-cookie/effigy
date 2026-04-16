@@ -43,7 +43,7 @@ through presentation instead of consuming a settled runner contract.
 - Lane budget / pause signal: the run stopped because the harness/thread broke and a fresh-thread continuation artifact was explicitly requested, not because the lane is blocked.
 - Key files:
   - [demo_command.rs](../../../src/runner/demo_command.rs)
-  - [command_parsing.rs](../../../src/cli/parse/command_parsing.rs)
+  - [command_parsing.rs](../../../crates/effigy-cli/src/command_parsing.rs)
   - [demo.rs](../../../src/cli_help/topics/demo.rs)
   - [command_behavior_tests.rs](../../../tests/cli_output_tests/command_behavior_tests.rs)
   - [039-implement-demo-history-query-controls.md](../../specs/batch-cards/039-implement-demo-history-query-controls.md)
@@ -72,7 +72,7 @@ through presentation instead of consuming a settled runner contract.
 
 ## Suggested Next Move
 
-Start from [039-implement-demo-history-query-controls.md](../../specs/batch-cards/039-implement-demo-history-query-controls.md), inspect the current `demo history` CLI and retained-attempt structures, then implement one bounded query-control batch in [demo_command.rs](../../../src/runner/demo_command.rs), [command_parsing.rs](../../../src/cli/parse/command_parsing.rs), [demo.rs](../../../src/cli_help/topics/demo.rs), and the matching CLI tests. Keep it one-demo and query-first. A good target is: outcome-focused filtering plus one human-friendly retained-attempt selector alongside the existing stable `--attempt <ATTEMPT_ID>` path.
+Start from [039-implement-demo-history-query-controls.md](../../specs/batch-cards/039-implement-demo-history-query-controls.md), inspect the current `demo history` CLI and retained-attempt structures, then implement one bounded query-control batch in [demo_command.rs](../../../src/runner/demo_command.rs), [command_parsing.rs](../../../crates/effigy-cli/src/command_parsing.rs), [demo.rs](../../../src/cli_help/topics/demo.rs), and the matching CLI tests. Keep it one-demo and query-first. A good target is: outcome-focused filtering plus one human-friendly retained-attempt selector alongside the existing stable `--attempt <ATTEMPT_ID>` path.
 
 ## Completion Protocol
 

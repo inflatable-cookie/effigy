@@ -1,8 +1,8 @@
 use crate::process_manager::{ProcessEvent, ProcessEventKind};
 
-use super::super::super::config::{VT_PARSER_COLS, VT_PARSER_ROWS, VT_PARSER_SCROLLBACK};
 use super::super::super::diagnostics::RuntimeDiagnostics;
 use super::super::super::state::SessionState;
+use effigy_tui::terminal_text::config::{VT_PARSER_COLS, VT_PARSER_ROWS, VT_PARSER_SCROLLBACK};
 
 pub(super) fn handle_chunk_event_impl(
     event_item: &ProcessEvent,

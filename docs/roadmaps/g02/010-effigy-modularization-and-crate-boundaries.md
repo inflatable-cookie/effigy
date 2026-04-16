@@ -632,7 +632,484 @@ Those are both bounded enough to justify one more modularization decision
 before `v0.3`, rather than pretending the remaining `src/` weight is only
 adapter cleanup.
 
+That decision is now made and the CLI shell slice is now shipped too:
+
+- `crates/effigy-cli` exists and is used by the main crate
+- the CLI command model now lives in the extracted crate instead of
+  `src/lib.rs`
+- the global JSON and command parsing grammar now live in the extracted crate
+  instead of `src/cli/parse/`
+
+That leaves the TUI/browser runtime surface as the next honest shell-facing
+seam before release can resume.
+
+That first TUI foundation extraction is now real too:
+
+- `crates/effigy-tui` exists and is used by the main crate
+- the shared TUI core contracts now live in the extracted crate
+- the multiprocess terminal-text runtime helpers now live in the extracted
+  crate
+- `src/tui/core.rs` and `src/tui/multiprocess/terminal_text/mod.rs` are now
+  thin compatibility adapters instead of owning those implementations
+
+That narrows the remaining TUI shell:
+
+- `src/tui/demo_browser.rs` was still the dominant browser-local file
+- the wider multiprocess runtime tree was the next reusable TUI seam
+- the next move was therefore multiprocess TUI foundation extraction, not
+  release closure
+
+That multiprocess TUI foundation extraction is now real too:
+
+- `effigy-tui::multiprocess` now exists and is used by the main crate
+- multiprocess config, diagnostics, session-state ownership, and active
+  view-model logic now live in the extracted crate
+- `src/tui/multiprocess/{config,diagnostics,state,view_model}` are now thin
+  compatibility adapters instead of owning those implementations
+
+That shifts the remaining TUI shell again:
+
+- `src/tui/demo_browser.rs` was now the dominant remaining shell file
+- the remaining multiprocess files are mostly event/render/lifecycle wiring
+- the next move was therefore demo-browser TUI foundation extraction, not
+  release closure
+
+That demo-browser TUI foundation extraction is now real too:
+
+- `effigy-tui::demo_browser` now exists and is used by the main crate
+- browser presentation/state contracts now live in the extracted crate
+- `src/tui/demo_browser.rs` now consumes that extracted browser TUI surface
+  instead of owning those contracts inline
+
+That narrows the browser shell again:
+
+- the remaining weight in `src/tui/demo_browser.rs` is now centered on
+  terminal-view rendering and live-session runtime handling
+- the next move is therefore browser terminal/live-session extraction, not
+  release closure
+
+That browser terminal/live-session extraction is now real too:
+
+- `effigy-tui::demo_browser` now owns the browser terminal-view helpers
+- live-session spawn, polling, input, and shutdown helpers now live in the
+  extracted crate too
+- `src/tui/demo_browser.rs` now consumes that extracted terminal/session
+  surface instead of owning it inline
+
+That narrows the browser shell again:
+
+- `src/tui/demo_browser.rs` still carries the browser app-flow shell
+- overlay handling, selection/runtime coordination, and top-level event wiring
+  are now the dominant remaining browser-local seam
+- the next move is therefore browser app-flow and overlay/runtime extraction,
+  not release closure
+
+That browser app-flow and overlay/runtime extraction is now real too:
+
+- `effigy-tui::demo_browser` now owns shared browser header/list/footer render
+  behavior
+- empty-state and prompt/action/filter overlay rendering now live in the
+  extracted crate too
+- shared overlay and pending-launch state contracts no longer sit only in
+  `src/tui/demo_browser.rs`
+
+That narrows the browser shell again:
+
+- `src/tui/demo_browser.rs` is now centered on browser state-machine flow
+- selection/runtime coordination and command-bridge effect handling are now the
+  dominant remaining browser-local seam
+- the next move is therefore browser state-machine and command-bridge
+  extraction, not release closure
+
+That browser state-machine and command-bridge extraction is now real too:
+
+- `effigy-tui::demo_browser` now owns the browser state struct
+- selection, focus, overlay, and detail-navigation state helpers now live in
+  the extracted crate too
+- pending browser action and launch ownership no longer sits only in
+  `src/tui/demo_browser.rs`
+
+That browser effect-loop and runner-bridge extraction is now real too:
+
+- `crates/effigy-tui/src/demo_browser.rs` now owns browser refresh projection
+  application and pending action/live-session result handling
+- `src/tui/demo_browser.rs` no longer owns that refresh/poll state application
+  inline
+- the browser shell shrank again instead of stalling on the previous seam
+
+That browser event-loop and terminal-shell extraction is now real too:
+
+- `crates/effigy-tui/src/demo_browser.rs` now owns browser escape handling,
+  navigation updates, selected live-session lookup, and terminal panel
+  rendering
+- `src/tui/demo_browser.rs` no longer owns that terminal panel/runtime shell
+  inline
+- the browser shell shrank again instead of stalling on terminal-local wiring
+
+That browser runner-bridge and overlay-loop extraction is now real too:
+
+- `crates/effigy-tui/src/demo_browser.rs` now owns browser key routing,
+  terminal-input interpretation, and overlay-loop decision handling
+- `src/tui/demo_browser.rs` no longer owns that overlay/key-routing shell
+  inline
+- the browser shell shrank again instead of stalling on input-loop glue
+
+That browser runtime-command-bridge extraction is now real too:
+
+- `crates/effigy-tui/src/demo_browser.rs` now owns run/rerun, stop,
+  artifact-open, retained-history, and selected-detail runtime-command
+  planning
+- `src/tui/demo_browser.rs` no longer owns that runtime-command planning shell
+  inline
+- the browser shell shrank again instead of stalling on command-bridge glue
+
+That leaves a narrower browser shell again:
+
+- `crates/effigy-tui/src/demo_browser.rs` now owns browser lifecycle polling,
+  live-session completion classification, and run-loop refresh cadence
+- `src/tui/demo_browser.rs` no longer owns that lifecycle/run-loop shell inline
+- the browser shell shrank again instead of stalling on poll-loop glue
+
+That browser refresh-load and render extraction is now real too:
+
+- `crates/effigy-tui/src/demo_browser.rs` now owns browser refresh-load
+  planning, detail-tab state application, and the non-terminal render shell
+- `src/tui/demo_browser.rs` no longer owns that refresh/load and render shell
+  inline
+- the browser shell shrank again instead of stalling on render assembly
+
+That browser command/process shell extraction is now real too:
+
+- `crates/effigy-tui/src/demo_browser.rs` now owns browser demo-command
+  request building, refresh-load request shaping, payload parsing, and payload
+  message extraction
+- `src/tui/demo_browser.rs` no longer owns that command/load bridge inline
+- the browser shell shrank again instead of stalling on request-plumbing glue
+
+That browser host-bridge extraction is now real too:
+
+- `crates/effigy-tui/src/demo_browser.rs` now owns browser action-menu planning,
+  forwarded input request shaping, resize request shaping, and shutdown request
+  shaping
+- `src/tui/demo_browser.rs` no longer owns that host interaction shell inline
+- the browser shell shrank again instead of stalling on host request glue
+
+That browser event-loop and host-effect extraction is now real too:
+
+- `crates/effigy-tui/src/demo_browser.rs` now owns browser host-effect
+  resolution from key actions
+- `src/tui/demo_browser.rs` no longer owns that event-loop dispatch ladder
+  inline
+- the browser shell shrank again instead of stalling on host-effect mapping
+
+That browser loop/process-helper extraction is now real too:
+
+- `crates/effigy-tui/src/demo_browser.rs` now owns browser loop polling and
+  artifact-open process helpers
+- `src/tui/demo_browser.rs` no longer owns that loop/process helper shell
+  inline
+- the browser shell shrank again instead of stalling on runtime polling glue
+
+That browser terminal-bootstrap and runtime-boundary extraction is now real too:
+
+- `crates/effigy-tui/src/demo_browser.rs` now owns browser terminal bootstrap
+  and generic runtime-boundary helpers
+- `src/tui/demo_browser.rs` no longer owns that bootstrap/runtime helper shell
+  inline
+- the browser shell shrank again instead of stalling on generic executor glue
+
+That leaves a narrower browser shell again:
+
+- `src/tui/demo_browser.rs` is now centered on the final Effigy command
+  invocation bridge and runtime/process adapter shell
+- the next move is therefore a post-browser boundary decision, not another
+  guessed extraction batch
+
+That post-browser runtime boundary decision is now made too:
+
+- the browser seam is smaller, but not yet clean enough to pause
+- `src/tui/demo_browser.rs` still owns a real host/runtime loop boundary:
+  - top-level browser run loop flow
+  - Effigy command invocation bridge
+  - refresh/resize/shutdown execution shell
+  - remaining integration-heavy browser shell tests
+- the next ready batch is therefore one more demo-browser host/runtime loop
+  extraction, not a pause or release resumption
+
+That demo-browser host/runtime loop extraction is now real too:
+
+- `crates/effigy-tui/src/demo_browser.rs` now owns `DemoBrowserApp`
+- the browser run loop and generic invoke-json host/runtime boundary no longer
+  sit in the root crate
+- `src/tui/demo_browser.rs` is now reduced to launch wiring, direct Effigy
+  command dispatch, and browser tests
+
+That post-browser host/runtime loop boundary decision is now made too:
+
+- the remaining production shell in `src/tui/demo_browser.rs` is now honest
+  adapter work
+- the browser seam can pause
+- `g02.010` stays active because the next `/src` pressure point is now
+  `src/runner/demo_command.rs`
+- the next ready batch is therefore demo runner runtime/persistence follow-up
+  extraction, not more browser work
+
+That demo runner runtime/persistence follow-up extraction is now real too:
+
+- `crates/effigy-demo/src/active.rs` now owns the active-attempt persistence
+  contract
+- terminal input/resize handoff writes and recent-output file helpers no longer
+  sit entirely in `src/runner/demo_command.rs`
+- `src/runner/demo_command.rs` now adapts the extracted active-state layer
+  instead of owning that file contract directly
+
+That leaves a narrower demo runner shell again:
+
+- the remaining `src/runner/demo_command.rs` weight is now more clearly split
+  between:
+  - demo render/projection output
+  - demo execution orchestration
+  - process/runtime launch control
+- the next move is therefore a post-demo-runner boundary decision, not another
+  guessed extraction batch
+
+That post-demo-runner runtime/persistence boundary decision is now made too:
+
+- the demo runner seam is smaller, but not yet clean enough to pause
+- `src/runner/demo_command.rs` still owns one more reusable demo-domain
+  layer:
+  - `DemoRecord`
+  - `DemoActionAvailability`
+  - `DemoGroup`
+  - query/history/list projection helpers
+- the next ready batch is therefore demo record/projection follow-up
+  extraction, not a shift to another `/src` seam yet
+
+That demo record/projection follow-up extraction is now real too:
+
+- `crates/effigy-demo/src/records.rs` now owns the shared demo record and
+  projection layer
+- `src/runner/demo_command.rs` no longer owns:
+  - `DemoRecord`
+  - `DemoActionAvailability`
+  - `DemoGroup`
+  - `DemoEntrypoint`
+  - shared history/grouping projection helpers
+- the runner now adapts crate-owned demo record/projection contracts instead of
+  keeping a parallel local copy
+
+That leaves a narrower demo runner shell again:
+
+- `src/runner/demo_command.rs` is down again and now reads more clearly as:
+  - demo command entry/render wiring
+  - execution orchestration
+  - process/runtime launch control
+- the next move is therefore a post-demo-record boundary decision, not another
+  guessed extraction batch
+
+That post-demo-record/projection boundary decision is now made too:
+
+- the demo runner seam is smaller again, but not yet clean enough to pause
+- `src/runner/demo_command.rs` still owns one more reusable demo-domain
+  layer:
+  - `DemoExecutionAttempt`
+  - `DemoLogPaths`
+  - run-backed launch and output capture helpers
+  - concurrent-runner runtime state and projection helpers
+  - receipt/history/log persistence shaping around executed attempts
+- the next ready batch is therefore demo execution/runtime follow-up
+  extraction, not a shift to another `/src` seam yet
+
+That demo execution/runtime follow-up extraction is now real too:
+
+- `crates/effigy-demo/src/execution.rs` now owns the shared demo attempt/log
+  execution layer
+- `src/runner/demo_command.rs` no longer owns:
+  - `DemoExecutionAttempt`
+  - `DemoLogPaths`
+  - receipt persistence shaping
+  - output-log persistence shaping
+- the runner now adapts crate-owned attempt/log execution contracts while
+  keeping the raw subprocess and event-loop shell local
+
+That leaves a narrower demo runner shell again:
+
+- `src/runner/demo_command.rs` is down again and now reads more clearly as:
+  - demo command entry/render wiring
+  - host process launch and event-loop orchestration
+  - runtime-specific terminal/IO shell behavior
+- the next move is therefore a post-demo-execution boundary decision, not
+  another guessed extraction batch
+
+That post-demo-execution/runtime boundary decision is now made too:
+
+- the demo runner seam is smaller again, but not yet clean enough to pause
+- `src/runner/demo_command.rs` still owns one more reusable demo-domain
+  layer:
+  - concurrent-runner runtime state and event-loop handling
+  - run-backed launch mode and PTY/stream process shaping
+  - output capture / input handoff helpers
+  - runtime backend classification and projected-process helpers
+- the next ready batch is therefore demo runtime-control/process follow-up
+  extraction, not a shift to another `/src` seam yet
+
+That demo runtime-control/process follow-up extraction is now real too:
+
+- `crates/effigy-demo/src/process.rs` now owns the shared demo process helper
+  layer
+- `src/runner/demo_command.rs` no longer owns:
+  - `DemoLaunchMode`
+  - launch-mode resolution and terminal sizing helpers
+  - PTY wrapping
+  - output capture helpers
+  - input handoff forwarding helpers
+- the runner now adapts crate-owned process helpers while keeping the managed
+  runtime event loop and host orchestration local
+
+That leaves a narrower demo runner shell again:
+
+- `src/runner/demo_command.rs` is down again and now reads more clearly as:
+  - demo command entry/render wiring
+  - managed runtime state and event-loop orchestration
+  - runtime backend classification and stop/attach shell behavior
+- the next move is therefore a post-demo-runtime-control boundary decision, not
+  another guessed extraction batch
+
+That post-demo-runtime-control/process boundary decision is now made too:
+
+- the demo runner seam is smaller again, but not yet clean enough to pause
+- `src/runner/demo_command.rs` still owns one more reusable demo-domain
+  layer:
+  - managed runtime state and event-loop handling
+  - runtime backend classification and projected-process helpers
+  - stop/attach capability shaping around concurrent-runner demos
+- the next ready batch is therefore demo managed-runtime/backend follow-up
+  extraction, not a shift to another `/src` seam yet
+
+That demo managed-runtime/backend follow-up extraction is now real too:
+
+- `crates/effigy-demo/src/runtime.rs` now owns the shared concurrent-runner
+  runtime state machine
+- backend/projection shaping and non-zero-exit rendering no longer sit
+  entirely in `src/runner/demo_command.rs`
+- `src/runner/demo_command.rs` now adapts that extracted runtime layer while
+  keeping raw supervisor/process orchestration local
+
+That leaves a narrower demo runner shell again:
+
+- `src/runner/demo_command.rs` is down again and now reads more clearly as:
+  - demo command entry/render wiring
+  - raw process launch and supervisor orchestration
+  - final runner adapter behavior
+- the next move is therefore a post-demo-managed-runtime boundary decision,
+  not another guessed extraction batch
+
+That post-demo-managed-runtime boundary decision is now made too:
+
+- the remaining demo runner shell is now mostly:
+  - command entry and render wiring
+  - task/run dispatch orchestration
+  - raw process launch and supervisor integration
+  - final runner adapter behavior
+- that remainder is treated as honest runner shell work, not the next
+  `effigy-demo` extraction target
+- the next real `/src` pressure point is now `src/runner/release_command.rs`
+- the next ready batch is therefore release git/verify-install follow-up
+  extraction, not another demo batch
+
+That release git/verify-install follow-up extraction is now real too:
+
+- `crates/effigy-release/src/lib.rs` now owns the verify-install execution
+  cluster
+- tag resolution, repo-url normalization, temp fixture setup, and verification
+  step execution no longer sit entirely in `src/runner/release_command.rs`
+- `src/runner/release_command.rs` now adapts that extracted release path while
+  keeping repo/remote discovery local
+
+That leaves a narrower release shell again:
+
+- `src/runner/release_command.rs` is down again and now reads more clearly as:
+  - top-level release command dispatch and render wiring
+  - git-facing execute orchestration
+  - prepared-state review and interactive flow shell
+- the next move is therefore a post-release-verify-install boundary decision,
+  not another guessed extraction batch
+
+That post-release-verify-install boundary decision is now made too:
+
+- the release seam is smaller, but not yet clean enough to pause
+- `src/runner/release_command.rs` still owns one more reusable release-domain
+  layer:
+  - git-facing execute helpers
+  - branch/head/remote checks
+  - add/commit/tag/push orchestration
+- the next ready batch is therefore release git-execute follow-up extraction,
+  not a shift to another `/src` seam yet
+
+That release git-execute follow-up extraction is now real too:
+
+- `effigy-release` now owns branch/head/remote inspection and working-tree
+  status helpers for release execute
+- `effigy-release` now owns add/commit/tag/push orchestration for release
+  execute
+- `runner` now adapts that git-facing execute layer instead of carrying a
+  duplicate local helper block
+
+That leaves a narrower release shell again:
+
+- interactive release review flow
+- final progress/render wiring
+- the remaining shell-facing execute adapter behavior around the extracted
+  crate APIs
+
+That post-release-git-execute boundary decision is now made too:
+
+- the release seam is smaller, but still not honest enough to pause
+- `src/runner/release_command.rs` still owns one more reusable release-domain
+  layer:
+  - version-file read/update helpers
+  - changelog mutation shaping
+  - diff/mutation preview helpers
+- the next ready batch is therefore release version-and-preview follow-up
+  extraction, not a pause or a shift to another `/src` seam yet
+
+That release version-and-preview follow-up extraction is now real too:
+
+- `effigy-release` now owns current-version reading across supported release
+  version-file formats
+- `effigy-release` now owns version-file rewrite helpers and JSON path
+  replacement helpers
+- `effigy-release` now owns mutation detail/preview and diff-preview helpers
+- `runner` now adapts that release version-and-preview layer instead of
+  carrying a duplicate local helper block
+
+That post-release-version-and-preview boundary decision is now made too:
+
+- the release seam is smaller, but still not honest enough to pause
+- the remaining reusable layer is changelog coupling, not one more isolated
+  `effigy-release` helper cluster
+- `src/changelog.rs` and `src/runner/release_command.rs` still form one real
+  library boundary that should move into a workspace crate
+- the next ready batch is therefore changelog workspace extraction and release
+  adoption, not another release-helper-only slice
+
+That changelog workspace extraction is now real too:
+
+- `crates/effigy-changelog` now exists as a real workspace crate
+- changelog parsing, formatting, validation, and extraction no longer live
+  only in the root crate
+- release prep and changelog commands now adopt that promoted changelog
+  boundary through the root re-export
+
+That leaves a narrower release shell again:
+
+- interactive prepared-state review flow
+- final progress/render wiring
+- remaining release-shell adapter behavior around the extracted crate APIs
+- the next ready batch is therefore a post-changelog boundary decision, not
+  another guessed release slice
+
 ## Next Task
 
 Execute
-[`143-decide-cli-shell-and-tui-modularization-follow-up.md`](../../specs/batch-cards/143-decide-cli-shell-and-tui-modularization-follow-up.md).
+[`182-decide-post-changelog-workspace-extraction-boundary.md`](../../specs/batch-cards/182-decide-post-changelog-workspace-extraction-boundary.md).

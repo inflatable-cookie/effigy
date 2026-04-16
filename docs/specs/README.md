@@ -21,4 +21,4 @@ lane needs tighter execution grammar than the roadmap alone provides.
 ## Next Task
 
 Execute
-[`batch-cards/143-decide-cli-shell-and-tui-modularization-follow-up.md`](./batch-cards/143-decide-cli-shell-and-tui-modularization-follow-up.md).
+[`batch-cards/182-decide-post-changelog-workspace-extraction-boundary.md`](./batch-cards/182-decide-post-changelog-workspace-extraction-boundary.md).

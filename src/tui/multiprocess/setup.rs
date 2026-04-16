@@ -2,11 +2,11 @@ use std::path::PathBuf;
 
 use crate::process_manager::{ProcessSpec, ProcessSupervisor};
 
-use super::config::{VT_PARSER_COLS, VT_PARSER_ROWS, VT_PARSER_SCROLLBACK};
 use super::diagnostics::RuntimeDiagnostics;
 use super::lifecycle::init_terminal;
 use super::state::SessionState;
 use super::{MultiProcessTuiError, SessionRuntime};
+use effigy_tui::terminal_text::config::{VT_PARSER_COLS, VT_PARSER_ROWS, VT_PARSER_SCROLLBACK};
 
 pub(super) fn prepare_runtime_session(
     repo_root: PathBuf,
