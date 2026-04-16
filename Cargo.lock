@@ -652,6 +652,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "effigy-exec"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "effigy-gateway"
 version = "0.1.0"
 dependencies = [
