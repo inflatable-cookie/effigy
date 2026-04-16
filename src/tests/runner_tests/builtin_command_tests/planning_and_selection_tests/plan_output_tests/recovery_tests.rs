@@ -1,6 +1,8 @@
 use super::super::super::prelude::cases::*;
 use super::super::super::prelude::harness::*;
 use super::super::super::prelude::json::*;
+use crate::contract_test_support::{lock_test, EnvGuard};
+use std::fs;
 
 #[test]
 fn run_manifest_task_builtin_test_plan_multi_suite_recovery_outputs_hints() {
@@ -44,8 +46,12 @@ fn run_manifest_task_builtin_test_plan_json_recovery_has_versioned_schema() {
 
 #[test]
 fn run_manifest_task_builtin_test_plan_json_recovery_preserves_message_and_suite_candidates() {
+    let _guard = lock_test();
     let root = temp_workspace("builtin-test-plan-json-recovery-details");
     setup_multi_suite_repo(&root);
+    let empty_bin = root.join("empty-bin");
+    fs::create_dir_all(&empty_bin).expect("mkdir empty");
+    let _env = EnvGuard::set_many(&[("PATH", Some(empty_bin.display().to_string()))]);
 
     let out = run_builtin_ok(
         root,
@@ -65,5 +71,5 @@ fn run_manifest_task_builtin_test_plan_json_recovery_preserves_message_and_suite
         .iter()
         .filter_map(|value| value.as_str())
         .collect::<Vec<&str>>();
-    assert_eq!(available, vec!["cargo-nextest", "vitest"]);
+    assert_eq!(available, vec!["cargo-test", "vitest"]);
 }

@@ -1,6 +1,6 @@
 # 143 Decide CLI Shell And TUI Modularization Follow-Up
 
-Status: ready
+Status: complete
 Updated: 2026-04-15
 Roadmap: `g02.010`
 Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
@@ -35,7 +35,15 @@ through a CLI-shell crate, a TUI/runtime crate, or both in sequence.
 - `cargo run --bin effigy -- qa:docs`
 - `git diff --check`
 
+## Decision
+
+The next real seam is CLI shell extraction first.
+
+The command model and parse grammar are still bounded, reusable shell-facing
+contracts. By contrast, the remaining TUI/runtime surface is larger and should
+follow after the CLI shell no longer inflates `src/lib.rs` and
+`src/cli/parse/command_parsing.rs`.
+
 ## Next Task
 
-Decide whether the next real seam is CLI shell extraction, TUI/runtime
-extraction, or one last tighter architectural batch before `v0.3`.
+Execute [`144-implement-effigy-cli-foundation-extraction.md`](./144-implement-effigy-cli-foundation-extraction.md).

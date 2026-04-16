@@ -42,10 +42,8 @@ and `115` remains the release-closure batch for when this lane resumes.
 The modularization prerequisite is now treated as still open:
 
 - the extracted domain crates are real
-- but the remaining CLI shell/help/parse surface is still large enough to
-  justify another crate-boundary decision
-- and the TUI/browser runtime surface is still large enough to justify one
-  more modularization pass instead of being treated as incidental adapter work
+- and the remaining TUI shell is still large enough to justify more
+  modularization instead of being treated as incidental adapter work
 
 So the current release posture is:
 
@@ -79,5 +77,4 @@ it is no longer only an Effigy-local product claim.
 
 Keep
 [`115-implement-effigy-distribution-release-closure.md`](../../specs/batch-cards/115-implement-effigy-distribution-release-closure.md)
-queued while `g02.010` resolves the remaining CLI and TUI shell-seam
-modularization question.
+queued while `g02.010` resolves the remaining demo-browser TUI shell seam.

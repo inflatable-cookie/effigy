@@ -2,8 +2,45 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod active;
 pub mod browser;
+pub mod execution;
+pub mod process;
+pub mod records;
 pub mod runtime;
+
+pub use active::{
+    active_attempt_is_stop_requested, append_demo_terminal_input, append_demo_terminal_resize,
+    clear_active_attempt_state, clear_resize_handoff, load_active_attempt,
+    prepare_demo_input_handoff, prepare_demo_resize_handoff, read_active_attempt_record,
+    read_recent_output_lines, register_active_attempt, resolve_repo_relative_path,
+    update_active_terminal_resize, write_active_attempt_record, DemoActiveAttemptGuard,
+    PersistedDemoActiveAttempt, PersistedDemoActivePhase, PersistedDemoTerminalTransport,
+};
+pub use execution::{
+    failed_demo_attempt, persist_demo_attempt_logs, successful_demo_attempt,
+    terminated_demo_attempt, write_latest_attempt_receipt, DemoExecutionAttempt, DemoLogPaths,
+};
+pub use process::{
+    browser_terminal_size_override, current_terminal_size, demo_mode_prefers_attached_terminal,
+    initial_terminal_size_for_launch_mode, resolve_demo_launch_mode, sanitize_pty_transcript,
+    spawn_input_handoff_forward, spawn_output_capture, spawn_stdin_forward,
+    spawn_stdin_handoff_capture, stop_input_handoff_forward, wrap_pty_shell_command,
+    DemoInputHandoffForward, DemoLaunchMode, OutputMirror, DEMO_BROWSER_TERMINAL_COLS_ENV,
+    DEMO_BROWSER_TERMINAL_ROWS_ENV, DEMO_DEFAULT_TERMINAL_COLS, DEMO_DEFAULT_TERMINAL_ROWS,
+};
+pub use records::{
+    build_demo_groups, find_historical_attempt, history_attempt_to_json,
+    history_attempts_with_limit, history_attempts_with_outcome, DemoActionAvailability,
+    DemoEntrypoint, DemoGroup, DemoRecord, DemoRecordGroupBy,
+};
+pub use runtime::{
+    concurrent_runner_input_target_process, concurrent_runner_projected_output_provenance,
+    concurrent_runner_projected_process_summary, concurrent_runner_projection_shape,
+    concurrent_runner_runtime_backend, concurrent_runner_supports_browser_live_attach,
+    render_non_zero_exits, DemoConcurrentRuntimeState, DEMO_MANAGED_EVENT_POLL_INTERVAL_MS,
+    DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT,
+};
 
 use effigy_core::path_error_text::{
     failed_to_parse_path, failed_to_read_path, failed_to_render_path, failed_to_write_path,
@@ -24,7 +61,7 @@ pub struct DemoStateError {
 }
 
 impl DemoStateError {
-    fn new(message: impl Into<String>) -> Self {
+    pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }

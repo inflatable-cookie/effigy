@@ -637,6 +637,622 @@ pub fn resolve_version_field_path(
     })
 }
 
+pub fn read_current_version(
+    source: &ResolvedVersionSource,
+) -> Result<semver::Version, ReleaseError> {
+    match source.kind {
+        VersionFileKind::CargoToml | VersionFileKind::PyProjectToml => read_toml_version(source),
+        VersionFileKind::PackageJson => read_json_version(source),
+        VersionFileKind::PlainText => read_plain_text_version(source),
+    }
+}
+
+pub fn detect_pyproject_version_path(parsed: &toml::Value) -> Option<&'static str> {
+    ["project.version", "tool.poetry.version"]
+        .into_iter()
+        .find(|path| {
+            toml_value_at_path(parsed, path)
+                .and_then(toml::Value::as_str)
+                .is_some()
+        })
+}
+
+pub fn render_updated_version_contents(
+    source: &ResolvedVersionSource,
+    new_version: &semver::Version,
+) -> Result<String, ReleaseError> {
+    match source.kind {
+        VersionFileKind::CargoToml | VersionFileKind::PyProjectToml => {
+            render_updated_toml_contents(source, new_version)
+        }
+        VersionFileKind::PackageJson => render_updated_json_contents(source, new_version),
+        VersionFileKind::PlainText => Ok(format!("{new_version}\n")),
+    }
+}
+
+pub fn render_version_preview_line(
+    source: &ResolvedVersionSource,
+    content: &str,
+    version: &str,
+) -> String {
+    match source.kind {
+        VersionFileKind::PlainText => version.to_owned(),
+        _ => line_containing(content, version).unwrap_or_else(|| format!("version = {version}")),
+    }
+}
+
+pub fn render_changelog_preview_line(
+    content: &str,
+    version: &semver::Version,
+    release_date: &str,
+) -> String {
+    let heading = format!("## [{version}] - {release_date}");
+    line_containing(content, &heading).unwrap_or(heading)
+}
+
+pub fn build_version_mutation_detail_lines(
+    source: &ResolvedVersionSource,
+    selected_version: &semver::Version,
+) -> Vec<String> {
+    let mut details = vec![format!("format: {}", source.kind.format_label())];
+    if let Some(field_path) = &source.field_path {
+        details.push(format!("field path: {field_path}"));
+    } else {
+        details.push("field path: direct file contents".to_owned());
+    }
+    details.push(format!("selected version: {selected_version}"));
+    details
+}
+
+pub fn build_changelog_mutation_detail_lines(
+    unreleased_counts: &BTreeMap<String, usize>,
+    version: &semver::Version,
+    release_date: &str,
+) -> Vec<String> {
+    vec![
+        format!(
+            "unreleased entries before release: {}",
+            format_counts(unreleased_counts)
+        ),
+        format!("release heading: ## [{version}] - {release_date}"),
+        "unreleased section remains present after promotion".to_owned(),
+    ]
+}
+
+pub fn build_diff_preview(before: &str, after: &str) -> Vec<String> {
+    const MAX_CHANGED_PAIRS: usize = 3;
+
+    let before_lines: Vec<&str> = before.lines().collect();
+    let after_lines: Vec<&str> = after.lines().collect();
+    let max_len = before_lines.len().max(after_lines.len());
+    let mut preview = Vec::new();
+    let mut changed_pairs = 0usize;
+    let mut remaining_pairs = 0usize;
+
+    for index in 0..max_len {
+        let before_line = before_lines.get(index).copied();
+        let after_line = after_lines.get(index).copied();
+        if before_line == after_line {
+            continue;
+        }
+
+        if changed_pairs < MAX_CHANGED_PAIRS {
+            if let Some(line) = before_line {
+                preview.push(format!("- {}", truncate_diff_line(line)));
+            }
+            if let Some(line) = after_line {
+                preview.push(format!("+ {}", truncate_diff_line(line)));
+            }
+            changed_pairs += 1;
+        } else {
+            remaining_pairs += 1;
+        }
+    }
+
+    if remaining_pairs > 0 {
+        preview.push(format!("... {remaining_pairs} more changed line(s)"));
+    }
+
+    preview
+}
+
+pub fn toml_value_at_path<'a>(value: &'a toml::Value, path: &str) -> Option<&'a toml::Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        current = current.get(segment)?;
+    }
+    Some(current)
+}
+
+pub fn json_value_at_path<'a>(
+    value: &'a serde_json::Value,
+    path: &str,
+) -> Option<&'a serde_json::Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        current = current.get(segment)?;
+    }
+    Some(current)
+}
+
+fn read_toml_version(source: &ResolvedVersionSource) -> Result<semver::Version, ReleaseError> {
+    let raw = std::fs::read_to_string(&source.path).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to read release version file {}: {error}",
+            source.path.display()
+        ))
+    })?;
+    let parsed = raw.parse::<toml::Value>().map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to parse {}: {error}",
+            source.path.display()
+        ))
+    })?;
+    let version_text = resolve_toml_version_text(source, &parsed)?;
+    parse_semver_from_text(&source.path, &version_text)
+}
+
+fn read_json_version(source: &ResolvedVersionSource) -> Result<semver::Version, ReleaseError> {
+    let raw = std::fs::read_to_string(&source.path).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to read release version file {}: {error}",
+            source.path.display()
+        ))
+    })?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to parse {}: {error}",
+            source.path.display()
+        ))
+    })?;
+    let path = source.field_path.as_deref().unwrap_or("version");
+    let version_text = json_value_at_path(&parsed, path)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            ReleaseError::TaskInvocation(format!(
+                "release version path `{path}` was not found in {}",
+                source.path.display()
+            ))
+        })?;
+    parse_semver_from_text(&source.path, version_text)
+}
+
+fn read_plain_text_version(
+    source: &ResolvedVersionSource,
+) -> Result<semver::Version, ReleaseError> {
+    let raw = std::fs::read_to_string(&source.path).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to read release version file {}: {error}",
+            source.path.display()
+        ))
+    })?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(ReleaseError::TaskInvocation(format!(
+            "release version file is empty: {}",
+            source.path.display()
+        )));
+    }
+    parse_semver_from_text(&source.path, trimmed)
+}
+
+fn parse_semver_from_text(
+    path: &Path,
+    version_text: &str,
+) -> Result<semver::Version, ReleaseError> {
+    semver::Version::parse(version_text.trim()).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to parse semver version `{}` from {}: {error}",
+            version_text.trim(),
+            path.display()
+        ))
+    })
+}
+
+fn resolve_toml_version_text(
+    source: &ResolvedVersionSource,
+    parsed: &toml::Value,
+) -> Result<String, ReleaseError> {
+    if let Some(path) = source.field_path.as_deref() {
+        return toml_value_at_path(parsed, path)
+            .and_then(toml::Value::as_str)
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| {
+                ReleaseError::TaskInvocation(format!(
+                    "release version path `{path}` was not found in {}",
+                    source.path.display()
+                ))
+            });
+    }
+
+    let Some(path) = detect_pyproject_version_path(parsed) else {
+        return Err(ReleaseError::TaskInvocation(format!(
+            "could not find version field in {} (tried `project.version` and `tool.poetry.version`)",
+            source.path.display()
+        )));
+    };
+    toml_value_at_path(parsed, path)
+        .and_then(toml::Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            ReleaseError::TaskInvocation(format!(
+                "release version path `{path}` was not found in {}",
+                source.path.display()
+            ))
+        })
+}
+
+fn render_updated_toml_contents(
+    source: &ResolvedVersionSource,
+    new_version: &semver::Version,
+) -> Result<String, ReleaseError> {
+    let raw = std::fs::read_to_string(&source.path).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to read release version file {}: {error}",
+            source.path.display()
+        ))
+    })?;
+    let parsed = raw.parse::<toml::Value>().map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to parse {}: {error}",
+            source.path.display()
+        ))
+    })?;
+    let mut document = raw.parse::<toml_edit::DocumentMut>().map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to parse {}: {error}",
+            source.path.display()
+        ))
+    })?;
+    let path = source
+        .field_path
+        .clone()
+        .or_else(|| detect_pyproject_version_path(&parsed).map(ToOwned::to_owned))
+        .ok_or_else(|| {
+            ReleaseError::TaskInvocation(format!(
+                "could not find version field in {}",
+                source.path.display()
+            ))
+        })?;
+    set_toml_document_string_at_path(&mut document, &path, &new_version.to_string())?;
+    Ok(document.to_string())
+}
+
+fn render_updated_json_contents(
+    source: &ResolvedVersionSource,
+    new_version: &semver::Version,
+) -> Result<String, ReleaseError> {
+    let raw = std::fs::read_to_string(&source.path).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to read release version file {}: {error}",
+            source.path.display()
+        ))
+    })?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to parse {}: {error}",
+            source.path.display()
+        ))
+    })?;
+    let path = source.field_path.as_deref().unwrap_or("version");
+    json_value_at_path(&parsed, path)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            ReleaseError::TaskInvocation(format!(
+                "release version path `{path}` was not found in {}",
+                source.path.display()
+            ))
+        })?;
+    replace_json_string_at_path_preserving_layout(&raw, path, &new_version.to_string())
+}
+
+fn set_toml_document_string_at_path(
+    document: &mut toml_edit::DocumentMut,
+    path: &str,
+    new_value: &str,
+) -> Result<(), ReleaseError> {
+    let segments = path.split('.').collect::<Vec<_>>();
+    let Some((last, parents)) = segments.split_last() else {
+        return Err(ReleaseError::TaskInvocation(
+            "release version path must not be empty".to_owned(),
+        ));
+    };
+
+    let mut current = document.as_item_mut();
+    for segment in parents {
+        current = current.get_mut(*segment).ok_or_else(|| {
+            ReleaseError::TaskInvocation(format!("release version path `{path}` was not found"))
+        })?;
+    }
+    if let Some(existing) = current.get_mut(*last) {
+        let Some(existing_value) = existing.as_value_mut() else {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "release version path `{path}` does not point at a TOML value"
+            )));
+        };
+        let existing_decor = existing_value.decor().clone();
+        *existing_value = toml_edit::Value::from(new_value.to_owned());
+        *existing_value.decor_mut() = existing_decor;
+        return Ok(());
+    }
+
+    let Some(table) = current.as_table_like_mut() else {
+        return Err(ReleaseError::TaskInvocation(format!(
+            "release version path `{path}` does not point at a TOML table"
+        )));
+    };
+    table.insert(last, toml_edit::value(new_value.to_owned()));
+    Ok(())
+}
+
+pub fn replace_json_string_at_path_preserving_layout(
+    raw: &str,
+    path: &str,
+    new_value: &str,
+) -> Result<String, ReleaseError> {
+    let segments = path.split('.').collect::<Vec<_>>();
+    let Some(_) = segments.split_last() else {
+        return Err(ReleaseError::TaskInvocation(
+            "release version path must not be empty".to_owned(),
+        ));
+    };
+    let replacement = serde_json::to_string(new_value).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to render updated JSON value for `{path}`: {error}"
+        ))
+    })?;
+    let mut index = skip_json_whitespace(raw, 0);
+    let (start, end) = find_json_string_value_span_in_object(raw, &mut index, &segments, path)?;
+    let mut updated =
+        String::with_capacity(raw.len() + replacement.len().saturating_sub(end - start));
+    updated.push_str(&raw[..start]);
+    updated.push_str(&replacement);
+    updated.push_str(&raw[end..]);
+    Ok(updated)
+}
+
+fn find_json_string_value_span_in_object(
+    raw: &str,
+    index: &mut usize,
+    segments: &[&str],
+    path: &str,
+) -> Result<(usize, usize), ReleaseError> {
+    let bytes = raw.as_bytes();
+    if *index >= bytes.len() || bytes[*index] != b'{' {
+        return Err(ReleaseError::TaskInvocation(format!(
+            "release version path `{path}` does not point at a JSON object"
+        )));
+    }
+    *index += 1;
+    *index = skip_json_whitespace(raw, *index);
+
+    loop {
+        if *index >= bytes.len() {
+            return Err(ReleaseError::TaskInvocation(
+                "unterminated JSON object while updating release version".to_owned(),
+            ));
+        }
+        if bytes[*index] == b'}' {
+            break;
+        }
+
+        let (key_start, key_end) = parse_json_string_span(raw, *index)?;
+        let key = decode_json_string_literal(&raw[key_start..key_end])?;
+        *index = skip_json_whitespace(raw, key_end);
+        if *index >= bytes.len() || bytes[*index] != b':' {
+            return Err(ReleaseError::TaskInvocation(
+                "invalid JSON object syntax while updating release version".to_owned(),
+            ));
+        }
+        *index = skip_json_whitespace(raw, *index + 1);
+
+        if key == segments[0] {
+            if segments.len() == 1 {
+                return parse_json_string_span(raw, *index).map_err(|_| {
+                    ReleaseError::TaskInvocation(format!(
+                        "release version path `{path}` does not point at a JSON string"
+                    ))
+                });
+            }
+            return find_json_string_value_span_in_object(raw, index, &segments[1..], path);
+        }
+
+        *index = skip_json_value(raw, *index)?;
+        *index = skip_json_whitespace(raw, *index);
+        if *index >= bytes.len() {
+            return Err(ReleaseError::TaskInvocation(
+                "unterminated JSON object while updating release version".to_owned(),
+            ));
+        }
+        match bytes[*index] {
+            b',' => {
+                *index = skip_json_whitespace(raw, *index + 1);
+            }
+            b'}' => break,
+            _ => {
+                return Err(ReleaseError::TaskInvocation(
+                    "invalid JSON object syntax while updating release version".to_owned(),
+                ));
+            }
+        }
+    }
+
+    Err(ReleaseError::TaskInvocation(format!(
+        "release version path `{path}` was not found"
+    )))
+}
+
+fn skip_json_value(raw: &str, index: usize) -> Result<usize, ReleaseError> {
+    let bytes = raw.as_bytes();
+    if index >= bytes.len() {
+        return Err(ReleaseError::TaskInvocation(
+            "release version path parsing ran past the end of the JSON document".to_owned(),
+        ));
+    }
+
+    match bytes[index] {
+        b'"' => parse_json_string_span(raw, index).map(|(_, end)| end),
+        b'{' => skip_json_object(raw, index),
+        b'[' => skip_json_array(raw, index),
+        b'-' | b'0'..=b'9' => Ok(skip_json_number(raw, index)),
+        b't' if raw[index..].starts_with("true") => Ok(index + 4),
+        b'f' if raw[index..].starts_with("false") => Ok(index + 5),
+        b'n' if raw[index..].starts_with("null") => Ok(index + 4),
+        _ => Err(ReleaseError::TaskInvocation(
+            "invalid JSON value while updating release version".to_owned(),
+        )),
+    }
+}
+
+fn skip_json_object(raw: &str, index: usize) -> Result<usize, ReleaseError> {
+    let bytes = raw.as_bytes();
+    let mut cursor = index + 1;
+    cursor = skip_json_whitespace(raw, cursor);
+    loop {
+        if cursor >= bytes.len() {
+            return Err(ReleaseError::TaskInvocation(
+                "unterminated JSON object while updating release version".to_owned(),
+            ));
+        }
+        if bytes[cursor] == b'}' {
+            return Ok(cursor + 1);
+        }
+        let (_, key_end) = parse_json_string_span(raw, cursor)?;
+        cursor = skip_json_whitespace(raw, key_end);
+        if cursor >= bytes.len() || bytes[cursor] != b':' {
+            return Err(ReleaseError::TaskInvocation(
+                "invalid JSON object syntax while updating release version".to_owned(),
+            ));
+        }
+        cursor = skip_json_whitespace(raw, cursor + 1);
+        cursor = skip_json_value(raw, cursor)?;
+        cursor = skip_json_whitespace(raw, cursor);
+        if cursor >= bytes.len() {
+            return Err(ReleaseError::TaskInvocation(
+                "unterminated JSON object while updating release version".to_owned(),
+            ));
+        }
+        match bytes[cursor] {
+            b',' => cursor = skip_json_whitespace(raw, cursor + 1),
+            b'}' => return Ok(cursor + 1),
+            _ => {
+                return Err(ReleaseError::TaskInvocation(
+                    "invalid JSON object syntax while updating release version".to_owned(),
+                ));
+            }
+        }
+    }
+}
+
+fn skip_json_array(raw: &str, index: usize) -> Result<usize, ReleaseError> {
+    let bytes = raw.as_bytes();
+    let mut cursor = index + 1;
+    cursor = skip_json_whitespace(raw, cursor);
+    loop {
+        if cursor >= bytes.len() {
+            return Err(ReleaseError::TaskInvocation(
+                "unterminated JSON array while updating release version".to_owned(),
+            ));
+        }
+        if bytes[cursor] == b']' {
+            return Ok(cursor + 1);
+        }
+        cursor = skip_json_value(raw, cursor)?;
+        cursor = skip_json_whitespace(raw, cursor);
+        if cursor >= bytes.len() {
+            return Err(ReleaseError::TaskInvocation(
+                "unterminated JSON array while updating release version".to_owned(),
+            ));
+        }
+        match bytes[cursor] {
+            b',' => cursor = skip_json_whitespace(raw, cursor + 1),
+            b']' => return Ok(cursor + 1),
+            _ => {
+                return Err(ReleaseError::TaskInvocation(
+                    "invalid JSON array syntax while updating release version".to_owned(),
+                ));
+            }
+        }
+    }
+}
+
+fn skip_json_number(raw: &str, index: usize) -> usize {
+    let bytes = raw.as_bytes();
+    let mut cursor = index;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E' => cursor += 1,
+            _ => break,
+        }
+    }
+    cursor
+}
+
+fn parse_json_string_span(raw: &str, index: usize) -> Result<(usize, usize), ReleaseError> {
+    let bytes = raw.as_bytes();
+    if index >= bytes.len() || bytes[index] != b'"' {
+        return Err(ReleaseError::TaskInvocation(
+            "expected JSON string while updating release version".to_owned(),
+        ));
+    }
+
+    let mut cursor = index + 1;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'\\' => cursor += 2,
+            b'"' => return Ok((index, cursor + 1)),
+            _ => cursor += 1,
+        }
+    }
+
+    Err(ReleaseError::TaskInvocation(
+        "unterminated JSON string while updating release version".to_owned(),
+    ))
+}
+
+fn decode_json_string_literal(raw: &str) -> Result<String, ReleaseError> {
+    serde_json::from_str(raw)
+        .map_err(|error| ReleaseError::TaskInvocation(format!("invalid JSON string: {error}")))
+}
+
+fn skip_json_whitespace(raw: &str, mut index: usize) -> usize {
+    let bytes = raw.as_bytes();
+    while index < bytes.len() && matches!(bytes[index], b' ' | b'\n' | b'\r' | b'\t') {
+        index += 1;
+    }
+    index
+}
+
+fn truncate_diff_line(line: &str) -> String {
+    const MAX_CHARS: usize = 100;
+    let mut chars = line.chars();
+    let truncated: String = chars.by_ref().take(MAX_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
+}
+
+fn line_containing(content: &str, needle: &str) -> Option<String> {
+    content
+        .lines()
+        .find(|line| line.contains(needle))
+        .map(|line| line.trim().to_owned())
+}
+
+fn format_counts(counts: &BTreeMap<String, usize>) -> String {
+    if counts.is_empty() {
+        "nothing".to_owned()
+    } else {
+        counts
+            .iter()
+            .map(|(kind, count)| format!("{count} {kind}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
 pub fn format_release_tag(tag_format: &str, version: &semver::Version) -> String {
     tag_format.replace("{version}", &version.to_string())
 }
@@ -1179,6 +1795,569 @@ pub fn render_release_verify_install_json(result: &ReleaseVerifyInstall) -> Stri
     }))
     .unwrap_or_else(|_| {
         "{\"schema\":\"effigy.release.verify-install.v1\",\"verified\":false}".to_owned()
+    })
+}
+
+pub fn resolve_verify_install_tag(
+    tag: Option<String>,
+    github_ref_name: Option<String>,
+) -> Result<String, ReleaseError> {
+    tag.or(github_ref_name)
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ReleaseError::TaskInvocation(
+                "release verify-install requires `--tag <TAG>` or `GITHUB_REF_NAME`".to_owned(),
+            )
+        })
+}
+
+pub fn normalize_verify_install_repo_url(repo_url: &str) -> String {
+    let trimmed = repo_url.trim();
+    if trimmed.is_empty()
+        || trimmed.contains("://")
+        || trimmed.starts_with('/')
+        || trimmed.starts_with("./")
+        || trimmed.starts_with("../")
+        || trimmed.starts_with("~/")
+    {
+        return trimmed.to_owned();
+    }
+
+    if let Some((host_part, path_part)) = trimmed.split_once(':') {
+        if !path_part.is_empty()
+            && path_part.contains('/')
+            && !path_part.starts_with('/')
+            && (host_part.contains('@') || host_part.contains('.'))
+        {
+            return format!("ssh://{host_part}/{}", path_part.trim_start_matches('/'));
+        }
+    }
+
+    trimmed.to_owned()
+}
+
+fn make_release_temp_dir(purpose: &str) -> Result<PathBuf, ReleaseError> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!("failed to read system time: {error}"))
+        })?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("effigy-release-{purpose}-{ts}"));
+    std::fs::create_dir_all(&root).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to create release temp directory `{}`: {error}",
+            root.display()
+        ))
+    })?;
+    Ok(root)
+}
+
+fn write_release_install_fixture(path: &Path) -> Result<(), ReleaseError> {
+    let manifest_path = path.join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        "[catalog]\nalias = \"catalog_a\"\n\n[tasks]\nnoop = \"echo noop\"\n",
+    )
+    .map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to write verify-install fixture `{}`: {error}",
+            manifest_path.display()
+        ))
+    })
+}
+
+fn run_verification_step(
+    name: &str,
+    program: &str,
+    args: &[String],
+    cwd: Option<&Path>,
+) -> VerificationStepResult {
+    let mut command = ProcessCommand::new(program);
+    command.args(args);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    let started = Instant::now();
+    match command.output() {
+        Ok(output) => VerificationStepResult {
+            name: name.to_owned(),
+            command: format_command(program, args),
+            passed: output.status.success(),
+            exit_code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            launch_error: None,
+            duration_ms: started.elapsed().as_millis(),
+        },
+        Err(error) => VerificationStepResult {
+            name: name.to_owned(),
+            command: format_command(program, args),
+            passed: false,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            launch_error: Some(error.to_string()),
+            duration_ms: started.elapsed().as_millis(),
+        },
+    }
+}
+
+fn format_command(program: &str, args: &[String]) -> String {
+    if args.is_empty() {
+        return program.to_owned();
+    }
+    format!("{program} {}", args.join(" "))
+}
+
+pub fn git_modified_files(repo_root: &Path) -> Result<Vec<String>, ReleaseError> {
+    let repo_check = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .arg("rev-parse")
+        .arg("--is-inside-work-tree")
+        .output()
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!("failed to inspect git repository: {error}"))
+        })?;
+    if !repo_check.status.success() || String::from_utf8_lossy(&repo_check.stdout).trim() != "true"
+    {
+        return Err(ReleaseError::TaskInvocation(format!(
+            "release execute requires a git work tree at {}",
+            repo_root.display()
+        )));
+    }
+
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["status", "--porcelain=v1", "--untracked-files=all"])
+        .output()
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!("failed to inspect git working tree: {error}"))
+        })?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(ReleaseError::TaskInvocation(if detail.is_empty() {
+            "failed to inspect git working tree".to_owned()
+        } else {
+            format!("failed to inspect git working tree: {detail}")
+        }));
+    }
+
+    let stdout = String::from_utf8(output.stdout).map_err(|error| {
+        ReleaseError::TaskInvocation(format!("git status output was not utf-8: {error}"))
+    })?;
+    let mut paths = stdout
+        .lines()
+        .filter_map(parse_git_status_path)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    paths.sort();
+    Ok(paths)
+}
+
+fn parse_git_status_path(line: &str) -> Option<String> {
+    let raw_path = line.get(3..)?.trim();
+    if raw_path.is_empty() {
+        return None;
+    }
+    let path = raw_path
+        .split_once(" -> ")
+        .map(|(_, new_path)| new_path)
+        .unwrap_or(raw_path)
+        .trim();
+    if path.is_empty() {
+        None
+    } else {
+        Some(path.to_owned())
+    }
+}
+
+pub fn git_current_branch(repo_root: &Path) -> Result<String, ReleaseError> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .output()
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!("failed to resolve current branch: {error}"))
+        })?;
+    if !output.status.success() {
+        return Err(ReleaseError::TaskInvocation(
+            "release execute requires a checked-out branch".to_owned(),
+        ));
+    }
+    let branch = String::from_utf8(output.stdout).map_err(|error| {
+        ReleaseError::TaskInvocation(format!("git branch output was not utf-8: {error}"))
+    })?;
+    let trimmed = branch.trim();
+    if trimmed.is_empty() {
+        Err(ReleaseError::TaskInvocation(
+            "release execute requires a checked-out branch".to_owned(),
+        ))
+    } else {
+        Ok(trimmed.to_owned())
+    }
+}
+
+pub fn git_head_sha(repo_root: &Path) -> Result<String, ReleaseError> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!("failed to resolve current HEAD: {error}"))
+        })?;
+    if !output.status.success() {
+        return Err(ReleaseError::TaskInvocation(
+            "release execute requires a readable current HEAD".to_owned(),
+        ));
+    }
+    let sha = String::from_utf8(output.stdout).map_err(|error| {
+        ReleaseError::TaskInvocation(format!("git HEAD output was not utf-8: {error}"))
+    })?;
+    let trimmed = sha.trim();
+    if trimmed.is_empty() {
+        Err(ReleaseError::TaskInvocation(
+            "release execute requires a readable current HEAD".to_owned(),
+        ))
+    } else {
+        Ok(trimmed.to_owned())
+    }
+}
+
+pub fn git_remote_url(repo_root: &Path, remote: &str) -> Result<String, ReleaseError> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["remote", "get-url", remote])
+        .output()
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to inspect git remote `{remote}`: {error}"
+            ))
+        })?;
+    if !output.status.success() {
+        return Err(ReleaseError::TaskInvocation(format!(
+            "release execute requires a configured `{remote}` remote"
+        )));
+    }
+    let url = String::from_utf8(output.stdout).map_err(|error| {
+        ReleaseError::TaskInvocation(format!("git remote output was not utf-8: {error}"))
+    })?;
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        Err(ReleaseError::TaskInvocation(format!(
+            "release execute requires a configured `{remote}` remote"
+        )))
+    } else {
+        Ok(trimmed.to_owned())
+    }
+}
+
+pub fn git_tag_exists(repo_root: &Path, tag: &str) -> Result<bool, ReleaseError> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/tags/{tag}"),
+        ])
+        .output()
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!("failed to inspect local git tags: {error}"))
+        })?;
+    Ok(output.status.success())
+}
+
+pub fn git_add_release_files(repo_root: &Path, files: &[PathBuf]) -> Result<(), ReleaseError> {
+    let mut command = ProcessCommand::new("git");
+    command.arg("-C").arg(repo_root).arg("add");
+    for path in files {
+        let relative = path.strip_prefix(repo_root).unwrap_or(path);
+        command.arg(relative);
+    }
+    let output = command.output().map_err(|error| {
+        ReleaseError::TaskInvocation(format!("failed to stage release files: {error}"))
+    })?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(ReleaseError::TaskInvocation(if stderr.is_empty() {
+            "failed to stage release files".to_owned()
+        } else {
+            format!("failed to stage release files: {stderr}")
+        }))
+    }
+}
+
+pub fn git_commit_release(repo_root: &Path, message: &str) -> Result<String, ReleaseError> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["commit", "-m", message])
+        .output()
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!("failed to create release commit: {error}"))
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(ReleaseError::TaskInvocation(if stderr.is_empty() {
+            "failed to create release commit".to_owned()
+        } else {
+            format!("failed to create release commit: {stderr}")
+        }));
+    }
+
+    let rev = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!("failed to read release commit sha: {error}"))
+        })?;
+    if !rev.status.success() {
+        return Err(ReleaseError::TaskInvocation(
+            "failed to read release commit sha".to_owned(),
+        ));
+    }
+    let sha = String::from_utf8(rev.stdout).map_err(|error| {
+        ReleaseError::TaskInvocation(format!("git rev-parse output was not utf-8: {error}"))
+    })?;
+    Ok(sha.trim().to_owned())
+}
+
+pub fn git_create_tag(repo_root: &Path, tag: &str) -> Result<(), ReleaseError> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["tag", tag])
+        .output()
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!("failed to create release tag `{tag}`: {error}"))
+        })?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(ReleaseError::TaskInvocation(if stderr.is_empty() {
+            format!("failed to create release tag `{tag}`")
+        } else {
+            format!("failed to create release tag `{tag}`: {stderr}")
+        }))
+    }
+}
+
+pub fn git_push_release(
+    repo_root: &Path,
+    branch: &str,
+    remote: &str,
+    tag: Option<&str>,
+) -> Result<(), ReleaseError> {
+    let branch_output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["push", remote, branch])
+        .output()
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to push release branch to `{remote}`: {error}"
+            ))
+        })?;
+    if !branch_output.status.success() {
+        let stderr = String::from_utf8_lossy(&branch_output.stderr)
+            .trim()
+            .to_owned();
+        return Err(ReleaseError::TaskInvocation(if stderr.is_empty() {
+            format!("failed to push release branch to `{remote}`")
+        } else {
+            format!("failed to push release branch to `{remote}`: {stderr}")
+        }));
+    }
+
+    if let Some(tag) = tag {
+        let tag_output = ProcessCommand::new("git")
+            .arg("-C")
+            .arg(repo_root)
+            .args(["push", remote, tag])
+            .output()
+            .map_err(|error| {
+                ReleaseError::TaskInvocation(format!(
+                    "failed to push release tag `{tag}` to `{remote}`: {error}"
+                ))
+            })?;
+        if !tag_output.status.success() {
+            let stderr = String::from_utf8_lossy(&tag_output.stderr)
+                .trim()
+                .to_owned();
+            return Err(ReleaseError::TaskInvocation(if stderr.is_empty() {
+                format!("failed to push release tag `{tag}` to `{remote}`")
+            } else {
+                format!("failed to push release tag `{tag}` to `{remote}`: {stderr}")
+            }));
+        }
+    }
+
+    Ok(())
+}
+
+pub fn run_release_verify_install(
+    repo_root: PathBuf,
+    tag: String,
+    repo_url: String,
+) -> Result<ReleaseVerifyInstall, ReleaseError> {
+    let temp_root = make_release_temp_dir("verify-install")?;
+    let install_root = temp_root.join("install-root");
+    let fixture_dir = temp_root.join("fixture");
+    std::fs::create_dir_all(&fixture_dir).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to create verify-install fixture directory `{}`: {error}",
+            fixture_dir.display()
+        ))
+    })?;
+    write_release_install_fixture(&fixture_dir)?;
+
+    let install_command = vec![
+        "install".to_owned(),
+        "--git".to_owned(),
+        repo_url.clone(),
+        "--tag".to_owned(),
+        tag.clone(),
+        "--root".to_owned(),
+        install_root.display().to_string(),
+        "--force".to_owned(),
+        "effigy".to_owned(),
+    ];
+    let mut results = vec![run_verification_step(
+        "cargo install from git tag",
+        "cargo",
+        &install_command,
+        None,
+    )];
+
+    let mut blockers = Vec::new();
+    if !results[0].passed {
+        blockers.push(format!(
+            "install verification step `{}` failed",
+            results[0].name
+        ));
+        return Ok(ReleaseVerifyInstall {
+            repo_root,
+            tag,
+            repo_url,
+            installed_bin: None,
+            configured_check_count: 7,
+            executed_check_count: results.len(),
+            stopped_early: true,
+            results,
+            blockers,
+            verified: false,
+        });
+    }
+
+    let installed_bin = install_root.join("bin/effigy");
+    if !installed_bin.is_file() {
+        blockers.push(format!(
+            "installed binary is missing or not executable: {}",
+            installed_bin.display()
+        ));
+        return Ok(ReleaseVerifyInstall {
+            repo_root,
+            tag,
+            repo_url,
+            installed_bin: Some(installed_bin),
+            configured_check_count: 7,
+            executed_check_count: results.len(),
+            stopped_early: true,
+            results,
+            blockers,
+            verified: false,
+        });
+    }
+
+    let verification_checks = vec![
+        (
+            "installed binary help",
+            installed_bin.clone(),
+            vec!["help".to_owned()],
+        ),
+        (
+            "installed binary tasks fixture check",
+            installed_bin.clone(),
+            vec![
+                "tasks".to_owned(),
+                "--repo".to_owned(),
+                fixture_dir.display().to_string(),
+            ],
+        ),
+        (
+            "installed binary prefixed builtin tasks check",
+            installed_bin.clone(),
+            vec![
+                "catalog_a/tasks".to_owned(),
+                "--repo".to_owned(),
+                fixture_dir.display().to_string(),
+            ],
+        ),
+        (
+            "installed binary json help check",
+            installed_bin.clone(),
+            vec!["--json".to_owned(), "help".to_owned()],
+        ),
+        (
+            "installed binary completion check",
+            installed_bin.clone(),
+            vec!["completion".to_owned(), "bash".to_owned()],
+        ),
+        (
+            "installed binary completion candidates check",
+            installed_bin.clone(),
+            vec![
+                "completion".to_owned(),
+                "candidates".to_owned(),
+                "--repo".to_owned(),
+                fixture_dir.display().to_string(),
+            ],
+        ),
+    ];
+
+    let mut stopped_early = false;
+    for (name, program, args) in verification_checks {
+        let result = run_verification_step(name, &program.display().to_string(), &args, None);
+        let passed = result.passed;
+        results.push(result);
+        if !passed {
+            blockers.push(format!(
+                "install verification step `{}` failed",
+                results
+                    .last()
+                    .map(|step| step.name.as_str())
+                    .unwrap_or(name)
+            ));
+            stopped_early = true;
+            break;
+        }
+    }
+
+    Ok(ReleaseVerifyInstall {
+        repo_root,
+        tag,
+        repo_url,
+        installed_bin: Some(installed_bin),
+        configured_check_count: 7,
+        executed_check_count: results.len(),
+        stopped_early,
+        blockers: blockers.clone(),
+        verified: blockers.is_empty(),
+        results,
     })
 }
 

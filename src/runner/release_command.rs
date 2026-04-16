@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
 use std::time::Instant;
 
 use crate::changelog::{self, BumpKind, CategoryKind};
@@ -10,12 +9,24 @@ use crate::{ReleaseArgs, ReleaseSubcommand};
 use chrono::{Duration, Utc};
 use effigy_release::{
     apply_release_mutations as apply_release_mutations_via_release,
+    build_changelog_mutation_detail_lines as build_changelog_mutation_detail_lines_via_release,
+    build_diff_preview as build_diff_preview_via_release,
+    build_version_mutation_detail_lines as build_version_mutation_detail_lines_via_release,
     collect_changed_mutation_paths as collect_changed_mutation_paths_via_release,
     compare_release_state_fingerprints as compare_release_state_fingerprints_via_release,
-    format_release_tag, gate_blockers, gate_blockers_if_checked, load_release_config,
+    format_release_tag, gate_blockers, gate_blockers_if_checked,
+    git_add_release_files as git_add_release_files_via_release,
+    git_commit_release as git_commit_release_via_release,
+    git_create_tag as git_create_tag_via_release,
+    git_current_branch as git_current_branch_via_release, git_head_sha as git_head_sha_via_release,
+    git_modified_files as git_modified_files_via_release,
+    git_push_release as git_push_release_via_release, git_remote_url as git_remote_url_via_release,
+    git_tag_exists as git_tag_exists_via_release, load_release_config,
     load_release_prepared_state as load_release_prepared_state_via_release,
     normalized_expected_files as normalized_expected_files_via_release,
     normalized_repo_files as normalized_repo_files_via_release,
+    read_current_version as read_current_version_via_release,
+    render_changelog_preview_line as render_changelog_preview_line_via_release,
     render_release_execute_plan_json as render_release_execute_plan_json_payload,
     render_release_executed_json as render_release_executed_json_payload,
     render_release_gate_run_json as render_release_gate_run_json_payload,
@@ -25,12 +36,16 @@ use effigy_release::{
     render_release_simulation_json as render_release_simulation_json_payload,
     render_release_status_json as render_release_status_json_payload,
     render_release_verify_install_json as render_release_verify_install_json_payload,
+    render_updated_version_contents as render_updated_version_contents_via_release,
+    render_version_preview_line as render_version_preview_line_via_release,
+    resolve_verify_install_tag as resolve_verify_install_tag_via_release,
     run_release_gate as execute_release_gate,
+    run_release_verify_install as run_release_verify_install_via_release,
     snapshot_mutation_paths as snapshot_mutation_paths_via_release, write_release_prepared_state,
     FileMutationApply, FileMutationPlan, GateExecutionReport, GateResult, ReleaseConfig,
     ReleaseError, ReleaseExecutePlan, ReleaseExecuted, ReleaseGateRun, ReleasePreparePlan,
     ReleasePrepared, ReleaseSimulation, ReleaseStatus, ReleaseVerifyInstall, ResolvedGate,
-    ResolvedSyncFile, ResolvedVersionSource, SyncFileKind, VerificationStepResult, VersionFileKind,
+    ResolvedSyncFile, SyncFileKind,
 };
 
 use super::command_context::{current_working_dir, resolve_repo_root};
@@ -1949,8 +1964,11 @@ fn build_release_prepare_plan_with_gate_report(
                     error,
                 }
             })?;
-        let version_after =
-            render_updated_version_contents(&context.config.version_source, &next_version)?;
+        let version_after = render_updated_version_contents_via_release(
+            &context.config.version_source,
+            &next_version,
+        )
+        .map_err(map_release_error)?;
         let changelog_after = render_prepared_changelog_contents(
             &context.parsed_changelog,
             &next_version,
@@ -1964,21 +1982,21 @@ fn build_release_prepare_plan_with_gate_report(
                 "update version from {} to {}",
                 context.current_version, next_version
             ),
-            before_preview: version_preview_line(
+            before_preview: render_version_preview_line_via_release(
                 &context.config.version_source,
                 &version_before,
                 &context.current_version.to_string(),
             ),
-            after_preview: version_preview_line(
+            after_preview: render_version_preview_line_via_release(
                 &context.config.version_source,
                 &version_after,
                 &next_version.to_string(),
             ),
-            detail_lines: build_version_mutation_detail_lines(
+            detail_lines: build_version_mutation_detail_lines_via_release(
                 &context.config.version_source,
                 &next_version,
             ),
-            diff_preview: build_diff_preview(&version_before, &version_after),
+            diff_preview: build_diff_preview_via_release(&version_before, &version_after),
             apply: FileMutationApply::Write {
                 after_contents: version_after.clone(),
             },
@@ -1994,13 +2012,17 @@ fn build_release_prepare_plan_with_gate_report(
                 "[Unreleased] currently contains {}",
                 format_counts(&context.unreleased_counts)
             ),
-            after_preview: changelog_preview_line(&changelog_after, &next_version, &release_date),
-            detail_lines: build_changelog_mutation_detail_lines(
+            after_preview: render_changelog_preview_line_via_release(
+                &changelog_after,
+                &next_version,
+                &release_date,
+            ),
+            detail_lines: build_changelog_mutation_detail_lines_via_release(
                 &context.unreleased_counts,
                 &next_version,
                 &release_date,
             ),
-            diff_preview: build_diff_preview(&changelog_before, &changelog_after),
+            diff_preview: build_diff_preview_via_release(&changelog_before, &changelog_after),
             apply: FileMutationApply::Write {
                 after_contents: changelog_after.clone(),
             },
@@ -2192,8 +2214,8 @@ fn execute_release_prepare(
         });
     }
 
-    let prepared_branch = git_current_branch(&resolved.resolved_root).ok();
-    let prepared_head = git_head_sha(&resolved.resolved_root).ok();
+    let prepared_branch = git_current_branch_via_release(&resolved.resolved_root).ok();
+    let prepared_head = git_head_sha_via_release(&resolved.resolved_root).ok();
     write_release_prepared_state(
         &state_file,
         &resolved.resolved_root,
@@ -2256,149 +2278,11 @@ fn run_release_verify_install(
     tag: Option<String>,
     repo_url: Option<String>,
 ) -> Result<ReleaseVerifyInstall, RunnerError> {
-    let tag = resolve_verify_install_tag(tag)?;
+    let tag = resolve_verify_install_tag_via_release(tag, std::env::var("GITHUB_REF_NAME").ok())
+        .map_err(map_release_error)?;
     let repo_url = resolve_verify_install_repo_url(resolved, repo_url)?;
-    let temp_root = make_release_temp_dir("verify-install")?;
-    let install_root = temp_root.join("install-root");
-    let fixture_dir = temp_root.join("fixture");
-    std::fs::create_dir_all(&fixture_dir)
-        .map_err(|error| RunnerError::task_invocation_failed_write(&fixture_dir, error))?;
-    write_release_install_fixture(&fixture_dir)?;
-
-    let install_command = vec![
-        "install".to_owned(),
-        "--git".to_owned(),
-        repo_url.clone(),
-        "--tag".to_owned(),
-        tag.clone(),
-        "--root".to_owned(),
-        install_root.display().to_string(),
-        "--force".to_owned(),
-        "effigy".to_owned(),
-    ];
-    let mut results = vec![run_verification_step(
-        "cargo install from git tag",
-        "cargo",
-        &install_command,
-        None,
-    )];
-
-    let mut blockers = Vec::new();
-    if !results[0].passed {
-        blockers.push(format!(
-            "install verification step `{}` failed",
-            results[0].name
-        ));
-        return Ok(ReleaseVerifyInstall {
-            repo_root: resolved.resolved_root.clone(),
-            tag,
-            repo_url,
-            installed_bin: None,
-            configured_check_count: 7,
-            executed_check_count: results.len(),
-            stopped_early: true,
-            results,
-            blockers,
-            verified: false,
-        });
-    }
-
-    let installed_bin = install_root.join("bin/effigy");
-    if !installed_bin.is_file() {
-        blockers.push(format!(
-            "installed binary is missing or not executable: {}",
-            installed_bin.display()
-        ));
-        return Ok(ReleaseVerifyInstall {
-            repo_root: resolved.resolved_root.clone(),
-            tag,
-            repo_url,
-            installed_bin: Some(installed_bin),
-            configured_check_count: 7,
-            executed_check_count: results.len(),
-            stopped_early: true,
-            results,
-            blockers,
-            verified: false,
-        });
-    }
-
-    let verification_checks = vec![
-        (
-            "installed binary help",
-            installed_bin.clone(),
-            vec!["help".to_owned()],
-        ),
-        (
-            "installed binary tasks fixture check",
-            installed_bin.clone(),
-            vec![
-                "tasks".to_owned(),
-                "--repo".to_owned(),
-                fixture_dir.display().to_string(),
-            ],
-        ),
-        (
-            "installed binary prefixed builtin tasks check",
-            installed_bin.clone(),
-            vec![
-                "catalog_a/tasks".to_owned(),
-                "--repo".to_owned(),
-                fixture_dir.display().to_string(),
-            ],
-        ),
-        (
-            "installed binary json help check",
-            installed_bin.clone(),
-            vec!["--json".to_owned(), "help".to_owned()],
-        ),
-        (
-            "installed binary completion check",
-            installed_bin.clone(),
-            vec!["completion".to_owned(), "bash".to_owned()],
-        ),
-        (
-            "installed binary completion candidates check",
-            installed_bin.clone(),
-            vec![
-                "completion".to_owned(),
-                "candidates".to_owned(),
-                "--repo".to_owned(),
-                fixture_dir.display().to_string(),
-            ],
-        ),
-    ];
-
-    let mut stopped_early = false;
-    for (name, program, args) in verification_checks {
-        let result = run_verification_step(name, &program.display().to_string(), &args, None);
-        let passed = result.passed;
-        results.push(result);
-        if !passed {
-            blockers.push(format!(
-                "install verification step `{}` failed",
-                results
-                    .last()
-                    .map(|step| step.name.as_str())
-                    .unwrap_or(name)
-            ));
-            stopped_early = true;
-            break;
-        }
-    }
-
-    Ok(ReleaseVerifyInstall {
-        repo_root: resolved.resolved_root.clone(),
-        tag,
-        repo_url,
-        installed_bin: Some(installed_bin),
-        configured_check_count: 7,
-        executed_check_count: results.len(),
-        stopped_early,
-        blockers: blockers.clone(),
-        verified: blockers.is_empty(),
-        results,
-    })
+    run_release_verify_install_via_release(resolved.resolved_root.clone(), tag, repo_url)
+        .map_err(map_release_error)
 }
 
 fn collect_release_execute_plan(
@@ -2485,25 +2369,25 @@ fn collect_release_execute_plan(
                     blockers
                         .push("prepared release state reports failed or skipped gates".to_owned());
                 }
-                match git_current_branch(&repo_root) {
+                match git_current_branch_via_release(&repo_root) {
                     Ok(current_branch) => branch = Some(current_branch),
-                    Err(message) => blockers.push(message),
+                    Err(error) => blockers.push(error.to_string()),
                 }
-                match git_head_sha(&repo_root) {
+                match git_head_sha_via_release(&repo_root) {
                     Ok(head) => current_head = Some(head),
-                    Err(message) => blockers.push(message),
+                    Err(error) => blockers.push(error.to_string()),
                 }
-                match git_remote_url(&repo_root, "origin") {
+                match git_remote_url_via_release(&repo_root, "origin") {
                     Ok(url) => remote = Some(url),
-                    Err(message) => blockers.push(message),
+                    Err(error) => blockers.push(error.to_string()),
                 }
                 if let Some(prepared_tag) = state.tag.as_deref() {
-                    match git_tag_exists(&repo_root, prepared_tag) {
+                    match git_tag_exists_via_release(&repo_root, prepared_tag) {
                         Ok(true) => blockers.push(format!(
                             "release tag already exists locally: {prepared_tag}"
                         )),
                         Ok(false) => {}
-                        Err(message) => blockers.push(message),
+                        Err(error) => blockers.push(error.to_string()),
                     }
                 }
 
@@ -2512,7 +2396,7 @@ fn collect_release_execute_plan(
                     &repo_root,
                     &state.files_modified,
                 );
-                match git_modified_files(&repo_root) {
+                match git_modified_files_via_release(&repo_root) {
                     Ok(paths) => {
                         modified_files = paths;
                         let expected_set = expected_files.iter().cloned().collect::<BTreeSet<_>>();
@@ -2538,7 +2422,7 @@ fn collect_release_execute_plan(
                             ));
                         }
                     }
-                    Err(message) => blockers.push(message),
+                    Err(error) => blockers.push(error.to_string()),
                 }
 
                 if let Some(fingerprints) = &state.source_fingerprints {
@@ -2695,11 +2579,13 @@ fn execute_release(
     let mut pushed = false;
     let mut state_file_removed = false;
 
-    if let Err(message) = git_add_release_files(&resolved.resolved_root, &state.files_modified) {
-        blockers.push(message);
+    if let Err(error) =
+        git_add_release_files_via_release(&resolved.resolved_root, &state.files_modified)
+    {
+        blockers.push(error.to_string());
     } else {
         emit_release_progress_line("creating release commit");
-        match git_commit_release(
+        match git_commit_release_via_release(
             &resolved.resolved_root,
             commit_message.as_deref().unwrap_or("release: vunknown"),
         ) {
@@ -2707,30 +2593,30 @@ fn execute_release(
                 commit_sha = Some(sha);
                 committed = true;
             }
-            Err(message) => blockers.push(message),
+            Err(error) => blockers.push(error.to_string()),
         }
     }
 
     if blockers.is_empty() {
         if let Some(prepared_tag) = tag.as_deref() {
             emit_release_progress_line(&format!("creating tag `{prepared_tag}`"));
-            match git_create_tag(&resolved.resolved_root, prepared_tag) {
+            match git_create_tag_via_release(&resolved.resolved_root, prepared_tag) {
                 Ok(()) => tag_created = true,
-                Err(message) => blockers.push(message),
+                Err(error) => blockers.push(error.to_string()),
             }
         }
     }
 
     if blockers.is_empty() {
         emit_release_progress_line("pushing release commit and tag");
-        match git_push_release(
+        match git_push_release_via_release(
             &resolved.resolved_root,
             branch.as_deref().unwrap_or("HEAD"),
             "origin",
             tag.as_deref(),
         ) {
             Ok(()) => pushed = true,
-            Err(message) => blockers.push(message),
+            Err(error) => blockers.push(error.to_string()),
         }
     }
 
@@ -2783,7 +2669,8 @@ fn execute_release(
 
 fn load_release_context(root: &Path) -> Result<ReleaseContext, RunnerError> {
     let config = load_release_config(root).map_err(map_release_error)?;
-    let current_version = read_current_version(&config.version_source)?;
+    let current_version =
+        read_current_version_via_release(&config.version_source).map_err(map_release_error)?;
     let raw_changelog = std::fs::read_to_string(&config.changelog_path).map_err(|error| {
         RunnerError::TaskManifestRead {
             path: config.changelog_path.clone(),
@@ -2842,456 +2729,6 @@ fn load_release_context(root: &Path) -> Result<ReleaseContext, RunnerError> {
     })
 }
 
-fn read_current_version(source: &ResolvedVersionSource) -> Result<semver::Version, RunnerError> {
-    match source.kind {
-        VersionFileKind::CargoToml | VersionFileKind::PyProjectToml => read_toml_version(source),
-        VersionFileKind::PackageJson => read_json_version(source),
-        VersionFileKind::PlainText => read_plain_text_version(source),
-    }
-}
-
-fn read_toml_version(source: &ResolvedVersionSource) -> Result<semver::Version, RunnerError> {
-    let raw =
-        std::fs::read_to_string(&source.path).map_err(|error| RunnerError::TaskManifestRead {
-            path: source.path.clone(),
-            error,
-        })?;
-    let parsed = raw
-        .parse::<toml::Value>()
-        .map_err(|error| RunnerError::task_invocation_failed_parse(&source.path, error))?;
-    let version_text = resolve_toml_version_text(source, &parsed)?;
-    parse_semver_from_text(&source.path, &version_text)
-}
-
-fn read_json_version(source: &ResolvedVersionSource) -> Result<semver::Version, RunnerError> {
-    let raw =
-        std::fs::read_to_string(&source.path).map_err(|error| RunnerError::TaskManifestRead {
-            path: source.path.clone(),
-            error,
-        })?;
-    let parsed: serde_json::Value = serde_json::from_str(&raw)
-        .map_err(|error| RunnerError::task_invocation_failed_parse(&source.path, error))?;
-    let path = source.field_path.as_deref().unwrap_or("version");
-    let version_text = json_value_at_path(&parsed, path)
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            RunnerError::task_invocation(format!(
-                "release version path `{path}` was not found in {}",
-                source.path.display()
-            ))
-        })?;
-    parse_semver_from_text(&source.path, version_text)
-}
-
-fn read_plain_text_version(source: &ResolvedVersionSource) -> Result<semver::Version, RunnerError> {
-    let raw =
-        std::fs::read_to_string(&source.path).map_err(|error| RunnerError::TaskManifestRead {
-            path: source.path.clone(),
-            error,
-        })?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(RunnerError::task_invocation(format!(
-            "release version file is empty: {}",
-            source.path.display()
-        )));
-    }
-    parse_semver_from_text(&source.path, trimmed)
-}
-
-fn parse_semver_from_text(path: &Path, version_text: &str) -> Result<semver::Version, RunnerError> {
-    semver::Version::parse(version_text.trim()).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to parse semver version `{}` from {}: {error}",
-            version_text.trim(),
-            path.display()
-        ))
-    })
-}
-
-fn resolve_toml_version_text(
-    source: &ResolvedVersionSource,
-    parsed: &toml::Value,
-) -> Result<String, RunnerError> {
-    if let Some(path) = source.field_path.as_deref() {
-        return toml_value_at_path(parsed, path)
-            .and_then(toml::Value::as_str)
-            .map(ToOwned::to_owned)
-            .ok_or_else(|| {
-                RunnerError::task_invocation(format!(
-                    "release version path `{path}` was not found in {}",
-                    source.path.display()
-                ))
-            });
-    }
-
-    let Some(path) = detect_pyproject_version_path(parsed) else {
-        return Err(RunnerError::task_invocation(format!(
-            "could not find version field in {} (tried `project.version` and `tool.poetry.version`)",
-            source.path.display()
-        )));
-    };
-    toml_value_at_path(parsed, path)
-        .and_then(toml::Value::as_str)
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| {
-            RunnerError::task_invocation(format!(
-                "release version path `{path}` was not found in {}",
-                source.path.display()
-            ))
-        })
-}
-
-fn detect_pyproject_version_path(parsed: &toml::Value) -> Option<&'static str> {
-    ["project.version", "tool.poetry.version"]
-        .into_iter()
-        .find(|path| {
-            toml_value_at_path(parsed, path)
-                .and_then(toml::Value::as_str)
-                .is_some()
-        })
-}
-
-fn render_updated_version_contents(
-    source: &ResolvedVersionSource,
-    new_version: &semver::Version,
-) -> Result<String, RunnerError> {
-    match source.kind {
-        VersionFileKind::CargoToml | VersionFileKind::PyProjectToml => {
-            render_updated_toml_contents(source, new_version)
-        }
-        VersionFileKind::PackageJson => render_updated_json_contents(source, new_version),
-        VersionFileKind::PlainText => Ok(format!("{new_version}\n")),
-    }
-}
-
-fn render_updated_toml_contents(
-    source: &ResolvedVersionSource,
-    new_version: &semver::Version,
-) -> Result<String, RunnerError> {
-    let raw =
-        std::fs::read_to_string(&source.path).map_err(|error| RunnerError::TaskManifestRead {
-            path: source.path.clone(),
-            error,
-        })?;
-    let parsed = raw
-        .parse::<toml::Value>()
-        .map_err(|error| RunnerError::task_invocation_failed_parse(&source.path, error))?;
-    let mut document = raw
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|error| RunnerError::task_invocation_failed_parse(&source.path, error))?;
-    let path = source
-        .field_path
-        .clone()
-        .or_else(|| detect_pyproject_version_path(&parsed).map(ToOwned::to_owned))
-        .ok_or_else(|| {
-            RunnerError::task_invocation(format!(
-                "could not find version field in {}",
-                source.path.display()
-            ))
-        })?;
-    set_toml_document_string_at_path(&mut document, &path, &new_version.to_string())?;
-    Ok(document.to_string())
-}
-
-fn render_updated_json_contents(
-    source: &ResolvedVersionSource,
-    new_version: &semver::Version,
-) -> Result<String, RunnerError> {
-    let raw =
-        std::fs::read_to_string(&source.path).map_err(|error| RunnerError::TaskManifestRead {
-            path: source.path.clone(),
-            error,
-        })?;
-    let parsed: serde_json::Value = serde_json::from_str(&raw)
-        .map_err(|error| RunnerError::task_invocation_failed_parse(&source.path, error))?;
-    let path = source.field_path.as_deref().unwrap_or("version");
-    json_value_at_path(&parsed, path)
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            RunnerError::task_invocation(format!(
-                "release version path `{path}` was not found in {}",
-                source.path.display()
-            ))
-        })?;
-    replace_json_string_at_path_preserving_layout(&raw, path, &new_version.to_string())
-}
-
-fn set_toml_document_string_at_path(
-    document: &mut toml_edit::DocumentMut,
-    path: &str,
-    new_value: &str,
-) -> Result<(), RunnerError> {
-    let segments = path.split('.').collect::<Vec<_>>();
-    let Some((last, parents)) = segments.split_last() else {
-        return Err(RunnerError::task_invocation(
-            "release version path must not be empty".to_owned(),
-        ));
-    };
-
-    let mut current = document.as_item_mut();
-    for segment in parents {
-        current = current.get_mut(*segment).ok_or_else(|| {
-            RunnerError::task_invocation(format!("release version path `{path}` was not found"))
-        })?;
-    }
-    if let Some(existing) = current.get_mut(*last) {
-        let Some(existing_value) = existing.as_value_mut() else {
-            return Err(RunnerError::task_invocation(format!(
-                "release version path `{path}` does not point at a TOML value"
-            )));
-        };
-        let existing_decor = existing_value.decor().clone();
-        *existing_value = toml_edit::Value::from(new_value.to_owned());
-        *existing_value.decor_mut() = existing_decor;
-        return Ok(());
-    }
-
-    let Some(table) = current.as_table_like_mut() else {
-        return Err(RunnerError::task_invocation(format!(
-            "release version path `{path}` does not point at a TOML table"
-        )));
-    };
-    table.insert(last, toml_edit::value(new_value.to_owned()));
-    Ok(())
-}
-
-fn replace_json_string_at_path_preserving_layout(
-    raw: &str,
-    path: &str,
-    new_value: &str,
-) -> Result<String, RunnerError> {
-    let segments = path.split('.').collect::<Vec<_>>();
-    let Some(_) = segments.split_last() else {
-        return Err(RunnerError::task_invocation(
-            "release version path must not be empty".to_owned(),
-        ));
-    };
-    let replacement = serde_json::to_string(new_value).map_err(|error| {
-        RunnerError::task_invocation_failed_render(std::path::Path::new(path), error)
-    })?;
-    let mut index = skip_json_whitespace(raw, 0);
-    let (start, end) = find_json_string_value_span_in_object(raw, &mut index, &segments, path)?;
-    let mut updated =
-        String::with_capacity(raw.len() + replacement.len().saturating_sub(end - start));
-    updated.push_str(&raw[..start]);
-    updated.push_str(&replacement);
-    updated.push_str(&raw[end..]);
-    Ok(updated)
-}
-
-fn find_json_string_value_span_in_object(
-    raw: &str,
-    index: &mut usize,
-    segments: &[&str],
-    path: &str,
-) -> Result<(usize, usize), RunnerError> {
-    let bytes = raw.as_bytes();
-    if *index >= bytes.len() || bytes[*index] != b'{' {
-        return Err(RunnerError::task_invocation(format!(
-            "release version path `{path}` does not point at a JSON object"
-        )));
-    }
-    *index += 1;
-    *index = skip_json_whitespace(raw, *index);
-
-    loop {
-        if *index >= bytes.len() {
-            return Err(RunnerError::task_invocation(
-                "unterminated JSON object while updating release version".to_owned(),
-            ));
-        }
-        if bytes[*index] == b'}' {
-            break;
-        }
-
-        let (key_start, key_end) = parse_json_string_span(raw, *index)?;
-        let key = decode_json_string_literal(&raw[key_start..key_end])?;
-        *index = skip_json_whitespace(raw, key_end);
-        if *index >= bytes.len() || bytes[*index] != b':' {
-            return Err(RunnerError::task_invocation(
-                "invalid JSON object syntax while updating release version".to_owned(),
-            ));
-        }
-        *index = skip_json_whitespace(raw, *index + 1);
-
-        if key == segments[0] {
-            if segments.len() == 1 {
-                return parse_json_string_span(raw, *index).map_err(|_| {
-                    RunnerError::task_invocation(format!(
-                        "release version path `{path}` does not point at a JSON string"
-                    ))
-                });
-            }
-            return find_json_string_value_span_in_object(raw, index, &segments[1..], path);
-        }
-
-        *index = skip_json_value(raw, *index)?;
-        *index = skip_json_whitespace(raw, *index);
-        if *index >= bytes.len() {
-            return Err(RunnerError::task_invocation(
-                "unterminated JSON object while updating release version".to_owned(),
-            ));
-        }
-        match bytes[*index] {
-            b',' => {
-                *index = skip_json_whitespace(raw, *index + 1);
-            }
-            b'}' => break,
-            _ => {
-                return Err(RunnerError::task_invocation(
-                    "invalid JSON object syntax while updating release version".to_owned(),
-                ));
-            }
-        }
-    }
-
-    Err(RunnerError::task_invocation(format!(
-        "release version path `{path}` was not found"
-    )))
-}
-
-fn skip_json_value(raw: &str, index: usize) -> Result<usize, RunnerError> {
-    let bytes = raw.as_bytes();
-    if index >= bytes.len() {
-        return Err(RunnerError::task_invocation(
-            "release version path parsing ran past the end of the JSON document".to_string(),
-        ));
-    }
-
-    match bytes[index] {
-        b'"' => parse_json_string_span(raw, index).map(|(_, end)| end),
-        b'{' => skip_json_object(raw, index),
-        b'[' => skip_json_array(raw, index),
-        b'-' | b'0'..=b'9' => Ok(skip_json_number(raw, index)),
-        b't' if raw[index..].starts_with("true") => Ok(index + 4),
-        b'f' if raw[index..].starts_with("false") => Ok(index + 5),
-        b'n' if raw[index..].starts_with("null") => Ok(index + 4),
-        _ => Err(RunnerError::task_invocation(
-            "invalid JSON value while updating release version".to_owned(),
-        )),
-    }
-}
-
-fn skip_json_object(raw: &str, index: usize) -> Result<usize, RunnerError> {
-    let bytes = raw.as_bytes();
-    let mut cursor = index + 1;
-    cursor = skip_json_whitespace(raw, cursor);
-    loop {
-        if cursor >= bytes.len() {
-            return Err(RunnerError::task_invocation(
-                "unterminated JSON object while updating release version".to_owned(),
-            ));
-        }
-        if bytes[cursor] == b'}' {
-            return Ok(cursor + 1);
-        }
-        let (_, key_end) = parse_json_string_span(raw, cursor)?;
-        cursor = skip_json_whitespace(raw, key_end);
-        if cursor >= bytes.len() || bytes[cursor] != b':' {
-            return Err(RunnerError::task_invocation(
-                "invalid JSON object syntax while updating release version".to_owned(),
-            ));
-        }
-        cursor = skip_json_whitespace(raw, cursor + 1);
-        cursor = skip_json_value(raw, cursor)?;
-        cursor = skip_json_whitespace(raw, cursor);
-        if cursor >= bytes.len() {
-            return Err(RunnerError::task_invocation(
-                "unterminated JSON object while updating release version".to_owned(),
-            ));
-        }
-        match bytes[cursor] {
-            b',' => cursor = skip_json_whitespace(raw, cursor + 1),
-            b'}' => return Ok(cursor + 1),
-            _ => {
-                return Err(RunnerError::task_invocation(
-                    "invalid JSON object syntax while updating release version".to_owned(),
-                ));
-            }
-        }
-    }
-}
-
-fn skip_json_array(raw: &str, index: usize) -> Result<usize, RunnerError> {
-    let bytes = raw.as_bytes();
-    let mut cursor = index + 1;
-    cursor = skip_json_whitespace(raw, cursor);
-    loop {
-        if cursor >= bytes.len() {
-            return Err(RunnerError::task_invocation(
-                "unterminated JSON array while updating release version".to_owned(),
-            ));
-        }
-        if bytes[cursor] == b']' {
-            return Ok(cursor + 1);
-        }
-        cursor = skip_json_value(raw, cursor)?;
-        cursor = skip_json_whitespace(raw, cursor);
-        if cursor >= bytes.len() {
-            return Err(RunnerError::task_invocation(
-                "unterminated JSON array while updating release version".to_owned(),
-            ));
-        }
-        match bytes[cursor] {
-            b',' => cursor = skip_json_whitespace(raw, cursor + 1),
-            b']' => return Ok(cursor + 1),
-            _ => {
-                return Err(RunnerError::task_invocation(
-                    "invalid JSON array syntax while updating release version".to_owned(),
-                ));
-            }
-        }
-    }
-}
-
-fn skip_json_number(raw: &str, index: usize) -> usize {
-    let bytes = raw.as_bytes();
-    let mut cursor = index;
-    while cursor < bytes.len() {
-        match bytes[cursor] {
-            b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E' => cursor += 1,
-            _ => break,
-        }
-    }
-    cursor
-}
-
-fn parse_json_string_span(raw: &str, index: usize) -> Result<(usize, usize), RunnerError> {
-    let bytes = raw.as_bytes();
-    if index >= bytes.len() || bytes[index] != b'"' {
-        return Err(RunnerError::task_invocation(
-            "expected JSON string while updating release version".to_owned(),
-        ));
-    }
-
-    let mut cursor = index + 1;
-    while cursor < bytes.len() {
-        match bytes[cursor] {
-            b'\\' => cursor += 2,
-            b'"' => return Ok((index, cursor + 1)),
-            _ => cursor += 1,
-        }
-    }
-
-    Err(RunnerError::task_invocation(
-        "unterminated JSON string while updating release version".to_owned(),
-    ))
-}
-
-fn decode_json_string_literal(raw: &str) -> Result<String, RunnerError> {
-    serde_json::from_str(raw)
-        .map_err(|error| RunnerError::task_invocation(format!("invalid JSON string: {error}")))
-}
-
-fn skip_json_whitespace(raw: &str, mut index: usize) -> usize {
-    let bytes = raw.as_bytes();
-    while index < bytes.len() && matches!(bytes[index], b' ' | b'\n' | b'\r' | b'\t') {
-        index += 1;
-    }
-    index
-}
-
 fn render_prepared_changelog_contents(
     parsed: &changelog::Changelog,
     next_version: &semver::Version,
@@ -3319,25 +2756,6 @@ fn render_prepared_changelog_contents(
         },
     );
     Ok(changelog::format(&updated))
-}
-
-fn toml_value_at_path<'a>(value: &'a toml::Value, path: &str) -> Option<&'a toml::Value> {
-    let mut current = value;
-    for segment in path.split('.') {
-        current = current.get(segment)?;
-    }
-    Some(current)
-}
-
-fn json_value_at_path<'a>(
-    value: &'a serde_json::Value,
-    path: &str,
-) -> Option<&'a serde_json::Value> {
-    let mut current = value;
-    for segment in path.split('.') {
-        current = current.get(segment)?;
-    }
-    Some(current)
 }
 
 fn unreleased_counts(changelog: &changelog::Changelog) -> BTreeMap<String, usize> {
@@ -3557,17 +2975,6 @@ fn remediation_hints_for_blockers(blockers: &[String], stage: ReleaseBlockedStag
     hints.into_iter().collect()
 }
 
-fn resolve_verify_install_tag(tag: Option<String>) -> Result<String, RunnerError> {
-    tag.or_else(|| std::env::var("GITHUB_REF_NAME").ok())
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            RunnerError::task_invocation(
-                "release verify-install requires `--tag <TAG>` or `GITHUB_REF_NAME`".to_owned(),
-            )
-        })
-}
-
 fn resolve_verify_install_repo_url(
     resolved: &ResolvedTarget,
     repo_url: Option<String>,
@@ -3579,76 +2986,12 @@ fn resolve_verify_install_repo_url(
                 "release verify-install `--repo-url` must not be empty".to_owned(),
             ));
         }
-        return Ok(normalize_verify_install_repo_url(&trimmed));
+        return Ok(effigy_release::normalize_verify_install_repo_url(&trimmed));
     }
 
     let detected =
-        git_remote_url(&resolved.resolved_root, "origin").map_err(RunnerError::task_invocation)?;
-    Ok(normalize_verify_install_repo_url(&detected))
-}
-
-fn make_release_temp_dir(purpose: &str) -> Result<PathBuf, RunnerError> {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| {
-            RunnerError::task_invocation(format!("failed to read system time: {error}"))
-        })?
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("effigy-release-{purpose}-{ts}"));
-    std::fs::create_dir_all(&root)
-        .map_err(|error| RunnerError::task_invocation_failed_write(&root, error))?;
-    Ok(root)
-}
-
-fn write_release_install_fixture(path: &Path) -> Result<(), RunnerError> {
-    std::fs::write(
-        path.join("effigy.toml"),
-        "[catalog]\nalias = \"catalog_a\"\n\n[tasks]\nnoop = \"echo noop\"\n",
-    )
-    .map_err(|error| RunnerError::task_invocation_failed_write(&path.join("effigy.toml"), error))
-}
-
-fn run_verification_step(
-    name: &str,
-    program: &str,
-    args: &[String],
-    cwd: Option<&Path>,
-) -> VerificationStepResult {
-    let mut command = ProcessCommand::new(program);
-    command.args(args);
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    let started = Instant::now();
-    match command.output() {
-        Ok(output) => VerificationStepResult {
-            name: name.to_owned(),
-            command: format_command(program, args),
-            passed: output.status.success(),
-            exit_code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).trim().to_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-            launch_error: None,
-            duration_ms: started.elapsed().as_millis(),
-        },
-        Err(error) => VerificationStepResult {
-            name: name.to_owned(),
-            command: format_command(program, args),
-            passed: false,
-            exit_code: None,
-            stdout: String::new(),
-            stderr: String::new(),
-            launch_error: Some(error.to_string()),
-            duration_ms: started.elapsed().as_millis(),
-        },
-    }
-}
-
-fn format_command(program: &str, args: &[String]) -> String {
-    if args.is_empty() {
-        return program.to_owned();
-    }
-    format!("{program} {}", args.join(" "))
+        git_remote_url_via_release(&resolved.resolved_root, "origin").map_err(map_release_error)?;
+    Ok(effigy_release::normalize_verify_install_repo_url(&detected))
 }
 
 fn build_sync_mutations(sync_files: &[ResolvedSyncFile]) -> Vec<FileMutationPlan> {
@@ -3692,288 +3035,6 @@ fn format_release_progress_duration(duration_ms: u128) -> String {
     } else {
         format!("{duration_ms}ms")
     }
-}
-
-fn git_modified_files(repo_root: &Path) -> Result<Vec<String>, String> {
-    let repo_check = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .arg("rev-parse")
-        .arg("--is-inside-work-tree")
-        .output()
-        .map_err(|error| format!("failed to inspect git repository: {error}"))?;
-    if !repo_check.status.success() || String::from_utf8_lossy(&repo_check.stdout).trim() != "true"
-    {
-        return Err(format!(
-            "release execute requires a git work tree at {}",
-            repo_root.display()
-        ));
-    }
-
-    let output = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["status", "--porcelain=v1", "--untracked-files=all"])
-        .output()
-        .map_err(|error| format!("failed to inspect git working tree: {error}"))?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(if detail.is_empty() {
-            "failed to inspect git working tree".to_owned()
-        } else {
-            format!("failed to inspect git working tree: {detail}")
-        });
-    }
-
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|error| format!("git status output was not utf-8: {error}"))?;
-    let mut paths = stdout
-        .lines()
-        .filter_map(parse_git_status_path)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    paths.sort();
-    Ok(paths)
-}
-
-fn parse_git_status_path(line: &str) -> Option<String> {
-    let raw_path = line.get(3..)?.trim();
-    if raw_path.is_empty() {
-        return None;
-    }
-    let path = raw_path
-        .split_once(" -> ")
-        .map(|(_, new_path)| new_path)
-        .unwrap_or(raw_path)
-        .trim();
-    if path.is_empty() {
-        None
-    } else {
-        Some(path.to_owned())
-    }
-}
-
-fn git_current_branch(repo_root: &Path) -> Result<String, String> {
-    let output = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
-        .output()
-        .map_err(|error| format!("failed to resolve current branch: {error}"))?;
-    if !output.status.success() {
-        return Err("release execute requires a checked-out branch".to_owned());
-    }
-    let branch = String::from_utf8(output.stdout)
-        .map_err(|error| format!("git branch output was not utf-8: {error}"))?;
-    let trimmed = branch.trim();
-    if trimmed.is_empty() {
-        Err("release execute requires a checked-out branch".to_owned())
-    } else {
-        Ok(trimmed.to_owned())
-    }
-}
-
-fn git_head_sha(repo_root: &Path) -> Result<String, String> {
-    let output = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .map_err(|error| format!("failed to resolve current HEAD: {error}"))?;
-    if !output.status.success() {
-        return Err("release execute requires a readable current HEAD".to_owned());
-    }
-    let sha = String::from_utf8(output.stdout)
-        .map_err(|error| format!("git HEAD output was not utf-8: {error}"))?;
-    let trimmed = sha.trim();
-    if trimmed.is_empty() {
-        Err("release execute requires a readable current HEAD".to_owned())
-    } else {
-        Ok(trimmed.to_owned())
-    }
-}
-
-fn git_remote_url(repo_root: &Path, remote: &str) -> Result<String, String> {
-    let output = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["remote", "get-url", remote])
-        .output()
-        .map_err(|error| format!("failed to inspect git remote `{remote}`: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "release execute requires a configured `{remote}` remote"
-        ));
-    }
-    let url = String::from_utf8(output.stdout)
-        .map_err(|error| format!("git remote output was not utf-8: {error}"))?;
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        Err(format!(
-            "release execute requires a configured `{remote}` remote"
-        ))
-    } else {
-        Ok(trimmed.to_owned())
-    }
-}
-
-fn normalize_verify_install_repo_url(repo_url: &str) -> String {
-    let trimmed = repo_url.trim();
-    if trimmed.is_empty()
-        || trimmed.contains("://")
-        || trimmed.starts_with('/')
-        || trimmed.starts_with("./")
-        || trimmed.starts_with("../")
-        || trimmed.starts_with("~/")
-    {
-        return trimmed.to_owned();
-    }
-
-    if let Some((host_part, path_part)) = trimmed.split_once(':') {
-        if !path_part.is_empty()
-            && path_part.contains('/')
-            && !path_part.starts_with('/')
-            && (host_part.contains('@') || host_part.contains('.'))
-        {
-            return format!("ssh://{host_part}/{}", path_part.trim_start_matches('/'));
-        }
-    }
-
-    trimmed.to_owned()
-}
-
-fn git_tag_exists(repo_root: &Path, tag: &str) -> Result<bool, String> {
-    let output = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args([
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("refs/tags/{tag}"),
-        ])
-        .output()
-        .map_err(|error| format!("failed to inspect local git tags: {error}"))?;
-    Ok(output.status.success())
-}
-
-fn git_add_release_files(repo_root: &Path, files: &[PathBuf]) -> Result<(), String> {
-    let mut command = ProcessCommand::new("git");
-    command.arg("-C").arg(repo_root).arg("add");
-    for path in files {
-        let relative = path.strip_prefix(repo_root).unwrap_or(path);
-        command.arg(relative);
-    }
-    let output = command
-        .output()
-        .map_err(|error| format!("failed to stage release files: {error}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        Err(if stderr.is_empty() {
-            "failed to stage release files".to_owned()
-        } else {
-            format!("failed to stage release files: {stderr}")
-        })
-    }
-}
-
-fn git_commit_release(repo_root: &Path, message: &str) -> Result<String, String> {
-    let output = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["commit", "-m", message])
-        .output()
-        .map_err(|error| format!("failed to create release commit: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(if stderr.is_empty() {
-            "failed to create release commit".to_owned()
-        } else {
-            format!("failed to create release commit: {stderr}")
-        });
-    }
-
-    let rev = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .map_err(|error| format!("failed to read release commit sha: {error}"))?;
-    if !rev.status.success() {
-        return Err("failed to read release commit sha".to_owned());
-    }
-    let sha = String::from_utf8(rev.stdout)
-        .map_err(|error| format!("git rev-parse output was not utf-8: {error}"))?;
-    Ok(sha.trim().to_owned())
-}
-
-fn git_create_tag(repo_root: &Path, tag: &str) -> Result<(), String> {
-    let output = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["tag", tag])
-        .output()
-        .map_err(|error| format!("failed to create release tag `{tag}`: {error}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        Err(if stderr.is_empty() {
-            format!("failed to create release tag `{tag}`")
-        } else {
-            format!("failed to create release tag `{tag}`: {stderr}")
-        })
-    }
-}
-
-fn git_push_release(
-    repo_root: &Path,
-    branch: &str,
-    remote: &str,
-    tag: Option<&str>,
-) -> Result<(), String> {
-    let branch_output = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["push", remote, branch])
-        .output()
-        .map_err(|error| format!("failed to push release branch to `{remote}`: {error}"))?;
-    if !branch_output.status.success() {
-        let stderr = String::from_utf8_lossy(&branch_output.stderr)
-            .trim()
-            .to_owned();
-        return Err(if stderr.is_empty() {
-            format!("failed to push release branch to `{remote}`")
-        } else {
-            format!("failed to push release branch to `{remote}`: {stderr}")
-        });
-    }
-
-    if let Some(tag) = tag {
-        let tag_output = ProcessCommand::new("git")
-            .arg("-C")
-            .arg(repo_root)
-            .args(["push", remote, tag])
-            .output()
-            .map_err(|error| {
-                format!("failed to push release tag `{tag}` to `{remote}`: {error}")
-            })?;
-        if !tag_output.status.success() {
-            let stderr = String::from_utf8_lossy(&tag_output.stderr)
-                .trim()
-                .to_owned();
-            return Err(if stderr.is_empty() {
-                format!("failed to push release tag `{tag}` to `{remote}`")
-            } else {
-                format!("failed to push release tag `{tag}` to `{remote}`: {stderr}")
-            });
-        }
-    }
-
-    Ok(())
 }
 
 fn build_post_release_instructions(tag: Option<&str>) -> Vec<String> {
@@ -4918,121 +3979,28 @@ fn format_counts(counts: &BTreeMap<String, usize>) -> String {
     format!("{total} ({details})")
 }
 
-fn version_preview_line(source: &ResolvedVersionSource, content: &str, version: &str) -> String {
-    match source.kind {
-        VersionFileKind::PlainText => version.to_owned(),
-        _ => line_containing(content, version).unwrap_or_else(|| format!("version = {version}")),
-    }
-}
-
-fn changelog_preview_line(content: &str, version: &semver::Version, release_date: &str) -> String {
-    let heading = format!("## [{version}] - {release_date}");
-    line_containing(content, &heading).unwrap_or(heading)
-}
-
-fn build_version_mutation_detail_lines(
-    source: &ResolvedVersionSource,
-    selected_version: &semver::Version,
-) -> Vec<String> {
-    let mut details = vec![format!("format: {}", source.kind.format_label())];
-    if let Some(field_path) = &source.field_path {
-        details.push(format!("field path: {field_path}"));
-    } else {
-        details.push("field path: direct file contents".to_owned());
-    }
-    details.push(format!("selected version: {selected_version}"));
-    details
-}
-
-fn build_changelog_mutation_detail_lines(
-    unreleased_counts: &BTreeMap<String, usize>,
-    version: &semver::Version,
-    release_date: &str,
-) -> Vec<String> {
-    vec![
-        format!(
-            "unreleased entries before release: {}",
-            format_counts(unreleased_counts)
-        ),
-        format!("release heading: ## [{version}] - {release_date}"),
-        "unreleased section remains present after promotion".to_owned(),
-    ]
-}
-
-fn truncate_diff_line(line: &str) -> String {
-    const MAX_CHARS: usize = 100;
-    let mut chars = line.chars();
-    let truncated: String = chars.by_ref().take(MAX_CHARS).collect();
-    if chars.next().is_some() {
-        format!("{truncated}...")
-    } else {
-        truncated
-    }
-}
-
-fn build_diff_preview(before: &str, after: &str) -> Vec<String> {
-    const MAX_CHANGED_PAIRS: usize = 3;
-
-    let before_lines: Vec<&str> = before.lines().collect();
-    let after_lines: Vec<&str> = after.lines().collect();
-    let max_len = before_lines.len().max(after_lines.len());
-    let mut preview = Vec::new();
-    let mut changed_pairs = 0usize;
-    let mut remaining_pairs = 0usize;
-
-    for index in 0..max_len {
-        let before_line = before_lines.get(index).copied();
-        let after_line = after_lines.get(index).copied();
-        if before_line == after_line {
-            continue;
-        }
-
-        if changed_pairs < MAX_CHANGED_PAIRS {
-            if let Some(line) = before_line {
-                preview.push(format!("- {}", truncate_diff_line(line)));
-            }
-            if let Some(line) = after_line {
-                preview.push(format!("+ {}", truncate_diff_line(line)));
-            }
-            changed_pairs += 1;
-        } else {
-            remaining_pairs += 1;
-        }
-    }
-
-    if remaining_pairs > 0 {
-        preview.push(format!("... {remaining_pairs} more changed line(s)"));
-    }
-
-    preview
-}
-
-fn line_containing(content: &str, needle: &str) -> Option<String> {
-    content
-        .lines()
-        .find(|line| line.contains(needle))
-        .map(|line| line.trim().to_owned())
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        build_diff_preview, changelog_preview_line, detect_pyproject_version_path,
-        format_release_progress_duration, format_release_tag, json_value_at_path,
-        load_release_config, normalize_verify_install_repo_url,
+        format_release_progress_duration, format_release_tag, load_release_config,
         parse_indexed_review_inspection_request, parse_prepare_mutation_inspection_request,
         remediation_hints_for_blockers, render_execute_review_menu_lines,
         render_prepare_review_menu_lines, render_prepared_changelog_contents,
-        render_updated_version_contents, replace_json_string_at_path_preserving_layout,
-        resolve_verify_install_repo_url, review_label, suggested_bump, toml_value_at_path,
+        resolve_verify_install_repo_url, review_label, suggested_bump,
         validate_prepare_version_override, ExecuteReviewState, PrepareReviewState,
         ReleaseBlockedStage, ReleaseConfig, ReleaseContext, ReleaseExecutePlan, ReleasePreparePlan,
-        ResolvedVersionSource, SyncFileKind, VersionFileKind,
+        SyncFileKind,
     };
     use crate::changelog::BumpKind;
     use crate::resolver::ResolvedTarget;
     use crate::tasks::ResolutionMode;
-    use effigy_release::{detect_version_file_kind, resolve_version_field_path};
+    use effigy_release::normalize_verify_install_repo_url;
+    use effigy_release::{
+        build_diff_preview, detect_pyproject_version_path, detect_version_file_kind,
+        json_value_at_path, render_changelog_preview_line as changelog_preview_line,
+        render_updated_version_contents, replace_json_string_at_path_preserving_layout,
+        resolve_version_field_path, toml_value_at_path, ResolvedVersionSource, VersionFileKind,
+    };
 
     #[test]
     fn version_file_kind_detection_matches_supported_names() {

@@ -9,7 +9,7 @@ Roadmap: `g02.007`
 The container lane is paused on a trustworthy v1 boundary.
 
 The modularization lane is active again because the user does not consider the
-remaining CLI and TUI shell weight release-ready yet.
+remaining TUI shell weight release-ready yet.
 
 The shipped distribution surface now has:
 
@@ -58,8 +58,8 @@ The release-prep hardening chain is real:
   `cargo run --bin effigy`
 
 That closes the release-prep hardening detour, but release closure is queued
-again until the remaining CLI shell and TUI/browser modularization question is
-settled honestly.
+again until the remaining demo-browser TUI modularization question is settled
+honestly.
 
 ## Batch Model
 
@@ -90,5 +90,4 @@ claims.
 
 Keep
 [`115-implement-effigy-distribution-release-closure.md`](./batch-cards/115-implement-effigy-distribution-release-closure.md)
-queued while `g02.010` resolves the remaining shell-seam modularization
-boundary.
+queued while `g02.010` resolves the remaining demo-browser TUI shell seam.

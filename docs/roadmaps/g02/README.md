@@ -20,7 +20,7 @@ Current milestones:
 - [`007-distribution-release-and-consumer-rollout.md`](./007-distribution-release-and-consumer-rollout.md) (in progress; release closure is queued again while the remaining TUI shell is still being reduced)
 - [`008-demo-and-manifest-import-rollout.md`](./008-demo-and-manifest-import-rollout.md) (planned; complete manifest-import adoption and demo rollout across the intended repo cohort)
 - [`009-vault-backed-varlock-rollout.md`](./009-vault-backed-varlock-rollout.md) (planned; turn the shipped env-schema/varlock foundation into a vault-backed consumer rollout program)
-- [`010-effigy-modularization-and-crate-boundaries.md`](./010-effigy-modularization-and-crate-boundaries.md) (in progress; the backbone plus domain crates are real, the browser/TUI seam is paused on a clean adapter boundary, the demo runner seam is paused on an honest shell boundary, the release verify-install, git-execute, and version-preview slices are now extracted, the release seam is still open, and the next move is changelog workspace extraction and release adoption)
+- [`010-effigy-modularization-and-crate-boundaries.md`](./010-effigy-modularization-and-crate-boundaries.md) (in progress; the backbone plus domain crates are real, the browser/TUI seam is paused on a clean adapter boundary, the demo runner seam is paused on an honest shell boundary, the changelog workspace seam is now extracted, the release seam is narrower again, and the next move is the post-changelog boundary decision)
 - [`011-service-catalog-and-compose-assembly.md`](./011-service-catalog-and-compose-assembly.md) (planned; eliminate compose boilerplate by assembling docker-compose.yml from a manifest-declared service catalog with bundled, overridable fragments)
 - [`012-container-context-and-transparent-execution.md`](./012-container-context-and-transparent-execution.md) (planned; mark a container as the project's execution context so task routing implicitly goes through it)
 - [`013-dev-front-door-and-managed-lifecycle.md`](./013-dev-front-door-and-managed-lifecycle.md) (planned; single-command `effigy dev` front door using the managed-process concurrent runtime with embedded terminal and health gate)
@@ -36,7 +36,7 @@ Active strict planning lane:
 
 - [`../specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`](../specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md)
 - active ready card:
-  [`../specs/batch-cards/181-implement-effigy-changelog-workspace-extraction-and-release-adoption.md`](../specs/batch-cards/181-implement-effigy-changelog-workspace-extraction-and-release-adoption.md)
+  [`../specs/batch-cards/182-decide-post-changelog-workspace-extraction-boundary.md`](../specs/batch-cards/182-decide-post-changelog-workspace-extraction-boundary.md)
 
 Queued release card:
 
@@ -50,5 +50,5 @@ Rules:
 
 ## Next Task
 
-Execute `181` to extract the changelog surface into its own workspace crate and
-reconnect release prep through that boundary.
+Execute `182` to decide whether the remaining release shell is now honest
+enough to pause or still needs one final bounded extraction.

@@ -146,18 +146,68 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`140-implement-effigy-doctor-report-and-projection-extraction.md`](./140-implement-effigy-doctor-report-and-projection-extraction.md) (complete)
 - [`141-decide-post-doctor-report-and-projection-extraction-boundary.md`](./141-decide-post-doctor-report-and-projection-extraction-boundary.md) (complete)
 - [`142-decide-modularization-pause-boundary-before-v0-3-release-resumption.md`](./142-decide-modularization-pause-boundary-before-v0-3-release-resumption.md) (complete)
-- [`143-decide-cli-shell-and-tui-modularization-follow-up.md`](./143-decide-cli-shell-and-tui-modularization-follow-up.md) (ready)
+- [`143-decide-cli-shell-and-tui-modularization-follow-up.md`](./143-decide-cli-shell-and-tui-modularization-follow-up.md) (complete)
+- [`144-implement-effigy-cli-foundation-extraction.md`](./144-implement-effigy-cli-foundation-extraction.md) (complete)
+- [`145-implement-effigy-tui-foundation-extraction.md`](./145-implement-effigy-tui-foundation-extraction.md) (complete)
+- [`146-implement-effigy-multiprocess-tui-foundation-extraction.md`](./146-implement-effigy-multiprocess-tui-foundation-extraction.md) (complete)
+- [`147-implement-effigy-demo-browser-tui-foundation-extraction.md`](./147-implement-effigy-demo-browser-tui-foundation-extraction.md) (complete)
+- [`148-implement-effigy-demo-browser-terminal-and-live-session-extraction.md`](./148-implement-effigy-demo-browser-terminal-and-live-session-extraction.md) (complete)
+- [`149-implement-effigy-demo-browser-app-flow-and-overlay-runtime-extraction.md`](./149-implement-effigy-demo-browser-app-flow-and-overlay-runtime-extraction.md) (complete)
+- [`150-implement-effigy-demo-browser-state-machine-and-command-bridge-extraction.md`](./150-implement-effigy-demo-browser-state-machine-and-command-bridge-extraction.md) (complete)
+- [`151-implement-effigy-demo-browser-effect-loop-and-runner-bridge-extraction.md`](./151-implement-effigy-demo-browser-effect-loop-and-runner-bridge-extraction.md) (complete)
+- [`152-implement-effigy-demo-browser-event-loop-and-terminal-shell-extraction.md`](./152-implement-effigy-demo-browser-event-loop-and-terminal-shell-extraction.md) (complete)
+- [`153-implement-effigy-demo-browser-runner-bridge-and-overlay-loop-extraction.md`](./153-implement-effigy-demo-browser-runner-bridge-and-overlay-loop-extraction.md) (complete)
+- [`154-implement-effigy-demo-browser-runtime-command-bridge-extraction.md`](./154-implement-effigy-demo-browser-runtime-command-bridge-extraction.md) (complete)
+- [`155-implement-effigy-demo-browser-refresh-lifecycle-and-run-loop-extraction.md`](./155-implement-effigy-demo-browser-refresh-lifecycle-and-run-loop-extraction.md) (complete)
+- [`156-implement-effigy-demo-browser-refresh-load-and-render-extraction.md`](./156-implement-effigy-demo-browser-refresh-load-and-render-extraction.md) (complete)
+- [`157-implement-effigy-demo-browser-command-and-process-shell-extraction.md`](./157-implement-effigy-demo-browser-command-and-process-shell-extraction.md) (complete)
+- [`158-implement-effigy-demo-browser-host-bridge-and-event-loop-extraction.md`](./158-implement-effigy-demo-browser-host-bridge-and-event-loop-extraction.md) (complete)
+- [`159-implement-effigy-demo-browser-event-loop-and-terminal-process-shell-extraction.md`](./159-implement-effigy-demo-browser-event-loop-and-terminal-process-shell-extraction.md) (complete)
+- [`160-implement-effigy-demo-browser-runtime-executor-and-process-shell-extraction.md`](./160-implement-effigy-demo-browser-runtime-executor-and-process-shell-extraction.md) (complete)
+- [`161-implement-effigy-demo-browser-terminal-bootstrap-and-runtime-boundary-extraction.md`](./161-implement-effigy-demo-browser-terminal-bootstrap-and-runtime-boundary-extraction.md) (complete)
+- [`162-decide-post-demo-browser-runtime-boundary.md`](./162-decide-post-demo-browser-runtime-boundary.md) (complete)
+- [`163-implement-effigy-demo-browser-host-runtime-loop-extraction.md`](./163-implement-effigy-demo-browser-host-runtime-loop-extraction.md) (complete)
+- [`164-decide-post-demo-browser-host-runtime-loop-boundary.md`](./164-decide-post-demo-browser-host-runtime-loop-boundary.md) (complete)
+- [`165-implement-effigy-demo-runner-runtime-and-persistence-follow-up-extraction.md`](./165-implement-effigy-demo-runner-runtime-and-persistence-follow-up-extraction.md) (complete)
+- [`166-decide-post-demo-runner-runtime-and-persistence-follow-up-boundary.md`](./166-decide-post-demo-runner-runtime-and-persistence-follow-up-boundary.md) (complete)
+- [`167-implement-effigy-demo-record-and-projection-follow-up-extraction.md`](./167-implement-effigy-demo-record-and-projection-follow-up-extraction.md) (complete)
+- [`168-decide-post-demo-record-and-projection-follow-up-boundary.md`](./168-decide-post-demo-record-and-projection-follow-up-boundary.md) (complete)
+- [`169-implement-effigy-demo-execution-runtime-and-attempt-follow-up-extraction.md`](./169-implement-effigy-demo-execution-runtime-and-attempt-follow-up-extraction.md) (complete)
+- [`170-decide-post-demo-execution-runtime-and-attempt-follow-up-boundary.md`](./170-decide-post-demo-execution-runtime-and-attempt-follow-up-boundary.md) (complete)
+- [`171-implement-effigy-demo-runtime-control-and-process-follow-up-extraction.md`](./171-implement-effigy-demo-runtime-control-and-process-follow-up-extraction.md) (complete)
+- [`172-decide-post-demo-runtime-control-and-process-follow-up-boundary.md`](./172-decide-post-demo-runtime-control-and-process-follow-up-boundary.md) (complete)
+- [`173-implement-effigy-demo-managed-runtime-and-backend-follow-up-extraction.md`](./173-implement-effigy-demo-managed-runtime-and-backend-follow-up-extraction.md) (complete)
+- [`174-decide-post-demo-managed-runtime-and-backend-follow-up-boundary.md`](./174-decide-post-demo-managed-runtime-and-backend-follow-up-boundary.md) (complete)
+- [`175-implement-effigy-release-git-and-verify-install-follow-up-extraction.md`](./175-implement-effigy-release-git-and-verify-install-follow-up-extraction.md) (complete)
+- [`176-decide-post-release-verify-install-follow-up-boundary.md`](./176-decide-post-release-verify-install-follow-up-boundary.md) (complete)
+- [`177-implement-effigy-release-git-execute-follow-up-extraction.md`](./177-implement-effigy-release-git-execute-follow-up-extraction.md) (complete)
+- [`178-decide-post-release-git-execute-follow-up-boundary.md`](./178-decide-post-release-git-execute-follow-up-boundary.md) (complete)
+- [`179-implement-effigy-release-version-and-preview-follow-up-extraction.md`](./179-implement-effigy-release-version-and-preview-follow-up-extraction.md) (complete)
+- [`180-decide-post-release-version-and-preview-follow-up-boundary.md`](./180-decide-post-release-version-and-preview-follow-up-boundary.md) (complete)
+- [`181-implement-effigy-changelog-workspace-extraction-and-release-adoption.md`](./181-implement-effigy-changelog-workspace-extraction-and-release-adoption.md) (complete)
+- [`182-decide-post-changelog-workspace-extraction-boundary.md`](./182-decide-post-changelog-workspace-extraction-boundary.md) (ready)
 
 ## Active Ready Card
 
-- [`143-decide-cli-shell-and-tui-modularization-follow-up.md`](./143-decide-cli-shell-and-tui-modularization-follow-up.md)
+- [`182-decide-post-changelog-workspace-extraction-boundary.md`](./182-decide-post-changelog-workspace-extraction-boundary.md)
 
 ## Recent Boundary Decision
 
 - [`142-decide-modularization-pause-boundary-before-v0-3-release-resumption.md`](./142-decide-modularization-pause-boundary-before-v0-3-release-resumption.md)
 - [`143-decide-cli-shell-and-tui-modularization-follow-up.md`](./143-decide-cli-shell-and-tui-modularization-follow-up.md)
+- [`144-implement-effigy-cli-foundation-extraction.md`](./144-implement-effigy-cli-foundation-extraction.md)
+- [`145-implement-effigy-tui-foundation-extraction.md`](./145-implement-effigy-tui-foundation-extraction.md)
+- [`146-implement-effigy-multiprocess-tui-foundation-extraction.md`](./146-implement-effigy-multiprocess-tui-foundation-extraction.md)
+- [`147-implement-effigy-demo-browser-tui-foundation-extraction.md`](./147-implement-effigy-demo-browser-tui-foundation-extraction.md)
+- [`148-implement-effigy-demo-browser-terminal-and-live-session-extraction.md`](./148-implement-effigy-demo-browser-terminal-and-live-session-extraction.md)
+- [`149-implement-effigy-demo-browser-app-flow-and-overlay-runtime-extraction.md`](./149-implement-effigy-demo-browser-app-flow-and-overlay-runtime-extraction.md)
+- [`150-implement-effigy-demo-browser-state-machine-and-command-bridge-extraction.md`](./150-implement-effigy-demo-browser-state-machine-and-command-bridge-extraction.md)
+- [`151-implement-effigy-demo-browser-effect-loop-and-runner-bridge-extraction.md`](./151-implement-effigy-demo-browser-effect-loop-and-runner-bridge-extraction.md)
+- [`152-implement-effigy-demo-browser-event-loop-and-terminal-shell-extraction.md`](./152-implement-effigy-demo-browser-event-loop-and-terminal-shell-extraction.md)
+- [`153-implement-effigy-demo-browser-runner-bridge-and-overlay-loop-extraction.md`](./153-implement-effigy-demo-browser-runner-bridge-and-overlay-loop-extraction.md)
+- [`154-implement-effigy-demo-browser-runtime-command-bridge-extraction.md`](./154-implement-effigy-demo-browser-runtime-command-bridge-extraction.md)
 
 ## Next Task
 
-Execute `143` to decide the next real CLI or TUI modularization seam before
-release closure resumes.
+Execute `182` to decide whether the remaining release shell is now honest
+enough to pause or still needs one final bounded extraction.

@@ -65,6 +65,44 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/16-180018-effigy-changelog-workspace-extraction-and-release-adoption.md`](./2026-04/16-180018-effigy-changelog-workspace-extraction-and-release-adoption.md)
+- [`2026-04/16-175500-post-release-version-and-preview-follow-up-boundary-decision.md`](./2026-04/16-175500-post-release-version-and-preview-follow-up-boundary-decision.md)
+- [`2026-04/16-174500-effigy-release-version-and-preview-follow-up-extraction.md`](./2026-04/16-174500-effigy-release-version-and-preview-follow-up-extraction.md)
+- [`2026-04/16-172508-post-release-git-execute-follow-up-boundary-decision.md`](./2026-04/16-172508-post-release-git-execute-follow-up-boundary-decision.md)
+- [`2026-04/16-171500-effigy-release-git-execute-follow-up-extraction.md`](./2026-04/16-171500-effigy-release-git-execute-follow-up-extraction.md)
+- [`2026-04/16-165909-post-release-verify-install-follow-up-boundary-decision.md`](./2026-04/16-165909-post-release-verify-install-follow-up-boundary-decision.md)
+- [`2026-04/16-165132-effigy-release-git-and-verify-install-follow-up-extraction.md`](./2026-04/16-165132-effigy-release-git-and-verify-install-follow-up-extraction.md)
+- [`2026-04/16-164056-post-demo-managed-runtime-and-backend-follow-up-boundary-decision.md`](./2026-04/16-164056-post-demo-managed-runtime-and-backend-follow-up-boundary-decision.md)
+- [`2026-04/16-161008-effigy-demo-managed-runtime-and-backend-follow-up-extraction.md`](./2026-04/16-161008-effigy-demo-managed-runtime-and-backend-follow-up-extraction.md)
+- [`2026-04/16-160108-post-demo-runtime-control-and-process-follow-up-boundary-decision.md`](./2026-04/16-160108-post-demo-runtime-control-and-process-follow-up-boundary-decision.md)
+- [`2026-04/16-162500-effigy-demo-runtime-control-and-process-follow-up-extraction.md`](./2026-04/16-162500-effigy-demo-runtime-control-and-process-follow-up-extraction.md)
+- [`2026-04/16-160500-post-demo-execution-runtime-and-attempt-follow-up-boundary-decision.md`](./2026-04/16-160500-post-demo-execution-runtime-and-attempt-follow-up-boundary-decision.md)
+- [`2026-04/16-154500-effigy-demo-execution-runtime-and-attempt-follow-up-extraction.md`](./2026-04/16-154500-effigy-demo-execution-runtime-and-attempt-follow-up-extraction.md)
+- [`2026-04/16-152500-post-demo-record-and-projection-follow-up-boundary-decision.md`](./2026-04/16-152500-post-demo-record-and-projection-follow-up-boundary-decision.md)
+- [`2026-04/16-150500-effigy-demo-record-and-projection-follow-up-extraction.md`](./2026-04/16-150500-effigy-demo-record-and-projection-follow-up-extraction.md)
+- [`2026-04/16-143706-post-demo-runner-runtime-and-persistence-follow-up-boundary-decision.md`](./2026-04/16-143706-post-demo-runner-runtime-and-persistence-follow-up-boundary-decision.md)
+- [`2026-04/16-135022-effigy-demo-runner-runtime-and-persistence-follow-up-extraction.md`](./2026-04/16-135022-effigy-demo-runner-runtime-and-persistence-follow-up-extraction.md)
+- [`2026-04/16-135022-post-demo-browser-host-runtime-loop-boundary-decision.md`](./2026-04/16-135022-post-demo-browser-host-runtime-loop-boundary-decision.md)
+- [`2026-04/16-135022-effigy-demo-browser-host-runtime-loop-extraction.md`](./2026-04/16-135022-effigy-demo-browser-host-runtime-loop-extraction.md)
+- [`2026-04/16-134143-post-demo-browser-runtime-boundary-decision.md`](./2026-04/16-134143-post-demo-browser-runtime-boundary-decision.md)
+- [`2026-04/16-133938-effigy-demo-browser-terminal-bootstrap-and-runtime-boundary-extraction.md`](./2026-04/16-133938-effigy-demo-browser-terminal-bootstrap-and-runtime-boundary-extraction.md)
+- [`2026-04/16-123601-effigy-demo-browser-runtime-executor-and-process-shell-extraction.md`](./2026-04/16-123601-effigy-demo-browser-runtime-executor-and-process-shell-extraction.md)
+- [`2026-04/16-121822-effigy-demo-browser-event-loop-and-terminal-process-shell-extraction.md`](./2026-04/16-121822-effigy-demo-browser-event-loop-and-terminal-process-shell-extraction.md)
+- [`2026-04/16-120704-effigy-demo-browser-host-bridge-and-event-loop-extraction.md`](./2026-04/16-120704-effigy-demo-browser-host-bridge-and-event-loop-extraction.md)
+- [`2026-04/16-114549-effigy-demo-browser-command-and-process-shell-extraction.md`](./2026-04/16-114549-effigy-demo-browser-command-and-process-shell-extraction.md)
+- [`2026-04/16-113514-effigy-demo-browser-refresh-load-and-render-extraction.md`](./2026-04/16-113514-effigy-demo-browser-refresh-load-and-render-extraction.md)
+- [`2026-04/16-112401-effigy-demo-browser-refresh-lifecycle-and-run-loop-extraction.md`](./2026-04/16-112401-effigy-demo-browser-refresh-lifecycle-and-run-loop-extraction.md)
+- [`2026-04/16-103312-effigy-demo-browser-runtime-command-bridge-extraction.md`](./2026-04/16-103312-effigy-demo-browser-runtime-command-bridge-extraction.md)
+- [`2026-04/16-101820-effigy-demo-browser-runner-bridge-and-overlay-loop-extraction.md`](./2026-04/16-101820-effigy-demo-browser-runner-bridge-and-overlay-loop-extraction.md)
+- [`2026-04/16-100824-effigy-demo-browser-event-loop-and-terminal-shell-extraction.md`](./2026-04/16-100824-effigy-demo-browser-event-loop-and-terminal-shell-extraction.md)
+- [`2026-04/16-095933-effigy-demo-browser-effect-loop-and-runner-bridge-extraction.md`](./2026-04/16-095933-effigy-demo-browser-effect-loop-and-runner-bridge-extraction.md)
+- [`2026-04/16-092955-effigy-demo-browser-state-machine-and-command-bridge-extraction.md`](./2026-04/16-092955-effigy-demo-browser-state-machine-and-command-bridge-extraction.md)
+- [`2026-04/16-091525-effigy-demo-browser-app-flow-and-overlay-runtime-extraction.md`](./2026-04/16-091525-effigy-demo-browser-app-flow-and-overlay-runtime-extraction.md)
+- [`2026-04/16-090236-effigy-demo-browser-terminal-and-live-session-extraction.md`](./2026-04/16-090236-effigy-demo-browser-terminal-and-live-session-extraction.md)
+- [`2026-04/16-085000-effigy-demo-browser-tui-foundation-extraction.md`](./2026-04/16-085000-effigy-demo-browser-tui-foundation-extraction.md)
+- [`2026-04/16-083500-effigy-multiprocess-tui-foundation-extraction.md`](./2026-04/16-083500-effigy-multiprocess-tui-foundation-extraction.md)
+- [`2026-04/16-081913-effigy-tui-foundation-extraction.md`](./2026-04/16-081913-effigy-tui-foundation-extraction.md)
+- [`2026-04/15-234723-effigy-cli-foundation-extraction.md`](./2026-04/15-234723-effigy-cli-foundation-extraction.md)
 - [`2026-04/15-233714-modularization-lane-reopen-for-cli-and-tui-shell-seams.md`](./2026-04/15-233714-modularization-lane-reopen-for-cli-and-tui-shell-seams.md)
 - [`2026-04/15-233028-modularization-pause-boundary-before-v0-3-release-resumption-decision.md`](./2026-04/15-233028-modularization-pause-boundary-before-v0-3-release-resumption-decision.md)
 
@@ -468,4 +506,4 @@ Batch: <batch-slug>
 ## Next Task
 
 Keep the active evidence window aligned to the current strict lane so the next
-batch stays anchored on the active release lane now that `115` is resumed.
+implementation batch stays anchored on `177`.
