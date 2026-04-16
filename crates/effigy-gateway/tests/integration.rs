@@ -289,3 +289,294 @@ async fn proxy_returns_bad_gateway_for_unreachable_upstream() {
     let _ = shutdown_tx.send(true);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
 }
+
+// --- Proxy: POST body forwarding ─────────────────────────────────────
+
+/// Start an echo server that returns the request body back.
+async fn start_body_echo_server(port: u16) -> tokio::task::JoinHandle<()> {
+    use http_body_util::{BodyExt, Full};
+    use hyper::body::Bytes;
+    use hyper::server::conn::http1;
+    use hyper::service::service_fn;
+    use hyper::{Request, Response};
+    use hyper_util::rt::TokioIo;
+
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
+        .await
+        .unwrap();
+
+    tokio::spawn(async move {
+        for _ in 0..10 {
+            if let Ok((stream, _)) = listener.accept().await {
+                let io = TokioIo::new(stream);
+                tokio::spawn(async move {
+                    let service = service_fn(
+                        |req: Request<hyper::body::Incoming>| async move {
+                            let method = req.method().to_string();
+                            let content_type = req
+                                .headers()
+                                .get("content-type")
+                                .and_then(|v| v.to_str().ok())
+                                .unwrap_or("none")
+                                .to_string();
+
+                            let body_bytes = req
+                                .into_body()
+                                .collect()
+                                .await
+                                .unwrap()
+                                .to_bytes();
+                            let body_len = body_bytes.len();
+                            let body_str =
+                                String::from_utf8_lossy(&body_bytes).to_string();
+
+                            let response_body = format!(
+                                "method={method}\n\
+                                 content-type={content_type}\n\
+                                 body-length={body_len}\n\
+                                 body={body_str}\n"
+                            );
+
+                            Ok::<_, hyper::Error>(Response::new(Full::new(
+                                Bytes::from(response_body),
+                            )))
+                        },
+                    );
+                    let _ = http1::Builder::new().serve_connection(io, service).await;
+                });
+            }
+        }
+    })
+}
+
+#[tokio::test]
+async fn proxy_forwards_post_body() {
+    let upstream_port = available_port().await;
+    let proxy_port = available_port().await;
+
+    let _echo = start_body_echo_server(upstream_port).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let mut table = RouteTable::new();
+    table.upsert(test_route(
+        "myapp.test",
+        &format!("127.0.0.1:{upstream_port}"),
+    ));
+    let shared = Arc::new(RwLock::new(table));
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let proxy_config = ProxyConfig {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
+        tls_bind_addr: None,
+        connect_timeout: std::time::Duration::from_secs(5),
+    };
+
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("http://127.0.0.1:{proxy_port}/api/data"))
+        .header("host", "myapp.test")
+        .header("content-type", "application/json")
+        .body(r#"{"name":"test","value":42}"#)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("method=POST"), "body: {body}");
+    assert!(
+        body.contains("content-type=application/json"),
+        "body: {body}"
+    );
+    assert!(body.contains("body-length=26"), "body: {body}");
+    assert!(
+        body.contains(r#"body={"name":"test","value":42}"#),
+        "body: {body}"
+    );
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
+}
+
+#[tokio::test]
+async fn proxy_forwards_large_body() {
+    let upstream_port = available_port().await;
+    let proxy_port = available_port().await;
+
+    let _echo = start_body_echo_server(upstream_port).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let mut table = RouteTable::new();
+    table.upsert(test_route(
+        "myapp.test",
+        &format!("127.0.0.1:{upstream_port}"),
+    ));
+    let shared = Arc::new(RwLock::new(table));
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let proxy_config = ProxyConfig {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
+        tls_bind_addr: None,
+        connect_timeout: std::time::Duration::from_secs(5),
+    };
+
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // 100KB body.
+    let large_body = "x".repeat(100_000);
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("http://127.0.0.1:{proxy_port}/upload"))
+        .header("host", "myapp.test")
+        .body(large_body)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.text().await.unwrap();
+    assert!(
+        body.contains("body-length=100000"),
+        "should forward full 100KB body: {body}"
+    );
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
+}
+
+#[tokio::test]
+async fn proxy_multiple_concurrent_requests() {
+    let upstream_port = available_port().await;
+    let proxy_port = available_port().await;
+
+    let _echo = start_echo_server(upstream_port).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let mut table = RouteTable::new();
+    table.upsert(test_route(
+        "myapp.test",
+        &format!("127.0.0.1:{upstream_port}"),
+    ));
+    let shared = Arc::new(RwLock::new(table));
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let proxy_config = ProxyConfig {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
+        tls_bind_addr: None,
+        connect_timeout: std::time::Duration::from_secs(5),
+    };
+
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // 5 concurrent requests.
+    let client = reqwest::Client::new();
+    let mut handles = Vec::new();
+    for i in 0..5 {
+        let client = client.clone();
+        let port = proxy_port;
+        handles.push(tokio::spawn(async move {
+            let response = client
+                .get(format!("http://127.0.0.1:{port}/request-{i}"))
+                .header("host", "myapp.test")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 200);
+            let body = response.text().await.unwrap();
+            assert!(
+                body.contains(&format!("uri=/request-{i}")),
+                "request {i}: {body}"
+            );
+        }));
+    }
+
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
+}
+
+#[tokio::test]
+async fn proxy_preserves_response_status_and_headers() {
+    use http_body_util::Full;
+    use hyper::body::Bytes;
+    use hyper::server::conn::http1;
+    use hyper::service::service_fn;
+    use hyper::Response;
+    use hyper_util::rt::TokioIo;
+
+    let upstream_port = available_port().await;
+    let proxy_port = available_port().await;
+
+    // Server that returns custom status + headers.
+    let listener =
+        tokio::net::TcpListener::bind(format!("127.0.0.1:{upstream_port}"))
+            .await
+            .unwrap();
+    tokio::spawn(async move {
+        if let Ok((stream, _)) = listener.accept().await {
+            let io = TokioIo::new(stream);
+            let service = service_fn(
+                |_req: hyper::Request<hyper::body::Incoming>| async move {
+                    Ok::<_, hyper::Error>(
+                        Response::builder()
+                            .status(201)
+                            .header("x-custom-response", "hello")
+                            .header("content-type", "application/json")
+                            .body(Full::new(Bytes::from(r#"{"ok":true}"#)))
+                            .unwrap(),
+                    )
+                },
+            );
+            let _ = http1::Builder::new().serve_connection(io, service).await;
+        }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let mut table = RouteTable::new();
+    table.upsert(test_route(
+        "myapp.test",
+        &format!("127.0.0.1:{upstream_port}"),
+    ));
+    let shared = Arc::new(RwLock::new(table));
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let proxy_config = ProxyConfig {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
+        tls_bind_addr: None,
+        connect_timeout: std::time::Duration::from_secs(5),
+    };
+
+    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, shutdown_rx));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("http://127.0.0.1:{proxy_port}/"))
+        .header("host", "myapp.test")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 201);
+    assert_eq!(
+        response.headers().get("x-custom-response").unwrap().to_str().unwrap(),
+        "hello"
+    );
+    assert_eq!(
+        response.headers().get("content-type").unwrap().to_str().unwrap(),
+        "application/json"
+    );
+    let body = response.text().await.unwrap();
+    assert_eq!(body, r#"{"ok":true}"#);
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
+}
