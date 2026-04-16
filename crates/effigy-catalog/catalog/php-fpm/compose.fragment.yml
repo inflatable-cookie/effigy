@@ -8,6 +8,9 @@ services:
 {% if extensions %}
         EXTENSIONS: "{{ extensions | join(' ') }}"
 {% endif %}
+{% if node_version %}
+        NODE_VERSION: "{{ node_version }}"
+{% endif %}
     volumes:
       - {{ repo_root }}:{{ working_dir }}
     working_dir: {{ working_dir }}

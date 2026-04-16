@@ -1,6 +1,6 @@
 [service]
 name = "php-fpm"
-description = "PHP-FPM application server"
+description = "PHP-FPM application server with Composer and optional Node.js"
 
 [params.version]
 type = "string"
@@ -10,7 +10,7 @@ description = "PHP version (e.g., 7.4, 8.0, 8.1, 8.2, 8.3)"
 [params.extensions]
 type = "list"
 default = []
-description = "PHP extensions to install via docker-php-ext-install and pecl"
+description = "PHP extensions to install (e.g., pdo_mysql, gd, redis, memcached, intl, zip)"
 
 [params.document_root]
 type = "string"
@@ -21,6 +21,11 @@ description = "Document root relative to repo root"
 type = "string"
 default = "/var/www/html"
 description = "Container working directory where the repo is mounted"
+
+[params.node_version]
+type = "string"
+default = ""
+description = "Node.js major version to install (e.g., 20, 22). Empty to skip."
 
 [capabilities]
 exec_target = true
