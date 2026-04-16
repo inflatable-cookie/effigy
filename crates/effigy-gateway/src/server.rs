@@ -18,9 +18,9 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::watch;
 use tracing::{debug, error, info};
 
-use crate::dns::{DnsConfig, run_dns_server};
+use crate::dns::{run_dns_server, DnsConfig};
 use crate::error::GatewayError;
-use crate::proxy::{ProxyConfig, run_proxy_server};
+use crate::proxy::{run_proxy_server, ProxyConfig};
 use crate::routes::{LiveRouteTable, RouteTable};
 
 /// Configuration for the full gateway.
@@ -53,11 +53,7 @@ impl GatewayConfig {
     }
 
     /// Use custom bind addresses.
-    pub fn with_addrs(
-        mut self,
-        dns_addr: SocketAddr,
-        proxy_addr: SocketAddr,
-    ) -> Self {
+    pub fn with_addrs(mut self, dns_addr: SocketAddr, proxy_addr: SocketAddr) -> Self {
         self.dns.bind_addr = dns_addr;
         self.proxy.bind_addr = proxy_addr;
         self
@@ -233,8 +229,8 @@ fn setup_file_watcher(
 ) -> Result<RecommendedWatcher, GatewayError> {
     let watched_path = path.clone();
 
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        match event {
+    let mut watcher =
+        notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
             Ok(ev) => {
                 use notify::EventKind;
                 match ev.kind {
@@ -242,8 +238,7 @@ fn setup_file_watcher(
                         debug!(path = %watched_path.display(), "route table changed, reloading");
                         match RouteTable::load(&watched_path) {
                             Ok(new_table) => {
-                                let mut guard =
-                                    table.write().expect("route table lock poisoned");
+                                let mut guard = table.write().expect("route table lock poisoned");
                                 *guard = new_table;
                                 debug!("route table reloaded successfully");
                             }
@@ -258,9 +253,8 @@ fn setup_file_watcher(
             Err(e) => {
                 error!(error = %e, "file watcher error");
             }
-        }
-    })
-    .map_err(|e| GatewayError::WatcherError(e.to_string()))?;
+        })
+        .map_err(|e| GatewayError::WatcherError(e.to_string()))?;
 
     // Watch the parent directory (the file might not exist yet).
     let watch_dir = path.parent().unwrap_or(path.as_ref());
