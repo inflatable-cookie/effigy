@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Planned
+Status: Complete (crate shipped, awaiting runner integration after g02.010)
 Owner: Platform
 Created: 2026-04-16
 Depends on: 006, 010
