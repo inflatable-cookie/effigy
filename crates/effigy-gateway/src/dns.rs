@@ -17,6 +17,7 @@ use tokio::net::UdpSocket;
 use tracing::{debug, error, warn};
 
 use crate::routes::RouteTable;
+use crate::stats::GatewayStats;
 
 /// Configuration for the DNS resolver.
 #[derive(Debug, Clone)]
@@ -50,6 +51,7 @@ impl Default for DnsConfig {
 pub async fn run_dns_server(
     config: DnsConfig,
     route_table: Arc<RwLock<RouteTable>>,
+    stats: Arc<GatewayStats>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), crate::GatewayError> {
     let socket =
@@ -69,11 +71,16 @@ pub async fn run_dns_server(
             result = socket.recv_from(&mut buf) => {
                 match result {
                     Ok((len, src)) => {
-                        let response = handle_dns_query(
+                        GatewayStats::inc(&stats.dns_queries);
+
+                        let (response, resolved) = handle_dns_query(
                             &buf[..len],
                             &config,
                             &route_table,
                         );
+                        if resolved {
+                            GatewayStats::inc(&stats.dns_resolved);
+                        }
                         if let Some(response_bytes) = response {
                             if let Err(e) = socket.send_to(&response_bytes, src).await {
                                 warn!(error = %e, "failed to send DNS response");
@@ -99,20 +106,24 @@ pub async fn run_dns_server(
 
 /// Handle a single DNS query packet.
 ///
-/// Returns the response bytes, or `None` if the query should be ignored.
+/// Returns `(response_bytes, was_resolved)` where `was_resolved` is true
+/// when the query matched a registered route (not just the TLD).
 fn handle_dns_query(
     query_bytes: &[u8],
     config: &DnsConfig,
     route_table: &Arc<RwLock<RouteTable>>,
-) -> Option<Vec<u8>> {
+) -> (Option<Vec<u8>>, bool) {
     use hickory_proto::op::Message;
     use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 
-    let request = Message::from_bytes(query_bytes).ok()?;
+    let request = match Message::from_bytes(query_bytes) {
+        Ok(r) => r,
+        Err(_) => return (None, false),
+    };
 
     // Only handle standard queries.
     if request.op_code() != OpCode::Query {
-        return None;
+        return (None, false);
     }
 
     let mut response = Message::new();
@@ -124,6 +135,7 @@ fn handle_dns_query(
 
     let mut answered = false;
     let mut matched_tld = false;
+    let mut resolved_route = false;
 
     for query in request.queries() {
         // We only serve A records. But if the query is for our TLD
@@ -168,6 +180,7 @@ fn handle_dns_query(
             let record = Record::from_rdata(name.clone(), 60, RData::A(A(config.resolve_to)));
             response.add_answer(record);
             answered = true;
+            resolved_route = true;
         } else {
             // Domain matches TLD but no route registered.
             // Still resolve to localhost — the proxy will return a
@@ -197,7 +210,7 @@ fn handle_dns_query(
     // Copy the original questions into the response.
     response.add_queries(request.queries().iter().cloned());
 
-    response.to_bytes().ok()
+    (response.to_bytes().ok(), resolved_route)
 }
 
 #[cfg(test)]
@@ -246,8 +259,9 @@ mod tests {
         let table = route_table_with("myapp.test");
         let query = build_query("myapp.test.", RecordType::A);
 
-        let response_bytes = handle_dns_query(&query, &config, &table).unwrap();
-        let response = Message::from_bytes(&response_bytes).unwrap();
+        let (response_bytes, resolved) = handle_dns_query(&query, &config, &table);
+        assert!(resolved, "should report as resolved route");
+        let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
 
         assert_eq!(response.response_code(), ResponseCode::NoError);
         assert_eq!(response.answers().len(), 1);
@@ -266,8 +280,9 @@ mod tests {
         let table = Arc::new(RwLock::new(RouteTable::new()));
         let query = build_query("unknown.test.", RecordType::A);
 
-        let response_bytes = handle_dns_query(&query, &config, &table).unwrap();
-        let response = Message::from_bytes(&response_bytes).unwrap();
+        let (response_bytes, resolved) = handle_dns_query(&query, &config, &table);
+        assert!(!resolved, "unregistered domain should not count as resolved");
+        let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
 
         // Should still resolve (proxy will show error page).
         assert_eq!(response.response_code(), ResponseCode::NoError);
@@ -280,8 +295,9 @@ mod tests {
         let table = route_table_with("myapp.test");
         let query = build_query("google.com.", RecordType::A);
 
-        let response_bytes = handle_dns_query(&query, &config, &table).unwrap();
-        let response = Message::from_bytes(&response_bytes).unwrap();
+        let (response_bytes, resolved) = handle_dns_query(&query, &config, &table);
+        assert!(!resolved);
+        let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
 
         assert_eq!(response.response_code(), ResponseCode::Refused);
         assert_eq!(response.answers().len(), 0);
@@ -293,8 +309,9 @@ mod tests {
         let table = route_table_with("myapp.test");
         let query = build_query("myapp.test.", RecordType::AAAA);
 
-        let response_bytes = handle_dns_query(&query, &config, &table).unwrap();
-        let response = Message::from_bytes(&response_bytes).unwrap();
+        let (response_bytes, resolved) = handle_dns_query(&query, &config, &table);
+        assert!(!resolved, "AAAA query should not count as resolved");
+        let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
 
         // AAAA query for .test domain — no A answers, but NoError
         // (not Refused) to prevent slow dual-stack browser lookups.
@@ -308,8 +325,8 @@ mod tests {
         let table = route_table_with("myapp.test");
         let query = build_query("myapp.test.", RecordType::A);
 
-        let response_bytes = handle_dns_query(&query, &config, &table).unwrap();
-        let response = Message::from_bytes(&response_bytes).unwrap();
+        let (response_bytes, _) = handle_dns_query(&query, &config, &table);
+        let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
 
         assert_eq!(response.id(), 1234);
     }

@@ -112,7 +112,7 @@ async fn dns_resolves_registered_domain_end_to_end() {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     // Start DNS server.
-    let dns_handle = tokio::spawn(run_dns_server(config, shared, shutdown_rx));
+    let dns_handle = tokio::spawn(run_dns_server(config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
 
     // Give the server a moment to bind.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -479,6 +479,49 @@ async fn proxy_response_timeout_returns_bad_gateway() {
     assert_eq!(response.status(), 502);
     let body = response.text().await.unwrap();
     assert!(body.contains("timeout"), "should mention timeout: {body}");
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
+}
+
+#[tokio::test]
+async fn proxy_rejects_oversized_request_body() {
+    let proxy_port = available_port().await;
+
+    let mut table = RouteTable::new();
+    table.upsert(test_route("myapp.test", "127.0.0.1:9999"));
+    let shared = Arc::new(RwLock::new(table));
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let proxy_config = ProxyConfig {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], proxy_port)),
+        tls_bind_addr: None,
+        connect_timeout: std::time::Duration::from_secs(5),
+        response_timeout: std::time::Duration::from_secs(30),
+        max_request_body: 1024, // 1KB limit
+    };
+
+    let proxy_handle = tokio::spawn(run_proxy_server(
+        proxy_config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        shutdown_rx,
+    ));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("http://127.0.0.1:{proxy_port}/upload"))
+        .header("host", "myapp.test")
+        .header("content-length", "10000")
+        .body("x".repeat(10000))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 413);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("too large"), "body: {body}");
 
     let _ = shutdown_tx.send(true);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), proxy_handle).await;
