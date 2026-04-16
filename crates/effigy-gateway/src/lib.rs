@@ -31,6 +31,7 @@ pub mod registration;
 pub mod resolver_setup;
 pub mod routes;
 pub mod server;
+pub mod stats;
 pub mod tls;
 
 pub use error::GatewayError;

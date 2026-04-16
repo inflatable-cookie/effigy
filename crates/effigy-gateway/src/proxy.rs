@@ -34,6 +34,7 @@ use tracing::{debug, error, info, warn};
 use serde_json;
 
 use crate::routes::RouteTable;
+use crate::stats::GatewayStats;
 
 /// Configuration for the reverse proxy.
 #[derive(Debug, Clone)]
@@ -51,6 +52,10 @@ pub struct ProxyConfig {
     /// Timeout for receiving a response from upstream after connecting.
     /// Protects against hung upstream processes.
     pub response_timeout: Duration,
+
+    /// Maximum request body size in bytes. Requests exceeding this are
+    /// rejected with 413 Payload Too Large. 0 means no limit.
+    pub max_request_body: u64,
 }
 
 impl Default for ProxyConfig {
@@ -60,6 +65,7 @@ impl Default for ProxyConfig {
             tls_bind_addr: None,
             connect_timeout: Duration::from_secs(5),
             response_timeout: Duration::from_secs(300), // 5 min — generous for debugging
+            max_request_body: 256 * 1024 * 1024,        // 256MB — generous for dev uploads
         }
     }
 }
@@ -102,6 +108,7 @@ const HOP_BY_HOP_HEADERS: &[&str] = &[
 pub async fn run_proxy_server(
     config: ProxyConfig,
     route_table: Arc<RwLock<RouteTable>>,
+    stats: Arc<GatewayStats>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), crate::GatewayError> {
     let listener = TcpListener::bind(config.bind_addr).await.map_err(|e| {
@@ -120,13 +127,15 @@ pub async fn run_proxy_server(
                     Ok((stream, peer_addr)) => {
                         let table = Arc::clone(&route_table);
                         let cfg = config.clone();
+                        let st = Arc::clone(&stats);
                         tokio::spawn(async move {
                             let io = TokioIo::new(stream);
                             let service = service_fn(move |req| {
                                 let table = Arc::clone(&table);
                                 let cfg = cfg.clone();
+                                let st = Arc::clone(&st);
                                 async move {
-                                    handle_request(req, &table, peer_addr, &cfg).await
+                                    handle_request(req, &table, &st, peer_addr, &cfg).await
                                 }
                             });
 
@@ -174,6 +183,7 @@ pub async fn run_tls_proxy_server(
     bind_addr: SocketAddr,
     tls_config: Arc<rustls::ServerConfig>,
     route_table: Arc<RwLock<RouteTable>>,
+    stats: Arc<GatewayStats>,
     proxy_config: ProxyConfig,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), crate::GatewayError> {
@@ -196,6 +206,7 @@ pub async fn run_tls_proxy_server(
                     Ok((stream, peer_addr)) => {
                         let acceptor = tls_acceptor.clone();
                         let table = Arc::clone(&route_table);
+                        let st = Arc::clone(&stats);
                         let cfg = proxy_config.clone();
                         tokio::spawn(async move {
                             // Perform TLS handshake.
@@ -214,9 +225,10 @@ pub async fn run_tls_proxy_server(
                             let io = TokioIo::new(tls_stream);
                             let service = service_fn(move |req| {
                                 let table = Arc::clone(&table);
+                                let st = Arc::clone(&st);
                                 let cfg = cfg.clone();
                                 async move {
-                                    handle_request(req, &table, peer_addr, &cfg).await
+                                    handle_request(req, &table, &st, peer_addr, &cfg).await
                                 }
                             });
 
@@ -275,6 +287,7 @@ fn is_benign_connection_error(e: &hyper::Error) -> bool {
 fn handle_gateway_endpoint(
     req: &Request<Incoming>,
     route_table: &Arc<RwLock<RouteTable>>,
+    stats: &Arc<GatewayStats>,
 ) -> Option<Response<ProxyBody>> {
     let path = req.uri().path();
 
@@ -284,13 +297,27 @@ fn handle_gateway_endpoint(
 
     match path {
         "/_effigy/health" => {
-            let body = r#"{"status":"ok"}"#;
+            let body = serde_json::json!({
+                "status": "ok",
+                "uptime_secs": stats.uptime_secs(),
+            });
             Some(
                 Response::builder()
                     .status(StatusCode::OK)
                     .header("content-type", "application/json")
                     .header("x-effigy-gateway", "true")
-                    .body(full_body(Bytes::from(body)))
+                    .body(full_body(Bytes::from(body.to_string())))
+                    .unwrap(),
+            )
+        }
+        "/_effigy/stats" => {
+            let json = stats.to_json();
+            Some(
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/json")
+                    .header("x-effigy-gateway", "true")
+                    .body(full_body(Bytes::from(json.to_string())))
                     .unwrap(),
             )
         }
@@ -335,12 +362,42 @@ fn handle_gateway_endpoint(
 async fn handle_request(
     req: Request<Incoming>,
     route_table: &Arc<RwLock<RouteTable>>,
+    stats: &Arc<GatewayStats>,
     peer_addr: SocketAddr,
     config: &ProxyConfig,
 ) -> Result<Response<ProxyBody>, hyper::Error> {
+    GatewayStats::inc(&stats.http_requests);
+
     // Gateway internal endpoints (/_effigy/*).
-    if let Some(response) = handle_gateway_endpoint(&req, route_table) {
+    if let Some(response) = handle_gateway_endpoint(&req, route_table, stats) {
         return Ok(response);
+    }
+
+    // Check request body size (Content-Length header).
+    if config.max_request_body > 0 {
+        if let Some(content_length) = req
+            .headers()
+            .get(hyper::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            if content_length > config.max_request_body {
+                GatewayStats::inc(&stats.body_too_large);
+                warn!(
+                    peer = %peer_addr,
+                    content_length = content_length,
+                    max = config.max_request_body,
+                    "request body too large"
+                );
+                return Ok(error_response(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    &format!(
+                        "Request body too large: {} bytes exceeds limit of {} bytes",
+                        content_length, config.max_request_body
+                    ),
+                ));
+            }
+        }
     }
 
     // Extract the Host header.
@@ -366,6 +423,7 @@ async fn handle_request(
     let target = match target {
         Some(t) => t,
         None => {
+            GatewayStats::inc(&stats.no_route_requests);
             debug!(host = %host, peer = %peer_addr, "no route for host");
             return Ok(no_route_response(&host));
         }
@@ -373,6 +431,7 @@ async fn handle_request(
 
     // Check for WebSocket upgrade.
     if is_websocket_upgrade(&req) {
+        GatewayStats::inc(&stats.websocket_upgrades);
         debug!(host = %host, target = %target, "WebSocket upgrade");
         return handle_websocket_upgrade(req, &target, &host, peer_addr, config).await;
     }
@@ -386,8 +445,12 @@ async fn handle_request(
     );
 
     match forward_request(req, &target, &host, peer_addr, config).await {
-        Ok(response) => Ok(response),
+        Ok(response) => {
+            GatewayStats::inc(&stats.proxied_requests);
+            Ok(response)
+        }
         Err(e) => {
+            GatewayStats::inc(&stats.upstream_errors);
             warn!(host = %host, target = %target, error = %e, "upstream error");
             Ok(error_response(
                 StatusCode::BAD_GATEWAY,
@@ -444,16 +507,15 @@ async fn forward_request(
     add_forwarding_headers(req.headers_mut(), original_host, peer_addr);
 
     // Send request and wait for response headers with timeout.
-    let response = tokio::time::timeout(
-        config.response_timeout,
-        sender.send_request(req),
-    )
-    .await
-    .map_err(|_| format!(
-        "upstream response timeout after {:?}",
-        config.response_timeout
-    ))?
-    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+    let response = tokio::time::timeout(config.response_timeout, sender.send_request(req))
+        .await
+        .map_err(|_| {
+            format!(
+                "upstream response timeout after {:?}",
+                config.response_timeout
+            )
+        })?
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
 
     // Strip hop-by-hop headers from response.
     let (mut parts, body) = response.into_parts();
