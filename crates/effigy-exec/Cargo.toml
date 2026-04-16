@@ -1,0 +1,13 @@
+[package]
+name = "effigy-exec"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Container execution context routing and CWD mapping for Effigy"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
