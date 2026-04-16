@@ -102,9 +102,14 @@ const HOP_BY_HOP_HEADERS: &[&str] = &[
     "transfer-encoding",
 ];
 
+/// Grace period for in-flight connections during shutdown.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Run the HTTP reverse proxy server.
 ///
-/// Blocks until the shutdown signal fires.
+/// Blocks until the shutdown signal fires. On shutdown, stops accepting
+/// new connections but waits up to 10 seconds for in-flight requests to
+/// complete before force-closing.
 pub async fn run_proxy_server(
     config: ProxyConfig,
     route_table: Arc<RwLock<RouteTable>>,
@@ -120,6 +125,9 @@ pub async fn run_proxy_server(
 
     info!(addr = %config.bind_addr, "HTTP proxy started");
 
+    // Track in-flight connections for graceful drain.
+    let inflight = Arc::new(std::sync::atomic::AtomicU32::new(0));
+
     loop {
         tokio::select! {
             result = listener.accept() => {
@@ -128,6 +136,9 @@ pub async fn run_proxy_server(
                         let table = Arc::clone(&route_table);
                         let cfg = config.clone();
                         let st = Arc::clone(&stats);
+                        let flight = Arc::clone(&inflight);
+                        flight.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
                         tokio::spawn(async move {
                             let io = TokioIo::new(stream);
                             let service = service_fn(move |req| {
@@ -153,6 +164,8 @@ pub async fn run_proxy_server(
                                     );
                                 }
                             }
+
+                            flight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                         });
                     }
                     Err(e) => {
@@ -162,7 +175,29 @@ pub async fn run_proxy_server(
             }
             _ = shutdown.changed() => {
                 if *shutdown.borrow() {
-                    info!("HTTP proxy shutting down");
+                    let count = inflight.load(std::sync::atomic::Ordering::Relaxed);
+                    if count > 0 {
+                        info!(
+                            inflight = count,
+                            timeout_secs = DRAIN_TIMEOUT.as_secs(),
+                            "HTTP proxy draining in-flight connections"
+                        );
+                        // Wait for in-flight connections to finish, with timeout.
+                        let deadline = tokio::time::Instant::now() + DRAIN_TIMEOUT;
+                        while inflight.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+                            if tokio::time::Instant::now() >= deadline {
+                                let remaining =
+                                    inflight.load(std::sync::atomic::Ordering::Relaxed);
+                                warn!(
+                                    remaining = remaining,
+                                    "drain timeout — closing remaining connections"
+                                );
+                                break;
+                            }
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                        }
+                    }
+                    info!("HTTP proxy stopped");
                     break;
                 }
             }
