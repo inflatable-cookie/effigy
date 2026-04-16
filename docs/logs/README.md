@@ -65,6 +65,40 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/16-233500-effigy-release-apply-and-gate-follow-up-cleanup-v4.md`](./2026-04/16-233500-effigy-release-apply-and-gate-follow-up-cleanup-v4.md)
+- [`2026-04/16-231500-post-release-context-and-plan-follow-up-cleanup-v3-boundary-decision.md`](./2026-04/16-231500-post-release-context-and-plan-follow-up-cleanup-v3-boundary-decision.md)
+- [`2026-04/16-230500-effigy-release-context-and-plan-follow-up-cleanup-v3.md`](./2026-04/16-230500-effigy-release-context-and-plan-follow-up-cleanup-v3.md)
+- [`2026-04/16-224920-post-release-text-and-remediation-follow-up-boundary-decision.md`](./2026-04/16-224920-post-release-text-and-remediation-follow-up-boundary-decision.md)
+- [`2026-04/16-224716-effigy-release-text-and-remediation-follow-up-extraction.md`](./2026-04/16-224716-effigy-release-text-and-remediation-follow-up-extraction.md)
+- [`2026-04/16-223913-post-release-runner-shell-follow-up-cleanup-v2-boundary-decision.md`](./2026-04/16-223913-post-release-runner-shell-follow-up-cleanup-v2-boundary-decision.md)
+- [`2026-04/16-223422-effigy-release-runner-shell-follow-up-cleanup-v2.md`](./2026-04/16-223422-effigy-release-runner-shell-follow-up-cleanup-v2.md)
+- [`2026-04/16-222200-next-src-shell-cleanup-priority-after-container-boundary-decision.md`](./2026-04/16-222200-next-src-shell-cleanup-priority-after-container-boundary-decision.md)
+- [`2026-04/16-221200-post-container-runner-shell-follow-up-cleanup-boundary-decision.md`](./2026-04/16-221200-post-container-runner-shell-follow-up-cleanup-boundary-decision.md)
+- [`2026-04/16-215447-effigy-container-runner-shell-follow-up-cleanup.md`](./2026-04/16-215447-effigy-container-runner-shell-follow-up-cleanup.md)
+- [`2026-04/16-223500-post-release-interactive-and-apply-shell-follow-up-cleanup-boundary-decision.md`](./2026-04/16-223500-post-release-interactive-and-apply-shell-follow-up-cleanup-boundary-decision.md)
+- [`2026-04/16-221500-effigy-release-interactive-and-apply-shell-follow-up-cleanup.md`](./2026-04/16-221500-effigy-release-interactive-and-apply-shell-follow-up-cleanup.md)
+- [`2026-04/16-220500-post-release-context-and-execute-shell-follow-up-cleanup-boundary-decision.md`](./2026-04/16-220500-post-release-context-and-execute-shell-follow-up-cleanup-boundary-decision.md)
+- [`2026-04/16-215500-effigy-release-context-and-execute-shell-follow-up-cleanup.md`](./2026-04/16-215500-effigy-release-context-and-execute-shell-follow-up-cleanup.md)
+- [`2026-04/16-214000-next-src-shell-cleanup-priority-after-demo-boundary-decision.md`](./2026-04/16-214000-next-src-shell-cleanup-priority-after-demo-boundary-decision.md)
+- [`2026-04/16-213310-next-src-shell-cleanup-priority-after-release-pause-boundary-decision.md`](./2026-04/16-213310-next-src-shell-cleanup-priority-after-release-pause-boundary-decision.md)
+- [`2026-04/16-212500-post-demo-runner-shell-follow-up-cleanup-boundary-decision.md`](./2026-04/16-212500-post-demo-runner-shell-follow-up-cleanup-boundary-decision.md)
+- [`2026-04/16-211500-effigy-demo-runner-shell-follow-up-cleanup.md`](./2026-04/16-211500-effigy-demo-runner-shell-follow-up-cleanup.md)
+- [`2026-04/16-204328-post-release-runner-shell-follow-up-cleanup-boundary-decision.md`](./2026-04/16-204328-post-release-runner-shell-follow-up-cleanup-boundary-decision.md)
+- [`2026-04/16-203617-effigy-release-runner-shell-follow-up-cleanup.md`](./2026-04/16-203617-effigy-release-runner-shell-follow-up-cleanup.md)
+- [`2026-04/16-201500-post-distribution-execution-and-artifact-follow-up-boundary-decision.md`](./2026-04/16-201500-post-distribution-execution-and-artifact-follow-up-boundary-decision.md)
+- [`2026-04/16-200243-next-src-shell-cleanup-priority-after-distribution-boundary-decision.md`](./2026-04/16-200243-next-src-shell-cleanup-priority-after-distribution-boundary-decision.md)
+- [`2026-04/16-200000-effigy-distribution-execution-and-artifact-follow-up-extraction.md`](./2026-04/16-200000-effigy-distribution-execution-and-artifact-follow-up-extraction.md)
+- [`2026-04/16-195254-post-distribution-first-publish-and-preflight-follow-up-boundary-decision.md`](./2026-04/16-195254-post-distribution-first-publish-and-preflight-follow-up-boundary-decision.md)
+- [`2026-04/16-194957-effigy-distribution-first-publish-and-preflight-follow-up-extraction.md`](./2026-04/16-194957-effigy-distribution-first-publish-and-preflight-follow-up-extraction.md)
+- [`2026-04/16-193743-post-distribution-metadata-and-closeout-follow-up-boundary-decision.md`](./2026-04/16-193743-post-distribution-metadata-and-closeout-follow-up-boundary-decision.md)
+- [`2026-04/16-193000-next-src-shell-cleanup-priority-after-bootstrap-boundary-decision.md`](./2026-04/16-193000-next-src-shell-cleanup-priority-after-bootstrap-boundary-decision.md)
+- [`2026-04/16-192955-effigy-distribution-metadata-and-closeout-follow-up-extraction.md`](./2026-04/16-192955-effigy-distribution-metadata-and-closeout-follow-up-extraction.md)
+- [`2026-04/16-191500-post-bootstrap-foundation-extraction-boundary-decision.md`](./2026-04/16-191500-post-bootstrap-foundation-extraction-boundary-decision.md)
+- [`2026-04/16-190500-effigy-bootstrap-foundation-extraction.md`](./2026-04/16-190500-effigy-bootstrap-foundation-extraction.md)
+- [`2026-04/16-185500-next-src-shell-cleanup-priority-after-release-boundary-decision.md`](./2026-04/16-185500-next-src-shell-cleanup-priority-after-release-boundary-decision.md)
+- [`2026-04/16-184500-post-release-review-and-text-projection-follow-up-boundary-decision.md`](./2026-04/16-184500-post-release-review-and-text-projection-follow-up-boundary-decision.md)
+- [`2026-04/16-183414-effigy-release-review-and-text-projection-follow-up-extraction.md`](./2026-04/16-183414-effigy-release-review-and-text-projection-follow-up-extraction.md)
+- [`2026-04/16-180755-post-changelog-workspace-extraction-boundary-decision.md`](./2026-04/16-180755-post-changelog-workspace-extraction-boundary-decision.md)
 - [`2026-04/16-180018-effigy-changelog-workspace-extraction-and-release-adoption.md`](./2026-04/16-180018-effigy-changelog-workspace-extraction-and-release-adoption.md)
 - [`2026-04/16-175500-post-release-version-and-preview-follow-up-boundary-decision.md`](./2026-04/16-175500-post-release-version-and-preview-follow-up-boundary-decision.md)
 - [`2026-04/16-174500-effigy-release-version-and-preview-follow-up-extraction.md`](./2026-04/16-174500-effigy-release-version-and-preview-follow-up-extraction.md)
@@ -506,4 +540,4 @@ Batch: <batch-slug>
 ## Next Task
 
 Keep the active evidence window aligned to the current strict lane so the next
-implementation batch stays anchored on `177`.
+implementation batch stays anchored on `217`.

@@ -29,10 +29,11 @@ pub use process::{
     DemoInputHandoffForward, DemoLaunchMode, OutputMirror, DEMO_BROWSER_TERMINAL_COLS_ENV,
     DEMO_BROWSER_TERMINAL_ROWS_ENV, DEMO_DEFAULT_TERMINAL_COLS, DEMO_DEFAULT_TERMINAL_ROWS,
 };
+pub mod projection;
 pub use records::{
-    build_demo_groups, find_historical_attempt, history_attempt_to_json,
-    history_attempts_with_limit, history_attempts_with_outcome, DemoActionAvailability,
-    DemoEntrypoint, DemoGroup, DemoRecord, DemoRecordGroupBy,
+    build_demo_groups, demo_run_preview, derive_gap_class, find_historical_attempt,
+    history_attempt_to_json, history_attempts_with_limit, history_attempts_with_outcome,
+    DemoActionAvailability, DemoEntrypoint, DemoGroup, DemoRecord, DemoRecordGroupBy,
 };
 pub use runtime::{
     concurrent_runner_input_target_process, concurrent_runner_projected_output_provenance,

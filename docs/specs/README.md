@@ -21,4 +21,4 @@ lane needs tighter execution grammar than the roadmap alone provides.
 ## Next Task
 
 Execute
-[`batch-cards/182-decide-post-changelog-workspace-extraction-boundary.md`](./batch-cards/182-decide-post-changelog-workspace-extraction-boundary.md).
+[`batch-cards/217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md`](./batch-cards/217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md).

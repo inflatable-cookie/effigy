@@ -262,6 +262,17 @@ pub enum DemoEntrypoint {
 }
 
 impl DemoEntrypoint {
+    /// Build an entrypoint from a manifest demo configuration.
+    pub fn from_manifest(demo: &effigy_manifest::ManifestDemoConfig) -> Self {
+        if let Some(task) = &demo.task {
+            Self::Task(task.clone())
+        } else if let Some(run) = &demo.run {
+            Self::Run(run.clone())
+        } else {
+            Self::Run(ManifestManagedRun::Command("<invalid>".to_owned()))
+        }
+    }
+
     pub fn render_compact(&self) -> String {
         match self {
             Self::Task(task) => format!("task:{task}"),
@@ -387,10 +398,26 @@ pub fn build_demo_groups<'a>(
         .collect()
 }
 
-fn demo_run_preview(run: &ManifestManagedRun) -> String {
+pub fn demo_run_preview(run: &ManifestManagedRun) -> String {
     match run {
         ManifestManagedRun::Command(command) => command.clone(),
         ManifestManagedRun::Sequence(steps) => format!("<sequence:{}>", steps.len()),
+    }
+}
+
+/// Classify the gap between current demo state and target.
+pub fn derive_gap_class(status: ManifestDemoStatus, stale: bool) -> &'static str {
+    if stale {
+        return "stale";
+    }
+    match status {
+        ManifestDemoStatus::Planned => "planned",
+        ManifestDemoStatus::Missing => "missing",
+        ManifestDemoStatus::Broken => "broken",
+        ManifestDemoStatus::Ready
+        | ManifestDemoStatus::Running
+        | ManifestDemoStatus::Passed
+        | ManifestDemoStatus::Failed => "existing",
     }
 }
 

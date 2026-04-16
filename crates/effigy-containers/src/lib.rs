@@ -1,3 +1,9 @@
+pub mod colima;
+pub mod compose;
+pub mod exec;
+pub mod health;
+pub mod session;
+
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 

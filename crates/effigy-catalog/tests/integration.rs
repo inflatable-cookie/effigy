@@ -1051,7 +1051,10 @@ fn node_fragment_assembles_with_modules_volume() {
 
     // Should have a node_modules named volume to avoid platform conflicts.
     assert!(
-        result.volumes.iter().any(|v| v.name.contains("node-modules")),
+        result
+            .volumes
+            .iter()
+            .any(|v| v.name.contains("node-modules")),
         "should have node_modules volume: {:?}",
         result.volumes
     );

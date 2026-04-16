@@ -36,7 +36,7 @@ Active strict planning lane:
 
 - [`../specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`](../specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md)
 - active ready card:
-  [`../specs/batch-cards/189-implement-effigy-distribution-execution-and-artifact-follow-up-extraction.md`](../specs/batch-cards/189-implement-effigy-distribution-execution-and-artifact-follow-up-extraction.md)
+  [`../specs/batch-cards/217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md`](../specs/batch-cards/217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md)
 
 Queued release card:
 
@@ -50,4 +50,4 @@ Rules:
 
 ## Next Task
 
-Execute `189` to extract the next real distribution workspace boundary.
+Execute `210` to reduce the next bounded release runner shell slice.

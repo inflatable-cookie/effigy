@@ -185,11 +185,19 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`179-implement-effigy-release-version-and-preview-follow-up-extraction.md`](./179-implement-effigy-release-version-and-preview-follow-up-extraction.md) (complete)
 - [`180-decide-post-release-version-and-preview-follow-up-boundary.md`](./180-decide-post-release-version-and-preview-follow-up-boundary.md) (complete)
 - [`181-implement-effigy-changelog-workspace-extraction-and-release-adoption.md`](./181-implement-effigy-changelog-workspace-extraction-and-release-adoption.md) (complete)
-- [`182-decide-post-changelog-workspace-extraction-boundary.md`](./182-decide-post-changelog-workspace-extraction-boundary.md) (ready)
+- [`182-decide-post-changelog-workspace-extraction-boundary.md`](./182-decide-post-changelog-workspace-extraction-boundary.md) (complete)
+- [`210-implement-effigy-release-runner-shell-follow-up-cleanup-v2.md`](./210-implement-effigy-release-runner-shell-follow-up-cleanup-v2.md) (complete)
+- [`211-decide-post-release-runner-shell-follow-up-cleanup-v2-boundary.md`](./211-decide-post-release-runner-shell-follow-up-cleanup-v2-boundary.md) (complete)
+- [`212-implement-effigy-release-text-and-remediation-follow-up-extraction.md`](./212-implement-effigy-release-text-and-remediation-follow-up-extraction.md) (complete)
+- [`213-decide-post-release-text-and-remediation-follow-up-boundary.md`](./213-decide-post-release-text-and-remediation-follow-up-boundary.md) (complete)
+- [`214-implement-effigy-release-context-and-plan-follow-up-cleanup-v3.md`](./214-implement-effigy-release-context-and-plan-follow-up-cleanup-v3.md) (complete)
+- [`215-decide-post-release-context-and-plan-follow-up-cleanup-v3-boundary.md`](./215-decide-post-release-context-and-plan-follow-up-cleanup-v3-boundary.md) (complete)
+- [`216-implement-effigy-release-apply-and-gate-follow-up-cleanup-v4.md`](./216-implement-effigy-release-apply-and-gate-follow-up-cleanup-v4.md) (complete)
+- [`217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md`](./217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md) (ready)
 
 ## Active Ready Card
 
-- [`182-decide-post-changelog-workspace-extraction-boundary.md`](./182-decide-post-changelog-workspace-extraction-boundary.md)
+- [`217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md`](./217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md)
 
 ## Recent Boundary Decision
 
@@ -209,5 +217,5 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Execute `182` to decide whether the remaining release shell is now honest
-enough to pause or still needs one final bounded extraction.
+Execute `217` to classify the remaining release runner shell after the
+apply/gate execution extraction.

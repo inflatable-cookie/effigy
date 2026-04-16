@@ -39,10 +39,7 @@ impl HealthCheck {
         if s.starts_with("http://") || s.starts_with("https://") {
             Ok(Self::Http { url: s.to_string() })
         } else if s.starts_with("tcp://") {
-            let addr = s
-                .strip_prefix("tcp://")
-                .unwrap_or(s)
-                .to_string();
+            let addr = s.strip_prefix("tcp://").unwrap_or(s).to_string();
             if addr.is_empty() {
                 return Err("tcp:// health check requires host:port".to_string());
             }
@@ -329,7 +326,9 @@ mod tests {
     #[test]
     fn parse_http_url() {
         let check = HealthCheck::parse("http://localhost:8080/health").unwrap();
-        assert!(matches!(check, HealthCheck::Http { url } if url == "http://localhost:8080/health"));
+        assert!(
+            matches!(check, HealthCheck::Http { url } if url == "http://localhost:8080/health")
+        );
     }
 
     #[test]

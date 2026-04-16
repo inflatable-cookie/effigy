@@ -632,6 +632,7 @@ version = "0.1.0"
 dependencies = [
  "effigy-manifest",
  "regex",
+ "serde_json",
  "walkdir",
 ]
 
@@ -698,6 +699,7 @@ name = "effigy-release"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "effigy-changelog",
  "effigy-manifest",
  "semver",
  "serde",
@@ -1914,6 +1916,7 @@ dependencies = [
  "aws-lc-rs",
  "log",
  "once_cell",
+ "ring",
  "rustls-pki-types",
  "rustls-webpki",
  "subtle",

@@ -788,6 +788,68 @@ impl DemoActiveTerminalSession {
         }
     }
 
+    /// Build an active terminal session from an active attempt.
+    ///
+    /// `stdout_lines` and `stderr_lines` are pre-loaded recent output
+    /// lines. The caller is responsible for reading them from disk.
+    pub fn from_active_attempt(
+        attempt: &DemoActiveAttempt,
+        stdout_lines: Vec<String>,
+        stderr_lines: Vec<String>,
+    ) -> Self {
+        if !attempt.active {
+            return Self::inactive();
+        }
+
+        let stdout_log_path = attempt.stdout_log_path.clone();
+        let stderr_log_path = attempt.stderr_log_path.clone();
+        let runtime_backend = attempt.runtime_backend();
+        let input_forwarding_reason = (!attempt.supports_input_forwarding).then_some(
+            "input forwarding is not exposed through the current demo runtime".to_owned(),
+        );
+
+        Self {
+            available: true,
+            state: "live".to_owned(),
+            attempt_id: attempt.attempt_id.clone(),
+            runtime_backend,
+            transport: attempt.terminal_transport.rendered().to_owned(),
+            pty: matches!(attempt.terminal_transport, DemoTerminalTransport::Pty),
+            supports_input_forwarding: attempt.supports_input_forwarding,
+            input_forwarding_reason: input_forwarding_reason.clone(),
+            input_forwarding: if attempt.supports_input_forwarding {
+                DemoTerminalInputForwarding::available()
+            } else {
+                DemoTerminalInputForwarding::unavailable(
+                    input_forwarding_reason
+                        .expect("reason exists when input forwarding is unavailable"),
+                )
+            },
+            nested_tui: attempt.nested_tui,
+            terminal_size: DemoTerminalSize {
+                cols: attempt.terminal_cols,
+                rows: attempt.terminal_rows,
+            },
+            resize: if attempt.supports_resize {
+                DemoTerminalResize::available()
+            } else {
+                DemoTerminalResize::unavailable(
+                    "terminal resize handoff is not exposed through the current demo runtime"
+                        .to_owned(),
+                )
+            },
+            resize_handoff_path: attempt.resize_handoff_path.clone(),
+            stdin_input_path: attempt.stdin_input_path.clone(),
+            stdout_log_path: stdout_log_path.clone(),
+            stderr_log_path: stderr_log_path.clone(),
+            output_available: stdout_log_path.is_some() || stderr_log_path.is_some(),
+            recent_output: DemoTerminalRecentOutput {
+                stdout_lines,
+                stderr_lines,
+            },
+        }
+    }
+
     pub fn to_json(&self) -> JsonValue {
         json!({
             "available": self.available,

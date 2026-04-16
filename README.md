@@ -401,4 +401,4 @@ effigy/
 ## Next Task
 
 Execute
-[`182-decide-post-changelog-workspace-extraction-boundary.md`](./docs/specs/batch-cards/182-decide-post-changelog-workspace-extraction-boundary.md).
+[`217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md`](./docs/specs/batch-cards/217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md).

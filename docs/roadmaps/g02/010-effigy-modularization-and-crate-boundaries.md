@@ -1109,7 +1109,48 @@ That leaves a narrower release shell again:
 - the next ready batch is therefore a post-changelog boundary decision, not
   another guessed release slice
 
+That release runner shell cleanup v2 is now real too:
+
+- `effigy-release` now owns the release review menu/state/detail render layer
+- `src/runner/release_command.rs` no longer carries duplicate review enums,
+  menu parsers, or review render helpers inline
+- the remaining release shell is now narrower around release text/render
+  projection plus the final interactive runner loop and prompt wiring
+- the next ready batch is therefore a boundary decision, not another guessed
+  release slice
+
+That post-`210` boundary decision is now made too:
+
+- the release seam cannot pause yet
+- `src/runner/release_command.rs` still owns the release text/projection and
+  blocker-remediation layer
+- `crates/effigy-release/src/text.rs` already exists as the promoted target,
+  but it is still mostly dormant, which is why the current docs pass shows dead
+  code warnings there
+- the next ready batch is therefore one bounded text/remediation extraction,
+  not a release pause or a shift to another `/src` seam
+
+That release text/remediation extraction is now real too:
+
+- `effigy-release` now owns the release status/prepare/simulate/resume/execute
+  text projection layer
+- blocker remediation hint shaping no longer sits inline in
+  `src/runner/release_command.rs`
+- the dormant `crates/effigy-release/src/text.rs` surface is now in real use
+- the remaining release shell is narrower again around interactive prompt flow,
+  release context loading, and final runner-side apply/dispatch wiring
+
+That post-`212` boundary decision is now made too:
+
+- the release seam still cannot pause
+- `src/runner/release_command.rs` still owns one coherent release-domain layer:
+  context loading plus status/prepare/simulate/execute-plan collection
+- the remaining release shell is therefore not yet just interactive prompt IO
+  and runner dispatch
+- the next ready batch is one more bounded release context/plan cleanup, not a
+  pause or a shift to another `/src` seam
+
 ## Next Task
 
 Execute
-[`182-decide-post-changelog-workspace-extraction-boundary.md`](../../specs/batch-cards/182-decide-post-changelog-workspace-extraction-boundary.md).
+[`217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md`](../../specs/batch-cards/217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md).

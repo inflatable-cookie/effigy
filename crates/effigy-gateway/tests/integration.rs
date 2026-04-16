@@ -112,8 +112,16 @@ async fn dns_resolves_registered_domain_end_to_end() {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     // Start DNS server.
-    let dns_cache = Arc::new(effigy_gateway::dns::DnsCache::new(std::time::Duration::from_secs(2)));
-    let dns_handle = tokio::spawn(run_dns_server(config, shared, Arc::new(GatewayStats::new()), dns_cache, shutdown_rx));
+    let dns_cache = Arc::new(effigy_gateway::dns::DnsCache::new(
+        std::time::Duration::from_secs(2),
+    ));
+    let dns_handle = tokio::spawn(run_dns_server(
+        config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        dns_cache,
+        shutdown_rx,
+    ));
 
     // Give the server a moment to bind.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -194,7 +202,12 @@ async fn proxy_routes_to_correct_upstream() {
     };
 
     // Start proxy.
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(
+        proxy_config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        shutdown_rx,
+    ));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Make a request through the proxy.
@@ -233,7 +246,12 @@ async fn proxy_returns_no_route_page() {
         max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(
+        proxy_config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        shutdown_rx,
+    ));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -275,7 +293,12 @@ async fn gateway_health_endpoint() {
         max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(
+        proxy_config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        shutdown_rx,
+    ));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -312,7 +335,12 @@ async fn gateway_routes_endpoint() {
         max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(
+        proxy_config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        shutdown_rx,
+    ));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -361,7 +389,12 @@ async fn gateway_unknown_endpoint_returns_404() {
         max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(
+        proxy_config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        shutdown_rx,
+    ));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -483,7 +516,12 @@ async fn proxy_returns_bad_gateway_for_unreachable_upstream() {
         max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(
+        proxy_config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        shutdown_rx,
+    ));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -547,7 +585,12 @@ async fn proxy_response_timeout_returns_bad_gateway() {
         max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(
+        proxy_config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        shutdown_rx,
+    ));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::builder()
@@ -685,7 +728,12 @@ async fn proxy_forwards_post_body() {
         max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(
+        proxy_config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        shutdown_rx,
+    ));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
@@ -739,7 +787,12 @@ async fn proxy_forwards_large_body() {
         max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(
+        proxy_config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        shutdown_rx,
+    ));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // 100KB body.
@@ -788,7 +841,12 @@ async fn proxy_multiple_concurrent_requests() {
         max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(
+        proxy_config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        shutdown_rx,
+    ));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // 5 concurrent requests.
@@ -871,7 +929,12 @@ async fn proxy_preserves_response_status_and_headers() {
         max_request_body: 0,
     };
 
-    let proxy_handle = tokio::spawn(run_proxy_server(proxy_config, shared, Arc::new(GatewayStats::new()), shutdown_rx));
+    let proxy_handle = tokio::spawn(run_proxy_server(
+        proxy_config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        shutdown_rx,
+    ));
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
