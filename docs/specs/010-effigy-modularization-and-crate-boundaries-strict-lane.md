@@ -1083,20 +1083,25 @@ That post-`212` boundary decision is now made too:
   ~9.5k lines) and task-routing core
   (`src/runner/{catalog,scan,locking,deferral}/**`, ~6k lines).
   Neither has a ready implementation card.
+- `247` opens three new cards in one planning batch:
+  [`242-implement-cross-crate-re-export-shim-cleanup.md`](batch-cards/242-implement-cross-crate-re-export-shim-cleanup.md)
+  (ready — delete the three transitional re-export shims left by
+  `239`/`240`/`246` at `src/runner/managed.rs`,
+  `src/runner/model/managed.rs`, `src/runner/model/catalog.rs`, plus
+  the widget facade block in `crates/effigy-ui/src/lib.rs` inherited
+  from `235`; migrate ~50 call sites to real crate paths),
+  [`243-decide-task-routing-core-extraction-shape.md`](batch-cards/243-decide-task-routing-core-extraction-shape.md)
+  (decide — shape pass for routing + scan + locking + deferral,
+  Decision section pending coupling review), and
+  [`244-decide-builtin-tasks-extraction-shape.md`](batch-cards/244-decide-builtin-tasks-extraction-shape.md)
+  (decide — shape pass for the 11 heterogeneous builtin tasks,
+  Decision section pending coupling review). The user's framing:
+  shim removal is architectural hygiene, not just unblocking — every
+  workspace type should have exactly one canonical import path.
 
 ## Next Task
 
-The strict 010 lane is now at a clean boundary. There is no ready
-card. The next move is an intent choice:
-
-1. open a decide card for the built-in tasks extraction (the
-   largest remaining shell, but also the most heterogeneous —
-   likely wants its own shape-decision pass before implement)
-2. open a decide card for routing core (catalog / scan / locking /
-   deferral — smaller and more cohesive than builtin, and the
-   natural companion to `effigy-managed`)
-3. pause the lane here — 010's original intent ("modularization
-   and crate boundaries") has landed the managed runtime, TUI, UI,
-   process, env, contracts, cli, and manifest layers as crates.
-   The remaining two queues are real work but the v0.3 release
-   posture no longer blocks on them.
+Execute
+[`242-implement-cross-crate-re-export-shim-cleanup.md`](batch-cards/242-implement-cross-crate-re-export-shim-cleanup.md).
+After `242` lands, return to planning to drive the Decision section
+of `243` or `244` (in either order) through coupling review.

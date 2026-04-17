@@ -218,13 +218,17 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`239-implement-effigy-manifest-loaded-catalog-relocate.md`](./239-implement-effigy-manifest-loaded-catalog-relocate.md) (complete)
 - [`240-implement-effigy-managed-extraction.md`](./240-implement-effigy-managed-extraction.md) (complete)
 - [`241-implement-runner-util-prerequisites-for-managed-extraction.md`](./241-implement-runner-util-prerequisites-for-managed-extraction.md) (complete)
+- [`242-implement-cross-crate-re-export-shim-cleanup.md`](./242-implement-cross-crate-re-export-shim-cleanup.md) (ready)
+- [`243-decide-task-routing-core-extraction-shape.md`](./243-decide-task-routing-core-extraction-shape.md) (ready)
+- [`244-decide-builtin-tasks-extraction-shape.md`](./244-decide-builtin-tasks-extraction-shape.md) (ready)
 
 ## Active Ready Card
 
-none — the last two remaining 010 queue items (built-in tasks,
-task-routing core) have no ready implementation card yet. The lane is
-between batches; next move is either a new decide card for one of
-those queues or a pause.
+[`242-implement-cross-crate-re-export-shim-cleanup.md`](./242-implement-cross-crate-re-export-shim-cleanup.md)
+— drop the transitional cross-crate shims left by `239`/`240`/`246` and
+the widget facade inherited from `235`. Cards `243` and `244` are open
+decide cards for the remaining 010 queue items (routing core, built-in
+tasks); their decisions are pending coupling review.
 
 ## Recent Boundary Decision
 
