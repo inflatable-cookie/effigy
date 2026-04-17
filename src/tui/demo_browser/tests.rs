@@ -165,8 +165,8 @@ fn browser_mode_filter_cycle_is_bounded() {
 fn browser_row_helpers_ignore_group_headers() {
     let rows = vec![
         BrowserRow::Group("ready".to_owned()),
-        BrowserRow::Demo(summary("alpha")),
-        BrowserRow::Demo(summary("beta")),
+        BrowserRow::Demo(Box::new(summary("alpha"))),
+        BrowserRow::Demo(Box::new(summary("beta"))),
     ];
     assert_eq!(first_demo_id(&rows).as_deref(), Some("alpha"));
     assert!(row_contains_demo(&rows, "beta"));

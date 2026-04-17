@@ -1978,8 +1978,8 @@ where
         GateExecutionReport::empty()
     };
     let gate_blockers = gate_blockers_if_checked(check_gates, &gate_report.results);
-    let files_modified = collect_changed_mutation_paths(&plan.mutations, &snapshots)
-        .unwrap_or_else(|_| planned_files);
+    let files_modified =
+        collect_changed_mutation_paths(&plan.mutations, &snapshots).unwrap_or(planned_files);
     if !gate_blockers.is_empty() {
         return Ok(ReleasePrepared {
             repo_root,

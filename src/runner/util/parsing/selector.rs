@@ -5,7 +5,3 @@ use crate::runner::error::RunnerError;
 pub(super) fn parse_task_selector(raw: &str) -> Result<TaskSelector, RunnerError> {
     effigy_tasks::parse_task_selector(raw).map_err(RunnerError::task_invocation)
 }
-
-pub(super) fn render_task_selector(selector: &TaskSelector) -> String {
-    effigy_tasks::render_task_selector(selector)
-}

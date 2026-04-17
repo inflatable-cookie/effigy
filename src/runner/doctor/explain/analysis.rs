@@ -42,7 +42,7 @@ pub(super) fn compute_selection_outcome(
 ) -> SelectionOutcome {
     match selection {
         Ok(value) => {
-            let mode = format_selection_mode(value.mode.clone());
+            let mode = format_selection_mode(value.mode);
             SelectionOutcome {
                 status: "ok".to_owned(),
                 catalog: Some(value.catalog.alias.clone()),

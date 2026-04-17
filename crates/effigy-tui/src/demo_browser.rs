@@ -38,7 +38,7 @@ use crate::terminal_text::{render_vt_lines, LiveTerminalBuffer};
 #[derive(Clone)]
 pub enum BrowserRow {
     Group(String),
-    Demo(DemoSummary),
+    Demo(Box<DemoSummary>),
 }
 
 #[derive(Clone, Copy)]
@@ -2344,7 +2344,7 @@ pub fn rows_from_payload(payload: &DemoListPayload) -> Vec<BrowserRow> {
                 group.label, group.count
             )));
             for demo in &group.demos {
-                rows.push(BrowserRow::Demo(demo.clone()));
+                rows.push(BrowserRow::Demo(Box::new(demo.clone())));
             }
         }
         return rows;
@@ -2354,7 +2354,7 @@ pub fn rows_from_payload(payload: &DemoListPayload) -> Vec<BrowserRow> {
         .demos
         .iter()
         .cloned()
-        .map(BrowserRow::Demo)
+        .map(|demo| BrowserRow::Demo(Box::new(demo)))
         .collect()
 }
 
@@ -2550,7 +2550,7 @@ pub fn clamp_artifact_index(current: usize, detail: &DemoDetail) -> usize {
     }
 }
 
-pub fn selected_artifact<'a>(detail: &'a DemoDetail, selected_index: usize) -> Option<&'a str> {
+pub fn selected_artifact(detail: &DemoDetail, selected_index: usize) -> Option<&str> {
     detail
         .latest_attempt
         .artifacts

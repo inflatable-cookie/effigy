@@ -49,6 +49,12 @@ pub struct DoctorState {
     pub fixes: Vec<DoctorFixAction>,
 }
 
+impl Default for DoctorState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DoctorState {
     pub fn new() -> Self {
         Self {

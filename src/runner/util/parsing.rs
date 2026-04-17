@@ -28,10 +28,6 @@ pub(in crate::runner) fn parse_task_reference_invocation(
     reference::parse_task_reference_invocation(raw)
 }
 
-pub(in crate::runner) fn render_task_selector(selector: &TaskSelector) -> String {
-    selector::render_task_selector(selector)
-}
-
 pub(in crate::runner) fn render_passthrough_args(args: &[String]) -> String {
     reference::render_passthrough_args(args)
 }

@@ -10,6 +10,12 @@ pub struct LiveTerminalBuffer {
     utf8_carry: Vec<u8>,
 }
 
+impl Default for LiveTerminalBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LiveTerminalBuffer {
     pub fn new() -> Self {
         Self {
