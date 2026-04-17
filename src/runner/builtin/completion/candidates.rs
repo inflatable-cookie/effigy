@@ -5,7 +5,7 @@ use crate::TaskInvocation;
 use super::output::render_completion_candidates_response;
 use super::request::parse_completion_candidates_request;
 use crate::runner::error::RunnerError;
-use crate::runner::model::catalog::TaskRuntimeArgs;
+use effigy_tasks::TaskRuntimeArgs;
 
 mod cache;
 

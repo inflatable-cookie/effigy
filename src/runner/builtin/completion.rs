@@ -2,10 +2,10 @@ use std::path::Path;
 
 use crate::TaskInvocation;
 
-use super::super::model::catalog::TaskRuntimeArgs;
 use super::command_spec::run_passthrough_builtin_command;
 use super::render_builtin_help_text;
 use crate::runner::error::RunnerError;
+use effigy_tasks::TaskRuntimeArgs;
 
 mod candidates;
 mod help;

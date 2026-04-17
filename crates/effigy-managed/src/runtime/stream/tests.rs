@@ -1,8 +1,8 @@
-use effigy_process::{ProcessEvent, ProcessEventKind};
-use effigy_ui::{
-    KeyValue, MessageBlock, NoticeLevel, Renderer, SpinnerHandle, StepState, SummaryCounts,
-    TableSpec, UiResult,
+use effigy_core::widgets::{
+    KeyValue, MessageBlock, NoticeLevel, StepState, SummaryCounts, TableSpec,
 };
+use effigy_process::{ProcessEvent, ProcessEventKind};
+use effigy_ui::{Renderer, SpinnerHandle, UiResult};
 
 use super::StreamState;
 

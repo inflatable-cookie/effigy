@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::runner::error::RunnerError;
-use crate::runner::model::catalog::LoadedCatalog;
+use effigy_manifest::LoadedCatalog;
 
 use self::common::{doctor_manifest_options, load_root_manifest_options};
 use super::super::model::{

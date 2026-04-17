@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use super::catalog::resolve_catalog_by_prefix;
-use super::model::catalog::{LoadedCatalog, TaskRuntimeArgs, TaskSelector};
 use crate::runner::error::RunnerError;
 use crate::TaskInvocation;
+use effigy_manifest::LoadedCatalog;
+use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 
 mod arg_parser;
 mod cache;

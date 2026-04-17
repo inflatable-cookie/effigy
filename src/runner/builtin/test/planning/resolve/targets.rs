@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::runner::builtin::test::planning::{BuiltinResolvedPlan, BuiltinTestTarget};
-use crate::runner::model::catalog::LoadedCatalog;
 use crate::runner::RunnerError;
+use effigy_manifest::LoadedCatalog;
 
 use super::plan_resolution::resolve_target_test_plans;
 

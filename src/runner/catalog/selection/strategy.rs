@@ -1,7 +1,8 @@
 use std::path::Path;
 
-use super::super::super::model::catalog::{CatalogSelectionMode, LoadedCatalog};
 use crate::runner::error::RunnerError;
+use effigy_manifest::LoadedCatalog;
+use effigy_tasks::CatalogSelectionMode;
 
 pub(super) fn select_unprefixed_catalog<'a>(
     cwd: &Path,

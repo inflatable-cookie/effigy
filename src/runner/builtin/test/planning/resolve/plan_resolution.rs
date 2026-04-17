@@ -3,9 +3,9 @@ use std::path::Path;
 
 use crate::runner::builtin::test::planning::BuiltinResolvedPlan;
 use crate::runner::manifest::ManifestCargoEnvMatchMode;
-use crate::runner::model::catalog::LoadedCatalog;
 use crate::runner::RunnerError;
 use crate::testing::detect_test_runner_plans;
+use effigy_manifest::LoadedCatalog;
 
 use super::apply_builtin_test_runner_config;
 use super::target_config::{

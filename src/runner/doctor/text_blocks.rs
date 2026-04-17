@@ -1,4 +1,5 @@
-use effigy_ui::{KeyValue, PlainRenderer, Renderer};
+use effigy_core::widgets::KeyValue;
+use effigy_ui::{PlainRenderer, Renderer};
 
 pub(super) const DOCTOR_REPORT_HEADING: &str = "Doctor's Report";
 pub(super) const DOCTOR_EXPLAIN_HEADING: &str = "Doctor Explain";

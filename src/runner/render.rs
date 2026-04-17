@@ -2,10 +2,11 @@ use std::io::IsTerminal;
 use std::path::Path;
 
 use crate::resolver::ResolvedTarget;
-use effigy_ui::{KeyValue, OutputMode, PlainRenderer, Renderer};
-
-use super::model::catalog::{TaskSelection, TaskSelector};
 use crate::runner::error::RunnerError;
+use effigy_core::widgets::KeyValue;
+use effigy_manifest::TaskSelection;
+use effigy_tasks::TaskSelector;
+use effigy_ui::{OutputMode, PlainRenderer, Renderer};
 
 pub(super) fn render_task_resolution_trace(
     resolved: &ResolvedTarget,

@@ -5,12 +5,12 @@ use crate::fs_probe::PathPresenceCache;
 use crate::path_probe::command_available_in_path;
 
 use super::super::manifest::config_sections::ManifestJsPackageManager;
-use super::super::model::catalog::LoadedCatalog;
 use super::super::tooling::{js_package_manager_binary, required_tools_for_command};
 use super::super::TaskManifest;
 use super::contracts::{check_id, install_tool, remediation};
 use super::report::DoctorState;
 use super::task_graph;
+use effigy_manifest::LoadedCatalog;
 
 pub(super) fn check_environment_tools(
     workspace_root: &Path,

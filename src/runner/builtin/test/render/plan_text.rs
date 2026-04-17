@@ -5,7 +5,8 @@ use crate::runner::builtin::test::planning::BuiltinTestTarget;
 use crate::runner::builtin::test::suite_selection::render_available_suites;
 use crate::runner::error::RunnerError;
 use crate::TaskInvocation;
-use effigy_ui::{KeyValue, NoticeLevel, Renderer};
+use effigy_core::widgets::{KeyValue, NoticeLevel};
+use effigy_ui::Renderer;
 
 use super::super::super::super::super::render::{render_utf8, text_renderer};
 use super::plan_projection::project_target_plan;

@@ -1,5 +1,5 @@
-use super::super::super::model::catalog::LoadedCatalog;
 use crate::runner::error::RunnerError;
+use effigy_manifest::LoadedCatalog;
 
 pub(super) fn format_catalog(catalog: &LoadedCatalog) -> String {
     format!("{} ({})", catalog.alias, catalog.manifest_path.display())

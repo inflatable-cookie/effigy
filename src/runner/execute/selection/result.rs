@@ -1,4 +1,4 @@
-use crate::runner::model::catalog::TaskSelection;
+use effigy_manifest::TaskSelection;
 
 pub(in crate::runner) enum SelectionResolution<'a> {
     Selected(TaskSelection<'a>),

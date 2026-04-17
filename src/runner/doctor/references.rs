@@ -1,11 +1,11 @@
 use std::path::Path;
 
 use super::super::catalog::select_catalog_and_task;
-use super::super::model::catalog::LoadedCatalog;
 use super::super::util::parse_task_reference_invocation;
 use super::report::DoctorState;
 use super::task_graph;
 use effigy_doctor::task_references;
+use effigy_manifest::LoadedCatalog;
 
 pub(super) fn check_task_references(catalogs: &[LoadedCatalog], state: &mut DoctorState) {
     let mut checker = ReferenceChecker::new(catalogs, state);

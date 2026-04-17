@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use crate::runner::model::{catalog::LoadedCatalog, constants::DEFAULT_BUILTIN_TEST_MAX_PARALLEL};
+use crate::runner::model::constants::DEFAULT_BUILTIN_TEST_MAX_PARALLEL;
+use effigy_manifest::LoadedCatalog;
 
 pub(super) fn builtin_test_max_parallel(catalogs: &[LoadedCatalog], resolved_root: &Path) -> usize {
     let configured = catalogs

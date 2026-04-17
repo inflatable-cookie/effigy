@@ -1,8 +1,9 @@
 use super::super::super::deferral::{select_deferral, should_attempt_deferral};
-use super::super::super::model::catalog::{LoadedCatalog, TaskSelection, TaskSelector};
 use super::contracts::{DeferralOutcome, SelectionOutcome};
 use super::CatalogSelectionMode;
 use crate::runner::error::RunnerError;
+use effigy_manifest::{LoadedCatalog, TaskSelection};
+use effigy_tasks::TaskSelector;
 
 pub(super) fn candidate_catalogs(
     catalogs: &[LoadedCatalog],

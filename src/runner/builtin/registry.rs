@@ -2,11 +2,12 @@ use std::path::Path;
 
 use crate::TaskInvocation;
 
-use super::super::model::catalog::{LoadedCatalog, TaskRuntimeArgs, TaskSelector};
 use super::{
     cache, completion, config, doctor, help, init, migrate, scan, tasks, test, unlock, watch,
 };
 use crate::runner::error::RunnerError;
+use effigy_manifest::LoadedCatalog;
+use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 
 pub(super) struct BuiltinRegistryEntry {
     pub(super) name: &'static str,

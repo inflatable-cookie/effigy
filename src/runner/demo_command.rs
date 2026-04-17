@@ -65,21 +65,23 @@ use serde_json::{json, Value as JsonValue};
 use crate::runner::catalog::select_catalog_and_task;
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
 use crate::runner::execute::run_manifest_task_with_cwd;
-use crate::runner::managed::command::resolve_managed_task_plan;
-use crate::runner::managed::run_spec::{render_task_run_spec, RunSpecContext};
 use crate::runner::manifest::{
     load_task_manifest_with_inspection, LoadedTaskManifest, ManifestDemoConfig, ManifestDemoMode,
     ManifestManagedRun, ManifestTask,
 };
-use crate::runner::model::catalog::{LoadedCatalog, TaskRuntimeArgs, TaskSelection, TaskSelector};
 use crate::runner::util::parse_task_selector;
 use crate::runner::util::with_local_node_bin_path;
 use crate::tui::run_demo_browser_tui;
 use crate::{
     DemoArgs, DemoHistoryOutcome, DemoListGroupBy, DemoListQuery, DemoSubcommand, TaskInvocation,
 };
+use effigy_core::widgets::{KeyValue, NoticeLevel};
+use effigy_managed::command::resolve_managed_task_plan;
+use effigy_managed::run_spec::{render_task_run_spec, RunSpecContext};
+use effigy_manifest::{LoadedCatalog, TaskSelection};
 use effigy_process::{ProcessEventKind, ProcessSpec, ProcessSupervisor};
-use effigy_ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
+use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
+use effigy_ui::{PlainRenderer, Renderer};
 
 use super::error::RunnerError;
 use super::render::{encode_json, render_utf8, text_renderer};
@@ -1632,7 +1634,7 @@ fn run_concurrent_runner_demo_runtime(
     repo_root: &Path,
     demo_id: &str,
     task_name: &str,
-    plan: crate::runner::model::managed::ManagedTaskPlan,
+    plan: effigy_managed::ManagedTaskPlan,
     log_paths: DemoLogPaths,
     input_target_process: Option<String>,
     input_handoff_path: Option<PathBuf>,

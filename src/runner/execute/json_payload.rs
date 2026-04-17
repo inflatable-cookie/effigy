@@ -5,7 +5,7 @@ use serde_json::json;
 
 use super::super::render::encode_json;
 use crate::runner::error::RunnerError;
-use crate::runner::model::catalog::TaskSelector;
+use effigy_tasks::TaskSelector;
 
 pub(super) fn render_task_cache_hit_json(
     task_name: &str,

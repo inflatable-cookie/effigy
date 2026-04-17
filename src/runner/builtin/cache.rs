@@ -11,10 +11,11 @@ mod request;
 #[path = "cache/selection.rs"]
 mod selection;
 
-use super::super::model::catalog::{LoadedCatalog, TaskRuntimeArgs};
 use super::command_spec::run_passthrough_builtin_command;
 use super::render_builtin_help_text;
 use crate::runner::error::RunnerError;
+use effigy_manifest::LoadedCatalog;
+use effigy_tasks::TaskRuntimeArgs;
 use request::{parse_cache_request, render_cache_help, CacheRequest};
 
 pub(super) fn run_builtin_cache(

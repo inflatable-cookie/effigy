@@ -2,7 +2,8 @@ use crate::{
     emit_json_envelope_error, emit_json_envelope_success, parse_json_or_string, render_cli_header,
     CliExecutionContext, Command,
 };
-use effigy_ui::{MessageBlock, PlainRenderer, Renderer};
+use effigy_core::widgets::MessageBlock;
+use effigy_ui::{PlainRenderer, Renderer};
 
 pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Command) {
     let mut renderer = PlainRenderer::stdout(context.output_mode);

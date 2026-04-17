@@ -10,6 +10,7 @@ anstream = "0.6"
 anstyle = "1"
 crossterm = "0.29"
 effigy-cli = { path = "../effigy-cli" }
+effigy-core = { path = "../effigy-core" }
 effigy-demo = { path = "../effigy-demo" }
 effigy-process = { path = "../effigy-process" }
 effigy-ui = { path = "../effigy-ui" }

@@ -19,7 +19,6 @@ mod env_schema_support;
 mod error;
 mod execute;
 mod locking;
-mod managed;
 mod manifest;
 mod model;
 mod release_command;
@@ -35,12 +34,9 @@ mod test_support;
 mod tooling;
 mod util;
 
+use effigy_manifest::LoadedCatalog;
 use manifest::TaskManifest;
-use model::{
-    catalog::{LoadedCatalog, TaskSelector},
-    constants::{DEFAULT_MANAGED_SHELL_RUN, IMPLICITLY_DEFERRED_COMMAND_BUILTINS},
-    managed::ManagedProcessSpec,
-};
+use model::constants::IMPLICITLY_DEFERRED_COMMAND_BUILTINS;
 
 pub use entrypoints::{resolve_command_root, run_command};
 pub use error::RunnerError;

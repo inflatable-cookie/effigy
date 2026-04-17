@@ -1,6 +1,5 @@
 use serde::Serialize;
 
-use super::super::super::model::catalog::LoadedCatalog;
 use super::super::super::tasks_view::ManagedProfileDisplayRow;
 use super::super::row_projection::TaskSignatureProjection;
 use super::super::selection::CatalogTaskMatch;
@@ -8,6 +7,7 @@ use super::catalog_projection::{
     prepare_matched_catalog_task_rows_for_path, prepare_ordered_catalog_task_rows_for_path,
     CatalogTaskListingEntry, CatalogTaskProjection,
 };
+use effigy_manifest::LoadedCatalog;
 
 #[derive(Clone, Serialize)]
 pub(in super::super) struct CatalogTaskJsonRow {

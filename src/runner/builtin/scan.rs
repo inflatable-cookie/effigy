@@ -2,10 +2,11 @@ use std::path::Path;
 
 use crate::TaskInvocation;
 
-use super::super::model::catalog::{LoadedCatalog, TaskRuntimeArgs};
 use super::command_spec::run_passthrough_builtin_command;
 use super::{has_builtin_json_flag, render_builtin_help_text};
 use crate::runner::error::RunnerError;
+use effigy_manifest::LoadedCatalog;
+use effigy_tasks::TaskRuntimeArgs;
 
 mod execution;
 mod help;

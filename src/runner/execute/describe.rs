@@ -1,5 +1,5 @@
 use super::super::manifest::task_runtime::{ManifestManagedRun, ManifestTask};
-use super::super::model::catalog::LoadedCatalog;
+use effigy_manifest::LoadedCatalog;
 
 pub(in crate::runner) fn task_run_preview(task: &ManifestTask) -> String {
     if let Some(run) = task.run.as_ref() {

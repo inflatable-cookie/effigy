@@ -3,7 +3,7 @@ use crate::TaskInvocation;
 use super::super::super::super::builtin::try_run_builtin_task;
 use super::super::super::preflight::ExecutionPreflight;
 use crate::runner::error::RunnerError;
-use crate::runner::model::catalog::TaskSelector;
+use effigy_tasks::TaskSelector;
 
 pub(super) fn resolve_builtin_selection_output(
     task: &TaskInvocation,

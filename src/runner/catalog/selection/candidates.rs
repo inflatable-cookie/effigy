@@ -1,4 +1,4 @@
-use super::super::super::model::catalog::LoadedCatalog;
+use effigy_manifest::LoadedCatalog;
 
 pub(super) fn catalogs_matching_task<'a>(
     catalogs: &'a [LoadedCatalog],

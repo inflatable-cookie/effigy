@@ -1,8 +1,9 @@
 use crate::TaskInvocation;
 use std::path::Path;
 
-use super::super::model::catalog::{LoadedCatalog, TaskRuntimeArgs, TaskSelector};
 use crate::runner::error::RunnerError;
+use effigy_manifest::LoadedCatalog;
+use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 
 mod execution;
 mod planning;

@@ -10,13 +10,13 @@ mod rows;
 #[path = "text_output/sections.rs"]
 mod sections;
 
-use super::super::model::catalog::LoadedCatalog;
 use super::super::tasks_view::render_resolution_probe_block;
 use super::super::{render, RunnerError};
 use super::render_context::ListingRenderRequest;
 use super::selection::PreparedFilteredListing;
 use super::selection_dispatch::dispatch_listing_selection;
 use super::ListingCatalogSnapshot;
+use effigy_manifest::LoadedCatalog;
 use filtered::render_filtered_tasks_text;
 use sections::render_default_tasks_text;
 

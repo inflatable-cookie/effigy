@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use super::super::super::catalog::select_catalog_and_task;
-use super::super::super::model::catalog::LoadedCatalog;
 use super::super::super::util::parse_task_selector;
 use crate::runner::error::RunnerError;
+use effigy_manifest::LoadedCatalog;
 
 pub(super) fn resolve_cache_selector(
     selector_raw: &str,

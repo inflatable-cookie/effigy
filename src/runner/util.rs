@@ -8,7 +8,7 @@ mod shell;
 use std::collections::BTreeMap;
 
 use crate::runner::error::RunnerError;
-use crate::runner::model::catalog::{TaskRuntimeArgs, TaskSelector};
+use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 
 pub(super) fn normalize_builtin_test_suite(raw: &str) -> Option<&'static str> {
     parsing::normalize_builtin_test_suite(raw)

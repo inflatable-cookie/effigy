@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use crate::resolver::ResolvedTarget;
 
 use super::preflight::ExecutionPreflight;
-use crate::runner::model::catalog::{TaskSelection, TaskSelector};
 use crate::runner::render::render_task_resolution_trace;
+use effigy_manifest::TaskSelection;
+use effigy_tasks::TaskSelector;
 
 pub(super) struct ExecutionTaskContext<'a> {
     pub(super) resolved: &'a ResolvedTarget,

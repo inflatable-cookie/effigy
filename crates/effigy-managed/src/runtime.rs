@@ -1,8 +1,9 @@
 use std::path::Path;
 
+use effigy_core::widgets::SummaryCounts;
 use effigy_process::ProcessSupervisor;
 use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
-use effigy_ui::{Renderer, SummaryCounts};
+use effigy_ui::Renderer;
 
 use super::render_support::{managed_process_specs, write_managed_overview};
 use crate::ManagedError;

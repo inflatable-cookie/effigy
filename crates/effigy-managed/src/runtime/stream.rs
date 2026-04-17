@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
+use effigy_core::widgets::NoticeLevel;
 use effigy_process::{ProcessEvent, ProcessEventKind, ProcessSupervisor};
-use effigy_ui::{NoticeLevel, Renderer};
+use effigy_ui::Renderer;
 
 use crate::ManagedError;
 

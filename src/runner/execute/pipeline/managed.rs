@@ -1,11 +1,11 @@
 use super::super::super::container_command::run_task_container_session;
 use super::super::super::locking::io::acquire_scopes;
 use super::super::super::locking::model::LockScope;
-use super::super::super::managed::command::resolve_managed_task_plan;
-use super::super::super::managed::presentation::run_or_render_managed_task;
 use super::super::preflight::ExecutionPreflight;
 use crate::runner::error::RunnerError;
-use crate::runner::model::catalog::TaskSelection;
+use effigy_managed::command::resolve_managed_task_plan;
+use effigy_managed::presentation::run_or_render_managed_task;
+use effigy_manifest::TaskSelection;
 
 pub(super) fn run_managed_task(
     preflight: &ExecutionPreflight,

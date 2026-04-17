@@ -1,8 +1,8 @@
 use std::path::Path;
 
-use super::super::super::model::catalog::LoadedCatalog;
 use super::request::{ScanCommand, ScanRequest};
 use crate::runner::error::RunnerError;
+use effigy_manifest::LoadedCatalog;
 
 #[path = "execution/core/mod.rs"]
 mod core;

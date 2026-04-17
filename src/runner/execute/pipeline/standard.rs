@@ -7,9 +7,9 @@ use super::super::preflight::ExecutionPreflight;
 use super::{super::cache_hit, super::process_run, command};
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
-use crate::runner::model::catalog::TaskSelection;
 use effigy_env::resolver::ResolvedEnv;
 use effigy_env::secret::SecretString;
+use effigy_manifest::TaskSelection;
 
 pub(super) fn run_standard_task(
     preflight: &ExecutionPreflight,

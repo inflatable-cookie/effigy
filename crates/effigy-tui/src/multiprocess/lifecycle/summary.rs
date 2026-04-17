@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::io::IsTerminal;
 use std::time::Instant;
 
+use effigy_core::widgets::KeyValue;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
-use effigy_ui::{KeyValue, OutputMode, PlainRenderer, Renderer};
+use effigy_ui::{OutputMode, PlainRenderer, Renderer};
 
 use super::super::diagnostics::RuntimeDiagnostics;
 use super::super::terminal_text::{format_elapsed, is_expected_shutdown_diagnostic, styled_text};

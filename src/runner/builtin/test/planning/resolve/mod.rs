@@ -3,9 +3,9 @@ use std::path::Path;
 
 use crate::runner::builtin::test::planning::BuiltinTestTarget;
 use crate::runner::manifest::config_sections::ManifestJsPackageManager;
-use crate::runner::model::catalog::LoadedCatalog;
 use crate::runner::tooling::vitest_command_for_js_package_manager;
 use crate::runner::RunnerError;
+use effigy_manifest::LoadedCatalog;
 
 mod cargo_env;
 mod plan_resolution;

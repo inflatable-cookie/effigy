@@ -1,9 +1,9 @@
-use crate::TaskInvocation;
-use effigy_ui::{KeyValue, Renderer};
-
-use super::super::model::catalog::DeferredCommand;
 use super::super::render::trace_renderer;
 use crate::runner::error::RunnerError;
+use crate::TaskInvocation;
+use effigy_core::widgets::KeyValue;
+use effigy_manifest::DeferredCommand;
+use effigy_ui::Renderer;
 
 pub(super) fn render_deferral_trace(
     task: &TaskInvocation,

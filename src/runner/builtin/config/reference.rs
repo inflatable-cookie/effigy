@@ -1,4 +1,5 @@
-use effigy_ui::{NoticeLevel, Renderer};
+use effigy_core::widgets::NoticeLevel;
+use effigy_ui::Renderer;
 
 use super::super::super::render::{plain_renderer, render_utf8};
 use super::super::doc_render::{emit_doc_lines, style_hash_comments};

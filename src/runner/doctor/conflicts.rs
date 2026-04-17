@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use super::super::model::catalog::LoadedCatalog;
 use super::contracts::{check_id, remediation};
 use super::report::DoctorState;
+use effigy_manifest::LoadedCatalog;
 
 pub(super) fn check_manifest_alias_conflicts(catalogs: &[LoadedCatalog], state: &mut DoctorState) {
     let mut seen = HashMap::<String, PathBuf>::new();

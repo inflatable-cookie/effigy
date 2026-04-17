@@ -788,6 +788,7 @@ dependencies = [
  "anstyle",
  "crossterm 0.29.0",
  "effigy-cli",
+ "effigy-core",
  "effigy-demo",
  "effigy-process",
  "effigy-ui",
