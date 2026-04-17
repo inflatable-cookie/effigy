@@ -1,5 +1,5 @@
-use crate::ui::theme::Theme;
-use crate::ui::Renderer;
+use effigy_ui::theme::Theme;
+use effigy_ui::Renderer;
 
 use super::text_doc::TextDoc;
 use crate::runner::error::RunnerError;

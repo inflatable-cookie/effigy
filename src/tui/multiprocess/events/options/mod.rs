@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::process_manager::ProcessSupervisor;
+use effigy_process::ProcessSupervisor;
 
 use super::super::render::options_actions;
 use super::super::state::{OptionsAction, SessionState};

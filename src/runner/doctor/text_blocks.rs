@@ -1,4 +1,4 @@
-use crate::ui::{KeyValue, PlainRenderer, Renderer};
+use effigy_ui::{KeyValue, PlainRenderer, Renderer};
 
 pub(super) const DOCTOR_REPORT_HEADING: &str = "Doctor's Report";
 pub(super) const DOCTOR_EXPLAIN_HEADING: &str = "Doctor Explain";
@@ -37,14 +37,14 @@ pub(super) fn optional_bullet_section(
 pub(super) fn render_key_values(
     renderer: &mut PlainRenderer<Vec<u8>>,
     rows: &[KeyValue],
-) -> Result<(), crate::ui::UiError> {
+) -> Result<(), effigy_ui::UiError> {
     renderer.key_values(rows)
 }
 
 pub(super) fn render_bullet_sections(
     renderer: &mut PlainRenderer<Vec<u8>>,
     sections: &[BulletListSection],
-) -> Result<(), crate::ui::UiError> {
+) -> Result<(), effigy_ui::UiError> {
     for section in sections {
         renderer.bullet_list(&section.label, &section.items)?;
     }

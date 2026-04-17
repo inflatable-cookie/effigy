@@ -193,11 +193,34 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`214-implement-effigy-release-context-and-plan-follow-up-cleanup-v3.md`](./214-implement-effigy-release-context-and-plan-follow-up-cleanup-v3.md) (complete)
 - [`215-decide-post-release-context-and-plan-follow-up-cleanup-v3-boundary.md`](./215-decide-post-release-context-and-plan-follow-up-cleanup-v3-boundary.md) (complete)
 - [`216-implement-effigy-release-apply-and-gate-follow-up-cleanup-v4.md`](./216-implement-effigy-release-apply-and-gate-follow-up-cleanup-v4.md) (complete)
-- [`217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md`](./217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md) (ready)
+- [`217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md`](./217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md) (complete)
+- [`218-decide-next-src-shell-cleanup-priority-after-release-final-pause-boundary.md`](./218-decide-next-src-shell-cleanup-priority-after-release-final-pause-boundary.md) (complete)
+- [`219-implement-effigy-contracts-foundation-extraction.md`](./219-implement-effigy-contracts-foundation-extraction.md) (complete)
+- [`220-decide-post-contracts-foundation-extraction-boundary.md`](./220-decide-post-contracts-foundation-extraction-boundary.md) (complete)
+- [`221-decide-next-src-shell-cleanup-priority-after-contracts-boundary.md`](./221-decide-next-src-shell-cleanup-priority-after-contracts-boundary.md) (complete)
+- [`222-implement-effigy-distribution-runner-shell-follow-up-cleanup-v2.md`](./222-implement-effigy-distribution-runner-shell-follow-up-cleanup-v2.md) (complete)
+- [`223-decide-post-distribution-runner-shell-follow-up-cleanup-v2-boundary.md`](./223-decide-post-distribution-runner-shell-follow-up-cleanup-v2-boundary.md) (complete)
+- [`224-implement-effigy-bootstrap-runner-shell-follow-up-cleanup-v2.md`](./224-implement-effigy-bootstrap-runner-shell-follow-up-cleanup-v2.md) (complete)
+- [`225-decide-post-bootstrap-runner-shell-follow-up-cleanup-v2-boundary.md`](./225-decide-post-bootstrap-runner-shell-follow-up-cleanup-v2-boundary.md) (complete)
+- [`226-implement-effigy-bootstrap-integration-test-ownership.md`](./226-implement-effigy-bootstrap-integration-test-ownership.md) (complete)
+- [`227-decide-post-bootstrap-integration-test-ownership-boundary.md`](./227-decide-post-bootstrap-integration-test-ownership-boundary.md) (complete)
+- [`228-decide-next-src-shell-cleanup-priority-after-bootstrap-pause-boundary.md`](./228-decide-next-src-shell-cleanup-priority-after-bootstrap-pause-boundary.md) (complete)
+- [`229-implement-effigy-cli-help-extraction.md`](./229-implement-effigy-cli-help-extraction.md) (complete)
+- [`230-decide-post-cli-help-extraction-boundary.md`](./230-decide-post-cli-help-extraction-boundary.md) (complete)
+- [`231-decide-next-src-shell-cleanup-priority-after-cli-help-pause-boundary.md`](./231-decide-next-src-shell-cleanup-priority-after-cli-help-pause-boundary.md) (complete)
+- [`232-implement-effigy-process-subsystem-extraction.md`](./232-implement-effigy-process-subsystem-extraction.md) (complete)
+- [`233-decide-post-effigy-process-extraction-boundary.md`](./233-decide-post-effigy-process-extraction-boundary.md) (complete)
+- [`234-decide-next-src-shell-cleanup-priority-after-effigy-process-pause-boundary.md`](./234-decide-next-src-shell-cleanup-priority-after-effigy-process-pause-boundary.md) (complete)
+- [`235-implement-effigy-ui-subsystem-extraction.md`](./235-implement-effigy-ui-subsystem-extraction.md) (complete)
+- [`236-decide-post-effigy-ui-extraction-boundary.md`](./236-decide-post-effigy-ui-extraction-boundary.md) (complete)
+- [`237-decide-post-subsystem-runner-adapter-cleanup-survey.md`](./237-decide-post-subsystem-runner-adapter-cleanup-survey.md) (complete)
 
 ## Active Ready Card
 
-- [`217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md`](./217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md)
+none — the `g02.010` strict modularization lane is paused on a trustworthy
+full boundary. Resume
+[`115-implement-effigy-distribution-release-closure.md`](./115-implement-effigy-distribution-release-closure.md)
+for `v0.3` closure.
 
 ## Recent Boundary Decision
 
@@ -217,5 +240,4 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Execute `217` to classify the remaining release runner shell after the
-apply/gate execution extraction.
+Execute `222` to reduce the next meaningful distribution runner shell slice.

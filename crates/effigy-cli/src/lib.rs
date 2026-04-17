@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 mod command_parsing;
 mod global_json;
+pub mod help;
 mod value_parsing;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

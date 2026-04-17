@@ -1,8 +1,8 @@
 use std::path::Path;
 
-use crate::process_manager::ProcessSupervisor;
 use crate::tui::{run_multiprocess_tui, MultiProcessTuiOptions};
-use crate::ui::{Renderer, SummaryCounts};
+use effigy_process::ProcessSupervisor;
+use effigy_ui::{Renderer, SummaryCounts};
 
 use super::super::model::managed::ManagedTaskPlan;
 use super::super::render::{render_utf8, text_renderer};

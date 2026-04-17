@@ -81,41 +81,5 @@ pub fn render_task_selector(selector: &TaskSelector) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn selector_parse_and_render_are_stable() {
-        assert_eq!(
-            parse_task_selector("api/test").expect("selector"),
-            TaskSelector {
-                prefix: Some("api".to_owned()),
-                task_name: "test".to_owned(),
-            }
-        );
-        assert_eq!(
-            render_task_selector(&TaskSelector {
-                prefix: Some("api".to_owned()),
-                task_name: "test".to_owned(),
-            }),
-            "api/test"
-        );
-    }
-
-    #[test]
-    fn runtime_args_parse_is_stable() {
-        let parsed = parse_task_runtime_args(&[
-            "--repo".to_owned(),
-            "/tmp/repo".to_owned(),
-            "--env-schema".to_owned(),
-            "env.toml".to_owned(),
-            "--verbose-root".to_owned(),
-            "--watch".to_owned(),
-        ])
-        .expect("runtime args");
-        assert_eq!(parsed.repo_override, Some(PathBuf::from("/tmp/repo")));
-        assert_eq!(parsed.env_schema_override, Some(PathBuf::from("env.toml")));
-        assert!(parsed.verbose_root);
-        assert_eq!(parsed.passthrough, vec!["--watch".to_owned()]);
-    }
-}
+#[path = "parsing/tests.rs"]
+mod tests;

@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use crate::process_manager::{ProcessEvent, ProcessEventKind, ProcessSupervisor};
-use crate::ui::{NoticeLevel, Renderer};
+use effigy_process::{ProcessEvent, ProcessEventKind, ProcessSupervisor};
+use effigy_ui::{NoticeLevel, Renderer};
 
 use crate::runner::error::RunnerError;
 

@@ -1,10 +1,16 @@
 use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::Local;
 use effigy_manifest::{
     config_sections::{ManifestDistributionCloseoutConfig, ManifestDistributionPublishConfig},
     load_task_manifest, ManifestDistributionConfig, ManifestDistributionMetadataConfig,
     ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig, ManifestError,
 };
+use regex::Regex;
+use serde_json::json;
 
 pub const DEFAULT_PACKAGE_NAME: &str = "effigy";
 pub const DEFAULT_REPO_URL: &str = "https://github.com/inflatable-cookie/effigy.git";
@@ -51,6 +57,26 @@ pub struct EffectiveDistributionPolicy {
 pub enum DistributionPolicyError {
     Manifest(ManifestError),
 }
+
+#[derive(Debug)]
+pub enum DistributionExecutionError {
+    Io {
+        path: PathBuf,
+        error: std::io::Error,
+    },
+    Message(String),
+}
+
+impl std::fmt::Display for DistributionExecutionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io { path, error } => write!(f, "failed to access {}: {error}", path.display()),
+            Self::Message(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for DistributionExecutionError {}
 
 impl std::fmt::Display for DistributionPolicyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -190,6 +216,477 @@ pub fn homebrew_artifact_patterns(
         ));
     }
     patterns
+}
+
+pub fn validate_artifacts_command(
+    distribution_policy: &EffectiveDistributionPolicy,
+    artifacts_dir: &Path,
+    expect_homebrew: bool,
+    output_json: bool,
+) -> Result<String, DistributionExecutionError> {
+    if !artifacts_dir.is_dir() {
+        return Err(DistributionExecutionError::Message(format!(
+            "artifacts directory not found: {}",
+            artifacts_dir.display()
+        )));
+    }
+    let base_patterns = base_artifact_patterns(distribution_policy);
+    let homebrew_patterns = homebrew_artifact_patterns(distribution_policy);
+
+    let mut found = Vec::new();
+    let mut missing = Vec::new();
+    for (label, pattern) in base_patterns.into_iter().chain(if expect_homebrew {
+        homebrew_patterns
+    } else {
+        Vec::new()
+    }) {
+        match find_log_by_pattern(artifacts_dir, &pattern) {
+            Some(path) => found.push(json!({
+                "label": label,
+                "pattern": pattern,
+                "file": path.file_name().and_then(|name| name.to_str()).unwrap_or_default(),
+            })),
+            None => missing.push(json!({
+                "label": label,
+                "pattern": pattern,
+            })),
+        }
+    }
+
+    let payload = json!({
+        "schema": "effigy.distribution.artifacts.v1",
+        "schema_version": 1,
+        "ok": missing.is_empty(),
+        "artifacts_dir": artifacts_dir.display().to_string(),
+        "expect_homebrew": expect_homebrew,
+        "found": found,
+        "missing": missing,
+    });
+
+    if output_json {
+        return if payload["ok"] == true {
+            Ok(payload.to_string())
+        } else {
+            Err(DistributionExecutionError::Message(payload.to_string()))
+        };
+    }
+    if payload["ok"] == true {
+        return Ok("[ok] distribution artifact validation passed".to_owned());
+    }
+    Err(DistributionExecutionError::Message(
+        payload["missing"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|value| {
+                Some(format!(
+                    "missing {} log (pattern: *{}*.log)",
+                    value.get("label")?.as_str()?,
+                    value.get("pattern")?.as_str()?
+                ))
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    ))
+}
+
+pub fn generate_closeout_command(
+    distribution_policy: &EffectiveDistributionPolicy,
+    tag: &str,
+    artifacts_dir: &Path,
+    output_path: Option<PathBuf>,
+    owner: &str,
+    expect_homebrew: bool,
+    output_json: bool,
+) -> Result<String, DistributionExecutionError> {
+    let tag_re = Regex::new(r"^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$").expect("tag regex");
+    if !tag_re.is_match(tag) {
+        return Err(DistributionExecutionError::Message(format!(
+            "tag must match vX.Y.Z format: {tag}"
+        )));
+    }
+    if !artifacts_dir.is_dir() {
+        return Err(DistributionExecutionError::Message(format!(
+            "artifacts directory not found: {}",
+            artifacts_dir.display()
+        )));
+    }
+
+    let summary_path = artifacts_dir.join("distribution-summary.env");
+    let mut inferred_expect_homebrew = expect_homebrew;
+    if !expect_homebrew && summary_path.is_file() {
+        let summary = std::fs::read_to_string(&summary_path).map_err(|error| {
+            DistributionExecutionError::Io {
+                path: summary_path.clone(),
+                error,
+            }
+        })?;
+        inferred_expect_homebrew = summary
+            .lines()
+            .find_map(|line| line.strip_prefix("HOMEBREW_EXECUTED="))
+            == Some("1");
+    }
+
+    let _ = validate_artifacts_command(
+        distribution_policy,
+        artifacts_dir,
+        inferred_expect_homebrew,
+        false,
+    )?;
+
+    let mut log_files = std::fs::read_dir(artifacts_dir)
+        .map_err(|error| DistributionExecutionError::Io {
+            path: artifacts_dir.to_path_buf(),
+            error,
+        })?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("log"))
+        .collect::<Vec<_>>();
+    log_files.sort();
+    if log_files.is_empty() {
+        return Err(DistributionExecutionError::Message(format!(
+            "no .log files found in artifacts directory: {}",
+            artifacts_dir.display()
+        )));
+    }
+
+    let homebrew_patterns = homebrew_artifact_patterns(distribution_policy);
+    let has_homebrew_logs = log_files.iter().any(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                homebrew_patterns
+                    .iter()
+                    .any(|(_, pattern)| name.contains(pattern))
+            })
+    });
+
+    let now = Local::now();
+    let output_path = output_path.unwrap_or_else(|| {
+        let sanitized_tag = tag.trim_start_matches('v').replace('.', "-");
+        PathBuf::from(format!(
+            "docs/logs/{}/{}-{}-distribution-acceptance-closeout-{}.md",
+            now.format("%Y-%m"),
+            now.format("%d"),
+            now.format("%H%M%S"),
+            sanitized_tag
+        ))
+    });
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| DistributionExecutionError::Io {
+            path: parent.to_path_buf(),
+            error,
+        })?;
+    }
+
+    let owner = effective_closeout_owner(distribution_policy, owner);
+    let today = now.format("%F").to_string();
+    let related_line = distribution_policy
+        .closeout_related
+        .as_ref()
+        .map(|related| format!("Related: {related}\n"))
+        .unwrap_or_default();
+    let evidence_lines = log_files
+        .iter()
+        .filter_map(|path| path.file_name().and_then(|name| name.to_str()))
+        .map(|name| format!("- {name}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let rendered = format!(
+        "# Distribution Acceptance Closeout ({tag})\n\nDate: {today}\nOwner: {owner}\n{related_line}\n## Scope\n\n- Capture publish-cycle distribution evidence from artifact logs.\n- Record acceptance-closeout outcomes for tag {tag}.\n\n## Inputs\n\n- release tag: {tag}\n- artifacts directory: {}\n- artifacts summary: {}\n\n## Evidence Logs\n\n{evidence_lines}\n\n## Outcomes\n\n- First-publish artifacts were captured and linked for closeout evidence.\n- Install validation evidence for `{}` is included in this closeout via artifact outputs.\n- Homebrew evidence included: {has_homebrew_logs}.\n\n## Risks / Follow-ups\n\n- If any expected channel log is missing, rerun `effigy distribution first-publish --tag {tag} --artifacts-dir <dir>` before final sign-off.\n- External distribution channel state still determines final release readiness.\n\n## Next Step\n\n- {}\n",
+        artifacts_dir.display(),
+        summary_path.display(),
+        distribution_policy.package_name,
+        distribution_policy.closeout_next_step,
+    );
+    std::fs::write(&output_path, &rendered).map_err(|error| DistributionExecutionError::Io {
+        path: output_path.clone(),
+        error,
+    })?;
+
+    let payload = json!({
+        "schema": "effigy.distribution.closeout.v1",
+        "schema_version": 1,
+        "ok": true,
+        "tag": tag,
+        "artifacts_dir": artifacts_dir.display().to_string(),
+        "output": output_path.display().to_string(),
+        "owner": owner,
+        "related": distribution_policy.closeout_related,
+        "has_homebrew_logs": has_homebrew_logs,
+        "log_count": log_files.len(),
+    });
+    if output_json {
+        return Ok(payload.to_string());
+    }
+    Ok(format!("[ok] wrote log: {}", output_path.display()))
+}
+
+pub fn write_summary_command(
+    distribution_policy: &EffectiveDistributionPolicy,
+    tag: &str,
+    artifacts_dir: &Path,
+    crate_version: Option<&str>,
+    repo_url: &str,
+    brew_formula: &str,
+    homebrew_executed: bool,
+    log_files: &[String],
+    output_json: bool,
+) -> Result<String, DistributionExecutionError> {
+    let tag_re = Regex::new(r"^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$").expect("tag regex");
+    if !tag_re.is_match(tag) {
+        return Err(DistributionExecutionError::Message(format!(
+            "tag must match vX.Y.Z format: {tag}"
+        )));
+    }
+    std::fs::create_dir_all(artifacts_dir).map_err(|error| DistributionExecutionError::Io {
+        path: artifacts_dir.to_path_buf(),
+        error,
+    })?;
+
+    let crate_version = crate_version.unwrap_or_else(|| tag.trim_start_matches('v'));
+    let summary_path = artifacts_dir.join("distribution-summary.env");
+    let rendered = format!(
+        "TAG={tag}\nPACKAGE_NAME={}\nBINARY_NAME={}\nREGISTRY_LABEL={}\nCRATE_VERSION={crate_version}\nREPO_URL={repo_url}\nBREW_FORMULA={brew_formula}\nHOMEBREW_EXECUTED={}\nLOG_FILES={}\n",
+        distribution_policy.package_name,
+        distribution_policy.binary_name,
+        distribution_policy.registry_label,
+        if homebrew_executed { 1 } else { 0 },
+        log_files.join(","),
+    );
+    std::fs::write(&summary_path, rendered).map_err(|error| DistributionExecutionError::Io {
+        path: summary_path.clone(),
+        error,
+    })?;
+
+    let payload = json!({
+        "schema": "effigy.distribution.summary.v1",
+        "schema_version": 1,
+        "ok": true,
+        "tag": tag,
+        "package_name": distribution_policy.package_name,
+        "binary_name": distribution_policy.binary_name,
+        "registry_label": distribution_policy.registry_label,
+        "crate_version": crate_version,
+        "artifacts_dir": artifacts_dir.display().to_string(),
+        "summary": summary_path.display().to_string(),
+        "repo_url": repo_url,
+        "brew_formula": brew_formula,
+        "homebrew_executed": homebrew_executed,
+        "log_files": log_files,
+    });
+    if output_json {
+        return Ok(payload.to_string());
+    }
+    Ok(format!("[ok] wrote summary: {}", summary_path.display()))
+}
+
+pub fn first_publish_command(
+    repo_root: &Path,
+    distribution_policy: &EffectiveDistributionPolicy,
+    tag: &str,
+    crate_version: &str,
+    repo_url: &str,
+    brew_formula: &str,
+    skip_homebrew: bool,
+    artifacts_dir: &Path,
+    work_dir: &Path,
+    effigy_bin: &Path,
+    output_json: bool,
+) -> Result<String, DistributionExecutionError> {
+    let mut step_index = 0usize;
+    let mut log_files = Vec::new();
+    let mut homebrew_executed = false;
+    let homebrew_status: String;
+
+    if distribution_policy.verify_tag_install {
+        run_logged_step(
+            artifacts_dir,
+            &mut step_index,
+            &mut log_files,
+            "tag install validation",
+            {
+                let mut command = Command::new(effigy_bin);
+                command.args([
+                    "release",
+                    "verify-install",
+                    "--repo",
+                    &repo_root.display().to_string(),
+                    "--tag",
+                    tag,
+                    "--repo-url",
+                    repo_url,
+                ]);
+                command
+            },
+        )?;
+    }
+
+    let crate_install_root = work_dir.join("crates-install-root");
+    run_logged_step(
+        artifacts_dir,
+        &mut step_index,
+        &mut log_files,
+        &format!(
+            "{} install validation ({crate_version})",
+            distribution_policy.registry_label
+        ),
+        {
+            let mut command = Command::new("cargo");
+            command.args([
+                "install",
+                &distribution_policy.package_name,
+                "--version",
+                crate_version,
+                "--locked",
+                "--root",
+                &crate_install_root.display().to_string(),
+                "--force",
+            ]);
+            command
+        },
+    )?;
+
+    let crate_bin = crate_install_root
+        .join("bin")
+        .join(&distribution_policy.binary_name);
+    if !crate_bin.is_file() {
+        return Err(DistributionExecutionError::Message(format!(
+            "expected installed binary at {}",
+            crate_bin.display()
+        )));
+    }
+
+    run_logged_step(
+        artifacts_dir,
+        &mut step_index,
+        &mut log_files,
+        &format!("{} binary help", distribution_policy.registry_label),
+        {
+            let mut command = Command::new(&crate_bin);
+            command.arg("--help");
+            command
+        },
+    )?;
+    if distribution_policy.verify_binary_json_tasks {
+        run_logged_step(
+            artifacts_dir,
+            &mut step_index,
+            &mut log_files,
+            &format!("{} binary json tasks", distribution_policy.registry_label),
+            {
+                let mut command = Command::new(&crate_bin);
+                command.args(["--json", "tasks"]);
+                command
+            },
+        )?;
+    }
+
+    if skip_homebrew {
+        homebrew_status = "skipped (--skip-homebrew)".to_owned();
+    } else if !command_exists("brew") {
+        homebrew_status = "skipped (brew not available)".to_owned();
+    } else {
+        homebrew_executed = true;
+        homebrew_status = "executed".to_owned();
+        run_logged_step(
+            artifacts_dir,
+            &mut step_index,
+            &mut log_files,
+            "homebrew install",
+            {
+                let mut command = Command::new("brew");
+                command.args(["install", brew_formula]);
+                command
+            },
+        )?;
+        run_logged_step(
+            artifacts_dir,
+            &mut step_index,
+            &mut log_files,
+            "homebrew binary help",
+            {
+                let mut command = Command::new(&distribution_policy.binary_name);
+                command.arg("--help");
+                command
+            },
+        )?;
+        if distribution_policy.verify_binary_json_tasks {
+            run_logged_step(
+                artifacts_dir,
+                &mut step_index,
+                &mut log_files,
+                "homebrew binary json tasks",
+                {
+                    let mut command = Command::new(&distribution_policy.binary_name);
+                    command.args(["--json", "tasks"]);
+                    command
+                },
+            )?;
+        }
+        run_logged_step(
+            artifacts_dir,
+            &mut step_index,
+            &mut log_files,
+            "homebrew upgrade",
+            {
+                let mut command = Command::new("brew");
+                command.args(["upgrade", "effigy"]);
+                command
+            },
+        )?;
+    }
+
+    let _ = write_summary_command(
+        distribution_policy,
+        tag,
+        artifacts_dir,
+        Some(crate_version),
+        repo_url,
+        brew_formula,
+        homebrew_executed,
+        &log_files,
+        false,
+    )?;
+    let _ =
+        validate_artifacts_command(distribution_policy, artifacts_dir, homebrew_executed, false)?;
+    let summary_path = artifacts_dir.join("distribution-summary.env");
+
+    let payload = json!({
+        "schema": "effigy.distribution.first-publish.v1",
+        "schema_version": 1,
+        "ok": true,
+        "tag": tag,
+        "package_name": distribution_policy.package_name,
+        "binary_name": distribution_policy.binary_name,
+        "registry_label": distribution_policy.registry_label,
+        "crate_version": crate_version,
+        "repo_url": repo_url,
+        "brew_formula": brew_formula,
+        "homebrew_executed": homebrew_executed,
+        "homebrew_status": homebrew_status,
+        "artifacts_dir": artifacts_dir.display().to_string(),
+        "summary_path": summary_path.display().to_string(),
+        "log_files": log_files,
+    });
+    if output_json {
+        return Ok(payload.to_string());
+    }
+
+    Ok(format!(
+        "[ok] distribution first-publish matrix passed\n[ok] artifacts directory: {}\n[ok] artifacts summary: {}",
+        artifacts_dir.display(),
+        summary_path.display()
+    ))
+}
+
+pub fn allocate_distribution_temp_dir(prefix: &str) -> Result<PathBuf, DistributionExecutionError> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| DistributionExecutionError::Message(error.to_string()))?
+        .as_nanos();
+    Ok(std::env::temp_dir().join(format!("{prefix}-{now}")))
 }
 
 fn package_name_from_config(config: Option<&ManifestDistributionPackageConfig>) -> String {
@@ -346,122 +843,100 @@ fn slugify(value: &str) -> String {
         .to_owned()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        base_artifact_patterns, effective_brew_formula, effective_closeout_owner,
-        effective_repo_url, load_distribution_policy, EffectiveDistributionPolicy,
-        DEFAULT_BINARY_NAME, DEFAULT_BREW_FORMULA, DEFAULT_CLOSEOUT_NEXT_STEP,
-        DEFAULT_CLOSEOUT_OWNER, DEFAULT_DOCS_TASK, DEFAULT_PACKAGE_NAME, DEFAULT_REGISTRY_LABEL,
-        DEFAULT_REPO_URL, DEFAULT_REQUIRED_DOCS, DEFAULT_REQUIRED_FILES, DEFAULT_SMOKE_TASK,
-    };
-    use std::fs;
-    use std::path::PathBuf;
+fn run_logged_step(
+    artifacts_dir: &Path,
+    step_index: &mut usize,
+    log_files: &mut Vec<String>,
+    label: &str,
+    mut command: Command,
+) -> Result<(), DistributionExecutionError> {
+    *step_index += 1;
+    let slug = slugify(label);
+    let log_file = format!("{:02}-{slug}.log", *step_index);
+    let log_path = artifacts_dir.join(&log_file);
+    let output = command
+        .output()
+        .map_err(|error| DistributionExecutionError::Message(error.to_string()))?;
+    let mut rendered = String::new();
+    rendered.push_str(&String::from_utf8_lossy(&output.stdout));
+    rendered.push_str(&String::from_utf8_lossy(&output.stderr));
+    std::fs::write(&log_path, rendered).map_err(|error| DistributionExecutionError::Io {
+        path: log_path.clone(),
+        error,
+    })?;
+    log_files.push(log_file);
 
-    fn temp_repo(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "effigy-distribution-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&root).expect("mkdir");
-        root
-    }
-
-    #[test]
-    fn load_distribution_policy_uses_manifest_values() {
-        let root = temp_repo("manifest");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[distribution.package]
-name = "example-tool"
-repo-url = "https://example.com/example-tool.git"
-
-[distribution.publish]
-registry-label = "local"
-verify-tag-install = false
-"#,
-        )
-        .expect("write manifest");
-
-        let policy = load_distribution_policy(&root).expect("policy");
-        assert!(policy.manifest_adopted);
-        assert_eq!(policy.package_name, "example-tool");
-        assert_eq!(policy.binary_name, "example-tool");
-        assert_eq!(policy.registry_label, "local");
-        assert!(!policy.verify_tag_install);
-    }
-
-    #[test]
-    fn manifest_adoption_drops_effigy_default_metadata_requirements() {
-        let policy = EffectiveDistributionPolicy::from_manifest(Some(Default::default()));
-        assert!(policy.manifest_adopted);
-        assert!(policy.required_docs.is_empty());
-        assert!(policy.required_files.is_empty());
-    }
-
-    #[test]
-    fn artifact_patterns_respect_optional_checks() {
-        let mut policy = default_distribution_policy();
-        policy.registry_label = "local".to_owned();
-        policy.verify_tag_install = false;
-        policy.verify_binary_json_tasks = false;
-
-        let patterns = base_artifact_patterns(&policy);
-        let labels = patterns
-            .into_iter()
-            .map(|(label, _)| label)
-            .collect::<Vec<_>>();
-        assert!(!labels.iter().any(|label| label == "tag install validation"));
-        assert!(labels.iter().any(|label| label == "local install"));
-        assert!(!labels
-            .iter()
-            .any(|label| label == "local binary json tasks"));
-    }
-
-    #[test]
-    fn effective_override_helpers_preserve_manifest_defaults() {
-        let policy = default_distribution_policy();
-        assert_eq!(
-            effective_repo_url(&policy, DEFAULT_REPO_URL),
-            policy.repo_url
-        );
-        assert_eq!(
-            effective_brew_formula(&policy, DEFAULT_BREW_FORMULA),
-            policy.brew_formula
-        );
-        assert_eq!(
-            effective_closeout_owner(&policy, DEFAULT_CLOSEOUT_OWNER),
-            policy.closeout_owner
-        );
-    }
-
-    fn default_distribution_policy() -> EffectiveDistributionPolicy {
-        EffectiveDistributionPolicy {
-            manifest_adopted: false,
-            package_name: DEFAULT_PACKAGE_NAME.to_owned(),
-            binary_name: DEFAULT_BINARY_NAME.to_owned(),
-            registry_label: DEFAULT_REGISTRY_LABEL.to_owned(),
-            verify_tag_install: true,
-            verify_binary_json_tasks: true,
-            repo_url: DEFAULT_REPO_URL.to_owned(),
-            brew_formula: DEFAULT_BREW_FORMULA.to_owned(),
-            docs_task: DEFAULT_DOCS_TASK.to_owned(),
-            smoke_task: DEFAULT_SMOKE_TASK.to_owned(),
-            required_docs: DEFAULT_REQUIRED_DOCS
-                .iter()
-                .map(|value| (*value).to_owned())
-                .collect(),
-            required_files: DEFAULT_REQUIRED_FILES
-                .iter()
-                .map(|value| (*value).to_owned())
-                .collect(),
-            closeout_owner: DEFAULT_CLOSEOUT_OWNER.to_owned(),
-            closeout_related: None,
-            closeout_next_step: DEFAULT_CLOSEOUT_NEXT_STEP.to_owned(),
-        }
+    if output.status.success() {
+        Ok(())
+    } else {
+        let tail = read_log_tail(&log_path, 40);
+        Err(DistributionExecutionError::Message(format!(
+            "[error] {label} failed (log: {})\n[error] tail of log:\n{}",
+            log_path.display(),
+            tail
+        )))
     }
 }
+
+pub fn find_log_by_pattern(artifacts_dir: &Path, pattern: &str) -> Option<PathBuf> {
+    let mut matches = std::fs::read_dir(artifacts_dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().and_then(|ext| ext.to_str()) == Some("log")
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(pattern))
+        })
+        .collect::<Vec<_>>();
+    matches.sort();
+    matches.into_iter().next()
+}
+
+pub fn command_exists(program: &str) -> bool {
+    let candidate = Path::new(program);
+    if candidate.components().count() > 1 {
+        return is_executable_file(candidate);
+    }
+
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+        .map(|entry| entry.join(program))
+        .any(|path| is_executable_file(&path))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn read_log_tail(path: &Path, line_count: usize) -> String {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|contents| {
+            let lines = contents.lines().collect::<Vec<_>>();
+            let start = lines.len().saturating_sub(line_count);
+            lines[start..].join("\n")
+        })
+        .unwrap_or_else(|| "(unable to read log tail)".to_owned())
+}
+
+#[cfg(test)]
+mod tests;

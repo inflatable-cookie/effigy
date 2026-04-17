@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::ui::theme::Theme;
-use crate::ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
+use effigy_ui::theme::Theme;
+use effigy_ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
 
 use super::super::super::model::catalog::LoadedCatalog;
 use super::super::prepared_task_rows::{

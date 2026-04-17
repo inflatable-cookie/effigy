@@ -2,6 +2,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use effigy_manifest::{ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy};
+use serde_json::json;
 
 pub const TASK_MANIFEST_FILE: &str = "effigy.toml";
 
@@ -263,6 +264,177 @@ pub fn submodule_policy_label(policy: ManifestBootstrapSubmodulesPolicy) -> &'st
     }
 }
 
+pub fn render_bootstrap_plan(request: &BootstrapResolution, output_json: bool) -> String {
+    let payload = json!({
+        "schema": "effigy.bootstrap.v1",
+        "schema_version": 1,
+        "ok": true,
+        "phase": "plan",
+        "repo_url": request.repo_url,
+        "repo_name": request.repo_name,
+        "destination": request.destination.display().to_string(),
+        "destination_source": request.destination_source,
+        "branch": request.branch,
+        "start_requested": request.start_requested,
+        "display": format!(
+            "bootstrap {} -> {}",
+            request.repo_url,
+            request.destination.display()
+        ),
+    });
+    if output_json {
+        return payload.to_string();
+    }
+
+    let branch_line = request
+        .branch
+        .as_deref()
+        .map_or("default remote HEAD".to_owned(), |branch| branch.to_owned());
+    let start_line = if request.start_requested { "yes" } else { "no" };
+    format!(
+        "[planned] bootstrap request resolved\nrepo: {}\ndestination: {}\nbranch: {}\nstart after setup: {}",
+        request.repo_url,
+        request.destination.display(),
+        branch_line,
+        start_line,
+    )
+}
+
+pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: bool) -> String {
+    let payload = json!({
+        "schema": "effigy.bootstrap.v1",
+        "schema_version": 1,
+        "ok": true,
+        "phase": "executed",
+        "repo_url": result.request.repo_url,
+        "repo_name": result.request.repo_name,
+        "destination": result.request.destination.display().to_string(),
+        "destination_source": result.request.destination_source,
+        "branch": result.request.branch,
+        "root": {
+            "repo": result.request.repo_url,
+            "repo_name": result.request.repo_name,
+            "destination": result.request.destination.display().to_string(),
+            "destination_source": result.request.destination_source,
+            "requested_branch": result.request.branch,
+            "repo_state": result.root_repo_state,
+            "update_strategy": if result.request.branch.is_some() { "branch" } else { "default-head" },
+        },
+        "root_repo_state": result.root_repo_state,
+        "manifest_found": result.manifest_found,
+        "manifest": {
+            "path": result.manifest_path.display().to_string(),
+            "file_found": result.manifest_found,
+            "bootstrap_contract_found": result.bootstrap_contract_found,
+        },
+        "submodules": {
+            "policy": submodule_policy_label(result.submodules_policy),
+            "applied": result.submodules_applied,
+        },
+        "children": result.child_results.iter().map(|child| json!({
+            "path": child.path,
+            "destination": child.destination.display().to_string(),
+            "repo": child.repo,
+            "requested_branch": child.branch,
+            "required": child.required,
+            "repo_state": child.repo_state,
+            "setup": child.setup,
+            "warning": child.warning,
+        })).collect::<Vec<_>>(),
+        "setup": {
+            "root": result.root_setup,
+            "children": result.child_results.iter().map(|child| json!({
+                "path": child.path,
+                "repo": child.repo,
+                "required": child.required,
+                "repo_state": child.repo_state,
+                "setup": child.setup,
+                "warning": child.warning,
+            })).collect::<Vec<_>>(),
+        },
+        "start": {
+            "requested": result.request.start_requested,
+            "task": result.start_task,
+            "ran": result.start_ran,
+        },
+        "warnings": result.warnings,
+        "display": format!(
+            "bootstrapped {} -> {}",
+            result.request.repo_url,
+            result.request.destination.display()
+        ),
+    });
+    if output_json {
+        return payload.to_string();
+    }
+
+    let mut lines = vec![
+        "[ok] bootstrap completed".to_owned(),
+        format!("repo: {}", result.request.repo_url),
+        format!("destination: {}", result.request.destination.display()),
+        format!("root repo: {}", result.root_repo_state),
+        format!(
+            "submodules: {}{}",
+            submodule_policy_label(result.submodules_policy),
+            if result.submodules_applied {
+                " (applied)"
+            } else {
+                ""
+            }
+        ),
+    ];
+    if !result.root_setup.is_empty() {
+        lines.push(format!("root setup: {}", result.root_setup.join(", ")));
+    } else if result.bootstrap_contract_found {
+        lines.push("root setup: none".to_owned());
+    } else if result.manifest_found {
+        lines.push(format!(
+            "manifest: {} present, but no [bootstrap] contract was found",
+            result.manifest_path.display()
+        ));
+    } else {
+        lines.push("manifest: no effigy.toml bootstrap contract found".to_owned());
+    }
+    if !result.child_results.is_empty() {
+        for child in &result.child_results {
+            let mut line = format!("child {}: {}", child.path, child.repo_state);
+            if !child.setup.is_empty() {
+                line.push_str(&format!("; setup {}", child.setup.join(", ")));
+            } else if child.warning.is_none() {
+                line.push_str("; setup none");
+            }
+            if let Some(branch) = child.branch.as_deref() {
+                line.push_str(&format!("; branch {branch}"));
+            }
+            if let Some(warning) = child.warning.as_deref() {
+                line.push_str(&format!("; warning {warning}"));
+            }
+            lines.push(line);
+        }
+    } else {
+        lines.push("children: none".to_owned());
+    }
+    if let Some(start_task) = result.start_task.as_deref() {
+        lines.push(format!(
+            "start task: {} ({})",
+            start_task,
+            if result.start_ran {
+                "ran"
+            } else {
+                "not requested"
+            }
+        ));
+    } else if result.request.start_requested {
+        lines.push("start task: requested but no [bootstrap].start is configured".to_owned());
+    } else if result.bootstrap_contract_found {
+        lines.push("start task: none".to_owned());
+    }
+    for warning in &result.warnings {
+        lines.push(format!("[warn] {warning}"));
+    }
+    lines.join("\n")
+}
+
 fn run_bootstrap_tasks<RunTask>(
     run_task: &mut RunTask,
     repo_root: &Path,
@@ -435,91 +607,4 @@ fn run_git_inherit(repo_root: Option<&Path>, args: &[String]) -> Result<(), Boot
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        derive_repo_name, normalize_bootstrap_repo_url, resolve_bootstrap_request,
-        submodule_policy_label,
-    };
-    use effigy_manifest::ManifestBootstrapSubmodulesPolicy;
-    use std::path::{Path, PathBuf};
-
-    #[test]
-    fn derive_repo_name_supports_https_and_ssh_git_urls() {
-        assert_eq!(
-            derive_repo_name("https://github.com/inflatable-cookie/effigy.git"),
-            Some("effigy".to_owned())
-        );
-        assert_eq!(
-            derive_repo_name("git@github.com:inflatable-cookie/loophole.git"),
-            Some("loophole".to_owned())
-        );
-        assert_eq!(
-            derive_repo_name("ssh://git@github.com/inflatable-cookie/northstar.git"),
-            Some("northstar".to_owned())
-        );
-    }
-
-    #[test]
-    fn normalize_bootstrap_repo_url_rewrites_scp_style_ssh_remotes() {
-        assert_eq!(
-            normalize_bootstrap_repo_url("git@github.com:betterthanclay/effigy.git"),
-            "ssh://git@github.com/betterthanclay/effigy.git"
-        );
-        assert_eq!(
-            normalize_bootstrap_repo_url("https://github.com/betterthanclay/effigy.git"),
-            "https://github.com/betterthanclay/effigy.git"
-        );
-    }
-
-    #[test]
-    fn resolve_bootstrap_request_defaults_destination_under_cwd() {
-        let cwd = Path::new("/tmp/dev");
-        let resolved = resolve_bootstrap_request(
-            cwd,
-            "git@github.com:inflatable-cookie/effigy.git",
-            None,
-            None,
-            false,
-        )
-        .expect("resolve bootstrap");
-        assert_eq!(resolved.repo_name, "effigy");
-        assert_eq!(resolved.destination, cwd.join("effigy"));
-        assert_eq!(resolved.destination_source, "cwd-default");
-    }
-
-    #[test]
-    fn resolve_bootstrap_request_honors_explicit_relative_path() {
-        let cwd = Path::new("/tmp/dev");
-        let resolved = resolve_bootstrap_request(
-            cwd,
-            "git@github.com:inflatable-cookie/effigy.git",
-            Some(Path::new("./sandbox/effigy-dev")),
-            Some("main"),
-            true,
-        )
-        .expect("resolve bootstrap");
-        assert_eq!(
-            resolved.destination,
-            cwd.join(PathBuf::from("./sandbox/effigy-dev"))
-        );
-        assert_eq!(resolved.destination_source, "explicit-path");
-        assert_eq!(resolved.branch.as_deref(), Some("main"));
-        assert!(resolved.start_requested);
-    }
-
-    #[test]
-    fn submodule_policy_label_matches_manifest_variants() {
-        assert_eq!(
-            submodule_policy_label(ManifestBootstrapSubmodulesPolicy::None),
-            "none"
-        );
-        assert_eq!(
-            submodule_policy_label(ManifestBootstrapSubmodulesPolicy::Init),
-            "init"
-        );
-        assert_eq!(
-            submodule_policy_label(ManifestBootstrapSubmodulesPolicy::Recursive),
-            "recursive"
-        );
-    }
-}
+mod tests;

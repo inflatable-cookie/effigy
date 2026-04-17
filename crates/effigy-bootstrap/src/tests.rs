@@ -1,0 +1,86 @@
+use super::{
+    derive_repo_name, normalize_bootstrap_repo_url, resolve_bootstrap_request,
+    submodule_policy_label,
+};
+use effigy_manifest::ManifestBootstrapSubmodulesPolicy;
+use std::path::{Path, PathBuf};
+
+#[test]
+fn derive_repo_name_supports_https_and_ssh_git_urls() {
+    assert_eq!(
+        derive_repo_name("https://github.com/inflatable-cookie/effigy.git"),
+        Some("effigy".to_owned())
+    );
+    assert_eq!(
+        derive_repo_name("git@github.com:inflatable-cookie/loophole.git"),
+        Some("loophole".to_owned())
+    );
+    assert_eq!(
+        derive_repo_name("ssh://git@github.com/inflatable-cookie/northstar.git"),
+        Some("northstar".to_owned())
+    );
+}
+
+#[test]
+fn normalize_bootstrap_repo_url_rewrites_scp_style_ssh_remotes() {
+    assert_eq!(
+        normalize_bootstrap_repo_url("git@github.com:betterthanclay/effigy.git"),
+        "ssh://git@github.com/betterthanclay/effigy.git"
+    );
+    assert_eq!(
+        normalize_bootstrap_repo_url("https://github.com/betterthanclay/effigy.git"),
+        "https://github.com/betterthanclay/effigy.git"
+    );
+}
+
+#[test]
+fn resolve_bootstrap_request_defaults_destination_under_cwd() {
+    let cwd = Path::new("/tmp/dev");
+    let resolved = resolve_bootstrap_request(
+        cwd,
+        "git@github.com:inflatable-cookie/effigy.git",
+        None,
+        None,
+        false,
+    )
+    .expect("resolve bootstrap");
+    assert_eq!(resolved.repo_name, "effigy");
+    assert_eq!(resolved.destination, cwd.join("effigy"));
+    assert_eq!(resolved.destination_source, "cwd-default");
+}
+
+#[test]
+fn resolve_bootstrap_request_honors_explicit_relative_path() {
+    let cwd = Path::new("/tmp/dev");
+    let resolved = resolve_bootstrap_request(
+        cwd,
+        "git@github.com:inflatable-cookie/effigy.git",
+        Some(Path::new("./sandbox/effigy-dev")),
+        Some("main"),
+        true,
+    )
+    .expect("resolve bootstrap");
+    assert_eq!(
+        resolved.destination,
+        cwd.join(PathBuf::from("./sandbox/effigy-dev"))
+    );
+    assert_eq!(resolved.destination_source, "explicit-path");
+    assert_eq!(resolved.branch.as_deref(), Some("main"));
+    assert!(resolved.start_requested);
+}
+
+#[test]
+fn submodule_policy_label_matches_manifest_variants() {
+    assert_eq!(
+        submodule_policy_label(ManifestBootstrapSubmodulesPolicy::None),
+        "none"
+    );
+    assert_eq!(
+        submodule_policy_label(ManifestBootstrapSubmodulesPolicy::Init),
+        "init"
+    );
+    assert_eq!(
+        submodule_policy_label(ManifestBootstrapSubmodulesPolicy::Recursive),
+        "recursive"
+    );
+}

@@ -1,4 +1,4 @@
-use crate::ui::UiError;
+use effigy_ui::UiError;
 
 use super::{map_doctor_render_error, DOCTOR_EXPLAIN_RENDER_TARGET, DOCTOR_RENDER_TARGET};
 use crate::runner::error::RunnerError;

@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::process_manager::ProcessSpec;
-use crate::ui::{KeyValue, NoticeLevel, Renderer, SummaryCounts, TableSpec};
+use effigy_process::ProcessSpec;
+use effigy_ui::{KeyValue, NoticeLevel, Renderer, SummaryCounts, TableSpec};
 
 use super::super::model::managed::{ManagedProcessSpec, ManagedTaskPlan};
 use crate::runner::error::RunnerError;

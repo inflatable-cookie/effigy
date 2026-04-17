@@ -1,0 +1,139 @@
+use super::super::{HelpRenderer, HelpResult};
+
+use super::shared::{
+    render_bullet_section, render_info_notices, render_options_section, render_usage_section,
+};
+
+pub(crate) fn render_demo_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
+    renderer.section("demo Help")?;
+    renderer.text("Discover, inspect, execute, and control the repo-owned demo registry.")?;
+    renderer.text("")?;
+
+    render_info_notices(
+        renderer,
+        &[
+            "Use `effigy demo browser` for the interactive proof browser, `effigy demo list` for direct CLI discovery, `effigy demo inspect <DEMO_ID>` to inspect one record in detail, and `effigy demo run <DEMO_ID>` to record a new normalized attempt before `stop` or `rerun` when lifecycle control exists for that demo. In text mode, interactive and hybrid run-backed demos attach directly to the live terminal session, and bounded single-process concurrent-runner-backed demos now do the same through the demo-owned session path; when the runtime supports it, the transport uses PTY-backed semantics so terminal-oriented demos can run honestly while still writing runner-owned logs and receipts. `demo inspect` also exposes the active terminal/session handoff for live demo attempts, including transport metadata, recent output snapshots, terminal size metadata, and explicit input/resize capability signaling. `demo input <DEMO_ID> --text <TEXT>` remains the bounded forwarding surface for detached terminal text, and `demo resize <DEMO_ID> --cols <COLS> --rows <ROWS>` is the bounded geometry handoff when the active runtime exposes it. Inside the browser, `Tab` and `Shift+Tab` switch between the demo list and the detail pane, `←` and `→` switch the selected detail view between `Overview`, `History`, `Terminal`, and `Artifacts` when the detail pane is focused, `↑` and `↓` act inside the focused panel, and on the `Terminal` tab they scroll the current browser terminal surface. For browser-launched run-backed interactive demos and bounded single-process concurrent-runner-backed interactive demos, `Run demo` or `Rerun demo` now starts a live terminal session directly in that tab; typed keys go straight to that live session when input capture is enabled. Multi-process concurrent-runner demos still use the runner-owned projected session surfaces without nested TUI launch. `Enter` opens the action sheet from the list, activates the selected detail-side action/history/artifact entry, or toggles terminal input capture on the `Terminal` tab when the current terminal path supports it. `Esc` closes overlays, leaves terminal input capture, returns non-overview tabs to `Overview`, or quits from `Overview`, `/` edits search, and `f` opens the single filter sheet for owner/tag/mode/cover/status/gap/stale/grouping controls.",
+        ],
+    )?;
+
+    render_usage_section(
+        renderer,
+        &[
+            "effigy demo browser [--group-by <FIELD>] [--repo <PATH>]",
+            "effigy demo list [--search <TEXT>] [--owner <NAME>] [--tag <TAG>] [--mode <MODE>] [--cover <AREA>] [--status <STATUS>] [--gap <GAP>] [--stale-only] [--group-by <FIELD>] [--repo <PATH>] [--json]",
+            "effigy demo inspect <DEMO_ID> [--repo <PATH>] [--json]",
+            "effigy demo history <DEMO_ID> [--limit <N>] [--outcome <OUTCOME>] [--attempt <ATTEMPT_ID> | --ordinal <N>] [--repo <PATH>] [--json]",
+            "effigy demo run <DEMO_ID> [--repo <PATH>] [--json]",
+            "effigy demo stop <DEMO_ID> [--repo <PATH>] [--json]",
+            "effigy demo input <DEMO_ID> --text <TEXT> [--append-newline] [--repo <PATH>] [--json]",
+            "effigy demo resize <DEMO_ID> --cols <COLS> --rows <ROWS> [--repo <PATH>] [--json]",
+            "effigy demo rerun <DEMO_ID> [--repo <PATH>] [--json]",
+            "effigy --json demo list [--search <TEXT>] [--owner <NAME>] [--tag <TAG>] [--mode <MODE>] [--cover <AREA>] [--status <STATUS>] [--gap <GAP>] [--stale-only] [--group-by <FIELD>] [--repo <PATH>]",
+            "effigy --json demo inspect <DEMO_ID> [--repo <PATH>]",
+            "effigy --json demo history <DEMO_ID> [--limit <N>] [--outcome <OUTCOME>] [--attempt <ATTEMPT_ID> | --ordinal <N>] [--repo <PATH>]",
+            "effigy --json demo run <DEMO_ID> [--repo <PATH>]",
+            "effigy --json demo stop <DEMO_ID> [--repo <PATH>]",
+            "effigy --json demo input <DEMO_ID> --text <TEXT> [--append-newline] [--repo <PATH>]",
+            "effigy --json demo resize <DEMO_ID> --cols <COLS> --rows <ROWS> [--repo <PATH>]",
+            "effigy --json demo rerun <DEMO_ID> [--repo <PATH>]",
+        ],
+    )?;
+
+    render_options_section(
+        renderer,
+        &[
+            ("--repo <PATH>", "Run against a different repo root"),
+            (
+                "--group-by <FIELD>",
+                "Open the browser with list grouping by owner, tag, mode, cover, status, or gap",
+            ),
+            ("--search <TEXT>", "Filter demos by id, title, or summary text"),
+            ("--owner <NAME>", "Filter demos by owner"),
+            ("--tag <TAG>", "Filter demos by tag"),
+            (
+                "--mode <MODE>",
+                "Filter demos by mode: headless, interactive, or hybrid",
+            ),
+            ("--cover <AREA>", "Filter demos by a declared coverage key"),
+            (
+                "--status <STATUS>",
+                "Filter demos by current browser status: planned, ready, running, passed, failed, broken, or missing",
+            ),
+            (
+                "--gap <GAP>",
+                "Filter demos by gap class: existing, planned, missing, broken, or stale",
+            ),
+            (
+                "--stale-only",
+                "Show only demos whose latest recorded proof is stale",
+            ),
+            (
+                "--group-by <FIELD>",
+                "Group list output by owner, tag, mode, cover, status, or gap",
+            ),
+            (
+                "--limit <N>",
+                "Limit the number of retained history entries rendered for `demo history`",
+            ),
+            (
+                "--outcome <OUTCOME>",
+                "Filter `demo history` to retained outcomes: passed, failed, or terminated",
+            ),
+            (
+                "--attempt <ATTEMPT_ID>",
+                "Inspect one retained historical attempt in detail from `demo history`",
+            ),
+            (
+                "--ordinal <N>",
+                "Inspect the Nth retained attempt from the current `demo history` result set",
+            ),
+            (
+                "--text <TEXT>",
+                "Forward one text payload through `demo input` to the active terminal session",
+            ),
+            (
+                "--append-newline",
+                "Append one trailing newline when forwarding bounded terminal input",
+            ),
+            (
+                "--cols <COLS>",
+                "Set the active demo terminal session width in columns through `demo resize`",
+            ),
+            (
+                "--rows <ROWS>",
+                "Set the active demo terminal session height in rows through `demo resize`",
+            ),
+            (
+                "--json",
+                "Render machine-readable demo discovery, inspection, or run payloads",
+            ),
+            ("-h, --help", "Print demo command help"),
+        ],
+    )?;
+
+    render_bullet_section(
+        renderer,
+        "Examples",
+        "example",
+        &[
+            "effigy demo browser",
+            "effigy demo browser --group-by status",
+            "effigy demo list",
+            "effigy demo list --owner auth --status ready",
+            "effigy demo list --group-by owner --stale-only",
+            "effigy demo inspect plugin-capability-browser",
+            "effigy demo history login-smoke --limit 5",
+            "effigy demo history login-smoke --outcome failed",
+            "effigy demo history login-smoke --attempt login-smoke-1775944053944",
+            "effigy demo history login-smoke --outcome terminated --ordinal 1",
+            "effigy demo run login-smoke",
+            "effigy demo stop login-smoke",
+            "effigy demo input lifecycle-window --text 'status'",
+            "effigy demo resize lifecycle-window --cols 120 --rows 32",
+            "effigy demo rerun login-smoke",
+            "effigy --json demo inspect login-smoke",
+        ],
+    )?;
+
+    Ok(())
+}

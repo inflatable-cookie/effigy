@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::ui::OutputMode;
+use effigy_ui::OutputMode;
 
 pub struct CliExecutionContext<'a> {
     pub output_mode: OutputMode,

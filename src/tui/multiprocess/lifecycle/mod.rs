@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use crate::process_manager::ProcessSupervisor;
+use effigy_process::ProcessSupervisor;
 
 use super::diagnostics::RuntimeDiagnostics;
 use super::MultiProcessTuiError;

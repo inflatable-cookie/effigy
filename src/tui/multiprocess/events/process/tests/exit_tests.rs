@@ -1,5 +1,5 @@
-use crate::process_manager::ProcessEventKind;
 use crate::tui::core::{LogEntryKind, ProcessExitState};
+use effigy_process::ProcessEventKind;
 
 use super::super::{all_processes_exited, handle_exit_event};
 use super::{diagnostics, process_event, state_with_process};

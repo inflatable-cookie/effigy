@@ -2,7 +2,7 @@ use std::io::IsTerminal;
 use std::path::Path;
 
 use crate::resolver::ResolvedTarget;
-use crate::ui::{KeyValue, OutputMode, PlainRenderer, Renderer};
+use effigy_ui::{KeyValue, OutputMode, PlainRenderer, Renderer};
 
 use super::model::catalog::{TaskSelection, TaskSelector};
 use crate::runner::error::RunnerError;

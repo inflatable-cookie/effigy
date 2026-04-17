@@ -1,5 +1,5 @@
-use crate::process_manager::{ProcessEvent, ProcessEventKind};
-use crate::ui::{
+use effigy_process::{ProcessEvent, ProcessEventKind};
+use effigy_ui::{
     KeyValue, MessageBlock, NoticeLevel, Renderer, SpinnerHandle, StepState, SummaryCounts,
     TableSpec, UiResult,
 };

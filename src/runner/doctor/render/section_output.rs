@@ -1,4 +1,4 @@
-use crate::ui::PlainRenderer;
+use effigy_ui::PlainRenderer;
 
 use super::super::text_blocks;
 use super::contracts::DoctorFindingSection;
@@ -95,7 +95,7 @@ fn render_verbose_findings(
     Ok(())
 }
 
-fn map_render_error(error: crate::ui::UiError) -> RunnerError {
+fn map_render_error(error: effigy_ui::UiError) -> RunnerError {
     super::super::render_support::map_doctor_render_error(
         super::super::render_support::DOCTOR_RENDER_TARGET,
         error,

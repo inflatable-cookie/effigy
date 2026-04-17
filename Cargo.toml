@@ -1,10 +1,14 @@
 [workspace]
 members = [
+    "crates/effigy-bootstrap",
     "crates/effigy-changelog",
     "crates/effigy-catalog",
     "crates/effigy-exec",
     "crates/effigy-gateway",
+    "crates/effigy-process",
+    "crates/effigy-ui",
     "crates/effigy-cli",
+    "crates/effigy-contracts",
     "crates/effigy-core",
     "crates/effigy-manifest",
     "crates/effigy-tasks",
@@ -27,8 +31,10 @@ license = "MIT"
 description = "Unified task runner with nested catalog resolution"
 
 [dependencies]
+effigy-bootstrap = { path = "crates/effigy-bootstrap" }
 effigy-changelog = { path = "crates/effigy-changelog" }
 effigy-cli = { path = "crates/effigy-cli" }
+effigy-contracts = { path = "crates/effigy-contracts" }
 effigy-containers = { path = "crates/effigy-containers" }
 effigy-core = { path = "crates/effigy-core" }
 effigy-demo = { path = "crates/effigy-demo" }
@@ -37,10 +43,12 @@ effigy-docs-policy = { path = "crates/effigy-docs-policy" }
 effigy-distribution = { path = "crates/effigy-distribution" }
 effigy-env = { path = "crates/effigy-env" }
 effigy-manifest = { path = "crates/effigy-manifest" }
+effigy-process = { path = "crates/effigy-process" }
 effigy-release = { path = "crates/effigy-release" }
 effigy-rhai = { path = "crates/effigy-rhai" }
 effigy-tasks = { path = "crates/effigy-tasks" }
 effigy-tui = { path = "crates/effigy-tui" }
+effigy-ui = { path = "crates/effigy-ui" }
 anstream = "0.6"
 anstyle = "1"
 indicatif = "0.18"

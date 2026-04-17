@@ -537,9 +537,11 @@ dependencies = [
  "anstyle",
  "chrono",
  "crossterm 0.29.0",
+ "effigy-bootstrap",
  "effigy-changelog",
  "effigy-cli",
  "effigy-containers",
+ "effigy-contracts",
  "effigy-core",
  "effigy-demo",
  "effigy-distribution",
@@ -547,10 +549,12 @@ dependencies = [
  "effigy-doctor",
  "effigy-env",
  "effigy-manifest",
+ "effigy-process",
  "effigy-release",
  "effigy-rhai",
  "effigy-tasks",
  "effigy-tui",
+ "effigy-ui",
  "globset",
  "ignore",
  "indexmap",
@@ -569,6 +573,14 @@ dependencies = [
  "vt100",
  "walkdir",
  "zeroize",
+]
+
+[[package]]
+name = "effigy-bootstrap"
+version = "0.1.0"
+dependencies = [
+ "effigy-manifest",
+ "serde_json",
 ]
 
 [[package]]
@@ -596,12 +608,23 @@ dependencies = [
 [[package]]
 name = "effigy-cli"
 version = "0.1.0"
+dependencies = [
+ "effigy-core",
+]
 
 [[package]]
 name = "effigy-containers"
 version = "0.1.0"
 dependencies = [
  "effigy-manifest",
+]
+
+[[package]]
+name = "effigy-contracts"
+version = "0.1.0"
+dependencies = [
+ "effigy-cli",
+ "serde_json",
 ]
 
 [[package]]
@@ -623,7 +646,10 @@ dependencies = [
 name = "effigy-distribution"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "effigy-manifest",
+ "regex",
+ "serde_json",
 ]
 
 [[package]]
@@ -695,6 +721,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "effigy-process"
+version = "0.1.0"
+dependencies = [
+ "nix",
+]
+
+[[package]]
 name = "effigy-release"
 version = "0.1.0"
 dependencies = [
@@ -739,6 +772,17 @@ dependencies = [
  "serde",
  "serde_json",
  "vt100",
+]
+
+[[package]]
+name = "effigy-ui"
+version = "0.1.0"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "effigy-core",
+ "indicatif",
+ "tabled",
 ]
 
 [[package]]

@@ -401,4 +401,4 @@ effigy/
 ## Next Task
 
 Execute
-[`217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md`](./docs/specs/batch-cards/217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md).
+[`229-implement-effigy-cli-help-extraction.md`](./docs/specs/batch-cards/229-implement-effigy-cli-help-extraction.md).

@@ -65,6 +65,27 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/17-050000-post-subsystem-runner-adapter-cleanup-survey-and-strict-lane-pause.md`](./2026-04/17-050000-post-subsystem-runner-adapter-cleanup-survey-and-strict-lane-pause.md)
+- [`2026-04/17-044500-post-effigy-ui-extraction-boundary-decision.md`](./2026-04/17-044500-post-effigy-ui-extraction-boundary-decision.md)
+- [`2026-04/17-043000-effigy-ui-subsystem-extraction.md`](./2026-04/17-043000-effigy-ui-subsystem-extraction.md)
+- [`2026-04/17-040000-next-src-shell-cleanup-priority-after-effigy-process-pause-boundary-decision.md`](./2026-04/17-040000-next-src-shell-cleanup-priority-after-effigy-process-pause-boundary-decision.md)
+- [`2026-04/17-034500-post-effigy-process-extraction-boundary-decision.md`](./2026-04/17-034500-post-effigy-process-extraction-boundary-decision.md)
+- [`2026-04/17-033000-effigy-process-subsystem-extraction.md`](./2026-04/17-033000-effigy-process-subsystem-extraction.md)
+- [`2026-04/17-030500-next-src-shell-cleanup-priority-after-cli-help-pause-boundary-decision.md`](./2026-04/17-030500-next-src-shell-cleanup-priority-after-cli-help-pause-boundary-decision.md)
+- [`2026-04/17-025500-post-cli-help-extraction-boundary-decision.md`](./2026-04/17-025500-post-cli-help-extraction-boundary-decision.md)
+- [`2026-04/17-024000-effigy-cli-help-extraction.md`](./2026-04/17-024000-effigy-cli-help-extraction.md)
+- [`2026-04/17-023500-next-src-shell-cleanup-priority-after-bootstrap-pause-boundary-decision.md`](./2026-04/17-023500-next-src-shell-cleanup-priority-after-bootstrap-pause-boundary-decision.md)
+- [`2026-04/17-022000-post-bootstrap-integration-test-ownership-boundary-decision.md`](./2026-04/17-022000-post-bootstrap-integration-test-ownership-boundary-decision.md)
+- [`2026-04/17-020500-effigy-bootstrap-integration-test-ownership.md`](./2026-04/17-020500-effigy-bootstrap-integration-test-ownership.md)
+- [`2026-04/17-015000-post-bootstrap-runner-shell-follow-up-cleanup-v2-boundary-decision.md`](./2026-04/17-015000-post-bootstrap-runner-shell-follow-up-cleanup-v2-boundary-decision.md)
+- [`2026-04/17-013500-effigy-bootstrap-runner-shell-follow-up-cleanup-v2.md`](./2026-04/17-013500-effigy-bootstrap-runner-shell-follow-up-cleanup-v2.md)
+- [`2026-04/17-011500-post-distribution-runner-shell-follow-up-cleanup-v2-boundary-decision.md`](./2026-04/17-011500-post-distribution-runner-shell-follow-up-cleanup-v2-boundary-decision.md)
+- [`2026-04/17-010500-effigy-distribution-runner-shell-follow-up-cleanup-v2.md`](./2026-04/17-010500-effigy-distribution-runner-shell-follow-up-cleanup-v2.md)
+- [`2026-04/16-236500-next-src-shell-cleanup-priority-after-release-final-pause-boundary-decision.md`](./2026-04/16-236500-next-src-shell-cleanup-priority-after-release-final-pause-boundary-decision.md)
+- [`2026-04/16-235500-post-release-apply-and-gate-follow-up-cleanup-v4-boundary-decision.md`](./2026-04/16-235500-post-release-apply-and-gate-follow-up-cleanup-v4-boundary-decision.md)
+- [`2026-04/16-237500-effigy-contracts-foundation-extraction.md`](./2026-04/16-237500-effigy-contracts-foundation-extraction.md)
+- [`2026-04/17-001500-post-contracts-foundation-extraction-boundary-decision.md`](./2026-04/17-001500-post-contracts-foundation-extraction-boundary-decision.md)
+- [`2026-04/17-003000-next-src-shell-cleanup-priority-after-contracts-boundary-decision.md`](./2026-04/17-003000-next-src-shell-cleanup-priority-after-contracts-boundary-decision.md)
 - [`2026-04/16-233500-effigy-release-apply-and-gate-follow-up-cleanup-v4.md`](./2026-04/16-233500-effigy-release-apply-and-gate-follow-up-cleanup-v4.md)
 - [`2026-04/16-231500-post-release-context-and-plan-follow-up-cleanup-v3-boundary-decision.md`](./2026-04/16-231500-post-release-context-and-plan-follow-up-cleanup-v3-boundary-decision.md)
 - [`2026-04/16-230500-effigy-release-context-and-plan-follow-up-cleanup-v3.md`](./2026-04/16-230500-effigy-release-context-and-plan-follow-up-cleanup-v3.md)
@@ -540,4 +561,4 @@ Batch: <batch-slug>
 ## Next Task
 
 Keep the active evidence window aligned to the current strict lane so the next
-implementation batch stays anchored on `217`.
+implementation batch stays anchored on `222`.

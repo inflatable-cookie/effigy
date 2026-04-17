@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::process_manager::ProcessSupervisor;
 use crate::tui::core::InputMode;
+use effigy_process::ProcessSupervisor;
 
 use super::super::input::shell_key_input;
 use super::{LoopControl, MultiProcessTuiError, SessionState};

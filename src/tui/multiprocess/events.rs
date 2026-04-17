@@ -1,6 +1,6 @@
 use crossterm::event::KeyEvent;
 
-use crate::process_manager::{ProcessEventKind, ProcessSupervisor};
+use effigy_process::{ProcessEventKind, ProcessSupervisor};
 
 use super::config::EVENT_DRAIN_WAIT;
 use super::diagnostics::RuntimeDiagnostics;
@@ -98,40 +98,5 @@ pub(super) fn handle_key_event(
     Ok(handle_command_key(key, state, max_offset))
 }
 #[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-
-    use crate::tui::core::{next_index, prev_index, toggle_follow_for_active};
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-    use super::input::shell_key_input;
-
-    #[test]
-    fn tab_index_helpers_wrap_correctly() {
-        assert_eq!(next_index(0, 4), 1);
-        assert_eq!(next_index(3, 4), 0);
-        assert_eq!(prev_index(0, 4), 3);
-        assert_eq!(prev_index(2, 4), 1);
-    }
-
-    #[test]
-    fn toggle_follow_updates_mode_and_offset() {
-        let mut follow = HashMap::from([("api".to_owned(), false)]);
-        let mut offsets = HashMap::from([("api".to_owned(), 1usize)]);
-        toggle_follow_for_active(&mut follow, &mut offsets, "api", 42);
-        assert_eq!(follow.get("api"), Some(&true));
-        assert_eq!(offsets.get("api"), Some(&42usize));
-
-        toggle_follow_for_active(&mut follow, &mut offsets, "api", 99);
-        assert_eq!(follow.get("api"), Some(&false));
-        assert_eq!(offsets.get("api"), Some(&42usize));
-    }
-
-    #[test]
-    fn shell_key_input_maps_control_keys() {
-        let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert_eq!(shell_key_input(&key), Some("\u{3}".to_owned()));
-        let key = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
-        assert_eq!(shell_key_input(&key), Some("\u{1b}[D".to_owned()));
-    }
-}
+#[path = "events/tests.rs"]
+mod tests;

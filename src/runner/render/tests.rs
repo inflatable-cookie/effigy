@@ -1,5 +1,5 @@
 use super::resolve_text_color_enabled;
-use crate::ui::OutputMode;
+use effigy_ui::OutputMode;
 
 #[test]
 fn resolve_text_color_enabled_follows_output_mode_when_no_color_unset() {

@@ -20,5 +20,7 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-Execute
-[`batch-cards/217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md`](./batch-cards/217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md).
+The `g02.010` strict modularization lane is paused. Resume the queued release
+card
+[`batch-cards/115-implement-effigy-distribution-release-closure.md`](./batch-cards/115-implement-effigy-distribution-release-closure.md)
+when release closure is intended.

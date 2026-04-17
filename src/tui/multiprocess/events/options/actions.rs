@@ -1,8 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
-use crate::process_manager::ProcessSupervisor;
 use crate::tui::core::{LogEntry, LogEntryKind};
+use effigy_process::ProcessSupervisor;
 
 use super::super::super::state::{OptionsAction, SessionState};
 use super::super::super::terminal_text::{push_entry, sanitize_log_text};

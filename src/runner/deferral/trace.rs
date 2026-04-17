@@ -1,5 +1,5 @@
-use crate::ui::{KeyValue, Renderer};
 use crate::TaskInvocation;
+use effigy_ui::{KeyValue, Renderer};
 
 use super::super::model::catalog::DeferredCommand;
 use super::super::render::trace_renderer;

@@ -1,5 +1,5 @@
-use crate::process_manager::ProcessEvent;
 use crate::tui::core::{LogEntry, LogEntryKind, ProcessExitState};
+use effigy_process::ProcessEvent;
 
 use super::super::super::diagnostics::RuntimeDiagnostics;
 use super::super::super::state::SessionState;

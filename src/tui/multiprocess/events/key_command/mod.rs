@@ -1,6 +1,6 @@
 use crossterm::event::KeyEvent;
 
-use crate::process_manager::ProcessSupervisor;
+use effigy_process::ProcessSupervisor;
 
 use super::super::state::SessionState;
 use super::super::{MultiProcessTuiError, MultiProcessTuiOptions};

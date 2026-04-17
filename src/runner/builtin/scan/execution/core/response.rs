@@ -7,8 +7,8 @@ use super::super::super::super::super::scan::model::{ScanRenderFormat, TextRende
 use super::{encode_scan_json, ScanCommonOptions, ScanModeConfig, ScanPayloadResult};
 use crate::runner::builtin::scan::request::ScanRequest;
 use crate::runner::error::RunnerError;
-use crate::ui::theme::resolve_color_enabled;
-use crate::ui::OutputMode;
+use effigy_ui::theme::resolve_color_enabled;
+use effigy_ui::OutputMode;
 
 pub(super) fn build_scan_payload<TOptions, TResult>(
     mode: ScanModeConfig,
