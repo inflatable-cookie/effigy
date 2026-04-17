@@ -13,10 +13,13 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- [`245-implement-routing-error-boundary-and-catalog-loading-consolidation.md`](./245-implement-routing-error-boundary-and-catalog-loading-consolidation.md)
-  is the current ready card for `g02.010`.
-- [`246-implement-effigy-routing-extraction.md`](./246-implement-effigy-routing-extraction.md)
-  is queued behind `245`.
+- [`247-decide-effigy-scan-extraction-shape.md`](./247-decide-effigy-scan-extraction-shape.md)
+  is a ready card for `g02.010` (decide the scan extraction shape).
+- [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](./248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
+  is a ready card for `g02.010` (runner-side utility relocations and
+  inversions; independent of `247`).
+- [`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md)
+  is queued behind `247`.
 - [`115-implement-effigy-distribution-release-closure.md`](./115-implement-effigy-distribution-release-closure.md)
   is complete. Release execution remains deferred until the `g02.010` thread
   closes cleanly.
@@ -32,7 +35,14 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Execute
-[`245-implement-routing-error-boundary-and-catalog-loading-consolidation.md`](./245-implement-routing-error-boundary-and-catalog-loading-consolidation.md),
-then move to
-[`246-implement-effigy-routing-extraction.md`](./246-implement-effigy-routing-extraction.md).
+Two ready cards; pick either (they are independent):
+
+- [`247-decide-effigy-scan-extraction-shape.md`](./247-decide-effigy-scan-extraction-shape.md)
+  (decide — shape pass for the 4.9k-line scan subsystem; unblocks
+  `249`).
+- [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](./248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
+  (implement — relocate six runner utilities + two inversions; prereq
+  for the future `effigy-builtin` extraction).
+
+[`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md)
+runs after `247`.

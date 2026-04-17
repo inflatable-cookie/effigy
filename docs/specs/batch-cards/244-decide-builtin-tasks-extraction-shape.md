@@ -1,6 +1,6 @@
 # 244 Decide Built-In Tasks Extraction Shape
 
-Status: ready
+Status: complete
 Updated: 2026-04-17
 Roadmap: `g02.010`
 Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
@@ -134,9 +134,133 @@ section. Leave the section pending until the decision is made.
 
 ## Decision
 
-_Pending — populate after coupling review._
+Decided 2026-04-17 after a function-level coupling sweep across
+`src/runner/builtin/**` (10,096 lines total — larger than the 9.5k
+estimate) and the adjacent `src/runner/scan/**` (4,928 lines).
+
+### 1. Scope partition — single `effigy-builtin` crate
+
+The 11 tasks share enough real helpers (`arg_parser`, `support`,
+`response`, `doc_render`, `command_spec`, `help_text`, table-driven
+`registry`) that splitting into per-task or per-cluster crates would
+demand a shared support crate plus a registry split for no compile-time
+win today. `test` (~2.2k) and `scan` (~1.9k) are the heavy clusters;
+their external deps (`effigy-managed::run_spec` for test; `runner/scan`
+for scan) are clean cross-crate deps, not justification for separate
+builtin crates. Revisit cluster splits only if compile-unit size bites.
+
+### 2. Crate name — `effigy-builtin`
+
+Single-crate shape; name matches domain; no collisions in the workspace.
+
+### 3. Prerequisite ordering — sequence after six relocations plus the scan extraction
+
+Builtin already imports `effigy_routing::*` and `effigy_manifest::*`
+directly (no routing callback inversion needed — 245/246 lesson
+applies). What it still reaches for inside the runner that must move
+first or sit on the runner edge via a thin callback:
+
+- **Runner-side utility relocations (card `248`)** — small, independent
+  moves bundled into one implement card:
+  - `runner::util::{shell_quote, parse_dotenv_entries, normalize_builtin_test_suite}`
+    → `effigy-tasks` or `effigy-core`.
+  - `runner::tooling::vitest_command_for_js_package_manager` → likely
+    `effigy-tasks`.
+  - `runner::model::constants::{BUILTIN_TASKS, DEFAULT_BUILTIN_TEST_MAX_PARALLEL}`
+    → `effigy-tasks` (or inline into the new crate if no other caller).
+  - `src/data_loading::{parse_json, parse_toml, read_utf8}` →
+    `effigy-core`.
+  - `runner::render::encode_json` → `effigy-ui` or a shared json helper.
+  - Invert `runner::deferred_builtins_for_root` so `builtin/support.rs`
+    takes the deferred-builtins list as an argument rather than
+    reaching up into the runner module.
+  - Resolve `crate::testing::detect_test_runner_plans` —
+    relocate if it belongs in a crate, or invert if app-side.
+- **`effigy-scan` extraction (cards `247` decide / `249` implement)** —
+  builtin/scan is a thin orchestrator over `runner/scan/{execution,
+  options, render, model}`, not a duplicate; builtin must depend on
+  the extracted scan crate or it will re-reach into the runner.
+
+### 4. `builtin/scan` vs `runner/scan` — consume the extracted scan crate
+
+The sweep resolved this: builtin/scan is orchestration (request parse →
+mode dispatch → response envelope → ~1,857 lines), runner/scan is the
+engine (~4,928 lines). Zero type duplication. Extract `runner/scan/**`
+into `effigy-scan` as a prerequisite (opens as a decide card `247` + an
+implement card `249`). Builtin then consumes it.
+
+### 5. `builtin/arg_parser` — defer, travels with `effigy-builtin`
+
+116-line internal cursor over `&[String]` with deps only on
+`RunnerError` + `effigy_cli::TaskInvocation`. Does **not** duplicate
+`effigy-cli` (CLI parses the outer `TaskInvocation`; `BuiltinArgParser`
+parses the inner args inside each builtin). Self-contained — moves into
+the new crate as-is and switches `RunnerError` to `BuiltinError`.
+
+### 6. Error boundary — introduce `BuiltinError` with `From` impl
+
+Job-8 pattern, matches `RoutingError`. Every builtin file currently
+imports `RunnerError` but uses only four constructor helpers
+(`task_invocation`, `task_invocation_failed_{read,parse,write,render}`)
+and four variants (`TaskInvocation`, `TaskManifestCompose`,
+`BuiltinTestNonZero`, `BuiltinScanNonZero`) plus the `Task*` family
+surfaced by routing calls that bubble through. `BuiltinError` covers
+the builtin-owned variants; routing/task errors continue to surface
+through their own enums. `From<BuiltinError> for RunnerError` lives in
+`src/runner/error.rs`, matching the runner-edge adapter pattern.
+
+### 7. Consumer adapter — direct migration, no shim
+
+242 / second-sweep lesson. Two inbound call sites only:
+`execute/selection/fallback.rs::try_run_builtin_task` and
+`runner/mod.rs`'s registry lookup. Both migrate directly to
+`effigy_builtin::*` at extraction time. No `src/runner/builtin.rs`
+re-export shim.
+
+### 8. Hidden coupling sweep — recorded
+
+Coupling findings beyond the top-level list:
+
+- `test/**` heavily self-references `crate::runner::builtin::test::planning::*`
+  — fine inside a single crate, costly if test were a separate crate
+  (confirms decision 1).
+- `scan/request/parser.rs` uses `builtin::arg_parser` — arg_parser
+  travels with scan orchestration inside `effigy-builtin` (confirms
+  decision 5).
+- `migrate/io.rs` reaches `crate::data_loading::{parse_json, parse_toml,
+  read_utf8}` — captured as a card `248` relocation.
+- `test/planning/resolve/plan_resolution.rs` reaches
+  `crate::testing::detect_test_runner_plans` — needs resolution in
+  card `248` (relocate vs invert).
+- `support.rs` reaches `crate::runner::deferred_builtins_for_root`
+  from within the help surface — requires call-site inversion in
+  card `248`.
+- `config/output.rs` has fully-qualified `crate::runner::manifest::*`
+  references at lines 281 and 412 in addition to top-of-file imports
+  — grep for these during the 249 migration.
+- Builtin does **not** reach into `runner::locking`, `runner::deferral`,
+  `runner::command_context`, `runner::cache`, or `runner::execute` —
+  none of those are hazards for this extraction.
+- Registry is table-driven (`BUILTIN_REGISTRY: [BuiltinRegistryEntry; 13]`
+  → `BuiltinDispatch` → match), which means a single-crate move keeps
+  dispatch intact; a cluster split would require registry-split work
+  (confirms decision 1).
 
 ## Next Task
 
-_Pending — the follow-up card(s) will be named in the Decision section
-once decided._
+Open three follow-up cards in one planning batch:
+
+- [`247-decide-effigy-scan-extraction-shape.md`](./247-decide-effigy-scan-extraction-shape.md)
+  (decide, ready) — prerequisite: scan is ~4.9k lines and needs its
+  own decide pass before any implement card opens. Gates `249` and
+  the full `effigy-builtin` extraction.
+- [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](./248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
+  (implement, ready — independent of `247`) — relocate the six
+  runner-side utilities + the `deferred_builtins_for_root` inversion
+  + the `testing::detect_test_runner_plans` resolution.
+- [`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md)
+  (implement, queued behind `247`) — once `247` decides the scan
+  shape, this card does the crate move.
+
+Card `250` (implement `effigy-builtin` extraction) will open once
+`247`, `248`, and `249` are all complete. It is not yet drafted.

@@ -1180,14 +1180,68 @@ That post-`212` boundary decision is now made too:
   open but gated on the routing extraction landing first — builtin's
   coupling to routing is the largest factor in its own decision.
 
+- `252` landed cards `245` and `246` back to back — the
+  `effigy-routing` crate extraction is now real. Commit `86355753`
+  introduced `RoutingError` inside the runner (seven catalog-owned
+  variants plus a `Manifest(ManifestError)` wrapper for the
+  consolidated catalog-loading path), wired `From<RoutingError> for
+  RunnerError` to reproduce identical variant shapes (deferral's
+  pattern-match on `TaskNotFound*` / `TaskCatalogPrefixNotFound`
+  keeps working unchanged), and relocated
+  `catalog/manifest_load.rs` so catalog no longer reaches into
+  `runner/manifest.rs` for its own loading path. Scan's parallel use
+  of `runner/manifest.rs::load_task_manifest` stays untouched,
+  intentionally — that belongs to the future scan extraction. Commit
+  `8ddb0bbe` did the mechanical crate move: `src/runner/catalog/**`
+  became `crates/effigy-routing/src/**` (seven files detected as pure
+  renames at 80-100% similarity by git), ~13 caller files migrated
+  from `crate::runner::catalog::*` to `effigy_routing::*`, and the
+  root crate gained `effigy-routing = { path = "crates/effigy-routing" }`
+  plus workspace-member entry. No transitional shim inside `src/`
+  (242 / second-sweep lesson). Test totals unchanged (683 / 16 / 89).
+  `cargo fmt` / `cargo clippy` / `qa:docs` / `git diff --check` all
+  clean.
+- `253` decided card `244` (built-in tasks extraction shape) and
+  opened three follow-up cards. A function-level coupling sweep
+  across `src/runner/builtin/**` (10,096 lines — larger than the
+  9.5k queue estimate) confirmed the domain is heterogeneous but
+  shares enough support scaffolding (`arg_parser`, `support`,
+  `response`, `doc_render`, `command_spec`, `help_text`,
+  table-driven `registry`) that splitting into per-task or
+  per-cluster crates would demand a shared support crate for no
+  compile-time gain. Decisions: single `effigy-builtin` crate; scope
+  covers all eleven tasks; `arg_parser` travels with the crate (it
+  parses inner-invocation args, not the outer `TaskInvocation` the
+  CLI owns); `BuiltinError` with `From<BuiltinError> for RunnerError`
+  matching the Job-8 pattern; direct migration, no re-export shim.
+  Sweep surfaced six runner-side utility reach-ins plus two inversions
+  that must land first, packaged into card
+  [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](batch-cards/248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
+  (ready, independent of the scan decision). Builtin/scan is thin
+  orchestration over `runner/scan/**` (4,928 lines); not a duplicate,
+  but a direct dependent — so scan must be its own crate before
+  `effigy-builtin` can extract cleanly. That work is split into
+  [`247-decide-effigy-scan-extraction-shape.md`](batch-cards/247-decide-effigy-scan-extraction-shape.md)
+  (ready — decide scope, error boundary, manifest-glue resolution)
+  and
+  [`249-implement-effigy-scan-extraction.md`](batch-cards/249-implement-effigy-scan-extraction.md)
+  (queued behind `247`). The eventual `effigy-builtin` implement card
+  opens once `247`, `248`, and `249` are all complete; it is not yet
+  drafted.
+
 ## Next Task
 
-With `243` decided and the routing sub-lane's two cards open, the
-active ready card is
-[`245-implement-routing-error-boundary-and-catalog-loading-consolidation.md`](batch-cards/245-implement-routing-error-boundary-and-catalog-loading-consolidation.md).
-`245` does the error-boundary introduction and catalog-loading glue
-consolidation entirely inside the runner; `246` then moves
-`catalog/**` plus the consolidated glue plus `RoutingError` into a
-new `effigy-routing` crate. Card `244` (built-in tasks decide)
-remains open but waits on `246` landing so the builtin/routing
-boundary is concrete before builtin decisions get made.
+With `252` landing `effigy-routing` and `253` decoding the
+`effigy-builtin` plan, two ready cards sit in the queue and they are
+independent of each other:
+
+- [`247-decide-effigy-scan-extraction-shape.md`](batch-cards/247-decide-effigy-scan-extraction-shape.md)
+  — decide the scope, crate name, error boundary, and manifest-glue
+  resolution for the scan extraction. Unblocks `249`.
+- [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](batch-cards/248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
+  — relocate the six runner-side utilities builtin reaches into plus
+  resolve two inversions. Does not require `247` to decide first.
+
+[`249-implement-effigy-scan-extraction.md`](batch-cards/249-implement-effigy-scan-extraction.md)
+is queued behind `247`. The `effigy-builtin` implement card opens
+once `247`, `248`, and `249` are all complete.
