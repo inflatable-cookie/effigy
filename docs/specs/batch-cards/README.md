@@ -215,14 +215,14 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`236-decide-post-effigy-ui-extraction-boundary.md`](./236-decide-post-effigy-ui-extraction-boundary.md) (complete)
 - [`237-decide-post-subsystem-runner-adapter-cleanup-survey.md`](./237-decide-post-subsystem-runner-adapter-cleanup-survey.md) (complete)
 - [`238-decide-effigy-managed-extraction-shape.md`](./238-decide-effigy-managed-extraction-shape.md) (complete)
-- [`239-implement-effigy-manifest-loaded-catalog-relocate.md`](./239-implement-effigy-manifest-loaded-catalog-relocate.md) (ready)
-- [`240-implement-effigy-managed-extraction.md`](./240-implement-effigy-managed-extraction.md) (queued)
+- [`239-implement-effigy-manifest-loaded-catalog-relocate.md`](./239-implement-effigy-manifest-loaded-catalog-relocate.md) (complete)
+- [`240-implement-effigy-managed-extraction.md`](./240-implement-effigy-managed-extraction.md) (ready)
 
 ## Active Ready Card
 
-[`239-implement-effigy-manifest-loaded-catalog-relocate.md`](./239-implement-effigy-manifest-loaded-catalog-relocate.md) —
-relocate `LoadedCatalog` + `TaskSelection` + `DeferredCommand` into
-`effigy-manifest` as the prerequisite for the managed extraction.
+[`240-implement-effigy-managed-extraction.md`](./240-implement-effigy-managed-extraction.md) —
+move `src/runner/managed/**` (~4.1k lines) and `runner::model::managed`
+into a new `effigy-managed` crate with a managed-local `ManagedError`.
 
 ## Recent Boundary Decision
 
