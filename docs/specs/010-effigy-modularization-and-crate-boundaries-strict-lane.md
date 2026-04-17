@@ -1083,6 +1083,33 @@ That post-`212` boundary decision is now made too:
   ~9.5k lines) and task-routing core
   (`src/runner/{catalog,scan,locking,deferral}/**`, ~6k lines).
   Neither has a ready implementation card.
+- `248` landed card `242` (cross-crate re-export shim cleanup). The
+  three transitional shim files
+  (`src/runner/managed.rs`, `src/runner/model/managed.rs`,
+  `src/runner/model/catalog.rs`) are deleted. The widget-type
+  re-export block in `crates/effigy-ui/src/lib.rs` (inherited from
+  `235`) is removed. Every workspace type now has exactly one
+  canonical import path:
+  - `LoadedCatalog` / `TaskSelection` / `DeferredCommand` →
+    `effigy_manifest`
+  - `TaskSelector` / `TaskRuntimeArgs` / `CatalogSelectionMode` →
+    `effigy_tasks`
+  - managed runtime bits → `effigy_managed`
+  - widget data types (`KeyValue`, `NoticeLevel`, `TableSpec`,
+    `SummaryCounts`, `StepState`, `MessageBlock`) →
+    `effigy_core::widgets`
+
+  Internal `pub use self::submod` flattening inside each crate's
+  `lib.rs` stays untouched — that's crate public API, not a shim.
+  113 files touched across call-site migrations; `effigy-tui`
+  gains an `effigy-core` path dep; `src/runner/model.rs` now holds
+  only the `constants` submodule; `src/runner/mod.rs` drops its
+  `mod managed;` line and the now-dead imports that flowed
+  through the shim. Test totals unchanged: 683 runner lib + 16
+  effigy-managed + 89 effigy-env. `cargo fmt` / `cargo clippy`
+  (modulo the pre-existing `effigy-doctor`
+  `new_without_default`) / `effigy qa:docs` / `git diff --check`
+  all clean.
 - `247` opens three new cards in one planning batch:
   [`242-implement-cross-crate-re-export-shim-cleanup.md`](batch-cards/242-implement-cross-crate-re-export-shim-cleanup.md)
   (ready — delete the three transitional re-export shims left by
@@ -1101,7 +1128,10 @@ That post-`212` boundary decision is now made too:
 
 ## Next Task
 
-Execute
-[`242-implement-cross-crate-re-export-shim-cleanup.md`](batch-cards/242-implement-cross-crate-re-export-shim-cleanup.md).
-After `242` lands, return to planning to drive the Decision section
-of `243` or `244` (in either order) through coupling review.
+With `242` complete, the lane has no ready implementation card.
+Two decide cards are open:
+[`243-decide-task-routing-core-extraction-shape.md`](batch-cards/243-decide-task-routing-core-extraction-shape.md)
+and
+[`244-decide-builtin-tasks-extraction-shape.md`](batch-cards/244-decide-builtin-tasks-extraction-shape.md).
+The next move is to drive either Decision section through coupling
+review, or pause the lane.
