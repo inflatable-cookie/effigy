@@ -13,13 +13,12 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- [`247-decide-effigy-scan-extraction-shape.md`](./247-decide-effigy-scan-extraction-shape.md)
-  is a ready card for `g02.010` (decide the scan extraction shape).
 - [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](./248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
   is a ready card for `g02.010` (runner-side utility relocations and
-  inversions; independent of `247`).
+  inversions).
 - [`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md)
-  is queued behind `247`.
+  is a ready card for `g02.010` (extract `effigy-scan`; single-card
+  per the `247` decision). Independent of `248`.
 - [`115-implement-effigy-distribution-release-closure.md`](./115-implement-effigy-distribution-release-closure.md)
   is complete. Release execution remains deferred until the `g02.010` thread
   closes cleanly.
@@ -35,14 +34,13 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Two ready cards; pick either (they are independent):
+Two ready implement cards, independent of each other:
 
-- [`247-decide-effigy-scan-extraction-shape.md`](./247-decide-effigy-scan-extraction-shape.md)
-  (decide — shape pass for the 4.9k-line scan subsystem; unblocks
-  `249`).
 - [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](./248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
-  (implement — relocate six runner utilities + two inversions; prereq
-  for the future `effigy-builtin` extraction).
+  — relocate six runner-side utilities + two inversions. Prereq for
+  the future `effigy-builtin` extraction.
+- [`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md)
+  — extract `src/runner/scan/**` into `effigy-scan` with a
+  `ScanError` boundary.
 
-[`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md)
-runs after `247`.
+The `effigy-builtin` implement card opens once both land.

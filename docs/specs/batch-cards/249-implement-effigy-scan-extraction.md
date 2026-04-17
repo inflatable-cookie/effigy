@@ -1,6 +1,6 @@
 # 249 Implement Effigy-Scan Extraction
 
-Status: queued
+Status: ready
 Updated: 2026-04-17
 Roadmap: `g02.010`
 Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
@@ -9,15 +9,12 @@ Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
 
 Extract `src/runner/scan/**` (~4,928 lines) into a new `effigy-scan`
 workspace crate. Follow the established extraction pattern
-(`effigy-process`, `effigy-ui`, `effigy-managed`, `effigy-routing`): new
-crate, narrow error boundary per the `247` decision, `From` impl at the
-runner's edge (if applicable), call sites migrate to the new crate's
-import path.
+(`effigy-process`, `effigy-ui`, `effigy-managed`, `effigy-routing`):
+new crate with narrow `ScanError`, `From<ScanError> for RunnerError` at
+the runner's edge, call sites migrate to the new crate's import path.
 
-This card is queued behind card `247` (decide scan shape). It also
-benefits from card `248` landing first (runner-utility prereqs) to
-reduce the migration radius. Fields below are the provisional scope;
-card `247`'s Decision section may trim or shift them.
+Card `247` decided the shape. No prerequisite card — the whole move
+lands in one go. Independent of card `248`; either can run first.
 
 ## Context
 
@@ -52,24 +49,43 @@ Inbound callers to migrate (from the `244` sweep; ~11 files plus
 
 ## In Scope
 
-_Final shape to be locked by card `247`. Provisional scope below:_
-
 - Create `crates/effigy-scan/` workspace crate with `Cargo.toml`,
   `src/lib.rs`.
-- Move `src/runner/scan/**` contents into `crates/effigy-scan/src/`.
-- Per `247` decision:
-  - Introduce `ScanError` with `From<ScanError> for RunnerError`, or
-    keep scan surfacing `RunnerError::task_invocation(...)` via a
-    constructor re-export.
-  - Resolve the manifest-loading glue (consolidated scan-owned copy,
-    relocated into `effigy-manifest`, or keep options-loading behind
-    in the runner — locked by `247` §4).
-- Add deps: `effigy-core`, `effigy-manifest`, `effigy-tasks`,
-  `effigy-ui` (for render), `std` / `serde` / `toml` as required.
+- Move `src/runner/scan/**` contents into `crates/effigy-scan/src/`,
+  including `tests.rs` and `constants.rs`.
+- Introduce `ScanError` enum inside the new crate. Initial shape is a
+  single-variant newtype (`ScanError::Invocation(String)`) covering
+  the 20 `RunnerError::task_invocation(...)` call sites; enriching to
+  a richer enum (`InvalidGlob`, `ReadFailed`, `ValidateBounds`, etc.)
+  is a follow-up inside the crate. Rewrite every producer inside
+  `scan/**` to return `ScanError`; adapters at call sites lift via
+  `?`.
+- Add `impl From<ScanError> for RunnerError` in `src/runner/error.rs`
+  that lifts every `ScanError` variant to
+  `RunnerError::task_invocation(...)`.
+- Swap the four scan files that import `crate::runner::manifest::*`
+  (`model/common.rs`, `options/loading/common.rs`,
+  `options/loading/traits.rs`, `options/loading/impls.rs`) to import
+  from `effigy_manifest::*` directly. `src/runner/manifest.rs` lines
+  7-14 are pure re-exports of the same items, so the swap is
+  behavior-preserving.
+- Pull `TASK_MANIFEST_FILE` into the new crate as a crate-private
+  constant (the one scan consumer, `options/loading/common.rs`,
+  imports it locally). Runner's own copy in
+  `src/runner/model/constants.rs` stays put for non-scan consumers.
+- Flip `pub(in crate::runner)` visibility markers in scan files to
+  `pub` or `pub(crate)` as required by the new crate boundary.
+- Add crate deps: `effigy-manifest`, `effigy-tasks`, `globset`,
+  `ignore`, `serde`, `serde_json` (tests). No `effigy-core` dep
+  required (scan reaches no `effigy-core` types today). No
+  `effigy-ui` dep required (render uses its own stringify helpers,
+  not widget types).
 - Remove `src/runner/scan/` directory from the runner.
-- Update `src/runner/error.rs` if a `ScanError` is introduced
-  (`impl From<ScanError> for RunnerError`).
-- Migrate every caller file listed above to import from `effigy_scan::*`.
+- Migrate caller files to import from `effigy_scan::*`:
+  - `src/runner/builtin/scan/**` (all files touching `scan::*`)
+  - `src/runner/builtin/watch/runtime.rs`
+  - `src/runner/builtin/registry.rs`
+  - `src/runner/doctor/{attention_markers,comment_ratio,duplicate_blocks,generated_assets,generated_in_src,god_files,manifest,scan_checks/mod,stale_suppressions}.rs`
 - Update `Cargo.toml` workspace `members` list.
 - Add `effigy-scan = { path = "crates/effigy-scan" }` to the root
   crate's deps.
@@ -86,22 +102,20 @@ _Final shape to be locked by card `247`. Provisional scope below:_
 
 - `effigy-scan` workspace crate exists with the moved code.
 - `src/runner/scan/` directory is gone.
-- If `247` selects a `ScanError` boundary:
-  `impl From<ScanError> for RunnerError` lives in `src/runner/error.rs`
+- `impl From<ScanError> for RunnerError` lives in `src/runner/error.rs`
   and depends on `effigy_scan::ScanError`.
 - All caller files import from `effigy_scan::` directly (no transitional
   shim inside `src/` — per `242` / second-sweep lesson).
 - `src/lib.rs` does not gain a `pub use effigy_scan::*` re-export —
   consumers import from the crate directly.
-- `builtin/scan/**` continues to compile (still pointing at
-  `crate::runner::scan::*` before this card moves them? — see note).
-  After this card lands, builtin/scan's imports flip to `effigy_scan::*`
-  as part of the caller migration.
+- `builtin/scan/**` imports flip to `effigy_scan::*` as part of the
+  caller migration.
 - Doctor's scan-check modules continue to emit identical findings —
   validate via existing doctor tests.
-- Test totals unchanged: 683 runner lib + 16 effigy-managed + 89
-  effigy-env + any new effigy-scan unit tests (flag in post-extraction
-  checkpoint).
+- Test totals: runner lib drops by ~12 (scan's `#[test]` functions);
+  new `effigy-scan` unit-test count picks up those 12; `effigy-managed`
+  (16) and `effigy-env` (89) unchanged. Flag exact deltas in the
+  post-extraction checkpoint.
 
 ## Validation
 
