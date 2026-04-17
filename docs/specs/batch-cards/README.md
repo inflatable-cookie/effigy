@@ -13,12 +13,12 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](./248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
-  is a ready card for `g02.010` (runner-side utility relocations and
-  inversions).
 - [`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md)
-  is a ready card for `g02.010` (extract `effigy-scan`; single-card
-  per the `247` decision). Independent of `248`.
+  is the sole ready card for `g02.010` (extract `effigy-scan`;
+  single-card per the `247` decision).
+- [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](./248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
+  is complete (relocations, direct-import flips, and the
+  `deferred_builtins_for_root` inversion all landed).
 - [`115-implement-effigy-distribution-release-closure.md`](./115-implement-effigy-distribution-release-closure.md)
   is complete. Release execution remains deferred until the `g02.010` thread
   closes cleanly.
@@ -34,13 +34,7 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Two ready implement cards, independent of each other:
-
-- [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](./248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
-  — relocate six runner-side utilities + two inversions. Prereq for
-  the future `effigy-builtin` extraction.
-- [`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md)
-  — extract `src/runner/scan/**` into `effigy-scan` with a
-  `ScanError` boundary.
-
-The `effigy-builtin` implement card opens once both land.
+Execute [`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md)
+— extract `src/runner/scan/**` into `effigy-scan` with a `ScanError`
+boundary. Card `248` is complete; the `effigy-builtin` implement card
+can be drafted once `249` lands.

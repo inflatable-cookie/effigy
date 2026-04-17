@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 
+use effigy_core::shell::shell_quote;
+
 use crate::runner::builtin::test::planning::BuiltinTestTarget;
 use crate::runner::manifest::ManifestTestSuiteTeardownPolicy;
-use crate::runner::util::shell_quote;
 
 pub(super) struct ProjectedSuitePlan {
     pub(super) suite: String,

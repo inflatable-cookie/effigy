@@ -635,6 +635,11 @@ dependencies = [
 [[package]]
 name = "effigy-core"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml",
+]
 
 [[package]]
 name = "effigy-demo"
@@ -787,6 +792,7 @@ name = "effigy-tasks"
 version = "0.1.0"
 dependencies = [
  "effigy-core",
+ "serde_json",
 ]
 
 [[package]]

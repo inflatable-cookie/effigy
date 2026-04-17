@@ -1,6 +1,6 @@
 # 248 Implement Runner-Utility Prerequisites For Effigy-Builtin
 
-Status: ready
+Status: complete
 Updated: 2026-04-17
 Roadmap: `g02.010`
 Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
@@ -159,12 +159,95 @@ exist yet).
 - `cargo run --bin effigy -- qa:docs`
 - `git diff --check`
 
+## Landed Decisions
+
+### Relocations applied
+
+- `parse_json` / `parse_toml` / `read_utf8` → `effigy-core::data_loading`
+  (new module). Deleted `src/data_loading.rs`. Two runner callers
+  (`builtin/migrate/io`, `doctor/manifest/scan`) flipped to
+  `effigy_core::data_loading::*`. `effigy-core` gained `serde`,
+  `serde_json`, and `toml` deps — cost-neutral since every downstream
+  already transitively required them.
+- `TASK_MANIFEST_FILE` → `effigy-manifest` as a `pub const`. Removed from
+  `runner::model::constants`. Ten call sites (builtin init, migrate,
+  doctor, runner mod, error display, scan loading) flipped to
+  `effigy_manifest::TASK_MANIFEST_FILE`. Historical inlined copies in
+  `effigy-bootstrap`, `effigy-release`, and `effigy-routing` are left in
+  place with a doc-comment pointer to the canonical constant; they will
+  migrate when they next touch adjacent code.
+- `vitest_command_for_js_package_manager` and
+  `js_package_manager_binary` → methods `vitest_command()` and
+  `binary_name()` on `ManifestJsPackageManager` inside `effigy-manifest`.
+  Pivoted away from `effigy-tasks` because `effigy-manifest` already
+  depends on `effigy-tasks` (dep cycle). Method placement keeps behavior
+  colocated with the enum and saves the two existing callers from an
+  extra import.
+- `src/testing/**` (detect_test_runner\*, TestRunner, TestRunnerPlan,
+  TestRunnerCandidate, TestRunnerDetection) → `effigy-tasks::testing`.
+  `effigy-tasks` gained `serde_json` dep (existing deep dep chain
+  required it anyway). The two runner callers flipped to
+  `effigy_tasks::testing::*`. Integration tests at
+  `src/tests/testing_tests.rs` stay in the main crate (they rely on
+  `contract_test_support`) but now import symbols from `effigy_tasks`.
+- `shell_quote` → direct `effigy_core::shell::shell_quote` at every
+  builtin call site (5 files). One non-builtin caller
+  (`runner/deferral/run.rs`) also flipped. The runner-internal
+  `src/runner/util/shell.rs` shim now re-exports only
+  `with_local_node_bin_path` (still used by three non-builtin runner
+  modules).
+- `parse_dotenv_entries` → direct `effigy_env::dotenv::parse_dotenv_entries`
+  at the one builtin call site. Deleted the `src/runner/util/dotenv.rs`
+  shim entirely.
+- `normalize_builtin_test_suite` → direct
+  `effigy_tasks::normalize_builtin_test_suite` at the two call sites
+  (builtin suite-selection, builtin test target config). Removed the
+  stray duplicate implementation in `src/runner/util/parsing/runtime.rs`
+  and the `runner::util::parsing::normalize_builtin_test_suite` shim.
+
+### Deferred with justification
+
+- `BUILTIN_TASKS` and `DEFAULT_BUILTIN_TEST_MAX_PARALLEL` stay in
+  `runner::model::constants`. They are builtin-specific values with
+  exactly one consumer each outside builtin. Moving them now would
+  spread indirection; inlining into `effigy-builtin` at extraction time
+  is the cleanest path. Noted in the commit message.
+- `encode_json` stays in `runner::render`. The single builtin caller
+  (`builtin/scan/execution/core`) can keep reaching for it; the roughly
+  fourteen non-builtin runner callers would each need a `.map_err`
+  shim if we relocated. Decision: move at `effigy-builtin` extraction
+  time, when we know whether the builtin-side errors want to be
+  `BuiltinError::Render(...)` or continue to surface as
+  `RunnerError::Ui`.
+
+### Inversions applied
+
+- `deferred_builtins_for_root` no longer called from
+  `builtin/support.rs`. The function `render_builtin_general_help_for_root`
+  became `render_builtin_general_help(deferred_builtins, output_json)`
+  with the set passed in. `run_builtin_help` gained a
+  `deferred_builtins: &BTreeSet<String>` parameter. The registry's
+  `Help` arm computes `deferred_builtins_from_catalogs(catalogs,
+  target_root)` using already-loaded catalogs (no fresh filesystem
+  discovery) and passes it in.
+- `detect_test_runner_plans` relocation (option a) over callback
+  inversion: the function is pure data-flow (repo root in, plan list
+  out), `effigy-tasks` is already an available crate, and adding a
+  callback would have cost more indirection than the move.
+
+### Test totals after landing
+
+- `cargo test` summary: 1 + 0 + 681 + 0 + 0 + 4 + 10 + 190 + 27 + 0
+  (all passing). Runner lib test count drops from 683 → 681 because the
+  two migrated tests (`js_package_manager_binary_*` and
+  `js_package_manager_vitest_commands_*`) now live with their code in
+  `effigy-manifest`; runtime-side `normalize_builtin_test_suite` had no
+  dedicated test in the runner tooling suite. `effigy-managed` still
+  reports 16 and `effigy-env` still reports 89 (unchanged).
+
 ## Next Task
 
-_Decided by the state of the `g02.010` lane when this card lands:_
-
-- If card `247` has also decided: open
-  [`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md)
-  next (the sibling prerequisite for the future `effigy-builtin`
-  implement card).
-- If `249` has also landed: draft the `effigy-builtin` implement card.
+Execute [`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md).
+With `247` decided and `248` complete, the prerequisites for the
+eventual `effigy-builtin` implement card are both done — only `249`
+remains before drafting it.

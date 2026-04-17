@@ -1,5 +1,5 @@
-use super::{detect_test_runner, detect_test_runner_detailed, TestRunner};
 use crate::contract_test_support::{lock_test, temp_workspace, EnvGuard};
+use effigy_tasks::testing::{detect_test_runner, detect_test_runner_detailed, TestRunner};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 

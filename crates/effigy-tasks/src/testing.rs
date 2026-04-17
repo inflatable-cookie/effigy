@@ -1,3 +1,9 @@
+//! Test-runner detection helpers shared across Effigy subsystems.
+//!
+//! Given a repo root, these helpers detect whether Vitest, cargo-nextest,
+//! or `cargo test` should be used as the default test runner, along with
+//! evidence strings for operator-facing rendering.
+
 use std::path::Path;
 
 mod rust;
@@ -71,7 +77,3 @@ pub fn detect_test_runner_detailed(repo_root: &Path) -> TestRunnerDetection {
         candidates: vec![vitest_candidate, nextest_candidate, fallback_candidate],
     }
 }
-
-#[cfg(test)]
-#[path = "tests/testing_tests.rs"]
-mod tests;

@@ -7,10 +7,10 @@ use crate::runner::manifest::{
     ManifestCargoEnvMatchMode, ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedRunStep,
     ManifestTestSuiteTeardownPolicy,
 };
-use crate::runner::util::normalize_builtin_test_suite;
 use crate::runner::RunnerError;
 use effigy_managed::run_spec::{render_run_step_sequence, resolve_run_step_env};
 use effigy_manifest::LoadedCatalog;
+use effigy_tasks::normalize_builtin_test_suite;
 
 use super::cargo_env::resolve_manifest_cargo_env;
 

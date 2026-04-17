@@ -68,7 +68,7 @@ fn implicit_deferred_builtins_for_root(root: &Path) -> BTreeSet<String> {
 }
 
 pub(crate) fn deferred_builtins_for_root(root: &Path) -> BTreeSet<String> {
-    let manifest_path = root.join(model::constants::TASK_MANIFEST_FILE);
+    let manifest_path = root.join(effigy_manifest::TASK_MANIFEST_FILE);
     let explicit = manifest::load_task_manifest(&manifest_path)
         .ok()
         .and_then(|manifest| {

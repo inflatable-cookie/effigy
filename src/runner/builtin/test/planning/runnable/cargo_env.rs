@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use effigy_core::shell::shell_quote;
+
 use crate::runner::manifest::ManifestCargoEnvMatchMode;
-use crate::runner::util::shell_quote;
 
 pub(super) fn maybe_wrap_with_cargo_env(
     command: String,

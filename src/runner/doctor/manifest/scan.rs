@@ -10,7 +10,7 @@ use super::super::finding_templates::ManifestParseFinding;
 use super::super::report::DoctorState;
 use super::schema::validate_manifest_schema;
 use super::ManifestScanResult;
-use crate::data_loading::{parse_toml, read_utf8};
+use effigy_core::data_loading::{parse_toml, read_utf8};
 use effigy_manifest::LoadedCatalog;
 use effigy_routing::{default_alias, discover_manifest_paths};
 

@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::runner::manifest::ManifestEnvEntry;
-use crate::runner::util::parse_dotenv_entries;
+use effigy_env::dotenv::parse_dotenv_entries;
 use effigy_manifest::LoadedCatalog;
 
 const BUILTIN_CARGO_ENV_FALLBACK_KEYS: [&str; 2] = ["CARGO_HOME", "CARGO_TARGET_DIR"];

@@ -8,10 +8,6 @@ mod selector;
 use crate::runner::error::RunnerError;
 use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 
-pub(in crate::runner) fn normalize_builtin_test_suite(raw: &str) -> Option<&'static str> {
-    runtime::normalize_builtin_test_suite(raw)
-}
-
 pub(in crate::runner) fn parse_task_runtime_args(
     args: &[String],
 ) -> Result<TaskRuntimeArgs, RunnerError> {

@@ -242,6 +242,35 @@ pub enum ManifestJsPackageManager {
     Direct,
 }
 
+impl ManifestJsPackageManager {
+    /// Binary name to look up in `PATH` for this manager.
+    ///
+    /// Returns `None` for `Direct`, which assumes the runner binary
+    /// (`vitest` and friends) is already resolvable without an outer
+    /// package-manager invocation.
+    pub fn binary_name(self) -> Option<&'static str> {
+        match self {
+            Self::Bun => Some("bun"),
+            Self::Pnpm => Some("pnpm"),
+            Self::Npm => Some("npm"),
+            Self::Direct => None,
+        }
+    }
+
+    /// Vitest invocation for this manager as a `(command, label)` pair.
+    ///
+    /// The label is used as stable evidence text in plan output, e.g.
+    /// `package_manager.js=pnpm`.
+    pub fn vitest_command(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Bun => ("bun x vitest run", "bun"),
+            Self::Pnpm => ("pnpm exec vitest run", "pnpm"),
+            Self::Npm => ("npx vitest run", "npm"),
+            Self::Direct => ("vitest run", "direct"),
+        }
+    }
+}
+
 #[derive(Debug, serde::Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestEnvSchemaConfig {
@@ -700,4 +729,37 @@ pub struct ManifestReleaseGateDetails {
     pub command: String,
     #[serde(default)]
     pub description: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ManifestJsPackageManager;
+
+    #[test]
+    fn js_package_manager_binary_names_are_stable() {
+        assert_eq!(ManifestJsPackageManager::Bun.binary_name(), Some("bun"));
+        assert_eq!(ManifestJsPackageManager::Pnpm.binary_name(), Some("pnpm"));
+        assert_eq!(ManifestJsPackageManager::Npm.binary_name(), Some("npm"));
+        assert_eq!(ManifestJsPackageManager::Direct.binary_name(), None);
+    }
+
+    #[test]
+    fn js_package_manager_vitest_commands_are_stable() {
+        assert_eq!(
+            ManifestJsPackageManager::Bun.vitest_command(),
+            ("bun x vitest run", "bun")
+        );
+        assert_eq!(
+            ManifestJsPackageManager::Pnpm.vitest_command(),
+            ("pnpm exec vitest run", "pnpm")
+        );
+        assert_eq!(
+            ManifestJsPackageManager::Npm.vitest_command(),
+            ("npx vitest run", "npm")
+        );
+        assert_eq!(
+            ManifestJsPackageManager::Direct.vitest_command(),
+            ("vitest run", "direct")
+        );
+    }
 }

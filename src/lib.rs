@@ -20,9 +20,7 @@
 //! `effigy-changelog` directly.
 
 mod cli;
-mod data_loading;
 pub mod runner;
-pub mod testing;
 pub mod tui;
 
 pub use cli::entrypoint::run_cli;
@@ -54,3 +52,7 @@ mod contract_test_support;
 #[cfg(test)]
 #[path = "tests/lib_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/testing_tests.rs"]
+mod testing_tests;

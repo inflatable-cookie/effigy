@@ -3,10 +3,10 @@ use std::path::Path;
 use effigy_cli::{HelpTopic, TaskInvocation};
 use effigy_core::fs_probe::PathPresenceCache;
 
-use super::super::model::constants::TASK_MANIFEST_FILE;
 use super::command_spec::run_builtin_command;
 use super::render_builtin_help_topic;
 use crate::runner::error::RunnerError;
+use effigy_manifest::TASK_MANIFEST_FILE;
 #[path = "init/output.rs"]
 mod output;
 #[path = "init/request.rs"]

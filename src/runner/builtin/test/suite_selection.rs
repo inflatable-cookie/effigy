@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
-use super::super::super::util::normalize_builtin_test_suite;
+use effigy_tasks::normalize_builtin_test_suite;
+
 use super::planning::BuiltinTestRunnable;
 
 #[derive(Debug, Clone)]

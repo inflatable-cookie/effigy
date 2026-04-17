@@ -1,5 +1,6 @@
 mod parsing;
 mod reference;
+pub mod testing;
 
 use std::path::PathBuf;
 
