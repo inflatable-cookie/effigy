@@ -1,9 +1,9 @@
-use super::super::super::super::super::scan::model::{
-    CommentRatioScanOptions, GeneratedInSrcScanOptions, StaleSuppressionScanOptions,
-};
 use super::{ScanCommonOptions, ScanThresholdOverrideOptions, ScanThresholds};
 use crate::runner::builtin::scan::request::ScanRequest;
 use crate::runner::error::RunnerError;
+use effigy_scan::{
+    CommentRatioScanOptions, GeneratedInSrcScanOptions, StaleSuppressionScanOptions,
+};
 
 pub(in crate::runner::builtin::scan::execution) fn apply_common_request_overrides<T>(
     options: &mut T,

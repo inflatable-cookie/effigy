@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::runner::scan::model::ScanRenderFormat;
+use effigy_scan::ScanRenderFormat;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::runner::builtin::scan) enum ScanCommand {

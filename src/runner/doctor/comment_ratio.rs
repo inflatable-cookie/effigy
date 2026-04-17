@@ -1,11 +1,10 @@
 use std::path::Path;
 
-use super::super::scan::execution::run_comment_ratio_scan_workspace;
-use super::super::scan::options::doctor_comment_ratio_options;
 use super::contracts::{check_id, remediation};
 use super::report::DoctorState;
 use super::scan_checks::{run_scan_check, ScanDoctorCheck};
 use effigy_manifest::LoadedCatalog;
+use effigy_scan::{doctor_comment_ratio_options, run_comment_ratio_scan_workspace};
 
 pub(super) fn check_comment_ratio(
     resolved_root: &Path,
@@ -21,7 +20,9 @@ pub(super) fn check_comment_ratio(
             label: "comment-ratio",
             remediation: remediation::REDUCE_COMMENT_RATIO,
         },
-        doctor_comment_ratio_options,
-        run_comment_ratio_scan_workspace,
+        |root, catalogs| doctor_comment_ratio_options(root, catalogs).map_err(Into::into),
+        |root, scan_roots, options| {
+            run_comment_ratio_scan_workspace(root, scan_roots, options).map_err(Into::into)
+        },
     );
 }

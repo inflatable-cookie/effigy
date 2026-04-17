@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use super::super::super::super::super::scan::model::{ScanRenderFormat, TextRenderOptions};
 use super::{encode_scan_json, ScanCommonOptions, ScanModeConfig, ScanPayloadResult};
 use crate::runner::builtin::scan::request::ScanRequest;
 use crate::runner::error::RunnerError;
+use effigy_scan::{ScanRenderFormat, TextRenderOptions};
 use effigy_ui::theme::resolve_color_enabled;
 use effigy_ui::OutputMode;
 

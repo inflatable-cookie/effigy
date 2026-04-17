@@ -1,6 +1,6 @@
 use super::super::api::ScanCommonOptions;
 use crate::runner::error::RunnerError;
-use crate::runner::scan::model::{
+use effigy_scan::{
     AttentionMarkerScanOptions, CommentRatioScanOptions, DuplicateBlockScanOptions,
     GeneratedAssetScanOptions, GeneratedInSrcScanOptions, GodFileScanOptions, ScanRenderFormat,
     StaleSuppressionScanOptions,
@@ -20,7 +20,7 @@ impl ScanCommonOptions for GodFileScanOptions {
         self.respect_gitignore
     }
     fn validate(&self) -> Result<(), RunnerError> {
-        GodFileScanOptions::validate(self)
+        GodFileScanOptions::validate(self).map_err(Into::into)
     }
     fn format_mut(&mut self) -> &mut ScanRenderFormat {
         &mut self.format
@@ -53,7 +53,7 @@ impl ScanCommonOptions for GeneratedAssetScanOptions {
         self.respect_gitignore
     }
     fn validate(&self) -> Result<(), RunnerError> {
-        GeneratedAssetScanOptions::validate(self)
+        GeneratedAssetScanOptions::validate(self).map_err(Into::into)
     }
     fn format_mut(&mut self) -> &mut ScanRenderFormat {
         &mut self.format
@@ -86,7 +86,7 @@ impl ScanCommonOptions for GeneratedInSrcScanOptions {
         self.respect_gitignore
     }
     fn validate(&self) -> Result<(), RunnerError> {
-        GeneratedInSrcScanOptions::validate(self)
+        GeneratedInSrcScanOptions::validate(self).map_err(Into::into)
     }
     fn format_mut(&mut self) -> &mut ScanRenderFormat {
         &mut self.format
@@ -119,7 +119,7 @@ impl ScanCommonOptions for DuplicateBlockScanOptions {
         self.respect_gitignore
     }
     fn validate(&self) -> Result<(), RunnerError> {
-        DuplicateBlockScanOptions::validate(self)
+        DuplicateBlockScanOptions::validate(self).map_err(Into::into)
     }
     fn format_mut(&mut self) -> &mut ScanRenderFormat {
         &mut self.format
@@ -152,7 +152,7 @@ impl ScanCommonOptions for CommentRatioScanOptions {
         self.respect_gitignore
     }
     fn validate(&self) -> Result<(), RunnerError> {
-        CommentRatioScanOptions::validate(self)
+        CommentRatioScanOptions::validate(self).map_err(Into::into)
     }
     fn format_mut(&mut self) -> &mut ScanRenderFormat {
         &mut self.format
@@ -185,7 +185,7 @@ impl ScanCommonOptions for AttentionMarkerScanOptions {
         self.respect_gitignore
     }
     fn validate(&self) -> Result<(), RunnerError> {
-        AttentionMarkerScanOptions::validate(self)
+        AttentionMarkerScanOptions::validate(self).map_err(Into::into)
     }
     fn format_mut(&mut self) -> &mut ScanRenderFormat {
         &mut self.format
@@ -218,7 +218,7 @@ impl ScanCommonOptions for StaleSuppressionScanOptions {
         self.respect_gitignore
     }
     fn validate(&self) -> Result<(), RunnerError> {
-        StaleSuppressionScanOptions::validate(self)
+        StaleSuppressionScanOptions::validate(self).map_err(Into::into)
     }
     fn format_mut(&mut self) -> &mut ScanRenderFormat {
         &mut self.format

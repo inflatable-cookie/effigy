@@ -1,11 +1,11 @@
 use serde_json::{json, Map, Value};
 
-use super::super::super::super::super::scan::model::{
+use super::api::ScanPayloadResult;
+use effigy_scan::{
     AttentionMarkerScanResult, CommentRatioScanResult, DuplicateBlockScanResult,
     GeneratedAssetScanResult, GeneratedInSrcScanResult, GodFileScanResult,
     StaleSuppressionScanResult,
 };
-use super::api::ScanPayloadResult;
 
 impl ScanPayloadResult for GodFileScanResult {
     fn root(&self) -> &str {

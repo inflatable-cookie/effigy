@@ -1,20 +1,19 @@
 use std::path::{Path, PathBuf};
 
-use super::super::scan::model::{
-    format_bytes, format_ratio, AttentionMarkerFinding, AttentionMarkerScanOptions,
-    AttentionMarkerScanResult, AttentionMarkerSeverity, CommentRatioFinding,
-    CommentRatioScanOptions, CommentRatioScanResult, CommentRatioSeverity, DuplicateBlockFinding,
-    DuplicateBlockScanOptions, DuplicateBlockScanResult, DuplicateBlockSeverity,
-    GeneratedAssetFinding, GeneratedAssetScanOptions, GeneratedAssetScanResult,
-    GeneratedAssetSeverity, GeneratedInSrcFinding, GeneratedInSrcScanOptions,
-    GeneratedInSrcScanResult, GeneratedInSrcSeverity, GodFileFinding, GodFileScanOptions,
-    GodFileScanResult, GodFileSeverity, StaleSuppressionFinding, StaleSuppressionScanOptions,
-    StaleSuppressionScanResult, StaleSuppressionSeverity,
-};
-use super::super::scan::options::catalog_scan_roots;
 use super::report::{DoctorSeverity, DoctorState};
 use crate::runner::error::RunnerError;
 use effigy_manifest::LoadedCatalog;
+use effigy_scan::{
+    catalog_scan_roots, format_bytes, format_ratio, AttentionMarkerFinding,
+    AttentionMarkerScanOptions, AttentionMarkerScanResult, AttentionMarkerSeverity,
+    CommentRatioFinding, CommentRatioScanOptions, CommentRatioScanResult, CommentRatioSeverity,
+    DuplicateBlockFinding, DuplicateBlockScanOptions, DuplicateBlockScanResult,
+    DuplicateBlockSeverity, GeneratedAssetFinding, GeneratedAssetScanOptions,
+    GeneratedAssetScanResult, GeneratedAssetSeverity, GeneratedInSrcFinding,
+    GeneratedInSrcScanOptions, GeneratedInSrcScanResult, GeneratedInSrcSeverity, GodFileFinding,
+    GodFileScanOptions, GodFileScanResult, GodFileSeverity, StaleSuppressionFinding,
+    StaleSuppressionScanOptions, StaleSuppressionScanResult, StaleSuppressionSeverity,
+};
 
 mod core;
 mod findings;

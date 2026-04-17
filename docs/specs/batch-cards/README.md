@@ -13,12 +13,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- [`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md)
-  is the sole ready card for `g02.010` (extract `effigy-scan`;
-  single-card per the `247` decision).
-- [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](./248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
-  is complete (relocations, direct-import flips, and the
-  `deferred_builtins_for_root` inversion all landed).
+- No ready card for `g02.010`. Cards `247`, `248`, and `249` are all
+  complete — scan now lives at `crates/effigy-scan/` with a `ScanError`
+  → `RunnerError` boundary. Next move is drafting the
+  `effigy-builtin` implement card (tentatively `250`+) per card
+  `244`'s pre-agreed scope, error boundary, and migration pattern.
 - [`115-implement-effigy-distribution-release-closure.md`](./115-implement-effigy-distribution-release-closure.md)
   is complete. Release execution remains deferred until the `g02.010` thread
   closes cleanly.
@@ -34,7 +33,6 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Execute [`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md)
-— extract `src/runner/scan/**` into `effigy-scan` with a `ScanError`
-boundary. Card `248` is complete; the `effigy-builtin` implement card
-can be drafted once `249` lands.
+Draft the `effigy-builtin` implement card (tentatively `250`+).
+Prerequisites (`247`, `248`, `249`) are all complete. Card `244`
+already fixed the scope, error boundary, and migration pattern.

@@ -1,5 +1,5 @@
 use super::super::api::{ScanThresholdOverrideOptions, ScanThresholds};
-use crate::runner::scan::model::{
+use effigy_scan::{
     DuplicateBlockScanOptions, DuplicateBlockThresholds, GeneratedAssetScanOptions,
     GeneratedAssetThresholds, GeneratedInSrcScanOptions, GeneratedInSrcThresholds,
     GodFileScanOptions, GodFileThresholds,

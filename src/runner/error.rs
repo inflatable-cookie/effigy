@@ -9,6 +9,7 @@ use effigy_managed::ManagedError;
 use effigy_manifest::ManifestError;
 use effigy_process::ProcessManagerError;
 use effigy_routing::RoutingError;
+use effigy_scan::ScanError;
 use effigy_tasks::TaskError;
 
 #[path = "error/display.rs"]
@@ -368,6 +369,22 @@ impl From<RoutingError> for RunnerError {
                 Self::TaskAmbiguous { name, candidates }
             }
             RoutingError::Manifest(error) => map_manifest_error(error),
+        }
+    }
+}
+
+/// Lifts `ScanError` from `effigy-scan` into `RunnerError` at the
+/// runner's edge. Job-8 pattern — see also `effigy-process`,
+/// `effigy-ui`, `effigy-managed`, `effigy-env`, `effigy-routing`.
+/// The `Invocation` variant covers the 20 call sites that previously
+/// constructed `RunnerError::task_invocation(...)` directly. The
+/// `Manifest` variant bridges scan's option-loading path through the
+/// existing `ManifestError` → `RunnerError` mapping.
+impl From<ScanError> for RunnerError {
+    fn from(value: ScanError) -> Self {
+        match value {
+            ScanError::Invocation(message) => Self::TaskInvocation(message),
+            ScanError::Manifest(error) => map_manifest_error(error),
         }
     }
 }

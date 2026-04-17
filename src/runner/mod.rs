@@ -22,7 +22,6 @@ mod manifest;
 mod model;
 mod release_command;
 mod render;
-mod scan;
 mod script_command;
 mod tasks_command;
 mod tasks_listing;

@@ -1,6 +1,6 @@
 # 249 Implement Effigy-Scan Extraction
 
-Status: ready
+Status: complete
 Updated: 2026-04-17
 Roadmap: `g02.010`
 Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
@@ -125,8 +125,37 @@ Inbound callers to migrate (from the `244` sweep; ~11 files plus
 - `cargo run --bin effigy -- qa:docs`
 - `git diff --check`
 
+## Outcome
+
+Landed 2026-04-17. `crates/effigy-scan/` created with the full move
+in a single commit; ~4,928 lines across 34 files relocated. `ScanError`
+shipped as a two-variant enum (`Invocation(String)`,
+`Manifest(ManifestError)`); the `Manifest` variant bridges scan's
+option-loading path through `effigy_manifest::load_task_manifest`
+(no runner-side wrapper needed, `ScanError` implements
+`From<ManifestError>`). `From<ScanError> for RunnerError` in
+`src/runner/error.rs` lifts `Invocation` to `TaskInvocation` and
+delegates `Manifest` through the existing `map_manifest_error`
+helper. 328 `pub(in crate::runner)` markers flipped to `pub` inside
+the crate for items reachable via the crate-root re-exports; the
+crate root (`lib.rs`) re-exports a flattened public surface so callers
+use `effigy_scan::ScanRenderFormat`, `effigy_scan::run_god_file_scan_workspace`,
+etc. (no submodule paths externally). 19 caller files migrated —
+`builtin/scan/**` and `doctor/**` — with `.map_err(Into::into)`
+closure wrapping at the 21 sites where `ScanError` meets a
+runner-side `RunnerError` bound (14 in `builtin/scan/execution/modes.rs`,
+7 in doctor check files). `TASK_MANIFEST_FILE` inlined as a
+crate-private constant. Test totals: runner lib −12, `effigy-scan`
++12 (all 12 `#[test]` fns in the former `scan/tests.rs`).
+`effigy-managed` (16) and `effigy-env` (89) unchanged.
+
+Full validation green: `cargo build`, `cargo fmt --check`, `cargo
+clippy` (-D warnings, standard allowlist), `cargo test --workspace`,
+`cargo run --bin effigy -- qa:docs`.
+
 ## Next Task
 
-_To be decided after this card lands. Expected: draft the
-`effigy-builtin` implement card (tentatively `250`+) once cards `247`,
-`248`, and `249` are all complete._
+Draft the `effigy-builtin` implement card (tentatively `250`+).
+All three prerequisites (`247` decide scan, `248` utility prereqs,
+`249` implement scan) are now complete. Card `244` already fixed
+the scope, error boundary, and migration pattern.

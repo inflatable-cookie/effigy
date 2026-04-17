@@ -19,6 +19,7 @@ members = [
     "crates/effigy-release",
     "crates/effigy-rhai",
     "crates/effigy-routing",
+    "crates/effigy-scan",
     "crates/effigy-demo",
     "crates/effigy-docs-policy",
     "crates/effigy-env",
@@ -50,6 +51,7 @@ effigy-process = { path = "crates/effigy-process" }
 effigy-release = { path = "crates/effigy-release" }
 effigy-rhai = { path = "crates/effigy-rhai" }
 effigy-routing = { path = "crates/effigy-routing" }
+effigy-scan = { path = "crates/effigy-scan" }
 effigy-tasks = { path = "crates/effigy-tasks" }
 effigy-tui = { path = "crates/effigy-tui" }
 effigy-ui = { path = "crates/effigy-ui" }
