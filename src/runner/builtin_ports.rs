@@ -18,7 +18,7 @@ use effigy_manifest::LoadedCatalog;
 
 use crate::runner::cache::ops;
 use crate::runner::command_context;
-use crate::runner::doctor;
+use crate::runner::doctor_ports::RunnerDoctorPorts;
 use crate::runner::error::RunnerError;
 use crate::runner::execute;
 use crate::runner::locking::io as locking_io;
@@ -72,7 +72,9 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts {
     }
 
     fn run_doctor(&self, args: DoctorArgs) -> Result<String, BuiltinError> {
-        doctor::run_doctor(args).map_err(runner_to_builtin)
+        let ports = RunnerDoctorPorts::new();
+        effigy_doctor::run_doctor(args, &ports)
+            .map_err(|err| runner_to_builtin(RunnerError::from(err)))
     }
 
     fn run_tasks(&self, args: TasksArgs) -> Result<String, BuiltinError> {

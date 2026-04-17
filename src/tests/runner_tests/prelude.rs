@@ -21,7 +21,8 @@ pub(super) mod runtime {
     pub(in crate::runner::tests) use std::time::{Duration, Instant};
 
     pub(in crate::runner::tests) fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
-        super::super::super::doctor::run_doctor(args)
+        let ports = super::super::super::doctor_ports::RunnerDoctorPorts::new();
+        effigy_doctor::run_doctor(args, &ports).map_err(RunnerError::from)
     }
 
     pub(in crate::runner::tests) fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {

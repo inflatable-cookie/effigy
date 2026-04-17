@@ -36,12 +36,30 @@ Batch cards are the execution units for active Effigy strict-lane work.
   `effigy-ui`. Single crate, no cluster. No prerequisite cards —
   card `252` already handled the directory flattens.
 - [`254-implement-effigy-doctor-runner-extraction.md`](./254-implement-effigy-doctor-runner-extraction.md)
-  is the ready card for `g02.010`. Mechanical crate move per card
-  `253`'s decision: grow `effigy-doctor/Cargo.toml` deps, move
-  all 65 files, introduce `DoctorError`, add
-  `From<DoctorError> for RunnerError` at runner boundary, inline
-  the 2 `current_working_dir()` call sites, flip the
-  `ManifestJsPackageManager` import to `effigy-manifest` direct.
+  is complete. Moved `src/runner/doctor/**` (60 files, ~4.5k LOC)
+  into the existing `effigy-doctor` crate, growing it from pure
+  library (705 LOC) to domain orchestration (~5.2k LOC).
+  `DoctorError` variants: `DoctorNonZero`, `TaskInvocation`,
+  `Ui`, `CommandJsonFailure`, `Manifest`, `Scan`, `Routing`
+  (two extra variants added mid-execution after survey missed
+  `CommandJsonFailure` path from health task and `Routing`
+  structured data used by explain's ambiguity analysis).
+  Card `253`'s "no port traits" decision was **amended during
+  execution**: fresh grep surfaced two missed reach-ins
+  (`execute::run_manifest_task_with_cwd` for health task;
+  `deferral::select_deferral` for explain analysis). Added
+  minimal `DoctorRuntimePorts` trait with 2 methods, matching
+  the `BuiltinRuntimePorts` pattern from card 251. Runner
+  provides `RunnerDoctorPorts` impl at
+  `src/runner/doctor_ports.rs`. Tooling helper
+  (`runner/tooling.rs`) inlined into doctor's `environment.rs`.
+  `ManifestSnapshot` extracted to standalone
+  `manifest_snapshot.rs`; runner's duplicate `DoctorState`
+  wrapper deleted in favor of `effigy-doctor`'s canonical
+  version. Runner lost 32 inline doctor tests; `effigy-doctor`
+  gained 38 (net +6 from duplicate test coverage).
+  `super::super::super::super::` count still 0;
+  `super::super::super::` count now 11 (down from 15).
 - [`255-implement-test-harness-prelude-flatten.md`](./255-implement-test-harness-prelude-flatten.md)
   is queued — closes the lane by collapsing the nested test-side
   prelude chain into a single top-level fixture surface.
@@ -77,7 +95,7 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Execute card `254` — move `src/runner/doctor/**` into the existing
-`effigy-doctor` crate per card `253`'s decision. Mechanical
-extraction: 65 files, ~4.5k LOC, single commit, narrow
-`DoctorError` → `RunnerError` boundary at the runner's edge.
+Execute card `255` — flatten the test-harness prelude chain. Final
+bounded batch in the reopened `g02.010` lane. Once landed, the
+lane closes cleanly and the roadmap returns to card `115`'s
+deferred release-closure execution.

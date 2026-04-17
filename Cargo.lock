@@ -704,6 +704,15 @@ dependencies = [
 name = "effigy-doctor"
 version = "0.1.0"
 dependencies = [
+ "anstream",
+ "effigy-cli",
+ "effigy-core",
+ "effigy-manifest",
+ "effigy-routing",
+ "effigy-scan",
+ "effigy-tasks",
+ "effigy-ui",
+ "serde",
  "serde_json",
  "toml",
 ]
