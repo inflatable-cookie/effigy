@@ -38,9 +38,9 @@ use effigy_containers::{
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
 use crate::runner::manifest::ManifestContainerOnTaskExit;
-use crate::tui::{run_multiprocess_tui, MultiProcessTuiOptions};
 use crate::{ContainerArgs, ContainerSubcommand};
 use effigy_process::ProcessSpec;
+use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
 
 use super::error::RunnerError;
 const DEFAULT_CONTAINER_SHELL: &str = "sh";

@@ -1,5 +1,5 @@
 use super::{canonicalize_best_effort, resolve_target_root};
-use crate::tasks::ResolutionMode;
+use effigy_tasks::ResolutionMode;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};

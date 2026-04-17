@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use crate::resolver::ResolvedTarget;
-use crate::tasks::ResolutionMode;
+use effigy_tasks::ResolutionMode;
 
 use super::*;
 

@@ -3,7 +3,6 @@ use super::{
     resolve_verify_install_repo_url, validate_prepare_version_override, ReleaseBlockedStage,
 };
 use crate::resolver::ResolvedTarget;
-use crate::tasks::ResolutionMode;
 use effigy_release::normalize_verify_install_repo_url;
 use effigy_release::{
     build_diff_preview, detect_pyproject_version_path, detect_version_file_kind,
@@ -15,6 +14,7 @@ use effigy_release::{
     ExecuteReviewState, PrepareReviewState, ReleaseConfig, ReleaseContext, ReleaseExecutePlan,
     ReleasePreparePlan, ResolvedVersionSource, SyncFileKind, VersionFileKind,
 };
+use effigy_tasks::ResolutionMode;
 
 #[test]
 fn version_file_kind_detection_matches_supported_names() {

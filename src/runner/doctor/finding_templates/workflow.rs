@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::tasks::ResolutionMode;
+use effigy_tasks::ResolutionMode;
 
 use super::super::super::model::constants::TASK_MANIFEST_FILE;
 use super::super::contracts::{check_id, remediation};
