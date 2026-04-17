@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::super::super::report::{DoctorState, ManifestSnapshot};
+use super::super::report::{DoctorState, ManifestSnapshot};
 use super::catalog_checks::{
     run_environment_tools_check, run_health_task_check, run_manifest_conflicts_check,
     run_task_references_check,

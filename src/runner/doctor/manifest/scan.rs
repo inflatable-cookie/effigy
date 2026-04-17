@@ -5,13 +5,14 @@ use toml::Value;
 use super::super::super::manifest::{
     config_sections::ManifestJsPackageManager, load_task_manifest_with_inspection,
 };
-use super::super::super::{RunnerError, TaskManifest};
+use super::super::super::RunnerError;
 use super::super::finding_templates::ManifestParseFinding;
 use super::super::report::DoctorState;
 use super::schema::validate_manifest_schema;
 use super::ManifestScanResult;
 use effigy_core::data_loading::{parse_toml, read_utf8};
 use effigy_manifest::LoadedCatalog;
+use effigy_manifest::TaskManifest;
 use effigy_routing::{default_alias, discover_manifest_paths};
 
 pub(super) fn collect_manifest_findings(

@@ -1,4 +1,5 @@
 mod attention_markers;
+mod checks;
 mod command;
 mod comment_ratio;
 mod conflicts;
@@ -17,10 +18,10 @@ mod references;
 mod render;
 mod render_support;
 mod report;
-mod run;
 mod scan_checks;
 mod stale_suppressions;
 mod task_graph;
 mod text_blocks;
+mod workflow;
 
 pub(super) use command::run_doctor;

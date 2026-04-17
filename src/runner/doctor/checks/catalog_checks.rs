@@ -1,5 +1,5 @@
-use super::super::super::report::DoctorState;
-use super::super::super::{conflicts, environment, health, references};
+use super::super::report::DoctorState;
+use super::super::{conflicts, environment, health, references};
 use super::definitions::DoctorCheckContext;
 
 pub(super) fn run_manifest_conflicts_check(

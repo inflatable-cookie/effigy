@@ -1,6 +1,6 @@
-use super::super::progress::DoctorProgressReporter;
-use super::super::report::DoctorReport;
-use super::check_registry::run_doctor_checks;
+use super::checks::run_doctor_checks;
+use super::progress::DoctorProgressReporter;
+use super::report::DoctorReport;
 use crate::runner::command_context::current_working_dir;
 use crate::runner::error::RunnerError;
 #[path = "workflow/handler.rs"]
@@ -10,12 +10,12 @@ mod phases;
 #[path = "workflow/preparation.rs"]
 mod preparation;
 
-pub(in super::super) struct DoctorRunOutput {
-    pub(in super::super) report: DoctorReport,
-    pub(in super::super) error_count: usize,
+pub(super) struct DoctorRunOutput {
+    pub(super) report: DoctorReport,
+    pub(super) error_count: usize,
 }
 
-pub(in super::super) fn run_doctor_workflow(
+pub(super) fn run_doctor_workflow(
     repo_override: Option<std::path::PathBuf>,
     fix: bool,
     progress: Option<&mut DoctorProgressReporter>,

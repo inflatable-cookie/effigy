@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::super::model::constants::IMPLICIT_ROOT_DEFER_TEMPLATE;
+use super::policy::IMPLICIT_ROOT_DEFER_TEMPLATE;
 use effigy_manifest::{DeferredCommand, LoadedCatalog};
 use effigy_tasks::TaskSelector;
 

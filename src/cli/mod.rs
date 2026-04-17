@@ -3,5 +3,4 @@ pub mod execution_context;
 pub mod help_dispatch;
 pub mod output;
 pub mod parse_error;
-pub mod runner_dispatch;
 pub mod version_dispatch;

@@ -1,9 +1,8 @@
-use super::super::render::trace_renderer;
 use crate::runner::error::RunnerError;
 use effigy_cli::TaskInvocation;
 use effigy_core::widgets::KeyValue;
 use effigy_manifest::DeferredCommand;
-use effigy_ui::Renderer;
+use effigy_ui::{text_renderer, Renderer};
 
 pub(super) fn render_deferral_trace(
     task: &TaskInvocation,
@@ -11,7 +10,7 @@ pub(super) fn render_deferral_trace(
     command: &str,
     cause: &RunnerError,
 ) -> String {
-    let mut renderer = trace_renderer();
+    let mut renderer = text_renderer();
     let _ = renderer.section("Task Deferral");
     let _ = renderer.key_values(&[
         KeyValue::new("request", task.name.clone()),

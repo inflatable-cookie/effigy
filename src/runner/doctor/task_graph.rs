@@ -1,7 +1,7 @@
 use super::super::manifest::task_runtime::{
     ManifestManagedConcurrentEntry, ManifestManagedRun, ManifestManagedRunStep, ManifestTask,
 };
-use super::super::TaskManifest;
+use effigy_manifest::TaskManifest;
 
 pub(super) fn for_each_manifest_command<F>(manifest: &TaskManifest, mut visit: F)
 where

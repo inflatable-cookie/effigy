@@ -8,6 +8,10 @@ use super::{super::cache_hit, super::process_run, command};
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
 use effigy_env::resolver::ResolvedEnv;
+use effigy_env::schema_support::{
+    resolve_catalog_env_schema as shared_resolve_env_schema, SchemaSupportConfig,
+    SchemaSupportError,
+};
 use effigy_env::secret::SecretString;
 use effigy_manifest::TaskSelection;
 
@@ -70,9 +74,24 @@ fn resolve_env_schema_if_present(
     runtime_override: Option<&Path>,
     config: Option<&ManifestEnvSchemaConfig>,
 ) -> Result<Option<ResolvedEnv>, RunnerError> {
-    crate::runner::env_schema_support::resolve_catalog_env_schema(
-        catalog_root,
-        config,
-        runtime_override,
-    )
+    let shared_config = SchemaSupportConfig {
+        config_schema: config.and_then(|c| c.schema.as_deref()),
+        config_enabled: config.and_then(|c| c.enabled),
+        config_exec_timeout_secs: config.and_then(|c| c.exec_timeout),
+    };
+    shared_resolve_env_schema(catalog_root, shared_config, runtime_override)
+        .map_err(map_schema_support_error)
+}
+
+fn map_schema_support_error(error: SchemaSupportError) -> RunnerError {
+    match error {
+        SchemaSupportError::InvalidConfig(message) => RunnerError::task_invocation(message),
+        SchemaSupportError::SchemaFileMissing(path) => {
+            RunnerError::task_invocation(format!("env schema file not found: {}", path.display()))
+        }
+        SchemaSupportError::DotenvRead { path, error } => {
+            RunnerError::task_invocation(format!("failed to read {}: {error}", path.display()))
+        }
+        SchemaSupportError::Schema(error) => RunnerError::EnvSchema(error),
+    }
 }

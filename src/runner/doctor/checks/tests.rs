@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::super::super::report::{DoctorState, ManifestSnapshot};
+use super::super::report::{DoctorState, ManifestSnapshot};
 use super::definitions::{doctor_check_definitions, DoctorCheckContext, DoctorCheckDefinition};
 use super::executor::for_each_check;
 

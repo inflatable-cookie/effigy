@@ -2,8 +2,8 @@ use std::path::Path;
 
 use effigy_core::resolver::{resolve_target_root, ResolvedTarget};
 
-use super::super::super::report::{DoctorState, ManifestSnapshot};
-use super::super::super::{finding_templates::WorkflowFinding, manifest};
+use super::super::report::{DoctorState, ManifestSnapshot};
+use super::super::{finding_templates::WorkflowFinding, manifest};
 use super::{phases, preparation, run_doctor_checks, DoctorProgressReporter, DoctorRunOutput};
 use crate::runner::error::RunnerError;
 

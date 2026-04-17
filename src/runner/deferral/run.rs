@@ -10,7 +10,7 @@ use effigy_cli::TaskInvocation;
 
 use effigy_core::shell::{shell_quote, with_local_node_bin_path};
 
-use super::super::model::constants::DEFER_DEPTH_ENV;
+use super::policy::DEFER_DEPTH_ENV;
 use super::trace::render_deferral_trace;
 use crate::runner::error::RunnerError;
 use effigy_manifest::DeferredCommand;
