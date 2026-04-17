@@ -42,6 +42,7 @@ pub(super) fn build_task_command(
             task_scope_cwd: &selection.catalog.catalog_root,
             runtime_env_schema_override,
             depth: 0,
+            resolver: &crate::runner::catalog::resolve_task_selection,
         },
     )
 }

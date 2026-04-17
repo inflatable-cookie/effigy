@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use super::super::super::catalog::select_catalog_and_task;
+use effigy_manifest::TaskResolverFn;
+
 use super::super::super::managed::profiles::has_concurrent_schema;
 use super::super::super::manifest::task_runtime::ManifestManagedRun;
 use super::super::super::model::catalog::{LoadedCatalog, TaskSelection};
@@ -28,11 +29,12 @@ pub(super) fn resolve_reference_run<'a, F>(
     runtime_env_schema_override: Option<&Path>,
     depth: usize,
     missing_run_error: F,
+    resolver: TaskResolverFn<'_>,
 ) -> Result<ResolvedReferenceRun, RunnerError>
 where
     F: Fn(&TaskSelection<'a>) -> RunnerError,
 {
-    match resolve_reference_target(parsed, catalogs, task_scope_cwd) {
+    match resolve_reference_target(parsed, catalogs, task_scope_cwd, resolver) {
         Ok(ReferenceTarget::Builtin) => Ok(ResolvedReferenceRun {
             command: render_builtin_reference_invocation(&parsed.selector_rendered, args_rendered)?,
             cwd: task_scope_cwd.to_path_buf(),
@@ -47,6 +49,7 @@ where
                 runtime_env_schema_override,
                 depth,
                 || missing_run_error(&selection),
+                resolver,
             )?,
             cwd: selection.catalog.catalog_root.clone(),
         }),
@@ -58,11 +61,12 @@ fn resolve_reference_target<'a>(
     parsed: &ParsedTaskRef,
     catalogs: &'a [LoadedCatalog],
     task_scope_cwd: &Path,
+    resolver: TaskResolverFn<'_>,
 ) -> Result<ReferenceTarget<'a>, RunnerError> {
-    match select_catalog_and_task(&parsed.selector, catalogs, task_scope_cwd) {
+    match resolver(&parsed.selector, catalogs, task_scope_cwd) {
         Ok(selection) => Ok(ReferenceTarget::Catalog(selection)),
         Err(_) if is_builtin_task_selector(&parsed.selector) => Ok(ReferenceTarget::Builtin),
-        Err(error) => Err(error),
+        Err(message) => Err(RunnerError::task_invocation(message)),
     }
 }
 
@@ -75,6 +79,7 @@ fn render_selected_task_invocation<F>(
     runtime_env_schema_override: Option<&Path>,
     depth: usize,
     missing_run_error: F,
+    resolver: TaskResolverFn<'_>,
 ) -> Result<String, RunnerError>
 where
     F: FnOnce() -> RunnerError,
@@ -88,6 +93,7 @@ where
             catalogs,
             runtime_env_schema_override,
             depth,
+            resolver,
         );
     }
 
@@ -101,14 +107,15 @@ where
     Err(missing_run_error())
 }
 
-fn render_selected_task_run(
-    selection: &TaskSelection<'_>,
+fn render_selected_task_run<'a>(
+    selection: &TaskSelection<'a>,
     run_spec: &ManifestManagedRun,
     task_name: &str,
     args_rendered: &str,
-    catalogs: &[LoadedCatalog],
+    catalogs: &'a [LoadedCatalog],
     runtime_env_schema_override: Option<&Path>,
     depth: usize,
+    resolver: TaskResolverFn<'a>,
 ) -> Result<String, RunnerError> {
     let env_schema_resolved = env_schema_support::resolve_catalog_env_schema(
         &selection.catalog.catalog_root,
@@ -137,6 +144,7 @@ fn render_selected_task_run(
             task_scope_cwd: &selection.catalog.catalog_root,
             runtime_env_schema_override,
             depth,
+            resolver,
         },
     )
 }

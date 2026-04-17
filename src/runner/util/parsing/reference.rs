@@ -1,100 +1,19 @@
-use super::super::super::model::catalog::TaskSelector;
-use super::super::shell_quote;
+//! Thin adapter — the parser lives in `effigy-tasks::reference`.
+//!
+//! Moved out in batch 241. Wraps the shared `Result<_, String>`
+//! return channel back into `RunnerError::task_invocation` so runner
+//! callers see the same error shape they had before.
+
+use effigy_tasks::TaskSelector;
+
 use crate::runner::error::RunnerError;
 
 pub(super) fn parse_task_reference_invocation(
     raw: &str,
 ) -> Result<(TaskSelector, Vec<String>), RunnerError> {
-    let parts = split_task_reference_words(raw)?;
-    let Some(selector_raw) = parts.first() else {
-        return Err(RunnerError::task_invocation("task reference is required"));
-    };
-    let selector = super::selector::parse_task_selector(selector_raw)?;
-    let args = parts.iter().skip(1).cloned().collect::<Vec<String>>();
-    Ok((selector, args))
-}
-
-fn split_task_reference_words(raw: &str) -> Result<Vec<String>, RunnerError> {
-    let mut out = Vec::<String>::new();
-    let mut current = String::new();
-    let mut token_started = false;
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut escaping = false;
-
-    for ch in raw.chars() {
-        if escaping {
-            current.push(ch);
-            token_started = true;
-            escaping = false;
-            continue;
-        }
-        if in_single {
-            if ch == '\'' {
-                in_single = false;
-            } else {
-                current.push(ch);
-                token_started = true;
-            }
-            continue;
-        }
-        if in_double {
-            if ch == '"' {
-                in_double = false;
-            } else if ch == '\\' {
-                escaping = true;
-            } else {
-                current.push(ch);
-                token_started = true;
-            }
-            continue;
-        }
-
-        match ch {
-            '\'' => {
-                in_single = true;
-                token_started = true;
-            }
-            '"' => {
-                in_double = true;
-                token_started = true;
-            }
-            '\\' => {
-                escaping = true;
-                token_started = true;
-            }
-            c if c.is_whitespace() => {
-                if token_started {
-                    out.push(std::mem::take(&mut current));
-                    token_started = false;
-                }
-            }
-            _ => {
-                current.push(ch);
-                token_started = true;
-            }
-        }
-    }
-
-    if escaping {
-        return Err(RunnerError::task_invocation(
-            "task reference has trailing escape (`\\`)",
-        ));
-    }
-    if in_single || in_double {
-        return Err(RunnerError::task_invocation(
-            "task reference has an unterminated quote",
-        ));
-    }
-    if token_started {
-        out.push(current);
-    }
-    Ok(out)
+    effigy_tasks::parse_task_reference_invocation(raw).map_err(RunnerError::task_invocation)
 }
 
 pub(super) fn render_passthrough_args(args: &[String]) -> String {
-    args.iter()
-        .map(|arg| shell_quote(arg))
-        .collect::<Vec<String>>()
-        .join(" ")
+    effigy_tasks::render_passthrough_args(args)
 }

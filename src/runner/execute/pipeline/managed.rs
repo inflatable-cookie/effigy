@@ -34,6 +34,7 @@ pub(super) fn run_managed_task(
         &preflight.runtime_args_exec,
         &preflight.catalogs,
         &selection.catalog.catalog_root,
+        &crate::runner::catalog::resolve_task_selection,
     )?
     else {
         return Ok(None);

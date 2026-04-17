@@ -1023,10 +1023,42 @@ That post-`212` boundary decision is now made too:
   reference parsing → `effigy-tasks`) plus the callback inversion
   for `select_catalog_and_task`. `240` is now `queued` behind `241`.
 
+- `245` landed the prerequisite utility relocates from `241`:
+  `util/shell.rs` → `effigy-core::shell` (pub
+  `shell_quote`, `with_local_node_bin_path`); `util/dotenv.rs` →
+  `effigy-env::dotenv`; `env_schema_support.rs` →
+  `effigy-env::schema_support` (new `SchemaSupportConfig` /
+  `SchemaSupportError` public types, runner keeps a thin adapter
+  mapping `SchemaSupportError` → `RunnerError`);
+  `util/parsing/reference.rs` → `effigy-tasks::reference` (pub
+  `parse_task_reference_invocation`, `render_passthrough_args`).
+  The runner-local adapter modules stay in place so the existing
+  call sites (including the still-in-tree managed code) compile
+  unchanged. A new
+  `effigy_manifest::TaskResolverFn` type alias was added next to
+  `LoadedCatalog`, and managed's reference-resolution machinery
+  (`references::resolve*`, `plan::entries::*`,
+  `run_spec::RunSpecContext`, `command::resolve_managed_task_plan`,
+  `run_spec::render_run_step_sequence`) now takes that callback
+  rather than importing `crate::runner::catalog::select_catalog_and_task`
+  directly. The four runner entry points (`demo_command`,
+  `execute/pipeline/command`, `execute/pipeline/managed`,
+  `builtin/test/planning/resolve/target_config`) pass
+  `&crate::runner::catalog::resolve_task_selection`, a new
+  string-error adapter over `select_catalog_and_task`. Full workspace
+  tests green (699 runner lib + 89 effigy-env after 3 dotenv tests
+  redistributed); `cargo fmt` clean; `qa:docs` pass; `git diff
+  --check` clean. Two pre-existing clippy issues remain
+  (`new_without_default` in `effigy-doctor`,
+  `unnecessary_lazy_evaluations` in `effigy-release`) — both
+  untouched by this batch.
+
 ## Next Task
 
 Execute
-[`241-implement-runner-util-prerequisites-for-managed-extraction.md`](../specs/batch-cards/241-implement-runner-util-prerequisites-for-managed-extraction.md)
-to relocate the runner-local utilities into shared crates and invert
-the routing-core dependency via a callback, clearing the path for
-`240`.
+[`240-implement-effigy-managed-extraction.md`](../specs/batch-cards/240-implement-effigy-managed-extraction.md)
+to move `src/runner/managed/**` and `runner::model::managed` into
+the new `effigy-managed` crate. The utility prerequisites from
+`245` mean the move is now mechanical: no routing-core reach-throughs
+remain, and all other runner-internal deps are either `effigy-*`
+crate paths or carried as callbacks.

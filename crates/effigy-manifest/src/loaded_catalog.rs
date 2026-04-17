@@ -15,12 +15,27 @@
 //! in new code.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use effigy_tasks::CatalogSelectionMode;
+use effigy_tasks::{CatalogSelectionMode, TaskSelector};
 
 use crate::task_runtime::ManifestTask;
 use crate::TaskManifest;
+
+/// Callback signature for resolving a `TaskSelector` against a slice
+/// of `LoadedCatalog`. The runner owns the routing implementation
+/// (currently `src/runner/catalog::select_catalog_and_task`); managed
+/// task orchestration takes this as a parameter rather than importing
+/// the routing core directly so it stays extract-ready.
+///
+/// The error channel is plain `String` — both runners and managed
+/// orchestration have their own error enums with `task_invocation`
+/// constructors that accept strings, so callers wrap at the boundary.
+pub type TaskResolverFn<'r> = &'r dyn for<'c> Fn(
+    &TaskSelector,
+    &'c [LoadedCatalog],
+    &Path,
+) -> Result<TaskSelection<'c>, String>;
 
 #[derive(Debug)]
 pub struct LoadedCatalog {

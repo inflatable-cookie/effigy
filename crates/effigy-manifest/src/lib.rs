@@ -21,7 +21,7 @@ pub use config_sections::{
     ManifestDocsPolicyConfig, ManifestEnvSchemaConfig, ManifestPackageManagerConfig,
     ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
 };
-pub use loaded_catalog::{DeferredCommand, LoadedCatalog, TaskSelection};
+pub use loaded_catalog::{DeferredCommand, LoadedCatalog, TaskResolverFn, TaskSelection};
 use task_defs::deserialize_tasks;
 pub use task_runtime::{
     ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedProfile, ManifestManagedRun,

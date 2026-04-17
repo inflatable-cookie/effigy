@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use effigy_manifest::TaskResolverFn;
+
 use super::super::manifest::task_runtime::ManifestTask;
 use super::super::model::catalog::{LoadedCatalog, TaskSelector};
 use super::super::model::managed::{ManagedProcessSpec, ManagedTaskPlan};
@@ -19,6 +21,7 @@ pub(super) struct ManagedConcurrentPlanInput<'a> {
     pub(super) passthrough: &'a [String],
     pub(super) catalogs: &'a [LoadedCatalog],
     pub(super) task_scope_cwd: &'a Path,
+    pub(super) resolver: TaskResolverFn<'a>,
 }
 
 #[derive(Debug)]
@@ -40,6 +43,7 @@ pub(super) fn resolve_managed_concurrent_task_plan(
         passthrough,
         catalogs,
         task_scope_cwd,
+        resolver,
     } = input;
     if profile.entries.is_empty() {
         return Err(RunnerError::TaskManagedProfileEmpty {
@@ -54,6 +58,7 @@ pub(super) fn resolve_managed_concurrent_task_plan(
         catalog,
         catalogs,
         task_scope_cwd,
+        resolver,
     )?;
     Ok(build_managed_task_plan(
         task,

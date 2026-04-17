@@ -1,4 +1,5 @@
 mod parsing;
+mod reference;
 
 use std::path::PathBuf;
 
@@ -7,6 +8,7 @@ pub use parsing::{
     normalize_builtin_test_suite, parse_task_runtime_args, parse_task_selector,
     render_task_selector,
 };
+pub use reference::{parse_task_reference_invocation, render_passthrough_args};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskContext {
