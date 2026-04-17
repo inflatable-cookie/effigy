@@ -1271,11 +1271,22 @@ That post-`212` boundary decision is now made too:
   tests pass (699 runner lib + 89 effigy-env after 3 dotenv tests
   redistributed).
 
+- `246` landed the managed extraction from `240`.
+  `src/runner/managed/**` and `src/runner/model/managed.rs` now
+  live in the new `effigy-managed` crate. `ManagedError` converts
+  back to `RunnerError` via a `From` impl. Two thin runner shims
+  stay in place so external consumers compile unchanged. Test
+  counts redistributed cleanly (683 runner + 16 effigy-managed =
+  699, unchanged). With `246`, the 010 active-card queue is empty;
+  two named items remain in planning: built-in tasks (~9.5k lines)
+  and task-routing core (~6k lines).
+
 ## Next Task
 
-Execute the ready card
-[`240-implement-effigy-managed-extraction.md`](../../specs/batch-cards/240-implement-effigy-managed-extraction.md)
-to move `src/runner/managed/**` and `runner::model::managed` into
-the new `effigy-managed` crate. With `245` cleared, the move is
-mechanical: no routing-core reach-throughs remain, and all other
-runner-internal deps are either `effigy-*` crate paths or callbacks.
+No ready card. The next move is an intent choice between opening
+a decide card for one of the two remaining queues (built-in
+tasks or routing core) or pausing the lane here — the v0.3
+release posture no longer blocks on either extraction, and
+`effigy-managed` / `effigy-tui` / `effigy-ui` / `effigy-process`
+/ `effigy-env` / `effigy-manifest` / `effigy-contracts` /
+`effigy-cli` have all shipped as crates.

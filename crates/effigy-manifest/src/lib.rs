@@ -24,9 +24,9 @@ pub use config_sections::{
 pub use loaded_catalog::{DeferredCommand, LoadedCatalog, TaskResolverFn, TaskSelection};
 use task_defs::deserialize_tasks;
 pub use task_runtime::{
-    ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedProfile, ManifestManagedRun,
-    ManifestManagedRunStep, ManifestManagedRunStepTable, ManifestRunStepEnv, ManifestTask,
-    ManifestTaskCache,
+    ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedConcurrentEntry,
+    ManifestManagedProfile, ManifestManagedRun, ManifestManagedRunStep,
+    ManifestManagedRunStepTable, ManifestRunStepEnv, ManifestTask, ManifestTaskCache,
 };
 use test_config::ManifestTestConfig;
 pub use test_config::{ManifestCargoEnvMatchMode, ManifestTestSuiteTeardownPolicy};

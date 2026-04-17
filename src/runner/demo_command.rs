@@ -1358,6 +1358,7 @@ fn render_demo_run_command(
             resolver: &crate::runner::catalog::resolve_task_selection,
         },
     )
+    .map_err(Into::into)
 }
 
 /// Runner-local `load_active_attempt` wrapper that threads the runner's
