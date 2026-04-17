@@ -139,6 +139,28 @@ When g02.010 finishes:
 - `docs/specs/012-*` — exec strict lane spec (integration path)
 - `docs/specs/batch-cards/200-*` — fragment format decision
 
+## Parallel modularization work
+
+This thread also executed g02.017 shell cleanup jobs in parallel:
+
+| Shell | Before | After | Δ |
+|-------|--------|-------|---|
+| demo_command.rs | 3302 | 2819 | −483 (−14.6%) |
+| docs_command.rs | 1083 | 977 | −106 (−9.8%) |
+| bootstrap_command.rs | 1136 | 803 | −333 (−29.3%) |
+
+Extractions into existing crates:
+- `effigy-containers`: health probing, compose backend, Colima lifecycle commands
+- `effigy-demo`: projection functions (KeyValue/TableSpec builders),
+  `DemoActiveTerminalSession::from_active_attempt`, `DemoEntrypoint::from_manifest`,
+  `derive_gap_class`
+- `effigy-docs-policy`: JSON examples validation, next-action orchestration, domain defaults
+- `effigy-core`: `KeyValue`, `TableSpec`, `NoticeLevel`, `StepState`, `MessageBlock`,
+  `SummaryCounts` widget types (enables domain crates to produce display-ready projections)
+- `effigy-bootstrap`: resolve/execute now delegate to crate via closure API
+
+All four touched seams are at honest adapter/shell boundaries.
+
 ## Test counts
 
-230 total tests across 3 crates. All clippy clean. No cross-crate deps.
+230 total tests across 3 infrastructure crates. All clippy clean. No cross-crate deps.
