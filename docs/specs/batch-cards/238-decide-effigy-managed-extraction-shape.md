@@ -158,9 +158,43 @@ Decisions:
      (`demo_command`, `execute/pipeline/*`, `builtin/test/*`) to hit the
      crates directly is a follow-up sweep, not part of either card.
 
+## Post-Mortem Addendum (after first `240` attempt)
+
+The `RunnerError | LoadedCatalog | ManagedTaskPlan` grep sweep that
+anchored the five decisions missed a whole class of coupling. A
+function-level grep through `src/runner/managed/**` after the first
+in-flight extraction attempt surfaced ~500 lines of extra
+runner-local dependencies:
+
+- `catalog::select_catalog_and_task` (routing core — the next queued
+  batch)
+- `env_schema_support::resolve_catalog_env_schema` (94 LOC)
+- `util::parse_task_reference_invocation` (~100 LOC)
+- `util::parse_dotenv_entries`, `util::shell_quote`,
+  `util::render_passthrough_args` (smaller helpers)
+- `model::constants::BUILTIN_TASKS` (13-entry constant)
+
+The consequence is that `240` as originally scoped would have to
+move the whole managed tree _and_ relocate ~500 LOC of utilities
+across four shared crates _and_ invert a dependency on routing
+core. That exceeds the bounded-batch envelope.
+
+Revised plan: insert card `241` as a prerequisite that handles the
+utility relocates (shell → `effigy-core`, dotenv + env-schema →
+`effigy-env`, reference parsing → `effigy-tasks`) and the callback
+contract for `select_catalog_and_task` so managed no longer reaches
+into routing core. `240` then moves only the managed tree and the
+plan shapes, staying mechanical.
+
+The five original decisions still hold — this addendum widens the
+queue, not the shape.
+
 ## Next Task
 
 Open and execute
 [`239-implement-effigy-manifest-loaded-catalog-relocate.md`](./239-implement-effigy-manifest-loaded-catalog-relocate.md)
-first. Once `239` lands, open
-[`240-implement-effigy-managed-extraction.md`](./240-implement-effigy-managed-extraction.md).
+first (landed in commit `eaf6eac0`), then
+[`241-implement-runner-util-prerequisites-for-managed-extraction.md`](./241-implement-runner-util-prerequisites-for-managed-extraction.md)
+(ready), and finally
+[`240-implement-effigy-managed-extraction.md`](./240-implement-effigy-managed-extraction.md)
+(queued).

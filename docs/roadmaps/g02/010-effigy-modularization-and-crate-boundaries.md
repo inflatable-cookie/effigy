@@ -1244,10 +1244,24 @@ That post-`212` boundary decision is now made too:
   keeps a 2-line shim at `src/runner/model/catalog.rs` so the existing
   78 call sites work unchanged. `effigy-manifest` picked up
   `effigy-tasks` as a direct dep. Full workspace tests pass.
+- `244` attempted `240` and reverted after surfacing ~500 lines of
+  runner-local utility coupling that the decide-card grep sweep had
+  missed. Managed depends on `catalog::select_catalog_and_task` (part
+  of routing core — a separate queued batch), plus
+  `env_schema_support`, `util::{shell_quote, parse_dotenv_entries,
+  parse_task_reference_invocation, render_passthrough_args}`, and
+  `model::constants::BUILTIN_TASKS`. Folding those into `240` would
+  exceed the bounded-batch envelope and pull routing-core work out of
+  order. The in-flight attempt was stashed and dropped cleanly.
+  Prerequisite card `241` now owns the utility relocates and the
+  `select_catalog_and_task` callback inversion. `240` is queued
+  behind it.
 
 ## Next Task
 
 Execute the ready card
-[`240-implement-effigy-managed-extraction.md`](../../specs/batch-cards/240-implement-effigy-managed-extraction.md)
-to move `src/runner/managed/**` and `runner::model::managed` into a
-new `effigy-managed` crate with a managed-local `ManagedError`.
+[`241-implement-runner-util-prerequisites-for-managed-extraction.md`](../../specs/batch-cards/241-implement-runner-util-prerequisites-for-managed-extraction.md)
+to move `util/shell.rs` → `effigy-core`, `util/dotenv.rs` +
+`env_schema_support.rs` → `effigy-env`, `util/parsing/reference.rs`
+→ `effigy-tasks`, and introduce the callback contract that replaces
+managed's reach into `runner::catalog`.

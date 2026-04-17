@@ -1,6 +1,6 @@
 # 240 Implement Effigy Managed Extraction
 
-Status: ready
+Status: queued (blocked on `241`)
 Updated: 2026-04-17
 Roadmap: `g02.010`
 Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
@@ -15,7 +15,16 @@ managed-local `ManagedError`, wired to `RunnerError` via a runner-side
 
 This card implements decisions `1`, `2`, `4` (phase 2), and `5` from
 `238`. It assumes `239` has landed (`LoadedCatalog` now lives in
-`effigy-manifest`).
+`effigy-manifest`) and `241` has landed (runner utilities now live
+in shared crates, and reference resolution is callback-driven).
+
+An in-flight attempt on `240` (pre-revert) surfaced that managed
+also depends on ~500 lines of runner-local utilities
+(`catalog::select_catalog_and_task`, `env_schema_support`,
+`util::shell_quote`, `util::parse_task_reference_invocation`,
+`util::parse_dotenv_entries`, `model::constants::BUILTIN_TASKS`,
+etc.). Those prerequisites became card `241` rather than being
+folded into `240`.
 
 ## In Scope
 
