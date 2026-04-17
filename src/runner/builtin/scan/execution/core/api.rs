@@ -1,7 +1,7 @@
 use serde_json::{Map, Value};
 
-use super::super::super::super::super::scan::model::ScanRenderFormat;
 use crate::runner::error::RunnerError;
+use effigy_scan::ScanRenderFormat;
 
 #[derive(Clone, Copy)]
 pub(in crate::runner::builtin::scan::execution) struct ScanModeConfig {

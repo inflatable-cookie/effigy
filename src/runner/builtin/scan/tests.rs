@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use effigy_cli::TaskInvocation;
 
-use super::super::super::scan::model::ScanRenderFormat;
 use super::request::parse_scan_request;
+use effigy_scan::ScanRenderFormat;
 
 #[test]
 fn parse_scan_request_requires_subcommand() {

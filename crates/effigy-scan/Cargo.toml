@@ -1,0 +1,17 @@
+[package]
+name = "effigy-scan"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Workspace scan engine for Effigy (options, execution, render)"
+
+[dependencies]
+effigy-manifest = { path = "../effigy-manifest" }
+effigy-tasks = { path = "../effigy-tasks" }
+anstyle = "1"
+globset = "0.4"
+ignore = "0.4"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

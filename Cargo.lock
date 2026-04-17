@@ -554,6 +554,7 @@ dependencies = [
  "effigy-release",
  "effigy-rhai",
  "effigy-routing",
+ "effigy-scan",
  "effigy-tasks",
  "effigy-tui",
  "effigy-ui",
@@ -785,6 +786,19 @@ version = "0.1.0"
 dependencies = [
  "effigy-manifest",
  "effigy-tasks",
+]
+
+[[package]]
+name = "effigy-scan"
+version = "0.1.0"
+dependencies = [
+ "anstyle",
+ "effigy-manifest",
+ "effigy-tasks",
+ "globset",
+ "ignore",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

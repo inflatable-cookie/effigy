@@ -1272,10 +1272,43 @@ That post-`212` boundary decision is now made too:
   is now ready and runs the full move in one card. Independent of
   card `248` — either ordering works.
 
+- `256` landed card `249` (implement scan extraction). The full
+  `src/runner/scan/**` subsystem (4,928 lines, 34 files) moved into
+  a new `crates/effigy-scan/` workspace crate with a two-variant
+  `ScanError` enum (`Invocation(String)`, `Manifest(ManifestError)`)
+  lifting the 20 `task_invocation` producer sites and scan's
+  manifest-loading path. The `From<ScanError> for RunnerError` impl
+  in `src/runner/error.rs` maps `Invocation` → `TaskInvocation` and
+  delegates `Manifest` through the existing `map_manifest_error`
+  helper. 328 `pub(in crate::runner)` visibility markers across the
+  34 files flipped to `pub` inside the crate for items re-exported
+  at the crate root. Manifest imports in the four affected scan
+  files swapped to `effigy_manifest::*` directly — pure re-export
+  swap, zero behavior change. `TASK_MANIFEST_FILE` inlined as a
+  crate-private constant in the new crate. Caller migration touched
+  19 files across `builtin/scan/**` and `doctor/**`: every
+  `super::...::scan::*` and `crate::runner::scan::*` import flipped
+  to flat `effigy_scan::*` imports. The `ScanError` → `RunnerError`
+  boundary at call sites uses `.map_err(Into::into)` closures (14 in
+  `builtin/scan/execution/modes.rs` plus 7 in doctor check files),
+  matching the routing/managed extraction idiom. Test totals: runner
+  lib count drops by 12; new `effigy-scan` crate picks up 12 unit
+  tests. Full validation green — `cargo build`, `cargo fmt --check`,
+  `cargo clippy` (-D warnings, standard allowlist), `cargo test
+  --workspace`, `cargo run --bin effigy -- qa:docs`. Cards `247`,
+  `248`, and `249` are all complete; the `effigy-builtin` implement
+  card is now draftable.
+
 ## Next Task
 
-Execute [`249-implement-effigy-scan-extraction.md`](batch-cards/249-implement-effigy-scan-extraction.md)
-— extract `src/runner/scan/**` (~4,928 lines, 34 files) into the new
-`effigy-scan` crate with `ScanError` boundary. Single card, no prereq
-(per `247` decision). Card `248` is complete; the `effigy-builtin`
-implement card can be drafted once `249` lands.
+Draft the `effigy-builtin` implement card (tentatively `250`+). The
+prerequisites — card `247` (decide scan shape), card `248`
+(runner-utility prereqs), card `249` (implement scan extraction) —
+are all complete. Card `244`'s decision + sweep already fixed the
+scope (all eleven builtin tasks), the error boundary (`BuiltinError`
+with `From<BuiltinError> for RunnerError`, Job-8 pattern), and the
+migration path (direct imports, no re-export shim). The draft card
+should enumerate the per-file move surface under
+`src/runner/builtin/**` (~10,096 lines), the caller migration on
+the runner side, and any residual coupling that actually trying the
+move surfaces.

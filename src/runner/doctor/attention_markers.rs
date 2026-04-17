@@ -1,11 +1,10 @@
 use std::path::Path;
 
-use super::super::scan::execution::run_attention_marker_scan_workspace;
-use super::super::scan::options::doctor_attention_marker_options;
 use super::contracts::{check_id, remediation};
 use super::report::DoctorState;
 use super::scan_checks::{run_scan_check, ScanDoctorCheck};
 use effigy_manifest::LoadedCatalog;
+use effigy_scan::{doctor_attention_marker_options, run_attention_marker_scan_workspace};
 
 pub(super) fn check_attention_markers(
     resolved_root: &Path,
@@ -21,7 +20,9 @@ pub(super) fn check_attention_markers(
             label: "attention-markers",
             remediation: remediation::RESOLVE_ATTENTION_MARKERS,
         },
-        doctor_attention_marker_options,
-        run_attention_marker_scan_workspace,
+        |root, catalogs| doctor_attention_marker_options(root, catalogs).map_err(Into::into),
+        |root, scan_roots, options| {
+            run_attention_marker_scan_workspace(root, scan_roots, options).map_err(Into::into)
+        },
     );
 }

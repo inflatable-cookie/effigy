@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use super::super::super::super::scan::model::TextRenderOptions;
 use super::super::super::response::schema_payload;
 use super::super::request::ScanRequest;
 use crate::runner::error::RunnerError;
 use crate::runner::render::encode_json;
+use effigy_scan::TextRenderOptions;
 
 mod api;
 mod options_impls;
