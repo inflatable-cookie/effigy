@@ -21,8 +21,6 @@ mod tasks_command;
 mod tasks_listing;
 mod tasks_probe;
 mod tasks_view;
-#[cfg(test)]
-mod test_support;
 mod util;
 
 pub(crate) use deferral::{

@@ -1,6 +1,6 @@
 # 255 Implement Test-Harness Prelude Flatten
 
-Status: queued
+Status: landed
 Updated: 2026-04-17
 Roadmap: `g02.010`
 Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`

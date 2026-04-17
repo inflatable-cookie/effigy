@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_builtin_ok_empty, assert_catalog_alias_conflict, create_workspace_dir,
     discover_catalogs, symlink, temp_workspace, write_catalog_tasks, write_manifest,
 };

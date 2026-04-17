@@ -1,4 +1,4 @@
-use super::prelude::{execution::*, harness::*, json::*, runtime::*};
+use crate::runner::json_contract_tests::prelude::{execution::*, harness::*, json::*, runtime::*};
 
 fn write_duplicate_block_file(path: &std::path::Path, block_prefix: &str, body_lines: usize) {
     let mut lines = vec![format!("pub fn {block_prefix}_alpha() -> usize {{")];

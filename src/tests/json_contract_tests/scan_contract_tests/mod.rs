@@ -1,4 +1,4 @@
-use super::prelude::{execution::*, harness::*, json::*, runtime::*};
+use crate::runner::json_contract_tests::prelude::{execution::*, harness::*, json::*, runtime::*};
 
 fn write_large_code_file(path: &std::path::Path, line_count: usize) {
     let body = (0..line_count)

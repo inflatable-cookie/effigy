@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_cargo_env_absent, assert_cargo_env_applied, assert_output_contains_all, lock_test,
     run_builtin_ok, setup_path_with_probes, temp_workspace, write_root_manifest,
     CARGO_ENV_PROBE_SCRIPT,

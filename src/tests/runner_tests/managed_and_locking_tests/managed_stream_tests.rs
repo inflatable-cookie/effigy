@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_managed_non_zero_exit_case_table, assert_managed_output_case_table,
     assert_managed_profile_not_found_case_table, assert_managed_stream_builtin_test_case_table,
     lock_test, managed_stream_env, write_managed_stream_profile_manifest, write_root_manifest,

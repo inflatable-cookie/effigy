@@ -1,4 +1,6 @@
-use super::prelude::{assert_builtin_help_json_contract_case_table, builtin_help_json_case};
+use crate::runner::tests::prelude::{
+    assert_builtin_help_json_contract_case_table, builtin_help_json_case,
+};
 
 #[test]
 fn run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_and_precedence() {

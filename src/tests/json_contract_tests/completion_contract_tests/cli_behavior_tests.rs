@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::json_contract_tests::prelude::{
     fs, run_completion_task, temp_workspace, test_lock, with_completion_cache_default,
     write_manifest, RunnerError,
 };

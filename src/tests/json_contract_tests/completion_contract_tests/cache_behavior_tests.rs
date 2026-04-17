@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::json_contract_tests::prelude::{
     assert_candidates_cache_policy, fs, run_completion_candidates_json, temp_workspace, test_lock,
     thread, with_completion_cache_default, write_manifest, Duration, EnvGuard,
 };

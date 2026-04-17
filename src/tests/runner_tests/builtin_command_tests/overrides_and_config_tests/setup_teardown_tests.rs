@@ -1,5 +1,5 @@
-use super::super::prelude::assert_builtin_test_non_zero;
-use super::prelude::{
+use crate::runner::tests::prelude::assert_builtin_test_non_zero;
+use crate::runner::tests::prelude::{
     fs, lock_test, read_file_text, run_builtin_err, run_builtin_ok, temp_workspace,
     write_executable, write_root_manifest, EnvGuard,
 };

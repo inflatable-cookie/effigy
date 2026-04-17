@@ -1,4 +1,4 @@
-use super::prelude::{parse_command, Command, HelpTopic, TaskInvocation};
+use crate::tests::prelude::{parse_command, Command, HelpTopic, TaskInvocation};
 
 #[test]
 fn parse_defaults_to_help_without_command() {

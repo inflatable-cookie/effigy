@@ -1,10 +1,10 @@
-use super::super::super::prelude::{
+use super::assert_markdown_report_written;
+use super::{setup_fanout_scan_workspace, setup_scan_workspace, write_asset_file};
+use crate::runner::tests::prelude::{
     assert_json_array_field_non_empty, assert_json_string_field_eq, assert_output_contains_all, fs,
     parse_json_output_with_schema, run_builtin_ok, temp_workspace, write_manifest,
     write_root_manifest, Path,
 };
-use super::assert_markdown_report_written;
-use super::{setup_fanout_scan_workspace, setup_scan_workspace, write_asset_file};
 
 fn run_generated_scan_json_case(
     name: &str,
@@ -105,7 +105,7 @@ pub(in crate::runner::tests::builtin_command_tests::scan_tests) fn assert_genera
 
     let out = run_builtin_ok(root, "scan", args);
     assert_output_contains_all(&out, expected_output_lines);
-    super::super::super::prelude::assert_output_excludes_all(&out, unexpected_output_lines);
+    crate::runner::tests::prelude::assert_output_excludes_all(&out, unexpected_output_lines);
 }
 
 pub(in crate::runner::tests::builtin_command_tests::scan_tests) fn assert_generated_markdown_report(

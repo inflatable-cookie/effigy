@@ -1,4 +1,4 @@
-use super::prelude::TaskInvocation;
+use crate::runner::tests::prelude::TaskInvocation;
 
 fn parser_task() -> TaskInvocation {
     TaskInvocation {

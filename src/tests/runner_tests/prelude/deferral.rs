@@ -1,56 +1,57 @@
-pub(super) use super::super::super::deferral::reset_composer_home_cache_for_tests;
-pub(super) use super::super::prelude::{
-    assert_case_table, assert_file_text_equals, assert_output_equals, assert_path_missing, fs,
-    lock_test, run_task_in_workspace, temp_workspace, write_defer_manifest, write_executable,
-    write_manifest, EnvGuard, Path, PathBuf, RunnerError,
-};
+use super::cases::assert_case_table;
+use super::fixture_support::{run_task_in_workspace, write_defer_manifest};
+use super::harness::{temp_workspace, write_executable, EnvGuard};
+use super::output::{assert_file_text_equals, assert_output_equals, assert_path_missing};
+use super::runtime::{fs, Path, PathBuf, RunnerError};
 
-pub(super) struct DeferredTaskCase {
-    pub(super) workspace: &'static str,
-    pub(super) defer_run: &'static str,
-    pub(super) request: &'static str,
-    pub(super) args: &'static [&'static str],
+pub(in crate::runner::tests) use crate::runner::deferral::reset_composer_home_cache_for_tests;
+
+pub(in crate::runner::tests) struct DeferredTaskCase {
+    pub(in crate::runner::tests) workspace: &'static str,
+    pub(in crate::runner::tests) defer_run: &'static str,
+    pub(in crate::runner::tests) request: &'static str,
+    pub(in crate::runner::tests) args: &'static [&'static str],
 }
 
-pub(super) struct ImplicitFallbackDisabledCase {
-    pub(super) workspace: &'static str,
-    pub(super) create_effigy_marker: bool,
-    pub(super) create_composer_marker: bool,
-    pub(super) use_nested_markers: bool,
+pub(in crate::runner::tests) struct ImplicitFallbackDisabledCase {
+    pub(in crate::runner::tests) workspace: &'static str,
+    pub(in crate::runner::tests) create_effigy_marker: bool,
+    pub(in crate::runner::tests) create_composer_marker: bool,
+    pub(in crate::runner::tests) use_nested_markers: bool,
 }
 
-pub(super) enum ImplicitDeferralExpectation {
+pub(in crate::runner::tests) enum ImplicitDeferralExpectation {
     Deferred { expected_args: &'static str },
     TaskNotFound,
     ExplicitDeferral,
 }
 
-pub(super) struct ImplicitDeferralCase {
-    pub(super) workspace: &'static str,
-    pub(super) create_effigy_marker: bool,
-    pub(super) create_composer_marker: bool,
-    pub(super) use_nested_markers: bool,
-    pub(super) explicit_defer_run: Option<&'static str>,
-    pub(super) request: &'static str,
-    pub(super) args: &'static [&'static str],
-    pub(super) expectation: ImplicitDeferralExpectation,
+pub(in crate::runner::tests) struct ImplicitDeferralCase {
+    pub(in crate::runner::tests) workspace: &'static str,
+    pub(in crate::runner::tests) create_effigy_marker: bool,
+    pub(in crate::runner::tests) create_composer_marker: bool,
+    pub(in crate::runner::tests) use_nested_markers: bool,
+    pub(in crate::runner::tests) explicit_defer_run: Option<&'static str>,
+    pub(in crate::runner::tests) request: &'static str,
+    pub(in crate::runner::tests) args: &'static [&'static str],
+    pub(in crate::runner::tests) expectation: ImplicitDeferralExpectation,
 }
 
-pub(super) fn assert_task_not_found_any(err: RunnerError) {
+pub(in crate::runner::tests) fn assert_task_not_found_any(err: RunnerError) {
     match err {
         RunnerError::TaskNotFoundAny { .. } => {}
         other => panic!("unexpected error: {other}"),
     }
 }
 
-pub(super) fn assert_defer_loop_detected(err: RunnerError, expected_depth: u8) {
+pub(in crate::runner::tests) fn assert_defer_loop_detected(err: RunnerError, expected_depth: u8) {
     match err {
         RunnerError::DeferLoopDetected { depth } => assert_eq!(depth, expected_depth),
         other => panic!("unexpected error: {other}"),
     }
 }
 
-pub(super) fn setup_implicit_deferral_stub(
+pub(in crate::runner::tests) fn setup_implicit_deferral_stub(
     root: &Path,
     script: &str,
     marker_file: &Path,
@@ -86,7 +87,7 @@ pub(super) fn setup_implicit_deferral_stub(
     ])
 }
 
-pub(super) fn write_implicit_deferral_markers(
+pub(in crate::runner::tests) fn write_implicit_deferral_markers(
     root: &Path,
     create_effigy_marker: bool,
     create_composer_marker: bool,
@@ -108,13 +109,13 @@ pub(super) fn write_implicit_deferral_markers(
     }
 }
 
-pub(super) fn implicit_deferral_script(exit_code: u8) -> String {
+pub(in crate::runner::tests) fn implicit_deferral_script(exit_code: u8) -> String {
     format!(
         "#!/bin/sh\nprintf \"%s\\n\" \"$@\" > \"$EFFIGY_TEST_DEFER_ARGS_FILE\"\nexit {exit_code}\n"
     )
 }
 
-pub(super) fn workspace_with_optional_defer_manifest(
+pub(in crate::runner::tests) fn workspace_with_optional_defer_manifest(
     workspace: &str,
     defer_run: Option<&str>,
 ) -> PathBuf {
@@ -141,7 +142,7 @@ fn run_case_task(root: &Path, request: &str, args: &[&str]) -> Result<String, Ru
     run_task_in_workspace(root, request, args)
 }
 
-pub(super) fn run_task_expect_empty_output(
+pub(in crate::runner::tests) fn run_task_expect_empty_output(
     root: &Path,
     request: &str,
     args: &[&str],
@@ -151,7 +152,7 @@ pub(super) fn run_task_expect_empty_output(
     assert_output_equals(&out, "");
 }
 
-pub(super) fn assert_deferred_task_case_table(cases: &[DeferredTaskCase]) {
+pub(in crate::runner::tests) fn assert_deferred_task_case_table(cases: &[DeferredTaskCase]) {
     for_each_workspace_case(
         cases,
         |case| case.workspace,
@@ -167,7 +168,9 @@ pub(super) fn assert_deferred_task_case_table(cases: &[DeferredTaskCase]) {
     );
 }
 
-pub(super) fn assert_implicit_deferral_case_table(cases: &[ImplicitDeferralCase]) {
+pub(in crate::runner::tests) fn assert_implicit_deferral_case_table(
+    cases: &[ImplicitDeferralCase],
+) {
     for_each_workspace_case(
         cases,
         |case| case.workspace,
@@ -218,7 +221,10 @@ fn assert_implicit_explicit_deferral_case(root: &Path, marker: &Path, case: &Imp
     assert_path_missing(marker, "implicit deferral marker");
 }
 
-pub(super) fn run_implicit_deferral_case(case: &ImplicitDeferralCase, root: PathBuf) {
+pub(in crate::runner::tests) fn run_implicit_deferral_case(
+    case: &ImplicitDeferralCase,
+    root: PathBuf,
+) {
     write_implicit_deferral_markers(
         &root,
         case.create_effigy_marker,

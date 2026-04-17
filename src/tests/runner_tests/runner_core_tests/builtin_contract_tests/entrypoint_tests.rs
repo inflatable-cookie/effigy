@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_builtin_error_contract_case_table, assert_builtin_help_case_table, builtin_help_case,
     builtin_shared_unknown_argument_cases,
 };

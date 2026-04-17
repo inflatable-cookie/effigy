@@ -1,4 +1,4 @@
-use super::super::prelude::{
+use crate::runner::tests::prelude::{
     assert_run_array_task_output_derived_case_table, expected_cargo_paths,
     write_root_api_dual_env_capture_manifest, Path, RunArrayTaskOutputDerivedCase,
 };

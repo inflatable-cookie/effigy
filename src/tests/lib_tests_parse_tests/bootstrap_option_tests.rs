@@ -1,4 +1,4 @@
-use super::prelude::{parse_command, BootstrapArgs, Command, HelpTopic, PathBuf};
+use crate::tests::prelude::{parse_command, BootstrapArgs, Command, HelpTopic, PathBuf};
 
 #[test]
 fn parse_bootstrap_help_is_scoped() {

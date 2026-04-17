@@ -1,4 +1,4 @@
-use super::super::super::prelude::{
+use crate::runner::tests::prelude::{
     assert_file_text_contains_all, assert_output_contains_all, assert_output_excludes_all, Path,
     RunnerError,
 };

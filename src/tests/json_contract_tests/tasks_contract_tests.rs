@@ -1,4 +1,4 @@
-use super::prelude::{harness::*, json::*, runtime::*};
+use crate::runner::json_contract_tests::prelude::{harness::*, json::*, runtime::*};
 
 #[test]
 fn tasks_json_contract_has_versioned_top_level_shape() {

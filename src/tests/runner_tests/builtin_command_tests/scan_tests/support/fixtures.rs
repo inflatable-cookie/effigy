@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use super::super::super::prelude::{fs, temp_workspace, write_manifest, write_root_manifest, Path};
+use crate::runner::tests::prelude::{
+    fs, temp_workspace, write_manifest, write_root_manifest, Path,
+};
 
 pub(in crate::runner::tests::builtin_command_tests::scan_tests) fn write_large_code_file(
     path: &Path,

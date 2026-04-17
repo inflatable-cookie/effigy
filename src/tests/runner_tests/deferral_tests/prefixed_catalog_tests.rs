@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     fs, lock_test, run_task_expect_empty_output, workspace_with_optional_defer_manifest,
     write_manifest,
 };

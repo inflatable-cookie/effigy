@@ -1,4 +1,6 @@
-use super::prelude::{assert_output_contains_all, run_config_ok, workspace_with_empty_manifest};
+use crate::runner::tests::prelude::{
+    assert_output_contains_all, run_config_ok, workspace_with_empty_manifest,
+};
 
 #[test]
 fn run_manifest_task_builtin_config_has_blank_line_between_sections() {

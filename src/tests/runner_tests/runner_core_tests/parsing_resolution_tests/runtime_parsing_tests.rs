@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     builtin_test_max_parallel, discover_catalogs, parse_task_runtime_args, temp_workspace,
     write_root_manifest, PathBuf, RunnerError, TaskRuntimeArgs,
 };

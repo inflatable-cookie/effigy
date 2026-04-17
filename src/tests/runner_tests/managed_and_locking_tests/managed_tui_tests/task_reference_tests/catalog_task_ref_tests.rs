@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_managed_output_case_table, assert_managed_output_derived_case_table,
     create_workspace_dir, lock_test, managed_tui_env, write_catalog_a_and_catalog_c_dev_catalogs,
     write_catalog_tasks, write_managed_tui_dev_manifest, write_managed_tui_dev_manifest_with_extra,

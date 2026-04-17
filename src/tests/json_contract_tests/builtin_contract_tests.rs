@@ -1,4 +1,4 @@
-use super::prelude::{execution::*, harness::*, json::*, runtime::*};
+use crate::runner::json_contract_tests::prelude::{execution::*, harness::*, json::*, runtime::*};
 
 #[test]
 fn builtin_help_json_contract_has_versioned_shape() {

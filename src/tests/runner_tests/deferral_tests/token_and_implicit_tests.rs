@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_deferred_task_case_table, assert_file_text_equals, assert_implicit_deferral_case_table,
     fs, implicit_deferral_script, lock_test, reset_composer_home_cache_for_tests,
     run_task_expect_empty_output, setup_implicit_deferral_stub,

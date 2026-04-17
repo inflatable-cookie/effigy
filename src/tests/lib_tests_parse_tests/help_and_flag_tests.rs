@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::tests::prelude::{
     parse_command, strip_global_json_flag, strip_global_json_flags, Command, HelpTopic,
 };
 

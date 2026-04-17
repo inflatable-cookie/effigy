@@ -1,12 +1,6 @@
-pub(super) use super::super::prelude::catalog::*;
-pub(super) use super::super::prelude::fixture_support::*;
-pub(super) use super::super::prelude::harness_builtin::*;
-pub(super) use super::super::prelude::harness_env::*;
-pub(super) use super::super::prelude::harness_workspace::*;
-pub(super) use super::super::prelude::output::*;
-pub(super) use super::super::prelude::runtime::*;
+use super::runtime::RunnerError;
 
-pub(super) fn assert_task_ambiguous_reset_db(err: RunnerError) {
+pub(in crate::runner::tests) fn assert_task_ambiguous_reset_db(err: RunnerError) {
     match err {
         RunnerError::TaskAmbiguous { name, candidates } => {
             assert_eq!(name, "reset-db");
@@ -16,7 +10,10 @@ pub(super) fn assert_task_ambiguous_reset_db(err: RunnerError) {
     }
 }
 
-pub(super) fn assert_catalog_alias_conflict(err: RunnerError, expected_alias: &str) {
+pub(in crate::runner::tests) fn assert_catalog_alias_conflict(
+    err: RunnerError,
+    expected_alias: &str,
+) {
     match err {
         RunnerError::TaskCatalogAliasConflict {
             alias,

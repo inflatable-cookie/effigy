@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_run_array_validate_invocation_error_case_table,
     assert_run_array_validate_invocation_message_case_table,
     assert_run_array_validate_output_case_table, RunArrayInvocationErrorCase,

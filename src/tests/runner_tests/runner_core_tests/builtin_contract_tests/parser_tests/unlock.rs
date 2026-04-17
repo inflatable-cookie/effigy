@@ -1,7 +1,7 @@
-use super::super::prelude::{
+use super::parser_task;
+use crate::runner::tests::prelude::{
     assert_parser_task_invocation_error, parse_unlock_contract_request, string_args,
 };
-use super::parser_task;
 
 #[test]
 fn builtin_unlock_parser_contracts_are_stable() {

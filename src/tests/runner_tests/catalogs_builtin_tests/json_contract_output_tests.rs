@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_json_array_field, assert_json_string_field_eq, assert_output_excludes_all,
     parse_json_output_with_schema, parse_json_output_with_schema_version, run_catalogs_ok,
     temp_workspace, write_managed_dev_profile_manifest, write_root_and_catalog_a_api_catalog,

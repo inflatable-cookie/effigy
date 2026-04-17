@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::tests::prelude::{
     parse_command, Command, ContainerArgs, ContainerSubcommand, ContractsArgs, ContractsCheckMode,
     ContractsSelectionPrintMode, ContractsSubcommand, DistributionArgs, DistributionSubcommand,
     DocsArgs, DocsBlockRequirement, DocsSubcommand, PathBuf,

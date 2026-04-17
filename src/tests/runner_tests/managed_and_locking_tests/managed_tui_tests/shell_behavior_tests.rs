@@ -1,4 +1,4 @@
-use super::super::prelude::{
+use crate::runner::tests::prelude::{
     assert_managed_output_case_table, lock_test, managed_tui_env, write_root_manifest,
     ManagedInvocation, ManagedOutputCase, Path,
 };

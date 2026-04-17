@@ -1,5 +1,10 @@
-pub(super) mod runtime {
-    pub(crate) use super::super::super::error::RunnerError;
+// Flat prelude surface for json_contract_tests. Every helper the tests need
+// is re-exported at this module's root. Facade submodules (`runtime`,
+// `harness`, `execution`, `json`) are preserved for test sites that still
+// glob-import `{runtime::*, harness::*, ...}`.
+
+pub(crate) mod runtime {
+    pub(crate) use crate::runner::error::RunnerError;
     pub(crate) use effigy_cli::{DoctorArgs, TaskInvocation, TasksArgs};
     pub(crate) use std::fs;
     #[cfg(unix)]
@@ -9,36 +14,36 @@ pub(super) mod runtime {
     pub(crate) use std::time::Duration;
 
     pub(crate) fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
-        let ports = super::super::super::doctor_ports::RunnerDoctorPorts::new();
+        let ports = crate::runner::doctor_ports::RunnerDoctorPorts::new();
         effigy_doctor::run_doctor(args, &ports).map_err(RunnerError::from)
     }
 
     pub(crate) fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
-        super::super::super::tasks_command::run_tasks(args)
+        crate::runner::tasks_command::run_tasks(args)
     }
 }
 
-pub(super) mod harness {
+pub(crate) mod harness {
     pub(crate) use crate::contract_test_support::{
         parse_json, temp_workspace, test_lock, with_cwd, write_manifest, EnvGuard,
     };
 }
 
-pub(super) mod execution {
-    pub(crate) use super::{run_completion_candidates_json, run_invocation_json};
-
+pub(crate) mod execution {
     use super::runtime::{PathBuf, RunnerError, TaskInvocation};
 
     pub(crate) fn run_manifest_task_with_cwd(
         invocation: &TaskInvocation,
         root: PathBuf,
     ) -> Result<String, RunnerError> {
-        super::super::super::test_support::execution::run_manifest_task_with_cwd(invocation, root)
+        crate::runner::execute::run_manifest_task_with_cwd(invocation, root)
     }
+
+    pub(crate) use super::run_invocation_json;
 }
 
-pub(super) mod json {
-    pub(crate) use super::{assert_candidates_cache_policy, assert_schema_v1};
+pub(crate) mod json {
+    pub(crate) use super::assert_schema_v1;
 }
 
 use execution::run_manifest_task_with_cwd;
@@ -78,3 +83,26 @@ pub(crate) fn assert_candidates_cache_policy(
     assert_eq!(parsed["effective_cache_ttl_ms"], effective_ttl_ms);
     assert_eq!(parsed["cache_ttl_source"], ttl_source);
 }
+
+// Absorbed from former completion_contract_tests/prelude.rs.
+pub(crate) fn with_completion_cache_default() -> harness::EnvGuard {
+    harness::EnvGuard::set_many(&[("EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS", None)])
+}
+
+pub(crate) fn run_completion_task(
+    root: PathBuf,
+    args: &[&str],
+) -> Result<String, runtime::RunnerError> {
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "completion".to_owned(),
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        },
+        root,
+    )
+}
+
+// Flat re-export surface — test sites use the absolute path
+// `crate::runner::json_contract_tests::prelude::...`.
+pub(crate) use harness::*;
+pub(crate) use runtime::*;
