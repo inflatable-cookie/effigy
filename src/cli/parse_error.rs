@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use crate::{render_cli_header, render_help, HelpTopic};
-use effigy_ui::{MessageBlock, Renderer, UiResult};
+use effigy_core::widgets::MessageBlock;
+use effigy_ui::{Renderer, UiResult};
 use serde_json::json;
 
 pub const PARSE_ERROR_HINT: &str = "Run `effigy --help` to see supported command forms";

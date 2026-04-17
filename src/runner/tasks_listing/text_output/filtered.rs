@@ -1,7 +1,8 @@
 use std::path::Path;
 
+use effigy_core::widgets::NoticeLevel;
 use effigy_ui::theme::Theme;
-use effigy_ui::{NoticeLevel, PlainRenderer, Renderer};
+use effigy_ui::{PlainRenderer, Renderer};
 
 use super::super::prepared_task_rows::prepare_catalog_match_task_rows;
 use super::super::selection::PreparedFilteredListing;

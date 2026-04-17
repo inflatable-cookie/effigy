@@ -9,10 +9,9 @@ mod strategy;
 
 use std::path::Path;
 
-use super::super::model::catalog::{
-    CatalogSelectionMode, LoadedCatalog, TaskSelection, TaskSelector,
-};
 use crate::runner::error::RunnerError;
+use effigy_manifest::{LoadedCatalog, TaskSelection};
+use effigy_tasks::{CatalogSelectionMode, TaskSelector};
 
 pub(in crate::runner) fn select_catalog_and_task<'a>(
     selector: &TaskSelector,

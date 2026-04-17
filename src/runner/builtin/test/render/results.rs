@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
-use effigy_ui::{KeyValue, Renderer};
+use effigy_core::widgets::KeyValue;
+use effigy_ui::Renderer;
 
 use super::super::super::super::render::{render_utf8, text_renderer};
 use super::super::super::response::render_text_or_json_lazy;

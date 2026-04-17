@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde_json::json;
 
-use super::super::model::catalog::LoadedCatalog;
+use effigy_manifest::LoadedCatalog;
 
 pub(in crate::runner) struct ListingCatalogSnapshot<'a> {
     catalogs: &'a [LoadedCatalog],

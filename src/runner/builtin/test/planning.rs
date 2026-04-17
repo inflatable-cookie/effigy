@@ -1,7 +1,8 @@
 use std::path::Path;
 
-use crate::runner::model::catalog::{LoadedCatalog, TaskSelector};
 use crate::runner::RunnerError;
+use effigy_manifest::LoadedCatalog;
+use effigy_tasks::TaskSelector;
 
 #[path = "planning/config.rs"]
 mod config;

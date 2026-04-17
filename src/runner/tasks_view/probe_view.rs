@@ -1,5 +1,6 @@
+use effigy_core::widgets::{KeyValue, NoticeLevel};
 use effigy_ui::theme::Theme;
-use effigy_ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
+use effigy_ui::{PlainRenderer, Renderer};
 
 use crate::runner::error::RunnerError;
 

@@ -7,12 +7,9 @@
 //! shell fallback template when a selector doesn't resolve locally.
 //!
 //! These types previously lived inside the runner binary
-//! (`src/runner/model/catalog.rs`). They moved here so the upcoming
+//! (`src/runner/model/catalog.rs`). They moved here so the
 //! `effigy-managed` extraction can depend on them without the runner
-//! having to expose internal module paths. The runner now keeps a thin
-//! re-export shim at `crate::runner::model::catalog` for the existing
-//! ~78 call sites; consumers should prefer `effigy_manifest::` directly
-//! in new code.
+//! having to expose internal module paths.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

@@ -1,6 +1,6 @@
 use super::super::super::util::parse_task_runtime_args;
 use crate::runner::error::RunnerError;
-use crate::runner::model::catalog::TaskRuntimeArgs;
+use effigy_tasks::TaskRuntimeArgs;
 
 pub(super) fn prepare_execution_runtime_args(
     args: &[String],

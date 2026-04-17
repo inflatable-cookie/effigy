@@ -1,12 +1,12 @@
-use crate::TaskInvocation;
-use effigy_ui::{NoticeLevel, Renderer};
-
-use super::super::super::model::catalog::LoadedCatalog;
 use super::super::super::render::encode_json;
 use super::super::render_support;
 use super::super::text_blocks;
 use super::contracts::{self, DeferralOutcome, SelectionOutcome};
 use crate::runner::error::RunnerError;
+use crate::TaskInvocation;
+use effigy_core::widgets::NoticeLevel;
+use effigy_manifest::LoadedCatalog;
+use effigy_ui::Renderer;
 
 pub(super) fn render_explain_json(
     request: &TaskInvocation,

@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use effigy_core::widgets::{KeyValue, NoticeLevel, SummaryCounts, TableSpec};
 use effigy_process::ProcessSpec;
-use effigy_ui::{KeyValue, NoticeLevel, Renderer, SummaryCounts, TableSpec};
+use effigy_ui::Renderer;
 
 use crate::ManagedError;
 use crate::{ManagedProcessSpec, ManagedTaskPlan};

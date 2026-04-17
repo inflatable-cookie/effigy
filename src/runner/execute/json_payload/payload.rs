@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::runner::model::catalog::TaskSelector;
+use effigy_tasks::TaskSelector;
 
 pub(super) fn task_run_payload(
     task_name: &str,

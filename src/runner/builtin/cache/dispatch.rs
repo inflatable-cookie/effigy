@@ -4,13 +4,13 @@ use super::super::super::cache::ops::{
     cache_entries, cache_entry, cache_entry_key, invalidate_all_cache_entries,
     invalidate_cache_keys,
 };
-use super::super::super::model::catalog::LoadedCatalog;
 use super::output::{
     render_inspect_all_response, render_inspect_response, render_invalidate_response,
 };
 use super::request::{InspectRequest, InvalidateRequest};
 use super::selection::resolve_cache_selector;
 use crate::runner::error::RunnerError;
+use effigy_manifest::LoadedCatalog;
 
 pub(super) fn run_inspect(
     target_root: &Path,

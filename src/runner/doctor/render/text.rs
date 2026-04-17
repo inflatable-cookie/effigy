@@ -1,4 +1,5 @@
-use effigy_ui::{NoticeLevel, PlainRenderer, Renderer, SummaryCounts, TableSpec};
+use effigy_core::widgets::{NoticeLevel, SummaryCounts, TableSpec};
+use effigy_ui::{PlainRenderer, Renderer};
 
 use super::super::render_support;
 use super::super::report::{DoctorReport, DoctorSeverity};

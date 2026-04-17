@@ -6,10 +6,10 @@ use super::super::catalog::discover_catalogs_allow_missing;
 use super::super::command_context::{
     current_working_dir, resolve_repo_root, task_selection_precedence_notes,
 };
-use super::super::model::catalog::LoadedCatalog;
 use super::super::tasks_listing::{build_catalog_diagnostics, render_tasks_listing};
 use super::super::tasks_probe::build_resolve_probe;
 use crate::runner::error::RunnerError;
+use effigy_manifest::LoadedCatalog;
 
 pub(super) struct PreparedTasksCommand {
     resolved_root: PathBuf,

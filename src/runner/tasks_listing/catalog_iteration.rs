@@ -1,5 +1,5 @@
 use super::super::manifest::task_runtime::ManifestTask;
-use crate::runner::model::catalog::LoadedCatalog;
+use effigy_manifest::LoadedCatalog;
 
 pub(super) fn catalog_tasks<'a>(
     catalog: &'a LoadedCatalog,

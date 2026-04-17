@@ -23,8 +23,8 @@ mod snapshot;
 #[path = "tasks_listing/text_output.rs"]
 mod text_output;
 
-use super::model::catalog::LoadedCatalog;
 use crate::runner::error::RunnerError;
+use effigy_manifest::LoadedCatalog;
 use render_context::ListingRenderRequest;
 pub(super) use snapshot::{build_catalog_diagnostics, ListingCatalogSnapshot};
 

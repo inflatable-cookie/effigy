@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use super::super::manifest::config_sections::ManifestJsPackageManager;
-use super::super::model::catalog::LoadedCatalog;
 use super::report::{DoctorFixAction, DoctorState};
 use crate::runner::error::RunnerError;
+use effigy_manifest::LoadedCatalog;
 
 mod fixers;
 mod scan;

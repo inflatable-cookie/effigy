@@ -1,5 +1,6 @@
+use effigy_core::widgets::NoticeLevel;
 use effigy_ui::theme::Theme;
-use effigy_ui::{NoticeLevel, PlainRenderer, Renderer};
+use effigy_ui::{PlainRenderer, Renderer};
 
 use super::super::super::tasks_view::render_resolution_probe_block;
 use super::super::row_projection::BuiltinTaskProjection;

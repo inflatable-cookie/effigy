@@ -8,11 +8,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::TaskInvocation;
 
-use super::super::model::catalog::{DeferredCommand, TaskRuntimeArgs};
 use super::super::model::constants::DEFER_DEPTH_ENV;
 use super::super::util::{shell_quote, with_local_node_bin_path};
 use super::trace::render_deferral_trace;
 use crate::runner::error::RunnerError;
+use effigy_manifest::DeferredCommand;
+use effigy_tasks::TaskRuntimeArgs;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ComposerHomeCacheKey {

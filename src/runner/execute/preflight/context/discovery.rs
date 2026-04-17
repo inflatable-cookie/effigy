@@ -5,8 +5,9 @@ use crate::resolver::ResolvedTarget;
 use crate::runner::catalog::discover_catalogs_allow_missing;
 use crate::runner::command_context::{canonicalize_or_original, resolve_repo_root};
 use crate::runner::error::RunnerError;
-use crate::runner::model::catalog::{LoadedCatalog, TaskSelector};
 use crate::runner::util::parse_task_selector;
+use effigy_manifest::LoadedCatalog;
+use effigy_tasks::TaskSelector;
 
 pub(in crate::runner) struct ExecutionPreflightDiscovery {
     pub(in crate::runner) invocation_cwd: PathBuf,

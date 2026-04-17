@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use super::super::execute::catalog_task_label;
-use super::super::managed::profiles::DEFAULT_MANAGED_PROFILE;
 use super::super::manifest::task_runtime::ManifestTask;
-use super::super::model::catalog::LoadedCatalog;
+use effigy_managed::profiles::DEFAULT_MANAGED_PROFILE;
+use effigy_manifest::LoadedCatalog;
 
 #[derive(Debug)]
 pub(in crate::runner) struct ManagedProfileDisplayRow {

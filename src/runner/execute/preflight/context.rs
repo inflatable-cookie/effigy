@@ -8,7 +8,8 @@ use crate::TaskInvocation;
 use super::runtime::prepare_execution_runtime_args;
 use crate::resolver::ResolvedTarget;
 use crate::runner::error::RunnerError;
-use crate::runner::model::catalog::{LoadedCatalog, TaskRuntimeArgs, TaskSelector};
+use effigy_manifest::LoadedCatalog;
+use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 
 pub(in crate::runner) struct ExecutionPreflight {
     pub(in crate::runner) invocation_cwd: PathBuf,

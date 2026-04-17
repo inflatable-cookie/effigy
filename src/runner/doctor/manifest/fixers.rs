@@ -5,9 +5,9 @@ use toml::Value;
 
 use crate::fs_probe::PathPresenceCache;
 
-use super::super::super::model::catalog::LoadedCatalog;
 use super::super::super::model::constants::TASK_MANIFEST_FILE;
 use super::super::report::{DoctorFixAction, DoctorFixStatus};
+use effigy_manifest::LoadedCatalog;
 
 const HEALTH_FIX_ID: &str = "manifest.health_task_scaffold";
 const HEALTH_SCAFFOLD_COMMAND: &str = "printf health-check-placeholder";

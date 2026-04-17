@@ -5,8 +5,8 @@ mod runtime;
 #[path = "parsing/selector.rs"]
 mod selector;
 
-use super::super::model::catalog::{TaskRuntimeArgs, TaskSelector};
 use crate::runner::error::RunnerError;
+use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 
 pub(in crate::runner) fn normalize_builtin_test_suite(raw: &str) -> Option<&'static str> {
     runtime::normalize_builtin_test_suite(raw)

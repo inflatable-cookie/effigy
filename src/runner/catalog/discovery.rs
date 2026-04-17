@@ -3,9 +3,9 @@ use std::fs::{self, FileType};
 use std::path::{Path, PathBuf};
 
 use super::super::manifest::load_task_manifest;
-use super::super::model::catalog::LoadedCatalog;
 use super::super::model::constants::TASK_MANIFEST_FILE;
 use super::super::{RunnerError, TaskManifest};
+use effigy_manifest::LoadedCatalog;
 
 pub(in crate::runner) fn discover_catalogs(
     workspace_root: &Path,

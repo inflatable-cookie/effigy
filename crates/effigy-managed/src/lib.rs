@@ -2,9 +2,7 @@
 //!
 //! Moved out of the runner binary in batch 240. Owns the managed task
 //! scheduler, run-spec rendering, env resolution, references, profiles,
-//! the runtime session loop, and the plan-shape structs. The runner
-//! keeps thin re-export shims at `crate::runner::managed` and
-//! `crate::runner::model::managed`.
+//! the runtime session loop, and the plan-shape structs.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};

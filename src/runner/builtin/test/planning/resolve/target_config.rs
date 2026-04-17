@@ -1,16 +1,16 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::runner::managed::run_spec::{render_run_step_sequence, resolve_run_step_env};
 use crate::runner::manifest::config_sections::ManifestJsPackageManager;
 use crate::runner::manifest::task_runtime::ManifestRunStepEnv;
 use crate::runner::manifest::{
     ManifestCargoEnvMatchMode, ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedRunStep,
     ManifestTestSuiteTeardownPolicy,
 };
-use crate::runner::model::catalog::LoadedCatalog;
 use crate::runner::util::normalize_builtin_test_suite;
 use crate::runner::RunnerError;
+use effigy_managed::run_spec::{render_run_step_sequence, resolve_run_step_env};
+use effigy_manifest::LoadedCatalog;
 
 use super::cargo_env::resolve_manifest_cargo_env;
 

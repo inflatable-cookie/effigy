@@ -1,5 +1,5 @@
 use crate::runner::manifest::config_sections::ManifestJsPackageManager;
-use crate::runner::model::catalog::LoadedCatalog;
+use effigy_manifest::LoadedCatalog;
 
 pub(in crate::runner) struct ManifestSnapshot {
     pub(in crate::runner) manifest_paths: Vec<std::path::PathBuf>,

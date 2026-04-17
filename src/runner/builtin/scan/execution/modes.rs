@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use super::super::super::super::model::catalog::LoadedCatalog;
 use super::super::super::super::scan::execution::{
     run_attention_marker_scan_workspace, run_comment_ratio_scan_workspace,
     run_duplicate_block_scan_workspace, run_generated_asset_scan_workspace,
@@ -27,6 +26,7 @@ use super::core::{
     apply_threshold_request_overrides, reject_threshold_overrides, run_scan_mode, ScanModeConfig,
 };
 use crate::runner::error::RunnerError;
+use effigy_manifest::LoadedCatalog;
 
 pub(super) fn run_god_files(
     request: ScanRequest,

@@ -1,9 +1,5 @@
 use std::path::Path;
 
-use effigy_ui::theme::Theme;
-use effigy_ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
-
-use super::super::super::model::catalog::LoadedCatalog;
 use super::super::prepared_task_rows::{
     prepare_default_text_rows, CatalogAliasProjection, CatalogTaskProjection,
 };
@@ -12,6 +8,10 @@ use super::followups::render_builtin_rows_section;
 use super::rows::{render_catalog_alias_rows, render_catalog_task_rows};
 use crate::runner::deferred_builtins_from_catalogs;
 use crate::runner::error::RunnerError;
+use effigy_core::widgets::{KeyValue, NoticeLevel};
+use effigy_manifest::LoadedCatalog;
+use effigy_ui::theme::Theme;
+use effigy_ui::{PlainRenderer, Renderer};
 
 pub(super) fn render_default_tasks_text(
     renderer: &mut PlainRenderer<Vec<u8>>,

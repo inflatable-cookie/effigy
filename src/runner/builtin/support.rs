@@ -3,10 +3,10 @@ use std::path::Path;
 
 use crate::{render_help, HelpTopic};
 
-use super::super::model::catalog::TaskRuntimeArgs;
 use super::super::render::{encode_json, render_utf8, standard_renderer};
 use super::response::schema_payload;
 use crate::runner::error::RunnerError;
+use effigy_tasks::TaskRuntimeArgs;
 
 pub(in crate::runner) fn reject_verbose_root_for_builtin(
     task_name: &str,

@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use super::super::model::catalog::LoadedCatalog;
 use super::super::scan::model::{
     format_bytes, format_ratio, AttentionMarkerFinding, AttentionMarkerScanOptions,
     AttentionMarkerScanResult, AttentionMarkerSeverity, CommentRatioFinding,
@@ -15,6 +14,7 @@ use super::super::scan::model::{
 use super::super::scan::options::catalog_scan_roots;
 use super::report::{DoctorSeverity, DoctorState};
 use crate::runner::error::RunnerError;
+use effigy_manifest::LoadedCatalog;
 
 mod core;
 mod findings;
