@@ -1,6 +1,6 @@
 # 250 Implement Effigy-Builtin Extraction
 
-Status: queued
+Status: done
 Updated: 2026-04-17
 Roadmap: `g02.010`
 Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`

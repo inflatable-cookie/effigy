@@ -1,0 +1,29 @@
+[package]
+name = "effigy-builtin"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Built-in command layer for Effigy (registry, dispatch, ports, all built-in arms)"
+
+[dependencies]
+effigy-cli = { path = "../effigy-cli" }
+effigy-core = { path = "../effigy-core" }
+effigy-env = { path = "../effigy-env" }
+effigy-managed = { path = "../effigy-managed" }
+effigy-manifest = { path = "../effigy-manifest" }
+effigy-process = { path = "../effigy-process" }
+effigy-routing = { path = "../effigy-routing" }
+effigy-scan = { path = "../effigy-scan" }
+effigy-tasks = { path = "../effigy-tasks" }
+effigy-tui = { path = "../effigy-tui" }
+effigy-ui = { path = "../effigy-ui" }
+anstyle = "1"
+globset = "0.4"
+ignore = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"

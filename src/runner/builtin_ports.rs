@@ -1,93 +1,32 @@
-//! Runtime ports the built-in command layer uses to reach back into the
-//! runner.
+//! Concrete [`BuiltinRuntimePorts`] implementation for the runner.
 //!
-//! Card 251 inverts direct `super::super::super::{locking,cache,...}`
-//! reach-ins behind this trait so that the built-in layer depends on an
-//! abstract contract instead of sibling runner modules. Card 250 then moves
-//! `src/runner/builtin/` into its own crate and the only remaining runner
-//! dependency is the port trait + a handful of shared types.
+//! The trait itself lives in `effigy-builtin`. This module threads the
+//! built-in layer's reach-backs into the runner's `locking`, `cache`,
+//! `doctor`, `execute`, `command_context`, and `tasks_command`
+//! modules, converting `RunnerError` to `BuiltinError` at the port
+//! boundary so the built-in layer only speaks its own error type.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use effigy_builtin::{
+    BuiltinError, BuiltinLockGuards, BuiltinRuntimePorts, LockScope as BuiltinLockScope,
+    TaskCacheEntry, UnlockResult,
+};
 use effigy_cli::{DoctorArgs, TaskInvocation, TasksArgs};
 use effigy_manifest::LoadedCatalog;
 
-use crate::runner::cache::model::TaskCacheEntry;
 use crate::runner::cache::ops;
 use crate::runner::command_context;
 use crate::runner::doctor;
 use crate::runner::error::RunnerError;
 use crate::runner::execute;
 use crate::runner::locking::io as locking_io;
-use crate::runner::locking::io::{LockGuard, UnlockResult};
-use crate::runner::locking::model::LockScope;
+use crate::runner::locking::io::LockGuard;
 use crate::runner::tasks_command;
 
-/// Runtime services the built-in command layer depends on. Every reach-back
-/// from the built-in layer into the rest of the runner should go through this
-/// trait so the built-in layer can be extracted into its own crate without
-/// pulling sibling runner modules along.
-pub(in crate::runner) trait BuiltinRuntimePorts {
-    // Locking.
-    fn acquire_scopes(
-        &self,
-        workspace_root: &Path,
-        scopes: &[LockScope],
-    ) -> Result<Vec<LockGuard>, RunnerError>;
-
-    fn unlock_scopes(
-        &self,
-        workspace_root: &Path,
-        scopes: &[LockScope],
-    ) -> Result<UnlockResult, RunnerError>;
-
-    fn unlock_all(&self, workspace_root: &Path) -> Result<UnlockResult, RunnerError>;
-
-    // Command context.
-    fn current_working_dir(&self) -> Result<PathBuf, RunnerError>;
-
-    // Execute / nested command entry points.
-    fn run_manifest_task_with_cwd(
-        &self,
-        task: &TaskInvocation,
-        cwd: PathBuf,
-    ) -> Result<String, RunnerError>;
-
-    fn run_doctor(&self, args: DoctorArgs) -> Result<String, RunnerError>;
-
-    fn run_tasks(&self, args: TasksArgs) -> Result<String, RunnerError>;
-
-    // Cache inspection / invalidation.
-    fn cache_entries(&self, workspace_root: &Path) -> Result<Vec<TaskCacheEntry>, RunnerError>;
-
-    fn cache_entry(
-        &self,
-        workspace_root: &Path,
-        manifest_path: &Path,
-        task_name: &str,
-    ) -> Result<Option<TaskCacheEntry>, RunnerError>;
-
-    fn cache_entry_key(&self, manifest_path: &Path, task_name: &str) -> String;
-
-    fn invalidate_cache_keys(
-        &self,
-        workspace_root: &Path,
-        keys: &[String],
-    ) -> Result<Vec<String>, RunnerError>;
-
-    fn invalidate_all_cache_entries(&self, workspace_root: &Path) -> Result<usize, RunnerError>;
-
-    // Deferred builtin introspection.
-    fn deferred_builtins_from_catalogs(
-        &self,
-        catalogs: &[LoadedCatalog],
-        resolved_root: &Path,
-    ) -> BTreeSet<String>;
-}
-
-/// Concrete `BuiltinRuntimePorts` implementation that delegates to the runner
-/// modules directly.
+/// Concrete `BuiltinRuntimePorts` implementation that delegates to the
+/// runner modules directly.
 #[derive(Debug, Default)]
 pub(in crate::runner) struct RunnerBuiltinPorts;
 
@@ -101,45 +40,47 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts {
     fn acquire_scopes(
         &self,
         workspace_root: &Path,
-        scopes: &[LockScope],
-    ) -> Result<Vec<LockGuard>, RunnerError> {
-        locking_io::acquire_scopes(workspace_root, scopes)
+        scopes: &[BuiltinLockScope],
+    ) -> Result<BuiltinLockGuards, BuiltinError> {
+        let guards: Vec<LockGuard> =
+            locking_io::acquire_scopes(workspace_root, scopes).map_err(runner_to_builtin)?;
+        Ok(BuiltinLockGuards::new(guards))
     }
 
     fn unlock_scopes(
         &self,
         workspace_root: &Path,
-        scopes: &[LockScope],
-    ) -> Result<UnlockResult, RunnerError> {
-        locking_io::unlock_scopes(workspace_root, scopes)
+        scopes: &[BuiltinLockScope],
+    ) -> Result<UnlockResult, BuiltinError> {
+        locking_io::unlock_scopes(workspace_root, scopes).map_err(runner_to_builtin)
     }
 
-    fn unlock_all(&self, workspace_root: &Path) -> Result<UnlockResult, RunnerError> {
-        locking_io::unlock_all(workspace_root)
+    fn unlock_all(&self, workspace_root: &Path) -> Result<UnlockResult, BuiltinError> {
+        locking_io::unlock_all(workspace_root).map_err(runner_to_builtin)
     }
 
-    fn current_working_dir(&self) -> Result<PathBuf, RunnerError> {
-        command_context::current_working_dir()
+    fn current_working_dir(&self) -> Result<PathBuf, BuiltinError> {
+        command_context::current_working_dir().map_err(runner_to_builtin)
     }
 
     fn run_manifest_task_with_cwd(
         &self,
         task: &TaskInvocation,
         cwd: PathBuf,
-    ) -> Result<String, RunnerError> {
-        execute::run_manifest_task_with_cwd(task, cwd)
+    ) -> Result<String, BuiltinError> {
+        execute::run_manifest_task_with_cwd(task, cwd).map_err(runner_to_builtin)
     }
 
-    fn run_doctor(&self, args: DoctorArgs) -> Result<String, RunnerError> {
-        doctor::run_doctor(args)
+    fn run_doctor(&self, args: DoctorArgs) -> Result<String, BuiltinError> {
+        doctor::run_doctor(args).map_err(runner_to_builtin)
     }
 
-    fn run_tasks(&self, args: TasksArgs) -> Result<String, RunnerError> {
-        tasks_command::run_tasks(args)
+    fn run_tasks(&self, args: TasksArgs) -> Result<String, BuiltinError> {
+        tasks_command::run_tasks(args).map_err(runner_to_builtin)
     }
 
-    fn cache_entries(&self, workspace_root: &Path) -> Result<Vec<TaskCacheEntry>, RunnerError> {
-        ops::cache_entries(workspace_root)
+    fn cache_entries(&self, workspace_root: &Path) -> Result<Vec<TaskCacheEntry>, BuiltinError> {
+        ops::cache_entries(workspace_root).map_err(runner_to_builtin)
     }
 
     fn cache_entry(
@@ -147,8 +88,8 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts {
         workspace_root: &Path,
         manifest_path: &Path,
         task_name: &str,
-    ) -> Result<Option<TaskCacheEntry>, RunnerError> {
-        ops::cache_entry(workspace_root, manifest_path, task_name)
+    ) -> Result<Option<TaskCacheEntry>, BuiltinError> {
+        ops::cache_entry(workspace_root, manifest_path, task_name).map_err(runner_to_builtin)
     }
 
     fn cache_entry_key(&self, manifest_path: &Path, task_name: &str) -> String {
@@ -159,12 +100,12 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts {
         &self,
         workspace_root: &Path,
         keys: &[String],
-    ) -> Result<Vec<String>, RunnerError> {
-        ops::invalidate_cache_keys(workspace_root, keys)
+    ) -> Result<Vec<String>, BuiltinError> {
+        ops::invalidate_cache_keys(workspace_root, keys).map_err(runner_to_builtin)
     }
 
-    fn invalidate_all_cache_entries(&self, workspace_root: &Path) -> Result<usize, RunnerError> {
-        ops::invalidate_all_cache_entries(workspace_root)
+    fn invalidate_all_cache_entries(&self, workspace_root: &Path) -> Result<usize, BuiltinError> {
+        ops::invalidate_all_cache_entries(workspace_root).map_err(runner_to_builtin)
     }
 
     fn deferred_builtins_from_catalogs(
@@ -173,5 +114,50 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts {
         resolved_root: &Path,
     ) -> BTreeSet<String> {
         super::deferred_builtins_from_catalogs(catalogs, resolved_root)
+    }
+}
+
+/// Translate `RunnerError` variants surfaced by the runner locking /
+/// cache / execute modules into `BuiltinError`. Only the shapes that
+/// can actually be produced by the port surface are mirrored; anything
+/// else collapses to `BuiltinError::TaskInvocation` via `Display`.
+fn runner_to_builtin(error: RunnerError) -> BuiltinError {
+    match error {
+        RunnerError::TaskInvocation(message) => BuiltinError::TaskInvocation(message),
+        RunnerError::Ui(message) => BuiltinError::Ui(message),
+        RunnerError::TaskLockIo { path, error } => BuiltinError::TaskLockIo { path, error },
+        RunnerError::TaskLockConflict {
+            scope,
+            lock_path,
+            holder_pid,
+            holder_started_at_epoch_ms,
+            holder_heartbeat_at_epoch_ms,
+            holder_hostname,
+            holder_workspace_root,
+            remediation,
+        } => BuiltinError::TaskLockConflict {
+            scope,
+            lock_path,
+            holder_pid,
+            holder_started_at_epoch_ms,
+            holder_heartbeat_at_epoch_ms,
+            holder_hostname,
+            holder_workspace_root,
+            remediation,
+        },
+        RunnerError::TaskCommandLaunch { command, error } => {
+            BuiltinError::TaskCommandLaunch { command, error }
+        }
+        RunnerError::TaskManifestCompose { path, detail } => {
+            BuiltinError::TaskManifestCompose { path, detail }
+        }
+        RunnerError::DoctorNonZero {
+            error_count,
+            rendered,
+        } => BuiltinError::DoctorNonZero {
+            error_count,
+            rendered,
+        },
+        other => BuiltinError::TaskInvocation(other.to_string()),
     }
 }

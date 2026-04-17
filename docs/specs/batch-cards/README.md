@@ -14,12 +14,15 @@ Batch cards are the execution units for active Effigy strict-lane work.
 ## Current Live Chain
 
 - [`250-implement-effigy-builtin-extraction.md`](./250-implement-effigy-builtin-extraction.md)
-  is the ready card for `g02.010`. Scope: single `effigy-builtin`
-  crate (~10,114 lines, 120 files) with a `BuiltinError` →
-  `RunnerError` boundary. With card `251` landed, residual reach-ins
-  are trimmed to manifest re-exports, constants, `test_support`
-  re-export, and moving the `BuiltinRuntimePorts` trait definition
-  into the new crate.
+  is complete. `src/runner/builtin/**` (120 files, ~10,114 lines)
+  moved into the new `effigy-builtin` workspace crate behind a
+  narrow `BuiltinError` → `RunnerError` boundary. The
+  `BuiltinRuntimePorts` trait definition plus `LockScope`,
+  `UnlockResult`, `TaskCacheEntry` moved with it; the runner keeps
+  the concrete `RunnerBuiltinPorts` impl. `BUILTIN_TASKS` and
+  `DEFAULT_BUILTIN_TEST_MAX_PARALLEL` now live in the new crate as
+  `pub const`s. With `g02.010`'s bounded batch exhausted, the
+  strict lane moves to a pause-boundary decide card.
 - [`251-implement-builtin-runtime-ports-inversion.md`](./251-implement-builtin-runtime-ports-inversion.md)
   is complete. The port-trait inversion landed with 13 methods (not
   16 as proposed — three unused cache-lifecycle methods dropped after
@@ -43,9 +46,15 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Execute card `250` — migrate `src/runner/builtin/**` (all eleven
-tasks plus dispatcher / registry / arg_parser / test_support) into
-a new `effigy-builtin` crate with a `BuiltinError` → `RunnerError`
-boundary. The `BuiltinRuntimePorts` trait migrates into the new
-crate as a `pub trait`; the runner provides the concrete impl and
-every call site already routes through the single allowed surface.
+Plan the `g02.010` pause-boundary decide card. With the last
+bounded batch (built-in tasks) extracted, spec 010's active scope
+is exhausted. Options for the next step include:
+
+- resume release closure (card `115`'s deferred execution path),
+- open a fresh modularization spec for the remaining coupling (e.g.
+  runner-internal `locking` / `cache` / `execute` cleanups), or
+- pause strict-lane execution entirely and hand the roadmap back to
+  planning for a new pivot.
+
+Draft the decide card once a steering signal arrives; until then
+the `g02.010` lane sits closed.

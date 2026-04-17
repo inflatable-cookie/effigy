@@ -1,7 +1,7 @@
 use super::super::execute::{catalog_task_label, task_run_preview};
 use super::super::manifest::task_runtime::ManifestTask;
-use super::super::model::constants::BUILTIN_TASKS;
 use super::super::tasks_view::{managed_profile_display_rows, ManagedProfileDisplayRow};
+use effigy_builtin::BUILTIN_TASKS;
 use effigy_manifest::LoadedCatalog;
 use std::collections::BTreeSet;
 

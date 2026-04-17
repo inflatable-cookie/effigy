@@ -174,12 +174,14 @@ pub(in crate::runner::tests) fn string_args(args: &[&str]) -> Vec<String> {
     args.iter().map(|arg| (*arg).to_owned()).collect()
 }
 
-pub(in crate::runner::tests) fn assert_parser_task_invocation_error<T>(
-    result: Result<T, RunnerError>,
+pub(in crate::runner::tests) fn assert_parser_task_invocation_error<T, E>(
+    result: Result<T, E>,
     expected: &str,
-) {
+) where
+    E: Into<RunnerError>,
+{
     match result {
         Ok(_) => panic!("expected parser task invocation error containing `{expected}`"),
-        Err(err) => assert_invocation_error_contains(err, &[expected]),
+        Err(err) => assert_invocation_error_contains(err.into(), &[expected]),
     }
 }

@@ -538,6 +538,7 @@ dependencies = [
  "chrono",
  "crossterm 0.29.0",
  "effigy-bootstrap",
+ "effigy-builtin",
  "effigy-changelog",
  "effigy-cli",
  "effigy-containers",
@@ -584,6 +585,31 @@ version = "0.1.0"
 dependencies = [
  "effigy-manifest",
  "serde_json",
+]
+
+[[package]]
+name = "effigy-builtin"
+version = "0.1.0"
+dependencies = [
+ "anstyle",
+ "effigy-cli",
+ "effigy-core",
+ "effigy-env",
+ "effigy-managed",
+ "effigy-manifest",
+ "effigy-process",
+ "effigy-routing",
+ "effigy-scan",
+ "effigy-tasks",
+ "effigy-tui",
+ "effigy-ui",
+ "globset",
+ "ignore",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+ "walkdir",
 ]
 
 [[package]]

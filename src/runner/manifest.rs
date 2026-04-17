@@ -6,11 +6,8 @@ use super::locking::model::LockScope;
 
 pub(in crate::runner) use effigy_manifest::{config_sections, task_runtime};
 pub(in crate::runner) use effigy_manifest::{
-    LoadedTaskManifest, ManifestCargoEnvMatchMode, ManifestCompositionEdge,
-    ManifestCompositionOverride, ManifestCompositionValueSource, ManifestContainerOnTaskExit,
-    ManifestDemoConfig, ManifestDemoMode, ManifestDocsPolicyConfig, ManifestEnvEntry,
-    ManifestEnvFileDirective, ManifestManagedRun, ManifestManagedRunStep, ManifestTask,
-    ManifestTestSuiteTeardownPolicy, TaskManifest,
+    LoadedTaskManifest, ManifestContainerOnTaskExit, ManifestDemoConfig, ManifestDemoMode,
+    ManifestDocsPolicyConfig, ManifestManagedRun, ManifestTask, TaskManifest,
 };
 
 pub(super) fn load_task_manifest(manifest_path: &Path) -> Result<TaskManifest, super::RunnerError> {

@@ -1,5 +1,5 @@
 pub(in crate::runner) mod builtin_contracts {
-    pub(in crate::runner) use super::super::builtin::test_support::{
+    pub(in crate::runner) use effigy_builtin::test_support::{
         parse_completion_contract_request, parse_config_contract_request,
         parse_unlock_contract_request, parse_watch_contract_request, CompletionParseContract,
         ConfigParseContract,
@@ -7,7 +7,7 @@ pub(in crate::runner) mod builtin_contracts {
 }
 
 pub(in crate::runner) mod catalog {
-    pub(in crate::runner) use super::super::builtin::test_support::builtin_test_max_parallel;
+    pub(in crate::runner) use effigy_builtin::test_support::builtin_test_max_parallel;
     pub(in crate::runner) use effigy_routing::discover_catalogs;
 }
 
