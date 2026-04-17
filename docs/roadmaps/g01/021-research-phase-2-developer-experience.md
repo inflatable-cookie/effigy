@@ -2,7 +2,7 @@
 
 Generation: `g01`
 
-Status: Planned
+Status: Complete
 Owner: Research
 Created: 2026-03-07
 Depends on: 020
@@ -252,14 +252,25 @@ Deliverables:
 
 ## 10) Outcome
 
-Status: planned
+Status: complete
 
-Upon completion, Effigy will have:
+The Phase 2 research tracks are complete. Since the original roadmap was
+written, substantial parts of the outcome have already landed in product work:
+
+- completion and help shaping moved through the CLI/help cleanup lane
+- workspace and manifest-composition direction is now real in `g02.002`
+- env/schema and secret-handling direction is now real in `effigy-env`
+
+The remaining unchecked items in this file are carry-forward work around
+promotion, a formal DX pattern library, and the residual future-facing DX
+questions that still matter after those shipped surfaces.
+
+Upon completion, Effigy has:
 - Validated completion patterns
 - Structured approach to error messages
 - Workspace design informed by monorepo tools
 - Cross-platform coverage validated
 - Environment/security patterns documented
 
-Next: Research Phase 3 (Scale & Integration) roadmap g01.022
-
+Next: carry the unfinished DX promotion and future-facing residue into
+[`g02.018`](../g02/018-research-promotion-and-carry-forward.md).

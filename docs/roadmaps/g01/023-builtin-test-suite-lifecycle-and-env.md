@@ -2,7 +2,7 @@
 
 Generation: `g01`
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-03-07
 Depends on: 005, 007
@@ -59,15 +59,15 @@ That wrapper works, but it means:
 
 ## 2) Goals
 
-- [ ] Extend builtin test suites to support declarative `env`
-- [ ] Extend builtin test suites to support declarative `env_file`
-- [ ] Add declarative `setup` steps for builtin test suites
-- [ ] Add declarative `teardown` steps for builtin test suites
-- [ ] Add explicit teardown policy with an `always` mode
-- [ ] Keep builtin `effigy test` compatible with `cargo nextest run` as the actual Rust runner
-- [ ] Reuse existing managed task env/env_file/step resolution instead of inventing a parallel config system
-- [ ] Surface setup/teardown/env behavior in `effigy test --plan`
-- [ ] Let Farmyard-style managed DB test flows migrate off custom wrapper scripts
+- [x] Extend builtin test suites to support declarative `env`
+- [x] Extend builtin test suites to support declarative `env_file`
+- [x] Add declarative `setup` steps for builtin test suites
+- [x] Add declarative `teardown` steps for builtin test suites
+- [x] Add explicit teardown policy with an `always` mode
+- [x] Keep builtin `effigy test` compatible with `cargo nextest run` as the actual Rust runner
+- [x] Reuse existing managed task env/env_file/step resolution instead of inventing a parallel config system
+- [x] Surface setup/teardown/env behavior in `effigy test --plan`
+- [x] Let Farmyard-style managed DB test flows migrate off custom wrapper scripts
 
 ## 3) Non-Goals
 
@@ -167,48 +167,48 @@ Design constraint:
 
 ### Batch 23.1 - Schema and Planning Contract
 
-- [ ] Extend `ManifestTestSuiteTable` to support `env`, `env_file`, `setup`, `teardown`, and `teardown_policy`
-- [ ] Extend doctor/schema validation for the richer `test.suites` table shape
-- [ ] Update builtin test help/config docs with managed-suite examples
-- [ ] Add parser tests for accepted and rejected shapes
+- [x] Extend `ManifestTestSuiteTable` to support `env`, `env_file`, `setup`, `teardown`, and `teardown_policy`
+- [x] Extend doctor/schema validation for the richer `test.suites` table shape
+- [x] Update builtin test help/config docs with managed-suite examples
+- [x] Add parser tests for accepted and rejected shapes
 
 ### Batch 23.2 - Shared Env Resolution Reuse
 
-- [ ] Extract or adapt managed task env/env_file resolution so builtin test suites can reuse it
-- [ ] Remove builtin test's special-case dependence on only `CARGO_*` env where suite-level env is configured
-- [ ] Preserve current cargo-env wrapping behavior for plain auto-detected suites
-- [ ] Add tests covering suite env, env_file, and mixed fallback behavior
+- [x] Extract or adapt managed task env/env_file resolution so builtin test suites can reuse it
+- [x] Remove builtin test's special-case dependence on only `CARGO_*` env where suite-level env is configured
+- [x] Preserve current cargo-env wrapping behavior for plain auto-detected suites
+- [x] Add tests covering suite env, env_file, and mixed fallback behavior
 
 ### Batch 23.3 - Setup/Teardown Execution Model
 
-- [ ] Extend builtin test runnable model to represent lifecycle steps, not just a single command string
-- [ ] Execute setup, then runner command, then teardown according to policy
-- [ ] Guarantee teardown execution for `always` even when the runner command exits non-zero
-- [ ] Ensure final exit status reflects runner/setup failure while still surfacing teardown failure clearly
-- [ ] Add execution tests for setup failure, runner failure, teardown failure, and teardown-on-failure behavior
+- [x] Extend builtin test runnable model to represent lifecycle steps, not just a single command string
+- [x] Execute setup, then runner command, then teardown according to policy
+- [x] Guarantee teardown execution for `always` even when the runner command exits non-zero
+- [x] Ensure final exit status reflects runner/setup failure while still surfacing teardown failure clearly
+- [x] Add execution tests for setup failure, runner failure, teardown failure, and teardown-on-failure behavior
 
 ### Batch 23.4 - Plan and Result Explainability
 
-- [ ] Extend `effigy test --plan` output to show lifecycle stages and env sources
-- [ ] Extend verbose results/json output to describe setup/run/teardown command paths
-- [ ] Keep output concise for simple suites that only use `run`
-- [ ] Add contract tests for text/json rendering
+- [x] Extend `effigy test --plan` output to show lifecycle stages and env sources
+- [x] Extend verbose results/json output to describe setup/run/teardown command paths
+- [x] Keep output concise for simple suites that only use `run`
+- [x] Add contract tests for text/json rendering
 
 ### Batch 23.5 - Farmyard Migration Proof
 
-- [ ] Replace Farmyard's custom `test:managed` wrapper behavior with builtin test suite config using nextest
-- [ ] Remove repo-local managed wrapper assumptions once parity is proven
-- [ ] Validate `effigy test --plan` and `effigy test` in Farmyard against the managed DB lifecycle flow
-- [ ] Publish a checkpoint log documenting the migration and remaining nextest caveats
+- [x] Replace Farmyard's custom `test:managed` wrapper behavior with builtin test suite config using nextest
+- [x] Remove repo-local managed wrapper assumptions once parity is proven
+- [x] Validate `effigy test --plan` and `effigy test` in Farmyard against the managed DB lifecycle flow
+- [x] Publish a checkpoint log documenting the migration and remaining nextest caveats
 
 ## 7) Acceptance Criteria
 
-- [ ] A builtin test suite can declare env and env_file without falling back to a custom task wrapper
-- [ ] A builtin test suite can declare setup and teardown steps
-- [ ] `teardown_policy = "always"` guarantees teardown after runner failure
-- [ ] Rust managed suites can still use `cargo nextest run` as the actual test runner
-- [ ] `effigy test --plan` explains lifecycle stages, not just the final runner command
-- [ ] Farmyard can express its managed test lifecycle without `scripts/tasks/run-managed-tests.ts`
+- [x] A builtin test suite can declare env and env_file without falling back to a custom task wrapper
+- [x] A builtin test suite can declare setup and teardown steps
+- [x] `teardown_policy = "always"` guarantees teardown after runner failure
+- [x] Rust managed suites can still use `cargo nextest run` as the actual test runner
+- [x] `effigy test --plan` explains lifecycle stages, not just the final runner command
+- [x] Farmyard can express its managed test lifecycle without `scripts/tasks/run-managed-tests.ts`
 
 ## 8) Risks and Mitigations
 
@@ -225,23 +225,23 @@ Design constraint:
 
 ## 9) Deliverables
 
-- [ ] Rich builtin test suite manifest contract
-- [ ] Builtin test lifecycle execution support
-- [ ] Updated help/docs/schema coverage
-- [ ] Farmyard migration off custom managed test wrapper
-- [ ] Validation log covering nextest-backed managed suites
+- [x] Rich builtin test suite manifest contract
+- [x] Builtin test lifecycle execution support
+- [x] Updated help/docs/schema coverage
+- [x] Farmyard migration off custom managed test wrapper
+- [x] Validation log covering nextest-backed managed suites
 
 ## 10) Validation
 
-- [ ] Parser and schema tests for new `test.suites` fields
-- [ ] Builtin test execution tests for setup/run/teardown outcome combinations
-- [ ] Plan rendering tests for lifecycle-aware suites
-- [ ] Farmyard adoption validation using builtin `effigy test`
-- [ ] No regression to simple command-only builtin test suites
+- [x] Parser and schema tests for new `test.suites` fields
+- [x] Builtin test execution tests for setup/run/teardown outcome combinations
+- [x] Plan rendering tests for lifecycle-aware suites
+- [x] Farmyard adoption validation using builtin `effigy test`
+- [x] No regression to simple command-only builtin test suites
 
 ## 11) Outcome
 
-Status: planned
+Status: complete
 
 Upon completion, Effigy will support a single high-level testing story:
 
@@ -250,4 +250,16 @@ Upon completion, Effigy will support a single high-level testing story:
 - repositories can attach lifecycle and environment policy declaratively
 - custom managed wrapper scripts become optional instead of required
 
-Next: execute roadmap `g01.023` in meaningful batches, starting with schema/config expansion and shared env-resolution reuse.
+Closeout note:
+
+- `crates/effigy-manifest/src/test_config.rs` now owns the richer suite
+  contract with `env`, `env_file`, `setup`, `teardown`, and `teardown_policy`.
+- builtin test planning and execution now carry lifecycle-aware suite
+  resolution, plan projection, result payloads, and teardown policy semantics.
+- guides `013` and `048` now document lifecycle-aware suites as shipped user
+  behavior rather than planned scope.
+- Farmyard-style managed nextest flows are now treated as the intended builtin
+  pattern, not wrapper-only escape hatches.
+
+Next: keep `g01.023` closed and finish the remaining pre-`v0.3` blocker in
+`g01.027` once `g02.010` settles.

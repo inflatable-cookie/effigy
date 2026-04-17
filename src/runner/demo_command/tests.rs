@@ -1,13 +1,14 @@
 use super::{
     append_demo_terminal_input, append_demo_terminal_resize, browser_terminal_size_override,
-    load_active_attempt, read_recent_output_lines, render_demo_execute_text,
-    terminated_demo_attempt, wrap_pty_shell_command, write_active_attempt_record,
-    DemoActiveAttempt, DemoActiveTerminalSession, DemoEntrypoint, DemoLogPaths, DemoRecord,
+    load_active_attempt, render_demo_execute_text, terminated_demo_attempt, wrap_pty_shell_command,
+    write_active_attempt_record, DemoActiveAttempt, DemoEntrypoint, DemoLogPaths, DemoRecord,
     DemoRuntimeBackend, PersistedDemoActiveAttempt, PersistedDemoActivePhase,
-    PersistedDemoTerminalTransport, DEMO_BROWSER_TERMINAL_COLS_ENV, DEMO_BROWSER_TERMINAL_ROWS_ENV,
+    DEMO_BROWSER_TERMINAL_COLS_ENV, DEMO_BROWSER_TERMINAL_ROWS_ENV,
 };
 use crate::runner::manifest::{ManifestDemoMode, ManifestManagedRun};
-use effigy_demo::runtime::DemoTerminalTransport;
+use effigy_demo::read_recent_output_lines;
+use effigy_demo::runtime::{DemoActiveTerminalSession, DemoTerminalTransport};
+use effigy_demo::PersistedDemoTerminalTransport;
 use effigy_demo::{DemoAttemptHistory, DemoLatestAttempt};
 use effigy_manifest::ManifestDemoStatus;
 use std::{

@@ -16,6 +16,7 @@ use crate::HelpTopic;
 pub use effigy_core::widgets::{KeyValue, NoticeLevel, TableSpec};
 
 pub mod topics;
+pub mod ui;
 
 /// Result type returned by [`HelpRenderer`] methods.
 ///

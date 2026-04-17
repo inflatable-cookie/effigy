@@ -1,4 +1,3 @@
-pub(crate) mod core;
 pub mod demo_browser;
 pub mod multiprocess;
 

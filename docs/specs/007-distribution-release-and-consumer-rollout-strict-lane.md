@@ -1,15 +1,12 @@
 # 007 Distribution Release And Consumer Rollout Strict Lane
 
-Status: queued
-Updated: 2026-04-15
+Status: active
+Updated: 2026-04-17
 Roadmap: `g02.007`
 
 ## Context
 
 The container lane is paused on a trustworthy v1 boundary.
-
-The modularization lane is active again because the user does not consider the
-remaining TUI shell weight release-ready yet.
 
 The shipped distribution surface now has:
 
@@ -17,8 +14,8 @@ The shipped distribution surface now has:
 - in-process Rhai dispatch for the rehearsal path
 - one explicit release-closure card
 
-That prerequisite is no longer treated as met strongly enough, so release
-closure is queued again behind `g02.010`.
+The modularization lane is now paused on a trustworthy full boundary, so
+release closure is active again.
 
 ## Governing Refs
 
@@ -39,9 +36,9 @@ This strict lane remains responsible for:
 
 ## Current Posture
 
-`strict-queued`
+`strict-active`
 
-`g02.006` is paused. `g02.010` is active again. `g02.007` is queued again.
+`g02.010` is paused. `g02.007` is active again.
 
 The release-prep hardening chain is real:
 
@@ -57,9 +54,19 @@ The release-prep hardening chain is real:
 - `release:linux:rehearse` no longer re-enters through
   `cargo run --bin effigy`
 
-That closes the release-prep hardening detour, but release closure is queued
-again until the remaining demo-browser TUI modularization question is settled
-honestly.
+That hardening detour is now fully closed:
+
+- `cargo run --bin effigy -- qa:ci` passes
+- `cargo run --bin effigy -- release simulate` now reports
+  `Ready to prepare and execute: yes`
+- the suggested release is `v0.2.14`
+
+The next move is no longer another hardening batch.
+
+Release execution is technically ready, `g02.010` is paused, and `115` is
+complete.
+
+No ready implementation card remains in this lane.
 
 ## Batch Model
 
@@ -88,6 +95,9 @@ claims.
 
 ## Next Task
 
-Keep
-[`115-implement-effigy-distribution-release-closure.md`](./batch-cards/115-implement-effigy-distribution-release-closure.md)
-queued while `g02.010` resolves the remaining demo-browser TUI shell seam.
+No ready implementation card remains.
+
+The next move is an intent checkpoint:
+
+1. explicitly approve `v0.2.14` release execution from `115`
+2. or activate the next product roadmap card before resuming release work

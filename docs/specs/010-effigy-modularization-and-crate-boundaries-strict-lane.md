@@ -955,10 +955,29 @@ That post-`212` boundary decision is now made too:
   adapter residue exposed by the process + UI extractions in any
   non-parallel-thread file; the strict lane now pauses on a trustworthy full
   boundary
+- `238` closed the `g02.017` queue in full; roadmap 017 is now `Closed`
+- `239` extended the job-8 `From<DomainError> for RunnerError` pattern to the
+  release runner and swept the remaining `DemoStateError` adapter residue
+  missed in the earlier job-8 pass
+- `240` reversed the earlier pause after a proper line-count-anchored audit
+  showed ~15k lines of reusable domain still in `src/runner/**` +
+  `src/tui/**` despite the walk-by-walk rationalization at `237`; the next
+  honest batch is a real crate extraction, not another shell-rationalization
+- `241` completed the half-finished `effigy-tui::multiprocess` extraction:
+  events, render, lifecycle, setup, runtime_loop, and the module root
+  moved into `crates/effigy-tui/src/multiprocess/`; the root
+  `src/tui/multiprocess/mod.rs` is now an 8-line re-export; the unused
+  `src/tui/core.rs` shim is deleted; `effigy-tui` now depends on
+  `effigy-process`, `effigy-ui`, and `anstream`. The three external
+  consumers reach the API unchanged via the root re-export chain.
+- `241` also narrows the 010 queue to three remaining bounded batches:
+  managed task orchestration (~2.7k lines), built-in tasks (~9.5k lines),
+  and task routing core (~6k lines)
 
 ## Next Task
 
-The `g02.010` strict modularization lane is paused. Resume the queued release
-card
-[`115-implement-effigy-distribution-release-closure.md`](./batch-cards/115-implement-effigy-distribution-release-closure.md)
-when release closure is intended.
+The next honest bounded batch is **managed task orchestration extraction**
+(`src/runner/managed/**` → `effigy-managed` or into `effigy-tasks`): the
+smallest of the three remaining queues, unlocks both the demo and
+container runners cleanly, and keeps the extraction order described in
+`5.7` honest.

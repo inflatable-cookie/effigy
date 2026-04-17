@@ -2,7 +2,7 @@
 
 Generation: `g01`
 
-Status: In Progress
+Status: Complete
 Owner: Platform
 Created: 2026-03-10
 Depends on: 026
@@ -16,7 +16,7 @@ releases through a consistent, auditable workflow. The system is built _in_
 Effigy, validated _on_ Effigy's own releases, and designed _for_ every project
 in the ecosystem.
 
-Implementation status (2026-03-11):
+Implementation status (2026-04-17):
 - The built-in command surface, release config, version-file mutation flow,
   gate execution, prepare/execute state handling, simulate previews, install
   verification, compatibility wrappers, and regression coverage are now
@@ -29,10 +29,10 @@ Implementation status (2026-03-11):
   inline `sed` release-note extraction to built-in
   `effigy changelog extract`, with hosted validation proving the tagged release
   path publishes changelog-derived notes correctly.
-- Remaining unchecked items at the end of this roadmap are operator-adoption
-  tasks: retiring legacy wrappers after a successful live release and
-  completing the first human-approved Effigy release through the new built-in
-  workflow.
+- The remaining unchecked items from the original roadmap are now closed too:
+  the first real production Effigy release through the built-in workflow was
+  recorded for `v0.2.5`, the workflow cutover to built-in changelog extract
+  landed, and the legacy release compatibility wrappers were later retired.
 
 ## Primary Tags
 
@@ -553,11 +553,11 @@ replaced by the new `effigy release` commands.
 - [x] Configure gates to match current `check-release-gates.sh` checks
 - [x] Configure version file as `Cargo.toml` with `Cargo.lock` sync
 - [x] Run parallel validation: old scripts and new system produce same results
-- [ ] Update `release-binaries.yml` to use `effigy changelog extract` for
+- [x] Update `release-binaries.yml` to use `effigy changelog extract` for
   release notes (requires human approval per CLAUDE.md)
 - [x] Update guide 049 (Release Protocol) section 6c to reference new commands
 - [x] Update guide 014 (Release Checklist) to reference new workflow
-- [ ] Retire `prepare-release.sh`, `check-release-gates.sh`, and
+- [x] Retire `prepare-release.sh`, `check-release-gates.sh`, and
   `check-release-install-from-tag.sh` after the explicit wrapper-retirement
   criteria in guide `049` are met
 - [x] Execute first release using `effigy release prepare` + `effigy release
@@ -666,6 +666,21 @@ This roadmap is complete when:
 6. Effigy's own release process uses the new system (self-hosting).
 7. At least one release has been successfully executed using the new system.
 8. Documentation is complete with configuration reference and examples.
+
+Status: complete
+
+Closeout note:
+
+- `docs/logs/2026-03/12-131500-release-checkpoint-v0-2-5.md` records the first
+  real production Effigy release through the built-in release path.
+- `docs/logs/2026-03/11-183500-release-workflow-cutover-hosted-validation.md`
+  records the hosted validation for `.github/workflows/release-binaries.yml`
+  using `effigy changelog extract`.
+- `docs/logs/2026-04/15-013500-release-wrapper-retirement-and-native-cutover.md`
+  records the later retirement of the legacy release compatibility wrappers.
+- The remaining release work is no longer roadmap `027` implementation work. It
+  is normal operator use of the shipped release surface once `g02.010` is fully
+  out of the way.
 
 ## Dependencies
 

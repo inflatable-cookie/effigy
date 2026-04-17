@@ -1,17 +1,15 @@
 # 115 Implement Effigy Distribution Release Closure
 
-Status: queued
-Updated: 2026-04-15
+Status: complete
+Updated: 2026-04-17
 Roadmap: `g02.007`
 Spec: `docs/specs/007-distribution-release-and-consumer-rollout-strict-lane.md`
 
 ## Objective
 
 Carry the shipped optional distribution surface through the actual Effigy
-release-closure batch now that the release-prep hardening work is complete.
-
-This card remains valid, but it is queued again because the remaining CLI
-shell and TUI/browser modularization seams are not yet judged release-ready.
+release-closure batch now that the release-prep hardening and modularization
+detours are complete.
 
 ## In Scope
 
@@ -46,5 +44,6 @@ shell and TUI/browser modularization seams are not yet judged release-ready.
 
 ## Next Task
 
-Decide whether the repo is now ready for explicit human-approved release
-execution or still needs one tighter release-prep batch.
+The repo is technically ready for explicit human-approved `v0.2.14` release
+execution, but that move is now explicitly deferred pending the
+roadmap-completion audit.

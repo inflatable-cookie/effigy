@@ -1,9 +1,6 @@
-use super::{
-    resolve_schema_payload, split_shell_like_args, validate_selection, ContractsError,
-    SelectionPayload,
-};
+use super::{resolve_schema_payload, split_shell_like_args, validate_selection, SelectionPayload};
 use serde_json::json;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[test]
 fn validate_selection_accepts_valid_payload() {

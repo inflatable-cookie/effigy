@@ -2,7 +2,7 @@
 
 Generation: `g01`
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-03-06
 Depends on: 009, 012, 014, 016
@@ -208,4 +208,6 @@ Benchmark summary:
 
 ## 12) Next Task
 
-Roadmap `g01.017` is complete. Reassess the next scan milestone and decide whether the next target should stay hygiene-focused (`generated-in-src`, `mixed-responsibility`) or move toward structural policy checks (`layering`, `dead-exports`).
+This roadmap is complete and stays closed. Use the remaining scan backlog only
+when a new explicit hygiene signal becomes important enough to warrant a fresh
+roadmap.

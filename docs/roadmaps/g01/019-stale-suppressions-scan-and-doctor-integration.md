@@ -2,7 +2,7 @@
 
 Generation: `g01`
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-03-06
 Depends on: 009, 012, 014, 017, 018

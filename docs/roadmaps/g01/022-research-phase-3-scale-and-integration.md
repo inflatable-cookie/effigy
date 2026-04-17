@@ -2,7 +2,7 @@
 
 Generation: `g01`
 
-Status: Planned
+Status: Complete
 Owner: Research
 Created: 2026-03-07
 Depends on: 021
@@ -253,9 +253,21 @@ Deliverables:
 
 ## 10) Outcome
 
-Status: planned
+Status: complete
 
-Upon completion, Effigy will have:
+The Phase 3 research tracks are complete. Since the original roadmap was
+written, parts of the outcome have already become real groundwork:
+
+- CI/release integration is now deeply reflected in the shipped release system
+- gateway and coordination groundwork now exist in `effigy-gateway`
+- cross-project and scale questions are now clearer and narrower than this
+  original research lane assumed
+
+What remains is not missing research coverage. It is promotion, carry-forward,
+and later product decisions around remote execution, IDE/editor integration,
+plugin/extensibility posture, and telemetry.
+
+Upon completion, Effigy has:
 - Research-backed remote execution strategy
 - CI/CD integration approach validated
 - IDE/editor integration path defined
@@ -263,7 +275,8 @@ Upon completion, Effigy will have:
 - Telemetry strategy grounded in prior art
 - Complete research foundation for future development
 
-Next: Transition from research to prototype validation and implementation
+Next: carry the unfinished promotion and future-facing residue into
+[`g02.018`](../g02/018-research-promotion-and-carry-forward.md).
 
 ## 11) Research Program Summary
 
@@ -275,4 +288,3 @@ Three phases covering:
 | 2 (021) | 6-10 | Developer Experience | +7 dossiers, 5 value tracks, 5 memos |
 | 3 (022) | 11-15 | Scale & Integration | +5 dossiers, 5 value tracks, 5 memos |
 | **Total** | **15** | **Comprehensive** | **20 dossiers, 15 tracks, 15 memos** |
-

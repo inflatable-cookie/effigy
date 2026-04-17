@@ -1,11 +1,9 @@
-use super::{
-    command_exists, run_preflight, run_validate_artifacts, run_validate_metadata, run_write_summary,
-};
+use super::{run_preflight, run_validate_artifacts, run_validate_metadata, run_write_summary};
 use effigy_distribution::{
-    find_log_by_pattern, EffectiveDistributionPolicy, DEFAULT_BINARY_NAME, DEFAULT_BREW_FORMULA,
-    DEFAULT_CLOSEOUT_NEXT_STEP, DEFAULT_CLOSEOUT_OWNER, DEFAULT_DOCS_TASK, DEFAULT_PACKAGE_NAME,
-    DEFAULT_REGISTRY_LABEL, DEFAULT_REPO_URL, DEFAULT_REQUIRED_DOCS, DEFAULT_REQUIRED_FILES,
-    DEFAULT_SMOKE_TASK,
+    command_exists, find_log_by_pattern, EffectiveDistributionPolicy, DEFAULT_BINARY_NAME,
+    DEFAULT_BREW_FORMULA, DEFAULT_CLOSEOUT_NEXT_STEP, DEFAULT_CLOSEOUT_OWNER, DEFAULT_DOCS_TASK,
+    DEFAULT_PACKAGE_NAME, DEFAULT_REGISTRY_LABEL, DEFAULT_REPO_URL, DEFAULT_REQUIRED_DOCS,
+    DEFAULT_REQUIRED_FILES, DEFAULT_SMOKE_TASK,
 };
 use std::fs;
 

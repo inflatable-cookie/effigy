@@ -2,7 +2,7 @@
 
 Generation: `g01`
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-03-09
 Depends on: 015
@@ -124,3 +124,18 @@ This roadmap is complete when:
 3. JSON contracts workflow is validated on a real PR.
 
 Sections 4-6 are stretch goals that can roll into a follow-up milestone.
+
+## Closeout Note (2026-04-17)
+
+This roadmap is complete for Effigy's actual release posture.
+
+The originally-open proof points are now satisfied strongly enough by real use:
+
+- tagged Homebrew installs have been in routine use for multiple versions
+- Effigy has been running in CI across multiple consumer repos for some time
+- the release/install path is no longer hypothetical and has moved into normal
+  operation rather than one-off validation
+
+The remaining release-system work now belongs in roadmap `027`, where the
+built-in release orchestration itself still needs its final live-release
+closeout.

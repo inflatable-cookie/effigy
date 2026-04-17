@@ -461,9 +461,9 @@ the retirement decision reviewable and reversible, not to rely on memory.
 
 Current operating stance:
 - prefer built-in release commands for operator-driven runs
-- keep legacy shell wrappers available as backup channels
-- do not present wrapper retirement as completed work until maintainers
-  explicitly remove those paths
+- legacy release compatibility wrappers are retired in this repo
+- do not reintroduce wrapper-first guidance unless a new external contract
+  genuinely requires it
 
 ## 9) Setup Action
 

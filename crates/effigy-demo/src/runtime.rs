@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 
 use crate::DemoStateError;
+use effigy_manifest::ManifestTask;
 
 pub const DEMO_MANAGED_EVENT_POLL_INTERVAL_MS: u64 = 100;
 pub const DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT: usize = 3;
@@ -458,6 +459,13 @@ pub fn concurrent_runner_supports_browser_live_attach(process_names: &[String]) 
     concurrent_runner_input_target_process(process_names).is_some()
 }
 
+/// Classifier: does this manifest task resolve to a concurrent-runner backed
+/// demo runtime (mode = "tui" with concurrent or profile entries)?
+pub fn task_is_concurrent_runner_backed(task: &ManifestTask) -> bool {
+    task.mode.as_deref() == Some("tui")
+        && (!task.concurrent.is_empty() || !task.profiles.is_empty())
+}
+
 pub fn concurrent_runner_runtime_backend(managed_process_names: Vec<String>) -> DemoRuntimeBackend {
     let process_count = managed_process_names.len();
     let mut capabilities = vec![
@@ -885,4 +893,40 @@ pub fn runtime_backend_label(kind: &str) -> &'static str {
         "none" => "none",
         _ => "custom-runtime",
     }
+}
+
+/// Number of recent output lines surfaced in the active terminal session
+/// projection. Used by both the runner and the demo browser.
+pub const DEMO_ACTIVE_TERMINAL_RECENT_LINES: usize = 8;
+
+/// Load an active terminal session projection for the given active attempt,
+/// reading at most [`DEMO_ACTIVE_TERMINAL_RECENT_LINES`] recent lines from the
+/// stdout and stderr logs referenced by the attempt.
+pub fn load_active_terminal_session(
+    repo_root: &Path,
+    active_attempt: &DemoActiveAttempt,
+) -> DemoActiveTerminalSession {
+    let stdout_lines = active_attempt
+        .stdout_log_path
+        .as_deref()
+        .map(|path| {
+            crate::active::read_recent_output_lines(
+                repo_root,
+                path,
+                DEMO_ACTIVE_TERMINAL_RECENT_LINES,
+            )
+        })
+        .unwrap_or_default();
+    let stderr_lines = active_attempt
+        .stderr_log_path
+        .as_deref()
+        .map(|path| {
+            crate::active::read_recent_output_lines(
+                repo_root,
+                path,
+                DEMO_ACTIVE_TERMINAL_RECENT_LINES,
+            )
+        })
+        .unwrap_or_default();
+    DemoActiveTerminalSession::from_active_attempt(active_attempt, stdout_lines, stderr_lines)
 }

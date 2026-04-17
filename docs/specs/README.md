@@ -15,12 +15,16 @@ lane needs tighter execution grammar than the roadmap alone provides.
 ## Active Spec Set
 
 - [`010-effigy-modularization-and-crate-boundaries-strict-lane.md`](./010-effigy-modularization-and-crate-boundaries-strict-lane.md)
-- [`007-distribution-release-and-consumer-rollout-strict-lane.md`](./007-distribution-release-and-consumer-rollout-strict-lane.md) (queued)
+- [`007-distribution-release-and-consumer-rollout-strict-lane.md`](./007-distribution-release-and-consumer-rollout-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 ## Next Task
 
-The `g02.010` strict modularization lane is paused. Resume the queued release
-card
-[`batch-cards/115-implement-effigy-distribution-release-closure.md`](./batch-cards/115-implement-effigy-distribution-release-closure.md)
-when release closure is intended.
+The release-closure batch is complete.
+
+No ready implementation card remains.
+
+The next move is an intent choice:
+
+1. explicitly approve `v0.2.14` release execution from `115`
+2. or activate the next product roadmap card on the stable crate boundary

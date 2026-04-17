@@ -2,7 +2,13 @@ pub mod colima;
 pub mod compose;
 pub mod exec;
 pub mod health;
+pub mod report;
 pub mod session;
+
+pub use report::{
+    down_report, logs_report, reset_report, status_report, up_detached_report,
+    ContainerCommandReport,
+};
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -266,7 +272,7 @@ fn path_relative_to_repo(repo_root: &Path, path: &Path) -> String {
         .to_string()
 }
 
-fn driver_label(driver: ManifestContainerDriver) -> &'static str {
+pub fn driver_label(driver: ManifestContainerDriver) -> &'static str {
     match driver {
         ManifestContainerDriver::Colima => "colima",
     }

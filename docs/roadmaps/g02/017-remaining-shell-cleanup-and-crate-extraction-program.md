@@ -2,9 +2,10 @@
 
 Generation: `g02`
 
-Status: Planned
+Status: Closed
 Owner: Platform
 Created: 2026-04-16
+Closed: 2026-04-17
 Depends on: 010
 
 ## Vision Alignment
@@ -299,5 +300,29 @@ This roadmap is complete when the remaining heavy `/src` seams are either:
 
 ## Next Task
 
-Use this roadmap as the canonical queue for substantial parallel shell-cleanup
-work while `g02.010` remains the active strict lane.
+This roadmap is **Closed** as of 2026-04-17. All eight queued jobs were
+landed or confirmed already-done in prior streams:
+
+- Job 1 (Demo runner shell cleanup) — landed in 2 batches; remaining runner
+  weight is honest process / renderer shell.
+- Job 2 (Docs runner shell cleanup) — landed; docs-policy now owns all
+  command-result payload and text shaping via a unified `DocsCheckReport`.
+- Job 3 (CLI help extraction) — landed; `src/cli_help/**` removed, help
+  surface and CLI header now owned by `effigy-cli::{help::ui, header}`.
+- Job 4 (Process runtime extraction) — already complete on main; owned by
+  `effigy-process` and `effigy-exec`.
+- Job 5 (Contracts surface extraction) — landed; `CheckReport::render_text`
+  and `SelectionPayload::render_for_print_mode` now own the runner-facing
+  text and print-mode formatting.
+- Job 6 (UI / widget primitives) — already complete on main; owned by
+  `effigy-ui` and `effigy-core::widgets`.
+- Job 7 (Bootstrap follow-up) — reassessment showed
+  `src/runner/bootstrap_command.rs` is already an honest 89-line adapter.
+- Job 8 (Post-subsystem runner adapter cleanup) — landed; canonical
+  `From<DomainError> for RunnerError` impls now replace ~50 inline
+  `.map_err(...)` adapters across demo / container / distribution runners.
+
+The remaining heavy `/src` seam is `src/runner/release_command.rs`, which
+stays inside the `g02.010` strict lane's coordination boundary. Further
+modularization of the release runner should be driven from `g02.010`
+rather than reopened here.
