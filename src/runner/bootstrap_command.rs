@@ -1,12 +1,16 @@
-use std::path::{Component, Path, PathBuf};
-use std::process::Command as ProcessCommand;
+use std::path::{Path, PathBuf};
 
+use effigy_bootstrap::{
+    derive_repo_name, execute_bootstrap_request as crate_execute_bootstrap,
+    normalize_bootstrap_repo_url, resolve_bootstrap_request as crate_resolve_bootstrap,
+    submodule_policy_label, BootstrapChildResult, BootstrapError, BootstrapExecutionResult,
+    BootstrapResolution,
+};
 use serde_json::json;
 
 use crate::runner::command_context::current_working_dir;
 use crate::runner::execute::run_manifest_task_with_cwd;
 use crate::runner::manifest::{load_task_manifest, ManifestBootstrapSubmodulesPolicy};
-use crate::runner::model::constants::TASK_MANIFEST_FILE;
 use crate::{BootstrapArgs, TaskInvocation};
 
 use super::error::RunnerError;
@@ -25,168 +29,36 @@ fn run_bootstrap_with_cwd(args: BootstrapArgs, cwd: PathBuf) -> Result<String, R
     render_bootstrap_result(&result, args.output_json)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BootstrapResolution {
-    repo_url: String,
-    repo_name: String,
-    destination: PathBuf,
-    destination_source: &'static str,
-    branch: Option<String>,
-    start_requested: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BootstrapExecutionResult {
-    request: BootstrapResolution,
-    root_repo_state: &'static str,
-    manifest_path: PathBuf,
-    manifest_found: bool,
-    bootstrap_contract_found: bool,
-    submodules_policy: ManifestBootstrapSubmodulesPolicy,
-    submodules_applied: bool,
-    root_setup: Vec<String>,
-    child_results: Vec<BootstrapChildResult>,
-    start_task: Option<String>,
-    start_ran: bool,
-    warnings: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BootstrapChildResult {
-    path: String,
-    repo: String,
-    destination: PathBuf,
-    branch: Option<String>,
-    required: bool,
-    repo_state: &'static str,
-    setup: Vec<String>,
-    warning: Option<String>,
-}
-
 fn resolve_bootstrap_request(
     cwd: &Path,
     args: &BootstrapArgs,
 ) -> Result<BootstrapResolution, RunnerError> {
-    let repo_name = derive_repo_name(&args.repo_url)
-        .ok_or_else(|| RunnerError::task_invocation("could not derive repo name from git URL"))?;
-    let (destination, destination_source) = match args.path.as_ref() {
-        Some(path) if path.is_absolute() => (path.clone(), "explicit-path"),
-        Some(path) => (cwd.join(path), "explicit-path"),
-        None => (cwd.join(&repo_name), "cwd-default"),
-    };
-
-    Ok(BootstrapResolution {
-        repo_url: args.repo_url.clone(),
-        repo_name,
-        destination,
-        destination_source,
-        branch: args.branch.clone(),
-        start_requested: args.start,
-    })
+    crate_resolve_bootstrap(
+        cwd,
+        &args.repo_url,
+        args.path.as_deref(),
+        args.branch.as_deref(),
+        args.start,
+    )
+    .map_err(map_bootstrap_error)
 }
 
 fn execute_bootstrap_request(
     request: &BootstrapResolution,
 ) -> Result<BootstrapExecutionResult, RunnerError> {
-    let root_repo_state = sync_repo_checkout(
-        &request.repo_url,
-        &request.destination,
-        request.branch.as_deref(),
-    )?;
-    let manifest_path = request.destination.join(TASK_MANIFEST_FILE);
-    let manifest = if manifest_path.is_file() {
-        Some(load_task_manifest(&manifest_path)?)
-    } else {
-        None
-    };
-    let bootstrap = manifest
-        .as_ref()
-        .and_then(|manifest| manifest.bootstrap.as_ref())
-        .cloned()
-        .unwrap_or_default();
-    let manifest_found = manifest.is_some();
-    let bootstrap_contract_found = manifest
-        .as_ref()
-        .map(|manifest| manifest.bootstrap.is_some())
-        .unwrap_or(false);
-    let submodules_policy = bootstrap
-        .submodules
-        .unwrap_or(ManifestBootstrapSubmodulesPolicy::None);
-    let submodules_applied = apply_submodule_policy(&request.destination, submodules_policy)?;
-
-    let mut warnings = Vec::new();
-    let mut child_results = Vec::new();
-    for child in &bootstrap.children {
-        let child_destination = resolve_child_destination(&request.destination, &child.path)?;
-        match sync_repo_checkout(&child.repo, &child_destination, child.branch.as_deref()) {
-            Ok(repo_state) => {
-                let setup = run_bootstrap_tasks(
-                    &child_destination,
-                    &child.setup,
-                    &format!("bootstrap child `{}` setup", child.path),
-                )?;
-                child_results.push(BootstrapChildResult {
-                    path: child.path.clone(),
-                    repo: child.repo.clone(),
-                    destination: child_destination,
-                    branch: child.branch.clone(),
-                    required: child.required,
-                    repo_state,
-                    setup,
-                    warning: None,
-                });
-            }
-            Err(err) if !child.required => {
-                let warning = format!("optional child `{}` failed: {}", child.path, err);
-                warnings.push(warning.clone());
-                child_results.push(BootstrapChildResult {
-                    path: child.path.clone(),
-                    repo: child.repo.clone(),
-                    destination: child_destination,
-                    branch: child.branch.clone(),
-                    required: false,
-                    repo_state: "failed",
-                    setup: Vec::new(),
-                    warning: Some(warning),
-                });
-            }
-            Err(err) => {
-                return Err(RunnerError::task_invocation(format!(
-                    "bootstrap child `{}` failed: {}",
-                    child.path, err
-                )));
-            }
-        }
-    }
-
-    let root_setup = run_bootstrap_tasks(&request.destination, &bootstrap.setup, "bootstrap root")?;
-
-    let mut start_ran = false;
-    let start_task = bootstrap.start.clone();
-    if request.start_requested {
-        let start_selector = start_task.as_ref().ok_or_else(|| {
-            RunnerError::task_invocation(
-                "bootstrap start was requested but `[bootstrap].start` is not configured",
-            )
-        })?;
-        run_bootstrap_task(&request.destination, start_selector, "bootstrap start")?;
-        start_ran = true;
-    }
-
-    Ok(BootstrapExecutionResult {
-        request: request.clone(),
-        root_repo_state,
-        manifest_path,
-        manifest_found,
-        bootstrap_contract_found,
-        submodules_policy,
-        submodules_applied,
-        root_setup,
-        child_results,
-        start_task,
-        start_ran,
-        warnings,
-    })
+    crate_execute_bootstrap(
+        request,
+        |manifest_path| {
+            let manifest = load_task_manifest(manifest_path)
+                .map_err(|e| BootstrapError::task_invocation(e.to_string()))?;
+            Ok(manifest.bootstrap)
+        },
+        |repo_root, selector, phase| {
+            run_bootstrap_task(repo_root, selector, phase)
+                .map_err(|e| BootstrapError::task_invocation(e.to_string()))
+        },
+    )
+    .map_err(map_bootstrap_error)
 }
 
 fn render_bootstrap_plan(
@@ -366,19 +238,6 @@ fn render_bootstrap_result(
     Ok(lines.join("\n"))
 }
 
-fn run_bootstrap_tasks(
-    repo_root: &Path,
-    selectors: &[String],
-    phase: &str,
-) -> Result<Vec<String>, RunnerError> {
-    let mut ran = Vec::new();
-    for selector in selectors {
-        run_bootstrap_task(repo_root, selector, phase)?;
-        ran.push(selector.clone());
-    }
-    Ok(ran)
-}
-
 fn run_bootstrap_task(repo_root: &Path, selector: &str, phase: &str) -> Result<(), RunnerError> {
     run_manifest_task_with_cwd(
         &TaskInvocation {
@@ -391,207 +250,15 @@ fn run_bootstrap_task(repo_root: &Path, selector: &str, phase: &str) -> Result<(
     .map_err(|err| RunnerError::task_invocation(format!("{phase} task `{selector}` failed: {err}")))
 }
 
-fn resolve_child_destination(root: &Path, child_path: &str) -> Result<PathBuf, RunnerError> {
-    let path = Path::new(child_path);
-    if path.is_absolute() {
-        return Err(RunnerError::task_invocation(
-            "bootstrap child paths must be relative to the root repo",
-        ));
-    }
-
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::Normal(segment) => normalized.push(segment),
-            _ => {
-                return Err(RunnerError::task_invocation(
-                    "bootstrap child paths cannot include parent traversal or prefixes",
-                ));
-            }
+fn map_bootstrap_error(error: BootstrapError) -> RunnerError {
+    match error {
+        BootstrapError::TaskInvocation(message) => RunnerError::task_invocation(message),
+        BootstrapError::Read { path, error } => {
+            RunnerError::task_invocation_failed_read(&path, error)
         }
-    }
-
-    if normalized.as_os_str().is_empty() {
-        return Err(RunnerError::task_invocation(
-            "bootstrap child paths cannot be empty",
-        ));
-    }
-
-    Ok(root.join(normalized))
-}
-
-fn apply_submodule_policy(
-    repo_root: &Path,
-    policy: ManifestBootstrapSubmodulesPolicy,
-) -> Result<bool, RunnerError> {
-    match policy {
-        ManifestBootstrapSubmodulesPolicy::None => Ok(false),
-        ManifestBootstrapSubmodulesPolicy::Init => {
-            run_git(repo_root, &["submodule", "update", "--init"])?;
-            Ok(true)
+        BootstrapError::Write { path, error } => {
+            RunnerError::task_invocation_failed_write(&path, error)
         }
-        ManifestBootstrapSubmodulesPolicy::Recursive => {
-            run_git(repo_root, &["submodule", "update", "--init", "--recursive"])?;
-            Ok(true)
-        }
-    }
-}
-
-fn sync_repo_checkout(
-    repo_url: &str,
-    destination: &Path,
-    branch: Option<&str>,
-) -> Result<&'static str, RunnerError> {
-    if !destination.exists() {
-        if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|err| RunnerError::task_invocation_failed_write(parent, err))?;
-        }
-        let mut args = vec!["clone".to_owned()];
-        if let Some(branch) = branch {
-            args.push("--branch".to_owned());
-            args.push(branch.to_owned());
-        }
-        args.push(repo_url.to_owned());
-        args.push(destination.display().to_string());
-        run_git_inherit(None, &args)?;
-        return Ok("cloned");
-    }
-
-    if !destination.is_dir() {
-        return Err(RunnerError::task_invocation(format!(
-            "bootstrap destination exists but is not a directory: {}",
-            destination.display()
-        )));
-    }
-    if !destination.join(".git").exists() {
-        return Err(RunnerError::task_invocation(format!(
-            "bootstrap destination exists but is not a git checkout: {}",
-            destination.display()
-        )));
-    }
-
-    let actual_remote = git_stdout(destination, &["remote", "get-url", "origin"])?;
-    if normalize_bootstrap_repo_url(&actual_remote) != normalize_bootstrap_repo_url(repo_url) {
-        return Err(RunnerError::task_invocation(format!(
-            "bootstrap destination remote mismatch: expected `{}`, found `{}`",
-            repo_url, actual_remote
-        )));
-    }
-    if repo_has_uncommitted_changes(destination)? {
-        return Err(RunnerError::task_invocation(format!(
-            "bootstrap destination has uncommitted changes: {}",
-            destination.display()
-        )));
-    }
-
-    run_git(destination, &["fetch", "origin"])?;
-    if let Some(branch) = branch {
-        run_git(destination, &["checkout", branch])?;
-        run_git(destination, &["pull", "--ff-only", "origin", branch])?;
-    } else {
-        run_git(destination, &["pull", "--ff-only"])?;
-    }
-    Ok("updated")
-}
-
-fn repo_has_uncommitted_changes(repo_root: &Path) -> Result<bool, RunnerError> {
-    let output = git_stdout(repo_root, &["status", "--porcelain"])?;
-    Ok(!output.trim().is_empty())
-}
-
-fn git_stdout(repo_root: &Path, args: &[&str]) -> Result<String, RunnerError> {
-    let output = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(args)
-        .output()
-        .map_err(|err| RunnerError::task_invocation(format!("failed to run git: {err}")))?;
-    if !output.status.success() {
-        return Err(RunnerError::task_invocation(format!(
-            "git {} failed in {}: {}",
-            args.join(" "),
-            repo_root.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-}
-
-fn run_git(repo_root: &Path, args: &[&str]) -> Result<(), RunnerError> {
-    let owned = args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
-    run_git_inherit(Some(repo_root), &owned)
-}
-
-fn run_git_inherit(repo_root: Option<&Path>, args: &[String]) -> Result<(), RunnerError> {
-    let mut command = ProcessCommand::new("git");
-    if let Some(repo_root) = repo_root {
-        command.arg("-C").arg(repo_root);
-    }
-    command.args(args);
-    let output = command
-        .output()
-        .map_err(|err| RunnerError::task_invocation(format!("failed to run git: {err}")))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(RunnerError::task_invocation(format!(
-        "git {} failed: {}",
-        args.join(" "),
-        String::from_utf8_lossy(&output.stderr).trim()
-    )))
-}
-
-fn derive_repo_name(repo_url: &str) -> Option<String> {
-    let trimmed = repo_url.trim().trim_end_matches('/');
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let tail = trimmed
-        .rsplit('/')
-        .next()
-        .or_else(|| trimmed.rsplit(':').next())
-        .unwrap_or(trimmed);
-    let stripped = tail.strip_suffix(".git").unwrap_or(tail).trim();
-    if stripped.is_empty() {
-        None
-    } else {
-        Some(stripped.to_owned())
-    }
-}
-
-fn normalize_bootstrap_repo_url(repo_url: &str) -> String {
-    let trimmed = repo_url.trim();
-    if trimmed.is_empty()
-        || trimmed.contains("://")
-        || trimmed.starts_with('/')
-        || trimmed.starts_with("./")
-        || trimmed.starts_with("../")
-        || trimmed.starts_with("~/")
-    {
-        return trimmed.to_owned();
-    }
-
-    if let Some((host_part, path_part)) = trimmed.split_once(':') {
-        if !path_part.is_empty()
-            && path_part.contains('/')
-            && !path_part.starts_with('/')
-            && (host_part.contains('@') || host_part.contains('.'))
-        {
-            return format!("ssh://{host_part}/{}", path_part.trim_start_matches('/'));
-        }
-    }
-
-    trimmed.to_owned()
-}
-
-fn submodule_policy_label(policy: ManifestBootstrapSubmodulesPolicy) -> &'static str {
-    match policy {
-        ManifestBootstrapSubmodulesPolicy::None => "none",
-        ManifestBootstrapSubmodulesPolicy::Init => "init",
-        ManifestBootstrapSubmodulesPolicy::Recursive => "recursive",
     }
 }
 
