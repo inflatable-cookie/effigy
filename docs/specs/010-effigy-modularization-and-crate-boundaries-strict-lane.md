@@ -1006,11 +1006,27 @@ That post-`212` boundary decision is now made too:
   `git diff --check` clean. No behavioral change — types and fields
   identical apart from visibility promotion (`pub(in crate::runner)`
   → `pub`, which is the whole point of the relocate).
+- `244` attempted `240` (managed extraction) and reverted after a
+  function-level grep surfaced ~500 lines of runner-local utility
+  dependencies the decide-card (`238`) grep sweep had missed:
+  `catalog::select_catalog_and_task` (routing core),
+  `env_schema_support::resolve_catalog_env_schema`,
+  `util::parse_task_reference_invocation`, `util::shell_quote`,
+  `util::parse_dotenv_entries`, `util::render_passthrough_args`, and
+  `model::constants::BUILTIN_TASKS`. Folding these into `240` would
+  have crossed the bounded-batch envelope and dragged routing-core
+  work out of order. The in-flight attempt was stashed and dropped;
+  the working tree returned to `eaf6eac0` cleanly. `238` gained a
+  post-mortem addendum recording the coupling surprise, and a new
+  prerequisite card `241` was opened covering the utility relocates
+  (shell → `effigy-core`, dotenv + env-schema → `effigy-env`,
+  reference parsing → `effigy-tasks`) plus the callback inversion
+  for `select_catalog_and_task`. `240` is now `queued` behind `241`.
 
 ## Next Task
 
 Execute
-[`240-implement-effigy-managed-extraction.md`](../specs/batch-cards/240-implement-effigy-managed-extraction.md)
-to move `src/runner/managed/**` and `runner::model::managed` into a
-new `effigy-managed` crate now that `LoadedCatalog` lives in a
-neutral home.
+[`241-implement-runner-util-prerequisites-for-managed-extraction.md`](../specs/batch-cards/241-implement-runner-util-prerequisites-for-managed-extraction.md)
+to relocate the runner-local utilities into shared crates and invert
+the routing-core dependency via a callback, clearing the path for
+`240`.

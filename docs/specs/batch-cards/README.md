@@ -216,13 +216,16 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`237-decide-post-subsystem-runner-adapter-cleanup-survey.md`](./237-decide-post-subsystem-runner-adapter-cleanup-survey.md) (complete)
 - [`238-decide-effigy-managed-extraction-shape.md`](./238-decide-effigy-managed-extraction-shape.md) (complete)
 - [`239-implement-effigy-manifest-loaded-catalog-relocate.md`](./239-implement-effigy-manifest-loaded-catalog-relocate.md) (complete)
-- [`240-implement-effigy-managed-extraction.md`](./240-implement-effigy-managed-extraction.md) (ready)
+- [`240-implement-effigy-managed-extraction.md`](./240-implement-effigy-managed-extraction.md) (queued, blocked on `241`)
+- [`241-implement-runner-util-prerequisites-for-managed-extraction.md`](./241-implement-runner-util-prerequisites-for-managed-extraction.md) (ready)
 
 ## Active Ready Card
 
-[`240-implement-effigy-managed-extraction.md`](./240-implement-effigy-managed-extraction.md) —
-move `src/runner/managed/**` (~4.1k lines) and `runner::model::managed`
-into a new `effigy-managed` crate with a managed-local `ManagedError`.
+[`241-implement-runner-util-prerequisites-for-managed-extraction.md`](./241-implement-runner-util-prerequisites-for-managed-extraction.md) —
+move the runner-local utilities (shell, dotenv, env-schema support,
+reference parsing) into shared crates and invert the
+`select_catalog_and_task` dependency via a callback, so card `240`
+can extract managed cleanly.
 
 ## Recent Boundary Decision
 
