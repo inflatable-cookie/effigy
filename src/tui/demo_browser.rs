@@ -13,7 +13,7 @@ use effigy_tui::demo_browser::{init_browser_terminal, restore_browser_terminal, 
 use serde_json::Value as JsonValue;
 
 use crate::runner::{run_command, RunnerError};
-use crate::{Command, DemoArgs, DemoListGroupBy};
+use effigy_cli::{Command, DemoArgs, DemoListGroupBy};
 
 pub fn run_demo_browser_tui(
     repo_root: PathBuf,

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::pipeline::run_execution_pipeline;
 use super::preflight::build_execution_preflight;

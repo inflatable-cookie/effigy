@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::resolver::{resolve_target_root, ResolvedTarget};
+use effigy_core::resolver::{resolve_target_root, ResolvedTarget};
 
 use super::super::super::report::{DoctorState, ManifestSnapshot};
 use super::super::super::{finding_templates::WorkflowFinding, manifest};

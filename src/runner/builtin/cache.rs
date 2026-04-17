@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 #[path = "cache/dispatch.rs"]
 mod dispatch;

@@ -1,7 +1,7 @@
 use serde_json::json;
 
-use crate::resolver::ResolvedTarget;
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
+use effigy_core::resolver::ResolvedTarget;
 
 #[derive(Debug, Clone)]
 pub(super) struct SelectionOutcome {

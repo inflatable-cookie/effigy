@@ -3,7 +3,7 @@ mod fallback;
 #[path = "selection/result.rs"]
 mod result;
 
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::super::catalog::select_catalog_and_task;
 use super::preflight::ExecutionPreflight;

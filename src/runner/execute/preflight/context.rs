@@ -3,11 +3,11 @@ mod discovery;
 
 use std::path::PathBuf;
 
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::runtime::prepare_execution_runtime_args;
-use crate::resolver::ResolvedTarget;
 use crate::runner::error::RunnerError;
+use effigy_core::resolver::ResolvedTarget;
 use effigy_manifest::LoadedCatalog;
 use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 

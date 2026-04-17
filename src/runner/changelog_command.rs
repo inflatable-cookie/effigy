@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 
-use crate::changelog;
-use crate::{ChangelogArgs, ChangelogSubcommand};
+use effigy_changelog as changelog;
+use effigy_cli::{ChangelogArgs, ChangelogSubcommand};
 
 use super::error::RunnerError;
 

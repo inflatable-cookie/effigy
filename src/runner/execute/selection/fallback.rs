@@ -3,7 +3,7 @@ mod builtin;
 #[path = "fallback/deferred.rs"]
 mod deferred;
 
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::super::preflight::ExecutionPreflight;
 use super::super::selection::result;

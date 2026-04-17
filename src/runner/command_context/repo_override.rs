@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::Command;
+use effigy_cli::Command;
 
 pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf> {
     match cmd {

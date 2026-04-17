@@ -7,7 +7,7 @@ use effigy_contracts::{
 };
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
-use crate::{ContractsArgs, ContractsSelectionPrintMode, ContractsSubcommand};
+use effigy_cli::{ContractsArgs, ContractsSelectionPrintMode, ContractsSubcommand};
 
 use super::error::RunnerError;
 
@@ -70,7 +70,7 @@ fn run_validate_selection(
 fn run_check_json(
     repo_root: &Path,
     index_override: Option<&PathBuf>,
-    mode: crate::ContractsCheckMode,
+    mode: effigy_cli::ContractsCheckMode,
     changed_only_base: Option<&str>,
     print_selected: ContractsSelectionPrintMode,
     output_json: bool,

@@ -1,7 +1,8 @@
 use crate::{
     emit_json_envelope_error, emit_json_envelope_success, parse_json_or_string, render_cli_header,
-    CliExecutionContext, Command,
+    CliExecutionContext,
 };
+use effigy_cli::Command;
 use effigy_core::widgets::MessageBlock;
 use effigy_ui::{PlainRenderer, Renderer};
 

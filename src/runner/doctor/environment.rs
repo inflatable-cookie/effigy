@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::fs_probe::PathPresenceCache;
-use crate::path_probe::command_available_in_path;
+use effigy_core::fs_probe::PathPresenceCache;
+use effigy_core::path_probe::command_available_in_path;
 
 use super::super::manifest::config_sections::ManifestJsPackageManager;
 use super::super::tooling::{js_package_manager_binary, required_tools_for_command};

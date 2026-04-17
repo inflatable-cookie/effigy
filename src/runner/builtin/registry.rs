@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::{
     cache, completion, config, doctor, help, init, migrate, scan, tasks, test, unlock, watch,

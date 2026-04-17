@@ -72,7 +72,7 @@ use crate::runner::manifest::{
 use crate::runner::util::parse_task_selector;
 use crate::runner::util::with_local_node_bin_path;
 use crate::tui::run_demo_browser_tui;
-use crate::{
+use effigy_cli::{
     DemoArgs, DemoHistoryOutcome, DemoListGroupBy, DemoListQuery, DemoSubcommand, TaskInvocation,
 };
 use effigy_core::widgets::{KeyValue, NoticeLevel};

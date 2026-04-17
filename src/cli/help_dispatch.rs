@@ -1,7 +1,8 @@
 use crate::{
-    emit_json_envelope_success_value, help_topic_label, render_cli_header,
-    render_help_with_deferred_builtins, CliExecutionContext, HelpTopic,
+    emit_json_envelope_success_value, help_topic_label, render_cli_header, CliExecutionContext,
 };
+use effigy_cli::help::ui::render_help_with_deferred_builtins;
+use effigy_cli::HelpTopic;
 use effigy_ui::{PlainRenderer, Renderer};
 use serde_json::json;
 

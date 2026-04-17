@@ -1,4 +1,4 @@
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::command_spec::run_builtin_command;
 use crate::runner::error::RunnerError;

@@ -5,7 +5,7 @@ mod managed;
 #[path = "pipeline/standard.rs"]
 mod standard;
 
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::preflight::ExecutionPreflight;
 use super::selection::{resolve_task_selection, SelectionResolution};

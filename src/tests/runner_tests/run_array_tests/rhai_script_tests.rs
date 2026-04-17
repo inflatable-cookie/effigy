@@ -3,7 +3,7 @@ use super::prelude::{
 };
 use crate::contract_test_support::{lock_test, EnvGuard};
 use crate::runner::tests::prelude::execution::run_manifest_task_with_cwd;
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 

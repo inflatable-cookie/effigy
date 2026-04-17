@@ -1,4 +1,4 @@
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::request::{parse_completion_parsed_request, CompletionParsedRequest};
 use crate::runner::error::RunnerError;

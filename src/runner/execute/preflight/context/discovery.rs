@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::resolver::ResolvedTarget;
+use effigy_core::resolver::ResolvedTarget;
 
 use crate::runner::catalog::discover_catalogs_allow_missing;
 use crate::runner::command_context::{canonicalize_or_original, resolve_repo_root};

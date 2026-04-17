@@ -888,13 +888,13 @@ fn run_backed_interactive_demo_prefers_live_browser_terminal() {
 
     assert!(detail_prefers_live_browser_terminal(
         &detail,
-        &crate::DemoSubcommand::Run {
+        &effigy_cli::DemoSubcommand::Run {
             demo_id: detail.id.clone()
         }
     ));
     assert!(detail_prefers_live_browser_terminal(
         &detail,
-        &crate::DemoSubcommand::Rerun {
+        &effigy_cli::DemoSubcommand::Rerun {
             demo_id: detail.id.clone()
         }
     ));
@@ -915,7 +915,7 @@ fn concurrent_runner_single_process_demo_prefers_live_browser_terminal() {
 
     assert!(detail_prefers_live_browser_terminal(
         &detail,
-        &crate::DemoSubcommand::Run {
+        &effigy_cli::DemoSubcommand::Run {
             demo_id: detail.id.clone()
         }
     ));
@@ -935,7 +935,7 @@ fn concurrent_runner_without_live_attach_capability_does_not_prefer_live_browser
 
     assert!(!detail_prefers_live_browser_terminal(
         &detail,
-        &crate::DemoSubcommand::Run {
+        &effigy_cli::DemoSubcommand::Run {
             demo_id: detail.id.clone()
         }
     ));

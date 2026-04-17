@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::path_error_text::{
+use effigy_core::path_error_text::{
     failed_to_parse_toml_syntax_in_path, failed_to_read_path, strict_manifest_parse_failed_in_path,
 };
 

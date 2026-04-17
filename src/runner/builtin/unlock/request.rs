@@ -1,4 +1,4 @@
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::super::super::locking::model::LockScope;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::super::locking::io::{unlock_all, unlock_scopes};
 use super::command_spec::run_builtin_command;

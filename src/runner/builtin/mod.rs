@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use super::catalog::resolve_catalog_by_prefix;
 use crate::runner::error::RunnerError;
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 use effigy_manifest::LoadedCatalog;
 use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 

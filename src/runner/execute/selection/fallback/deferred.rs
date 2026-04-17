@@ -1,4 +1,4 @@
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::super::super::super::deferral::{
     run_deferred_request, select_deferral, should_attempt_deferral,

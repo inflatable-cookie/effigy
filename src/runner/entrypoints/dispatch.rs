@@ -1,4 +1,4 @@
-use crate::Command;
+use effigy_cli::Command;
 
 use super::super::bootstrap_command::run_bootstrap;
 use super::super::changelog_command::run_changelog;

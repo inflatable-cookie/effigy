@@ -4,7 +4,7 @@ use std::path::Path;
 use serde_json::json;
 
 use crate::runner::builtin::test::planning::BuiltinTestTarget;
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::super::super::super::response::schema_payload_versioned;
 use super::plan_projection::project_target_plan;

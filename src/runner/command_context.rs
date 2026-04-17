@@ -7,7 +7,7 @@ mod root;
 #[path = "command_context/tasks.rs"]
 mod tasks;
 
-use crate::Command;
+use effigy_cli::Command;
 
 use super::util::parse_task_runtime_args;
 

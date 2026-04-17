@@ -2,7 +2,7 @@ use super::{
     load_release_config, parse_prepare_mutation_inspection_request, remediation_hints_for_blockers,
     resolve_verify_install_repo_url, validate_prepare_version_override, ReleaseBlockedStage,
 };
-use crate::resolver::ResolvedTarget;
+use effigy_core::resolver::ResolvedTarget;
 use effigy_release::normalize_verify_install_repo_url;
 use effigy_release::{
     build_diff_preview, detect_pyproject_version_path, detect_version_file_kind,
@@ -189,7 +189,7 @@ fn replace_json_string_at_path_preserves_layout_for_nested_version_keys() {
 
 #[test]
 fn render_prepared_changelog_moves_unreleased_entries_into_new_release() {
-    let parsed = crate::changelog::parse(
+    let parsed = effigy_changelog::parse(
         "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Fix release output\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior fix\n",
     )
     .expect("parse changelog");
@@ -207,7 +207,7 @@ fn render_prepared_changelog_moves_unreleased_entries_into_new_release() {
 
 #[test]
 fn suggested_bump_respects_pre_1_0_breaking_policy() {
-    let changelog = crate::changelog::parse(
+    let changelog = effigy_changelog::parse(
         "# Changelog\n\n## [Unreleased]\n\n### Breaking\n- Break\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior fix\n",
     )
     .expect("parse changelog");
@@ -224,7 +224,7 @@ fn suggested_bump_respects_pre_1_0_breaking_policy() {
 
 #[test]
 fn validate_prepare_version_override_rejects_non_incrementing_versions() {
-    let changelog = crate::changelog::parse(
+    let changelog = effigy_changelog::parse(
         "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Fix release output\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior fix\n",
     )
     .expect("parse changelog");

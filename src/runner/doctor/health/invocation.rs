@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::super::super::execute::run_manifest_task_with_cwd;
 use crate::runner::error::RunnerError;

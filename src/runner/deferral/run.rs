@@ -6,7 +6,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::super::model::constants::DEFER_DEPTH_ENV;
 use super::super::util::{shell_quote, with_local_node_bin_path};

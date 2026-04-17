@@ -1,7 +1,7 @@
 use super::super::test_support::execution::run_manifest_task_with_cwd;
 use crate::contract_test_support::{temp_workspace, write_manifest, EnvGuard};
 use crate::runner::error::RunnerError;
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 use std::fs;
 use std::path::{Path, PathBuf};
 

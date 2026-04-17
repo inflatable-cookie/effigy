@@ -1,4 +1,4 @@
-use crate::TasksArgs;
+use effigy_cli::TasksArgs;
 
 #[derive(Clone, Copy)]
 pub(super) enum ListingSelection<'a> {

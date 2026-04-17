@@ -1,7 +1,9 @@
 use crate::{
-    apply_global_json_flag, command_kind_and_name, command_requests_json, emit_json_envelope_error,
-    parse_command, parse_error_json_details, render_parse_error, run_and_render_command,
-    run_help_command, strip_global_json_flags, CliExecutionContext, Command,
+    command_kind_and_name, emit_json_envelope_error, parse_error_json_details, render_parse_error,
+    run_and_render_command, run_help_command, CliExecutionContext,
+};
+use effigy_cli::{
+    apply_global_json_flag, command_requests_json, parse_command, strip_global_json_flags, Command,
 };
 use effigy_ui::{OutputMode, PlainRenderer};
 use std::path::{Path, PathBuf};
@@ -24,7 +26,7 @@ pub fn run_cli(raw_args: Vec<String>) {
                 );
             }
             let mut renderer = PlainRenderer::stderr(output_mode);
-            let resolved_root = crate::resolver::resolve_target_root(cwd.clone(), None)
+            let resolved_root = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
                 .map_or(cwd, |r| r.resolved_root);
             let _ = render_parse_error(&mut renderer, &resolved_root, &err.to_string());
             std::process::exit(2);
@@ -68,7 +70,7 @@ pub fn run_cli(raw_args: Vec<String>) {
 fn parse_command_with_explicit_builtin_deferral(
     args: Vec<String>,
     cwd: &Path,
-) -> Result<Command, crate::CliParseError> {
+) -> Result<Command, effigy_cli::CliParseError> {
     let Some(first) = args.first() else {
         return parse_command(args);
     };
@@ -81,7 +83,7 @@ fn parse_command_with_explicit_builtin_deferral(
         return parse_command(args);
     }
 
-    Ok(Command::Task(crate::TaskInvocation {
+    Ok(Command::Task(effigy_cli::TaskInvocation {
         name: first.clone(),
         args: args[1..].to_vec(),
     }))
@@ -92,7 +94,7 @@ fn explicit_deferred_builtin_root(cmd: &str, tail: &[String], cwd: &Path) -> Opt
         return None;
     }
     let repo_override = repo_override_from_args(tail);
-    crate::resolver::resolve_target_root(cwd.to_path_buf(), repo_override)
+    effigy_core::resolver::resolve_target_root(cwd.to_path_buf(), repo_override)
         .ok()
         .map(|resolved| resolved.resolved_root)
 }
