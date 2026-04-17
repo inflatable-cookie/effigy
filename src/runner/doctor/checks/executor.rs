@@ -1,5 +1,5 @@
-use super::super::super::progress::DoctorProgressReporter;
-use super::super::super::report::DoctorState;
+use super::super::progress::DoctorProgressReporter;
+use super::super::report::DoctorState;
 use super::definitions::{DoctorCheckContext, DoctorCheckDefinition};
 
 pub(super) fn run_registered_checks(

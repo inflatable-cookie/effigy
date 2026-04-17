@@ -1,5 +1,5 @@
 use super::{for_each_manifest_command, for_each_manifest_task_reference};
-use crate::runner::TaskManifest;
+use effigy_manifest::TaskManifest;
 
 fn fixture_manifest() -> TaskManifest {
     toml::from_str::<TaskManifest>(

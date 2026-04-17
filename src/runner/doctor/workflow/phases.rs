@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use effigy_core::resolver::ResolvedTarget;
 
-use super::super::super::report::{DoctorState, ManifestSnapshot};
+use super::super::report::{DoctorState, ManifestSnapshot};
 use super::DoctorRunOutput;
 use crate::runner::error::RunnerError;
 

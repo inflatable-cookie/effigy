@@ -1,5 +1,5 @@
-use super::super::super::report::DoctorState;
-use super::super::super::{
+use super::super::report::DoctorState;
+use super::super::{
     attention_markers, comment_ratio, duplicate_blocks, generated_assets, generated_in_src,
     god_files, stale_suppressions,
 };

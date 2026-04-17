@@ -28,5 +28,10 @@ lane needs tighter execution grammar than the roadmap alone provides.
 The release-closure batch is complete, but release execution remains deferred
 while live `g02.010` work is still active in the parallel thread.
 
-The next move is to finish that live `g02.010` work, then return to `115` for
-explicit human-approved release execution.
+`g02.010` is reopened post-`250` with a four-card follow-up chain
+(`252`–`255`) covering runner-root tidy, doctor-runner extraction,
+and test-harness prelude flattening. Card `252` is the ready card;
+details in [`batch-cards/README.md`](./batch-cards/README.md).
+
+Once that chain closes, return to `115` for explicit human-approved
+release execution.

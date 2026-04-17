@@ -1,16 +1,16 @@
 use std::path::Path;
 
-#[path = "check_registry/catalog_checks.rs"]
+#[path = "checks/catalog_checks.rs"]
 mod catalog_checks;
-#[path = "check_registry/definitions.rs"]
+#[path = "checks/definitions.rs"]
 mod definitions;
-#[path = "check_registry/executor.rs"]
+#[path = "checks/executor.rs"]
 mod executor;
-#[path = "check_registry/scan_checks.rs"]
+#[path = "checks/scan_checks.rs"]
 mod scan_checks;
 
-use super::super::progress::DoctorProgressReporter;
-use super::super::report::{DoctorState, ManifestSnapshot};
+use super::progress::DoctorProgressReporter;
+use super::report::{DoctorState, ManifestSnapshot};
 use definitions::DoctorCheckContext;
 
 pub(super) fn run_doctor_checks(

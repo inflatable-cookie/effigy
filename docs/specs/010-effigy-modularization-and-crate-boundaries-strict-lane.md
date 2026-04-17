@@ -1,6 +1,6 @@
 # 010 Effigy Modularization And Crate Boundaries Strict Lane
 
-Status: paused
+Status: strict-active
 Updated: 2026-04-17
 Roadmap: `g02.010`
 
@@ -1429,16 +1429,61 @@ That post-`212` boundary decision is now made too:
   --all-targets`, `cargo fmt --all --check`, `cargo clippy
   --all-targets` (with standard allowlist), `cargo test --workspace`
   (634 tests in the runner lib plus the rest of the workspace, all
-  passing). With card `250` landed, the bounded batch for spec 010
-  is exhausted and the `g02.010` strict lane closes.
+  passing).
+
+- `261` drew up the post-`250` tidy roadmap after a fresh audit of
+  `src/runner/**` (~17.3k LOC, 29 modules, 37 files with
+  `super::super::super::*` chains). The audit surfaced three bounded
+  cleanup batches and one more crate extraction candidate, opened
+  as cards `252`–`255`:
+
+  - Card `252` (runner-root shim and directory tidy): retires six
+    single-call-site shim files (`manifest.rs`,
+    `env_schema_support.rs`, `render.rs`, `model/constants.rs`,
+    `mod.rs::deferred_builtins_*`, `cli/runner_dispatch.rs`) and
+    flattens the two 4-level-deep subtrees (`doctor/run/workflow/`
+    + `doctor/run/check_registry/` → `doctor/workflow/` +
+    `doctor/checks/`; `execute/selection/fallback/` → flatter
+    shape). Pure tidy; no behavior change.
+  - Card `253` (decide doctor-runner extraction shape): pins crate
+    name, `DoctorError` shape, port surface, and split shape for
+    `src/runner/doctor/**` (~4,547 lines, 65 files). Last major
+    subsystem with a clean boundary.
+  - Card `254` (implement doctor-runner extraction): mechanical
+    crate move per card `253`'s decision.
+  - Card `255` (test-harness prelude flatten): collapses the three-
+    level nested test-side prelude chain into a single top-level
+    fixture surface. Closes the lane once landed.
+
+  The `g02.010` lane is reopened as `strict-active` with card `252`
+  as the ready card.
+
+- `262` landed card `252` (runner-root shim and directory tidy).
+  Four single-call-site shims retired (`env_schema_support.rs`,
+  `render.rs`, `model/constants.rs`, `cli/runner_dispatch.rs`);
+  deferral helpers (`deferred_builtins_for_root`,
+  `deferred_builtins_from_catalogs`,
+  `builtin_can_be_explicitly_deferred`) plus deferral constants
+  (`DEFER_DEPTH_ENV`, `IMPLICIT_ROOT_DEFER_TEMPLATE`,
+  `EXPLICITLY_DEFERRABLE_COMMAND_BUILTINS`,
+  `IMPLICITLY_DEFERRED_COMMAND_BUILTINS`) moved from
+  `runner/mod.rs` and `runner/model/constants.rs` into
+  `runner/deferral/{builtins,policy}.rs`. Three over-nested
+  subtrees flattened: `doctor/run/workflow/` → `doctor/workflow/`,
+  `doctor/run/check_registry/` → `doctor/checks/`,
+  `execute/selection/fallback/` collapsed from three files into a
+  single `fallback.rs`. `runner/manifest.rs` left in place after
+  survey showed four live helpers plus type re-exports all in
+  active use (not a pure shim). `super::super::super::super::`
+  count dropped 12 → 0; `super::super::super::` count dropped
+  37 → 15. All 634 runner tests plus the rest of the workspace
+  green; `cargo fmt`, `cargo clippy -- -D warnings` (standard
+  allowlist) clean. No behavior change.
 
 ## Next Task
 
-Spec 010's active scope is exhausted. The `g02.010` strict lane
-closes with card `250`. The next move depends on steering signal
-— options include resuming release closure (card `115`'s deferred
-execution path), opening a fresh modularization spec for the
-remaining runner-internal coupling (`locking`, `cache`, `execute`
-cleanups), or pausing strict-lane execution entirely for a new
-roadmap pivot. Draft a pause-boundary decide card once the next
-pivot is chosen; until then the lane sits closed.
+Execute [`253-decide-effigy-doctor-runner-extraction-shape.md`](batch-cards/253-decide-effigy-doctor-runner-extraction-shape.md).
+Pin crate name, `DoctorError` shape, port surface for the
+residual runner reach-ins (deferral, locking, env-schema via the
+recently-inlined helpers), and split vs single-crate shape for
+the ~4.5k LOC doctor subsystem. Implement card is `254`.

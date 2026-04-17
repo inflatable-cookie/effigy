@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::super::super::report::{DoctorState, ManifestSnapshot};
+use super::super::report::{DoctorState, ManifestSnapshot};
 use crate::runner::error::RunnerError;
 
 pub(super) fn prepare_manifest_snapshot_with<C, A>(

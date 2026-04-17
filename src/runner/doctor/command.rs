@@ -1,7 +1,7 @@
 use effigy_cli::DoctorArgs;
 
 use super::report::DoctorReport;
-use super::{explain, progress, render, run};
+use super::{explain, progress, render, workflow};
 use crate::runner::error::RunnerError;
 
 pub(in crate::runner) fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
@@ -29,9 +29,9 @@ fn run_workflow_with_progress(
     repo_override: Option<std::path::PathBuf>,
     fix: bool,
     output_json: bool,
-) -> Result<run::DoctorRunOutput, RunnerError> {
+) -> Result<workflow::DoctorRunOutput, RunnerError> {
     let mut progress = progress::DoctorProgressReporter::new(output_json);
-    let outcome = run::run_doctor_workflow(repo_override, fix, progress.as_mut());
+    let outcome = workflow::run_doctor_workflow(repo_override, fix, progress.as_mut());
     if let Some(progress) = progress.as_mut() {
         progress.finish();
     }
