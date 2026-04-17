@@ -372,8 +372,8 @@ Use these surfaces before continuing container-environment work:
 
 - [`docs/roadmaps/README.md`](./docs/roadmaps/README.md)
 - [`docs/roadmaps/g02/006-colima-container-environment-contract.md`](./docs/roadmaps/g02/006-colima-container-environment-contract.md)
-- [`docs/specs/006-colima-container-environment-strict-lane.md`](./docs/specs/006-colima-container-environment-strict-lane.md)
-- [`docs/specs/batch-cards/107-implement-colima-container-foundation.md`](./docs/specs/batch-cards/107-implement-colima-container-foundation.md)
+- [`docs/specs/archive/006-colima-container-environment-strict-lane.md`](./docs/specs/archive/006-colima-container-environment-strict-lane.md)
+- [`docs/specs/archive/batch-cards/107-implement-colima-container-foundation.md`](./docs/specs/archive/batch-cards/107-implement-colima-container-foundation.md)
 - [`docs/contracts/001-working-rules.md`](./docs/contracts/001-working-rules.md)
 
 Queued follow-on milestones:

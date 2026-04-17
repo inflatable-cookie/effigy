@@ -8,6 +8,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - Use milestone files inside each generation: `NNN-<slug>.md`.
 - Reference milestones as `gNN.NNN`.
 - Trigger generation rollover manually; do not use automatic file-count limits.
+- Treat generations as substantial sequencing eras, not one-or-two-file
+  buckets. As a healthy default, expect roughly 20 to 40 roadmap files in one
+  generation before rollover is even worth discussing.
+- Treat rollover as full generation closeout, not a convenience reset:
+  close, supersede, or rehome every roadmap in the current generation first,
+  then purge stale generation-specific specs and batch cards from
+  `docs/specs/` before opening the next generation.
 
 ## Layout
 
@@ -70,6 +77,20 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 - Execute milestones in meaningful batches.
 - Create logs per completed batch or update cycle, not per individual task.
+
+## Rollover guardrail
+
+Do not open `gNN+1` while the current generation still has live roadmap files
+or stale strict-lane debris in the active specs tree.
+
+Before rollover:
+
+- every roadmap in the closing generation must be explicitly closed, paused,
+  superseded, or moved to backlog
+- the roadmap front doors must agree that the old generation is no longer the
+  live queue
+- `docs/specs/` must be purged so only live or near-live planning artifacts
+  remain in the active tree
 
 ## Next Task
 
