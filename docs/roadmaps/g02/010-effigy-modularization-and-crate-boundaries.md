@@ -1238,9 +1238,16 @@ That post-`212` boundary decision is now made too:
   - preserve thin re-export shims at `src/runner/model/catalog.rs` and
     `src/runner/managed.rs` during the transition
 
+- `243` landed the prerequisite `LoadedCatalog` relocate:
+  `LoadedCatalog`, `TaskSelection`, and `DeferredCommand` now live in
+  `effigy-manifest` (new `loaded_catalog` module, public). The runner
+  keeps a 2-line shim at `src/runner/model/catalog.rs` so the existing
+  78 call sites work unchanged. `effigy-manifest` picked up
+  `effigy-tasks` as a direct dep. Full workspace tests pass.
+
 ## Next Task
 
 Execute the ready card
-[`239-implement-effigy-manifest-loaded-catalog-relocate.md`](../../specs/batch-cards/239-implement-effigy-manifest-loaded-catalog-relocate.md)
-to land the prerequisite `LoadedCatalog` relocate. The managed
-extraction proper (`240`) is queued behind it.
+[`240-implement-effigy-managed-extraction.md`](../../specs/batch-cards/240-implement-effigy-managed-extraction.md)
+to move `src/runner/managed/**` and `runner::model::managed` into a
+new `effigy-managed` crate with a managed-local `ManagedError`.

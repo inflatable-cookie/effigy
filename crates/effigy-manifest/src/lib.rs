@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 mod composition;
 pub mod config_sections;
+mod loaded_catalog;
 mod task_defs;
 pub mod task_runtime;
 mod test_config;
@@ -20,6 +21,7 @@ pub use config_sections::{
     ManifestDocsPolicyConfig, ManifestEnvSchemaConfig, ManifestPackageManagerConfig,
     ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
 };
+pub use loaded_catalog::{DeferredCommand, LoadedCatalog, TaskSelection};
 use task_defs::deserialize_tasks;
 pub use task_runtime::{
     ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedProfile, ManifestManagedRun,

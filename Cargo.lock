@@ -719,6 +719,7 @@ dependencies = [
 name = "effigy-manifest"
 version = "0.1.0"
 dependencies = [
+ "effigy-tasks",
  "indexmap",
  "serde",
  "toml",

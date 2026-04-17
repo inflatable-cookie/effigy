@@ -6,6 +6,7 @@ license = "MIT"
 description = "Shared manifest contracts and composition for Effigy"
 
 [dependencies]
+effigy-tasks = { path = "../effigy-tasks" }
 indexmap = { version = "2", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

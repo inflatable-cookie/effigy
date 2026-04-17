@@ -994,10 +994,23 @@ That post-`212` boundary decision is now made too:
     rewired in a follow-up sweep
 - `242` also opened the two follow-up cards: `239` (ready) and `240`
   (queued behind `239`).
+- `243` landed the prerequisite relocate from `239`:
+  `LoadedCatalog`, `TaskSelection`, and `DeferredCommand` now live in
+  `effigy-manifest` (new `loaded_catalog` module, public types with
+  public fields). `effigy-manifest` picked up `effigy-tasks` as a
+  direct dependency (for `CatalogSelectionMode`).
+  `src/runner/model/catalog.rs` is now a 2-line re-export shim,
+  preserving the existing 78 runner call sites unchanged.
+  `cargo test --workspace` green (702 lib tests, 190 CLI tests,
+  everything else unchanged); `cargo fmt` clean; `qa:docs` pass;
+  `git diff --check` clean. No behavioral change — types and fields
+  identical apart from visibility promotion (`pub(in crate::runner)`
+  → `pub`, which is the whole point of the relocate).
 
 ## Next Task
 
 Execute
-[`239-implement-effigy-manifest-loaded-catalog-relocate.md`](../specs/batch-cards/239-implement-effigy-manifest-loaded-catalog-relocate.md)
-to land the prerequisite `LoadedCatalog` relocate into
-`effigy-manifest` before the managed extraction itself begins.
+[`240-implement-effigy-managed-extraction.md`](../specs/batch-cards/240-implement-effigy-managed-extraction.md)
+to move `src/runner/managed/**` and `runner::model::managed` into a
+new `effigy-managed` crate now that `LoadedCatalog` lives in a
+neutral home.
