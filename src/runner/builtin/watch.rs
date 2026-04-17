@@ -5,6 +5,7 @@ use effigy_cli::TaskInvocation;
 
 use super::command_spec::run_passthrough_builtin_command;
 use super::render_builtin_help_topic;
+use crate::runner::builtin_ports::BuiltinRuntimePorts;
 use crate::runner::error::RunnerError;
 use effigy_tasks::TaskRuntimeArgs;
 
@@ -21,6 +22,7 @@ use request::parse_watch_request;
 use runtime::run_watch_runtime;
 
 pub(super) fn run_builtin_watch(
+    ports: &dyn BuiltinRuntimePorts,
     task: &TaskInvocation,
     runtime_args: &TaskRuntimeArgs,
     target_root: &Path,
@@ -30,14 +32,15 @@ pub(super) fn run_builtin_watch(
         runtime_args,
         |output_json| render_builtin_help_topic(HelpTopic::Watch, "watch", output_json),
         |args| parse_watch_request(task, args),
-        |request| run_watch_request(request, target_root),
+        |request| run_watch_request(ports, request, target_root),
     )
 }
 
 fn run_watch_request(
+    ports: &dyn BuiltinRuntimePorts,
     request: request::WatchRequest,
     target_root: &Path,
 ) -> Result<Option<String>, RunnerError> {
     request.validate_execution_policy()?;
-    run_watch_runtime(request, target_root)
+    run_watch_runtime(ports, request, target_root)
 }

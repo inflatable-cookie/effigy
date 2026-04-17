@@ -1,9 +1,8 @@
 use std::collections::BTreeMap;
 
 use effigy_core::widgets::KeyValue;
-use effigy_ui::Renderer;
+use effigy_ui::{render_utf8, text_renderer, Renderer};
 
-use super::super::super::super::render::{render_utf8, text_renderer};
 use super::super::super::response::render_text_or_json_lazy;
 use super::super::planning::BuiltinTestTarget;
 use super::super::{BuiltinTestExecResult, RunnerError};
@@ -134,7 +133,7 @@ pub(crate) fn render_builtin_test_results(
         renderer.key_values(&[KeyValue::new(name, value)])?;
     }
     renderer.text("")?;
-    render_utf8(renderer.into_inner())
+    Ok(render_utf8(renderer.into_inner())?)
 }
 
 fn render_suite_env_files(files: &[String]) -> String {

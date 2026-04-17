@@ -2,6 +2,7 @@ use effigy_cli::TaskInvocation;
 
 use super::super::super::super::builtin::try_run_builtin_task;
 use super::super::super::preflight::ExecutionPreflight;
+use crate::runner::builtin_ports::RunnerBuiltinPorts;
 use crate::runner::error::RunnerError;
 use effigy_tasks::TaskSelector;
 
@@ -9,7 +10,9 @@ pub(super) fn resolve_builtin_selection_output(
     task: &TaskInvocation,
     preflight: &ExecutionPreflight,
 ) -> Result<Option<String>, RunnerError> {
+    let ports = RunnerBuiltinPorts::new();
     try_run_builtin_task(
+        &ports,
         &preflight.selector,
         task,
         &preflight.runtime_args_raw,

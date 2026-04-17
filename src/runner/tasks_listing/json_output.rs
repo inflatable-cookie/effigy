@@ -3,7 +3,7 @@ mod payload;
 #[path = "json_output/rows.rs"]
 mod rows;
 
-use super::super::{render, RunnerError};
+use super::super::RunnerError;
 use super::prepared_task_rows::{prepare_all_catalog_rows_json, prepare_filtered_rows_json};
 use super::render_context::ListingRenderRequest;
 use super::selection::PreparedFilteredListing;
@@ -11,6 +11,7 @@ use super::selection_dispatch::dispatch_listing_selection;
 use super::ListingCatalogSnapshot;
 use crate::runner::deferred_builtins_from_catalogs;
 use effigy_manifest::LoadedCatalog;
+use effigy_ui::encode_json;
 use payload::{encode_catalog_payload, encode_filtered_payload, JsonPayloadContext};
 use rows::{builtin_rows_json, builtin_task_rows_json};
 
@@ -40,7 +41,7 @@ pub(super) fn render_tasks_json(
         render_catalog_payload,
         render_filtered_payload,
     )?;
-    render::encode_json(&payload, request.pretty_json())
+    Ok(encode_json(&payload, request.pretty_json())?)
 }
 
 fn render_catalog_payload(

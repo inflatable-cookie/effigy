@@ -11,10 +11,9 @@ mod contracts;
 mod render;
 
 use super::super::command_context::current_working_dir;
-use super::super::util::parse_task_selector;
 use crate::runner::error::RunnerError;
 use effigy_routing::{discover_catalogs, select_catalog_and_task};
-use effigy_tasks::CatalogSelectionMode;
+use effigy_tasks::{parse_task_selector, CatalogSelectionMode};
 pub(super) const DEFERRAL_NOT_CONSIDERED_REASON: &str =
     "deferral was not considered because the selection outcome does not trigger deferral";
 pub(super) const DEFERRAL_SELECTED_REASON: &str =
@@ -38,7 +37,7 @@ pub(super) fn run_doctor_explain(
     let cwd = current_working_dir()?;
     let resolved = resolve_target_root(cwd.clone(), repo_override)?;
     let catalogs = discover_catalogs(&resolved.resolved_root)?;
-    let selector = parse_task_selector(&request.name)?;
+    let selector = parse_task_selector(&request.name).map_err(RunnerError::task_invocation)?;
 
     let candidates = analysis::candidate_catalogs(&catalogs, &selector, &cwd);
     let selection_result =

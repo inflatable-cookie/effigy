@@ -1,6 +1,5 @@
-use super::super::render::{
-    color_enabled_for_text_output, encode_json, encode_pretty_json_optional,
-};
+use effigy_ui::{color_enabled_for_text_output, encode_json, encode_pretty_json_optional};
+
 use super::{has_builtin_help_flag, has_builtin_json_flag};
 use crate::runner::error::RunnerError;
 
@@ -14,7 +13,7 @@ pub(super) fn render_optional_text_or_json(
     payload: serde_json::Value,
 ) -> Result<Option<String>, RunnerError> {
     if output_json {
-        return encode_pretty_json_optional(&payload);
+        return Ok(encode_pretty_json_optional(&payload)?);
     }
     Ok(Some(text))
 }
@@ -77,7 +76,10 @@ where
 {
     let text = render_text();
     if output_json {
-        return encode_pretty_json_optional(&schema_payload(schema, render_fields(&text)));
+        return Ok(encode_pretty_json_optional(&schema_payload(
+            schema,
+            render_fields(&text),
+        ))?);
     }
     Ok(Some(text))
 }
@@ -95,7 +97,9 @@ where
     let text = render_text();
     if output_json {
         let fields = append_text_field(render_fields(), &text);
-        return encode_pretty_json_optional(&schema_payload(schema, fields));
+        return Ok(encode_pretty_json_optional(&schema_payload(
+            schema, fields,
+        ))?);
     }
     Ok(Some(text))
 }
@@ -110,7 +114,7 @@ where
     P: FnOnce() -> serde_json::Value,
 {
     if output_json {
-        return encode_json(&render_payload(), true);
+        return Ok(encode_json(&render_payload(), true)?);
     }
     render_text()
 }

@@ -2,9 +2,9 @@ use std::path::Path;
 
 use serde_json::json;
 
-use super::super::super::cache::model::TaskCacheEntry;
 use super::super::response::render_optional_text_with_schema_text_fields_lazy;
 use super::super::text_doc::TextDoc;
+use crate::runner::cache::model::TaskCacheEntry;
 
 pub(super) fn render_inspect_response(
     output_json: bool,

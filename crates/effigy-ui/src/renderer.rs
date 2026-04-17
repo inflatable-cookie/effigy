@@ -9,12 +9,14 @@ pub type UiResult<T> = Result<T, UiError>;
 #[derive(Debug)]
 pub enum UiError {
     Io(std::io::Error),
+    Encoding(String),
 }
 
 impl Display for UiError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             UiError::Io(error) => write!(f, "{error}"),
+            UiError::Encoding(message) => f.write_str(message),
         }
     }
 }

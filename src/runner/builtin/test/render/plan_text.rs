@@ -6,9 +6,8 @@ use crate::runner::builtin::test::suite_selection::render_available_suites;
 use crate::runner::error::RunnerError;
 use effigy_cli::TaskInvocation;
 use effigy_core::widgets::{KeyValue, NoticeLevel};
-use effigy_ui::Renderer;
+use effigy_ui::{render_utf8, text_renderer, Renderer};
 
-use super::super::super::super::super::render::{render_utf8, text_renderer};
 use super::plan_projection::project_target_plan;
 
 pub(super) fn render_builtin_test_plan_text(
@@ -98,7 +97,7 @@ pub(super) fn render_builtin_test_plan_text(
         renderer.bullet_list("fallback-chain", &target.fallback_chain)?;
         renderer.text("")?;
     }
-    render_utf8(renderer.into_inner())
+    Ok(render_utf8(renderer.into_inner())?)
 }
 
 fn render_suite_env_files(files: &[String]) -> String {
@@ -128,5 +127,5 @@ pub(super) fn render_builtin_test_plan_recovery_text(
     ])?;
     renderer.text("")?;
     renderer.notice(NoticeLevel::Warning, message)?;
-    render_utf8(renderer.into_inner())
+    Ok(render_utf8(renderer.into_inner())?)
 }

@@ -54,6 +54,7 @@ impl<R: Renderer> HelpRenderer for HelpView<'_, R> {
 fn ui_error_to_io(error: UiError) -> std::io::Error {
     match error {
         UiError::Io(error) => error,
+        UiError::Encoding(message) => std::io::Error::new(std::io::ErrorKind::InvalidData, message),
     }
 }
 

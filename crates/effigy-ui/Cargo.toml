@@ -10,4 +10,5 @@ effigy-core = { path = "../effigy-core" }
 anstream = "0.6"
 anstyle = "1"
 indicatif = "0.18"
+serde_json = "1"
 tabled = "0.20"

@@ -1,5 +1,5 @@
 use effigy_ui::theme::Theme;
-use effigy_ui::PlainRenderer;
+use effigy_ui::{plain_renderer, render_utf8, text_color_enabled, PlainRenderer};
 
 #[path = "text_output/filtered.rs"]
 mod filtered;
@@ -11,7 +11,7 @@ mod rows;
 mod sections;
 
 use super::super::tasks_view::render_resolution_probe_block;
-use super::super::{render, RunnerError};
+use super::super::RunnerError;
 use super::render_context::ListingRenderRequest;
 use super::selection::PreparedFilteredListing;
 use super::selection_dispatch::dispatch_listing_selection;
@@ -33,8 +33,8 @@ pub(super) fn render_tasks_text(
     request: ListingRenderRequest<'_>,
     snapshot: &ListingCatalogSnapshot<'_>,
 ) -> Result<String, RunnerError> {
-    let color_enabled = render::text_color_enabled();
-    let mut renderer = render::plain_renderer(color_enabled);
+    let color_enabled = text_color_enabled();
+    let mut renderer = plain_renderer(color_enabled);
     let theme = Theme::default();
     let resolve_probe = request.resolve_probe();
 
@@ -58,7 +58,7 @@ pub(super) fn render_tasks_text(
         )?;
     }
 
-    render::render_utf8(renderer.into_inner())
+    Ok(render_utf8(renderer.into_inner())?)
 }
 
 fn render_catalog_selection(

@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::runner::builtin_ports::BuiltinRuntimePorts;
 use crate::runner::error::RunnerError;
 use effigy_cli::TaskInvocation;
 use effigy_manifest::LoadedCatalog;
@@ -49,6 +50,7 @@ fn resolve_builtin_task_target_root(
 }
 
 pub(super) fn try_run_builtin_task(
+    ports: &dyn BuiltinRuntimePorts,
     selector: &TaskSelector,
     task: &TaskInvocation,
     runtime_args: &TaskRuntimeArgs,
@@ -67,6 +69,7 @@ pub(super) fn try_run_builtin_task(
     };
 
     entry.run(
+        ports,
         selector,
         task,
         runtime_args,
