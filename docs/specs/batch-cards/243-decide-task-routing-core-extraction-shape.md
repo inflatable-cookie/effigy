@@ -1,6 +1,6 @@
 # 243 Decide Task Routing Core Extraction Shape
 
-Status: ready
+Status: complete
 Updated: 2026-04-17
 Roadmap: `g02.010`
 Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
@@ -123,9 +123,90 @@ section. Leave the section pending until the decision is made.
 
 ## Decision
 
-_Pending — populate after coupling review._
+A function-level coupling sweep across the four subsystems informed the
+answers. Key sweep findings:
+
+- `scan/**` (4,928 lines) imports zero from catalog/locking/deferral,
+  uses only `RunnerError::task_invocation(...)` for errors, and is
+  consumed one-way by `builtin/scan/**` (1,857 lines of CLI adapter).
+- `locking/**` (410 lines) is self-contained — only stdlib +
+  `RunnerError` variants `TaskLockIo`, `TaskLockConflict`, plus one `Ui`
+  variant for encode failures. Zero coupling to routing.
+- `deferral/**` (391 lines) owns its own concerns (composer-home cache,
+  trace rendering) but `policy.rs` pattern-matches the catalog-owned
+  `RunnerError` variants `TaskNotFoundAny`, `TaskCatalogPrefixNotFound`,
+  `TaskNotFound`. Downstream of catalog errors, not catalog logic.
+- `catalog/**` (~500 lines) plus `runner/manifest.rs::load_task_manifest`
+  plus `model/constants::TASK_MANIFEST_FILE` form the actual routing
+  surface. Seven `RunnerError` variants (`TaskCatalogsMissing`,
+  `TaskCatalogReadDir`, `TaskCatalogAliasConflict`,
+  `TaskCatalogPrefixNotFound`, `TaskNotFound`, `TaskNotFoundAny`,
+  `TaskAmbiguous`) are produced only here.
+- Managed ↔ routing coupling is callback-only via
+  `effigy_manifest::TaskResolverFn`. Card `245` already sealed this.
+- `effigy-catalog` crate name is taken by the unrelated container
+  service-catalog (compose assembly). Must not collide.
+
+**Decisions:**
+
+1. **Scope partition — catalog only (~500 lines).** Scan, locking,
+   deferral do not travel with this extraction. Scan is 10× the size of
+   routing proper with its own error semantics; bundling inflates the
+   extraction for no coupling reason. Locking and deferral stay in the
+   runner; each becomes its own future decide card.
+2. **Crate name — `effigy-routing`** (new workspace crate).
+   `effigy-catalog` is taken. Folding into `effigy-manifest` was
+   considered — manifest owns `LoadedCatalog`, `TaskSelection`,
+   `TaskResolverFn` — but rejected because routing is operational
+   (filesystem discovery, selector matching) while manifest is a
+   data/config layer. New crate matches the extraction-per-concern
+   pattern (effigy-process, effigy-ui, effigy-managed).
+3. **Builtin/scan coupling — deferred.** Scan is not in this extraction,
+   so the `builtin/scan → runner/scan` dependency direction question
+   belongs to a future scan decide card.
+4. **Locking + deferral placement — stay in runner.** Deferral's
+   pattern-matching on catalog error variants continues to work against
+   `RunnerError` (which receives them via `From<RoutingError>`), so
+   deferral need not depend on the new crate. Locking has no coupling to
+   routing at all.
+5. **Error boundary — new `RoutingError` enum with `From` impl.** Job-8
+   pattern. Moves the seven catalog-owned variants into
+   `effigy_routing::RoutingError`. `impl From<RoutingError> for
+   RunnerError` reproduces the same variant shapes so deferral's
+   pattern-matching keeps working without any deferral changes.
+6. **Prerequisite order — one prerequisite card.** Sweep flagged two
+   cleanups that belong before the crate move:
+   - Introduce `RoutingError` inside the runner (same crate), route the
+     seven variants through it via `From`, update producers. No crate
+     move yet.
+   - Consolidate `load_task_manifest` + `TASK_MANIFEST_FILE` into a
+     shape the new crate can own directly. Today both
+     `catalog/discovery.rs` and `scan/options/loading/common.rs` reach
+     into `runner/manifest.rs` for these; the prereq relocates the
+     catalog-side consumer so scan's parallel usage isn't accidentally
+     dragged into routing's extraction.
+
+   `task_lock_scope` relocation from `runner/manifest.rs` (also
+   sweep-flagged) belongs to the future locking extraction, not this
+   one.
+
+7. **Scope shape — two cards: prerequisite + implement.** Follows the
+   `239`+`240` precedent. Prerequisite card does the error-boundary
+   introduction and catalog-loading glue consolidation entirely inside
+   the runner. Implement card moves `catalog/**` plus the consolidated
+   glue into `effigy-routing` and updates ~12 caller files.
 
 ## Next Task
 
-_Pending — the follow-up card (implement or prerequisite) will be named
-in the Decision section once decided._
+Open the prerequisite card:
+[`245-implement-routing-error-boundary-and-catalog-loading-consolidation.md`](./245-implement-routing-error-boundary-and-catalog-loading-consolidation.md)
+— introduce `RoutingError`, move the seven catalog-owned variants behind
+it with `From<RoutingError> for RunnerError`, consolidate the
+`load_task_manifest` + `TASK_MANIFEST_FILE` catalog-loading glue. No
+crate move.
+
+Then open the implement card:
+[`246-implement-effigy-routing-extraction.md`](./246-implement-effigy-routing-extraction.md)
+— queued behind `245`. Moves `catalog/**` plus the consolidated glue
+plus `RoutingError` into the new `effigy-routing` crate; migrates ~12
+caller files to the new import path.

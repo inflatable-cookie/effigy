@@ -1126,12 +1126,68 @@ That post-`212` boundary decision is now made too:
   shim removal is architectural hygiene, not just unblocking — every
   workspace type should have exactly one canonical import path.
 
+- `249` extended the shim sweep after spotting more cross-crate
+  re-export shims in the root binary crate. Two commits landed
+  (`d8344c5b`, `ffee1bd1`) covering two waves: first, four more
+  file-level shims — `src/cli/parse/mod.rs`, `src/env_schema.rs`,
+  `src/tasks/mod.rs`, `src/tui/multiprocess/mod.rs` — deleted with
+  their callers migrated to `effigy_cli`, `effigy_env`,
+  `effigy_tasks`, `effigy_tui::multiprocess` directly (17 files
+  touched). Second, the cross-crate `pub use` re-exports in
+  `src/lib.rs`: `effigy_core::resolver`,
+  `effigy_core::{fs_probe, path_error_text, path_probe}`,
+  `effigy_changelog as changelog`, `effigy_cli::help::ui::{render_help,
+  render_help_with_deferred_builtins}`, and the nine-line
+  `effigy_cli::{...}` type block. 105 files touched; all call sites
+  now import from the source crate directly. The `pub use cli::*`
+  lines stay — those re-export an internal `mod cli` and are the
+  legitimate crate API. `tests/env_schema_tests.rs` migrated in
+  tandem because it reached through the `effigy::env_schema` alias.
+  Test totals unchanged (683 / 16 / 89); fmt / qa:docs / diff-check
+  all clean.
+- `250` cleared the baseline clippy warnings across the workspace
+  (commit `d5f99833`). `cargo clippy --all-targets -- -D warnings`
+  now passes cleanly under the documented allow list
+  (`result_large_err`, `too_many_arguments`, `type_complexity`) —
+  no inline `#[allow]` escapes. Eight fixes, no behaviour change:
+  `Default` impls for `DoctorState` and `LiveTerminalBuffer`, boxed
+  the large `BrowserRow::Demo` variant, elided a needless lifetime on
+  `selected_artifact`, swapped `unwrap_or_else(|_| planned_files)` for
+  `unwrap_or(planned_files)` in `effigy-release`, removed a
+  `clone-on-Copy` in `doctor::explain::analysis`, and dropped two
+  pieces of dead code the extraction work left behind: the
+  `DEFAULT_MANAGED_SHELL_RUN` constant and the three-layer
+  `render_task_selector` shim chain (both canonical in
+  `effigy-managed` / `effigy-tasks` now). CI config already matches
+  this command — no workflow change.
+- `251` landed the Decision section for card `243` (task-routing core
+  extraction shape). A function-level coupling sweep across
+  `catalog/**` (~500 lines), `scan/**` (4,928 lines), `locking/**`
+  (410 lines), and `deferral/**` (391 lines) confirmed that the
+  "routing core ~6k lines" label in the 010 queue bundles four
+  loosely-related subsystems. Decisions: scope is catalog only; scan,
+  locking, deferral each become separate future decide cards; new
+  crate name `effigy-routing` (since `effigy-catalog` is taken by the
+  unrelated container service-catalog); `RoutingError` enum with
+  `From<RoutingError> for RunnerError` matching the Job-8 pattern;
+  two cards — prerequisite for error-boundary + catalog-loading glue
+  consolidation, then implement for the crate move. Two new cards
+  opened:
+  [`245-implement-routing-error-boundary-and-catalog-loading-consolidation.md`](batch-cards/245-implement-routing-error-boundary-and-catalog-loading-consolidation.md)
+  (ready) and
+  [`246-implement-effigy-routing-extraction.md`](batch-cards/246-implement-effigy-routing-extraction.md)
+  (queued behind `245`). Card `244` (built-in tasks decide) stays
+  open but gated on the routing extraction landing first — builtin's
+  coupling to routing is the largest factor in its own decision.
+
 ## Next Task
 
-With `242` complete, the lane has no ready implementation card.
-Two decide cards are open:
-[`243-decide-task-routing-core-extraction-shape.md`](batch-cards/243-decide-task-routing-core-extraction-shape.md)
-and
-[`244-decide-builtin-tasks-extraction-shape.md`](batch-cards/244-decide-builtin-tasks-extraction-shape.md).
-The next move is to drive either Decision section through coupling
-review, or pause the lane.
+With `243` decided and the routing sub-lane's two cards open, the
+active ready card is
+[`245-implement-routing-error-boundary-and-catalog-loading-consolidation.md`](batch-cards/245-implement-routing-error-boundary-and-catalog-loading-consolidation.md).
+`245` does the error-boundary introduction and catalog-loading glue
+consolidation entirely inside the runner; `246` then moves
+`catalog/**` plus the consolidated glue plus `RoutingError` into a
+new `effigy-routing` crate. Card `244` (built-in tasks decide)
+remains open but waits on `246` landing so the builtin/routing
+boundary is concrete before builtin decisions get made.

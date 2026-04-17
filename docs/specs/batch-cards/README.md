@@ -219,17 +219,23 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`240-implement-effigy-managed-extraction.md`](./240-implement-effigy-managed-extraction.md) (complete)
 - [`241-implement-runner-util-prerequisites-for-managed-extraction.md`](./241-implement-runner-util-prerequisites-for-managed-extraction.md) (complete)
 - [`242-implement-cross-crate-re-export-shim-cleanup.md`](./242-implement-cross-crate-re-export-shim-cleanup.md) (complete)
-- [`243-decide-task-routing-core-extraction-shape.md`](./243-decide-task-routing-core-extraction-shape.md) (ready)
+- [`243-decide-task-routing-core-extraction-shape.md`](./243-decide-task-routing-core-extraction-shape.md) (complete)
 - [`244-decide-builtin-tasks-extraction-shape.md`](./244-decide-builtin-tasks-extraction-shape.md) (ready)
+- [`245-implement-routing-error-boundary-and-catalog-loading-consolidation.md`](./245-implement-routing-error-boundary-and-catalog-loading-consolidation.md) (ready)
+- [`246-implement-effigy-routing-extraction.md`](./246-implement-effigy-routing-extraction.md) (queued)
 
 ## Active Ready Card
 
-none — `242` landed the shim cleanup (113 files touched, three shim
-files deleted, the widget re-export facade removed from `effigy-ui`).
-Cards `243` and `244` are open decide cards for the remaining 010
-queue items (routing core, built-in tasks); their Decision sections
-are pending coupling review. The lane is between batches; next move
-is to drive either decide card through coupling review, or pause.
+[`245-implement-routing-error-boundary-and-catalog-loading-consolidation.md`](./245-implement-routing-error-boundary-and-catalog-loading-consolidation.md)
+— prerequisite for the `effigy-routing` extraction. Introduces
+`RoutingError` inside the runner (routes the seven catalog-owned
+`RunnerError` variants through it with a `From` impl), and
+consolidates the `load_task_manifest` + `TASK_MANIFEST_FILE`
+catalog-loading glue so the crate move in `246` can be a
+near-mechanical `mv` plus import-path update. Card `244` (built-in
+tasks decide card) is also ready but gated on the routing extraction
+landing first — builtin coupling to routing is the largest factor in
+its decision.
 
 ## Recent Boundary Decision
 
