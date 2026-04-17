@@ -5,9 +5,9 @@ mod result;
 
 use effigy_cli::TaskInvocation;
 
-use super::super::catalog::select_catalog_and_task;
 use super::preflight::ExecutionPreflight;
 use crate::runner::error::RunnerError;
+use effigy_routing::select_catalog_and_task;
 
 pub(super) use result::SelectionResolution;
 

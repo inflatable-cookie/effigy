@@ -4,25 +4,24 @@ use effigy_manifest::ManifestError;
 
 /// Narrow error boundary for the task-routing surface.
 ///
-/// Produced by `catalog/**` discovery and selection. Lifts to
-/// `RunnerError` at the runner edge via `From<RoutingError> for RunnerError`
-/// in `src/runner/error.rs`. Matches the Job-8 pattern used by
-/// `effigy-process`, `effigy-ui`, `effigy-managed`, `effigy-env`, and
-/// sets the crate-move seam for card `246` (extraction to `effigy-routing`).
+/// Produced by catalog discovery and selection. Lifts to `RunnerError`
+/// at the runner edge via `From<RoutingError> for RunnerError` in
+/// `src/runner/error.rs`. Matches the Job-8 pattern used by
+/// `effigy-process`, `effigy-ui`, `effigy-managed`, and `effigy-env`.
 ///
 /// Variants:
 ///
 /// - Seven routing-specific variants, same shapes as the corresponding
-///   `RunnerError::Task*` variants. Kept shape-identical so the existing
+///   `RunnerError::Task*` variants. Kept shape-identical so the
 ///   deferral `policy.rs` pattern-match on `RunnerError` continues to
 ///   work after the `From` impl reproduces them.
-/// - One `Manifest` wrapper variant that bridges catalog's own
-///   `load_task_manifest` call path (Part B of card `245`). Catalog no
-///   longer reaches into `src/runner/manifest.rs` for loading; errors
-///   surface through this variant and lift to the existing
-///   `RunnerError::TaskManifest*` variants via the runner-edge `From`.
+/// - One `Manifest` wrapper variant that bridges routing's own
+///   `load_task_manifest` call path (Part B of card `245`). Routing
+///   owns its load wrapper; errors surface through this variant and
+///   lift to the existing `RunnerError::TaskManifest*` variants via
+///   the runner-edge `From`.
 #[derive(Debug)]
-pub(in crate::runner) enum RoutingError {
+pub enum RoutingError {
     TaskCatalogsMissing {
         root: PathBuf,
     },

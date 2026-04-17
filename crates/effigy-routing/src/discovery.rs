@@ -6,9 +6,7 @@ use super::error::RoutingError;
 use super::manifest_load::{load_task_manifest, TASK_MANIFEST_FILE};
 use effigy_manifest::{LoadedCatalog, TaskManifest};
 
-pub(in crate::runner) fn discover_catalogs(
-    workspace_root: &Path,
-) -> Result<Vec<LoadedCatalog>, RoutingError> {
+pub fn discover_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatalog>, RoutingError> {
     let manifest_paths = discover_manifest_paths(workspace_root)?;
     if manifest_paths.is_empty() {
         return Err(RoutingError::TaskCatalogsMissing {
@@ -58,7 +56,7 @@ pub(in crate::runner) fn discover_catalogs(
     Ok(catalogs)
 }
 
-pub(in crate::runner) fn discover_catalogs_allow_missing(
+pub fn discover_catalogs_allow_missing(
     workspace_root: &Path,
 ) -> Result<Vec<LoadedCatalog>, RoutingError> {
     match discover_catalogs(workspace_root) {
@@ -68,9 +66,7 @@ pub(in crate::runner) fn discover_catalogs_allow_missing(
     }
 }
 
-pub(in crate::runner) fn discover_manifest_paths(
-    workspace_root: &Path,
-) -> Result<Vec<PathBuf>, RoutingError> {
+pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, RoutingError> {
     let mut pending: Vec<PathBuf> = vec![workspace_root.to_path_buf()];
     let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
     let mut manifests_by_catalog: HashMap<PathBuf, PathBuf> = HashMap::new();
@@ -118,7 +114,7 @@ pub(super) fn should_skip_dir(path: &Path) -> bool {
     )
 }
 
-pub(in crate::runner) fn default_alias(catalog_root: &Path, workspace_root: &Path) -> String {
+pub fn default_alias(catalog_root: &Path, workspace_root: &Path) -> String {
     if catalog_root == workspace_root {
         return "root".to_owned();
     }
