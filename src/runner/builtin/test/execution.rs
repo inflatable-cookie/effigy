@@ -7,9 +7,9 @@ use std::sync::{Arc, Mutex};
 use crate::runner::manifest::ManifestCargoEnvMatchMode;
 use crate::runner::manifest::ManifestTestSuiteTeardownPolicy;
 use crate::runner::util::shell_quote;
-use crate::tui::{run_multiprocess_tui, MultiProcessTuiOptions};
 use effigy_managed::run_spec::wrap_command_with_env;
 use effigy_process::ProcessSpec;
+use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
 
 use super::super::super::command_context::current_working_dir;
 use super::super::super::util::with_local_node_bin_path;

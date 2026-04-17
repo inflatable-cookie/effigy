@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use effigy::env_schema;
-use effigy::env_schema::resolver::ResolvedSource;
-use effigy::env_schema::EnvSchemaError;
-use effigy::env_schema::EnvValue;
+use effigy_env as env_schema;
+use effigy_env::resolver::ResolvedSource;
+use effigy_env::EnvSchemaError;
+use effigy_env::EnvValue;
 
 /// Create a temporary directory with a `.env.schema` file inside it.
 /// Returns the directory path. Caller should clean up with `cleanup_temp`.

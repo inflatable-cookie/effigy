@@ -4,10 +4,10 @@ use crate::path_error_text::{
     failed_to_parse_path, failed_to_read_path, failed_to_render_path, failed_to_write_path,
 };
 use crate::resolver::ResolveError;
-use crate::tasks::TaskError;
 use effigy_env::error::EnvSchemaError;
 use effigy_managed::ManagedError;
 use effigy_process::ProcessManagerError;
+use effigy_tasks::TaskError;
 
 #[path = "error/display.rs"]
 mod display;

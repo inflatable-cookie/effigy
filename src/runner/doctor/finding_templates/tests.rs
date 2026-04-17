@@ -2,7 +2,7 @@ use std::io::Error;
 use std::path::Path;
 
 use crate::runner::doctor::report::DoctorSeverity;
-use crate::tasks::ResolutionMode;
+use effigy_tasks::ResolutionMode;
 
 use super::super::contracts::{check_id, remediation};
 use super::super::report::DoctorState;

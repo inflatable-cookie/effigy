@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::resolver::ResolvedTarget;
-use crate::tasks::ResolutionMode;
+use effigy_tasks::ResolutionMode;
 
 use super::super::super::super::model::constants::TASK_MANIFEST_FILE;
 use super::super::super::contracts::{check_id, remediation};
