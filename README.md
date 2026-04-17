@@ -35,8 +35,8 @@ manifest, not to teach people more wrapper scripts.
 
 Current roadmap state:
 - [`g02.006` container environment contract](./docs/roadmaps/g02/006-colima-container-environment-contract.md) is paused on a trustworthy v1 boundary
-- [`g02.007` distribution release and consumer rollout](./docs/roadmaps/g02/007-distribution-release-and-consumer-rollout.md) is active, with release closure complete and no ready implementation card left
-- [`g02.010` modularization and crate boundaries](./docs/roadmaps/g02/010-effigy-modularization-and-crate-boundaries.md) is paused on a trustworthy full boundary
+- [`g02.007` distribution release and consumer rollout](./docs/roadmaps/g02/007-distribution-release-and-consumer-rollout.md) is active, with release closure complete but release execution still deferred
+- [`g02.010` modularization and crate boundaries](./docs/roadmaps/g02/010-effigy-modularization-and-crate-boundaries.md) is still active in a parallel thread
 - workspace plus `effigy-core` foundation is shipped
 - `effigy-tasks` foundation is shipped
 - `effigy-manifest` foundation is shipped
@@ -400,9 +400,8 @@ effigy/
 
 ## Next Task
 
-No ready implementation card is open.
+Release execution stays deferred while the remaining `g02.010` work is still
+active.
 
-The next move is an intent choice:
-
-1. explicitly approve `v0.2.14` release execution and resume from `115`
-2. or activate the next roadmap card against the now-stable crate boundary
+The next move is to finish the live `g02.010` thread, then re-evaluate release
+execution from `115`.

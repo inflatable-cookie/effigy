@@ -14,8 +14,8 @@ The shipped distribution surface now has:
 - in-process Rhai dispatch for the rehearsal path
 - one explicit release-closure card
 
-The modularization lane is now paused on a trustworthy full boundary, so
-release closure is active again.
+The modularization lane is still active in a parallel thread, so release
+execution remains deferred even though release closure is complete.
 
 ## Governing Refs
 
@@ -38,7 +38,7 @@ This strict lane remains responsible for:
 
 `strict-active`
 
-`g02.010` is paused. `g02.007` is active again.
+`g02.010` is still active in a parallel thread. `g02.007` remains active too.
 
 The release-prep hardening chain is real:
 
@@ -63,10 +63,10 @@ That hardening detour is now fully closed:
 
 The next move is no longer another hardening batch.
 
-Release execution is technically ready, `g02.010` is paused, and `115` is
-complete.
+Release execution is technically ready and `115` is complete, but `g02.010`
+is still live in a parallel thread.
 
-No ready implementation card remains in this lane.
+Release execution stays deferred until that thread closes.
 
 ## Batch Model
 
@@ -95,9 +95,5 @@ claims.
 
 ## Next Task
 
-No ready implementation card remains.
-
-The next move is an intent checkpoint:
-
-1. explicitly approve `v0.2.14` release execution from `115`
-2. or activate the next product roadmap card before resuming release work
+Finish the remaining live `g02.010` work in the parallel thread, then return
+to `115` for explicit human-approved release execution.

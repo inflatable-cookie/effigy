@@ -60,14 +60,9 @@ Shipped proof already in place:
 
 The release gate is now broader product readiness, not repo hardening.
 
-`g02.010` is paused and `115` is complete.
+`115` is complete, but `g02.010` is still active in a parallel thread.
 
-No ready implementation card remains in this lane.
-
-The next move is now an explicit intent choice:
-
-- approve `v0.2.14` release execution through the human-only release path
-- or activate the next product roadmap card before returning to release work
+Release execution remains deferred until that live modularization work closes.
 
 ## Exit Condition
 
@@ -77,9 +72,5 @@ it is no longer only an Effigy-local product claim.
 
 ## Next Task
 
-No ready implementation card remains.
-
-The next move is an intent choice:
-
-1. explicitly approve `v0.2.14` release execution from `115`
-2. or activate the next product roadmap card on the stable crate boundary
+Finish the remaining live `g02.010` work in the parallel thread, then return
+to `115` for explicit human-approved release execution.
