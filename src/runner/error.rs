@@ -6,8 +6,11 @@ use effigy_core::path_error_text::{
 use effigy_core::resolver::ResolveError;
 use effigy_env::error::EnvSchemaError;
 use effigy_managed::ManagedError;
+use effigy_manifest::ManifestError;
 use effigy_process::ProcessManagerError;
 use effigy_tasks::TaskError;
+
+use super::catalog::RoutingError;
 
 #[path = "error/display.rs"]
 mod display;
@@ -329,6 +332,57 @@ impl From<effigy_containers::ContainerPolicyError> for RunnerError {
 impl From<effigy_release::ReleaseError> for RunnerError {
     fn from(value: effigy_release::ReleaseError) -> Self {
         Self::task_invocation(value.to_string())
+    }
+}
+
+/// Lifts `RoutingError` from the `catalog/**` routing surface into the
+/// existing `RunnerError::Task*` variants. Shapes are kept identical so
+/// this is a mechanical variant-to-variant map; the `Manifest` wrapper
+/// variant bridges catalog's own load path (card `245` Part B) by
+/// delegating through the existing `ManifestError` → `RunnerError`
+/// mapping. Card `246` will move this impl to a shim once `catalog/**`
+/// extracts into `effigy-routing`.
+impl From<RoutingError> for RunnerError {
+    fn from(value: RoutingError) -> Self {
+        match value {
+            RoutingError::TaskCatalogsMissing { root } => Self::TaskCatalogsMissing { root },
+            RoutingError::TaskCatalogReadDir { path, error } => {
+                Self::TaskCatalogReadDir { path, error }
+            }
+            RoutingError::TaskCatalogAliasConflict {
+                alias,
+                first_path,
+                second_path,
+            } => Self::TaskCatalogAliasConflict {
+                alias,
+                first_path,
+                second_path,
+            },
+            RoutingError::TaskCatalogPrefixNotFound { prefix, available } => {
+                Self::TaskCatalogPrefixNotFound { prefix, available }
+            }
+            RoutingError::TaskNotFound { name, path } => Self::TaskNotFound { name, path },
+            RoutingError::TaskNotFoundAny { name, catalogs } => {
+                Self::TaskNotFoundAny { name, catalogs }
+            }
+            RoutingError::TaskAmbiguous { name, candidates } => {
+                Self::TaskAmbiguous { name, candidates }
+            }
+            RoutingError::Manifest(error) => map_manifest_error(error),
+        }
+    }
+}
+
+fn map_manifest_error(error: ManifestError) -> RunnerError {
+    match error {
+        ManifestError::Read { path, error } => RunnerError::TaskManifestRead { path, error },
+        ManifestError::Parse { path, error } => RunnerError::TaskManifestParse { path, error },
+        ManifestError::Compose { path, detail } => {
+            RunnerError::TaskManifestCompose { path, detail }
+        }
+        ManifestError::Render { path, detail } => {
+            RunnerError::task_invocation_failed_render(&path, detail)
+        }
     }
 }
 

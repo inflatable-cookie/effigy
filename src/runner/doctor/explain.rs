@@ -41,7 +41,8 @@ pub(super) fn run_doctor_explain(
     let selector = parse_task_selector(&request.name)?;
 
     let candidates = analysis::candidate_catalogs(&catalogs, &selector, &cwd);
-    let selection_result = select_catalog_and_task(&selector, &catalogs, &cwd);
+    let selection_result =
+        select_catalog_and_task(&selector, &catalogs, &cwd).map_err(RunnerError::from);
     let selection = analysis::compute_selection_outcome(&selection_result);
     let deferral = analysis::compute_deferral_outcome(
         &selection_result,

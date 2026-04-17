@@ -53,5 +53,5 @@ alias = "catalog_b"
     symlink(&underlay_src, root.join("underlay")).expect("symlink underlay");
 
     let err = discover_catalogs(&root).expect_err("expected alias conflict");
-    assert_catalog_alias_conflict(err, "catalog_b");
+    assert_catalog_alias_conflict(err.into(), "catalog_b");
 }

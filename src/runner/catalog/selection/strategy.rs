@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::runner::error::RunnerError;
+use super::super::error::RoutingError;
 use effigy_manifest::LoadedCatalog;
 use effigy_tasks::CatalogSelectionMode;
 
@@ -8,7 +8,7 @@ pub(super) fn select_unprefixed_catalog<'a>(
     cwd: &Path,
     matches: &[&'a LoadedCatalog],
     task_name: &str,
-) -> Result<(&'a LoadedCatalog, CatalogSelectionMode, String), RunnerError> {
+) -> Result<(&'a LoadedCatalog, CatalogSelectionMode, String), RoutingError> {
     if let Some(selected) = select_in_scope_catalog(cwd, matches, task_name)? {
         return Ok((
             selected,
@@ -43,7 +43,7 @@ fn select_in_scope_catalog<'a>(
     cwd: &Path,
     catalogs: &[&'a LoadedCatalog],
     task_name: &str,
-) -> Result<Option<&'a LoadedCatalog>, RunnerError> {
+) -> Result<Option<&'a LoadedCatalog>, RoutingError> {
     let in_scope = catalogs
         .iter()
         .copied()
@@ -63,7 +63,7 @@ fn select_in_scope_catalog<'a>(
 fn select_shallowest_catalog<'a>(
     catalogs: &[&'a LoadedCatalog],
     task_name: &str,
-) -> Result<&'a LoadedCatalog, RunnerError> {
+) -> Result<&'a LoadedCatalog, RoutingError> {
     let min_depth = catalogs
         .iter()
         .map(|catalog| catalog.depth)
@@ -76,7 +76,7 @@ fn select_unique_catalog_by_depth<'a>(
     catalogs: &[&'a LoadedCatalog],
     depth: usize,
     task_name: &str,
-) -> Result<&'a LoadedCatalog, RunnerError> {
+) -> Result<&'a LoadedCatalog, RoutingError> {
     let matches = catalogs
         .iter()
         .copied()

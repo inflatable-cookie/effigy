@@ -1500,6 +1500,7 @@ impl DemoTaskSelectionResolved {
             &self.catalogs,
             &self.catalogs[self.selected_catalog_index].catalog_root,
         )
+        .map_err(Into::into)
     }
 
     fn task(&self) -> Result<&ManifestTask, RunnerError> {

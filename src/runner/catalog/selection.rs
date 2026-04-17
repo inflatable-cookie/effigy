@@ -9,7 +9,7 @@ mod strategy;
 
 use std::path::Path;
 
-use crate::runner::error::RunnerError;
+use super::error::RoutingError;
 use effigy_manifest::{LoadedCatalog, TaskSelection};
 use effigy_tasks::{CatalogSelectionMode, TaskSelector};
 
@@ -17,7 +17,7 @@ pub(in crate::runner) fn select_catalog_and_task<'a>(
     selector: &TaskSelector,
     catalogs: &'a [LoadedCatalog],
     cwd: &Path,
-) -> Result<TaskSelection<'a>, RunnerError> {
+) -> Result<TaskSelection<'a>, RoutingError> {
     if let Some(prefix_value) = &selector.prefix {
         let Some(catalog) = resolve_catalog_by_prefix(prefix_value, catalogs, cwd) else {
             return Err(errors::task_catalog_prefix_not_found(
@@ -60,7 +60,7 @@ fn build_task_selection<'a>(
     catalog: &'a LoadedCatalog,
     mode: CatalogSelectionMode,
     evidence: Vec<String>,
-) -> Result<TaskSelection<'a>, RunnerError> {
+) -> Result<TaskSelection<'a>, RoutingError> {
     let Some(task) = catalog.manifest.tasks.get(&selector.task_name) else {
         return Err(errors::task_not_found_in_catalog(
             &selector.task_name,
