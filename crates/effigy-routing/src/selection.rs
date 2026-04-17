@@ -1,10 +1,6 @@
-#[path = "selection/candidates.rs"]
 mod candidates;
-#[path = "selection/errors.rs"]
 mod errors;
-#[path = "selection/prefix.rs"]
 mod prefix;
-#[path = "selection/strategy.rs"]
 mod strategy;
 
 use std::path::Path;
@@ -13,7 +9,7 @@ use super::error::RoutingError;
 use effigy_manifest::{LoadedCatalog, TaskSelection};
 use effigy_tasks::{CatalogSelectionMode, TaskSelector};
 
-pub(in crate::runner) fn select_catalog_and_task<'a>(
+pub fn select_catalog_and_task<'a>(
     selector: &TaskSelector,
     catalogs: &'a [LoadedCatalog],
     cwd: &Path,
@@ -47,7 +43,7 @@ pub(in crate::runner) fn select_catalog_and_task<'a>(
     build_task_selection(selector, selected, mode, vec![evidence])
 }
 
-pub(in crate::runner) fn resolve_catalog_by_prefix<'a>(
+pub fn resolve_catalog_by_prefix<'a>(
     prefix_value: &str,
     catalogs: &'a [LoadedCatalog],
     cwd: &Path,

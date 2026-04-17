@@ -10,10 +10,10 @@ mod contracts;
 #[path = "explain/render.rs"]
 mod render;
 
-use super::super::catalog::{discover_catalogs, select_catalog_and_task};
 use super::super::command_context::current_working_dir;
 use super::super::util::parse_task_selector;
 use crate::runner::error::RunnerError;
+use effigy_routing::{discover_catalogs, select_catalog_and_task};
 use effigy_tasks::CatalogSelectionMode;
 pub(super) const DEFERRAL_NOT_CONSIDERED_REASON: &str =
     "deferral was not considered because the selection outcome does not trigger deferral";

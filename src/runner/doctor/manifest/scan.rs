@@ -2,7 +2,6 @@ use std::path::Path;
 
 use toml::Value;
 
-use super::super::super::catalog::{default_alias, discover_manifest_paths};
 use super::super::super::manifest::{
     config_sections::ManifestJsPackageManager, load_task_manifest_with_inspection,
 };
@@ -13,6 +12,7 @@ use super::schema::validate_manifest_schema;
 use super::ManifestScanResult;
 use crate::data_loading::{parse_toml, read_utf8};
 use effigy_manifest::LoadedCatalog;
+use effigy_routing::{default_alias, discover_manifest_paths};
 
 pub(super) fn collect_manifest_findings(
     resolved_root: &Path,

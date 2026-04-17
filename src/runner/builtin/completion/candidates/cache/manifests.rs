@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use super::super::super::scripts::command_names;
-use crate::runner::catalog::{discover_catalogs, RoutingError};
 use crate::runner::error::RunnerError;
+use effigy_routing::{discover_catalogs, RoutingError};
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct ManifestStamp {

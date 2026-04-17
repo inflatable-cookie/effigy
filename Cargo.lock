@@ -553,6 +553,7 @@ dependencies = [
  "effigy-process",
  "effigy-release",
  "effigy-rhai",
+ "effigy-routing",
  "effigy-tasks",
  "effigy-tui",
  "effigy-ui",
@@ -771,6 +772,14 @@ dependencies = [
  "serde_json",
  "signal-hook",
  "toml",
+]
+
+[[package]]
+name = "effigy-routing"
+version = "0.1.0"
+dependencies = [
+ "effigy-manifest",
+ "effigy-tasks",
 ]
 
 [[package]]

@@ -62,7 +62,6 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
 
-use crate::runner::catalog::select_catalog_and_task;
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
 use crate::runner::execute::run_manifest_task_with_cwd;
 use crate::runner::manifest::{
@@ -80,6 +79,7 @@ use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::run_spec::{render_task_run_spec, RunSpecContext};
 use effigy_manifest::{LoadedCatalog, TaskSelection};
 use effigy_process::{ProcessEventKind, ProcessSpec, ProcessSupervisor};
+use effigy_routing::select_catalog_and_task;
 use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 use effigy_ui::{PlainRenderer, Renderer};
 
@@ -1341,7 +1341,7 @@ fn render_demo_run_command(
     demo_id: &str,
     run: &ManifestManagedRun,
 ) -> Result<String, RunnerError> {
-    let catalogs = crate::runner::catalog::discover_catalogs_allow_missing(repo_root)?;
+    let catalogs = effigy_routing::discover_catalogs_allow_missing(repo_root)?;
     let task_env = BTreeMap::new();
     render_task_run_spec(
         run,
@@ -1357,7 +1357,7 @@ fn render_demo_run_command(
             task_scope_cwd: repo_root,
             runtime_env_schema_override: None,
             depth: 0,
-            resolver: &crate::runner::catalog::resolve_task_selection,
+            resolver: &effigy_routing::resolve_task_selection,
         },
     )
     .map_err(Into::into)
@@ -1512,7 +1512,7 @@ fn demo_task_selection(
     repo_root: &Path,
     task_name: &str,
 ) -> Result<Option<DemoTaskSelectionResolved>, RunnerError> {
-    let catalogs = crate::runner::catalog::discover_catalogs_allow_missing(repo_root)?;
+    let catalogs = effigy_routing::discover_catalogs_allow_missing(repo_root)?;
     if catalogs.is_empty() {
         return Ok(None);
     }
@@ -1559,7 +1559,7 @@ fn execute_concurrent_runner_backed_demo(
         &runtime_args,
         &resolved.catalogs,
         &selection.catalog.catalog_root,
-        &crate::runner::catalog::resolve_task_selection,
+        &effigy_routing::resolve_task_selection,
     )?
     .ok_or_else(|| {
         RunnerError::task_invocation(format!(
@@ -1791,7 +1791,7 @@ fn concurrent_runner_task_process_names(repo_root: &Path, task_name: &str) -> Op
         &runtime_args,
         &resolved.catalogs,
         &selection.catalog.catalog_root,
-        &crate::runner::catalog::resolve_task_selection,
+        &effigy_routing::resolve_task_selection,
     )
     .ok()
     .flatten()

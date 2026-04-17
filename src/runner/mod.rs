@@ -4,7 +4,6 @@ use std::path::Path;
 mod bootstrap_command;
 mod builtin;
 mod cache;
-mod catalog;
 mod changelog_command;
 mod command_context;
 mod container_command;
@@ -64,7 +63,7 @@ fn implicit_deferred_builtins_for_root_with_catalogs(
 }
 
 fn implicit_deferred_builtins_for_root(root: &Path) -> BTreeSet<String> {
-    let catalogs = catalog::discover_catalogs_allow_missing(root).unwrap_or_default();
+    let catalogs = effigy_routing::discover_catalogs_allow_missing(root).unwrap_or_default();
     implicit_deferred_builtins_for_root_with_catalogs(root, &catalogs)
 }
 

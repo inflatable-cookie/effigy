@@ -1,4 +1,3 @@
-use super::super::catalog::select_catalog_and_task;
 use super::super::command_context::current_working_dir;
 use super::super::manifest::task_runtime::ManifestTask;
 use super::super::model::constants::BUILTIN_TASKS;
@@ -10,6 +9,7 @@ use effigy_managed::profiles::{
     available_concurrent_profiles, has_concurrent_profile, DEFAULT_MANAGED_PROFILE,
 };
 use effigy_manifest::{LoadedCatalog, TaskSelection};
+use effigy_routing::select_catalog_and_task;
 
 pub(in crate::runner) fn build_resolve_probe(
     raw_selector: Option<String>,

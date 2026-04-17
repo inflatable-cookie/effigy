@@ -8,7 +8,7 @@ pub(in crate::runner) mod builtin_contracts {
 
 pub(in crate::runner) mod catalog {
     pub(in crate::runner) use super::super::builtin::test_support::builtin_test_max_parallel;
-    pub(in crate::runner) use super::super::catalog::discover_catalogs;
+    pub(in crate::runner) use effigy_routing::discover_catalogs;
 }
 
 pub(in crate::runner) mod execution {

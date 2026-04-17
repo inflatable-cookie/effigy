@@ -8,9 +8,8 @@ use effigy_env::error::EnvSchemaError;
 use effigy_managed::ManagedError;
 use effigy_manifest::ManifestError;
 use effigy_process::ProcessManagerError;
+use effigy_routing::RoutingError;
 use effigy_tasks::TaskError;
-
-use super::catalog::RoutingError;
 
 #[path = "error/display.rs"]
 mod display;
