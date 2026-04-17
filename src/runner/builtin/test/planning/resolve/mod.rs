@@ -3,7 +3,6 @@ use std::path::Path;
 
 use crate::runner::builtin::test::planning::BuiltinTestTarget;
 use crate::runner::manifest::config_sections::ManifestJsPackageManager;
-use crate::runner::tooling::vitest_command_for_js_package_manager;
 use crate::runner::RunnerError;
 use effigy_manifest::LoadedCatalog;
 
@@ -22,13 +21,13 @@ pub(super) fn resolve_builtin_test_targets(
 }
 
 pub(super) fn apply_builtin_test_runner_config(
-    mut plan: crate::testing::TestRunnerPlan,
+    mut plan: effigy_tasks::testing::TestRunnerPlan,
     package_manager: Option<ManifestJsPackageManager>,
     runner_overrides: &BTreeMap<String, String>,
-) -> crate::testing::TestRunnerPlan {
-    if plan.runner == crate::testing::TestRunner::Vitest {
+) -> effigy_tasks::testing::TestRunnerPlan {
+    if plan.runner == effigy_tasks::testing::TestRunner::Vitest {
         if let Some(manager) = package_manager {
-            let (command, manager_label) = vitest_command_for_js_package_manager(manager);
+            let (command, manager_label) = manager.vitest_command();
             plan.command = command.to_owned();
             plan.evidence
                 .push(format!("package_manager.js={manager_label}"));

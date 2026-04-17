@@ -2,10 +2,10 @@ use std::path::Path;
 
 use effigy_core::fs_probe::PathPresenceCache;
 
-use super::super::super::model::constants::TASK_MANIFEST_FILE;
 use super::io;
 use super::model::{MigratePlan, MigrateRequest};
 use crate::runner::error::RunnerError;
+use effigy_manifest::TASK_MANIFEST_FILE;
 
 pub(super) fn build_migrate_plan(
     request: &MigrateRequest,

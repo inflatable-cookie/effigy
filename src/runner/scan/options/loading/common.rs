@@ -2,8 +2,7 @@ use std::path::Path;
 
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::{load_task_manifest, TaskManifest};
-use crate::runner::model::constants::TASK_MANIFEST_FILE;
-use effigy_manifest::LoadedCatalog;
+use effigy_manifest::{LoadedCatalog, TASK_MANIFEST_FILE};
 
 use super::traits::{CommonManifestOptions, CommonScanOptionsMut, ManifestBackedScanOptions};
 

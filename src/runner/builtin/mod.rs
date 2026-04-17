@@ -31,7 +31,7 @@ mod watch;
 
 pub(super) use support::{
     ensure_no_unknown_builtin_args, ensure_no_unknown_builtin_args_with_prefix,
-    has_builtin_help_flag, has_builtin_json_flag, render_builtin_general_help_for_root,
+    has_builtin_help_flag, has_builtin_json_flag, render_builtin_general_help,
     render_builtin_help_text, render_builtin_help_topic,
 };
 

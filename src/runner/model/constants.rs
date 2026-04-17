@@ -1,4 +1,3 @@
-pub(in crate::runner) const TASK_MANIFEST_FILE: &str = "effigy.toml";
 pub(in crate::runner) const DEFER_DEPTH_ENV: &str = "EFFIGY_DEFER_DEPTH";
 pub(in crate::runner) const IMPLICIT_ROOT_DEFER_TEMPLATE: &str =
     "{composer_global_effigy} {request} {args}";

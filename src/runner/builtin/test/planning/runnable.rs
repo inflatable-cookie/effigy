@@ -1,5 +1,6 @@
+use effigy_core::shell::shell_quote;
+
 use crate::runner::builtin::test::planning::{BuiltinTestRunnable, BuiltinTestTarget};
-use crate::runner::util::shell_quote;
 
 pub(super) fn collect_builtin_test_runnable_targets(
     targets: &[BuiltinTestTarget],

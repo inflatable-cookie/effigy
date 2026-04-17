@@ -2,9 +2,9 @@ use std::path::Path;
 
 use effigy_tasks::ResolutionMode;
 
-use super::super::super::model::constants::TASK_MANIFEST_FILE;
 use super::super::contracts::{check_id, remediation};
 use super::super::report::DoctorState;
+use effigy_manifest::TASK_MANIFEST_FILE;
 
 pub(in crate::runner::doctor) enum WorkflowFinding<'a> {
     RootResolution {

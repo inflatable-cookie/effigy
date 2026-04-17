@@ -2,9 +2,9 @@ use std::path::Path;
 
 use serde_json::json;
 
-use super::super::super::model::constants::TASK_MANIFEST_FILE;
 use super::super::response::render_optional_text_with_schema_fields_lazy;
 use crate::runner::error::RunnerError;
+use effigy_manifest::TASK_MANIFEST_FILE;
 
 pub(super) struct InitOutcome {
     pub(super) manifest_exists: bool,

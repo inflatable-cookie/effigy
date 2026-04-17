@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use effigy_core::resolver::ResolvedTarget;
 use effigy_tasks::ResolutionMode;
 
-use super::super::super::super::model::constants::TASK_MANIFEST_FILE;
 use super::super::super::contracts::{check_id, remediation};
 use super::super::super::report::{DoctorSeverity, DoctorState, ManifestSnapshot};
 use super::*;
+use effigy_manifest::TASK_MANIFEST_FILE;
 
 fn empty_manifest_snapshot() -> ManifestSnapshot {
     ManifestSnapshot {

@@ -8,6 +8,14 @@ mod task_defs;
 pub mod task_runtime;
 mod test_config;
 
+/// Filename of the per-catalog Effigy manifest file (`effigy.toml`).
+///
+/// Canonical copy lives here. A handful of historical call sites in
+/// `effigy-bootstrap`, `effigy-release`, and `effigy-routing` still
+/// inline their own copies to avoid an extra cross-crate dep; they
+/// should migrate to this constant when the opportunity arises.
+pub const TASK_MANIFEST_FILE: &str = "effigy.toml";
+
 pub use composition::{
     load_task_manifest_with_inspection, LoadedTaskManifest, ManifestCompositionEdge,
     ManifestCompositionOverride, ManifestCompositionValueSource,

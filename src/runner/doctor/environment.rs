@@ -5,7 +5,7 @@ use effigy_core::fs_probe::PathPresenceCache;
 use effigy_core::path_probe::command_available_in_path;
 
 use super::super::manifest::config_sections::ManifestJsPackageManager;
-use super::super::tooling::{js_package_manager_binary, required_tools_for_command};
+use super::super::tooling::required_tools_for_command;
 use super::super::TaskManifest;
 use super::contracts::{check_id, install_tool, remediation};
 use super::report::DoctorState;
@@ -27,7 +27,7 @@ pub(super) fn check_environment_tools(
     if has_package_json {
         add_required_tools(&mut required, &["node"]);
         if let Some(pm) = preferred_js_pm {
-            if let Some(binary) = js_package_manager_binary(pm) {
+            if let Some(binary) = pm.binary_name() {
                 add_required_tools(&mut required, &[binary]);
             }
         }

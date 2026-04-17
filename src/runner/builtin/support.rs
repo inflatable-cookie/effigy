@@ -1,5 +1,6 @@
+use std::collections::BTreeSet;
+
 use serde_json::json;
-use std::path::Path;
 
 use effigy_cli::help::ui::{render_help, render_help_with_deferred_builtins};
 use effigy_cli::HelpTopic;
@@ -95,13 +96,12 @@ pub(in crate::runner) fn render_builtin_help_text(
     Ok(text)
 }
 
-pub(in crate::runner) fn render_builtin_general_help_for_root(
-    root: &Path,
+pub(in crate::runner) fn render_builtin_general_help(
+    deferred_builtins: &BTreeSet<String>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let mut renderer = standard_renderer(output_json);
-    let deferred_builtins = crate::runner::deferred_builtins_for_root(root);
-    render_help_with_deferred_builtins(&mut renderer, HelpTopic::General, &deferred_builtins)?;
+    render_help_with_deferred_builtins(&mut renderer, HelpTopic::General, deferred_builtins)?;
     let rendered = render_utf8(renderer.into_inner())?;
     render_builtin_help_text("general", rendered, output_json)
 }

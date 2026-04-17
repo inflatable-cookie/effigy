@@ -1229,6 +1229,28 @@ That post-`212` boundary decision is now made too:
   opens once `247`, `248`, and `249` are all complete; it is not yet
   drafted.
 
+- `255` landed card `248` (runner-utility prerequisites for
+  `effigy-builtin`). Relocations: `parse_json`/`parse_toml`/`read_utf8`
+  into `effigy-core::data_loading`; `TASK_MANIFEST_FILE` into
+  `effigy-manifest` as a `pub const`; `vitest_command_for_js_package_manager`
+  and `js_package_manager_binary` into methods on
+  `ManifestJsPackageManager` inside `effigy-manifest` (pivoted from
+  `effigy-tasks` to avoid the `effigy-manifest → effigy-tasks` cycle);
+  `src/testing/**` into `effigy-tasks::testing`. Direct-import flips:
+  `shell_quote`, `parse_dotenv_entries`, and
+  `normalize_builtin_test_suite` at every builtin call site now reach
+  for `effigy_core::shell`, `effigy_env::dotenv`, and `effigy_tasks`
+  respectively. Inversion: `render_builtin_general_help_for_root` →
+  `render_builtin_general_help(deferred_builtins, output_json)` with
+  the set threaded in from the registry using catalogs already in
+  hand. Deferred with justification: `BUILTIN_TASKS`,
+  `DEFAULT_BUILTIN_TEST_MAX_PARALLEL`, `encode_json` — inline/relocate
+  at `effigy-builtin` extraction time. `src/runner/util/dotenv.rs`
+  shim deleted; `src/runner/util/shell.rs` shim now only re-exports
+  `with_local_node_bin_path`. Full validation green. Card `249`
+  remains ready; the `effigy-builtin` implement card can be drafted
+  once it lands.
+
 - `254` landed card `247` (decide scan extraction shape). A
   function-level coupling sweep across `src/runner/scan/**` (4,928
   lines, 34 files) confirmed the subsystem is tightly internal:
@@ -1252,15 +1274,8 @@ That post-`212` boundary decision is now made too:
 
 ## Next Task
 
-Two ready implement cards, independent of each other:
-
-- [`249-implement-effigy-scan-extraction.md`](batch-cards/249-implement-effigy-scan-extraction.md)
-  — extract `src/runner/scan/**` (~4,928 lines, 34 files) into the
-  new `effigy-scan` crate with `ScanError` boundary. Single card
-  (no prereq, per `247` decision).
-- [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](batch-cards/248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
-  — relocate six runner-side utilities plus two inversions so the
-  eventual `effigy-builtin` move is mechanical.
-
-The `effigy-builtin` implement card opens once `248` and `249` are
-both complete.
+Execute [`249-implement-effigy-scan-extraction.md`](batch-cards/249-implement-effigy-scan-extraction.md)
+— extract `src/runner/scan/**` (~4,928 lines, 34 files) into the new
+`effigy-scan` crate with `ScanError` boundary. Single card, no prereq
+(per `247` decision). Card `248` is complete; the `effigy-builtin`
+implement card can be drafted once `249` lands.

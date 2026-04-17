@@ -130,7 +130,11 @@ impl BuiltinDispatch {
             Self::Config => {
                 config::run_builtin_config(task, &runtime_args.passthrough, target_root)
             }
-            Self::Help => help::run_builtin_help(task, &runtime_args.passthrough, target_root),
+            Self::Help => {
+                let deferred_builtins =
+                    crate::runner::deferred_builtins_from_catalogs(catalogs, target_root);
+                help::run_builtin_help(task, &runtime_args.passthrough, &deferred_builtins)
+            }
             Self::Watch => watch::run_builtin_watch(task, runtime_args, target_root),
             Self::Init => init::run_builtin_init(task, &runtime_args.passthrough, target_root),
             Self::Migrate => {

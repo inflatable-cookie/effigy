@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 
 use effigy_cli::TaskInvocation;
 
+use effigy_core::shell::shell_quote;
+
 use super::super::model::constants::DEFER_DEPTH_ENV;
-use super::super::util::{shell_quote, with_local_node_bin_path};
+use super::super::util::with_local_node_bin_path;
 use super::trace::render_deferral_trace;
 use crate::runner::error::RunnerError;
 use effigy_manifest::DeferredCommand;

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::runner::manifest::ManifestCargoEnvMatchMode;
 use crate::runner::manifest::ManifestTestSuiteTeardownPolicy;
-use crate::runner::util::shell_quote;
+use effigy_core::shell::shell_quote;
 use effigy_managed::run_spec::wrap_command_with_env;
 use effigy_process::ProcessSpec;
 use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
