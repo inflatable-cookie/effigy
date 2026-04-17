@@ -45,6 +45,12 @@ Rules:
 - `g01` remains the historical implementation and consolidation generation
 - new roadmap items that represent a fresh product cycle should start in `g02`
 - continue numbering in `g02/` until another manual rollover is justified
+- treat rollover as full closeout, not a convenience reset: `g02` does not end
+  until every `g02` roadmap is closed, paused, superseded, or rehomed and the
+  stale `g02` strict-lane artifacts have been purged from the active
+  `docs/specs/` tree
+- as a healthy default, expect a generation to carry roughly 20 to 40 roadmap
+  files before rollover is even worth discussing
 
 ## Next Task
 
