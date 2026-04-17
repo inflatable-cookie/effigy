@@ -1229,19 +1229,38 @@ That post-`212` boundary decision is now made too:
   opens once `247`, `248`, and `249` are all complete; it is not yet
   drafted.
 
+- `254` landed card `247` (decide scan extraction shape). A
+  function-level coupling sweep across `src/runner/scan/**` (4,928
+  lines, 34 files) confirmed the subsystem is tightly internal:
+  `execution` uses `support` + `model`, `render` consumes `model`
+  types, `options/loading` builds the same model types `execution`
+  emits. Decisions: single `effigy-scan` crate covering all six
+  subsystems; name already pre-reserved in `effigy-managed`'s
+  crate-slug table; `ScanError` enum with
+  `From<ScanError> for RunnerError` matching the Job-8 pattern (all
+  20 producer sites today use `RunnerError::task_invocation(...)`);
+  scan consumes `effigy-manifest` types directly (current
+  `crate::runner::manifest::*` imports are pure re-exports);
+  `TASK_MANIFEST_FILE` inlines into the new crate. Diverged from
+  the 245/246 prereq+implement cadence — scan's "prereq" work is
+  cosmetic (re-export swap + uniform `task_invocation` rewrite) and
+  reviewable as a single commit alongside the crate move. Card
+  `247` is complete; card
+  [`249-implement-effigy-scan-extraction.md`](batch-cards/249-implement-effigy-scan-extraction.md)
+  is now ready and runs the full move in one card. Independent of
+  card `248` — either ordering works.
+
 ## Next Task
 
-With `252` landing `effigy-routing` and `253` decoding the
-`effigy-builtin` plan, two ready cards sit in the queue and they are
-independent of each other:
+Two ready implement cards, independent of each other:
 
-- [`247-decide-effigy-scan-extraction-shape.md`](batch-cards/247-decide-effigy-scan-extraction-shape.md)
-  — decide the scope, crate name, error boundary, and manifest-glue
-  resolution for the scan extraction. Unblocks `249`.
+- [`249-implement-effigy-scan-extraction.md`](batch-cards/249-implement-effigy-scan-extraction.md)
+  — extract `src/runner/scan/**` (~4,928 lines, 34 files) into the
+  new `effigy-scan` crate with `ScanError` boundary. Single card
+  (no prereq, per `247` decision).
 - [`248-implement-runner-utility-prerequisites-for-effigy-builtin.md`](batch-cards/248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
-  — relocate the six runner-side utilities builtin reaches into plus
-  resolve two inversions. Does not require `247` to decide first.
+  — relocate six runner-side utilities plus two inversions so the
+  eventual `effigy-builtin` move is mechanical.
 
-[`249-implement-effigy-scan-extraction.md`](batch-cards/249-implement-effigy-scan-extraction.md)
-is queued behind `247`. The `effigy-builtin` implement card opens
-once `247`, `248`, and `249` are all complete.
+The `effigy-builtin` implement card opens once `248` and `249` are
+both complete.

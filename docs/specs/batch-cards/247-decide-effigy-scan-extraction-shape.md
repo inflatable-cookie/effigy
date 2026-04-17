@@ -1,6 +1,6 @@
 # 247 Decide Effigy-Scan Extraction Shape
 
-Status: ready
+Status: complete
 Updated: 2026-04-17
 Roadmap: `g02.010`
 Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
@@ -150,9 +150,131 @@ section. Leave the section pending until the decision is made.
 - `cargo run --bin effigy -- qa:docs`
 - `git diff --check`
 
+## Decision
+
+Decided 2026-04-17 after a function-level coupling sweep across
+`src/runner/scan/**` (4,928 lines, 34 files).
+
+### 1. Scope partition — single crate covering all six subsystems
+
+All of `model/**`, `support/**`, `execution/**`, `options/**`,
+`render/**`, plus `tests.rs` and `constants.rs` move as one crate. The
+subsystems are tightly internal: `execution` uses `support` + `model`;
+`render` consumes `model` types (`ScanRenderFormat`, `TextRenderOptions`);
+`options/loading` builds the same model types that `execution` emits.
+Splitting `render` out would force duplicating `model/common.rs` across
+two crates. Keeping `options/loading` in the runner fragments six
+`load_root_*` / six `doctor_*` option builders from the types they
+construct. 4,928 lines is comparable to `effigy-managed` at extraction
+time; one compile unit is fine.
+
+### 2. Crate name — `effigy-scan`
+
+Pre-reserved. `crates/effigy-managed/src/lib.rs` already maps
+`("scan", "effigy-scan")` in its crate-slug table. No workspace
+collisions in `Cargo.toml` or `crates/*/Cargo.toml`.
+
+### 3. Error boundary — introduce `ScanError` with `From<ScanError> for RunnerError`
+
+Job-8 pattern. Scan produces errors at exactly 20 call sites, all
+`RunnerError::task_invocation(...)`:
+- `execution/workspace.rs:77`, `execution/file_scans/generated.rs:81,145`
+- `support/traversal/walker.rs:21,26,72,107,114`
+- `options/validation.rs:40,49,62,74,91,108,121,133,148,153,167,172`
+
+Shape: single-variant newtype `ScanError::Invocation(String)` is
+sufficient today, but a richer enum (`InvalidGlob`, `ReadFailed`,
+`ValidateBounds`) is the natural first refactor inside the new crate
+and can land incrementally. `From<ScanError> for RunnerError` lifts
+every variant to `RunnerError::task_invocation(...)`. Avoids the
+scan-depends-on-effigy cycle.
+
+### 4. Manifest-loading glue — consume `effigy-manifest` directly
+
+Every scan file currently reaching into `crate::runner::manifest::*`
+is reaching through a pure re-export: `src/runner/manifest.rs` lines
+7-14 re-export `effigy_manifest::config_sections` and
+`effigy_manifest::task_runtime` verbatim. The four scan files affected
+(`model/common.rs`, `options/loading/common.rs`,
+`options/loading/traits.rs`, `options/loading/impls.rs`) swap their
+imports from `crate::runner::manifest::*` to `effigy_manifest::*`
+directly — zero behavior change.
+
+`load_task_manifest` already lives in `effigy-manifest`; the runner
+keeps only a thin `ManifestError → RunnerError` mapper at
+`src/runner/manifest.rs:33-46`. Scan calls
+`effigy_manifest::load_task_manifest` and maps `ManifestError` →
+`ScanError` itself. No relocation of `load_task_manifest` is needed.
+
+`TASK_MANIFEST_FILE` is a one-line constant (`"effigy.toml"`) used in
+one scan file (`options/loading/common.rs`). Travels into the new
+crate as a crate-private constant, matching the routing extraction's
+handling of the same constant.
+
+### 5. Prerequisite ordering vs card `248` — independent
+
+Scan has zero overlap with five of card `248`'s six relocation targets
+(`runner::util::*`, `runner::tooling::vitest_command_for_js_package_manager`,
+`runner::render::encode_json`, `data_loading::*`, `testing::detect_test_runner_plans`,
+`BUILTIN_TASKS`, `DEFAULT_BUILTIN_TEST_MAX_PARALLEL`). The only
+touchpoint is `TASK_MANIFEST_FILE` — one scan file, and scan handles
+it directly per decision 4 (inline into `effigy-scan`). `247`/`249`
+and `248` can run in any order.
+
+### 6. Test redistribution — 12 tests travel with the crate
+
+All 12 `#[test]` functions sit in `src/runner/scan/tests.rs`. Other
+scan files have `#[cfg(test)]` gates but no `#[test]` bodies. Tests
+use only in-crate types + `serde_json` + `std::path` — clean port,
+no fixture rewrites. Runner lib count drops by 12 at extraction; new
+`effigy-scan` crate count picks up 12.
+
+### 7. Scope shape — single implement card, no prerequisite
+
+Diverges from the `245`+`246` cadence intentionally. Routing's
+prerequisite card existed because catalog had **real glue
+consolidation** work: catalog owned a manifest-loading path distinct
+from scan's, and that split had to land inside the runner first. Scan
+has **no equivalent work** — its manifest reach is already pure
+re-exports (zero-behavior imports), its error surface is 20 uniform
+`task_invocation` calls, and no other subsystem parallels scan's
+manifest-loading use. The prerequisite would be purely cosmetic
+import swaps plus the `ScanError` introduction, all of which can
+land in the same commit as the crate move without reviewer strain.
+
+Card [`249`](./249-implement-effigy-scan-extraction.md) stays as the
+single implement card. No prereq card opens.
+
+### Hidden coupling findings
+
+- Scan reaches no runner types beyond `RunnerError::task_invocation`.
+  No runner helpers, globals, or non-manifest types consumed.
+- External deps the new crate needs: `globset`, `ignore`, `serde`,
+  `serde_json` (tests only). All already in the workspace `Cargo.toml`.
+  Zero `regex` / `rayon` / `walkdir` / `toml` direct use in scan.
+- 328 `pub(in crate::runner)` visibility markers across 34 scan files.
+  At the new crate boundary they become `pub` (for items the runner
+  re-exports) or `pub(crate)` (crate-internal). Heavy count but
+  mechanical.
+- Inbound callers outside scan reach into `runner::scan::model::*`
+  for four items (`ScanRenderFormat`, threshold types, severity
+  types) — those become the crate's public surface.
+- No cyclic risk. Scan depends on `effigy-manifest`;
+  `effigy-manifest` has no reach into scan. `effigy-managed` names
+  `"effigy-scan"` only as a string slug, not a cargo dep.
+- No runner-specific test fixtures. All 12 tests use plain stdlib +
+  `serde_json`.
+
 ## Next Task
 
-_To be written in the `Decision` section once sweep + review complete.
-Expected outcome: open [`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md)
-as the implement card, possibly preceded by a small prerequisite card
-if sweep finds a hazard not yet identified._
+Card [`249-implement-effigy-scan-extraction.md`](./249-implement-effigy-scan-extraction.md)
+is now the active ready implement card for the scan sub-lane. It does
+the full move in one go: introduce `ScanError`, relocate
+`src/runner/scan/**` into `crates/effigy-scan/src/**`, swap manifest
+re-exports for direct `effigy_manifest::*` imports at the four affected
+files, flip visibilities, wire `Cargo.toml`, migrate the ~11
+caller files (builtin/scan, doctor scan-checks, builtin/watch/runtime,
+builtin/registry) to the new import path. No prerequisite card opens.
+
+Card [`248`](./248-implement-runner-utility-prerequisites-for-effigy-builtin.md)
+stays ready and independent — it can execute in parallel with `249`.
