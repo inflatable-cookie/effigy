@@ -1480,10 +1480,37 @@ That post-`212` boundary decision is now made too:
   green; `cargo fmt`, `cargo clippy -- -D warnings` (standard
   allowlist) clean. No behavior change.
 
+- `263` landed card `253` (decide doctor-runner extraction shape).
+  Fresh survey showed the runner doctor subtree (~4,532 LOC, 65
+  files) has surprisingly narrow reach-ins: `RunnerError`
+  (universal), `command_context::current_working_dir()` (2 call
+  sites), and one `ManifestJsPackageManager` type import that
+  actually already lives in `effigy-manifest`. Zero reaches into
+  `deferral`, `locking`, `util`, `cache`, or `execute`. The
+  existing `effigy-doctor` crate (705 LOC) is pure library —
+  reports, findings, projections, contracts. Decision: **fold the
+  runner orchestration into `effigy-doctor`** rather than creating
+  a separate `effigy-doctor-runner`. Final crate size ~5.2k LOC,
+  matching the pattern set by other domain crates that own both
+  types and orchestration (`effigy-tasks`, `effigy-release`,
+  `effigy-managed`). `DoctorError` enum with five variants
+  (`DoctorNonZero`, `TaskInvocation`, `Ui`, `Manifest(ManifestError)`,
+  `Scan(ScanError)`) plus helper constructors matching the
+  `BuiltinError` pattern; `impl From<DoctorError> for RunnerError`
+  at runner boundary reuses `map_manifest_error` and
+  `From<ScanError>`. **No port traits** — doctor depends directly
+  on `effigy-manifest`, `effigy-scan`, `effigy-core`, `effigy-env`,
+  `effigy-tasks`, `effigy-routing`, `effigy-ui`. Single crate, no
+  cluster. No prerequisite cards — card `252` already handled the
+  directory flattens. Card `254` is a mechanical extraction.
+
 ## Next Task
 
-Execute [`253-decide-effigy-doctor-runner-extraction-shape.md`](batch-cards/253-decide-effigy-doctor-runner-extraction-shape.md).
-Pin crate name, `DoctorError` shape, port surface for the
-residual runner reach-ins (deferral, locking, env-schema via the
-recently-inlined helpers), and split vs single-crate shape for
-the ~4.5k LOC doctor subsystem. Implement card is `254`.
+Execute [`254-implement-effigy-doctor-runner-extraction.md`](batch-cards/254-implement-effigy-doctor-runner-extraction.md).
+Mechanical move of 65 files (~4.5k LOC) into the existing
+`effigy-doctor` crate per card `253`'s decision. Narrow
+`DoctorError` → `RunnerError` boundary at the runner's edge;
+inline the 2 `current_working_dir()` call sites; flip the
+`ManifestJsPackageManager` import to `effigy-manifest` direct.
+Final bounded extraction for the reopened `g02.010` lane; card
+`255` (test-harness prelude flatten) closes the lane.

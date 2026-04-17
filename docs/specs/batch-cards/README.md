@@ -26,11 +26,22 @@ Batch cards are the execution units for active Effigy strict-lane work.
   `super::super::super::super::` count 12 → 0;
   `super::super::super::` count 37 → 15.
 - [`253-decide-effigy-doctor-runner-extraction-shape.md`](./253-decide-effigy-doctor-runner-extraction-shape.md)
-  is ready after `252`. Pins crate name, error boundary, port
-  surface, and split shape for the last major runner subsystem
-  (`src/runner/doctor/**`, ~4,547 lines, 65 files).
+  is complete. Decision: fold into the existing `effigy-doctor`
+  library crate (not a new `effigy-doctor-runner`), growing it
+  from pure-library to domain orchestration at ~5.2k LOC.
+  `DoctorError` enum with five variants (`DoctorNonZero`,
+  `TaskInvocation`, `Ui`, `Manifest`, `Scan`). No port traits —
+  doctor depends directly on `effigy-manifest`, `effigy-scan`,
+  `effigy-core`, `effigy-env`, `effigy-tasks`, `effigy-routing`,
+  `effigy-ui`. Single crate, no cluster. No prerequisite cards —
+  card `252` already handled the directory flattens.
 - [`254-implement-effigy-doctor-runner-extraction.md`](./254-implement-effigy-doctor-runner-extraction.md)
-  is queued, unblocks after `253`'s decision lands.
+  is the ready card for `g02.010`. Mechanical crate move per card
+  `253`'s decision: grow `effigy-doctor/Cargo.toml` deps, move
+  all 65 files, introduce `DoctorError`, add
+  `From<DoctorError> for RunnerError` at runner boundary, inline
+  the 2 `current_working_dir()` call sites, flip the
+  `ManifestJsPackageManager` import to `effigy-manifest` direct.
 - [`255-implement-test-harness-prelude-flatten.md`](./255-implement-test-harness-prelude-flatten.md)
   is queued — closes the lane by collapsing the nested test-side
   prelude chain into a single top-level fixture surface.
@@ -66,8 +77,7 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Execute card `253` — decide the shape of the doctor-runner
-extraction (`src/runner/doctor/**`, ~4,547 lines, 65 files). Pin
-crate name, `DoctorError` boundary, port surface for deferral /
-locking / env-schema reach-ins, and split vs single-crate shape
-before any code moves.
+Execute card `254` — move `src/runner/doctor/**` into the existing
+`effigy-doctor` crate per card `253`'s decision. Mechanical
+extraction: 65 files, ~4.5k LOC, single commit, narrow
+`DoctorError` → `RunnerError` boundary at the runner's edge.
