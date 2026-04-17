@@ -1053,12 +1053,50 @@ That post-`212` boundary decision is now made too:
   `unnecessary_lazy_evaluations` in `effigy-release`) — both
   untouched by this batch.
 
+- `246` landed the managed extraction from `240`:
+  `src/runner/managed/**` (37 files, ~4.1k lines) and
+  `src/runner/model/managed.rs` now live in the new
+  `effigy-managed` crate. The crate owns `ManagedError` (with
+  `From<ManagedError> for RunnerError` in the runner, matching the
+  `effigy-process` / `effigy-ui` job-8 pattern), the plan shapes
+  (`ManagedProcessSpec`, `ManagedTaskPlan`), `BUILTIN_TASKS`,
+  `DEFAULT_MANAGED_SHELL_RUN`, and a small `text_renderer` /
+  `render_utf8` duplicate from `runner::render`. Managed imports
+  `effigy-core::shell`, `effigy-env::{dotenv, schema_support}`,
+  `effigy-manifest::{LoadedCatalog, TaskResolverFn, ...}`,
+  `effigy-process`, `effigy-tasks::{parsing, reference, ...}`,
+  `effigy-tui::multiprocess::*`, `effigy-ui`. The runner keeps
+  two thin re-export shims (`src/runner/managed.rs` at 8 lines,
+  `src/runner/model/managed.rs` at 8 lines) so the external
+  consumers (demo_command, execute/pipeline, builtin/test) compile
+  unchanged; four runner call sites pick up `.map_err(Into::into)`
+  at the boundary. Test redistribution: 683 runner lib (was 699) +
+  16 effigy-managed (new) = 699 total, unchanged. Full workspace
+  tests green; `cargo fmt` clean; `qa:docs` pass; `git diff
+  --check` clean. One test-harness-only adjustment: the
+  `resolve_effigy_invocation_prefix` helper now uses
+  `{CARGO_MANIFEST_DIR}/../../Cargo.toml` to reach the workspace
+  root where the `effigy` binary lives (managed's own Cargo.toml
+  has no `effigy` bin).
+- `246` also empties the 010 active-card queue. Two named items
+  remain in planning: built-in tasks (`src/runner/builtin/**`,
+  ~9.5k lines) and task-routing core
+  (`src/runner/{catalog,scan,locking,deferral}/**`, ~6k lines).
+  Neither has a ready implementation card.
+
 ## Next Task
 
-Execute
-[`240-implement-effigy-managed-extraction.md`](../specs/batch-cards/240-implement-effigy-managed-extraction.md)
-to move `src/runner/managed/**` and `runner::model::managed` into
-the new `effigy-managed` crate. The utility prerequisites from
-`245` mean the move is now mechanical: no routing-core reach-throughs
-remain, and all other runner-internal deps are either `effigy-*`
-crate paths or carried as callbacks.
+The strict 010 lane is now at a clean boundary. There is no ready
+card. The next move is an intent choice:
+
+1. open a decide card for the built-in tasks extraction (the
+   largest remaining shell, but also the most heterogeneous —
+   likely wants its own shape-decision pass before implement)
+2. open a decide card for routing core (catalog / scan / locking /
+   deferral — smaller and more cohesive than builtin, and the
+   natural companion to `effigy-managed`)
+3. pause the lane here — 010's original intent ("modularization
+   and crate boundaries") has landed the managed runtime, TUI, UI,
+   process, env, contracts, cli, and manifest layers as crates.
+   The remaining two queues are real work but the v0.3 release
+   posture no longer blocks on them.

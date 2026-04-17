@@ -60,4 +60,5 @@ pub(super) fn run_managed_task(
         plan,
     )
     .map(Some)
+    .map_err(Into::into)
 }

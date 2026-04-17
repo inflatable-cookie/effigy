@@ -6,6 +6,7 @@ use crate::path_error_text::{
 use crate::resolver::ResolveError;
 use crate::tasks::TaskError;
 use effigy_env::error::EnvSchemaError;
+use effigy_managed::ManagedError;
 use effigy_process::ProcessManagerError;
 
 #[path = "error/display.rs"]
@@ -222,6 +223,61 @@ impl From<ProcessManagerError> for RunnerError {
 impl From<EnvSchemaError> for RunnerError {
     fn from(value: EnvSchemaError) -> Self {
         Self::EnvSchema(value)
+    }
+}
+
+impl From<ManagedError> for RunnerError {
+    fn from(value: ManagedError) -> Self {
+        match value {
+            ManagedError::Cwd(error) => Self::Cwd(error),
+            ManagedError::TaskInvocation(message) => Self::TaskInvocation(message),
+            ManagedError::Ui(message) => Self::Ui(message),
+            ManagedError::Process(error) => Self::ManagedProcess(error),
+            ManagedError::TaskManagedUnsupportedMode { task, mode } => {
+                Self::TaskManagedUnsupportedMode { task, mode }
+            }
+            ManagedError::TaskManagedProfileNotFound {
+                task,
+                profile,
+                available,
+            } => Self::TaskManagedProfileNotFound {
+                task,
+                profile,
+                available,
+            },
+            ManagedError::TaskManagedProfileEmpty { task, profile } => {
+                Self::TaskManagedProfileEmpty { task, profile }
+            }
+            ManagedError::TaskManagedProcessInvalidDefinition {
+                task,
+                process,
+                detail,
+            } => Self::TaskManagedProcessInvalidDefinition {
+                task,
+                process,
+                detail,
+            },
+            ManagedError::TaskManagedTaskReferenceInvalid {
+                task,
+                process,
+                reference,
+                detail,
+            } => Self::TaskManagedTaskReferenceInvalid {
+                task,
+                process,
+                reference,
+                detail,
+            },
+            ManagedError::TaskManagedNonZeroExit {
+                task,
+                profile,
+                processes,
+            } => Self::TaskManagedNonZeroExit {
+                task,
+                profile,
+                processes,
+            },
+        }
     }
 }
 

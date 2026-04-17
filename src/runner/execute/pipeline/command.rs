@@ -45,6 +45,7 @@ pub(super) fn build_task_command(
             resolver: &crate::runner::catalog::resolve_task_selection,
         },
     )
+    .map_err(Into::into)
 }
 
 /// Merge env-schema plain values into the task env map.

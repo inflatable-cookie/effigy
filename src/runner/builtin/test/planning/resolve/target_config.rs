@@ -177,6 +177,7 @@ fn render_suite_lifecycle_sequence(
         &crate::runner::catalog::resolve_task_selection,
     )
     .map(Some)
+    .map_err(Into::into)
 }
 
 fn render_suite_env_descriptor(env: Option<&ManifestRunStepEnv>) -> Option<String> {

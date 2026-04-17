@@ -548,6 +548,7 @@ dependencies = [
  "effigy-docs-policy",
  "effigy-doctor",
  "effigy-env",
+ "effigy-managed",
  "effigy-manifest",
  "effigy-process",
  "effigy-release",
@@ -713,6 +714,20 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
+]
+
+[[package]]
+name = "effigy-managed"
+version = "0.1.0"
+dependencies = [
+ "effigy-core",
+ "effigy-env",
+ "effigy-manifest",
+ "effigy-process",
+ "effigy-tasks",
+ "effigy-tui",
+ "effigy-ui",
+ "serde_json",
 ]
 
 [[package]]

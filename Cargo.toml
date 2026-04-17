@@ -10,6 +10,7 @@ members = [
     "crates/effigy-cli",
     "crates/effigy-contracts",
     "crates/effigy-core",
+    "crates/effigy-managed",
     "crates/effigy-manifest",
     "crates/effigy-tasks",
     "crates/effigy-tui",
@@ -42,6 +43,7 @@ effigy-doctor = { path = "crates/effigy-doctor" }
 effigy-docs-policy = { path = "crates/effigy-docs-policy" }
 effigy-distribution = { path = "crates/effigy-distribution" }
 effigy-env = { path = "crates/effigy-env" }
+effigy-managed = { path = "crates/effigy-managed" }
 effigy-manifest = { path = "crates/effigy-manifest" }
 effigy-process = { path = "crates/effigy-process" }
 effigy-release = { path = "crates/effigy-release" }

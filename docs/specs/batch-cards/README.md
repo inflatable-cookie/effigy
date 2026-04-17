@@ -216,15 +216,15 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`237-decide-post-subsystem-runner-adapter-cleanup-survey.md`](./237-decide-post-subsystem-runner-adapter-cleanup-survey.md) (complete)
 - [`238-decide-effigy-managed-extraction-shape.md`](./238-decide-effigy-managed-extraction-shape.md) (complete)
 - [`239-implement-effigy-manifest-loaded-catalog-relocate.md`](./239-implement-effigy-manifest-loaded-catalog-relocate.md) (complete)
-- [`240-implement-effigy-managed-extraction.md`](./240-implement-effigy-managed-extraction.md) (ready)
+- [`240-implement-effigy-managed-extraction.md`](./240-implement-effigy-managed-extraction.md) (complete)
 - [`241-implement-runner-util-prerequisites-for-managed-extraction.md`](./241-implement-runner-util-prerequisites-for-managed-extraction.md) (complete)
 
 ## Active Ready Card
 
-[`240-implement-effigy-managed-extraction.md`](./240-implement-effigy-managed-extraction.md) —
-move `src/runner/managed/**` (~4.1k lines) and `runner::model::managed`
-into a new `effigy-managed` crate with a managed-local `ManagedError`,
-now that `241` has cleared the runner-local utility coupling.
+none — the last two remaining 010 queue items (built-in tasks,
+task-routing core) have no ready implementation card yet. The lane is
+between batches; next move is either a new decide card for one of
+those queues or a pause.
 
 ## Recent Boundary Decision
 
