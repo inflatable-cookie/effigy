@@ -20,11 +20,8 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Next Task
 
-The release-closure batch is complete.
+The release-closure batch is complete, but release execution remains deferred
+while live `g02.010` work is still active in the parallel thread.
 
-No ready implementation card remains.
-
-The next move is an intent choice:
-
-1. explicitly approve `v0.2.14` release execution from `115`
-2. or activate the next product roadmap card on the stable crate boundary
+The next move is to finish that live `g02.010` work, then return to `115` for
+explicit human-approved release execution.

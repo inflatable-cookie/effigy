@@ -971,13 +971,33 @@ That post-`212` boundary decision is now made too:
   `effigy-process`, `effigy-ui`, and `anstream`. The three external
   consumers reach the API unchanged via the root re-export chain.
 - `241` also narrows the 010 queue to three remaining bounded batches:
-  managed task orchestration (~2.7k lines), built-in tasks (~9.5k lines),
-  and task routing core (~6k lines)
+  managed task orchestration (~2.7k lines before test files; ~4.1k with
+  tests), built-in tasks (~9.5k lines), and task routing core (~6k lines)
+- `242` opened and completed the decide card for the managed extraction
+  shape (`docs/specs/batch-cards/238-decide-effigy-managed-extraction-shape.md`).
+  Grep-anchored coupling review produced five decisions:
+  - (1) new `effigy-managed` crate (not folded into `effigy-tasks`,
+    which is intentionally thin and has no `effigy-manifest` dep)
+  - (2) managed owns `ManagedError` with a runner-side
+    `From<ManagedError> for RunnerError` (the job-8 pattern already
+    used for `effigy-process` and `effigy-ui`)
+  - (3) `LoadedCatalog` / `TaskSelection` / `DeferredCommand` relocate
+    into `effigy-manifest` first (their semantic home — `LoadedCatalog`
+    wraps a `TaskManifest`), not into `effigy-managed` (would force 67
+    non-managed runner files to import from a crate named "managed")
+  - (4) the extraction splits into two implement cards: `239`
+    relocates `LoadedCatalog` (mechanical 78-site import sweep), then
+    `240` moves `managed/**` itself
+  - (5) thin re-export shims at `src/runner/model/catalog.rs` and
+    `src/runner/managed.rs` survive the transition; external
+    consumers (demo_command, execute/pipeline, builtin/test) are
+    rewired in a follow-up sweep
+- `242` also opened the two follow-up cards: `239` (ready) and `240`
+  (queued behind `239`).
 
 ## Next Task
 
-The next honest bounded batch is **managed task orchestration extraction**
-(`src/runner/managed/**` → `effigy-managed` or into `effigy-tasks`): the
-smallest of the three remaining queues, unlocks both the demo and
-container runners cleanly, and keeps the extraction order described in
-`5.7` honest.
+Execute
+[`239-implement-effigy-manifest-loaded-catalog-relocate.md`](../specs/batch-cards/239-implement-effigy-manifest-loaded-catalog-relocate.md)
+to land the prerequisite `LoadedCatalog` relocate into
+`effigy-manifest` before the managed extraction itself begins.

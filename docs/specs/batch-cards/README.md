@@ -214,11 +214,15 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`235-implement-effigy-ui-subsystem-extraction.md`](./235-implement-effigy-ui-subsystem-extraction.md) (complete)
 - [`236-decide-post-effigy-ui-extraction-boundary.md`](./236-decide-post-effigy-ui-extraction-boundary.md) (complete)
 - [`237-decide-post-subsystem-runner-adapter-cleanup-survey.md`](./237-decide-post-subsystem-runner-adapter-cleanup-survey.md) (complete)
+- [`238-decide-effigy-managed-extraction-shape.md`](./238-decide-effigy-managed-extraction-shape.md) (complete)
+- [`239-implement-effigy-manifest-loaded-catalog-relocate.md`](./239-implement-effigy-manifest-loaded-catalog-relocate.md) (ready)
+- [`240-implement-effigy-managed-extraction.md`](./240-implement-effigy-managed-extraction.md) (queued)
 
 ## Active Ready Card
 
-none — `115` is complete and there is no new ready implementation card.
-Release execution is explicitly deferred behind `g02.010`.
+[`239-implement-effigy-manifest-loaded-catalog-relocate.md`](./239-implement-effigy-manifest-loaded-catalog-relocate.md) —
+relocate `LoadedCatalog` + `TaskSelection` + `DeferredCommand` into
+`effigy-manifest` as the prerequisite for the managed extraction.
 
 ## Recent Boundary Decision
 

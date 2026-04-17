@@ -1220,12 +1220,27 @@ That post-`212` boundary decision is now made too:
   - **task routing core** (`src/runner/{catalog,scan,locking,deferral}/**`,
     ~6k lines) — core task-runtime infrastructure with no dedicated crate
     home despite `effigy-tasks` existing
+- `242` opened _and completed_ the decide card
+  (`docs/specs/batch-cards/238-decide-effigy-managed-extraction-shape.md`).
+  The five decisions (crate shape, error boundary, catalog boundary,
+  scope shape, consumer adapter) resolved to:
+  - new `effigy-managed` crate (not folded into `effigy-tasks`)
+  - managed owns `ManagedError` with a `From<ManagedError> for
+    RunnerError` (matches `effigy-process` / `effigy-ui`)
+  - `LoadedCatalog` / `TaskSelection` / `DeferredCommand` relocate
+    into `effigy-manifest` first; they are a manifest-loading concept,
+    not a managed-runtime concept, and scoping them into a crate named
+    "managed" would force 67 non-managed runner files to import from
+    it
+  - split the work into two implement cards: `239` relocates
+    `LoadedCatalog` (mechanical 78-site import rewrite), `240` extracts
+    `managed/**` itself
+  - preserve thin re-export shims at `src/runner/model/catalog.rs` and
+    `src/runner/managed.rs` during the transition
 
 ## Next Task
 
-The next honest bounded batch on this lane is **managed task orchestration
-extraction** (`src/runner/managed/**` → `effigy-managed` or into
-`effigy-tasks`). It is the smallest of the three remaining queues, unlocks
-both the demo and container runners cleanly in one move, and keeps the
-extraction order described in `5.7` ("effigy-tasks extraction around
-routing, manifest runtime, and execution orchestration") honest.
+Execute the ready card
+[`239-implement-effigy-manifest-loaded-catalog-relocate.md`](../../specs/batch-cards/239-implement-effigy-manifest-loaded-catalog-relocate.md)
+to land the prerequisite `LoadedCatalog` relocate. The managed
+extraction proper (`240`) is queued behind it.

@@ -40,8 +40,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g02/004-rust-native-scripting-surface-contract.md` is paused after the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached a clean internal boundary.
 - `g02/005-optional-distribution-surface-contract.md` is paused after one real consumer proof plus bounded widening made the optional distribution boundary trustworthy for metadata validation, artifact validation, and closeout evidence reuse.
 - `g02/006-colima-container-environment-contract.md` is now paused after the real-machine `colima nerdctl` live-stop and closeout path was hardened strongly enough to stop carrying a deferred warning.
-- `g02/007-distribution-release-and-consumer-rollout.md` remains in progress; release closure is complete, and the lane is now in planning with no ready implementation card.
-- `g02/010-effigy-modularization-and-crate-boundaries.md` is now paused on a trustworthy full boundary after the subsystem extraction sweep, runner-adapter cleanup survey, and test-ownership cleanup pass.
+- `g02/007-distribution-release-and-consumer-rollout.md` remains in progress; release closure is complete, but release execution stays deferred while live `g02.010` work remains open.
+- `g02/010-effigy-modularization-and-crate-boundaries.md` remains in progress because the parallel thread still owns remaining live work even though some pause-oriented docs were written.
 - `g02/008-demo-and-manifest-import-rollout.md` queues the remaining demo and manifest-import adoption work across the intended cohort.
 - `g02/009-vault-backed-varlock-rollout.md` queues the vault-backed rollout for the shipped env-schema / varlock foundation.
 - `g02/017-remaining-shell-cleanup-and-crate-extraction-program.md` queues the substantial parallel cleanup jobs for the remaining heavy `/src` seams and any justified final crate splits.
@@ -50,8 +50,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Active Strict Lane
 
 - `g02.007`
-- active ready card: none — `115` is complete and no release execution batch is active
-- paused strict lane: `g02.010`
+- release execution batch: deferred — `115` is complete but blocked behind live `g02.010` work
+- parallel strict lane still active: `g02.010`
 
 ## Research Program
 
@@ -73,12 +73,8 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-No ready implementation card remains.
-
-The next move is an intent choice:
-
-1. explicitly approve `v0.2.14` release execution from `115`
-2. or activate the next product roadmap card on the stable crate boundary
+Finish the remaining live `g02.010` work in the parallel thread, then return
+to `115` for explicit human-approved release execution.
 
 
 ## Historical language boundary
