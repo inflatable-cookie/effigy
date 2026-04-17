@@ -1281,12 +1281,55 @@ That post-`212` boundary decision is now made too:
   two named items remain in planning: built-in tasks (~9.5k lines)
   and task-routing core (~6k lines).
 
+- A fresh `/src` audit rechecked the post-`246` shell instead of
+  pausing on the crate-count milestone. The main remaining cleanup
+  pressure is no longer "which final crate split next?" so much as
+  "which mixed-responsibility root files still make `/src` harder to
+  trust and maintain?" The audit result:
+  - **demo runner shell** (`src/runner/demo_command.rs`, ~2.2k lines)
+    remains the largest mixed adapter/runtime file in the root crate.
+    It still combines CLI dispatch, render/projection output,
+    task-backed execution, run-backed execution, process supervision,
+    handoff file management, OS-specific PTY setup, signal handling,
+    and JSON adapter shims. The likely shape is a directory split such
+    as `demo_command/{dispatch,query,execute_task,execute_run,runtime,render}`.
+  - **release runner shell** (`src/runner/release_command.rs`,
+    ~1.2k lines) still mixes three layers in one file: command
+    dispatch plus output policy, interactive review flow, and thin
+    wrappers over `effigy-release`. The likely shape is
+    `release_command/{dispatch,interactive,ops}` with the interactive
+    menu flow split again by mode if needed.
+  - **container runner shell** (`src/runner/container_command.rs`,
+    ~624 lines) is smaller but still bundles dispatch, startup and
+    shutdown orchestration, attached session handling, signal plumbing,
+    raw docker process spawning, and report rendering. The likely
+    shape is `container_command/{dispatch,lifecycle,session,signals}`.
+  - **runner test prelude shell** (`src/tests/runner_tests/prelude.rs`
+    plus `prelude/managed.rs`) is cleaner than before but still acts as
+    a god-prelude. It centralizes path wiring, facade namespaces, flat
+    re-export walls, fixture writers, case tables, and assertions. The
+    next cleanup there is not a new product crate; it is splitting the
+    test support surface into smaller owned modules such as
+    `managed/{cases,fixtures,assertions,helpers}` and shrinking the
+    top-level prelude export wall.
+  - **lower priority** after those: reevaluate whether the remaining
+    built-in tasks and task-routing core work should still be framed as
+    crate extraction first, or whether more shell cleanup inside the
+    root crate should happen before opening another crate-boundary
+    decision.
+  - Net result: `g02.010` still has real `/src` work, but the next
+    sequence should be bounded root-shell cleanup batches rather than a
+    forced immediate pause or a guessed final crate split.
+
 ## Next Task
 
-No ready card. The next move is an intent choice between opening
-a decide card for one of the two remaining queues (built-in
-tasks or routing core) or pausing the lane here — the v0.3
-release posture no longer blocks on either extraction, and
-`effigy-managed` / `effigy-tui` / `effigy-ui` / `effigy-process`
-/ `effigy-env` / `effigy-manifest` / `effigy-contracts` /
-`effigy-cli` have all shipped as crates.
+Keep `g02.010` active. The next move is to turn the audited `/src`
+cleanup queue into bounded execution cards, in this order:
+
+1. `src/runner/demo_command.rs`
+2. `src/runner/release_command.rs`
+3. `src/runner/container_command.rs`
+4. `src/tests/runner_tests/prelude.rs` and `prelude/managed.rs`
+
+Only after that queue is clearer should the lane reopen the broader
+"built-in tasks vs task-routing core vs pause" decision.
