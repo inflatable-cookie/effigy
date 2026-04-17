@@ -5,6 +5,8 @@ use crate::runner::manifest::task_runtime::{
     ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedRunStep, ManifestRunStepEnv,
 };
 
+use effigy_manifest::TaskResolverFn;
+
 use super::super::manifest::task_runtime::ManifestManagedRun;
 use super::super::model::catalog::LoadedCatalog;
 use crate::runner::error::RunnerError;
@@ -33,6 +35,7 @@ pub(in super::super) struct RunSpecContext<'a> {
     pub(in super::super) task_scope_cwd: &'a Path,
     pub(in super::super) runtime_env_schema_override: Option<&'a Path>,
     pub(in super::super) depth: usize,
+    pub(in super::super) resolver: TaskResolverFn<'a>,
 }
 
 impl RunSpecContext<'_> {
@@ -98,16 +101,17 @@ pub(in crate::runner) fn resolve_run_step_env(
     )
 }
 
-pub(in crate::runner) fn render_run_step_sequence(
-    owner_label: &str,
+pub(in crate::runner) fn render_run_step_sequence<'a>(
+    owner_label: &'a str,
     steps: &[ManifestManagedRunStep],
-    task_env: &BTreeMap<String, String>,
-    task_env_file: Option<&ManifestEnvFileDirective>,
-    env_profiles: &BTreeMap<String, ManifestEnvEntry>,
-    repo_root: &Path,
-    catalogs: &[LoadedCatalog],
-    task_scope_cwd: &Path,
-    runtime_env_schema_override: Option<&Path>,
+    task_env: &'a BTreeMap<String, String>,
+    task_env_file: Option<&'a ManifestEnvFileDirective>,
+    env_profiles: &'a BTreeMap<String, ManifestEnvEntry>,
+    repo_root: &'a Path,
+    catalogs: &'a [LoadedCatalog],
+    task_scope_cwd: &'a Path,
+    runtime_env_schema_override: Option<&'a Path>,
+    resolver: TaskResolverFn<'a>,
 ) -> Result<String, RunnerError> {
     sequence::render_run_sequence(
         steps,
@@ -123,6 +127,7 @@ pub(in crate::runner) fn render_run_step_sequence(
             task_scope_cwd,
             runtime_env_schema_override,
             depth: 1,
+            resolver,
         },
     )
 }

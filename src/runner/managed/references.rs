@@ -7,6 +7,8 @@ mod parser;
 #[path = "references/resolve.rs"]
 mod resolve;
 
+use effigy_manifest::TaskResolverFn;
+
 use super::super::model::catalog::{LoadedCatalog, TaskSelection};
 use super::run_spec::wrap_reference_command_in_cwd;
 use crate::runner::error::RunnerError;
@@ -14,12 +16,13 @@ use context::{ManagedRefContext, StepRefContext};
 use parser::{merge_args_rendered, parse_task_ref};
 use resolve::{resolve_reference_run, ResolvedReferenceRun};
 
-pub(super) fn resolve_task_reference_run(
+pub(super) fn resolve_task_reference_run<'a>(
     managed_task_name: &str,
     process_name: &str,
     task_ref: &str,
-    catalogs: &[LoadedCatalog],
+    catalogs: &'a [LoadedCatalog],
     task_scope_cwd: &Path,
+    resolver: TaskResolverFn<'a>,
 ) -> Result<(String, PathBuf), RunnerError> {
     let context = ManagedRefContext {
         managed_task_name: managed_task_name.to_owned(),
@@ -42,18 +45,20 @@ pub(super) fn resolve_task_reference_run(
                 selection.catalog.manifest_path.display()
             ))
         },
+        resolver,
     )?;
     Ok((resolved.command, resolved.cwd))
 }
 
-pub(super) fn resolve_task_reference_step(
+pub(super) fn resolve_task_reference_step<'a>(
     task_name: &str,
     task_ref: &str,
     args_rendered: &str,
-    catalogs: &[LoadedCatalog],
+    catalogs: &'a [LoadedCatalog],
     task_scope_cwd: &Path,
     runtime_env_schema_override: Option<&Path>,
     depth: usize,
+    resolver: TaskResolverFn<'a>,
 ) -> Result<String, RunnerError> {
     let context = StepRefContext {
         task_name: task_name.to_owned(),
@@ -74,6 +79,7 @@ pub(super) fn resolve_task_reference_step(
                 selection.catalog.manifest_path.display()
             ))
         },
+        resolver,
     )?;
     Ok(wrap_reference_command_in_cwd(
         &resolved.cwd,
@@ -81,6 +87,7 @@ pub(super) fn resolve_task_reference_step(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_task_reference<'a, FInvalid, FResolve, FMissing>(
     task_ref: &str,
     args_rendered: &str,
@@ -91,6 +98,7 @@ fn resolve_task_reference<'a, FInvalid, FResolve, FMissing>(
     invalid_error: FInvalid,
     resolve_error: FResolve,
     missing_run_error: FMissing,
+    resolver: TaskResolverFn<'a>,
 ) -> Result<ResolvedReferenceRun, RunnerError>
 where
     FInvalid: Fn(String) -> RunnerError,
@@ -107,6 +115,7 @@ where
         runtime_env_schema_override,
         depth,
         |selection| missing_run_error(&parsed, selection),
+        resolver,
     )
     .map_err(|error| resolve_error(error.to_string()))
 }

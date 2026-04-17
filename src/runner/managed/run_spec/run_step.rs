@@ -72,6 +72,7 @@ fn resolve_selected_run_or_task(
             context.task_scope_cwd,
             context.runtime_env_schema_override,
             context.depth,
+            context.resolver,
         ),
         RunOrTaskRef::RhaiFile(path) => render_rhai_step_invocation(context, path),
         RunOrTaskRef::Noop => Ok(":".to_owned()),

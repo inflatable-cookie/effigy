@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use effigy_manifest::TaskResolverFn;
+
 use super::super::super::manifest::task_runtime::ManifestManagedConcurrentEntry;
 use super::super::super::{
     LoadedCatalog, ManagedProcessSpec, TaskSelector, DEFAULT_MANAGED_SHELL_RUN,
@@ -8,12 +10,13 @@ use super::super::super::{
 use super::super::references;
 use super::{invalid_managed_process_definition, select_run_or_task};
 
-pub(super) fn resolve_concurrent_process_entries(
+pub(super) fn resolve_concurrent_process_entries<'a>(
     selector: &TaskSelector,
     entries: &[ManifestManagedConcurrentEntry],
     catalog: &LoadedCatalog,
-    catalogs: &[LoadedCatalog],
+    catalogs: &'a [LoadedCatalog],
     task_scope_cwd: &Path,
+    resolver: TaskResolverFn<'a>,
 ) -> Result<Vec<super::ConcurrentResolvedProcess>, crate::runner::error::RunnerError> {
     let mut used_names = HashSet::<String>::new();
     let mut resolved = Vec::<super::ConcurrentResolvedProcess>::with_capacity(entries.len());
@@ -35,6 +38,7 @@ pub(super) fn resolve_concurrent_process_entries(
             catalog,
             catalogs,
             task_scope_cwd,
+            resolver,
         )?;
         resolved.push(super::ConcurrentResolvedProcess {
             spec: ManagedProcessSpec {
@@ -84,13 +88,14 @@ fn normalize_entry(
     }
 }
 
-fn resolve_process_run_and_cwd(
+fn resolve_process_run_and_cwd<'a>(
     selector: &TaskSelector,
     process_name: &str,
     entry: &ManifestManagedConcurrentEntry,
     catalog: &LoadedCatalog,
-    catalogs: &[LoadedCatalog],
+    catalogs: &'a [LoadedCatalog],
     task_scope_cwd: &Path,
+    resolver: TaskResolverFn<'a>,
 ) -> Result<(String, PathBuf), crate::runner::error::RunnerError> {
     match select_run_or_task(
         entry.run.as_deref(),
@@ -117,18 +122,20 @@ fn resolve_process_run_and_cwd(
             catalog,
             catalogs,
             task_scope_cwd,
+            resolver,
         ),
         super::RunOrTaskRef::Run(run) => Ok((run.to_owned(), task_scope_cwd.to_path_buf())),
     }
 }
 
-fn resolve_task_process_run_and_cwd(
+fn resolve_task_process_run_and_cwd<'a>(
     selector: &TaskSelector,
     process_name: &str,
     task_ref: &str,
     catalog: &LoadedCatalog,
-    catalogs: &[LoadedCatalog],
+    catalogs: &'a [LoadedCatalog],
     task_scope_cwd: &Path,
+    resolver: TaskResolverFn<'a>,
 ) -> Result<(String, PathBuf), crate::runner::error::RunnerError> {
     if task_ref.trim() == "shell" {
         return resolve_shell_process_run(selector, process_name, catalog, task_scope_cwd);
@@ -139,6 +146,7 @@ fn resolve_task_process_run_and_cwd(
         task_ref,
         catalogs,
         task_scope_cwd,
+        resolver,
     )
 }
 

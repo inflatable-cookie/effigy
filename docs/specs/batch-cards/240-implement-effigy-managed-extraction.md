@@ -1,6 +1,6 @@
 # 240 Implement Effigy Managed Extraction
 
-Status: queued (blocked on `241`)
+Status: ready
 Updated: 2026-04-17
 Roadmap: `g02.010`
 Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`

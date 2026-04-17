@@ -174,6 +174,7 @@ fn render_suite_lifecycle_sequence(
         catalogs,
         target_root,
         None,
+        &crate::runner::catalog::resolve_task_selection,
     )
     .map(Some)
 }

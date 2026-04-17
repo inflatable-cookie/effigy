@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
 
 pub mod ast;
+pub mod dotenv;
 pub mod error;
 mod exec;
 mod parser;
 pub mod resolver;
+pub mod schema_support;
 pub mod secret;
 pub mod validator;
 

@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use effigy_manifest::TaskResolverFn;
+
 use super::super::manifest::ManifestTask;
 use super::super::model::{
     catalog::{LoadedCatalog, TaskRuntimeArgs, TaskSelector},
@@ -8,13 +10,15 @@ use super::super::model::{
 use super::{plan, profiles};
 use crate::runner::error::RunnerError;
 
-pub(in crate::runner) fn resolve_managed_task_plan(
+#[allow(clippy::too_many_arguments)]
+pub(in crate::runner) fn resolve_managed_task_plan<'a>(
     selector: &TaskSelector,
-    catalog: &LoadedCatalog,
-    task: &ManifestTask,
-    runtime_args: &TaskRuntimeArgs,
-    catalogs: &[LoadedCatalog],
-    task_scope_cwd: &Path,
+    catalog: &'a LoadedCatalog,
+    task: &'a ManifestTask,
+    runtime_args: &'a TaskRuntimeArgs,
+    catalogs: &'a [LoadedCatalog],
+    task_scope_cwd: &'a Path,
+    resolver: TaskResolverFn<'a>,
 ) -> Result<Option<ManagedTaskPlan>, RunnerError> {
     let Some(mode) = task.mode.as_deref() else {
         return Ok(None);
@@ -35,6 +39,7 @@ pub(in crate::runner) fn resolve_managed_task_plan(
         passthrough: &runtime_args.passthrough,
         catalogs,
         task_scope_cwd,
+        resolver,
     })
     .map(Some)
 }

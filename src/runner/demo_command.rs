@@ -1355,6 +1355,7 @@ fn render_demo_run_command(
             task_scope_cwd: repo_root,
             runtime_env_schema_override: None,
             depth: 0,
+            resolver: &crate::runner::catalog::resolve_task_selection,
         },
     )
 }
@@ -1554,6 +1555,7 @@ fn execute_concurrent_runner_backed_demo(
         &runtime_args,
         &resolved.catalogs,
         &selection.catalog.catalog_root,
+        &crate::runner::catalog::resolve_task_selection,
     )?
     .ok_or_else(|| {
         RunnerError::task_invocation(format!(
@@ -1785,6 +1787,7 @@ fn concurrent_runner_task_process_names(repo_root: &Path, task_name: &str) -> Op
         &runtime_args,
         &resolved.catalogs,
         &selection.catalog.catalog_root,
+        &crate::runner::catalog::resolve_task_selection,
     )
     .ok()
     .flatten()
