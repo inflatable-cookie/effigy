@@ -10,7 +10,7 @@ use effigy_distribution::{
 };
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
-use crate::{DistributionArgs, DistributionSubcommand};
+use effigy_cli::{DistributionArgs, DistributionSubcommand};
 
 use super::error::RunnerError;
 

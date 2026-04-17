@@ -2,7 +2,7 @@ use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{build_help_payload, build_help_payload_for_root};
-use crate::HelpTopic;
+use effigy_cli::HelpTopic;
 
 fn temp_workspace(name: &str) -> std::path::PathBuf {
     let ts = SystemTime::now()

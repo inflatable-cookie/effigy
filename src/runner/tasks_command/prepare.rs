@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::TasksArgs;
+use effigy_cli::TasksArgs;
 
 use super::super::catalog::discover_catalogs_allow_missing;
 use super::super::command_context::{

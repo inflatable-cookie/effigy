@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::runner::builtin::arg_parser::{BuiltinArgParser, ParseLoopAction};
 use crate::runner::error::RunnerError;
 use crate::runner::scan::model::ScanRenderFormat;
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::commands::parse_scan_command;
 use super::model::{ScanCommand, ScanRequest};

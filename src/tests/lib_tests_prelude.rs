@@ -1,11 +1,12 @@
-pub(super) use crate::{
-    apply_global_json_flag, command_requests_json, parse_command, render_cli_header, render_help,
-    strip_global_json_flag, strip_global_json_flags, BootstrapArgs, Command, ContainerArgs,
-    ContainerSubcommand, ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode,
-    ContractsSubcommand, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery,
-    DemoListStatus, DemoSubcommand, DistributionArgs, DistributionSubcommand, DocsArgs,
-    DocsBlockRequirement, DocsSubcommand, DoctorArgs, HelpTopic, ReleaseArgs, ReleaseSubcommand,
-    TaskInvocation, TasksArgs,
+pub(super) use crate::render_cli_header;
+pub(super) use effigy_cli::help::ui::render_help;
+pub(super) use effigy_cli::{
+    apply_global_json_flag, command_requests_json, parse_command, strip_global_json_flag,
+    strip_global_json_flags, BootstrapArgs, Command, ContainerArgs, ContainerSubcommand,
+    ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs,
+    DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSubcommand,
+    DistributionArgs, DistributionSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand,
+    DoctorArgs, HelpTopic, ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
 };
 pub(super) use effigy_ui::PlainRenderer;
 pub(super) use std::path::PathBuf;

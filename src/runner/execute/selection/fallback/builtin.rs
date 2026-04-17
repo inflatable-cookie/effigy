@@ -1,4 +1,4 @@
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::super::super::super::builtin::try_run_builtin_task;
 use super::super::super::preflight::ExecutionPreflight;

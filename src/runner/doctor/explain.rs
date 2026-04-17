@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use crate::resolver::resolve_target_root;
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
+use effigy_core::resolver::resolve_target_root;
 
 #[path = "explain/analysis.rs"]
 mod analysis;

@@ -1,8 +1,8 @@
 use std::io::{IsTerminal, Write};
 use std::path::Path;
 
-use crate::resolver::ResolvedTarget;
-use crate::{ReleaseArgs, ReleaseSubcommand};
+use effigy_cli::{ReleaseArgs, ReleaseSubcommand};
+use effigy_core::resolver::ResolvedTarget;
 use effigy_release::{
     append_indexed_review_hint, build_execute_stale_review_items,
     build_execute_working_tree_review_items,

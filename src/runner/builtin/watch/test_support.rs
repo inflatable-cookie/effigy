@@ -1,4 +1,4 @@
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::request::{parse_watch_request, WatchOwner};
 use crate::runner::error::RunnerError;

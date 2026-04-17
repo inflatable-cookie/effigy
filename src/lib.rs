@@ -4,7 +4,7 @@
 //!
 //! - CLI entrypoints and parsing helpers for embedding or testing the command
 //!   surface
-//! - the [`changelog`] library for Northstar changelog parsing, validation,
+//! - the `effigy_changelog` crate for Northstar changelog parsing, validation,
 //!   formatting, analysis, and release-note extraction
 //! - supporting runtime modules such as env-schema resolution, task routing,
 //!   and process management
@@ -16,16 +16,14 @@
 //! - changelog workflow and Northstar profile usage:
 //!   `docs/guides/052-changelog-workflows-and-northstar-profile.md`
 //!
-//! Library users looking for the changelog API should start with [`changelog`].
+//! Library users looking for the changelog API should depend on
+//! `effigy-changelog` directly.
 
 mod cli;
 mod data_loading;
 pub mod runner;
 pub mod testing;
 pub mod tui;
-
-pub use effigy_core::resolver;
-pub(crate) use effigy_core::{fs_probe, path_error_text, path_probe};
 
 pub use cli::entrypoint::run_cli;
 pub use cli::execution_context::CliExecutionContext;
@@ -37,17 +35,6 @@ pub use cli::output::{
 pub use cli::parse_error::{parse_error_json_details, render_parse_error, PARSE_ERROR_HINT};
 pub use cli::runner_dispatch::run_and_render_command;
 pub use cli::version_dispatch::{build_version_payload, run_version_command};
-pub use effigy_changelog as changelog;
-pub use effigy_cli::help::ui::{render_help, render_help_with_deferred_builtins};
-pub use effigy_cli::{
-    apply_global_json_flag, command_requests_json, parse_command, strip_global_json_flag,
-    strip_global_json_flags, BootstrapArgs, ChangelogArgs, ChangelogSubcommand, CliParseError,
-    Command, ContainerArgs, ContainerSubcommand, ContractsArgs, ContractsCheckMode,
-    ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs, DemoHistoryOutcome, DemoListGap,
-    DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSubcommand, DistributionArgs,
-    DistributionSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, HelpTopic,
-    InternalRhaiArgs, ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
-};
 use effigy_ui::{Renderer, UiResult};
 use std::path::Path;
 

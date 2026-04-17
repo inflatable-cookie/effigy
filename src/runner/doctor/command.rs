@@ -1,4 +1,4 @@
-use crate::DoctorArgs;
+use effigy_cli::DoctorArgs;
 
 use super::report::DoctorReport;
 use super::{explain, progress, render, run};

@@ -11,7 +11,7 @@ use effigy_bootstrap::{
 use crate::runner::command_context::current_working_dir;
 use crate::runner::execute::run_manifest_task_with_cwd;
 use crate::runner::manifest::load_task_manifest;
-use crate::{BootstrapArgs, TaskInvocation};
+use effigy_cli::{BootstrapArgs, TaskInvocation};
 
 use super::error::RunnerError;
 

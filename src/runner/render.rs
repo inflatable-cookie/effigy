@@ -1,8 +1,8 @@
 use std::io::IsTerminal;
 use std::path::Path;
 
-use crate::resolver::ResolvedTarget;
 use crate::runner::error::RunnerError;
+use effigy_core::resolver::ResolvedTarget;
 use effigy_core::widgets::KeyValue;
 use effigy_manifest::TaskSelection;
 use effigy_tasks::TaskSelector;

@@ -1,6 +1,6 @@
 use super::{ensure_no_unknown_builtin_args, ensure_no_unknown_builtin_args_with_prefix};
 use crate::runner::error::RunnerError;
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 mod flags;
 mod messages;

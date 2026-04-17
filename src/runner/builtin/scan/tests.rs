@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::super::super::scan::model::ScanRenderFormat;
 use super::request::parse_scan_request;

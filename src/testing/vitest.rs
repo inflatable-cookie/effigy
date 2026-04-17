@@ -2,7 +2,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
-use crate::fs_probe::PathPresenceCache;
+use effigy_core::fs_probe::PathPresenceCache;
 
 use super::{TestRunner, TestRunnerCandidate, TestRunnerPlan};
 

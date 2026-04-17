@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use toml::Value;
 
 use crate::data_loading::{parse_json, parse_toml, read_utf8};
-use crate::fs_probe::PathPresenceCache;
+use effigy_core::fs_probe::PathPresenceCache;
 
 use super::model::MigrateScript;
 use crate::runner::error::RunnerError;

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use effigy::changelog;
+use effigy_changelog as changelog;
 
 // ---- Full Pipeline Tests ----
 

@@ -1,4 +1,4 @@
-use crate::DemoHistoryOutcome;
+use effigy_cli::DemoHistoryOutcome;
 
 use super::prelude::{
     parse_command, Command, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery,

@@ -1,5 +1,5 @@
-use crate::HelpTopic;
-use crate::TaskInvocation;
+use effigy_cli::HelpTopic;
+use effigy_cli::TaskInvocation;
 use std::path::Path;
 
 #[path = "migrate/io.rs"]

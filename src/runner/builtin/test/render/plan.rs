@@ -8,7 +8,7 @@ mod plan_projection;
 #[path = "plan_text.rs"]
 mod plan_text;
 
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::super::super::response::render_text_or_json_lazy;
 use super::super::execution::should_run_builtin_test_tui;

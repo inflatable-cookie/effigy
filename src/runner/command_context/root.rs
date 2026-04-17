@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use crate::resolver::{resolve_target_root, ResolvedTarget};
-use crate::Command;
+use effigy_cli::Command;
+use effigy_core::resolver::{resolve_target_root, ResolvedTarget};
 
 use crate::runner::error::RunnerError;
 

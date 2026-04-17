@@ -1,7 +1,7 @@
 #[path = "entrypoints/dispatch.rs"]
 mod dispatch;
 
-use crate::Command;
+use effigy_cli::Command;
 
 use crate::runner::error::RunnerError;
 

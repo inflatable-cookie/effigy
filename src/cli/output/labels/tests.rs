@@ -1,5 +1,5 @@
 use super::{command_kind_and_name, help_topic_label};
-use crate::{
+use effigy_cli::{
     BootstrapArgs, Command, ContainerArgs, ContainerSubcommand, ContractsArgs, ContractsSubcommand,
     DemoArgs, DemoListQuery, DemoSubcommand, DistributionArgs, DistributionSubcommand, DoctorArgs,
     HelpTopic, ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,

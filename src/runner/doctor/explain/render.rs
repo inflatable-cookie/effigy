@@ -3,14 +3,14 @@ use super::super::render_support;
 use super::super::text_blocks;
 use super::contracts::{self, DeferralOutcome, SelectionOutcome};
 use crate::runner::error::RunnerError;
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 use effigy_core::widgets::NoticeLevel;
 use effigy_manifest::LoadedCatalog;
 use effigy_ui::Renderer;
 
 pub(super) fn render_explain_json(
     request: &TaskInvocation,
-    resolved: &crate::resolver::ResolvedTarget,
+    resolved: &effigy_core::resolver::ResolvedTarget,
     task_name: &str,
     selection: &SelectionOutcome,
     deferral: &DeferralOutcome,
@@ -25,7 +25,7 @@ pub(super) fn render_explain_json(
 
 pub(super) fn render_explain_text(
     request: &TaskInvocation,
-    resolved: &crate::resolver::ResolvedTarget,
+    resolved: &effigy_core::resolver::ResolvedTarget,
     selection: &SelectionOutcome,
     deferral: &DeferralOutcome,
     candidates: &[String],

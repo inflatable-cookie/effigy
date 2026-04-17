@@ -3,7 +3,7 @@ use std::path::Path;
 
 use toml::Value;
 
-use crate::fs_probe::PathPresenceCache;
+use effigy_core::fs_probe::PathPresenceCache;
 
 use super::super::super::model::constants::TASK_MANIFEST_FILE;
 use super::super::report::{DoctorFixAction, DoctorFixStatus};

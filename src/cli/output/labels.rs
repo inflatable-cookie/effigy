@@ -1,4 +1,4 @@
-use crate::{Command, HelpTopic};
+use effigy_cli::{Command, HelpTopic};
 
 pub fn help_topic_label(topic: HelpTopic) -> &'static str {
     match topic {

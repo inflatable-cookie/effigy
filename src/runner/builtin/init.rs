@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::fs_probe::PathPresenceCache;
-use crate::{HelpTopic, TaskInvocation};
+use effigy_cli::{HelpTopic, TaskInvocation};
+use effigy_core::fs_probe::PathPresenceCache;
 
 use super::super::model::constants::TASK_MANIFEST_FILE;
 use super::command_spec::run_builtin_command;

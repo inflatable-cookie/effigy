@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::resolver::ResolvedTarget;
+use effigy_core::resolver::ResolvedTarget;
 use effigy_tasks::ResolutionMode;
 
 use super::super::super::super::model::constants::TASK_MANIFEST_FILE;

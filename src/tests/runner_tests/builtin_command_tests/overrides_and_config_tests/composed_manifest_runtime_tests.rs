@@ -1,7 +1,7 @@
 use super::super::super::prelude::{temp_workspace, write_manifest, write_root_manifest};
 use super::prelude::assert_output_contains_all;
 use crate::runner::entrypoints::run_command;
-use crate::{Command, DocsArgs, DocsSubcommand};
+use effigy_cli::{Command, DocsArgs, DocsSubcommand};
 
 #[test]
 fn run_manifest_task_uses_docs_policy_loaded_from_composed_manifest() {

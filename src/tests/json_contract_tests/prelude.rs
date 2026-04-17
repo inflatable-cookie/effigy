@@ -1,6 +1,6 @@
 pub(super) mod runtime {
     pub(crate) use super::super::super::error::RunnerError;
-    pub(crate) use crate::{DoctorArgs, TaskInvocation, TasksArgs};
+    pub(crate) use effigy_cli::{DoctorArgs, TaskInvocation, TasksArgs};
     pub(crate) use std::fs;
     #[cfg(unix)]
     pub(crate) use std::os::unix::fs::PermissionsExt;

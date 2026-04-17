@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use crate::{render_cli_header, render_help, HelpTopic};
+use crate::render_cli_header;
+use effigy_cli::help::ui::render_help;
+use effigy_cli::HelpTopic;
 use effigy_core::widgets::MessageBlock;
 use effigy_ui::{Renderer, UiResult};
 use serde_json::json;

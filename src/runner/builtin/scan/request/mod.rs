@@ -10,7 +10,7 @@ pub(super) fn scan_candidate_mode(args: &[String]) -> Option<ScanCommand> {
 }
 
 pub(super) fn parse_scan_request(
-    task: &crate::TaskInvocation,
+    task: &effigy_cli::TaskInvocation,
     args: &[String],
 ) -> Result<ScanRequest, crate::runner::error::RunnerError> {
     parser::parse_scan_request(task, args)

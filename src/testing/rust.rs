@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::fs_probe::PathPresenceCache;
-use crate::path_probe::command_available_in_path;
+use effigy_core::fs_probe::PathPresenceCache;
+use effigy_core::path_probe::command_available_in_path;
 
 use super::{TestRunner, TestRunnerCandidate, TestRunnerPlan};
 

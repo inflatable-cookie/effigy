@@ -1,4 +1,4 @@
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 use std::path::Path;
 
 use crate::runner::error::RunnerError;

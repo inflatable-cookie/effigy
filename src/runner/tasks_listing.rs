@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::TasksArgs;
+use effigy_cli::TasksArgs;
 
 #[path = "tasks_listing/catalog_iteration.rs"]
 mod catalog_iteration;

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::{HelpTopic, TaskInvocation, TasksArgs};
+use effigy_cli::{HelpTopic, TaskInvocation, TasksArgs};
 
 use super::super::tasks_command::run_tasks;
 use super::command_spec::run_passthrough_builtin_command;

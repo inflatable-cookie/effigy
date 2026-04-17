@@ -11,7 +11,7 @@ mod output_assertions;
 
 pub(super) mod runtime {
     pub(in crate::runner::tests) use super::super::super::error::RunnerError;
-    pub(in crate::runner::tests) use crate::{DoctorArgs, TaskInvocation, TasksArgs};
+    pub(in crate::runner::tests) use effigy_cli::{DoctorArgs, TaskInvocation, TasksArgs};
     pub(in crate::runner::tests) use effigy_tasks::TaskRuntimeArgs;
     pub(in crate::runner::tests) use std::fs;
     #[cfg(unix)]

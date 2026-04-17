@@ -6,7 +6,7 @@
 //! integration tests in `crates/effigy-bootstrap/tests/integration.rs`.
 
 use super::run_bootstrap_with_cwd;
-use crate::BootstrapArgs;
+use effigy_cli::BootstrapArgs;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};

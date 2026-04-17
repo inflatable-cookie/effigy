@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
 use super::model::MigrateRequest;

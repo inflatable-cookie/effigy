@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::runner::builtin::test::planning::BuiltinTestTarget;
 use crate::runner::builtin::test::suite_selection::render_available_suites;
 use crate::runner::error::RunnerError;
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 use effigy_core::widgets::{KeyValue, NoticeLevel};
 use effigy_ui::Renderer;
 

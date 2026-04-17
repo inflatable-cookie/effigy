@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::TaskInvocation;
+use effigy_cli::TaskInvocation;
 
 use super::output::render_completion_candidates_response;
 use super::request::parse_completion_candidates_request;

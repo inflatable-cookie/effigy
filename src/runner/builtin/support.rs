@@ -1,7 +1,8 @@
 use serde_json::json;
 use std::path::Path;
 
-use crate::{render_help, HelpTopic};
+use effigy_cli::help::ui::{render_help, render_help_with_deferred_builtins};
+use effigy_cli::HelpTopic;
 
 use super::super::render::{encode_json, render_utf8, standard_renderer};
 use super::response::schema_payload;
@@ -100,11 +101,7 @@ pub(in crate::runner) fn render_builtin_general_help_for_root(
 ) -> Result<String, RunnerError> {
     let mut renderer = standard_renderer(output_json);
     let deferred_builtins = crate::runner::deferred_builtins_for_root(root);
-    crate::render_help_with_deferred_builtins(
-        &mut renderer,
-        HelpTopic::General,
-        &deferred_builtins,
-    )?;
+    render_help_with_deferred_builtins(&mut renderer, HelpTopic::General, &deferred_builtins)?;
     let rendered = render_utf8(renderer.into_inner())?;
     render_builtin_help_text("general", rendered, output_json)
 }

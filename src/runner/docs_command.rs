@@ -20,7 +20,7 @@ use effigy_docs_policy::{
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
 use crate::runner::manifest::{load_task_manifest, ManifestDocsPolicyConfig};
-use crate::{DocsArgs, DocsBlockRequirement, DocsSubcommand};
+use effigy_cli::{DocsArgs, DocsBlockRequirement, DocsSubcommand};
 
 use super::error::RunnerError;
 
