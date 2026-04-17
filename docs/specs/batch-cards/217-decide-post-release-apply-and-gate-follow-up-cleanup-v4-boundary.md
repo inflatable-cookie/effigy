@@ -1,6 +1,6 @@
 # 217 Decide Post Release Apply And Gate Follow Up Cleanup V4 Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-04-16
 Roadmap: `g02.010`
 Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
@@ -41,6 +41,5 @@ follow-up is still justified.
 ## Next Task
 
 Execute
-[`217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md`](./217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md)
-to classify the remaining release runner shell honestly before any further
-release cleanup or seam switch.
+[`218-decide-next-src-shell-cleanup-priority-after-release-final-pause-boundary.md`](./218-decide-next-src-shell-cleanup-priority-after-release-final-pause-boundary.md)
+to choose the next honest `/src` seam now that the release shell is paused.

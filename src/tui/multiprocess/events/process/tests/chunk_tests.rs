@@ -1,4 +1,4 @@
-use crate::process_manager::ProcessEventKind;
+use effigy_process::ProcessEventKind;
 
 use super::super::handle_chunk_event;
 use super::{diagnostics, process_event, state_with_process};

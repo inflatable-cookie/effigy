@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use crate::process_manager::ProcessSupervisor;
 use crate::tui::multiprocess::state::SessionState;
+use effigy_process::ProcessSupervisor;
 
 pub(super) fn empty_supervisor() -> ProcessSupervisor {
     ProcessSupervisor::spawn(PathBuf::from("."), Vec::new()).expect("spawn empty supervisor")

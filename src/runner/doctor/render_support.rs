@@ -1,4 +1,4 @@
-use crate::ui::{PlainRenderer, UiError};
+use effigy_ui::{PlainRenderer, UiError};
 
 use super::super::render::text_renderer;
 use crate::runner::error::RunnerError;

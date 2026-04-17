@@ -4,7 +4,7 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Paragraph;
 
-use crate::process_manager::{ProcessSupervisor, ShutdownProgress};
+use effigy_process::{ProcessSupervisor, ShutdownProgress};
 
 use super::super::config::SHUTDOWN_GRACE_TIMEOUT;
 use super::terminal::TuiTerminal;

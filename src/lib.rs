@@ -21,12 +21,10 @@
 mod cli;
 mod data_loading;
 pub mod env_schema;
-pub mod process_manager;
 pub mod runner;
 pub mod tasks;
 pub mod testing;
 pub mod tui;
-pub mod ui;
 
 pub use effigy_core::resolver;
 pub(crate) use effigy_core::{fs_probe, path_error_text, path_probe};
@@ -52,8 +50,8 @@ pub use effigy_cli::{
     DistributionSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, HelpTopic,
     InternalRhaiArgs, ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
 };
+use effigy_ui::{Renderer, UiResult};
 use std::path::Path;
-use ui::{Renderer, UiResult};
 
 mod cli_help;
 

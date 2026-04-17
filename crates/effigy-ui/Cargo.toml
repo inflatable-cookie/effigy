@@ -1,0 +1,13 @@
+[package]
+name = "effigy-ui"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "UI rendering primitives for Effigy: Renderer trait, PlainRenderer, theme, progress, and table helpers"
+
+[dependencies]
+effigy-core = { path = "../effigy-core" }
+anstream = "0.6"
+anstyle = "1"
+indicatif = "0.18"
+tabled = "0.20"

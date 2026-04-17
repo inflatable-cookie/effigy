@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::process_manager::ProcessEvent;
 use crate::tui::core::ProcessExitState;
+use effigy_process::ProcessEvent;
 
 use super::super::diagnostics::RuntimeDiagnostics;
 use super::super::state::SessionState;

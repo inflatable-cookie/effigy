@@ -1,7 +1,7 @@
 # 010 Effigy Modularization And Crate Boundaries Strict Lane
 
-Status: active
-Updated: 2026-04-15
+Status: paused
+Updated: 2026-04-17
 Roadmap: `g02.010`
 
 ## Context
@@ -919,14 +919,46 @@ That release text/remediation extraction is now real too:
 That post-`212` boundary decision is now made too:
 
 - the release seam still cannot pause
-- `src/runner/release_command.rs` still owns one coherent release-domain layer:
-  context loading plus status/prepare/simulate/execute-plan collection
-- the remaining release shell is therefore not yet just interactive prompt IO
-  and runner dispatch
-- the next ready batch is one more bounded release context/plan cleanup, not a
-  pause or a shift to another `/src` seam
+- the latest distribution runner-shell cleanup batch is now shipped
+- `effigy-distribution` now owns the publish-cycle lifecycle layer
+- `src/runner/distribution_command.rs` is now paused on a smaller
+  preflight/GLIBC plus final dispatch shell
+- the next ready batch is bootstrap runner-shell cleanup, because demo/docs are
+  already under parallel-thread churn and bootstrap still carries
+  crate-adoption residue in `runner`
+- `224` moved bootstrap plan/result rendering into `effigy-bootstrap`
+- `226` moved the crate-domain bootstrap integration tests out of the runner
+  and into `crates/effigy-bootstrap/tests/integration.rs`
+- `227` paused bootstrap cleanly on an honest shell boundary
+- `src/runner/bootstrap_command.rs` is now `87` shell lines plus runner-path
+  integration tests; the next move is picking the next `/src` priority or
+  pausing the lane
+- `229` moved the CLI help topic surface out of `src/cli_help/topics/` and
+  into `crates/effigy-cli/src/help/`; `src/cli_help.rs` is now `187` lines
+  of honest HelpRenderer bridge + CLI header theming
+- `230` paused CLI help cleanly on an honest adapter shell
+- `231` picked process runtime extraction as the next `g02.017` priority and
+  rejected merging with `effigy-exec` on the mix warning
+- `232` extracted `src/process_manager/**` into a new `effigy-process` crate
+  (7 integration tests moved with the code; 22+ call sites updated in one
+  sweep)
+- `233` paused process supervision cleanly; zero `process_manager` references
+  remain in the root crate
+- `234` picked UI/widget extraction as the next `g02.017` priority and rejected
+  folding into `effigy-core` on the mix warning (presentation deps would leak
+  into the pure core)
+- `235` extracted `src/ui/**` into a new `effigy-ui` crate (4 PlainRenderer
+  tests moved with the code; 47 caller files updated in one sweep)
+- `236` paused UI rendering cleanly; zero `crate::ui` references remain in
+  the root crate
+- `237` reran the `/src` churn check (g02.017 queue job #8) and found zero
+  adapter residue exposed by the process + UI extractions in any
+  non-parallel-thread file; the strict lane now pauses on a trustworthy full
+  boundary
 
 ## Next Task
 
-Execute
-[`217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md`](./batch-cards/217-decide-post-release-apply-and-gate-follow-up-cleanup-v4-boundary.md).
+The `g02.010` strict modularization lane is paused. Resume the queued release
+card
+[`115-implement-effigy-distribution-release-closure.md`](./batch-cards/115-implement-effigy-distribution-release-closure.md)
+when release closure is intended.

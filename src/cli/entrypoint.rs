@@ -1,9 +1,9 @@
-use crate::ui::{OutputMode, PlainRenderer};
 use crate::{
     apply_global_json_flag, command_kind_and_name, command_requests_json, emit_json_envelope_error,
     parse_command, parse_error_json_details, render_parse_error, run_and_render_command,
     run_help_command, strip_global_json_flags, CliExecutionContext, Command,
 };
+use effigy_ui::{OutputMode, PlainRenderer};
 use std::path::{Path, PathBuf};
 
 pub fn run_cli(raw_args: Vec<String>) {

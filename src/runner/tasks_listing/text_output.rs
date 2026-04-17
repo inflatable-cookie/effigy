@@ -1,5 +1,5 @@
-use crate::ui::theme::Theme;
-use crate::ui::PlainRenderer;
+use effigy_ui::theme::Theme;
+use effigy_ui::PlainRenderer;
 
 #[path = "text_output/filtered.rs"]
 mod filtered;

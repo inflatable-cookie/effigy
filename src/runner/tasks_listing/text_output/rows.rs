@@ -1,5 +1,5 @@
-use crate::ui::theme::Theme;
-use crate::ui::{PlainRenderer, Renderer};
+use effigy_ui::theme::Theme;
+use effigy_ui::{PlainRenderer, Renderer};
 
 use super::super::super::tasks_view::style_text;
 use super::super::prepared_task_rows::{CatalogAliasProjection, CatalogTaskProjection};

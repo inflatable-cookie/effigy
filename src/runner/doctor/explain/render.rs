@@ -1,5 +1,5 @@
-use crate::ui::{NoticeLevel, Renderer};
 use crate::TaskInvocation;
+use effigy_ui::{NoticeLevel, Renderer};
 
 use super::super::super::model::catalog::LoadedCatalog;
 use super::super::super::render::encode_json;
@@ -122,6 +122,6 @@ pub(super) fn render_explain_text(
     Ok(String::from_utf8_lossy(&out).to_string())
 }
 
-fn map_render_error(error: crate::ui::UiError) -> RunnerError {
+fn map_render_error(error: effigy_ui::UiError) -> RunnerError {
     render_support::map_doctor_render_error(render_support::DOCTOR_EXPLAIN_RENDER_TARGET, error)
 }

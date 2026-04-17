@@ -36,11 +36,11 @@ use effigy_containers::{
     validate_container_policy, ContainerPolicyError, EffectiveAttachMode, EffectiveContainerPolicy,
 };
 
-use crate::process_manager::ProcessSpec;
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
 use crate::runner::manifest::{ManifestContainerDriver, ManifestContainerOnTaskExit};
 use crate::tui::{run_multiprocess_tui, MultiProcessTuiOptions};
 use crate::{ContainerArgs, ContainerSubcommand};
+use effigy_process::ProcessSpec;
 
 use super::error::RunnerError;
 const DEFAULT_CONTAINER_SHELL: &str = "sh";

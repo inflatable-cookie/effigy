@@ -1,5 +1,5 @@
-use crate::ui::{PlainRenderer, Renderer};
 use crate::{emit_json_envelope_success_value, CliExecutionContext};
+use effigy_ui::{PlainRenderer, Renderer};
 use serde_json::json;
 
 pub fn run_version_command(context: &CliExecutionContext<'_>) {
@@ -27,20 +27,5 @@ pub fn build_version_payload() -> serde_json::Value {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::build_version_payload;
-
-    #[test]
-    fn build_version_payload_sets_schema_and_display() {
-        let payload = build_version_payload();
-        assert_eq!(payload["schema"], "effigy.version.v1");
-        assert_eq!(payload["schema_version"], 1);
-        assert_eq!(payload["ok"], true);
-        assert_eq!(payload["binary"], "effigy");
-        assert_eq!(payload["version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(
-            payload["display"],
-            format!("effigy v{}", env!("CARGO_PKG_VERSION"))
-        );
-    }
-}
+#[path = "version_dispatch/tests.rs"]
+mod tests;

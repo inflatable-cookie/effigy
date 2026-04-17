@@ -1,7 +1,7 @@
 use std::io::IsTerminal;
 
-use crate::ui::theme::is_ci_environment;
-use crate::ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
+use effigy_ui::theme::is_ci_environment;
+use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 
 pub(super) struct DoctorProgressReporter {
     renderer: PlainRenderer<anstream::AutoStream<std::io::Stderr>>,

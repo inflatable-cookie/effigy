@@ -1,7 +1,7 @@
 use std::io::IsTerminal;
 use std::path::Path;
 
-use crate::ui::Renderer;
+use effigy_ui::Renderer;
 
 use super::super::model::managed::ManagedTaskPlan;
 use super::super::render::{render_utf8, text_renderer};

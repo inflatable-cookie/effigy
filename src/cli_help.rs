@@ -1,38 +1,77 @@
-use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::ui::theme::Theme;
-use crate::ui::{Renderer, UiResult};
-use crate::HelpTopic;
+use effigy_cli::help::{HelpRenderer, HelpResult};
+use effigy_core::widgets::{KeyValue, NoticeLevel, TableSpec};
 
-mod topics;
+use effigy_ui::theme::Theme;
+use effigy_ui::{Renderer, UiResult};
 
-pub fn render_help<R: Renderer>(renderer: &mut R, topic: HelpTopic) -> UiResult<()> {
-    render_help_with_deferred_builtins(renderer, topic, &BTreeSet::new())
+use std::collections::BTreeSet;
+
+use effigy_cli::HelpTopic;
+
+/// Adapter struct bridging the root crate's `Renderer` trait to
+/// `effigy-cli`'s narrower [`HelpRenderer`] interface.
+///
+/// Required because Rust's orphan rule forbids a blanket
+/// `impl<R: Renderer> HelpRenderer for R` — the trait is foreign and `R` is
+/// a generic type parameter, so a local wrapper type is the honest bridge.
+struct HelpView<'a, R: Renderer>(&'a mut R);
+
+impl<R: Renderer> HelpRenderer for HelpView<'_, R> {
+    fn text(&mut self, body: &str) -> HelpResult<()> {
+        Renderer::text(self.0, body).map_err(ui_error_to_io)
+    }
+
+    fn section(&mut self, title: &str) -> HelpResult<()> {
+        Renderer::section(self.0, title).map_err(ui_error_to_io)
+    }
+
+    fn notice(&mut self, level: NoticeLevel, body: &str) -> HelpResult<()> {
+        Renderer::notice(self.0, level, body).map_err(ui_error_to_io)
+    }
+
+    fn bullet_list(&mut self, title: &str, items: &[String]) -> HelpResult<()> {
+        Renderer::bullet_list(self.0, title, items).map_err(ui_error_to_io)
+    }
+
+    fn table(&mut self, spec: &TableSpec) -> HelpResult<()> {
+        Renderer::table(self.0, spec).map_err(ui_error_to_io)
+    }
+
+    fn key_values(&mut self, items: &[KeyValue]) -> HelpResult<()> {
+        Renderer::key_values(self.0, items).map_err(ui_error_to_io)
+    }
 }
 
+fn ui_error_to_io(error: effigy_ui::UiError) -> std::io::Error {
+    match error {
+        effigy_ui::UiError::Io(error) => error,
+    }
+}
+
+fn io_error_to_ui(error: std::io::Error) -> effigy_ui::UiError {
+    effigy_ui::UiError::Io(error)
+}
+
+/// Render the help panel for `topic` through the runner's renderer.
+pub fn render_help<R: Renderer>(renderer: &mut R, topic: HelpTopic) -> UiResult<()> {
+    effigy_cli::help::render_help(&mut HelpView(renderer), topic).map_err(io_error_to_ui)
+}
+
+/// Render the help panel for `topic`, hiding rows whose built-in name is in
+/// `deferred_builtins`.
 pub fn render_help_with_deferred_builtins<R: Renderer>(
     renderer: &mut R,
     topic: HelpTopic,
     deferred_builtins: &BTreeSet<String>,
 ) -> UiResult<()> {
-    match topic {
-        HelpTopic::General => topics::render_general_help(renderer, deferred_builtins),
-        HelpTopic::Changelog => topics::render_changelog_help(renderer),
-        HelpTopic::Demo => topics::render_demo_help(renderer),
-        HelpTopic::Docs => topics::render_docs_help(renderer),
-        HelpTopic::Contracts => topics::render_contracts_help(renderer),
-        HelpTopic::Distribution => topics::render_distribution_help(renderer),
-        HelpTopic::Container => topics::render_container_help(renderer),
-        HelpTopic::Bootstrap => topics::render_bootstrap_help(renderer),
-        HelpTopic::Release => topics::render_release_help(renderer),
-        HelpTopic::Doctor => topics::render_doctor_help(renderer),
-        HelpTopic::Tasks => topics::render_tasks_help(renderer),
-        HelpTopic::Test => topics::render_test_help(renderer),
-        HelpTopic::Watch => topics::render_watch_help(renderer),
-        HelpTopic::Init => topics::render_init_help(renderer),
-        HelpTopic::Migrate => topics::render_migrate_help(renderer),
-    }
+    effigy_cli::help::render_help_with_deferred_builtins(
+        &mut HelpView(renderer),
+        topic,
+        deferred_builtins,
+    )
+    .map_err(io_error_to_ui)
 }
 
 pub fn render_cli_header<R: Renderer>(renderer: &mut R, root: &Path) -> UiResult<()> {
@@ -135,14 +174,5 @@ fn truncate_path_for_header(path: &str, available_path_width: usize) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::truncate_path_for_header;
-
-    #[test]
-    fn truncate_path_for_header_keeps_tail_when_space_is_tight() {
-        assert_eq!(
-            truncate_path_for_header("/Users/tom/Dev/projects/effigy", 18),
-            "…/projects/effigy"
-        );
-    }
-}
+#[path = "cli_help/tests.rs"]
+mod tests;

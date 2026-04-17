@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use crate::path_error_text::{
     failed_to_parse_path, failed_to_read_path, failed_to_render_path, failed_to_write_path,
 };
-use crate::process_manager::ProcessManagerError;
 use crate::resolver::ResolveError;
 use crate::tasks::TaskError;
 use effigy_env::error::EnvSchemaError;
+use effigy_process::ProcessManagerError;
 
 #[path = "error/display.rs"]
 mod display;
@@ -201,8 +201,8 @@ impl From<TaskError> for RunnerError {
     }
 }
 
-impl From<crate::ui::UiError> for RunnerError {
-    fn from(value: crate::ui::UiError) -> Self {
+impl From<effigy_ui::UiError> for RunnerError {
+    fn from(value: effigy_ui::UiError) -> Self {
         Self::Ui(value.to_string())
     }
 }

@@ -1,4 +1,4 @@
-use crate::process_manager::{ProcessEvent, ProcessEventKind};
+use effigy_process::{ProcessEvent, ProcessEventKind};
 
 use super::super::super::diagnostics::RuntimeDiagnostics;
 use super::super::super::state::SessionState;

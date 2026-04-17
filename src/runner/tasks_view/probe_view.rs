@@ -1,5 +1,5 @@
-use crate::ui::theme::Theme;
-use crate::ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
+use effigy_ui::theme::Theme;
+use effigy_ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
 
 use crate::runner::error::RunnerError;
 

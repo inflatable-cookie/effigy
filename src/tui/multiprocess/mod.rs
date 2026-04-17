@@ -1,8 +1,8 @@
 use std::io;
 use std::path::PathBuf;
 
-use crate::process_manager::{ProcessManagerError, ProcessSpec, ProcessSupervisor};
-use crate::ui::UiError;
+use effigy_process::{ProcessManagerError, ProcessSpec, ProcessSupervisor};
+use effigy_ui::UiError;
 
 mod config;
 mod diagnostics;

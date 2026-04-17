@@ -1,4 +1,4 @@
-use crate::ui::{NoticeLevel, PlainRenderer, Renderer, SummaryCounts, TableSpec};
+use effigy_ui::{NoticeLevel, PlainRenderer, Renderer, SummaryCounts, TableSpec};
 
 use super::super::render_support;
 use super::super::report::{DoctorReport, DoctorSeverity};
@@ -90,6 +90,6 @@ fn render_fix_actions(
     Ok(())
 }
 
-fn map_render_error(error: crate::ui::UiError) -> RunnerError {
+fn map_render_error(error: effigy_ui::UiError) -> RunnerError {
     render_support::map_doctor_render_error(render_support::DOCTOR_RENDER_TARGET, error)
 }
