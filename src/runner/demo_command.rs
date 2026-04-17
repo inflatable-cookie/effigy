@@ -14,12 +14,8 @@ use effigy_demo::browser::{
     DemoListPayload,
 };
 use effigy_demo::projection::{
-    active_attempt_key_values as crate_active_attempt_key_values,
-    active_terminal_session_key_values as crate_active_terminal_session_key_values,
-    availability_label as crate_availability_label,
-    demo_action_key_values as crate_demo_action_key_values,
-    demo_table_spec as crate_demo_table_spec,
-    recent_attempts_table_spec as crate_recent_attempts_table_spec,
+    active_attempt_key_values, active_terminal_session_key_values, availability_label,
+    demo_action_key_values, demo_table_spec, recent_attempts_table_spec,
 };
 use effigy_demo::runtime::{
     DemoActiveAttempt, DemoActiveTerminalSession, DemoConcurrentRuntimeState, DemoRuntimeBackend,
@@ -34,8 +30,7 @@ use effigy_demo::{
     concurrent_runner_projected_output_provenance, concurrent_runner_projection_shape,
     concurrent_runner_runtime_backend, current_terminal_size, demo_mode_prefers_attached_terminal,
     demo_run_preview as crate_demo_run_preview, derive_gap_class, display_repo_path,
-    failed_demo_attempt as build_failed_demo_attempt,
-    find_historical_attempt as find_extracted_historical_attempt,
+    failed_demo_attempt, find_historical_attempt as find_extracted_historical_attempt,
     history_attempt_to_json as history_attempt_to_json_value,
     history_attempts_with_limit as history_attempts_with_limit_slice,
     history_attempts_with_outcome as history_attempts_with_outcome_filtered,
@@ -50,9 +45,8 @@ use effigy_demo::{
     register_active_attempt as demo_register_active_attempt, render_active_attempt_path,
     render_non_zero_exits, resolve_demo_launch_mode, sanitize_pty_transcript,
     spawn_input_handoff_forward, spawn_output_capture, spawn_stdin_forward,
-    spawn_stdin_handoff_capture, stop_input_handoff_forward,
-    successful_demo_attempt as build_successful_demo_attempt,
-    terminated_demo_attempt as build_terminated_demo_attempt, wrap_pty_shell_command,
+    spawn_stdin_handoff_capture, stop_input_handoff_forward, successful_demo_attempt,
+    terminated_demo_attempt, wrap_pty_shell_command,
     write_active_attempt_record as demo_write_active_attempt_record,
     write_latest_attempt_receipt as persist_latest_demo_attempt_receipt, DemoActionAvailability,
     DemoAttemptHistory, DemoEntrypoint, DemoExecutionAttempt, DemoGroup, DemoHistoricalAttempt,
@@ -457,15 +451,18 @@ fn render_demo_history(
         );
     }
 
-    let filtered_attempts = history_attempts_with_outcome(&record.attempt_history, outcome);
-    let displayed_attempts = history_attempts_with_limit(&filtered_attempts, limit);
+    let filtered_attempts = history_attempts_with_outcome_filtered(
+        &record.attempt_history,
+        outcome.map(|v| v.as_str()),
+    );
+    let displayed_attempts = history_attempts_with_limit_slice(&filtered_attempts, limit);
     let filtered_count = filtered_attempts.len();
     let displayed_count = displayed_attempts.len();
     let stored_count = record.attempt_history.attempts.len();
     let selected_attempt = match (selected_attempt_id, selected_attempt_ordinal) {
         (Some(attempt_id), None) => {
             let Some(attempt) =
-                find_historical_attempt(&record.attempt_history.attempts, attempt_id)
+                find_extracted_historical_attempt(&record.attempt_history.attempts, attempt_id)
             else {
                 return demo_error(
                     output_json,
@@ -545,7 +542,7 @@ fn render_demo_history(
                     .enumerate()
                     .map(|(index, attempt)| {
                         browser_payload_from_json(
-                            history_attempt_to_json(index + 1, attempt),
+                            history_attempt_to_json_value(index + 1, attempt),
                             "demo history attempt",
                         )
                     })
@@ -1257,53 +1254,17 @@ fn demo_list_query_to_key_values(query: &DemoListQuery) -> Vec<KeyValue> {
     values
 }
 
-fn demo_table_spec(demos: &[&DemoRecord]) -> TableSpec {
-    crate_demo_table_spec(demos)
-}
+// demo_table_spec and recent_attempts_table_spec now imported directly
 
-fn recent_attempts_table_spec<T>(attempts: &[T]) -> TableSpec
-where
-    T: Borrow<DemoHistoricalAttempt>,
-{
-    crate_recent_attempts_table_spec(attempts)
-}
-
-fn history_attempt_to_json(ordinal: usize, attempt: &DemoHistoricalAttempt) -> JsonValue {
-    history_attempt_to_json_value(ordinal, attempt)
-}
-
-fn history_attempts_with_outcome(
-    history: &DemoAttemptHistory,
-    outcome: Option<DemoHistoryOutcome>,
-) -> Vec<&DemoHistoricalAttempt> {
-    history_attempts_with_outcome_filtered(history, outcome.map(|value| value.as_str()))
-}
-
-fn history_attempts_with_limit<'a>(
-    attempts: &'a [&'a DemoHistoricalAttempt],
-    limit: Option<usize>,
-) -> &'a [&'a DemoHistoricalAttempt] {
-    history_attempts_with_limit_slice(attempts, limit)
-}
-
-fn find_historical_attempt<'a>(
-    attempts: &'a [DemoHistoricalAttempt],
-    attempt_id: &str,
-) -> Option<&'a DemoHistoricalAttempt> {
-    find_extracted_historical_attempt(attempts, attempt_id)
-}
+// history_attempt_to_json, history_attempts_with_outcome,
+// history_attempts_with_limit, find_historical_attempt
+// now called through their aliased imports directly.
 
 fn build_demo_groups<'a>(demos: &'a [DemoRecord], group_by: DemoListGroupBy) -> Vec<DemoGroup<'a>> {
     build_extracted_demo_groups(demos, demo_record_group_by(group_by))
 }
 
-fn availability_label(available: bool, reason: Option<&str>) -> String {
-    crate_availability_label(available, reason)
-}
-
-fn demo_action_key_values(actions: &DemoActionAvailability) -> Vec<KeyValue> {
-    crate_demo_action_key_values(actions)
-}
+// availability_label and demo_action_key_values now imported directly
 
 fn demo_record_group_by(group_by: DemoListGroupBy) -> DemoRecordGroupBy {
     match group_by {
@@ -1329,16 +1290,7 @@ fn demo_matches_query(record: &DemoRecord, query: &DemoListQuery) -> bool {
     )
 }
 
-fn active_attempt_key_values(active_attempt: &DemoActiveAttempt) -> Vec<KeyValue> {
-    crate_active_attempt_key_values(active_attempt)
-}
-
-fn active_terminal_session_key_values(session: &DemoActiveTerminalSession) -> Vec<KeyValue> {
-    crate_active_terminal_session_key_values(session)
-}
-
-// active_attempt_key_values and active_terminal_session_key_values body
-// moved to effigy_demo::projection; stubs above forward to crate.
+// active_attempt_key_values and active_terminal_session_key_values now imported directly
 
 fn build_demo_record(
     repo_root: &Path,
@@ -2428,71 +2380,8 @@ fn request_demo_termination(target_pid: u32) -> Result<(), RunnerError> {
     }
 }
 
-fn successful_demo_attempt(
-    entrypoint_kind: &str,
-    entrypoint_value: &str,
-    command: &str,
-    exit_code: Option<i32>,
-    summary: Option<String>,
-    stdout: String,
-    stderr: String,
-    log_paths: DemoLogPaths,
-) -> DemoExecutionAttempt {
-    build_successful_demo_attempt(
-        entrypoint_kind,
-        entrypoint_value,
-        command,
-        exit_code,
-        summary,
-        stdout,
-        stderr,
-        log_paths,
-    )
-}
-
-fn failed_demo_attempt(
-    entrypoint_kind: &str,
-    entrypoint_value: &str,
-    command: &str,
-    exit_code: Option<i32>,
-    summary: String,
-    stdout: String,
-    stderr: String,
-    log_paths: DemoLogPaths,
-) -> DemoExecutionAttempt {
-    build_failed_demo_attempt(
-        entrypoint_kind,
-        entrypoint_value,
-        command,
-        exit_code,
-        summary,
-        stdout,
-        stderr,
-        log_paths,
-    )
-}
-
-fn terminated_demo_attempt(
-    entrypoint_kind: &str,
-    entrypoint_value: &str,
-    command: &str,
-    exit_code: Option<i32>,
-    summary: String,
-    stdout: String,
-    stderr: String,
-    log_paths: DemoLogPaths,
-) -> DemoExecutionAttempt {
-    build_terminated_demo_attempt(
-        entrypoint_kind,
-        entrypoint_value,
-        command,
-        exit_code,
-        summary,
-        stdout,
-        stderr,
-        log_paths,
-    )
-}
+// successful_demo_attempt, failed_demo_attempt, terminated_demo_attempt
+// now imported directly from effigy_demo
 
 fn write_latest_attempt_receipt(
     repo_root: &Path,
