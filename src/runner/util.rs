@@ -28,10 +28,6 @@ pub(super) fn parse_task_reference_invocation(
     parsing::parse_task_reference_invocation(raw)
 }
 
-pub(super) fn render_task_selector(selector: &TaskSelector) -> String {
-    parsing::render_task_selector(selector)
-}
-
 pub(super) fn render_passthrough_args(args: &[String]) -> String {
     parsing::render_passthrough_args(args)
 }

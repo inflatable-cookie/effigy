@@ -3,7 +3,6 @@ pub(in crate::runner) const DEFER_DEPTH_ENV: &str = "EFFIGY_DEFER_DEPTH";
 pub(in crate::runner) const IMPLICIT_ROOT_DEFER_TEMPLATE: &str =
     "{composer_global_effigy} {request} {args}";
 pub(in crate::runner) const DEFAULT_BUILTIN_TEST_MAX_PARALLEL: usize = 3;
-pub(in crate::runner) const DEFAULT_MANAGED_SHELL_RUN: &str = "exec ${SHELL:-/bin/zsh} -i";
 pub(in crate::runner) const EXPLICITLY_DEFERRABLE_COMMAND_BUILTINS: [&str; 7] = [
     "changelog",
     "docs",
