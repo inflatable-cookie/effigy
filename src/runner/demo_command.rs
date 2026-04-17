@@ -8,22 +8,23 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::Duration;
 
+#[cfg(test)]
+use effigy_demo::append_demo_terminal_resize;
 use effigy_demo::browser::{
-    DemoHistoryAttemptHistoryPayload, DemoHistoryDemo, DemoHistoryPayload, DemoInspectPayload,
-    DemoListPayload,
+    build_error_payload as build_demo_error_payload,
+    payload_from_json as demo_browser_payload_from_json,
+    payload_to_json as demo_browser_payload_to_json, DemoHistoryAttemptHistoryPayload,
+    DemoHistoryDemo, DemoHistoryPayload, DemoInspectPayload, DemoListPayload,
 };
 use effigy_demo::projection::{
     active_attempt_key_values, active_terminal_session_key_values, demo_action_key_values,
     demo_table_spec, recent_attempts_table_spec,
 };
-use effigy_demo::runtime::{
-    DemoActiveAttempt, DemoActiveTerminalSession, DemoConcurrentRuntimeState, DemoRuntimeBackend,
-};
+use effigy_demo::runtime::{DemoActiveAttempt, DemoConcurrentRuntimeState, DemoRuntimeBackend};
 use effigy_demo::{
-    active_attempt_is_stop_requested as demo_active_attempt_is_stop_requested, build_attempt_id,
-    build_demo_groups as build_extracted_demo_groups,
-    clear_active_attempt_state as demo_clear_active_attempt_state,
-    clear_resize_handoff as demo_clear_resize_handoff, concurrent_runner_input_target_process,
+    active_attempt_is_stop_requested, append_demo_terminal_input, build_attempt_id,
+    build_demo_groups as build_extracted_demo_groups, clear_active_attempt_state,
+    clear_resize_handoff, concurrent_runner_input_target_process,
     concurrent_runner_projected_output_provenance, concurrent_runner_projection_shape,
     concurrent_runner_runtime_backend, current_terminal_size, demo_mode_prefers_attached_terminal,
     demo_run_preview as crate_demo_run_preview, derive_gap_class, display_repo_path,
@@ -32,25 +33,20 @@ use effigy_demo::{
     history_attempts_with_limit as history_attempts_with_limit_slice,
     history_attempts_with_outcome as history_attempts_with_outcome_filtered,
     initial_terminal_size_for_launch_mode, load_active_attempt as load_demo_active_attempt,
-    load_attempt_history as load_demo_attempt_history,
-    load_latest_attempt as load_demo_latest_attempt, now_epoch_ms,
-    persist_demo_attempt_logs as persist_executed_demo_attempt_logs,
-    prepare_demo_input_handoff as demo_prepare_demo_input_handoff,
-    prepare_demo_resize_handoff as demo_prepare_demo_resize_handoff,
-    read_active_attempt_record as demo_read_active_attempt_record,
-    read_recent_output_lines as demo_read_recent_output_lines,
-    register_active_attempt as demo_register_active_attempt, render_active_attempt_path,
-    render_non_zero_exits, resolve_demo_launch_mode, sanitize_pty_transcript,
-    spawn_input_handoff_forward, spawn_output_capture, spawn_stdin_forward,
-    spawn_stdin_handoff_capture, stop_input_handoff_forward, successful_demo_attempt,
-    terminated_demo_attempt, wrap_pty_shell_command,
-    write_active_attempt_record as demo_write_active_attempt_record,
-    write_latest_attempt_receipt as persist_latest_demo_attempt_receipt, DemoAttemptHistory,
-    DemoEntrypoint, DemoExecutionAttempt, DemoGroup, DemoHistoricalAttempt, DemoLatestAttempt,
-    DemoLaunchMode, DemoLogPaths, DemoRecord, DemoRecordGroupBy, OutputMirror,
-    PersistedDemoActiveAttempt, PersistedDemoActivePhase, PersistedDemoTerminalTransport,
-    DEMO_DEFAULT_TERMINAL_COLS, DEMO_DEFAULT_TERMINAL_ROWS, DEMO_MANAGED_EVENT_POLL_INTERVAL_MS,
-    DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT,
+    load_active_terminal_session, load_attempt_history, load_latest_attempt,
+    parse_task_backed_attempt_json as demo_parse_task_backed_attempt_json,
+    prepare_demo_input_handoff, prepare_demo_resize_handoff, read_active_attempt_record,
+    register_active_attempt, render_active_attempt_path, render_non_zero_exits,
+    resolve_demo_launch_mode, run_attempt_from_output as demo_run_attempt_from_output,
+    sanitize_pty_transcript, spawn_input_handoff_forward, spawn_output_capture,
+    spawn_stdin_forward, spawn_stdin_handoff_capture, stop_input_handoff_forward,
+    successful_demo_attempt, task_is_concurrent_runner_backed, terminated_demo_attempt,
+    update_active_terminal_resize, wrap_pty_shell_command, write_active_attempt_record,
+    write_latest_attempt_receipt as persist_latest_demo_attempt_receipt, DemoEntrypoint,
+    DemoExecutionAttempt, DemoGroup, DemoHistoricalAttempt, DemoInvocationKind, DemoLaunchMode,
+    DemoLogPaths, DemoRecord, DemoRecordGroupBy, OutputMirror, PersistedDemoActiveAttempt,
+    PersistedDemoActivePhase, DEMO_DEFAULT_TERMINAL_COLS, DEMO_DEFAULT_TERMINAL_ROWS,
+    DEMO_MANAGED_EVENT_POLL_INTERVAL_MS, DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT,
 };
 #[cfg(test)]
 use effigy_demo::{
@@ -88,7 +84,6 @@ use effigy_ui::{KeyValue, NoticeLevel, PlainRenderer, Renderer};
 use super::error::RunnerError;
 use super::render::{encode_json, render_utf8, text_renderer};
 
-const DEMO_ACTIVE_TERMINAL_RECENT_LINES: usize = 8;
 pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
     let cwd = current_working_dir()?;
     let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
@@ -778,28 +773,22 @@ fn render_demo_stop(
     };
 
     let active_attempt = load_active_attempt(repo_root, demo_id)?;
-    match DemoEntrypoint::from_manifest(demo) {
-        DemoEntrypoint::Task(task_name) => {
-            if active_attempt.runtime_backend_kind != "concurrent-runner" {
-                return demo_error(
-                    output_json,
-                    "effigy.demo.stop.v1",
-                    format!(
-                        "demo `{demo_id}` uses task entrypoint `{task_name}`; stop is not supported until task execution exposes cancellable handles"
-                    ),
-                    json!({
-                        "demo_id": demo_id,
-                        "entrypoint": { "kind": "task", "value": task_name },
-                        "active_attempt": active_attempt.to_json(),
-                    }),
-                );
-            }
-        }
-        DemoEntrypoint::Run(_) => {}
-    }
+    let mut persisted = read_active_attempt_record(repo_root, demo_id)?;
 
-    if !active_attempt.active {
-        return demo_error(
+    match effigy_demo::classify_demo_stop(demo, &active_attempt, persisted.as_ref(), pid_is_alive) {
+        effigy_demo::DemoStopDecision::TaskEntrypointNotStoppable { task_name } => demo_error(
+            output_json,
+            "effigy.demo.stop.v1",
+            format!(
+                "demo `{demo_id}` uses task entrypoint `{task_name}`; stop is not supported until task execution exposes cancellable handles"
+            ),
+            json!({
+                "demo_id": demo_id,
+                "entrypoint": { "kind": "task", "value": task_name },
+                "active_attempt": active_attempt.to_json(),
+            }),
+        ),
+        effigy_demo::DemoStopDecision::NoActiveAttempt => demo_error(
             output_json,
             "effigy.demo.stop.v1",
             format!("demo `{demo_id}` has no active attempt to stop"),
@@ -807,10 +796,8 @@ fn render_demo_stop(
                 "demo_id": demo_id,
                 "active_attempt": active_attempt.to_json(),
             }),
-        );
-    }
-    if !active_attempt.stoppable {
-        return demo_error(
+        ),
+        effigy_demo::DemoStopDecision::NotStoppable => demo_error(
             output_json,
             "effigy.demo.stop.v1",
             format!("demo `{demo_id}` is active but not stoppable through the current runtime"),
@@ -818,44 +805,35 @@ fn render_demo_stop(
                 "demo_id": demo_id,
                 "active_attempt": active_attempt.to_json(),
             }),
-        );
-    }
-
-    let mut persisted = read_active_attempt_record(repo_root, demo_id)?.ok_or_else(|| {
-        RunnerError::task_invocation(format!("demo `{demo_id}` has no active attempt to stop"))
-    })?;
-    if persisted.phase == PersistedDemoActivePhase::StopRequested {
-        let active_attempt = load_active_attempt(repo_root, demo_id)?;
-        return render_demo_stop_result(
-            repo_root,
-            loaded,
-            demo_id,
-            output_json,
-            "stop already requested",
-            active_attempt,
-        );
-    }
-
-    let target_pid = persisted.target_pid;
-
-    if persisted.runtime_backend_kind.as_deref() == Some("concurrent-runner")
-        && target_pid.is_none()
-    {
-        persisted.phase = PersistedDemoActivePhase::StopRequested;
-        write_active_attempt_record(repo_root, demo_id, &persisted)?;
-        let active_attempt = load_active_attempt(repo_root, demo_id)?;
-        return render_demo_stop_result(
-            repo_root,
-            loaded,
-            demo_id,
-            output_json,
-            "stop requested",
-            active_attempt,
-        );
-    }
-
-    let Some(target_pid) = target_pid else {
-        return demo_error(
+        ),
+        effigy_demo::DemoStopDecision::AlreadyRequested => {
+            let active_attempt = load_active_attempt(repo_root, demo_id)?;
+            render_demo_stop_result(
+                repo_root,
+                loaded,
+                demo_id,
+                output_json,
+                "stop already requested",
+                active_attempt,
+            )
+        }
+        effigy_demo::DemoStopDecision::TransitionOnly => {
+            let persisted = persisted
+                .as_mut()
+                .expect("TransitionOnly implies a persisted record exists");
+            persisted.phase = PersistedDemoActivePhase::StopRequested;
+            write_active_attempt_record(repo_root, demo_id, persisted)?;
+            let active_attempt = load_active_attempt(repo_root, demo_id)?;
+            render_demo_stop_result(
+                repo_root,
+                loaded,
+                demo_id,
+                output_json,
+                "stop requested",
+                active_attempt,
+            )
+        }
+        effigy_demo::DemoStopDecision::NoStoppableHandle => demo_error(
             output_json,
             "effigy.demo.stop.v1",
             format!("demo `{demo_id}` is active but has no stoppable process handle"),
@@ -863,38 +841,41 @@ fn render_demo_stop(
                 "demo_id": demo_id,
                 "active_attempt": active_attempt.to_json(),
             }),
-        );
-    };
-
-    if !pid_is_alive(target_pid) {
-        clear_active_attempt_state(repo_root, demo_id);
-        return demo_error(
-            output_json,
-            "effigy.demo.stop.v1",
-            format!("demo `{demo_id}` is no longer running"),
-            json!({
-                "demo_id": demo_id,
-                "active_attempt": DemoActiveAttempt::inactive(Some(render_active_attempt_path(repo_root, demo_id))).to_json(),
-            }),
-        );
+        ),
+        effigy_demo::DemoStopDecision::ProcessNotRunning { .. } => {
+            clear_active_attempt_state(repo_root, demo_id);
+            demo_error(
+                output_json,
+                "effigy.demo.stop.v1",
+                format!("demo `{demo_id}` is no longer running"),
+                json!({
+                    "demo_id": demo_id,
+                    "active_attempt": DemoActiveAttempt::inactive(Some(render_active_attempt_path(repo_root, demo_id))).to_json(),
+                }),
+            )
+        }
+        effigy_demo::DemoStopDecision::SignalPid { target_pid } => {
+            let persisted = persisted
+                .as_mut()
+                .expect("SignalPid implies a persisted record exists");
+            persisted.phase = PersistedDemoActivePhase::StopRequested;
+            write_active_attempt_record(repo_root, demo_id, persisted)?;
+            if let Err(error) = request_demo_termination(target_pid) {
+                persisted.phase = PersistedDemoActivePhase::Running;
+                write_active_attempt_record(repo_root, demo_id, persisted)?;
+                return Err(error);
+            }
+            let active_attempt = load_active_attempt(repo_root, demo_id)?;
+            render_demo_stop_result(
+                repo_root,
+                loaded,
+                demo_id,
+                output_json,
+                "stop requested",
+                active_attempt,
+            )
+        }
     }
-
-    persisted.phase = PersistedDemoActivePhase::StopRequested;
-    write_active_attempt_record(repo_root, demo_id, &persisted)?;
-    if let Err(error) = request_demo_termination(target_pid) {
-        persisted.phase = PersistedDemoActivePhase::Running;
-        write_active_attempt_record(repo_root, demo_id, &persisted)?;
-        return Err(error);
-    }
-    let active_attempt = load_active_attempt(repo_root, demo_id)?;
-    render_demo_stop_result(
-        repo_root,
-        loaded,
-        demo_id,
-        output_json,
-        "stop requested",
-        active_attempt,
-    )
 }
 
 fn render_demo_input(
@@ -1378,126 +1359,13 @@ fn render_demo_run_command(
     )
 }
 
-fn load_latest_attempt(
-    repo_root: &Path,
-    demo_id: &str,
-    demo: &ManifestDemoConfig,
-) -> Result<DemoLatestAttempt, RunnerError> {
-    load_demo_latest_attempt(repo_root, demo_id, demo)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn load_attempt_history(
-    repo_root: &Path,
-    demo_id: &str,
-) -> Result<DemoAttemptHistory, RunnerError> {
-    load_demo_attempt_history(repo_root, demo_id)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn read_active_attempt_record(
-    repo_root: &Path,
-    demo_id: &str,
-) -> Result<Option<PersistedDemoActiveAttempt>, RunnerError> {
-    demo_read_active_attempt_record(repo_root, demo_id)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn register_active_attempt(
-    repo_root: &Path,
-    demo_id: &str,
-    record: &PersistedDemoActiveAttempt,
-) -> Result<effigy_demo::DemoActiveAttemptGuard, RunnerError> {
-    demo_register_active_attempt(repo_root, demo_id, record)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn write_active_attempt_record(
-    repo_root: &Path,
-    demo_id: &str,
-    record: &PersistedDemoActiveAttempt,
-) -> Result<(), RunnerError> {
-    demo_write_active_attempt_record(repo_root, demo_id, record)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn clear_active_attempt_state(repo_root: &Path, demo_id: &str) {
-    demo_clear_active_attempt_state(repo_root, demo_id);
-}
-
-fn prepare_demo_input_handoff(repo_root: &Path, demo_id: &str) -> Result<PathBuf, RunnerError> {
-    demo_prepare_demo_input_handoff(repo_root, demo_id)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn prepare_demo_resize_handoff(repo_root: &Path, demo_id: &str) -> Result<PathBuf, RunnerError> {
-    demo_prepare_demo_resize_handoff(repo_root, demo_id)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn clear_resize_handoff(path: Option<&Path>) {
-    demo_clear_resize_handoff(path);
-}
-
-fn active_attempt_is_stop_requested(repo_root: &Path, demo_id: &str) -> bool {
-    demo_active_attempt_is_stop_requested(repo_root, demo_id)
-}
-
-fn read_recent_output_lines(repo_root: &Path, rendered_path: &str, limit: usize) -> Vec<String> {
-    demo_read_recent_output_lines(repo_root, rendered_path, limit)
-}
-
+/// Runner-local `load_active_attempt` wrapper that threads the runner's
+/// `pid_is_alive` probe into the shared crate implementation. The other
+/// state accessors are called directly through `effigy-demo` — the
+/// `From<DemoStateError> for RunnerError` impl in [`super::error`] handles
+/// the error bridging so no other wrappers are needed.
 fn load_active_attempt(repo_root: &Path, demo_id: &str) -> Result<DemoActiveAttempt, RunnerError> {
-    load_demo_active_attempt(repo_root, demo_id, pid_is_alive)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn load_active_terminal_session(
-    repo_root: &Path,
-    active_attempt: &DemoActiveAttempt,
-) -> DemoActiveTerminalSession {
-    let stdout_lines = active_attempt
-        .stdout_log_path
-        .as_deref()
-        .map(|path| read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES))
-        .unwrap_or_default();
-    let stderr_lines = active_attempt
-        .stderr_log_path
-        .as_deref()
-        .map(|path| read_recent_output_lines(repo_root, path, DEMO_ACTIVE_TERMINAL_RECENT_LINES))
-        .unwrap_or_default();
-    DemoActiveTerminalSession::from_active_attempt(active_attempt, stdout_lines, stderr_lines)
-}
-
-fn update_active_terminal_resize(
-    repo_root: &Path,
-    demo_id: &str,
-    cols: u16,
-    rows: u16,
-    rendered_resize_path: &str,
-) -> Result<(), RunnerError> {
-    effigy_demo::update_active_terminal_resize(repo_root, demo_id, cols, rows, rendered_resize_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn append_demo_terminal_input(
-    repo_root: &Path,
-    rendered_path: &str,
-    forwarded_text: &str,
-) -> Result<(), RunnerError> {
-    effigy_demo::append_demo_terminal_input(repo_root, rendered_path, forwarded_text)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-#[cfg(test)]
-fn append_demo_terminal_resize(
-    repo_root: &Path,
-    rendered_path: &str,
-    cols: u16,
-    rows: u16,
-) -> Result<(), RunnerError> {
-    effigy_demo::append_demo_terminal_resize(repo_root, rendered_path, cols, rows)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+    load_demo_active_attempt(repo_root, demo_id, pid_is_alive).map_err(Into::into)
 }
 
 fn execute_demo_attempt(
@@ -1546,38 +1414,8 @@ fn execute_task_backed_demo(
         }
     }
 
-    let attempt_id = build_attempt_id(demo_id);
-    let active_record = PersistedDemoActiveAttempt {
-        schema: "effigy.demo.active.v1".to_owned(),
-        schema_version: 1,
-        attempt_id,
-        demo_id: demo_id.to_owned(),
-        phase: PersistedDemoActivePhase::Running,
-        started_at_epoch_ms: now_epoch_ms(),
-        owner_pid: std::process::id(),
-        target_pid: None,
-        stoppable: false,
-        entrypoint_kind: "task".to_owned(),
-        entrypoint_value: task_name.to_owned(),
-        command: task_name.to_owned(),
-        runtime_backend_kind: Some("task".to_owned()),
-        flattened_runtime_projection: false,
-        browser_live_attach_supported: false,
-        projection_shape_kind: Some("none".to_owned()),
-        managed_process_count: None,
-        managed_process_names: Vec::new(),
-        projected_output_provenance_kind: Some("none".to_owned()),
-        terminal_transport: PersistedDemoTerminalTransport::Stream,
-        supports_input_forwarding: false,
-        supports_resize: false,
-        nested_tui: false,
-        terminal_cols: None,
-        terminal_rows: None,
-        resize_handoff_path: None,
-        stdin_input_path: None,
-        stdout_log_path: None,
-        stderr_log_path: None,
-    };
+    let active_record =
+        PersistedDemoActiveAttempt::new_task_backed(build_attempt_id(demo_id), demo_id, task_name);
     let _active_guard = register_active_attempt(repo_root, demo_id, &active_record)?;
 
     if output_json {
@@ -1694,11 +1532,6 @@ fn demo_task_selection(
     }))
 }
 
-fn task_is_concurrent_runner_backed(task: &ManifestTask) -> bool {
-    task.mode.as_deref() == Some("tui")
-        && (!task.concurrent.is_empty() || !task.profiles.is_empty())
-}
-
 fn execute_concurrent_runner_backed_demo(
     repo_root: &Path,
     demo_id: &str,
@@ -1747,57 +1580,36 @@ fn execute_concurrent_runner_backed_demo(
     let resize_handoff_path = detached_interaction_projection
         .then(|| prepare_demo_resize_handoff(repo_root, demo_id))
         .transpose()?;
-    let log_paths = DemoLogPaths::prepare_split(repo_root, demo_id)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let log_paths = DemoLogPaths::prepare_split(repo_root, demo_id)?;
     let initial_terminal_size = if demo_mode_prefers_attached_terminal(demo_mode) {
         current_terminal_size()
     } else {
         Some((DEMO_DEFAULT_TERMINAL_COLS, DEMO_DEFAULT_TERMINAL_ROWS))
     };
-    let attempt_id = build_attempt_id(demo_id);
-    let active_record = PersistedDemoActiveAttempt {
-        schema: "effigy.demo.active.v1".to_owned(),
-        schema_version: 1,
-        attempt_id,
-        demo_id: demo_id.to_owned(),
-        phase: PersistedDemoActivePhase::Running,
-        started_at_epoch_ms: now_epoch_ms(),
-        owner_pid: std::process::id(),
-        target_pid: None,
-        stoppable: true,
-        entrypoint_kind: "task".to_owned(),
-        entrypoint_value: task_name.to_owned(),
-        command: format!("<managed:{task_name} profile:{}>", plan.profile),
-        runtime_backend_kind: Some("concurrent-runner".to_owned()),
-        flattened_runtime_projection: true,
+    let active_record = PersistedDemoActiveAttempt::new_concurrent_runner_backed(
+        build_attempt_id(demo_id),
+        demo_id,
+        task_name,
+        format!("<managed:{task_name} profile:{}>", plan.profile),
         browser_live_attach_supported,
-        projection_shape_kind: Some(
-            concurrent_runner_projection_shape(managed_process_names.len())
-                .kind
-                .clone(),
-        ),
-        managed_process_count: Some(plan.processes.len()),
-        managed_process_names: managed_process_names.clone(),
-        projected_output_provenance_kind: Some(
-            concurrent_runner_projected_output_provenance(managed_process_names.len())
-                .kind
-                .clone(),
-        ),
-        terminal_transport: PersistedDemoTerminalTransport::Stream,
-        supports_input_forwarding: input_handoff_path.is_some(),
-        supports_resize: resize_handoff_path.is_some(),
-        nested_tui: false,
-        terminal_cols: initial_terminal_size.map(|(cols, _)| cols),
-        terminal_rows: initial_terminal_size.map(|(_, rows)| rows),
-        resize_handoff_path: resize_handoff_path
+        concurrent_runner_projection_shape(managed_process_names.len())
+            .kind
+            .clone(),
+        plan.processes.len(),
+        managed_process_names.clone(),
+        concurrent_runner_projected_output_provenance(managed_process_names.len())
+            .kind
+            .clone(),
+        input_handoff_path
             .as_ref()
             .map(|path| display_repo_path(path, repo_root)),
-        stdin_input_path: input_handoff_path
+        resize_handoff_path
             .as_ref()
             .map(|path| display_repo_path(path, repo_root)),
-        stdout_log_path: log_paths.stdout.clone(),
-        stderr_log_path: log_paths.stderr.clone(),
-    };
+        log_paths.stdout.clone(),
+        log_paths.stderr.clone(),
+        initial_terminal_size,
+    );
     let _active_guard = register_active_attempt(repo_root, demo_id, &active_record)?;
 
     run_concurrent_runner_demo_runtime(
@@ -1854,8 +1666,7 @@ fn run_concurrent_runner_demo_runtime(
         input_target_process,
         input_handoff_path.clone(),
         !output_json,
-    )
-    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    )?;
     let _stdin_handoff = if !output_json {
         input_handoff_path
             .as_ref()
@@ -1872,13 +1683,8 @@ fn run_concurrent_runner_demo_runtime(
             state.stop_requested = true;
             supervisor.terminate_all();
         }
-        if let Some((process, rendered, new_len)) = state
-            .pending_input_chunk()
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-        {
-            supervisor
-                .send_input(&process, &rendered)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        if let Some((process, rendered, new_len)) = state.pending_input_chunk()? {
+            supervisor.send_input(&process, &rendered)?;
             state.mark_input_forwarded(new_len);
         }
         if let Some(event) = supervisor
@@ -1886,12 +1692,8 @@ fn run_concurrent_runner_demo_runtime(
         {
             state.reset_drain_after_activity();
             match event.kind {
-                ProcessEventKind::Stdout => state
-                    .record_stdout(&event.process, &event.payload)
-                    .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
-                ProcessEventKind::Stderr => state
-                    .record_stderr(&event.process, &event.payload)
-                    .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
+                ProcessEventKind::Stdout => state.record_stdout(&event.process, &event.payload)?,
+                ProcessEventKind::Stderr => state.record_stderr(&event.process, &event.payload)?,
                 ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {}
                 ProcessEventKind::Exit => {
                     if state.record_exit(&event.process, &event.payload) {
@@ -2000,59 +1802,7 @@ fn parse_task_backed_attempt_json(
     task_name: &str,
     rendered: &str,
 ) -> Result<DemoExecutionAttempt, RunnerError> {
-    let parsed: JsonValue = serde_json::from_str(rendered).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to parse json task payload for demo `{demo_id}` task `{task_name}`: {error}"
-        ))
-    })?;
-    let ok = parsed
-        .get("ok")
-        .and_then(JsonValue::as_bool)
-        .unwrap_or(false);
-    let exit_code = parsed
-        .get("exit_code")
-        .and_then(JsonValue::as_i64)
-        .and_then(|value| i32::try_from(value).ok());
-    let stdout = parsed
-        .get("stdout")
-        .and_then(JsonValue::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let stderr = parsed
-        .get("stderr")
-        .and_then(JsonValue::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let command = parsed
-        .get("command")
-        .and_then(JsonValue::as_str)
-        .unwrap_or(task_name)
-        .to_owned();
-
-    let log_paths = persist_demo_attempt_logs(repo_root, demo_id, &stdout, &stderr)?;
-
-    Ok(DemoExecutionAttempt {
-        ok,
-        outcome: if ok {
-            "passed".to_owned()
-        } else {
-            "failed".to_owned()
-        },
-        entrypoint_kind: "task".to_owned(),
-        entrypoint_value: task_name.to_owned(),
-        command,
-        exit_code,
-        summary: Some(if ok {
-            format!("Demo `{demo_id}` completed via task `{task_name}`.")
-        } else {
-            format!("Demo `{demo_id}` failed via task `{task_name}`.")
-        }),
-        stdout,
-        stderr,
-        stdout_log_path: log_paths.stdout,
-        stderr_log_path: log_paths.stderr,
-        recorded_at_epoch_ms: now_epoch_ms(),
-    })
+    demo_parse_task_backed_attempt_json(repo_root, demo_id, task_name, rendered).map_err(Into::into)
 }
 
 fn execute_run_backed_demo(
@@ -2087,42 +1837,23 @@ fn execute_run_backed_demo(
             ))
         })?;
 
-    let attempt_id = build_attempt_id(demo_id);
-    let active_record = PersistedDemoActiveAttempt {
-        schema: "effigy.demo.active.v1".to_owned(),
-        schema_version: 1,
-        attempt_id,
-        demo_id: demo_id.to_owned(),
-        phase: PersistedDemoActivePhase::Running,
-        started_at_epoch_ms: now_epoch_ms(),
-        owner_pid: std::process::id(),
-        target_pid: Some(child.id()),
-        stoppable: true,
-        entrypoint_kind: "run".to_owned(),
-        entrypoint_value: entrypoint_value.to_owned(),
-        command: run_command.to_owned(),
-        runtime_backend_kind: Some("run".to_owned()),
-        flattened_runtime_projection: false,
-        browser_live_attach_supported: true,
-        projection_shape_kind: Some("single-terminal".to_owned()),
-        managed_process_count: None,
-        managed_process_names: Vec::new(),
-        projected_output_provenance_kind: Some("none".to_owned()),
-        terminal_transport: launch_mode.transport(),
-        supports_input_forwarding: input_handoff_path.is_some(),
-        supports_resize: resize_handoff_path.is_some(),
-        nested_tui: false,
-        terminal_cols: initial_terminal_size.map(|(cols, _)| cols),
-        terminal_rows: initial_terminal_size.map(|(_, rows)| rows),
-        resize_handoff_path: resize_handoff_path
+    let active_record = PersistedDemoActiveAttempt::new_run_backed(
+        build_attempt_id(demo_id),
+        demo_id,
+        entrypoint_value.to_owned(),
+        run_command.to_owned(),
+        child.id(),
+        launch_mode.transport(),
+        input_handoff_path
             .as_ref()
             .map(|path| display_repo_path(path, repo_root)),
-        stdin_input_path: input_handoff_path
+        resize_handoff_path
             .as_ref()
             .map(|path| display_repo_path(path, repo_root)),
-        stdout_log_path: log_paths.stdout.clone(),
-        stderr_log_path: log_paths.stderr.clone(),
-    };
+        log_paths.stdout.clone(),
+        log_paths.stderr.clone(),
+        initial_terminal_size,
+    );
     let _active_guard = register_active_attempt(repo_root, demo_id, &active_record)?;
 
     if output_json || attached_terminal {
@@ -2181,7 +1912,7 @@ fn execute_run_backed_demo(
             }
         }
         let stop_requested = active_attempt_is_stop_requested(repo_root, demo_id);
-        return Ok(run_attempt_from_output(
+        return Ok(demo_run_attempt_from_output(
             demo_id,
             entrypoint_value,
             run_command,
@@ -2201,7 +1932,7 @@ fn execute_run_backed_demo(
     })?;
     clear_resize_handoff(resize_handoff_path.as_deref());
     let stop_requested = active_attempt_is_stop_requested(repo_root, demo_id);
-    Ok(run_attempt_from_output(
+    Ok(demo_run_attempt_from_output(
         demo_id,
         entrypoint_value,
         run_command,
@@ -2225,7 +1956,7 @@ fn demo_log_paths_for_launch_mode(
             DemoLogPaths::prepare_split(repo_root, demo_id)
         }
     }
-    .map_err(|error| RunnerError::task_invocation(error.to_string()))
+    .map_err(Into::into)
 }
 
 fn build_run_backed_process(
@@ -2295,53 +2026,6 @@ fn build_run_backed_pty_process(repo_root: &Path, run_command: &str) -> ProcessC
     process
 }
 
-fn run_attempt_from_output(
-    demo_id: &str,
-    entrypoint_value: &str,
-    run_command: &str,
-    exit_code: Option<i32>,
-    success: bool,
-    stop_requested: bool,
-    stdout: String,
-    stderr: String,
-    log_paths: DemoLogPaths,
-) -> DemoExecutionAttempt {
-    if stop_requested {
-        return terminated_demo_attempt(
-            "run",
-            entrypoint_value,
-            run_command,
-            exit_code,
-            format!("Demo `{demo_id}` was terminated after stop was requested."),
-            stdout,
-            stderr,
-            log_paths,
-        );
-    }
-    if success {
-        return successful_demo_attempt(
-            "run",
-            entrypoint_value,
-            run_command,
-            exit_code,
-            Some(format!("Demo `{demo_id}` completed via run entrypoint.")),
-            stdout,
-            stderr,
-            log_paths,
-        );
-    }
-    failed_demo_attempt(
-        "run",
-        entrypoint_value,
-        run_command,
-        exit_code,
-        format!("Demo `{demo_id}` failed via run entrypoint."),
-        stdout,
-        stderr,
-        log_paths,
-    )
-}
-
 fn join_output_capture(
     handle: thread::JoinHandle<Result<String, effigy_demo::DemoStateError>>,
     stream_name: &str,
@@ -2354,7 +2038,7 @@ fn join_output_capture(
                 "demo `{demo_id}` {stream_name} capture thread panicked"
             ))
         })?
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+        .map_err(Into::into)
 }
 
 fn request_demo_termination(target_pid: u32) -> Result<(), RunnerError> {
@@ -2386,18 +2070,7 @@ fn write_latest_attempt_receipt(
     demo: &ManifestDemoConfig,
     attempt: &DemoExecutionAttempt,
 ) -> Result<(), RunnerError> {
-    persist_latest_demo_attempt_receipt(repo_root, demo_id, demo, attempt)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn persist_demo_attempt_logs(
-    repo_root: &Path,
-    demo_id: &str,
-    stdout: &str,
-    stderr: &str,
-) -> Result<DemoLogPaths, RunnerError> {
-    persist_executed_demo_attempt_logs(repo_root, demo_id, stdout, stderr)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+    persist_latest_demo_attempt_receipt(repo_root, demo_id, demo, attempt).map_err(Into::into)
 }
 
 #[cfg(unix)]
@@ -2428,15 +2101,8 @@ fn demo_error(
     extra: JsonValue,
 ) -> Result<String, RunnerError> {
     if output_json {
-        let mut payload = serde_json::Map::new();
-        payload.insert("schema".to_owned(), JsonValue::String(schema.to_owned()));
-        payload.insert("schema_version".to_owned(), JsonValue::from(1));
-        payload.insert("ok".to_owned(), JsonValue::Bool(false));
-        payload.insert("message".to_owned(), JsonValue::String(message.clone()));
-        if let JsonValue::Object(extra_map) = extra {
-            payload.extend(extra_map);
-        }
-        let rendered = encode_json(&JsonValue::Object(payload), true)?;
+        let payload = build_demo_error_payload(schema, &message, extra);
+        let rendered = encode_json(&payload, true)?;
         return Err(RunnerError::CommandJsonFailure { rendered });
     }
     Err(RunnerError::task_invocation(message))
@@ -2446,44 +2112,14 @@ fn browser_payload_from_json<T: DeserializeOwned>(
     value: JsonValue,
     context: &str,
 ) -> Result<T, RunnerError> {
-    serde_json::from_value(value).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to build shared demo browser payload for {context}: {error}"
-        ))
-    })
+    demo_browser_payload_from_json(value, context).map_err(Into::into)
 }
 
 fn browser_payload_to_json<T: Serialize>(
     value: &T,
     context: &str,
 ) -> Result<JsonValue, RunnerError> {
-    serde_json::to_value(value).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to render shared demo browser payload for {context}: {error}"
-        ))
-    })
-}
-
-#[derive(Debug, Clone, Copy)]
-enum DemoInvocationKind {
-    Run,
-    Rerun,
-}
-
-impl DemoInvocationKind {
-    fn schema(&self) -> &'static str {
-        match self {
-            Self::Run => "effigy.demo.run.v1",
-            Self::Rerun => "effigy.demo.rerun.v1",
-        }
-    }
-
-    fn title(&self) -> &'static str {
-        match self {
-            Self::Run => "Demo Run",
-            Self::Rerun => "Demo Rerun",
-        }
-    }
+    demo_browser_payload_to_json(value, context).map_err(Into::into)
 }
 
 fn demo_runtime_backend(

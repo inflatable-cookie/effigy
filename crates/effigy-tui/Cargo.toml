@@ -6,10 +6,13 @@ license = "MIT"
 description = "Shared TUI core and terminal-text primitives for Effigy"
 
 [dependencies]
+anstream = "0.6"
 anstyle = "1"
 crossterm = "0.29"
 effigy-cli = { path = "../effigy-cli" }
 effigy-demo = { path = "../effigy-demo" }
+effigy-process = { path = "../effigy-process" }
+effigy-ui = { path = "../effigy-ui" }
 ratatui = "0.29"
 serde = "1"
 serde_json = "1"

@@ -938,5 +938,408 @@ fn read_log_tail(path: &Path, line_count: usize) -> String {
         .unwrap_or_else(|| "(unable to read log tail)".to_owned())
 }
 
+/// Collect the GLIBC minor versions referenced by a binary.
+///
+/// Tries `readelf`, `objdump`, and `strings` in order; stops at the first
+/// candidate that returns any `GLIBC_x.y` references. Returned versions
+/// are de-duplicated and sorted ascending by numeric comparison.
+pub fn collect_glibc_versions(
+    binary_path: &Path,
+) -> Result<Vec<String>, DistributionExecutionError> {
+    let candidates = [
+        (
+            "readelf",
+            vec![
+                "--version-info".to_owned(),
+                binary_path.display().to_string(),
+            ],
+        ),
+        (
+            "objdump",
+            vec!["-T".to_owned(), binary_path.display().to_string()],
+        ),
+        ("strings", vec![binary_path.display().to_string()]),
+    ];
+    let glibc_re = Regex::new(r"GLIBC_([0-9]+\.[0-9]+)").expect("glibc regex");
+
+    let mut captured = Vec::new();
+    for (program, args) in candidates {
+        if !command_exists(program) {
+            continue;
+        }
+        let output = Command::new(program)
+            .args(&args)
+            .output()
+            .map_err(|err| DistributionExecutionError::Message(err.to_string()))?;
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        for capture in glibc_re.captures_iter(&combined) {
+            captured.push(capture[1].to_owned());
+        }
+        if !captured.is_empty() {
+            break;
+        }
+    }
+    captured.sort_by(|left, right| {
+        compare_glibc_versions(left, right).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    captured.dedup();
+    Ok(captured)
+}
+
+/// Compare two `x.y` GLIBC version strings numerically.
+pub fn compare_glibc_versions(left: &str, right: &str) -> Option<std::cmp::Ordering> {
+    let parse = |value: &str| -> Option<(u32, u32)> {
+        let mut parts = value.split('.');
+        Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+    };
+    let left = parse(left)?;
+    let right = parse(right)?;
+    Some(left.cmp(&right))
+}
+
+/// Run the GLIBC floor compatibility check for a distribution binary.
+///
+/// Reads the dynamic GLIBC symbol requirements of `binary_path`, compares
+/// the highest required version against `max_glibc`, and shapes the
+/// distribution-check payload and text response. Returns an `Ok` rendered
+/// payload/text on compatibility, or an `Err` carrying the same payload /
+/// diagnostic text when the floor is violated.
+pub fn check_glibc_floor_command(
+    binary_path: &Path,
+    max_glibc: &str,
+    output_json: bool,
+) -> Result<String, DistributionExecutionError> {
+    if !binary_path.is_file() {
+        return Err(DistributionExecutionError::Message(format!(
+            "binary not found: {}",
+            binary_path.display()
+        )));
+    }
+
+    let versions = collect_glibc_versions(binary_path)?;
+    let (ok, required_glibc) = if let Some(required) = versions.last() {
+        let compatible = compare_glibc_versions(required, max_glibc)
+            .is_some_and(|ordering| ordering != std::cmp::Ordering::Greater);
+        (compatible, Some(required.clone()))
+    } else {
+        (true, None)
+    };
+
+    let payload = json!({
+        "schema": "effigy.distribution.glibc-floor.v1",
+        "schema_version": 1,
+        "ok": ok,
+        "binary": binary_path.display().to_string(),
+        "required_glibc": required_glibc,
+        "max_glibc": max_glibc,
+        "dynamic_symbols_found": required_glibc.is_some(),
+    });
+    if output_json {
+        return if ok {
+            Ok(payload.to_string())
+        } else {
+            Err(DistributionExecutionError::Message(payload.to_string()))
+        };
+    }
+
+    if let Some(required) = required_glibc {
+        if ok {
+            Ok(format!(
+                "[ok] {} GLIBC floor is compatible (requires GLIBC_{required}, max GLIBC_{max_glibc})",
+                binary_path.display()
+            ))
+        } else {
+            Err(DistributionExecutionError::Message(format!(
+                "{} requires GLIBC_{required} but the release floor is GLIBC_{max_glibc}",
+                binary_path.display()
+            )))
+        }
+    } else {
+        Ok(format!(
+            "[ok] no dynamic GLIBC symbol requirements found: {}",
+            binary_path.display()
+        ))
+    }
+}
+
+/// Validate distribution-related metadata in `Cargo.toml` against a
+/// distribution policy.
+///
+/// Reads `Cargo.toml`, checks package name / semver version / license /
+/// description / required docs / required files / release workflow
+/// wiring, and optionally cross-checks the supplied `tag` against the
+/// Cargo version. Returns an `Ok` rendered payload/text when all checks
+/// pass, or an `Err` with the same shape describing the failures.
+pub fn validate_metadata_command(
+    repo_root: &Path,
+    distribution_policy: &EffectiveDistributionPolicy,
+    tag: Option<&str>,
+    output_json: bool,
+) -> Result<String, DistributionExecutionError> {
+    let cargo_path = repo_root.join("Cargo.toml");
+    let cargo =
+        std::fs::read_to_string(&cargo_path).map_err(|error| DistributionExecutionError::Io {
+            path: cargo_path.clone(),
+            error,
+        })?;
+    let cargo: toml::Value = cargo.parse().map_err(|error: toml::de::Error| {
+        DistributionExecutionError::Message(format!(
+            "failed to parse {}: {error}",
+            cargo_path.display()
+        ))
+    })?;
+    let package = cargo.get("package").and_then(toml::Value::as_table);
+    let workspace_package = cargo
+        .get("workspace")
+        .and_then(toml::Value::as_table)
+        .and_then(|workspace| workspace.get("package"))
+        .and_then(toml::Value::as_table);
+    let package_metadata = package.or(workspace_package).ok_or_else(|| {
+        DistributionExecutionError::Message(
+            "Cargo.toml is missing [package] or [workspace.package] metadata".to_owned(),
+        )
+    })?;
+
+    let name = package_metadata
+        .get("name")
+        .and_then(toml::Value::as_str)
+        .unwrap_or(&distribution_policy.package_name)
+        .to_owned();
+    let version = package_metadata
+        .get("version")
+        .and_then(toml::Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let license = package_metadata
+        .get("license")
+        .and_then(toml::Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let description = package_metadata
+        .get("description")
+        .and_then(toml::Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+
+    let semver_re =
+        Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$").expect("semver regex");
+    let tag_re = Regex::new(r"^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$").expect("tag regex");
+
+    let required_docs = &distribution_policy.required_docs;
+    let required_files = &distribution_policy.required_files;
+    let mut errors = Vec::new();
+    if name != distribution_policy.package_name {
+        errors.push(format!(
+            "expected package name `{}`, got `{name}`",
+            distribution_policy.package_name
+        ));
+    }
+    if !semver_re.is_match(&version) {
+        errors.push(format!("package version is not semver-like: `{version}`"));
+    }
+    if !distribution_policy.manifest_adopted && license.is_empty() {
+        errors.push("package license is empty".to_owned());
+    }
+    if !distribution_policy.manifest_adopted && package.is_some() && description.is_empty() {
+        errors.push("package description is empty".to_owned());
+    }
+    if let Some(tag) = tag {
+        if !tag_re.is_match(tag) {
+            errors.push(format!("tag must match vX.Y.Z format: `{tag}`"));
+        } else if tag.trim_start_matches('v') != version {
+            errors.push(format!(
+                "tag version `{}` does not match Cargo version `{version}`",
+                tag.trim_start_matches('v')
+            ));
+        }
+    }
+    for path in required_docs.iter().chain(required_files.iter()) {
+        if !repo_root.join(path).is_file() {
+            errors.push(format!("required file is missing: {path}"));
+        }
+    }
+    if !distribution_policy.manifest_adopted {
+        let workflow_path = repo_root.join(".github/workflows/release-binaries.yml");
+        let workflow = std::fs::read_to_string(&workflow_path).map_err(|error| {
+            DistributionExecutionError::Io {
+                path: workflow_path.clone(),
+                error,
+            }
+        })?;
+        for (needle, description) in [
+            ("name: Release Binaries", "release workflow name"),
+            ("Create GitHub Release", "GitHub Release job wiring"),
+            ("Update Homebrew tap", "Homebrew automation job wiring"),
+            ("      - \"v*\"", "tag trigger wiring"),
+            (
+                "          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04",
+                "x86_64 Linux release baseline pinning",
+            ),
+            (
+                "          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04",
+                "aarch64 Linux release baseline pinning",
+            ),
+            (
+                "./scripts/check-linux-glibc-floor.sh ./effigy-${{ matrix.target }} 2.35",
+                "Linux glibc compatibility guard",
+            ),
+        ] {
+            if !workflow.contains(needle) {
+                errors.push(format!(
+                    "expected {description} in .github/workflows/release-binaries.yml"
+                ));
+            }
+        }
+    }
+
+    let payload = json!({
+        "schema": "effigy.distribution.metadata.v1",
+        "schema_version": 1,
+        "ok": errors.is_empty(),
+        "package": {
+            "name": name,
+            "version": version,
+            "license": license,
+            "description": description,
+        },
+        "tag": tag,
+        "required_docs": required_docs,
+        "required_files": required_files,
+        "errors": errors,
+    });
+
+    if output_json {
+        return if payload["ok"] == true {
+            Ok(payload.to_string())
+        } else {
+            Err(DistributionExecutionError::Message(payload.to_string()))
+        };
+    }
+    if payload["ok"] == true {
+        return Ok("[ok] distribution metadata checks passed".to_owned());
+    }
+    Err(DistributionExecutionError::Message(errors.join("\n")))
+}
+
+/// Run the distribution preflight sequence: docs task, metadata check,
+/// smoke task — each configurable and skippable.
+///
+/// Invokes `effigy_bin <task> --repo <repo_root>` for docs/smoke tasks and
+/// calls [`validate_metadata_command`] for the metadata slice. Optionally
+/// writes a key=value status file to `output_path` summarising each slice.
+/// Returns the shaped preflight payload (json or text).
+pub fn preflight_command(
+    repo_root: &Path,
+    distribution_policy: &EffectiveDistributionPolicy,
+    tag: Option<&str>,
+    skip_docs: bool,
+    skip_smoke: bool,
+    output_path: Option<&Path>,
+    effigy_bin: &Path,
+    output_json: bool,
+) -> Result<String, DistributionExecutionError> {
+    let mut docs_status = "skipped";
+    let mut smoke_status = "skipped";
+
+    if !skip_docs {
+        run_effigy_task(effigy_bin, repo_root, &distribution_policy.docs_task)?;
+        docs_status = "ok";
+    }
+
+    let _ = validate_metadata_command(repo_root, distribution_policy, tag, false)?;
+    let metadata_status = "ok";
+
+    if !skip_smoke {
+        run_effigy_task(effigy_bin, repo_root, &distribution_policy.smoke_task)?;
+        smoke_status = "ok";
+    }
+
+    if let Some(output_path) = output_path {
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| DistributionExecutionError::Io {
+                path: parent.to_path_buf(),
+                error,
+            })?;
+        }
+        let rendered = format!(
+            "TAG={}\nDOCS_STATUS={docs_status}\nMETADATA_STATUS={metadata_status}\nSMOKE_STATUS={smoke_status}\n",
+            tag.unwrap_or("")
+        );
+        std::fs::write(output_path, rendered).map_err(|error| DistributionExecutionError::Io {
+            path: output_path.to_path_buf(),
+            error,
+        })?;
+    }
+
+    let next_command = if let Some(tag) = tag {
+        format!(
+            "effigy distribution first-publish --tag {tag} --artifacts-dir ./artifacts/distribution-{tag}"
+        )
+    } else {
+        "effigy distribution first-publish --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z".to_owned()
+    };
+
+    let payload = json!({
+        "schema": "effigy.distribution.preflight.v1",
+        "schema_version": 1,
+        "ok": true,
+        "tag": tag,
+        "docs_status": docs_status,
+        "metadata_status": metadata_status,
+        "smoke_status": smoke_status,
+        "output": output_path.map(|path| path.display().to_string()),
+        "next_command": next_command,
+    });
+    if output_json {
+        return Ok(payload.to_string());
+    }
+
+    let mut lines = Vec::new();
+    if let Some(output_path) = output_path {
+        lines.push(format!(
+            "[ok] wrote preflight summary: {}",
+            output_path.display()
+        ));
+    }
+    lines.push("[ok] distribution preflight checks passed".to_owned());
+    lines.push(format!("[next] real publish-cycle command: {next_command}"));
+    Ok(lines.join("\n"))
+}
+
+fn run_effigy_task(
+    effigy_bin: &Path,
+    repo_root: &Path,
+    task: &str,
+) -> Result<(), DistributionExecutionError> {
+    let output = Command::new(effigy_bin)
+        .arg(task)
+        .arg("--repo")
+        .arg(repo_root)
+        .env("NO_COLOR", "1")
+        .output()
+        .map_err(|err| {
+            DistributionExecutionError::Message(format!("failed to run `{task}`: {err}"))
+        })?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let combined = if stderr.is_empty() {
+        stdout
+    } else if stdout.is_empty() {
+        stderr
+    } else {
+        format!("{stdout}\n{stderr}")
+    };
+    Err(DistributionExecutionError::Message(format!(
+        "`{task}` failed\n{combined}"
+    )))
+}
+
 #[cfg(test)]
 mod tests;

@@ -2,7 +2,7 @@
 
 Generation: `g01`
 
-Status: Planned
+Status: Complete
 Owner: Research
 Created: 2026-03-07
 Depends on: Research skeleton establishment
@@ -271,14 +271,21 @@ Each dossier should follow the template in `docs/research/templates/tool-dossier
 
 ## 11) Outcome
 
-Status: planned
+Status: complete
 
-Upon completion, Effigy will have:
+The research corpus for Phase 1 is materially complete. The core execution
+tracks were researched strongly enough to validate Effigy's direction around
+configuration, caching, watch mode, DAG execution, and process/TUI patterns.
+The remaining unchecked items in this file were research-program promotion and
+index hygiene, not missing core research.
+
+Upon completion, Effigy has:
 - Validated or revised TOML configuration choice
 - Identified caching improvements from build system research
 - Documented watch mode best practices
 - Cataloged DAG execution edge cases
 - Established TUI pattern library
 
-Next: Research Phase 2 (Developer Experience) roadmap g01.021
-
+Next: treat the remaining research-program promotion work as part of the
+cross-phase carry-forward in
+[`g02.018`](../g02/018-research-promotion-and-carry-forward.md).

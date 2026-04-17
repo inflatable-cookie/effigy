@@ -217,10 +217,8 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Active Ready Card
 
-none — the `g02.010` strict modularization lane is paused on a trustworthy
-full boundary. Resume
-[`115-implement-effigy-distribution-release-closure.md`](./115-implement-effigy-distribution-release-closure.md)
-for `v0.3` closure.
+none — `115` is complete and there is no new ready implementation card.
+Release execution is explicitly deferred behind `g02.010`.
 
 ## Recent Boundary Decision
 
@@ -240,4 +238,6 @@ for `v0.3` closure.
 
 ## Next Task
 
-Execute `222` to reduce the next meaningful distribution runner shell slice.
+Clear the remaining `v0.3` blocker:
+
+1. finish the remaining `/src` cleanup and reconciliation under `g02.010`

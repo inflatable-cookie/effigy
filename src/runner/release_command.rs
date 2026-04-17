@@ -44,9 +44,9 @@ use effigy_release::{
     run_release_gates_with_progress,
     run_release_verify_install as run_release_verify_install_via_release, BlockedPreflightAction,
     ExecuteMenuAction, ExecuteReviewState, GateExecutionReport, PrepareMenuAction,
-    PrepareReviewState, ReleaseBlockedStage, ReleaseContext, ReleaseError, ReleaseExecutePlan,
-    ReleaseExecuted, ReleaseGateRun, ReleasePreparePlan, ReleasePrepared, ReleaseSimulation,
-    ReleaseStatus, ReleaseVerifyInstall, ResolvedGate, ResumeMenuAction,
+    PrepareReviewState, ReleaseBlockedStage, ReleaseContext, ReleaseExecutePlan, ReleaseExecuted,
+    ReleaseGateRun, ReleasePreparePlan, ReleasePrepared, ReleaseSimulation, ReleaseStatus,
+    ReleaseVerifyInstall, ResolvedGate, ResumeMenuAction,
 };
 
 use super::command_context::{current_working_dir, resolve_repo_root};
@@ -281,8 +281,7 @@ fn run_interactive_release_prepare(
     resolved: &ResolvedTarget,
     requested_check_gates: bool,
 ) -> Result<String, RunnerError> {
-    let context =
-        load_release_context_via_release(&resolved.resolved_root).map_err(map_release_error)?;
+    let context = load_release_context_via_release(&resolved.resolved_root)?;
     let check_gates = requested_check_gates || !context.config.gates.is_empty();
     let gate_report = if check_gates {
         run_release_gates(&resolved.resolved_root, &context.config.gates, true)
@@ -290,8 +289,7 @@ fn run_interactive_release_prepare(
         GateExecutionReport::empty()
     };
     let mut plan =
-        build_release_prepare_plan_via_release(&context, check_gates, gate_report.clone(), None)
-            .map_err(map_release_error)?;
+        build_release_prepare_plan_via_release(&context, check_gates, gate_report.clone(), None)?;
     let rendered_plan = render_release_prepare_plan_text(&plan);
     if !plan.ready {
         return Err(RunnerError::task_invocation(rendered_plan));
@@ -309,8 +307,7 @@ fn run_interactive_release_prepare(
                         check_gates,
                         gate_report.clone(),
                         Some(selected_version),
-                    )
-                    .map_err(map_release_error)?;
+                    )?;
                 }
             }
             PrepareMenuAction::Mutations => {
@@ -1054,7 +1051,7 @@ fn parse_release_version_override(
     let Some(raw_version) = raw_version else {
         return Ok(None);
     };
-    let context = load_release_context_via_release(repo_root).map_err(map_release_error)?;
+    let context = load_release_context_via_release(repo_root)?;
     let suggested_version = context.next_version.clone().ok_or_else(|| {
         RunnerError::task_invocation(format!(
             "release {subcommand} `--version` requires a changelog-derived suggested version"
@@ -1073,8 +1070,7 @@ fn collect_release_status(
     resolved: &ResolvedTarget,
     check_gates: bool,
 ) -> Result<ReleaseStatus, RunnerError> {
-    let context =
-        load_release_context_via_release(&resolved.resolved_root).map_err(map_release_error)?;
+    let context = load_release_context_via_release(&resolved.resolved_root)?;
     if check_gates && !context.config.gates.is_empty() {
         emit_release_progress_line("checking release gates for status");
     }
@@ -1095,8 +1091,7 @@ fn collect_release_prepare_plan(
     check_gates: bool,
     version_override: Option<semver::Version>,
 ) -> Result<ReleasePreparePlan, RunnerError> {
-    let context =
-        load_release_context_via_release(&resolved.resolved_root).map_err(map_release_error)?;
+    let context = load_release_context_via_release(&resolved.resolved_root)?;
     build_release_prepare_plan(&context, check_gates, version_override)
 }
 
@@ -1114,15 +1109,14 @@ fn build_release_prepare_plan(
         GateExecutionReport::empty()
     };
     build_release_prepare_plan_via_release(context, check_gates, gate_report, version_override)
-        .map_err(map_release_error)
+        .map_err(Into::into)
 }
 
 fn collect_release_simulation(
     resolved: &ResolvedTarget,
     version_override: Option<semver::Version>,
 ) -> Result<ReleaseSimulation, RunnerError> {
-    let context =
-        load_release_context_via_release(&resolved.resolved_root).map_err(map_release_error)?;
+    let context = load_release_context_via_release(&resolved.resolved_root)?;
     if !context.config.gates.is_empty() {
         emit_release_progress_line("checking release gates for simulation");
     }
@@ -1132,8 +1126,7 @@ fn collect_release_simulation(
         true,
         gate_report.clone(),
         version_override,
-    )
-    .map_err(map_release_error)?;
+    )?;
     Ok(collect_release_simulation_via_release(
         &resolved.resolved_root,
         RELEASE_PREPARED_STATE_FILE,
@@ -1154,11 +1147,11 @@ fn execute_release_prepare(
         version_override,
         emit_release_progress_line,
     )
-    .map_err(map_release_error)
+    .map_err(Into::into)
 }
 
 fn run_standalone_release_gates(resolved: &ResolvedTarget) -> Result<ReleaseGateRun, RunnerError> {
-    let config = load_release_config(&resolved.resolved_root).map_err(map_release_error)?;
+    let config = load_release_config(&resolved.resolved_root)?;
     if !config.gates.is_empty() {
         emit_release_progress_line("running standalone release gates");
     }
@@ -1175,11 +1168,10 @@ fn run_release_verify_install(
     tag: Option<String>,
     repo_url: Option<String>,
 ) -> Result<ReleaseVerifyInstall, RunnerError> {
-    let tag = resolve_verify_install_tag_via_release(tag, std::env::var("GITHUB_REF_NAME").ok())
-        .map_err(map_release_error)?;
+    let tag = resolve_verify_install_tag_via_release(tag, std::env::var("GITHUB_REF_NAME").ok())?;
     let repo_url = resolve_verify_install_repo_url(resolved, repo_url)?;
     run_release_verify_install_via_release(resolved.resolved_root.clone(), tag, repo_url)
-        .map_err(map_release_error)
+        .map_err(Into::into)
 }
 
 fn collect_release_execute_plan(
@@ -1192,7 +1184,7 @@ fn collect_release_execute_plan(
         RELEASE_STATE_STALE_THRESHOLD_SECS,
         allow_stale,
     )
-    .map_err(map_release_error)
+    .map_err(Into::into)
 }
 
 fn execute_release(
@@ -1206,14 +1198,7 @@ fn execute_release(
         allow_stale,
         emit_release_progress_line,
     )
-    .map_err(map_release_error)
-}
-
-fn map_release_error(error: ReleaseError) -> RunnerError {
-    match error {
-        ReleaseError::Manifest(error) => RunnerError::task_invocation(error.to_string()),
-        ReleaseError::TaskInvocation(message) => RunnerError::task_invocation(message),
-    }
+    .map_err(Into::into)
 }
 
 fn run_release_gates(root: &Path, gates: &[ResolvedGate], fail_fast: bool) -> GateExecutionReport {
@@ -1234,8 +1219,7 @@ fn resolve_verify_install_repo_url(
         return Ok(effigy_release::normalize_verify_install_repo_url(&trimmed));
     }
 
-    let detected =
-        git_remote_url_via_release(&resolved.resolved_root, "origin").map_err(map_release_error)?;
+    let detected = git_remote_url_via_release(&resolved.resolved_root, "origin")?;
     Ok(effigy_release::normalize_verify_install_repo_url(&detected))
 }
 

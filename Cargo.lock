@@ -609,7 +609,9 @@ dependencies = [
 name = "effigy-cli"
 version = "0.1.0"
 dependencies = [
+ "crossterm 0.29.0",
  "effigy-core",
+ "effigy-ui",
 ]
 
 [[package]]
@@ -617,6 +619,7 @@ name = "effigy-containers"
 version = "0.1.0"
 dependencies = [
  "effigy-manifest",
+ "serde_json",
 ]
 
 [[package]]
@@ -650,6 +653,7 @@ dependencies = [
  "effigy-manifest",
  "regex",
  "serde_json",
+ "toml",
 ]
 
 [[package]]
@@ -764,10 +768,13 @@ dependencies = [
 name = "effigy-tui"
 version = "0.1.0"
 dependencies = [
+ "anstream",
  "anstyle",
  "crossterm 0.29.0",
  "effigy-cli",
  "effigy-demo",
+ "effigy-process",
+ "effigy-ui",
  "ratatui",
  "serde",
  "serde_json",

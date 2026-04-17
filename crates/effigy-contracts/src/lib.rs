@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use effigy_cli::ContractsCheckMode;
+use effigy_cli::{ContractsCheckMode, ContractsSelectionPrintMode};
 use serde_json::{json, Value};
 
 pub const DEFAULT_SCHEMA_INDEX: &str = "docs/contracts/json-schema-index.json";
@@ -144,6 +144,24 @@ impl SelectionPayload {
             .map(|schema| format!("[selected] {schema}"))
             .collect()
     }
+
+    /// Render this selection in the format requested by `print_mode`.
+    ///
+    /// Returns `None` when `print_mode` is `None`, meaning the caller
+    /// should not emit any intermediate selection output. The returned
+    /// string (when present) is ready for the caller to print verbatim —
+    /// the runner shell stays responsible for the `println!` side-effect
+    /// while this module owns the content format.
+    pub fn render_for_print_mode(&self, print_mode: ContractsSelectionPrintMode) -> Option<String> {
+        match print_mode {
+            ContractsSelectionPrintMode::None => None,
+            ContractsSelectionPrintMode::Text => Some(self.render_text_lines().join("\n")),
+            ContractsSelectionPrintMode::Json => Some(
+                self.render_json()
+                    .unwrap_or_else(|_| "{\"selected\":[]}".to_owned()),
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,6 +193,44 @@ pub struct CheckReport {
     pub checks: usize,
     pub skipped: usize,
     pub failures: Vec<CheckFailure>,
+}
+
+impl CheckReport {
+    /// Shape the runner-facing text result of a check-json run.
+    ///
+    /// Returns `Ok(success_text)` when no failures were recorded, and
+    /// `Err(failure_text)` when one or more failures are present. The
+    /// success-text branch varies based on whether any applicable schema
+    /// entries were validated — if `self.checks == 0`, the message
+    /// mentions the `changed_only_base` context (when provided) so the
+    /// caller sees why no checks ran.
+    pub fn render_text(&self, changed_only_base: Option<&str>) -> Result<String, String> {
+        if !self.failures.is_empty() {
+            let mut output = format!(
+                "[error] JSON contract checks failed: {} failure(s)",
+                self.failures.len()
+            );
+            for failure in &self.failures {
+                output.push('\n');
+                output.push_str(&failure.render_text());
+            }
+            return Err(output);
+        }
+
+        if self.checks == 0 {
+            if let Some(base) = changed_only_base {
+                return Ok(format!(
+                    "[ok] JSON contract checks passed (no changed active schema entries vs {base})"
+                ));
+            }
+            return Ok(
+                "[ok] JSON contract checks passed (no applicable schema entries to validate)"
+                    .to_owned(),
+            );
+        }
+
+        Ok("[ok] JSON contract checks passed".to_owned())
+    }
 }
 
 #[derive(Debug, Clone)]

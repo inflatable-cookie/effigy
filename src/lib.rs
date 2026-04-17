@@ -39,8 +39,8 @@ pub use cli::output::{
 pub use cli::parse_error::{parse_error_json_details, render_parse_error, PARSE_ERROR_HINT};
 pub use cli::runner_dispatch::run_and_render_command;
 pub use cli::version_dispatch::{build_version_payload, run_version_command};
-pub use cli_help::render_help_with_deferred_builtins;
 pub use effigy_changelog as changelog;
+pub use effigy_cli::help::ui::{render_help, render_help_with_deferred_builtins};
 pub use effigy_cli::{
     apply_global_json_flag, command_requests_json, parse_command, strip_global_json_flag,
     strip_global_json_flags, BootstrapArgs, ChangelogArgs, ChangelogSubcommand, CliParseError,
@@ -53,16 +53,13 @@ pub use effigy_cli::{
 use effigy_ui::{Renderer, UiResult};
 use std::path::Path;
 
-mod cli_help;
-
-/// Render built-in help for a specific topic through the supplied renderer.
-pub fn render_help<R: Renderer>(renderer: &mut R, topic: HelpTopic) -> UiResult<()> {
-    cli_help::render_help(renderer, topic)
-}
-
 /// Render the standard CLI header for the supplied repository root.
+///
+/// Thin wrapper that forwards to [`effigy_cli::header::render_cli_header`]
+/// with the root crate's `CARGO_PKG_VERSION`, so the displayed version
+/// tracks the binary rather than the helper crate.
 pub fn render_cli_header<R: Renderer>(renderer: &mut R, root: &Path) -> UiResult<()> {
-    cli_help::render_cli_header(renderer, root)
+    effigy_cli::header::render_cli_header(renderer, root, env!("CARGO_PKG_VERSION"))
 }
 
 #[cfg(test)]

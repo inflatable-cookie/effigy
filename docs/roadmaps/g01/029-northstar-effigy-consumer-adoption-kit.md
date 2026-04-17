@@ -2,7 +2,7 @@
 
 Generation: `g01`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-03-12
 Depends on: 013, 015, 026, 027, 028
@@ -469,8 +469,9 @@ Acceptance:
 
 ## Next Task
 
-Wave 3 is now complete and the source-of-truth docs are aligned. Keep
-bootstrap scaffolding in the `northstar-effigy` skill for now, keep the
-starter `qa:northstar` bundle stable across future repo adoptions, and only
-reopen an Effigy-side `init` / repo-contract surface if repeated real-world
-adoption pain shows the current skill/templates cannot cover the gap cleanly.
+Wave 3 is complete and the Effigy-side consumer-adoption boundary is now
+closed. Use the external sweep handoff in
+[`docs/handoffs/g01-029-consumer-adoption-sweep.md`](../../handoffs/g01-029-consumer-adoption-sweep.md)
+for any follow-up repo cohort check, and only reopen Effigy-side product work
+if that sweep shows repeated pain the current skill/template layer cannot
+cover.

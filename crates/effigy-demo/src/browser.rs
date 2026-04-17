@@ -1,3 +1,4 @@
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -6,7 +7,54 @@ pub use crate::runtime::{
     DemoRuntimeProjectedProcessSummary, DemoRuntimeProjectionShape, DemoTerminalInputForwarding,
     DemoTerminalRecentOutput, DemoTerminalResize, DemoTerminalSize,
 };
-use crate::DemoHistoricalAttempt;
+use crate::{DemoHistoricalAttempt, DemoStateError};
+
+/// Decode a `JsonValue` into a concrete browser payload type.
+///
+/// Errors carry the supplied `context` label so the caller can distinguish
+/// which payload slice failed to deserialize.
+pub fn payload_from_json<T: DeserializeOwned>(
+    value: JsonValue,
+    context: &str,
+) -> Result<T, DemoStateError> {
+    serde_json::from_value(value).map_err(|error| {
+        DemoStateError::new(format!(
+            "failed to build shared demo browser payload for {context}: {error}"
+        ))
+    })
+}
+
+/// Encode a browser payload type back into a `JsonValue`.
+///
+/// Errors carry the supplied `context` label so the caller can distinguish
+/// which payload slice failed to serialize.
+pub fn payload_to_json<T: Serialize>(
+    value: &T,
+    context: &str,
+) -> Result<JsonValue, DemoStateError> {
+    serde_json::to_value(value).map_err(|error| {
+        DemoStateError::new(format!(
+            "failed to render shared demo browser payload for {context}: {error}"
+        ))
+    })
+}
+
+/// Shape a demo error payload for json-mode responses.
+///
+/// Emits the standard `schema`/`schema_version`/`ok=false`/`message` envelope
+/// and merges any provided extra object fields. Non-object extras are
+/// ignored.
+pub fn build_error_payload(schema: &str, message: &str, extra: JsonValue) -> JsonValue {
+    let mut payload = serde_json::Map::new();
+    payload.insert("schema".to_owned(), JsonValue::String(schema.to_owned()));
+    payload.insert("schema_version".to_owned(), JsonValue::from(1));
+    payload.insert("ok".to_owned(), JsonValue::Bool(false));
+    payload.insert("message".to_owned(), JsonValue::String(message.to_owned()));
+    if let JsonValue::Object(extra_map) = extra {
+        payload.extend(extra_map);
+    }
+    JsonValue::Object(payload)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DemoListPayload {

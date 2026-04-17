@@ -13,31 +13,31 @@ use std::time::{Duration, Instant};
 use nix::sys::signal::{kill, Signal};
 #[cfg(unix)]
 use nix::unistd::{setpgid, Pid};
-use serde_json::json;
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
 use effigy_containers::{
-    compose::{compose_args, compose_invocation, shutdown_label},
-    effective_attach_mode,
+    compose::{compose_args, compose_invocation},
+    down_report, effective_attach_mode,
     exec::{
         capture_compose_ps, colima_is_running, ensure_colima_running,
         run_docker_capture as run_docker_capture_via_exec,
-        shutdown_container as shutdown_container_via_exec, ContainerExecError,
+        shutdown_container as shutdown_container_via_exec,
     },
     health::{probe_health_status, wait_for_ready},
-    load_container_policy,
+    load_container_policy, logs_report, reset_report,
     session::{
         attached_session_process_plans, attached_session_tab_order,
         render_attached_session_closeout as render_attached_session_closeout_text,
         render_stream_session_overview, resolve_attached_session_mode,
         resolve_effigy_invocation_prefix, AttachedSessionMode,
     },
-    validate_container_policy, ContainerPolicyError, EffectiveAttachMode, EffectiveContainerPolicy,
+    status_report, up_detached_report, validate_container_policy, ContainerCommandReport,
+    EffectiveAttachMode, EffectiveContainerPolicy,
 };
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
-use crate::runner::manifest::{ManifestContainerDriver, ManifestContainerOnTaskExit};
+use crate::runner::manifest::ManifestContainerOnTaskExit;
 use crate::tui::{run_multiprocess_tui, MultiProcessTuiOptions};
 use crate::{ContainerArgs, ContainerSubcommand};
 use effigy_process::ProcessSpec;
@@ -112,14 +112,12 @@ pub(super) fn run_task_container_session(
     let policy = load_container_policy(
         repo_root,
         normalize_task_container_reference(container_name),
-    )
-    .map_err(map_container_policy_error)?;
-    validate_container_policy(repo_root, &policy).map_err(map_container_policy_error)?;
+    )?;
+    validate_container_policy(repo_root, &policy)?;
     if stop_requested.load(std::sync::atomic::Ordering::Relaxed) {
         return render_attached_session_closeout(repo_root, &policy, false, "signal");
     }
-    let colima_started =
-        ensure_colima_running(&policy, repo_root).map_err(map_container_exec_error)?;
+    let colima_started = ensure_colima_running(&policy, repo_root)?;
     if stop_requested.load(std::sync::atomic::Ordering::Relaxed) {
         return render_attached_session_closeout(repo_root, &policy, colima_started, "signal");
     }
@@ -161,16 +159,15 @@ fn run_container_up(
     }
 
     let startup_stop_requested = install_stop_requested_flag()?;
-    let policy = load_container_policy(repo_root, name).map_err(map_container_policy_error)?;
-    validate_container_policy(repo_root, &policy).map_err(map_container_policy_error)?;
+    let policy = load_container_policy(repo_root, name)?;
+    validate_container_policy(repo_root, &policy)?;
     let attach_mode = effective_attach_mode(&policy, attach, detach);
     let stop_requested = if attach_mode == EffectiveAttachMode::Attached {
         Some(startup_stop_requested)
     } else {
         None
     };
-    let colima_started =
-        ensure_colima_running(&policy, repo_root).map_err(map_container_exec_error)?;
+    let colima_started = ensure_colima_running(&policy, repo_root)?;
     if stop_requested
         .as_ref()
         .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
@@ -198,38 +195,10 @@ fn run_container_up(
     }
 
     if attach_mode == EffectiveAttachMode::Detached {
-        let payload = json!({
-            "schema": "effigy.container.up.v1",
-            "schema_version": 1,
-            "ok": true,
-            "container": policy.name,
-            "profile": policy.profile,
-            "compose_file": policy.compose_file_display,
-            "project_name": policy.project_name,
-            "primary_service": policy.primary_service,
-            "attach_mode": "detached",
-            "colima_started": colima_started,
-            "ports": policy.declared_ports,
-            "mounts": policy.declared_mounts,
-            "ui_tabs": policy.ui_tabs,
-            "health": health,
-        });
-        if output_json {
-            return Ok(payload.to_string());
-        }
-        let mut lines = Vec::new();
-        if colima_started {
-            lines.push(format!("[ok] started Colima profile `{}`", policy.profile));
-        }
-        lines.push(format!(
-            "[ok] container `{}` is ready in detached mode",
-            policy.name
+        return Ok(render_container_report(
+            up_detached_report(&policy, colima_started, health),
+            output_json,
         ));
-        lines.push(format!(
-            "[next] inspect state with `effigy container {} status`",
-            policy.name
-        ));
-        return Ok(lines.join("\n"));
     }
 
     if output_json {
@@ -246,37 +215,16 @@ fn run_container_down(
     name: Option<&str>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let policy = load_container_policy(repo_root, name).map_err(map_container_policy_error)?;
-    validate_container_policy(repo_root, &policy).map_err(map_container_policy_error)?;
-    let colima_running = colima_is_running(&policy, repo_root).map_err(map_container_exec_error)?;
+    let policy = load_container_policy(repo_root, name)?;
+    validate_container_policy(repo_root, &policy)?;
+    let colima_running = colima_is_running(&policy, repo_root)?;
     if colima_running {
-        shutdown_container_via_exec(repo_root, &policy).map_err(map_container_exec_error)?;
+        shutdown_container_via_exec(repo_root, &policy)?;
     }
-
-    let payload = json!({
-        "schema": "effigy.container.down.v1",
-        "schema_version": 1,
-        "ok": true,
-        "container": policy.name,
-        "profile": policy.profile,
-        "colima_running": colima_running,
-        "shutdown": shutdown_label(policy.shutdown),
-    });
-    if output_json {
-        return Ok(payload.to_string());
-    }
-
-    if colima_running {
-        Ok(format!(
-            "[ok] stopped container environment `{}`",
-            policy.name
-        ))
-    } else {
-        Ok(format!(
-            "[ok] container environment `{}` was already down because Colima profile `{}` is not running",
-            policy.name, policy.profile
-        ))
-    }
+    Ok(render_container_report(
+        down_report(&policy, colima_running),
+        output_json,
+    ))
 }
 
 fn run_container_reset(
@@ -284,9 +232,9 @@ fn run_container_reset(
     name: Option<&str>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let policy = load_container_policy(repo_root, name).map_err(map_container_policy_error)?;
-    validate_container_policy(repo_root, &policy).map_err(map_container_policy_error)?;
-    let colima_running = colima_is_running(&policy, repo_root).map_err(map_container_exec_error)?;
+    let policy = load_container_policy(repo_root, name)?;
+    validate_container_policy(repo_root, &policy)?;
+    let colima_running = colima_is_running(&policy, repo_root)?;
     if colima_running {
         run_docker_capture(
             repo_root,
@@ -295,30 +243,10 @@ fn run_container_reset(
             "docker compose down -v",
         )?;
     }
-
-    let payload = json!({
-        "schema": "effigy.container.reset.v1",
-        "schema_version": 1,
-        "ok": true,
-        "container": policy.name,
-        "profile": policy.profile,
-        "colima_running": colima_running,
-    });
-    if output_json {
-        return Ok(payload.to_string());
-    }
-
-    if colima_running {
-        Ok(format!(
-            "[ok] reset container environment `{}` and removed compose-managed volumes",
-            policy.name
-        ))
-    } else {
-        Ok(format!(
-            "[ok] skipped reset for `{}` because Colima profile `{}` is not running",
-            policy.name, policy.profile
-        ))
-    }
+    Ok(render_container_report(
+        reset_report(&policy, colima_running),
+        output_json,
+    ))
 }
 
 fn run_container_status(
@@ -326,19 +254,16 @@ fn run_container_status(
     name: Option<&str>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let policy = load_container_policy(repo_root, name).map_err(map_container_policy_error)?;
-    validate_container_policy(repo_root, &policy).map_err(map_container_policy_error)?;
-    let colima_running = colima_is_running(&policy, repo_root).map_err(map_container_exec_error)?;
+    let policy = load_container_policy(repo_root, name)?;
+    validate_container_policy(repo_root, &policy)?;
+    let colima_running = colima_is_running(&policy, repo_root)?;
     let compose_ps = if colima_running {
-        Some(
-            capture_compose_ps(
-                repo_root,
-                &policy,
-                &compose_args(&policy, ["ps"]),
-                "docker compose ps",
-            )
-            .map_err(map_container_exec_error)?,
-        )
+        Some(capture_compose_ps(
+            repo_root,
+            &policy,
+            &compose_args(&policy, ["ps"]),
+            "docker compose ps",
+        )?)
     } else {
         None
     };
@@ -347,60 +272,10 @@ fn run_container_status(
     } else {
         None
     };
-
-    let payload = json!({
-        "schema": "effigy.container.status.v1",
-        "schema_version": 1,
-        "ok": true,
-        "container": policy.name,
-        "driver": "colima",
-        "profile": policy.profile,
-        "compose_file": policy.compose_file_display,
-        "project_name": policy.project_name,
-        "primary_service": policy.primary_service,
-        "colima_running": colima_running,
-        "health": health,
-        "ports": policy.declared_ports,
-        "mounts": policy.declared_mounts,
-        "ui_tabs": policy.ui_tabs,
-        "detach_timeout_secs": policy.detach_timeout_secs,
-        "compose_ps": compose_ps,
-    });
-    if output_json {
-        return Ok(payload.to_string());
-    }
-
-    let mut lines = vec![
-        format!("[container] {}", policy.name),
-        format!("driver: {}", driver_label(policy.driver)),
-        format!("profile: {}", policy.profile),
-        format!("compose_file: {}", policy.compose_file_display),
-        format!("project_name: {}", policy.project_name),
-        format!("primary_service: {}", policy.primary_service),
-        format!("colima_running: {}", yes_no(colima_running)),
-    ];
-    if !policy.declared_ports.is_empty() {
-        lines.push(format!("ports: {}", policy.declared_ports.join(", ")));
-    }
-    if !policy.declared_mounts.is_empty() {
-        lines.push(format!("mounts: {}", policy.declared_mounts.join(", ")));
-    }
-    if !policy.ui_tabs.is_empty() {
-        lines.push(format!("ui_tabs: {}", policy.ui_tabs.join(", ")));
-    }
-    lines.push(format!(
-        "detach_timeout_secs: {}",
-        policy.detach_timeout_secs
-    ));
-    if let Some(health) = health {
-        lines.push(format!("health: {health}"));
-    }
-    if let Some(compose_ps) = compose_ps {
-        lines.push(String::new());
-        lines.push("compose status:".to_owned());
-        lines.push(compose_ps.trim().to_owned());
-    }
-    Ok(lines.join("\n"))
+    Ok(render_container_report(
+        status_report(&policy, colima_running, health, compose_ps.as_deref()),
+        output_json,
+    ))
 }
 
 fn run_container_logs(
@@ -416,9 +291,9 @@ fn run_container_logs(
         ));
     }
 
-    let policy = load_container_policy(repo_root, name).map_err(map_container_policy_error)?;
-    validate_container_policy(repo_root, &policy).map_err(map_container_policy_error)?;
-    if !colima_is_running(&policy, repo_root).map_err(map_container_exec_error)? {
+    let policy = load_container_policy(repo_root, name)?;
+    validate_container_policy(repo_root, &policy)?;
+    if !colima_is_running(&policy, repo_root)? {
         return Err(RunnerError::task_invocation(format!(
             "Colima profile `{}` is not running for container `{}`",
             policy.profile, policy.name
@@ -454,18 +329,10 @@ fn run_container_logs(
         "docker compose logs",
     )?;
     let rendered = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let payload = json!({
-        "schema": "effigy.container.logs.v1",
-        "schema_version": 1,
-        "ok": true,
-        "container": policy.name,
-        "service": service,
-        "logs": rendered,
-    });
-    if output_json {
-        return Ok(payload.to_string());
-    }
-    Ok(rendered)
+    Ok(render_container_report(
+        logs_report(&policy, service, &rendered),
+        output_json,
+    ))
 }
 
 fn run_container_shell(
@@ -481,9 +348,9 @@ fn run_container_shell(
         ));
     }
 
-    let policy = load_container_policy(repo_root, name).map_err(map_container_policy_error)?;
-    validate_container_policy(repo_root, &policy).map_err(map_container_policy_error)?;
-    if !colima_is_running(&policy, repo_root).map_err(map_container_exec_error)? {
+    let policy = load_container_policy(repo_root, name)?;
+    validate_container_policy(repo_root, &policy)?;
+    if !colima_is_running(&policy, repo_root)? {
         return Err(RunnerError::task_invocation(format!(
             "Colima profile `{}` is not running for container `{}`",
             policy.profile, policy.name
@@ -509,35 +376,6 @@ fn run_container_shell(
         "[ok] finished container shell for `{}` service `{service}`",
         policy.name
     ))
-}
-
-fn map_container_policy_error(error: ContainerPolicyError) -> RunnerError {
-    match error {
-        ContainerPolicyError::Manifest(error) => RunnerError::task_invocation(error.to_string()),
-        ContainerPolicyError::TaskInvocation(message) => RunnerError::task_invocation(message),
-        ContainerPolicyError::Read { path, error } => {
-            RunnerError::task_invocation_failed_read(&path, error)
-        }
-    }
-}
-
-fn map_container_exec_error(error: ContainerExecError) -> RunnerError {
-    match error {
-        ContainerExecError::Launch { command, error } => {
-            RunnerError::TaskCommandLaunch { command, error }
-        }
-        ContainerExecError::Failure {
-            command,
-            code,
-            stdout,
-            stderr,
-        } => RunnerError::TaskCommandFailure {
-            command,
-            code,
-            stdout,
-            stderr,
-        },
-    }
 }
 
 fn run_attached_container_session(
@@ -647,7 +485,7 @@ fn render_attached_session_closeout(
 ) -> Result<String, RunnerError> {
     let mut shutdown_applied = false;
     if policy.on_task_exit == ManifestContainerOnTaskExit::Stop {
-        shutdown_container_via_exec(repo_root, policy).map_err(map_container_exec_error)?;
+        shutdown_container_via_exec(repo_root, policy)?;
         shutdown_applied = true;
     }
     Ok(render_attached_session_closeout_text(
@@ -677,7 +515,7 @@ fn run_docker_capture(
     args: &[OsString],
     label: &str,
 ) -> Result<Output, RunnerError> {
-    run_docker_capture_via_exec(repo_root, policy, args, label).map_err(map_container_exec_error)
+    run_docker_capture_via_exec(repo_root, policy, args, label).map_err(Into::into)
 }
 
 fn spawn_docker_inherit(
@@ -775,16 +613,12 @@ fn format_args(args: &[OsString]) -> String {
         .join(" ")
 }
 
-fn driver_label(driver: ManifestContainerDriver) -> &'static str {
-    match driver {
-        ManifestContainerDriver::Colima => "colima",
-    }
-}
-
-fn yes_no(value: bool) -> &'static str {
-    if value {
-        "yes"
+/// Render a `ContainerCommandReport` as either its json payload or the
+/// shaped success text, based on the caller's `--json` flag.
+fn render_container_report(report: ContainerCommandReport, output_json: bool) -> String {
+    if output_json {
+        report.json.to_string()
     } else {
-        "no"
+        report.success_text
     }
 }

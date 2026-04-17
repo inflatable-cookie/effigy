@@ -34,23 +34,16 @@ Close the distribution lane properly by:
 
 ## Current Focus
 
-The release lane is no longer the active strict lane.
+The release lane is active again.
 
-The local Linux rehearsal proof and Rhai dispatch hardening are now shipped,
-and `115` remains the release-closure batch for when this lane resumes.
-
-The modularization prerequisite is now treated as still open:
-
-- the extracted domain crates are real
-- and the remaining TUI shell is still large enough to justify more
-  modularization instead of being treated as incidental adapter work
-
-So the current release posture is:
+The local Linux rehearsal proof, Rhai dispatch hardening, and modularization
+detour are now all behind us. `115` is complete and the release posture is now:
 
 - local Linux rehearsal is real
-- release closure is defined
-- actual release-readiness and execution resume only after `g02.010` settles
-  those remaining shell seams honestly
+- release closure is complete
+- `qa:ci` passes
+- `release simulate` says `Ready to prepare and execute: yes`
+- the suggested release is `v0.2.14`
 
 Shipped proof already in place:
 
@@ -65,7 +58,16 @@ Shipped proof already in place:
 - the Linux rehearsal proof now runs through the live Effigy runtime instead of
   `cargo run --bin effigy`
 
-The next move inside this milestone is still `115`, but it is queued again.
+The release gate is now broader product readiness, not repo hardening.
+
+`g02.010` is paused and `115` is complete.
+
+No ready implementation card remains in this lane.
+
+The next move is now an explicit intent choice:
+
+- approve `v0.2.14` release execution through the human-only release path
+- or activate the next product roadmap card before returning to release work
 
 ## Exit Condition
 
@@ -75,6 +77,9 @@ it is no longer only an Effigy-local product claim.
 
 ## Next Task
 
-Keep
-[`115-implement-effigy-distribution-release-closure.md`](../../specs/batch-cards/115-implement-effigy-distribution-release-closure.md)
-queued while `g02.010` resolves the remaining demo-browser TUI shell seam.
+No ready implementation card remains.
+
+The next move is an intent choice:
+
+1. explicitly approve `v0.2.14` release execution from `115`
+2. or activate the next product roadmap card on the stable crate boundary

@@ -26,24 +26,19 @@ Recently completed milestones:
 - [`017-comment-ratio-scan-and-doctor-integration.md`](./017-comment-ratio-scan-and-doctor-integration.md) (complete)
 - [`018-generated-in-src-scan-and-doctor-integration.md`](./018-generated-in-src-scan-and-doctor-integration.md) (complete)
 - [`019-stale-suppressions-scan-and-doctor-integration.md`](./019-stale-suppressions-scan-and-doctor-integration.md) (complete)
-
-Research roadmaps (planned):
-- [`020-research-phase-1-core-execution.md`](./020-research-phase-1-core-execution.md)
-- [`021-research-phase-2-developer-experience.md`](./021-research-phase-2-developer-experience.md)
-- [`022-research-phase-3-scale-and-integration.md`](./022-research-phase-3-scale-and-integration.md)
-
-Implementation roadmaps (planned):
-- [`023-builtin-test-suite-lifecycle-and-env.md`](./023-builtin-test-suite-lifecycle-and-env.md)
-
-Release and distribution (complete):
+- [`020-research-phase-1-core-execution.md`](./020-research-phase-1-core-execution.md) (complete)
+- [`021-research-phase-2-developer-experience.md`](./021-research-phase-2-developer-experience.md) (complete)
+- [`022-research-phase-3-scale-and-integration.md`](./022-research-phase-3-scale-and-integration.md) (complete)
+- [`023-builtin-test-suite-lifecycle-and-env.md`](./023-builtin-test-suite-lifecycle-and-env.md) (complete)
 - [`024-release-pipeline-validation-and-consumer-ci.md`](./024-release-pipeline-validation-and-consumer-ci.md) (complete)
+- [`027-release-orchestration-system.md`](./027-release-orchestration-system.md) (complete)
+- [`029-northstar-effigy-consumer-adoption-kit.md`](./029-northstar-effigy-consumer-adoption-kit.md) (complete)
 
-Current active/planned milestones:
-- [`025-varlock-env-spec-integration.md`](./025-varlock-env-spec-integration.md)
-- [`026-changelog-library-and-northstar-profile.md`](./026-changelog-library-and-northstar-profile.md)
-- [`027-release-orchestration-system.md`](./027-release-orchestration-system.md)
-- [`028-script-surface-reduction-and-builtins.md`](./028-script-surface-reduction-and-builtins.md) (complete)
-- [`029-northstar-effigy-consumer-adoption-kit.md`](./029-northstar-effigy-consumer-adoption-kit.md) (active; rollout proved, product boundary being consolidated)
+Research carry-forward:
+- [`../g02/018-research-promotion-and-carry-forward.md`](../g02/018-research-promotion-and-carry-forward.md) (planned)
+
+Release and distribution:
+- no open `g01` release/distribution milestones remain
 
 Rules:
 
@@ -53,9 +48,11 @@ Rules:
 
 ## Next Task
 
-Use [`../g02/README.md`](../g02/README.md) for active roadmap work. `g01`
-remains the historical record for the implementation baseline and first
-consolidation cycle.
+There are no remaining live `g01` blockers before `v0.3`.
+
+The remaining blocker is now entirely in `g02`:
+
+1. [`../g02/010-effigy-modularization-and-crate-boundaries.md`](../g02/010-effigy-modularization-and-crate-boundaries.md)
 
 
 ## Historical language boundary

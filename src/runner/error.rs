@@ -225,6 +225,78 @@ impl From<EnvSchemaError> for RunnerError {
     }
 }
 
+impl From<effigy_demo::DemoStateError> for RunnerError {
+    fn from(value: effigy_demo::DemoStateError) -> Self {
+        Self::task_invocation(value.to_string())
+    }
+}
+
+impl From<effigy_distribution::DistributionPolicyError> for RunnerError {
+    fn from(value: effigy_distribution::DistributionPolicyError) -> Self {
+        match value {
+            effigy_distribution::DistributionPolicyError::Manifest(error) => {
+                Self::task_invocation(error.to_string())
+            }
+        }
+    }
+}
+
+impl From<effigy_distribution::DistributionExecutionError> for RunnerError {
+    fn from(value: effigy_distribution::DistributionExecutionError) -> Self {
+        match value {
+            effigy_distribution::DistributionExecutionError::Io { path, error } => {
+                Self::task_invocation_failed_write(&path, error)
+            }
+            effigy_distribution::DistributionExecutionError::Message(message) => {
+                Self::task_invocation(message)
+            }
+        }
+    }
+}
+
+impl From<effigy_containers::ContainerPolicyError> for RunnerError {
+    fn from(value: effigy_containers::ContainerPolicyError) -> Self {
+        match value {
+            effigy_containers::ContainerPolicyError::Manifest(error) => {
+                Self::task_invocation(error.to_string())
+            }
+            effigy_containers::ContainerPolicyError::TaskInvocation(message) => {
+                Self::task_invocation(message)
+            }
+            effigy_containers::ContainerPolicyError::Read { path, error } => {
+                Self::task_invocation_failed_read(&path, error)
+            }
+        }
+    }
+}
+
+impl From<effigy_release::ReleaseError> for RunnerError {
+    fn from(value: effigy_release::ReleaseError) -> Self {
+        Self::task_invocation(value.to_string())
+    }
+}
+
+impl From<effigy_containers::exec::ContainerExecError> for RunnerError {
+    fn from(value: effigy_containers::exec::ContainerExecError) -> Self {
+        match value {
+            effigy_containers::exec::ContainerExecError::Launch { command, error } => {
+                Self::TaskCommandLaunch { command, error }
+            }
+            effigy_containers::exec::ContainerExecError::Failure {
+                command,
+                code,
+                stdout,
+                stderr,
+            } => Self::TaskCommandFailure {
+                command,
+                code,
+                stdout,
+                stderr,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "error/tests.rs"]
 mod tests;

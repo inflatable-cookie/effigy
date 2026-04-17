@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use effigy_contracts::{
-    prepare_check_json, run_prepared_check_json, validate_selection, CheckReport, ContractsError,
+    prepare_check_json, run_prepared_check_json, validate_selection, ContractsError,
 };
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
@@ -89,59 +89,15 @@ fn run_check_json(
         };
     }
 
-    match print_selected {
-        ContractsSelectionPrintMode::None => {}
-        ContractsSelectionPrintMode::Text => {
-            for line in prepared.selection().render_text_lines() {
-                println!("{line}");
-            }
-        }
-        ContractsSelectionPrintMode::Json => {
-            println!(
-                "{}",
-                prepared
-                    .selection()
-                    .render_json()
-                    .unwrap_or_else(|_| "{\"selected\":[]}".to_owned())
-            );
-        }
+    if let Some(rendered) = prepared.selection().render_for_print_mode(print_selected) {
+        println!("{rendered}");
     }
 
     let report =
         run_prepared_check_json(repo_root, &prepared, true).map_err(map_contracts_error)?;
-    render_check_report(&report, prepared.changed_only_base())
-}
-
-fn render_check_report(
-    report: &CheckReport,
-    changed_only_base: Option<&str>,
-) -> Result<String, RunnerError> {
-    if !report.failures.is_empty() {
-        let mut output = String::new();
-        output.push_str(&format!(
-            "[error] JSON contract checks failed: {} failure(s)",
-            report.failures.len()
-        ));
-        for failure in &report.failures {
-            output.push('\n');
-            output.push_str(&failure.render_text());
-        }
-        return Err(RunnerError::task_invocation(output));
-    }
-
-    if report.checks == 0 {
-        if let Some(base) = changed_only_base {
-            return Ok(format!(
-                "[ok] JSON contract checks passed (no changed active schema entries vs {base})"
-            ));
-        }
-        return Ok(
-            "[ok] JSON contract checks passed (no applicable schema entries to validate)"
-                .to_owned(),
-        );
-    }
-
-    Ok("[ok] JSON contract checks passed".to_owned())
+    report
+        .render_text(prepared.changed_only_base())
+        .map_err(RunnerError::task_invocation)
 }
 
 fn map_contracts_error(error: ContractsError) -> RunnerError {

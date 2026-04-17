@@ -1,4 +1,12 @@
 pub mod checks;
+pub mod report;
+
+pub use report::{
+    add_log_index_report, contains_check_report, forbidden_check_report, heading_check_report,
+    index_check_report, json_examples_check_report, link_check_report, next_action_check_report,
+    path_check_report, workflow_path_check_report, AddLogIndexReportInputs, DocsCheckReport,
+    JsonExamplesReportInputs, NextActionFinding,
+};
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

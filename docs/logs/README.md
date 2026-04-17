@@ -65,6 +65,12 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/17-094500-strict-lane-continuation-state-reconciliation.md`](./2026-04/17-094500-strict-lane-continuation-state-reconciliation.md)
+- [`2026-04/17-091500-g01-027-release-orchestration-closeout.md`](./2026-04/17-091500-g01-027-release-orchestration-closeout.md)
+- [`2026-04/17-082501-g01-023-builtin-test-lifecycle-closeout.md`](./2026-04/17-082501-g01-023-builtin-test-lifecycle-closeout.md)
+- [`2026-04/17-090100-g01-reconciliation-and-research-carry-forward.md`](./2026-04/17-090100-g01-reconciliation-and-research-carry-forward.md)
+- [`2026-04/17-083510-roadmap-completion-audit-and-release-deferral.md`](./2026-04/17-083510-roadmap-completion-audit-and-release-deferral.md)
+- [`2026-04/17-082641-distribution-release-closure-readiness-boundary.md`](./2026-04/17-082641-distribution-release-closure-readiness-boundary.md)
 - [`2026-04/17-050000-post-subsystem-runner-adapter-cleanup-survey-and-strict-lane-pause.md`](./2026-04/17-050000-post-subsystem-runner-adapter-cleanup-survey-and-strict-lane-pause.md)
 - [`2026-04/17-044500-post-effigy-ui-extraction-boundary-decision.md`](./2026-04/17-044500-post-effigy-ui-extraction-boundary-decision.md)
 - [`2026-04/17-043000-effigy-ui-subsystem-extraction.md`](./2026-04/17-043000-effigy-ui-subsystem-extraction.md)
@@ -560,5 +566,6 @@ Batch: <batch-slug>
 
 ## Next Task
 
-Keep the active evidence window aligned to the current strict lane so the next
-implementation batch stays anchored on `222`.
+Keep the active evidence window aligned to the current strict-lane planning
+state so `continue` resolves through the real pause boundary, not a stale
+implementation card.

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::records::DemoEntrypoint;
 use crate::runtime::{DemoActiveAttempt, DemoTerminalTransport};
 use crate::{
     display_repo_path, effective_active_attempt_path, effective_input_handoff_path,
@@ -13,6 +14,7 @@ use crate::{
 use effigy_core::path_error_text::{
     failed_to_parse_path, failed_to_read_path, failed_to_render_path, failed_to_write_path,
 };
+use effigy_manifest::ManifestDemoConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedDemoActiveAttempt {
@@ -80,6 +82,243 @@ impl PersistedDemoActivePhase {
             Self::StopRequested => "stop-requested",
         }
     }
+}
+
+impl PersistedDemoActiveAttempt {
+    /// Build a task-backed active attempt record (non-managed tasks).
+    ///
+    /// Shapes the persistence payload for a demo whose entrypoint is a task
+    /// that is not concurrent-runner backed. There is no target process,
+    /// no terminal transport, and no input/resize forwarding.
+    pub fn new_task_backed(attempt_id: String, demo_id: &str, task_name: &str) -> Self {
+        Self {
+            schema: "effigy.demo.active.v1".to_owned(),
+            schema_version: 1,
+            attempt_id,
+            demo_id: demo_id.to_owned(),
+            phase: PersistedDemoActivePhase::Running,
+            started_at_epoch_ms: now_epoch_ms(),
+            owner_pid: std::process::id(),
+            target_pid: None,
+            stoppable: false,
+            entrypoint_kind: "task".to_owned(),
+            entrypoint_value: task_name.to_owned(),
+            command: task_name.to_owned(),
+            runtime_backend_kind: Some("task".to_owned()),
+            flattened_runtime_projection: false,
+            browser_live_attach_supported: false,
+            projection_shape_kind: Some("none".to_owned()),
+            managed_process_count: None,
+            managed_process_names: Vec::new(),
+            projected_output_provenance_kind: Some("none".to_owned()),
+            terminal_transport: PersistedDemoTerminalTransport::Stream,
+            supports_input_forwarding: false,
+            supports_resize: false,
+            nested_tui: false,
+            terminal_cols: None,
+            terminal_rows: None,
+            resize_handoff_path: None,
+            stdin_input_path: None,
+            stdout_log_path: None,
+            stderr_log_path: None,
+        }
+    }
+
+    /// Build a concurrent-runner backed active attempt record.
+    ///
+    /// The caller supplies the projection shape kind, provenance kind,
+    /// managed process summary, input/resize handoff rendered paths, log
+    /// rendered paths, and initial terminal size — all derived from the
+    /// runner's task plan. This keeps runtime-shape classification in
+    /// `effigy-demo` while the runner produces the plan-level inputs.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_concurrent_runner_backed(
+        attempt_id: String,
+        demo_id: &str,
+        task_name: &str,
+        managed_command: String,
+        browser_live_attach_supported: bool,
+        projection_shape_kind: String,
+        managed_process_count: usize,
+        managed_process_names: Vec<String>,
+        projected_output_provenance_kind: String,
+        input_handoff_rendered: Option<String>,
+        resize_handoff_rendered: Option<String>,
+        stdout_log_rendered: Option<String>,
+        stderr_log_rendered: Option<String>,
+        terminal_size: Option<(u16, u16)>,
+    ) -> Self {
+        let supports_input_forwarding = input_handoff_rendered.is_some();
+        let supports_resize = resize_handoff_rendered.is_some();
+        Self {
+            schema: "effigy.demo.active.v1".to_owned(),
+            schema_version: 1,
+            attempt_id,
+            demo_id: demo_id.to_owned(),
+            phase: PersistedDemoActivePhase::Running,
+            started_at_epoch_ms: now_epoch_ms(),
+            owner_pid: std::process::id(),
+            target_pid: None,
+            stoppable: true,
+            entrypoint_kind: "task".to_owned(),
+            entrypoint_value: task_name.to_owned(),
+            command: managed_command,
+            runtime_backend_kind: Some("concurrent-runner".to_owned()),
+            flattened_runtime_projection: true,
+            browser_live_attach_supported,
+            projection_shape_kind: Some(projection_shape_kind),
+            managed_process_count: Some(managed_process_count),
+            managed_process_names,
+            projected_output_provenance_kind: Some(projected_output_provenance_kind),
+            terminal_transport: PersistedDemoTerminalTransport::Stream,
+            supports_input_forwarding,
+            supports_resize,
+            nested_tui: false,
+            terminal_cols: terminal_size.map(|(cols, _)| cols),
+            terminal_rows: terminal_size.map(|(_, rows)| rows),
+            resize_handoff_path: resize_handoff_rendered,
+            stdin_input_path: input_handoff_rendered,
+            stdout_log_path: stdout_log_rendered,
+            stderr_log_path: stderr_log_rendered,
+        }
+    }
+
+    /// Build a run-backed active attempt record.
+    ///
+    /// Shapes the persistence payload for a demo whose entrypoint is a
+    /// shell run command, with a known target pid, terminal transport, and
+    /// optional input/resize handoff paths.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_run_backed(
+        attempt_id: String,
+        demo_id: &str,
+        entrypoint_value: String,
+        run_command: String,
+        target_pid: u32,
+        terminal_transport: PersistedDemoTerminalTransport,
+        input_handoff_rendered: Option<String>,
+        resize_handoff_rendered: Option<String>,
+        stdout_log_rendered: Option<String>,
+        stderr_log_rendered: Option<String>,
+        terminal_size: Option<(u16, u16)>,
+    ) -> Self {
+        let supports_input_forwarding = input_handoff_rendered.is_some();
+        let supports_resize = resize_handoff_rendered.is_some();
+        Self {
+            schema: "effigy.demo.active.v1".to_owned(),
+            schema_version: 1,
+            attempt_id,
+            demo_id: demo_id.to_owned(),
+            phase: PersistedDemoActivePhase::Running,
+            started_at_epoch_ms: now_epoch_ms(),
+            owner_pid: std::process::id(),
+            target_pid: Some(target_pid),
+            stoppable: true,
+            entrypoint_kind: "run".to_owned(),
+            entrypoint_value,
+            command: run_command,
+            runtime_backend_kind: Some("run".to_owned()),
+            flattened_runtime_projection: false,
+            browser_live_attach_supported: true,
+            projection_shape_kind: Some("single-terminal".to_owned()),
+            managed_process_count: None,
+            managed_process_names: Vec::new(),
+            projected_output_provenance_kind: Some("none".to_owned()),
+            terminal_transport,
+            supports_input_forwarding,
+            supports_resize,
+            nested_tui: false,
+            terminal_cols: terminal_size.map(|(cols, _)| cols),
+            terminal_rows: terminal_size.map(|(_, rows)| rows),
+            resize_handoff_path: resize_handoff_rendered,
+            stdin_input_path: input_handoff_rendered,
+            stdout_log_path: stdout_log_rendered,
+            stderr_log_path: stderr_log_rendered,
+        }
+    }
+}
+
+/// Classification of what a demo-stop invocation should do given the current
+/// persisted demo state.
+///
+/// The runner is responsible for the IO side-effects (signalling the
+/// process, writing the updated phase record, clearing active state, or
+/// producing a user-facing error response). This classifier owns the
+/// decision rules so those rules do not have to live in the runner shell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DemoStopDecision {
+    /// The demo has no active attempt to stop.
+    NoActiveAttempt,
+    /// The demo uses a task entrypoint that is not concurrent-runner backed,
+    /// so stop is not supported.
+    TaskEntrypointNotStoppable { task_name: String },
+    /// The active attempt is not stoppable through the current runtime.
+    NotStoppable,
+    /// Stop has already been requested; the runner should re-surface the
+    /// current state without transitioning.
+    AlreadyRequested,
+    /// Concurrent-runner demo without a target pid: transition phase to
+    /// `StopRequested` and report — no process signal needed because the
+    /// runtime is owner-driven.
+    TransitionOnly,
+    /// Demo is active but has no stoppable process handle (non
+    /// concurrent-runner backend missing `target_pid`).
+    NoStoppableHandle,
+    /// The target pid is no longer alive — runner should clear state and
+    /// report "no longer running".
+    ProcessNotRunning { target_pid: u32 },
+    /// Transition phase to `StopRequested` and send `SIGTERM` to this pid.
+    SignalPid { target_pid: u32 },
+}
+
+/// Classify the appropriate stop decision for a demo based on its manifest
+/// entrypoint, its observed active-attempt projection, and its persisted
+/// active-attempt record (if any).
+///
+/// Task-entrypoint rejection is evaluated first because it applies even to
+/// demos that have never been started. When `persisted` is `None`, the
+/// decision falls through to `NoActiveAttempt`.
+///
+/// `is_pid_alive` is invoked only when a target pid is present on the
+/// persisted record.
+pub fn classify_demo_stop<F>(
+    demo: &ManifestDemoConfig,
+    active_attempt: &DemoActiveAttempt,
+    persisted: Option<&PersistedDemoActiveAttempt>,
+    is_pid_alive: F,
+) -> DemoStopDecision
+where
+    F: FnOnce(u32) -> bool,
+{
+    if let DemoEntrypoint::Task(task_name) = DemoEntrypoint::from_manifest(demo) {
+        if active_attempt.runtime_backend_kind != "concurrent-runner" {
+            return DemoStopDecision::TaskEntrypointNotStoppable { task_name };
+        }
+    }
+    if !active_attempt.active {
+        return DemoStopDecision::NoActiveAttempt;
+    }
+    if !active_attempt.stoppable {
+        return DemoStopDecision::NotStoppable;
+    }
+    let Some(persisted) = persisted else {
+        return DemoStopDecision::NoActiveAttempt;
+    };
+    if persisted.phase == PersistedDemoActivePhase::StopRequested {
+        return DemoStopDecision::AlreadyRequested;
+    }
+    if persisted.runtime_backend_kind.as_deref() == Some("concurrent-runner")
+        && persisted.target_pid.is_none()
+    {
+        return DemoStopDecision::TransitionOnly;
+    }
+    let Some(target_pid) = persisted.target_pid else {
+        return DemoStopDecision::NoStoppableHandle;
+    };
+    if !is_pid_alive(target_pid) {
+        return DemoStopDecision::ProcessNotRunning { target_pid };
+    }
+    DemoStopDecision::SignalPid { target_pid }
 }
 
 pub struct DemoActiveAttemptGuard {

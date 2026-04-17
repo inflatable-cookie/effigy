@@ -3,16 +3,20 @@
 use std::path::{Path, PathBuf};
 
 use effigy_docs_policy::{
-    check_contains, check_forbidden, check_headings, check_paths, check_workflow_paths,
+    add_log_index_report, check_contains, check_forbidden, check_headings, check_paths,
+    check_workflow_paths,
     checks::{
         check_next_action, default_json_example_block_requirements,
         default_json_example_requirements, validate_json_examples,
     },
     collect_index_markdown_links, collect_link_check_files, collect_markdown_children,
-    insert_log_index_entry, normalize_log_index_relative_path, resolve_docs_index_spec,
-    resolve_docs_next_action_spec, resolve_repo_input, scan_markdown_links, DocsPolicyError,
+    contains_check_report, forbidden_check_report, heading_check_report, index_check_report,
+    insert_log_index_entry, json_examples_check_report, link_check_report,
+    next_action_check_report, normalize_log_index_relative_path, path_check_report,
+    resolve_docs_index_spec, resolve_docs_next_action_spec, resolve_repo_input,
+    scan_markdown_links, workflow_path_check_report, AddLogIndexReportInputs, DocsCheckReport,
+    DocsPolicyError, JsonExamplesReportInputs,
 };
-use serde_json::json;
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
 use crate::runner::manifest::{load_task_manifest, ManifestDocsPolicyConfig};
@@ -87,6 +91,26 @@ pub(super) fn run_docs(args: DocsArgs) -> Result<String, RunnerError> {
     }
 }
 
+/// Surface a docs-policy check report in the form the user requested.
+///
+/// `ok` reports produce a success string or json payload; failing reports
+/// produce a `RunnerError::task_invocation` whose body carries the report
+/// failure text (or the json payload, in json mode).
+fn dispatch_docs_report(report: DocsCheckReport, output_json: bool) -> Result<String, RunnerError> {
+    if output_json {
+        let rendered = report.json.to_string();
+        if report.ok {
+            Ok(rendered)
+        } else {
+            Err(RunnerError::task_invocation(rendered))
+        }
+    } else if report.ok {
+        Ok(report.success_text)
+    } else {
+        Err(RunnerError::task_invocation(report.failure_text))
+    }
+}
+
 fn run_check_links(
     repo_root: &Path,
     paths: &[PathBuf],
@@ -97,46 +121,7 @@ fn run_check_links(
         .iter()
         .flat_map(|file| scan_markdown_links(file).unwrap_or_else(|err| vec![err]))
         .collect::<Vec<_>>();
-
-    if output_json {
-        let payload = json!({
-            "schema": "effigy.docs.link-check.v1",
-            "schema_version": 1,
-            "ok": failures.is_empty(),
-            "checked_files": files.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
-            "broken_links": failures.iter().map(|failure| {
-                json!({
-                    "file": failure.file.display().to_string(),
-                    "target": failure.target,
-                    "reason": failure.reason,
-                })
-            }).collect::<Vec<_>>(),
-        });
-        return if failures.is_empty() {
-            Ok(payload.to_string())
-        } else {
-            Err(RunnerError::task_invocation(payload.to_string()))
-        };
-    }
-
-    if failures.is_empty() {
-        return Ok("link check passed".to_owned());
-    }
-
-    let mut output = String::new();
-    for failure in &failures {
-        output.push_str(&format!(
-            "broken link: {} -> {} ({})\n",
-            failure.file.display(),
-            failure.target,
-            failure.reason
-        ));
-    }
-    output.push_str(&format!(
-        "\nlink check failed: {} broken link(s)",
-        failures.len()
-    ));
-    Err(RunnerError::task_invocation(output))
+    dispatch_docs_report(link_check_report(&files, &failures), output_json)
 }
 
 fn run_check_json_examples(
@@ -182,33 +167,19 @@ fn run_check_json_examples(
         &required_blocks_tuples,
     );
 
-    if output_json {
-        let payload = json!({
-            "schema": "effigy.docs.json-examples.v1",
-            "schema_version": 1,
-            "ok": result.ok,
-            "file": result.file,
-            "section": result.section,
-            "block_count": result.block_count,
-            "min_blocks": result.min_blocks,
-            "required": result.required,
-            "required_blocks": required_blocks_tuples.iter().map(|(idx, needle)| {
-                json!({ "block_index": idx, "needle": needle })
-            }).collect::<Vec<_>>(),
-            "failures": result.failures,
-        });
-        return if result.ok {
-            Ok(payload.to_string())
-        } else {
-            Err(RunnerError::task_invocation(payload.to_string()))
-        };
-    }
-
-    if result.ok {
-        return Ok("examples json check passed".to_owned());
-    }
-
-    Err(RunnerError::task_invocation(result.failures.join("\n")))
+    dispatch_docs_report(
+        json_examples_check_report(JsonExamplesReportInputs {
+            file: &result.file,
+            section: &result.section,
+            block_count: result.block_count,
+            min_blocks: result.min_blocks,
+            required: &result.required,
+            required_blocks: &required_blocks_tuples,
+            failures: &result.failures,
+            ok: result.ok,
+        }),
+        output_json,
+    )
 }
 
 fn run_check_headings(
@@ -231,41 +202,10 @@ fn run_check_headings(
     let (files, findings) =
         check_headings(repo_root, paths, required_headings).map_err(map_docs_policy_error)?;
 
-    if output_json {
-        let payload = json!({
-            "schema": "effigy.docs.heading-check.v1",
-            "schema_version": 1,
-            "ok": findings.is_empty(),
-            "files": files.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
-            "required_headings": required_headings,
-            "findings": findings.iter().map(|finding| {
-                json!({
-                    "file": finding.file.display().to_string(),
-                    "kind": "missing-heading",
-                    "heading": finding.heading,
-                })
-            }).collect::<Vec<_>>(),
-        });
-        return if payload["ok"] == true {
-            Ok(payload.to_string())
-        } else {
-            Err(RunnerError::task_invocation(payload.to_string()))
-        };
-    }
-
-    if findings.is_empty() {
-        return Ok("docs heading check passed".to_owned());
-    }
-
-    let mut output = String::new();
-    for finding in findings {
-        output.push_str(&format!(
-            "missing heading `{}` in {}\n",
-            finding.heading,
-            finding.file.display()
-        ));
-    }
-    Err(RunnerError::task_invocation(output.trim_end().to_owned()))
+    dispatch_docs_report(
+        heading_check_report(&files, required_headings, &findings),
+        output_json,
+    )
 }
 
 fn run_check_contains(
@@ -288,41 +228,10 @@ fn run_check_contains(
     let (files, findings) =
         check_contains(repo_root, paths, required_text).map_err(map_docs_policy_error)?;
 
-    if output_json {
-        let payload = json!({
-            "schema": "effigy.docs.contains-check.v1",
-            "schema_version": 1,
-            "ok": findings.is_empty(),
-            "files": files.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
-            "required_text": required_text,
-            "findings": findings.iter().map(|finding| {
-                json!({
-                    "file": finding.file.display().to_string(),
-                    "kind": "missing-text",
-                    "needle": finding.needle,
-                })
-            }).collect::<Vec<_>>(),
-        });
-        return if payload["ok"] == true {
-            Ok(payload.to_string())
-        } else {
-            Err(RunnerError::task_invocation(payload.to_string()))
-        };
-    }
-
-    if findings.is_empty() {
-        return Ok("docs contains check passed".to_owned());
-    }
-
-    let mut output = String::new();
-    for finding in findings {
-        output.push_str(&format!(
-            "missing text `{}` in {}\n",
-            finding.needle,
-            finding.file.display()
-        ));
-    }
-    Err(RunnerError::task_invocation(output.trim_end().to_owned()))
+    dispatch_docs_report(
+        contains_check_report(&files, required_text, &findings),
+        output_json,
+    )
 }
 
 fn run_check_paths(
@@ -337,39 +246,7 @@ fn run_check_paths(
     }
 
     let (resolved_paths, findings) = check_paths(repo_root, paths);
-
-    if output_json {
-        let payload = json!({
-            "schema": "effigy.docs.path-check.v1",
-            "schema_version": 1,
-            "ok": findings.is_empty(),
-            "paths": resolved_paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
-            "findings": findings
-                .iter()
-                .map(|finding| {
-                    json!({
-                        "path": finding.path.display().to_string(),
-                        "kind": "missing-path",
-                    })
-                })
-                .collect::<Vec<_>>(),
-        });
-        return if payload["ok"] == true {
-            Ok(payload.to_string())
-        } else {
-            Err(RunnerError::task_invocation(payload.to_string()))
-        };
-    }
-
-    if findings.is_empty() {
-        return Ok("docs path check passed".to_owned());
-    }
-
-    let mut output = String::new();
-    for finding in findings {
-        output.push_str(&format!("missing path {}\n", finding.path.display()));
-    }
-    Err(RunnerError::task_invocation(output.trim_end().to_owned()))
+    dispatch_docs_report(path_check_report(&resolved_paths, &findings), output_json)
 }
 
 fn run_check_forbidden(
@@ -392,41 +269,10 @@ fn run_check_forbidden(
     let (files, findings) =
         check_forbidden(repo_root, paths, forbidden_text).map_err(map_docs_policy_error)?;
 
-    if output_json {
-        let payload = json!({
-            "schema": "effigy.docs.forbidden-check.v1",
-            "schema_version": 1,
-            "ok": findings.is_empty(),
-            "files": files.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
-            "forbidden_text": forbidden_text,
-            "findings": findings.iter().map(|finding| {
-                json!({
-                    "file": finding.file.display().to_string(),
-                    "kind": "forbidden-text",
-                    "needle": finding.needle,
-                })
-            }).collect::<Vec<_>>(),
-        });
-        return if payload["ok"] == true {
-            Ok(payload.to_string())
-        } else {
-            Err(RunnerError::task_invocation(payload.to_string()))
-        };
-    }
-
-    if findings.is_empty() {
-        return Ok("docs forbidden check passed".to_owned());
-    }
-
-    let mut output = String::new();
-    for finding in findings {
-        output.push_str(&format!(
-            "forbidden text `{}` in {}\n",
-            finding.needle,
-            finding.file.display()
-        ));
-    }
-    Err(RunnerError::task_invocation(output.trim_end().to_owned()))
+    dispatch_docs_report(
+        forbidden_check_report(&files, forbidden_text, &findings),
+        output_json,
+    )
 }
 
 fn run_check_index(
@@ -465,49 +311,7 @@ fn run_check_index(
     let missing = all_docs.difference(&indexed).cloned().collect::<Vec<_>>();
     let extra = indexed.difference(&all_docs).cloned().collect::<Vec<_>>();
 
-    if output_json {
-        let payload = json!({
-            "schema": "effigy.docs.index-check.v1",
-            "schema_version": 1,
-            "ok": missing.is_empty() && extra.is_empty(),
-            "dir": spec.dir.display().to_string(),
-            "index": spec.index.display().to_string(),
-            "policy_index": spec.policy_name,
-            "section": spec.section,
-            "missing": missing,
-            "extra": extra,
-        });
-        return if payload["ok"] == true {
-            Ok(payload.to_string())
-        } else {
-            Err(RunnerError::task_invocation(payload.to_string()))
-        };
-    }
-
-    if missing.is_empty() && extra.is_empty() {
-        return Ok(match spec.policy_name.as_deref() {
-            Some(name) => format!("docs index check passed ({name})"),
-            None => "docs index check passed".to_owned(),
-        });
-    }
-
-    let mut output = String::new();
-    if !missing.is_empty() {
-        output.push_str("docs index is missing entries:\n");
-        for entry in &missing {
-            output.push_str(&format!("  - {entry}\n"));
-        }
-    }
-    if !extra.is_empty() {
-        if !output.is_empty() {
-            output.push('\n');
-        }
-        output.push_str("docs index references non-existent markdown files:\n");
-        for entry in &extra {
-            output.push_str(&format!("  - {entry}\n"));
-        }
-    }
-    Err(RunnerError::task_invocation(output.trim_end().to_owned()))
+    dispatch_docs_report(index_check_report(&spec, &missing, &extra), output_json)
 }
 
 fn load_docs_policy_config(repo_root: &Path) -> Result<ManifestDocsPolicyConfig, RunnerError> {
@@ -531,38 +335,7 @@ fn run_check_next_action(
 
     let findings = check_next_action(&spec).map_err(map_docs_policy_error)?;
 
-    if output_json {
-        let payload = json!({
-            "schema": "effigy.docs.next-action-check.v1",
-            "schema_version": 1,
-            "ok": findings.is_empty(),
-            "policy": spec.policy_name,
-            "heading": spec.heading,
-            "index": spec.index.index.display().to_string(),
-            "dir": spec.index.dir.display().to_string(),
-            "allowlist_file": spec.allowlist_file.display().to_string(),
-            "findings": findings.iter().map(|f| f.to_json()).collect::<Vec<_>>(),
-        });
-        return if findings.is_empty() {
-            Ok(payload.to_string())
-        } else {
-            Err(RunnerError::task_invocation(payload.to_string()))
-        };
-    }
-
-    if findings.is_empty() {
-        return Ok(match spec.policy_name.as_deref() {
-            Some(name) => format!("docs next-action check passed ({name})"),
-            None => "docs next-action check passed".to_owned(),
-        });
-    }
-
-    let mut output = String::new();
-    for finding in &findings {
-        output.push_str(&finding.message);
-        output.push('\n');
-    }
-    Err(RunnerError::task_invocation(output.trim_end().to_owned()))
+    dispatch_docs_report(next_action_check_report(&spec, &findings), output_json)
 }
 
 fn run_add_log_index(
@@ -599,23 +372,14 @@ fn run_add_log_index(
             .map_err(|err| RunnerError::task_invocation_failed_write(&index_path, err))?;
     }
 
-    if output_json {
-        return Ok(json!({
-            "schema": "effigy.docs.add-log-index.v1",
-            "schema_version": 1,
-            "ok": true,
-            "log": relative_path,
-            "index": index_path.display().to_string(),
-            "already_indexed": already_indexed,
-        })
-        .to_string());
-    }
-
-    if already_indexed {
-        Ok(format!("log already indexed: {relative_path}"))
-    } else {
-        Ok(format!("indexed log: {relative_path}"))
-    }
+    dispatch_docs_report(
+        add_log_index_report(AddLogIndexReportInputs {
+            relative_path: &relative_path,
+            index_path: &index_path,
+            already_indexed,
+        }),
+        output_json,
+    )
 }
 
 fn run_check_workflow_paths(
@@ -640,52 +404,8 @@ fn run_check_workflow_paths(
     let findings = check_workflow_paths(repo_root, &dir, &default_logs_dir, dir_override.is_none())
         .map_err(map_docs_policy_error)?;
 
-    if output_json {
-        let payload = json!({
-            "schema": "effigy.docs.workflow-path-check.v1",
-            "schema_version": 1,
-            "ok": findings.is_empty(),
-            "dir": dir.display().to_string(),
-            "findings": findings.iter().map(|finding| {
-                json!({
-                    "file": finding.file.display().to_string(),
-                    "line": finding.line,
-                    "workflow_path": finding.workflow_path,
-                    "reason": finding.reason,
-                    "suggestion": finding.suggestion,
-                })
-            }).collect::<Vec<_>>(),
-        });
-        return if payload["ok"] == true {
-            Ok(payload.to_string())
-        } else {
-            Err(RunnerError::task_invocation(payload.to_string()))
-        };
-    }
-
-    if findings.is_empty() {
-        return Ok("doc workflow path check passed".to_owned());
-    }
-
-    let mut output = String::new();
-    for finding in findings {
-        let file = finding.file.display();
-        let line = finding.line;
-        let workflow_path = finding.workflow_path;
-        let reason = finding.reason;
-        if let Some(suggestion) = finding.suggestion {
-            output.push_str(&format!(
-                "{reason} in {file}:{line}: {workflow_path} (use {suggestion})\n"
-            ));
-        } else {
-            output.push_str(&format!("{reason} in {file}:{line}: {workflow_path}\n"));
-        }
-    }
-    Err(RunnerError::task_invocation(output.trim_end().to_owned()))
+    dispatch_docs_report(workflow_path_check_report(&dir, &findings), output_json)
 }
-
-// default_json_example_requirements and default_json_example_block_requirements
-// moved to effigy_docs_policy::checks
 
 fn map_docs_policy_error(error: DocsPolicyError) -> RunnerError {
     match error {

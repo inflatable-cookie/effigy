@@ -250,3 +250,143 @@ pub fn persist_demo_attempt_logs(
     }
     Ok(log_paths)
 }
+
+/// Kind of demo execution invocation — distinguishes `demo run` from `demo rerun`.
+#[derive(Debug, Clone, Copy)]
+pub enum DemoInvocationKind {
+    Run,
+    Rerun,
+}
+
+impl DemoInvocationKind {
+    pub fn schema(&self) -> &'static str {
+        match self {
+            Self::Run => "effigy.demo.run.v1",
+            Self::Rerun => "effigy.demo.rerun.v1",
+        }
+    }
+
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::Run => "Demo Run",
+            Self::Rerun => "Demo Rerun",
+        }
+    }
+}
+
+/// Assemble a `DemoExecutionAttempt` from run-backed process output.
+///
+/// Selects the `terminated`, `passed`, or `failed` outcome shape based on
+/// whether stop was requested and whether the run exited successfully.
+pub fn run_attempt_from_output(
+    demo_id: &str,
+    entrypoint_value: &str,
+    run_command: &str,
+    exit_code: Option<i32>,
+    success: bool,
+    stop_requested: bool,
+    stdout: String,
+    stderr: String,
+    log_paths: DemoLogPaths,
+) -> DemoExecutionAttempt {
+    if stop_requested {
+        return terminated_demo_attempt(
+            "run",
+            entrypoint_value,
+            run_command,
+            exit_code,
+            format!("Demo `{demo_id}` was terminated after stop was requested."),
+            stdout,
+            stderr,
+            log_paths,
+        );
+    }
+    if success {
+        return successful_demo_attempt(
+            "run",
+            entrypoint_value,
+            run_command,
+            exit_code,
+            Some(format!("Demo `{demo_id}` completed via run entrypoint.")),
+            stdout,
+            stderr,
+            log_paths,
+        );
+    }
+    failed_demo_attempt(
+        "run",
+        entrypoint_value,
+        run_command,
+        exit_code,
+        format!("Demo `{demo_id}` failed via run entrypoint."),
+        stdout,
+        stderr,
+        log_paths,
+    )
+}
+
+/// Parse a task-backed demo attempt from a rendered json task payload.
+///
+/// Persists split stdout/stderr logs and returns a demo execution attempt
+/// shaped from the parsed payload. Returns `DemoStateError` on parse or
+/// log-persistence failure.
+pub fn parse_task_backed_attempt_json(
+    repo_root: &Path,
+    demo_id: &str,
+    task_name: &str,
+    rendered: &str,
+) -> Result<DemoExecutionAttempt, DemoStateError> {
+    let parsed: JsonValue = serde_json::from_str(rendered).map_err(|error| {
+        DemoStateError::new(format!(
+            "failed to parse json task payload for demo `{demo_id}` task `{task_name}`: {error}"
+        ))
+    })?;
+    let ok = parsed
+        .get("ok")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false);
+    let exit_code = parsed
+        .get("exit_code")
+        .and_then(JsonValue::as_i64)
+        .and_then(|value| i32::try_from(value).ok());
+    let stdout = parsed
+        .get("stdout")
+        .and_then(JsonValue::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let stderr = parsed
+        .get("stderr")
+        .and_then(JsonValue::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let command = parsed
+        .get("command")
+        .and_then(JsonValue::as_str)
+        .unwrap_or(task_name)
+        .to_owned();
+
+    let log_paths = persist_demo_attempt_logs(repo_root, demo_id, &stdout, &stderr)?;
+
+    Ok(DemoExecutionAttempt {
+        ok,
+        outcome: if ok {
+            "passed".to_owned()
+        } else {
+            "failed".to_owned()
+        },
+        entrypoint_kind: "task".to_owned(),
+        entrypoint_value: task_name.to_owned(),
+        command,
+        exit_code,
+        summary: Some(if ok {
+            format!("Demo `{demo_id}` completed via task `{task_name}`.")
+        } else {
+            format!("Demo `{demo_id}` failed via task `{task_name}`.")
+        }),
+        stdout,
+        stderr,
+        stdout_log_path: log_paths.stdout,
+        stderr_log_path: log_paths.stderr,
+        recorded_at_epoch_ms: now_epoch_ms(),
+    })
+}

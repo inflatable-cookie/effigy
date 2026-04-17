@@ -70,6 +70,16 @@ impl NextActionFinding {
     }
 }
 
+impl crate::report::NextActionFinding for NextActionFinding {
+    fn message(&self) -> &str {
+        &self.message
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        Self::to_json(self)
+    }
+}
+
 /// Validate JSON example blocks in a markdown section.
 ///
 /// Checks that the section contains at least `min_blocks` fenced JSON

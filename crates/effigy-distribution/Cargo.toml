@@ -10,3 +10,4 @@ effigy-manifest = { path = "../effigy-manifest" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 regex = "1"
 serde_json = "1"
+toml = "0.8"

@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress
+Status: Paused
 Owner: Platform
 Created: 2026-04-15
 Depends on: 002, 004, 005, 006, 007, 025, 027
@@ -1179,10 +1179,53 @@ That post-`212` boundary decision is now made too:
   adapter residue exposed by the process + UI extractions in any
   non-parallel-thread file; the strict lane now pauses on a trustworthy full
   boundary
+- `238` closed the `g02.017` queue in full (jobs 3, 5, and 8 landed in the
+  parallel thread; jobs 4, 6, and 7 were confirmed already complete; job 1 and
+  2 landed earlier); the `017` roadmap is now marked `Closed`
+- `239` extended the job-8 `From<DomainError> for RunnerError` pattern to the
+  release runner (added `From<ReleaseError>`, swept four `.map_err(map_release_error)`
+  call sites, removed the obsolete `map_release_error` local mapper)
+- `239` also swept the eight `DemoStateError` adapter sites that were missed
+  in the earlier job-8 pass inside `src/runner/demo_command.rs`
+- `239` rechecked the `/src` churn floor after the `017` closure and release
+  adapter sweep; surfaced release-runner adapter residue and swept it
+- `240` reversed the `239` pause: a proper line-count-anchored audit showed
+  ~15k lines of reusable domain still in `src/runner/**` + `src/tui/**`
+  (built-in tasks under `src/runner/builtin/`, managed-task orchestration
+  under `src/runner/managed/`, task-routing under `src/runner/{catalog,scan,
+  locking,deferral}/`, and the unfinished multiprocess TUI runtime under
+  `src/tui/multiprocess/{events,render,lifecycle,setup,runtime_loop,mod}`).
+  That contradicts the target envelope ("thin binary shell + domain crates")
+  and makes the Rhai adapter rule impossible to satisfy.
+- `241` completed the `effigy-tui::multiprocess` extraction the earlier
+  extraction had left half-done:
+  - events, render, lifecycle, setup, runtime_loop, and the module root
+    moved from `src/tui/multiprocess/` into
+    `crates/effigy-tui/src/multiprocess/`
+  - `src/tui/multiprocess/mod.rs` is now an 8-line re-export of
+    `effigy_tui::multiprocess::*`
+  - the unused `src/tui/core.rs` compatibility shim is deleted
+  - `effigy-tui` picks up `effigy-process`, `effigy-ui`, and `anstream` as
+    direct dependencies (inherited from the moved runtime code)
+  - the three external consumers (`runner::container_command`,
+    `runner::managed::runtime`, `runner::builtin::test::execution`) reach
+    the API unchanged via the root re-export chain
+  - the root crate's non-test TUI footprint dropped from ~2,900 lines of
+    real multiprocess code to ~15 lines of re-exports
+- `241` also narrows the remaining 010 queue to:
+  - **managed task orchestration** (`src/runner/managed/**`, ~2.7k lines)
+    — cross-domain reusable; consumed by demo and container runners
+  - **built-in tasks** (`src/runner/builtin/**`, ~9.5k lines) — largest
+    architectural gap; several candidate crate splits
+  - **task routing core** (`src/runner/{catalog,scan,locking,deferral}/**`,
+    ~6k lines) — core task-runtime infrastructure with no dedicated crate
+    home despite `effigy-tasks` existing
 
 ## Next Task
 
-The `g02.010` strict modularization lane is paused. Resume the queued release
-card
-[`115-implement-effigy-distribution-release-closure.md`](../../specs/batch-cards/115-implement-effigy-distribution-release-closure.md)
-when release closure is intended.
+The next honest bounded batch on this lane is **managed task orchestration
+extraction** (`src/runner/managed/**` → `effigy-managed` or into
+`effigy-tasks`). It is the smallest of the three remaining queues, unlocks
+both the demo and container runners cleanly in one move, and keeps the
+extraction order described in `5.7` ("effigy-tasks extraction around
+routing, manifest runtime, and execution orchestration") honest.

@@ -11,15 +11,17 @@ pub mod runtime;
 
 pub use active::{
     active_attempt_is_stop_requested, append_demo_terminal_input, append_demo_terminal_resize,
-    clear_active_attempt_state, clear_resize_handoff, load_active_attempt,
+    classify_demo_stop, clear_active_attempt_state, clear_resize_handoff, load_active_attempt,
     prepare_demo_input_handoff, prepare_demo_resize_handoff, read_active_attempt_record,
     read_recent_output_lines, register_active_attempt, resolve_repo_relative_path,
     update_active_terminal_resize, write_active_attempt_record, DemoActiveAttemptGuard,
-    PersistedDemoActiveAttempt, PersistedDemoActivePhase, PersistedDemoTerminalTransport,
+    DemoStopDecision, PersistedDemoActiveAttempt, PersistedDemoActivePhase,
+    PersistedDemoTerminalTransport,
 };
 pub use execution::{
-    failed_demo_attempt, persist_demo_attempt_logs, successful_demo_attempt,
-    terminated_demo_attempt, write_latest_attempt_receipt, DemoExecutionAttempt, DemoLogPaths,
+    failed_demo_attempt, parse_task_backed_attempt_json, persist_demo_attempt_logs,
+    run_attempt_from_output, successful_demo_attempt, terminated_demo_attempt,
+    write_latest_attempt_receipt, DemoExecutionAttempt, DemoInvocationKind, DemoLogPaths,
 };
 pub use process::{
     browser_terminal_size_override, current_terminal_size, demo_mode_prefers_attached_terminal,
@@ -39,8 +41,9 @@ pub use runtime::{
     concurrent_runner_input_target_process, concurrent_runner_projected_output_provenance,
     concurrent_runner_projected_process_summary, concurrent_runner_projection_shape,
     concurrent_runner_runtime_backend, concurrent_runner_supports_browser_live_attach,
-    render_non_zero_exits, DemoConcurrentRuntimeState, DEMO_MANAGED_EVENT_POLL_INTERVAL_MS,
-    DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT,
+    load_active_terminal_session, render_non_zero_exits, task_is_concurrent_runner_backed,
+    DemoConcurrentRuntimeState, DEMO_ACTIVE_TERMINAL_RECENT_LINES,
+    DEMO_MANAGED_EVENT_POLL_INTERVAL_MS, DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT,
 };
 
 use effigy_core::path_error_text::{

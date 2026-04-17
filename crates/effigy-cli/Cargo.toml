@@ -7,3 +7,5 @@ description = "CLI command model and parse grammar for Effigy"
 
 [dependencies]
 effigy-core = { path = "../effigy-core" }
+effigy-ui = { path = "../effigy-ui" }
+crossterm = "0.29"

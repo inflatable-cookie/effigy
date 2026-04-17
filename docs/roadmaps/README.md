@@ -26,12 +26,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01/017-comment-ratio-scan-and-doctor-integration.md` is complete.
 - `g01/018-generated-in-src-scan-and-doctor-integration.md` is complete.
 - `g01/019-stale-suppressions-scan-and-doctor-integration.md` is complete.
-- `g01/020-research-phase-1-core-execution.md` is the first research roadmap (planned).
-- `g01/021-research-phase-2-developer-experience.md` is the second research roadmap (planned).
-- `g01/022-research-phase-3-scale-and-integration.md` is the third research roadmap (planned).
-- `g01/023-builtin-test-suite-lifecycle-and-env.md` is the next implementation roadmap (planned).
-- `g01/024-release-pipeline-validation-and-consumer-ci.md` validates the release pipeline and delivers consumer CI integration (complete).
-- `g01/029-northstar-effigy-consumer-adoption-kit.md` is the consumer-adoption and product-boundary consolidation roadmap.
+- `g01/020-research-phase-1-core-execution.md` is complete.
+- `g01/021-research-phase-2-developer-experience.md` is complete.
+- `g01/022-research-phase-3-scale-and-integration.md` is complete.
+- `g01/023-builtin-test-suite-lifecycle-and-env.md` is complete.
+- `g01/024-release-pipeline-validation-and-consumer-ci.md` is complete.
+- `g01/027-release-orchestration-system.md` is complete.
+- `g01/029-northstar-effigy-consumer-adoption-kit.md` is complete.
 - `g01/028-script-surface-reduction-and-builtins.md` reduces repo shell logic into Effigy-native command surfaces and is complete.
 - `g02/001-bootstrap-command-and-clone-contract.md` started the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up, and is now complete: released plus live-pilot validated on `loophole` and `songsprout`.
 - `g02/002-manifest-composition-and-override-contract.md` defines the general split-manifest model so features do not invent their own file-loading semantics, and its foundation plus inspectability are already shipped.
@@ -39,17 +40,18 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g02/004-rust-native-scripting-surface-contract.md` is paused after the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached a clean internal boundary.
 - `g02/005-optional-distribution-surface-contract.md` is paused after one real consumer proof plus bounded widening made the optional distribution boundary trustworthy for metadata validation, artifact validation, and closeout evidence reuse.
 - `g02/006-colima-container-environment-contract.md` is now paused after the real-machine `colima nerdctl` live-stop and closeout path was hardened strongly enough to stop carrying a deferred warning.
-- `g02/007-distribution-release-and-consumer-rollout.md` remains in progress, but release closure is queued again while the remaining TUI shell is still being reduced.
-- `g02/010-effigy-modularization-and-crate-boundaries.md` is active again because the remaining shell seams are still not clean enough for release; the CLI shell slice, TUI/browser slices, the demo seam, the changelog workspace seam, the contracts seam, the release seam, and the distribution seam are now all paused on honest boundaries, and the next local move is bootstrap runner-shell cleanup while parallel threads continue demo/docs cleanup.
+- `g02/007-distribution-release-and-consumer-rollout.md` remains in progress; release closure is complete, and the lane is now in planning with no ready implementation card.
+- `g02/010-effigy-modularization-and-crate-boundaries.md` is now paused on a trustworthy full boundary after the subsystem extraction sweep, runner-adapter cleanup survey, and test-ownership cleanup pass.
 - `g02/008-demo-and-manifest-import-rollout.md` queues the remaining demo and manifest-import adoption work across the intended cohort.
 - `g02/009-vault-backed-varlock-rollout.md` queues the vault-backed rollout for the shipped env-schema / varlock foundation.
 - `g02/017-remaining-shell-cleanup-and-crate-extraction-program.md` queues the substantial parallel cleanup jobs for the remaining heavy `/src` seams and any justified final crate splits.
+- `g02/018-research-promotion-and-carry-forward.md` carries the unfinished research-promotion residue from the closed `g01` research phases.
 
 ## Active Strict Lane
 
-- `g02.010`
-- active ready card: none — `g02.010` paused on a trustworthy full boundary after `237`
-- queued release card: `115-implement-effigy-distribution-release-closure.md`
+- `g02.007`
+- active ready card: none — `115` is complete and no release execution batch is active
+- paused strict lane: `g02.010`
 
 ## Research Program
 
@@ -71,7 +73,12 @@ Deferred roadmap items live in [backlog/README.md](./backlog/README.md).
 
 ## Next Task
 
-Execute `222` to reduce the next meaningful distribution runner shell slice.
+No ready implementation card remains.
+
+The next move is an intent choice:
+
+1. explicitly approve `v0.2.14` release execution from `115`
+2. or activate the next product roadmap card on the stable crate boundary
 
 
 ## Historical language boundary
