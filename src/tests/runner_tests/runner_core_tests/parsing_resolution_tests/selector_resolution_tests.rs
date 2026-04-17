@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_catalog_prefix_not_found, assert_output_contains_all, assert_run_task_ok_empty, fs,
     lock_test, parse_task_selector, run_task, temp_workspace, write_executable, write_manifest,
     write_root_manifest, EnvGuard,

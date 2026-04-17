@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     doctor_nonzero_rendered, run_builtin_ok, run_doctor_err_from_cwd,
     setup_doctor_explain_catalog_workspace, temp_workspace, write_root_manifest,
 };

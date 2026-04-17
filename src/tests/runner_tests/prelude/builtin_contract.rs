@@ -1,19 +1,13 @@
-pub(super) use super::super::prelude::{
-    assert_builtin_error_case, assert_builtin_help_case_table, assert_case_table,
-    assert_parser_task_invocation_error, builtin_help_case, builtin_scan_subcommand_help_cases,
-    builtin_shared_help_precedence_cases, parse_completion_contract_request,
-    parse_config_contract_request, parse_unlock_contract_request, parse_watch_contract_request,
-    string_args, BuiltinErrorCase, CompletionParseContract, ConfigParseContract, TaskInvocation,
-};
+use super::cases::{assert_builtin_error_case, assert_case_table, BuiltinErrorCase};
 
-pub(super) struct BuiltinContractErrorCase {
-    pub(super) workspace: &'static str,
-    pub(super) command: &'static str,
-    pub(super) args: &'static [&'static str],
-    pub(super) expected: &'static [&'static str],
+pub(in crate::runner::tests) struct BuiltinContractErrorCase {
+    pub(in crate::runner::tests) workspace: &'static str,
+    pub(in crate::runner::tests) command: &'static str,
+    pub(in crate::runner::tests) args: &'static [&'static str],
+    pub(in crate::runner::tests) expected: &'static [&'static str],
 }
 
-pub(super) fn builtin_contract_error_case(
+pub(in crate::runner::tests) fn builtin_contract_error_case(
     workspace: &'static str,
     command: &'static str,
     args: &'static [&'static str],
@@ -27,7 +21,9 @@ pub(super) fn builtin_contract_error_case(
     }
 }
 
-pub(super) fn assert_builtin_error_contract_case_table(cases: &[BuiltinContractErrorCase]) {
+pub(in crate::runner::tests) fn assert_builtin_error_contract_case_table(
+    cases: &[BuiltinContractErrorCase],
+) {
     assert_case_table(cases.iter(), |case| {
         assert_builtin_error_case(&BuiltinErrorCase {
             workspace: case.workspace,
@@ -39,7 +35,7 @@ pub(super) fn assert_builtin_error_contract_case_table(cases: &[BuiltinContractE
     });
 }
 
-pub(super) fn builtin_shared_unknown_argument_cases(
+pub(in crate::runner::tests) fn builtin_shared_unknown_argument_cases(
     cache_workspace: &'static str,
     completion_workspace: &'static str,
     watch_workspace: &'static str,

@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_case_table, assert_output_contains_all, assert_output_excludes_all,
     assert_string_items_contains_all, assert_string_items_excludes_all, json_task_column,
     parse_json_output_with_schema_version, run_tasks_from_repo, setup_root_and_catalog_a_catalog,

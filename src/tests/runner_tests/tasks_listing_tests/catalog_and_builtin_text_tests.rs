@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_builtin_ok_empty, assert_output_contains_all, run_tasks_from_repo,
     setup_root_and_catalog_a_catalog, temp_workspace, write_root_manifest,
 };

@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_managed_output_derived_case_table, lock_test, managed_tui_env,
     write_catalog_manifest_with_alias, write_froyo_validate_catalog, ManagedInvocation,
     ManagedOutputDerivedCase, Path,

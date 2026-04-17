@@ -1533,11 +1533,40 @@ That post-`212` boundary decision is now made too:
   `cargo fmt --all --check`, `cargo clippy --all-targets -- -D
   warnings` (standard allowlist).
 
+- `265` landed card `255` (test-harness prelude flatten).
+  Eliminated 22 nested single-file preludes and 3 directory-based
+  preludes (`managed_and_locking_tests/prelude/`,
+  `run_array_tests/prelude/`,
+  `run_array_tests/execution_controls_tests/prelude/`) by
+  relocating ~2,500 LOC of helper content into a single
+  `src/tests/runner_tests/prelude/` helper directory owned by one
+  flat top-level `prelude.rs`. Test files across 80+ sites now
+  import via `use crate::runner::tests::prelude::...` (absolute
+  path) rather than walking through per-subtree prelude chains.
+  Card spec was amended during execution to cover the three
+  directory-based preludes beyond the 22 single-file preludes the
+  spec's example list enumerated — acceptance criterion "at most
+  two prelude files" required collapsing them too. The
+  `src/runner/test_support.rs` facade (pure re-export shim over
+  upstream crates) was deleted and its remaining consumers
+  (catalogs_contract_tests, task_ref_parser_tests, cache_tests,
+  runner_test_support) repointed directly at `effigy_builtin`,
+  `effigy_routing`, `effigy_tasks`, `crate::runner::util`, and
+  `crate::runner::execute`. `json_contract_tests/prelude.rs`
+  flattened too; `completion_contract_tests/prelude.rs` absorbed
+  into the top-level json prelude. `lib_tests_prelude.rs` renamed
+  to `lib_tests_shared.rs` (module name unchanged at `prelude` for
+  zero test churn) and the one-hop re-export
+  `pub(super) use super::prelude;` in `lib_tests_parse_tests.rs`
+  deleted; its 7 descendant test files rewired to the absolute
+  path. Final count: exactly two prelude files under `src/tests/`
+  (`runner_tests/prelude.rs`, `json_contract_tests/prelude.rs`).
+  Full validation green — 602 runner tests + full workspace pass,
+  `cargo fmt --all --check` clean, `cargo clippy --all-targets
+  -- -D warnings` (standard allowlist) clean. No behavior change.
+
 ## Next Task
 
-Execute [`255-implement-test-harness-prelude-flatten.md`](batch-cards/255-implement-test-harness-prelude-flatten.md).
-Final bounded batch in the reopened `g02.010` lane. Collapse
-the three-level nested test-side prelude chain into a single
-top-level fixture surface. Once landed, the lane closes and the
-roadmap returns to card `115`'s deferred release-closure
-execution.
+`g02.010` lane closes cleanly. The roadmap returns to card
+`115`'s deferred release-closure execution, or planning can
+open a fresh lane decision — whichever the operator picks.

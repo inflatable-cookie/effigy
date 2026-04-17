@@ -1,6 +1,6 @@
-use super::super::super::prelude::harness::*;
-use super::super::super::prelude::json::*;
-use super::super::super::prelude::output::*;
+use crate::runner::tests::prelude::harness::*;
+use crate::runner::tests::prelude::json::*;
+use crate::runner::tests::prelude::output::*;
 
 #[test]
 fn run_manifest_task_builtin_test_plan_text_and_json_projection_consistency() {

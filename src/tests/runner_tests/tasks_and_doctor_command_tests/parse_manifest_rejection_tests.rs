@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_tasks_manifest_parse_rejection_case_table, ManifestParseRejectionCase,
 };
 

@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_output_contains_all, assert_output_excludes_all, assert_path_exists,
     assert_path_missing, fs, install_local_vitest_marker, lock_test, run_builtin_ok,
     setup_fanout_catalog_repo, temp_workspace, write_multi_suite_cargo_manifest,

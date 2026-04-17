@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_watch_lock_conflict_case_table, assert_watch_output_case_table,
     write_build_task_manifest, write_root_manifest, Path, WatchLockConflictCase, WatchOutputCase,
 };

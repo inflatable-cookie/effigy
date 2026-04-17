@@ -1,12 +1,6 @@
-pub(super) use super::super::prelude::{
-    assert_builtin_error_case_table, assert_output_contains_all, assert_run_task_ok_empty,
-    builtin_test_max_parallel, discover_catalogs, fs, lock_test, parse_task_runtime_args,
-    parse_task_selector, run_builtin_ok, run_task, temp_workspace, write_executable,
-    write_manifest, write_root_manifest, BuiltinErrorCase, EnvGuard, PathBuf, RunnerError,
-    TaskRuntimeArgs,
-};
+use super::runtime::RunnerError;
 
-pub(super) fn assert_catalog_prefix_not_found(
+pub(in crate::runner::tests) fn assert_catalog_prefix_not_found(
     err: RunnerError,
     expected_prefix: &str,
     expected_available: &[&str],

@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_builtin_ok_case_table_with_case_setup, write_managed_dev_profile_manifest,
     write_root_and_catalog_a_api_catalog, BuiltinInvocationSetupCase, Path,
 };

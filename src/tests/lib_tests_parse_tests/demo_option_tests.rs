@@ -1,6 +1,6 @@
 use effigy_cli::DemoHistoryOutcome;
 
-use super::prelude::{
+use crate::tests::prelude::{
     parse_command, Command, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery,
     DemoListStatus, DemoSubcommand, PathBuf,
 };

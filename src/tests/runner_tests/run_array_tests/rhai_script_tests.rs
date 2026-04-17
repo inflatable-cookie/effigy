@@ -1,8 +1,8 @@
-use super::prelude::{
-    assert_file_text_equals, assert_invocation_error_contains, fs, temp_workspace, write_manifest,
-};
 use crate::contract_test_support::{lock_test, EnvGuard};
 use crate::runner::tests::prelude::execution::run_manifest_task_with_cwd;
+use crate::runner::tests::prelude::{
+    assert_file_text_equals, assert_invocation_error_contains, fs, temp_workspace, write_manifest,
+};
 use effigy_cli::TaskInvocation;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;

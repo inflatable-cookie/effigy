@@ -1,6 +1,6 @@
-use super::super::super::prelude::{temp_workspace, write_manifest, write_root_manifest};
-use super::prelude::assert_output_contains_all;
 use crate::runner::entrypoints::run_command;
+use crate::runner::tests::prelude::assert_output_contains_all;
+use crate::runner::tests::prelude::{temp_workspace, write_manifest, write_root_manifest};
 use effigy_cli::{Command, DocsArgs, DocsSubcommand};
 
 #[test]

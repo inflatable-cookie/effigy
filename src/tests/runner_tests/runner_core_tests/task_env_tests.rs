@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_file_text_equals, assert_run_task_ok_empty, assert_task_invocation_error_contains, fs,
     run_task, temp_workspace, write_root_manifest, EnvGuard,
 };

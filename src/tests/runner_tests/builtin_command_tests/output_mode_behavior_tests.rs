@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_json_bool_field_eq, assert_json_string_field_eq, assert_output_contains_all,
     assert_output_excludes_all, install_local_vitest, install_local_vitest_marker,
     parse_json_output_with_schema, run_builtin_ok, temp_workspace, write_executable,

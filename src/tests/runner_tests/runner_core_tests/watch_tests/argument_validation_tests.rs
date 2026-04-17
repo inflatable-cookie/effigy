@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_builtin_error_case_table, assert_output_contains_all, run_builtin_ok, temp_workspace,
     write_empty_manifest, BuiltinErrorCase,
 };

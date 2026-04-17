@@ -1,4 +1,4 @@
-use super::test_support::parsing::parse_task_reference_invocation;
+use super::util::parse_task_reference_invocation;
 use crate::runner::error::RunnerError;
 
 fn assert_case_table<T>(cases: impl IntoIterator<Item = T>, mut assert_case: impl FnMut(T)) {

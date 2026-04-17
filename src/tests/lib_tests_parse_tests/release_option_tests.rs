@@ -1,4 +1,4 @@
-use super::prelude::{parse_command, Command, PathBuf, ReleaseArgs, ReleaseSubcommand};
+use crate::tests::prelude::{parse_command, Command, PathBuf, ReleaseArgs, ReleaseSubcommand};
 
 #[test]
 fn parse_release_status_with_repo_and_gate_check() {

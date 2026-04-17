@@ -4,5 +4,5 @@ mod help_render_tests;
 mod json_mode_tests;
 #[path = "lib_tests_parse_tests.rs"]
 mod parse_tests;
-#[path = "lib_tests_prelude.rs"]
+#[path = "lib_tests_shared.rs"]
 mod prelude;

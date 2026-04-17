@@ -1,4 +1,4 @@
-use super::test_support::execution::run_manifest_task_with_cwd;
+use super::execute::run_manifest_task_with_cwd;
 use crate::contract_test_support::{parse_json, temp_workspace, write_manifest};
 use effigy_cli::TaskInvocation;
 use std::fs;

@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_live_dev_lock_conflict, assert_output_equals, assert_unlock_invocation_error_case_table,
     assert_unlock_success_case_table, lock_test, run_dev, run_task_with_repo, temp_workspace,
     thread, write_lock_files, write_root_manifest, Duration, ManagedUnlockInvocationErrorCase,
@@ -168,7 +168,11 @@ lock = "dev-stack"
     std::thread::sleep(Duration::from_millis(120));
 
     let err = run_task_with_repo(&root, "build", &[]).expect_err("shared lock should conflict");
-    super::prelude::assert_lock_conflict(err, "shared:dev-stack", "effigy unlock shared:dev-stack");
+    crate::runner::tests::prelude::assert_lock_conflict(
+        err,
+        "shared:dev-stack",
+        "effigy unlock shared:dev-stack",
+    );
 
     join.join()
         .expect("thread join")

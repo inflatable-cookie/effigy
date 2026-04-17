@@ -1,4 +1,6 @@
-use super::prelude::{parse_command, Command, DoctorArgs, PathBuf, TaskInvocation, TasksArgs};
+use crate::tests::prelude::{
+    parse_command, Command, DoctorArgs, PathBuf, TaskInvocation, TasksArgs,
+};
 
 #[test]
 fn parse_doctor_with_repo_fix_and_json() {

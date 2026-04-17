@@ -1,6 +1,6 @@
-use super::super::prelude::cases::*;
-use super::super::prelude::harness::*;
-use super::super::prelude::output::*;
+use crate::runner::tests::prelude::cases::*;
+use crate::runner::tests::prelude::harness::*;
+use crate::runner::tests::prelude::output::*;
 
 #[test]
 fn run_manifest_task_builtin_test_uses_configured_suites_as_source_of_truth() {

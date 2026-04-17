@@ -1,7 +1,7 @@
-use super::super::super::prelude::cases::*;
-use super::super::super::prelude::harness::*;
-use super::super::super::prelude::json::*;
 use crate::contract_test_support::{lock_test, EnvGuard};
+use crate::runner::tests::prelude::cases::*;
+use crate::runner::tests::prelude::harness::*;
+use crate::runner::tests::prelude::json::*;
 use std::fs;
 
 #[test]

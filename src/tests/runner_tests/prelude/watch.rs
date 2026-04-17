@@ -1,33 +1,36 @@
-pub(super) use super::super::prelude::{
-    assert_builtin_error_case_table, assert_case_table, assert_output_contains_all,
-    assert_path_exists, assert_task_lock_conflict, lock_test, run_builtin_ok, run_task,
-    temp_workspace, thread, wait_for_path_exists, write_empty_manifest, write_root_manifest,
-    BuiltinErrorCase, Duration, Path, PathBuf, RunnerError,
-};
+use super::builtin_help::run_task;
+use super::cases::assert_case_table;
+use super::errors::assert_task_lock_conflict;
+use super::harness::{lock_test, temp_workspace, wait_for_path_exists, write_root_manifest};
+use super::output::{assert_output_contains_all, assert_path_exists};
+use super::runtime::{thread, Duration, Path, PathBuf, RunnerError};
 
-pub(super) struct WatchOutputCase {
-    pub(super) workspace: &'static str,
-    pub(super) args: &'static [&'static str],
-    pub(super) marker_rel: &'static str,
-    pub(super) expected: &'static [&'static str],
-    pub(super) setup: fn(&Path, &Path),
+pub(in crate::runner::tests) struct WatchOutputCase {
+    pub(in crate::runner::tests) workspace: &'static str,
+    pub(in crate::runner::tests) args: &'static [&'static str],
+    pub(in crate::runner::tests) marker_rel: &'static str,
+    pub(in crate::runner::tests) expected: &'static [&'static str],
+    pub(in crate::runner::tests) setup: fn(&Path, &Path),
 }
 
-pub(super) struct WatchLockConflictCase {
-    pub(super) workspace: &'static str,
-    pub(super) args: &'static [&'static str],
-    pub(super) lock_rel: &'static str,
-    pub(super) lock_label: &'static str,
-    pub(super) expected_scope: &'static str,
-    pub(super) expected_remediation: &'static str,
-    pub(super) setup: fn(&Path),
+pub(in crate::runner::tests) struct WatchLockConflictCase {
+    pub(in crate::runner::tests) workspace: &'static str,
+    pub(in crate::runner::tests) args: &'static [&'static str],
+    pub(in crate::runner::tests) lock_rel: &'static str,
+    pub(in crate::runner::tests) lock_label: &'static str,
+    pub(in crate::runner::tests) expected_scope: &'static str,
+    pub(in crate::runner::tests) expected_remediation: &'static str,
+    pub(in crate::runner::tests) setup: fn(&Path),
 }
 
-pub(super) fn write_build_task_manifest(root: &Path, run: &str) {
+pub(in crate::runner::tests) fn write_build_task_manifest(root: &Path, run: &str) {
     write_root_manifest(root, &format!("[tasks.build]\nrun = \"{run}\"\n"));
 }
 
-pub(super) fn run_watch(root: &Path, args: &[&str]) -> Result<String, RunnerError> {
+pub(in crate::runner::tests) fn run_watch(
+    root: &Path,
+    args: &[&str],
+) -> Result<String, RunnerError> {
     run_task(root, "watch", args)
 }
 
@@ -72,7 +75,7 @@ fn spawn_watch_owner(
     thread::spawn(move || run_watch(&root_for_thread, args))
 }
 
-pub(super) fn assert_watch_output_case_table(cases: &[WatchOutputCase]) {
+pub(in crate::runner::tests) fn assert_watch_output_case_table(cases: &[WatchOutputCase]) {
     for_each_watch_output_case(cases, |case, root, marker| {
         let out = run_watch(&root, case.args).expect("watch should run");
         assert_output_contains_all(&out, case.expected);
@@ -80,7 +83,9 @@ pub(super) fn assert_watch_output_case_table(cases: &[WatchOutputCase]) {
     });
 }
 
-pub(super) fn assert_watch_lock_conflict_case_table(cases: &[WatchLockConflictCase]) {
+pub(in crate::runner::tests) fn assert_watch_lock_conflict_case_table(
+    cases: &[WatchLockConflictCase],
+) {
     for_each_watch_lock_conflict_case(cases, |case, root| {
         let _guard = lock_test();
         let join = spawn_watch_owner(&root, case.args);

@@ -1,17 +1,9 @@
-pub(super) use super::super::prelude::builtin_contracts::*;
-pub(super) use super::super::prelude::cases::*;
-pub(super) use super::super::prelude::catalog::*;
-pub(super) use super::super::prelude::errors::*;
-pub(super) use super::super::prelude::fixture_support::*;
-pub(super) use super::super::prelude::harness_assertions::*;
-pub(super) use super::super::prelude::harness_builtin::*;
-pub(super) use super::super::prelude::harness_env::*;
-pub(super) use super::super::prelude::harness_workspace::*;
-pub(super) use super::super::prelude::output::*;
-pub(super) use super::super::prelude::parsing::*;
-pub(super) use super::super::prelude::runtime::*;
+use super::cases::{builtin_help_case, BuiltinHelpCase};
+use super::fixture_support::run_task_in_workspace;
+use super::output::assert_output_equals;
+use super::runtime::{Path, RunnerError};
 
-pub(super) fn builtin_shared_help_precedence_cases(
+pub(in crate::runner::tests) fn builtin_shared_help_precedence_cases(
     cache_workspace: &'static str,
     completion_workspace: &'static str,
     completion_candidates_workspace: &'static str,
@@ -41,7 +33,7 @@ pub(super) fn builtin_shared_help_precedence_cases(
     ]
 }
 
-pub(super) fn builtin_scan_subcommand_help_cases() -> Vec<BuiltinHelpCase> {
+pub(in crate::runner::tests) fn builtin_scan_subcommand_help_cases() -> Vec<BuiltinHelpCase> {
     vec![
         builtin_help_case(
             "builtin-subcommand-help-scan-bare",
@@ -122,7 +114,7 @@ pub(super) fn builtin_scan_subcommand_help_cases() -> Vec<BuiltinHelpCase> {
     ]
 }
 
-pub(super) fn builtin_scan_help_precedence_cases() -> Vec<BuiltinHelpCase> {
+pub(in crate::runner::tests) fn builtin_scan_help_precedence_cases() -> Vec<BuiltinHelpCase> {
     vec![
         builtin_help_case(
             "builtin-scan-help-precedence",
@@ -198,15 +190,33 @@ pub(super) fn builtin_scan_help_precedence_cases() -> Vec<BuiltinHelpCase> {
     ]
 }
 
-pub(super) fn run_task(root: &Path, name: &str, args: &[&str]) -> Result<String, RunnerError> {
+pub(in crate::runner::tests) fn run_task(
+    root: &Path,
+    name: &str,
+    args: &[&str],
+) -> Result<String, RunnerError> {
     run_task_in_workspace(root, name, args)
 }
 
-pub(super) fn write_empty_manifest(root: &Path) {
-    write_root_manifest(root, "");
+pub(in crate::runner::tests) fn write_empty_manifest(root: &Path) {
+    super::harness::write_root_manifest(root, "");
 }
 
-pub(super) fn assert_run_task_ok_empty(root: &Path, name: &str, args: &[&str]) {
+pub(in crate::runner::tests) fn assert_run_task_ok_empty(root: &Path, name: &str, args: &[&str]) {
     let out = run_task(root, name, args).expect("task should succeed");
     assert_output_equals(&out, "");
+}
+
+pub(in crate::runner::tests) fn assert_builtin_ok_for_empty_manifest(
+    command: &str,
+    cases: &[super::cases::BuiltinInvocationCase],
+) {
+    super::cases::assert_builtin_ok_case_table_with_setup(command, cases, write_empty_manifest);
+}
+
+pub(in crate::runner::tests) fn assert_builtin_error_for_empty_manifest(
+    command: &str,
+    cases: &[super::cases::BuiltinInvocationCase],
+) {
+    super::cases::assert_builtin_error_case_table_with_setup(command, cases, write_empty_manifest);
 }

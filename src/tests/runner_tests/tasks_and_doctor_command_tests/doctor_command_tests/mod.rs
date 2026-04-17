@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_doctor_non_zero_contains, assert_file_text_contains_all, assert_output_contains_all,
     assert_output_excludes_all, fs, run_doctor_err_from_cwd, run_doctor_task, temp_workspace,
     write_manifest,

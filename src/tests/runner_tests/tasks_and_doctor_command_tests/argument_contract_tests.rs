@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_builtin_argument_contract_command_case_table, BuiltinArgumentContractCase,
     BuiltinArgumentContractCommandCase,
 };

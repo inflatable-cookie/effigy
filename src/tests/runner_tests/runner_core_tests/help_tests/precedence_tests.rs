@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_builtin_help_case_table, builtin_help_case, builtin_scan_help_precedence_cases,
     builtin_shared_help_precedence_cases,
 };

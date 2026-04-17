@@ -1,6 +1,6 @@
-use super::super::super::prelude::run_builtin_ok;
 use super::assert_markdown_report_written;
 use super::{setup_scan_workspace, write_attention_file};
+use crate::runner::tests::prelude::run_builtin_ok;
 
 pub(in crate::runner::tests::builtin_command_tests::scan_tests) fn run_marker_markdown_out_case(
     name: &str,

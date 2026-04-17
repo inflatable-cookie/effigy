@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_builtin_error_case_table_with_case_setup, write_root_manifest,
     BuiltinInvocationSetupCase, Path,
 };

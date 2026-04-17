@@ -1,4 +1,4 @@
-use super::prelude::{
+use crate::runner::tests::prelude::{
     assert_output_contains_all, assert_output_excludes_all, run_config_ok,
     workspace_with_empty_manifest,
 };

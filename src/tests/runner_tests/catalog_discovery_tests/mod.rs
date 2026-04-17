@@ -1,4 +1,3 @@
 mod ambiguity_resolution_tests;
 mod discovery_symlink_tests;
 mod prefix_resolution_tests;
-mod prelude;

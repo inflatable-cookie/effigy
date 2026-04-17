@@ -1,4 +1,6 @@
-use super::prelude::{assert_managed_invalid_definition_case_table, ManagedInvalidDefinitionCase};
+use crate::runner::tests::prelude::{
+    assert_managed_invalid_definition_case_table, ManagedInvalidDefinitionCase,
+};
 
 #[test]
 fn run_manifest_task_managed_tui_validation_error_contract_table() {
