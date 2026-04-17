@@ -9,7 +9,7 @@ mod deferral;
 mod demo_command;
 mod distribution_command;
 mod docs_command;
-mod doctor;
+mod doctor_ports;
 mod entrypoints;
 mod error;
 mod execute;
@@ -23,7 +23,6 @@ mod tasks_probe;
 mod tasks_view;
 #[cfg(test)]
 mod test_support;
-mod tooling;
 mod util;
 
 pub(crate) use deferral::{

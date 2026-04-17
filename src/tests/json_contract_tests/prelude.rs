@@ -9,7 +9,8 @@ pub(super) mod runtime {
     pub(crate) use std::time::Duration;
 
     pub(crate) fn run_doctor(args: DoctorArgs) -> Result<String, RunnerError> {
-        super::super::super::doctor::run_doctor(args)
+        let ports = super::super::super::doctor_ports::RunnerDoctorPorts::new();
+        effigy_doctor::run_doctor(args, &ports).map_err(RunnerError::from)
     }
 
     pub(crate) fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {

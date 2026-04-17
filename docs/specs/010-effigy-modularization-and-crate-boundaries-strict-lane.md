@@ -1504,13 +1504,40 @@ That post-`212` boundary decision is now made too:
   cluster. No prerequisite cards — card `252` already handled the
   directory flattens. Card `254` is a mechanical extraction.
 
+- `264` landed card `254` (implement doctor extraction). Moved
+  60 files (~4.5k LOC) from `src/runner/doctor/**` into the
+  existing `effigy-doctor` crate, growing it from pure library
+  to domain crate (~5.2k LOC). Card `253`'s "no port traits"
+  decision was amended during execution: fresh grep surfaced
+  two missed runner reach-ins (`execute::run_manifest_task_with_cwd`
+  for the health task, `deferral::select_deferral` for explain
+  analysis). Added minimal `DoctorRuntimePorts` trait with 2
+  methods matching the `BuiltinRuntimePorts` pattern from card
+  251; concrete `RunnerDoctorPorts` at
+  `src/runner/doctor_ports.rs` threads the two reach-backs.
+  `DoctorError` carries 7 variants (`DoctorNonZero`,
+  `TaskInvocation`, `Ui`, `CommandJsonFailure`, `Manifest`,
+  `Scan`, `Routing`) — two extra variants added beyond the
+  decide card's five to preserve the health task's JSON-failure
+  path and the explain subcommand's structured ambiguity data.
+  `impl From<DoctorError> for RunnerError` at runner edge
+  reuses `map_manifest_error` and `From<{Scan,Routing}Error>`.
+  `src/runner/tooling.rs` helper inlined into doctor's
+  `environment.rs`. `ManifestSnapshot` relocated to a standalone
+  `effigy-doctor/src/manifest_snapshot.rs` module; runner's
+  duplicate `DoctorState` wrapper deleted in favor of
+  `effigy-doctor`'s canonical version. Runner lost 32 inline
+  doctor tests; `effigy-doctor` gained 38 (net +6 from added
+  port-trait stub coverage). Full validation green —
+  `cargo build --all-targets`, `cargo test --workspace`,
+  `cargo fmt --all --check`, `cargo clippy --all-targets -- -D
+  warnings` (standard allowlist).
+
 ## Next Task
 
-Execute [`254-implement-effigy-doctor-runner-extraction.md`](batch-cards/254-implement-effigy-doctor-runner-extraction.md).
-Mechanical move of 65 files (~4.5k LOC) into the existing
-`effigy-doctor` crate per card `253`'s decision. Narrow
-`DoctorError` → `RunnerError` boundary at the runner's edge;
-inline the 2 `current_working_dir()` call sites; flip the
-`ManifestJsPackageManager` import to `effigy-manifest` direct.
-Final bounded extraction for the reopened `g02.010` lane; card
-`255` (test-harness prelude flatten) closes the lane.
+Execute [`255-implement-test-harness-prelude-flatten.md`](batch-cards/255-implement-test-harness-prelude-flatten.md).
+Final bounded batch in the reopened `g02.010` lane. Collapse
+the three-level nested test-side prelude chain into a single
+top-level fixture surface. Once landed, the lane closes and the
+roadmap returns to card `115`'s deferred release-closure
+execution.

@@ -7,7 +7,7 @@ use super::super::contracts_command::run_contracts;
 use super::super::demo_command::run_demo;
 use super::super::distribution_command::run_distribution;
 use super::super::docs_command::run_docs;
-use super::super::doctor::run_doctor;
+use super::super::doctor_ports::RunnerDoctorPorts;
 use super::super::execute::run_manifest_task;
 use super::super::release_command::run_release;
 use super::super::script_command::run_internal_rhai;
@@ -26,7 +26,10 @@ pub(super) fn run_command(cmd: Command) -> Result<String, RunnerError> {
         Command::Container(args) => run_container(args),
         Command::Bootstrap(args) => run_bootstrap(args),
         Command::Release(args) => run_release(args),
-        Command::Doctor(args) => run_doctor(args),
+        Command::Doctor(args) => {
+            let ports = RunnerDoctorPorts::new();
+            effigy_doctor::run_doctor(args, &ports).map_err(RunnerError::from)
+        }
         Command::Tasks(args) => run_tasks(args),
         Command::InternalRhai(args) => run_internal_rhai(args),
         Command::Task(task) => run_manifest_task(&task),

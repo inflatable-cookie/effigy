@@ -460,6 +460,29 @@ impl From<effigy_builtin::BuiltinError> for RunnerError {
     }
 }
 
+/// Lifts `DoctorError` from `effigy-doctor` into `RunnerError` at the
+/// runner's edge (card 254). Mirrors the `From<BuiltinError>` pattern.
+impl From<effigy_doctor::DoctorError> for RunnerError {
+    fn from(value: effigy_doctor::DoctorError) -> Self {
+        use effigy_doctor::DoctorError as D;
+        match value {
+            D::DoctorNonZero {
+                error_count,
+                rendered,
+            } => Self::DoctorNonZero {
+                error_count,
+                rendered,
+            },
+            D::TaskInvocation(message) => Self::TaskInvocation(message),
+            D::Ui(message) => Self::Ui(message),
+            D::CommandJsonFailure { rendered } => Self::CommandJsonFailure { rendered },
+            D::Manifest(error) => map_manifest_error(error),
+            D::Scan(error) => Self::from(error),
+            D::Routing(error) => Self::from(error),
+        }
+    }
+}
+
 impl From<effigy_containers::exec::ContainerExecError> for RunnerError {
     fn from(value: effigy_containers::exec::ContainerExecError) -> Self {
         match value {

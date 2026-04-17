@@ -1,6 +1,6 @@
 # 254 Implement Effigy-Doctor Extraction
 
-Status: ready
+Status: done
 Updated: 2026-04-17
 Roadmap: `g02.010`
 Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
