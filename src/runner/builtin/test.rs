@@ -1,6 +1,7 @@
 use effigy_cli::TaskInvocation;
 use std::path::Path;
 
+use crate::runner::builtin_ports::BuiltinRuntimePorts;
 use crate::runner::error::RunnerError;
 use effigy_manifest::LoadedCatalog;
 use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
@@ -11,6 +12,7 @@ mod render;
 mod suite_selection;
 
 pub(super) fn try_run_builtin_test(
+    ports: &dyn BuiltinRuntimePorts,
     selector: &TaskSelector,
     task: &TaskInvocation,
     runtime_args: &TaskRuntimeArgs,
@@ -55,7 +57,7 @@ pub(super) fn try_run_builtin_test(
     let max_parallel = planning::builtin_test_max_parallel(catalogs, resolved_root);
     let should_tui = execution::should_run_builtin_test_tui(flags.tui, runnable.len());
     let results = if should_tui {
-        execution::run_builtin_test_targets_tui(runnable)?
+        execution::run_builtin_test_targets_tui(ports, runnable)?
     } else {
         execution::run_builtin_test_targets_parallel(runnable, max_parallel, flags.output_json)?
     };

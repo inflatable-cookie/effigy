@@ -1299,16 +1299,106 @@ That post-`212` boundary decision is now made too:
   `248`, and `249` are all complete; the `effigy-builtin` implement
   card is now draftable.
 
+- `258` caught a gap in card `244`'s coupling sweep during `250`
+  execution prep. Builtin reaches into `runner::locking::{io,model}`,
+  `runner::cache::{ops,model}`, `runner::execute::run_manifest_task_with_cwd`,
+  `runner::command_context::current_working_dir`,
+  `runner::tasks_command::run_tasks`, `runner::doctor::run_doctor`,
+  and `runner::deferred_builtins_from_catalogs` across the `unlock`,
+  `watch`, `cache`, `test`, `tasks`, `doctor`, and help-arm sites —
+  none of which `244` recorded. Option A (port-trait inversion prereq)
+  chosen to keep card `250` scope mechanical. Drafted card
+  [`251-implement-builtin-runtime-ports-inversion.md`](batch-cards/251-implement-builtin-runtime-ports-inversion.md)
+  covering:
+  (a) `BuiltinRuntimePorts` trait at `src/runner/builtin_ports.rs`
+  with 16 methods spanning lock / cache / execute / command-context /
+  top-level / deferred-builtins surfaces;
+  (b) `RunnerBuiltinPorts` concrete impl forwarding to today's
+  `pub(in crate::runner)` functions;
+  (c) dispatcher threading through `try_run_builtin_task` and
+  `BuiltinDispatch::run`;
+  (d) rewrite of every `super::super::super::*` reach-in site in
+  `builtin/**` to call the port;
+  (e) pure-helper relocations following the `248` precedent:
+  `parse_task_selector` → `effigy-tasks`,
+  `with_local_node_bin_path` → direct `effigy_core::shell` at every
+  caller, `render::{plain_renderer, render_utf8, text_renderer,
+  encode_json}` → `effigy-ui`.
+  Card `250` amended: status `queued`, residual reach-in list
+  trimmed to manifest re-exports + constants + `test_support`
+  re-export + moving the trait definition into the new crate.
+
+- `257` drafted card `250` (implement `effigy-builtin` extraction).
+  Scope: single `effigy-builtin` crate covering all eleven builtin
+  tasks plus dispatcher / registry / arg_parser / test_support
+  (~10,114 lines, 120 files). Error boundary: `BuiltinError` enum
+  with `Invocation(String)`, `Manifest(ManifestError)`,
+  `BuiltinTestNonZero`, `BuiltinScanNonZero`, `Ui(String)`,
+  `CommandLaunch { command, error }`; `From<BuiltinError> for
+  RunnerError` lives in `src/runner/error.rs` and reuses
+  `map_manifest_error` for the `Manifest` variant (Job-8 pattern,
+  matching `ScanError`). Residual runner reach-ins to resolve at
+  extraction: invert `deferred_builtins_from_catalogs` out of
+  `builtin/registry.rs` via `BuiltinDispatchContext`; swap
+  `crate::runner::manifest::*` to `effigy_manifest::*` in
+  `builtin/config/output.rs` and `builtin/test/execution.rs`; replace
+  `crate::runner::render::encode_json` with a crate-private helper;
+  inline `BUILTIN_TASKS` and `DEFAULT_BUILTIN_TEST_MAX_PARALLEL` into
+  the new crate as `pub const`s (two non-builtin callers flip to
+  `effigy_builtin::BUILTIN_TASKS`); flip
+  `src/runner/test_support.rs` re-exports to
+  `effigy_builtin::test_support::*`. No transitional shim.
+
+- `259` landed card `251` (builtin runtime ports inversion plus
+  pure-helper relocation). `BuiltinRuntimePorts` trait shipped at
+  `src/runner/builtin_ports.rs` with 13 methods — three cache
+  lifecycle methods from the proposal (`check_task_cache`,
+  `update_task_cache_entry`, `task_cache_config`) dropped after grep
+  confirmed no builtin site consumes them; the cache-hit path lives
+  in `runner::execute`, not builtin. `RunnerBuiltinPorts` zero-sized
+  struct forwards each method to the existing `pub(in crate::runner)`
+  function. `try_run_builtin_task` and `BuiltinDispatch::run` both
+  grew `ports: &dyn BuiltinRuntimePorts` and thread it into every
+  arm that reaches into runner machinery (`doctor`, `tasks`/catalogs,
+  `watch`, `unlock`, `cache`, `test`, plus the help-arm call to
+  `deferred_builtins_from_catalogs`); `init`, `migrate`, `config`,
+  `completion`, and `scan` arms don't reach and don't receive the
+  parameter. Every `super::super::super::{locking,execute,cache,
+  command_context,tasks_command,doctor}::*` import inside
+  `src/runner/builtin/**` deleted; both acceptance-criteria greps
+  return zero matches. Pure-helper relocations: `parse_task_selector`
+  → `effigy-tasks` (runner wrapper deleted; all five callers route
+  direct, lifting `TaskError` → `RunnerError` at the boundary);
+  `with_local_node_bin_path` → every caller imports
+  `effigy_core::shell::with_local_node_bin_path` directly
+  (`src/runner/util/shell.rs` shim deleted); `plain_renderer`,
+  `render_utf8`, `text_renderer`, `encode_json` → new
+  `crates/effigy-ui/src/output.rs` alongside `standard_renderer`,
+  `color_enabled_for_text_output`, `text_color_enabled`, and the
+  `resolve_text_color_enabled` helper with its unit tests.
+  `UiError` grew `Encoding(String)` for `encode_json`'s
+  `serde_json` error path; `From<UiError> for RunnerError` lifts at
+  the boundary; `effigy-cli`'s `help/ui.rs` match arm updated to
+  stay exhaustive. `src/runner/render.rs` shrank to just
+  `render_task_resolution_trace` and a thin `trace_renderer` that
+  delegates to `effigy_ui::text_renderer`. `LockScope`, `LockGuard`,
+  `UnlockResult`, `TaskCacheEntry` stayed as direct type imports
+  (rationale: card `251` is behavior inversion only; type-surface
+  exposure across crate boundaries is card `250`'s job). Full
+  validation green — `cargo build`, `cargo fmt --check`, `cargo
+  clippy` (-D warnings, standard allowlist), `cargo test --workspace`.
+  Card `250` is now unblocked as a mechanical extraction.
+
 ## Next Task
 
-Draft the `effigy-builtin` implement card (tentatively `250`+). The
-prerequisites — card `247` (decide scan shape), card `248`
-(runner-utility prereqs), card `249` (implement scan extraction) —
-are all complete. Card `244`'s decision + sweep already fixed the
-scope (all eleven builtin tasks), the error boundary (`BuiltinError`
-with `From<BuiltinError> for RunnerError`, Job-8 pattern), and the
-migration path (direct imports, no re-export shim). The draft card
-should enumerate the per-file move surface under
-`src/runner/builtin/**` (~10,096 lines), the caller migration on
-the runner side, and any residual coupling that actually trying the
-move surfaces.
+Execute [`250-implement-effigy-builtin-extraction.md`](batch-cards/250-implement-effigy-builtin-extraction.md).
+With port inversion and pure-helper relocation landed, card `250`
+is the mechanical crate move: all eleven builtin tasks plus
+dispatcher / registry / arg_parser / test_support migrate into a
+new `effigy-builtin` crate, the `BuiltinRuntimePorts` trait
+definition goes with them as a `pub trait`, and
+`From<BuiltinError> for RunnerError` lives at the runner boundary.
+The 010 lane then closes with card `250`, at which point a
+pause-boundary decide card sets up the next roadmap pivot
+(release-closure resumption or a follow-up modularization pause
+decision).

@@ -17,6 +17,7 @@ pub(in crate::runner) mod execution {
 
 pub(in crate::runner) mod parsing {
     pub(in crate::runner) use super::super::util::{
-        parse_task_reference_invocation, parse_task_runtime_args, parse_task_selector,
+        parse_task_reference_invocation, parse_task_runtime_args,
     };
+    pub(in crate::runner) use effigy_tasks::parse_task_selector;
 }

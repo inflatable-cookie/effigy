@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use super::super::super::response::schema_payload;
 use super::super::request::ScanRequest;
 use crate::runner::error::RunnerError;
-use crate::runner::render::encode_json;
 use effigy_scan::TextRenderOptions;
+use effigy_ui::encode_json;
 
 mod api;
 mod options_impls;
@@ -83,5 +83,5 @@ where
 }
 
 pub(super) fn encode_scan_json(payload: &serde_json::Value) -> Result<String, RunnerError> {
-    encode_json(payload, true)
+    Ok(encode_json(payload, true)?)
 }

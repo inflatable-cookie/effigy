@@ -6,15 +6,14 @@ use std::sync::{Arc, Mutex};
 
 use crate::runner::manifest::ManifestCargoEnvMatchMode;
 use crate::runner::manifest::ManifestTestSuiteTeardownPolicy;
-use effigy_core::shell::shell_quote;
+use effigy_core::shell::{shell_quote, with_local_node_bin_path};
 use effigy_managed::run_spec::wrap_command_with_env;
 use effigy_process::ProcessSpec;
 use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
 
-use super::super::super::command_context::current_working_dir;
-use super::super::super::util::with_local_node_bin_path;
 use super::planning::BuiltinTestRunnable;
 use super::{BuiltinTestExecResult, RunnerError};
+use crate::runner::builtin_ports::BuiltinRuntimePorts;
 #[path = "planning/runnable/cargo_env.rs"]
 mod cargo_env;
 
@@ -26,6 +25,7 @@ pub(super) fn should_run_builtin_test_tui(force_tui: bool, suite_count: usize) -
 }
 
 pub(super) fn run_builtin_test_targets_tui(
+    ports: &dyn BuiltinRuntimePorts,
     runnable: Vec<BuiltinTestRunnable>,
 ) -> Result<Vec<BuiltinTestExecResult>, RunnerError> {
     if runnable.is_empty() {
@@ -48,7 +48,7 @@ pub(super) fn run_builtin_test_targets_tui(
         })
         .collect::<Vec<ProcessSpec>>();
     let outcome = run_multiprocess_tui(
-        current_working_dir()?,
+        ports.current_working_dir()?,
         specs,
         tab_order,
         MultiProcessTuiOptions {

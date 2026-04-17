@@ -3,7 +3,8 @@ mod payload;
 
 use serde_json::json;
 
-use super::super::render::encode_json;
+use effigy_ui::encode_json;
+
 use crate::runner::error::RunnerError;
 use effigy_tasks::TaskSelector;
 
@@ -45,5 +46,5 @@ pub(super) fn render_task_command_json(
 }
 
 fn encode_task_run_json(payload: &serde_json::Value) -> Result<String, RunnerError> {
-    encode_json(payload, true)
+    Ok(encode_json(payload, true)?)
 }

@@ -1,12 +1,10 @@
-use std::io::IsTerminal;
 use std::path::Path;
 
-use crate::runner::error::RunnerError;
 use effigy_core::resolver::ResolvedTarget;
 use effigy_core::widgets::KeyValue;
 use effigy_manifest::TaskSelection;
 use effigy_tasks::TaskSelector;
-use effigy_ui::{OutputMode, PlainRenderer, Renderer};
+use effigy_ui::{text_renderer, PlainRenderer, Renderer};
 
 pub(super) fn render_task_resolution_trace(
     resolved: &ResolvedTarget,
@@ -56,65 +54,3 @@ pub(super) fn render_task_resolution_trace(
 pub(super) fn trace_renderer() -> PlainRenderer<Vec<u8>> {
     text_renderer()
 }
-
-pub(super) fn standard_renderer(output_json: bool) -> PlainRenderer<Vec<u8>> {
-    plain_renderer(color_enabled_for_text_output(output_json))
-}
-
-pub(super) fn plain_renderer(color_enabled: bool) -> PlainRenderer<Vec<u8>> {
-    PlainRenderer::new(Vec::<u8>::new(), color_enabled)
-}
-
-pub(super) fn text_renderer() -> PlainRenderer<Vec<u8>> {
-    plain_renderer(text_color_enabled())
-}
-
-pub(super) fn color_enabled_for_text_output(output_json: bool) -> bool {
-    !output_json && text_color_enabled()
-}
-
-pub(super) fn text_color_enabled() -> bool {
-    resolve_text_color_enabled(
-        OutputMode::from_env(),
-        std::io::stdout().is_terminal(),
-        std::env::var_os("NO_COLOR").is_some(),
-    )
-}
-
-pub(super) fn render_utf8(out: Vec<u8>) -> Result<String, RunnerError> {
-    String::from_utf8(out)
-        .map_err(|error| RunnerError::Ui(format!("invalid utf-8 in rendered output: {error}")))
-}
-
-pub(super) fn encode_json(
-    payload: &serde_json::Value,
-    pretty: bool,
-) -> Result<String, RunnerError> {
-    let encoded = if pretty {
-        serde_json::to_string_pretty(payload)
-    } else {
-        serde_json::to_string(payload)
-    };
-    encoded.map_err(|error| RunnerError::Ui(format!("failed to encode json: {error}")))
-}
-
-pub(super) fn encode_pretty_json_optional(
-    payload: &serde_json::Value,
-) -> Result<Option<String>, RunnerError> {
-    encode_json(payload, true).map(Some)
-}
-
-fn resolve_text_color_enabled(mode: OutputMode, is_tty: bool, no_color: bool) -> bool {
-    if no_color {
-        return false;
-    }
-    match mode {
-        OutputMode::Always => true,
-        OutputMode::Never => false,
-        OutputMode::Auto => is_tty,
-    }
-}
-
-#[cfg(test)]
-#[path = "render/tests.rs"]
-mod tests;

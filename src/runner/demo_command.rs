@@ -68,23 +68,22 @@ use crate::runner::manifest::{
     load_task_manifest_with_inspection, LoadedTaskManifest, ManifestDemoConfig, ManifestDemoMode,
     ManifestManagedRun, ManifestTask,
 };
-use crate::runner::util::parse_task_selector;
-use crate::runner::util::with_local_node_bin_path;
 use crate::tui::run_demo_browser_tui;
 use effigy_cli::{
     DemoArgs, DemoHistoryOutcome, DemoListGroupBy, DemoListQuery, DemoSubcommand, TaskInvocation,
 };
+use effigy_core::shell::with_local_node_bin_path;
 use effigy_core::widgets::{KeyValue, NoticeLevel};
 use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::run_spec::{render_task_run_spec, RunSpecContext};
 use effigy_manifest::{LoadedCatalog, TaskSelection};
 use effigy_process::{ProcessEventKind, ProcessSpec, ProcessSupervisor};
 use effigy_routing::select_catalog_and_task;
+use effigy_tasks::parse_task_selector;
 use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
-use effigy_ui::{PlainRenderer, Renderer};
+use effigy_ui::{encode_json, render_utf8, text_renderer, PlainRenderer, Renderer};
 
 use super::error::RunnerError;
-use super::render::{encode_json, render_utf8, text_renderer};
 
 pub(super) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
     let cwd = current_working_dir()?;
@@ -212,7 +211,8 @@ fn render_demo_list(
         return encode_json(
             &browser_payload_to_json(&payload, "demo list payload")?,
             true,
-        );
+        )
+        .map_err(Into::into);
     }
 
     let mut renderer = text_renderer();
@@ -230,7 +230,7 @@ fn render_demo_list(
             )?;
         }
         renderer.text("")?;
-        return render_utf8(renderer.into_inner());
+        return render_utf8(renderer.into_inner()).map_err(Into::into);
     }
 
     if !query_is_empty(query) {
@@ -254,7 +254,7 @@ fn render_demo_list(
         "Use `effigy demo inspect <DEMO_ID>` to inspect proof intent, coverage, action availability, active state, and latest attempt details.",
     )?;
     renderer.text("")?;
-    render_utf8(renderer.into_inner())
+    render_utf8(renderer.into_inner()).map_err(Into::into)
 }
 
 fn render_demo_inspect(
@@ -284,7 +284,8 @@ fn render_demo_inspect(
         return encode_json(
             &browser_payload_to_json(&payload, "demo inspect payload")?,
             true,
-        );
+        )
+        .map_err(Into::into);
     }
 
     let mut renderer = text_renderer();
@@ -409,7 +410,7 @@ fn render_demo_inspect(
         }
     }
     renderer.text("")?;
-    render_utf8(renderer.into_inner())
+    render_utf8(renderer.into_inner()).map_err(Into::into)
 }
 
 fn render_demo_history(
@@ -547,7 +548,8 @@ fn render_demo_history(
         return encode_json(
             &browser_payload_to_json(&payload, "demo history payload")?,
             true,
-        );
+        )
+        .map_err(Into::into);
     }
 
     let mut renderer = text_renderer();
@@ -636,7 +638,7 @@ fn render_demo_history(
         render_selected_historical_attempt(&mut renderer, attempt)?;
     }
     renderer.text("")?;
-    render_utf8(renderer.into_inner())
+    render_utf8(renderer.into_inner()).map_err(Into::into)
 }
 
 fn render_selected_historical_attempt(
@@ -974,7 +976,8 @@ fn render_demo_input(
                 "active_terminal_session": record.active_terminal_session.to_json(),
             }),
             true,
-        );
+        )
+        .map_err(Into::into);
     }
 
     let mut renderer = text_renderer();
@@ -984,7 +987,7 @@ fn render_demo_input(
         KeyValue::new("append-newline", if append_newline { "yes" } else { "no" }),
         KeyValue::new("forwarded-bytes", forwarded_text.len().to_string()),
     ])?;
-    render_utf8(renderer.into_inner())
+    render_utf8(renderer.into_inner()).map_err(Into::into)
 }
 
 fn render_demo_resize(
@@ -1066,7 +1069,8 @@ fn render_demo_resize(
                 "active_terminal_session": refreshed.active_terminal_session.to_json(),
             }),
             true,
-        );
+        )
+        .map_err(Into::into);
     }
 
     let mut renderer = text_renderer();
@@ -1076,7 +1080,7 @@ fn render_demo_resize(
         KeyValue::new("cols", cols.to_string()),
         KeyValue::new("rows", rows.to_string()),
     ])?;
-    render_utf8(renderer.into_inner())
+    render_utf8(renderer.into_inner()).map_err(Into::into)
 }
 
 fn render_demo_stop_result(
@@ -1116,7 +1120,8 @@ fn render_demo_stop_result(
                 "latest_attempt": record.latest_attempt.to_json(),
             }),
             true,
-        );
+        )
+        .map_err(Into::into);
     }
 
     let mut renderer = text_renderer();
@@ -1139,7 +1144,7 @@ fn render_demo_stop_result(
     let message = format!("demo `{demo_id}` {summary}");
     renderer.notice(NoticeLevel::Info, &message)?;
     renderer.text("")?;
-    render_utf8(renderer.into_inner())
+    render_utf8(renderer.into_inner()).map_err(Into::into)
 }
 
 fn render_demo_execute_text(
@@ -1174,7 +1179,7 @@ fn render_demo_execute_text(
         "Use `effigy demo inspect <DEMO_ID>` to review the recorded latest attempt, recent attempt history, and any active state.",
     )?;
     renderer.text("")?;
-    render_utf8(renderer.into_inner())
+    render_utf8(renderer.into_inner()).map_err(Into::into)
 }
 
 fn query_is_empty(query: &DemoListQuery) -> bool {
@@ -1516,7 +1521,7 @@ fn demo_task_selection(
     if catalogs.is_empty() {
         return Ok(None);
     }
-    let selector = parse_task_selector(task_name)?;
+    let selector = parse_task_selector(task_name).map_err(RunnerError::task_invocation)?;
     let selection = select_catalog_and_task(&selector, &catalogs, repo_root)?;
     let selected_catalog_index = catalogs
         .iter()

@@ -5,6 +5,7 @@ use effigy_cli::TaskInvocation;
 use super::{
     cache, completion, config, doctor, help, init, migrate, scan, tasks, test, unlock, watch,
 };
+use crate::runner::builtin_ports::BuiltinRuntimePorts;
 use crate::runner::error::RunnerError;
 use effigy_manifest::LoadedCatalog;
 use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
@@ -95,6 +96,7 @@ pub(super) fn builtin_registry_entry(task_name: &str) -> Option<&'static Builtin
 impl BuiltinRegistryEntry {
     pub(super) fn run(
         &self,
+        ports: &dyn BuiltinRuntimePorts,
         selector: &TaskSelector,
         task: &TaskInvocation,
         runtime_args: &TaskRuntimeArgs,
@@ -103,6 +105,7 @@ impl BuiltinRegistryEntry {
         invocation_cwd: &Path,
     ) -> Result<Option<String>, RunnerError> {
         self.dispatch.run(
+            ports,
             selector,
             task,
             runtime_args,
@@ -116,6 +119,7 @@ impl BuiltinRegistryEntry {
 impl BuiltinDispatch {
     fn run(
         self,
+        ports: &dyn BuiltinRuntimePorts,
         selector: &TaskSelector,
         task: &TaskInvocation,
         runtime_args: &TaskRuntimeArgs,
@@ -124,33 +128,45 @@ impl BuiltinDispatch {
         invocation_cwd: &Path,
     ) -> Result<Option<String>, RunnerError> {
         match self {
-            Self::Doctor => doctor::run_builtin_doctor(task, runtime_args, target_root),
-            Self::Catalogs => tasks::run_builtin_tasks(task, runtime_args, target_root, true),
-            Self::Tasks => tasks::run_builtin_tasks(task, runtime_args, target_root, false),
+            Self::Doctor => doctor::run_builtin_doctor(ports, task, runtime_args, target_root),
+            Self::Catalogs => {
+                tasks::run_builtin_tasks(ports, task, runtime_args, target_root, true)
+            }
+            Self::Tasks => tasks::run_builtin_tasks(ports, task, runtime_args, target_root, false),
             Self::Config => {
                 config::run_builtin_config(task, &runtime_args.passthrough, target_root)
             }
             Self::Help => {
                 let deferred_builtins =
-                    crate::runner::deferred_builtins_from_catalogs(catalogs, target_root);
+                    ports.deferred_builtins_from_catalogs(catalogs, target_root);
                 help::run_builtin_help(task, &runtime_args.passthrough, &deferred_builtins)
             }
-            Self::Watch => watch::run_builtin_watch(task, runtime_args, target_root),
+            Self::Watch => watch::run_builtin_watch(ports, task, runtime_args, target_root),
             Self::Init => init::run_builtin_init(task, &runtime_args.passthrough, target_root),
             Self::Migrate => {
                 migrate::run_builtin_migrate(task, &runtime_args.passthrough, target_root)
             }
             Self::Unlock => {
-                unlock::run_builtin_unlock(task, &runtime_args.passthrough, target_root)
+                unlock::run_builtin_unlock(ports, task, &runtime_args.passthrough, target_root)
             }
-            Self::Cache => {
-                cache::run_builtin_cache(task, runtime_args, target_root, catalogs, invocation_cwd)
-            }
+            Self::Cache => cache::run_builtin_cache(
+                ports,
+                task,
+                runtime_args,
+                target_root,
+                catalogs,
+                invocation_cwd,
+            ),
             Self::Completion => completion::run_builtin_completion(task, runtime_args, target_root),
             Self::Scan => scan::run_builtin_scan(task, runtime_args, target_root, catalogs),
-            Self::Test => {
-                test::try_run_builtin_test(selector, task, runtime_args, target_root, catalogs)
-            }
+            Self::Test => test::try_run_builtin_test(
+                ports,
+                selector,
+                task,
+                runtime_args,
+                target_root,
+                catalogs,
+            ),
         }
     }
 }

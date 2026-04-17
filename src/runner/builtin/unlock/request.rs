@@ -1,8 +1,8 @@
 use effigy_cli::TaskInvocation;
 
-use super::super::super::locking::model::LockScope;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
 use crate::runner::error::RunnerError;
+use crate::runner::locking::model::LockScope;
 
 pub(super) struct UnlockRequest {
     pub(super) output_json: bool,

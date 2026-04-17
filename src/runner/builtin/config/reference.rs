@@ -1,7 +1,6 @@
 use effigy_core::widgets::NoticeLevel;
-use effigy_ui::Renderer;
+use effigy_ui::{plain_renderer, render_utf8, Renderer};
 
-use super::super::super::render::{plain_renderer, render_utf8};
 use super::super::doc_render::{emit_doc_lines, style_hash_comments};
 use super::docs::{self, ConfigDocProfile};
 use crate::runner::error::RunnerError;
@@ -69,7 +68,7 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Run
         docs::tasks_canonical_lines(ConfigDocProfile::Reference),
     )?;
 
-    render_utf8(renderer.into_inner())
+    Ok(render_utf8(renderer.into_inner())?)
 }
 
 pub(super) fn style_schema_comments(schema: String, color_enabled: bool) -> String {

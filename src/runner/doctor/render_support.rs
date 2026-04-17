@@ -1,6 +1,5 @@
-use effigy_ui::{PlainRenderer, UiError};
+use effigy_ui::{text_renderer, PlainRenderer, UiError};
 
-use super::super::render::text_renderer;
 use crate::runner::error::RunnerError;
 
 pub(super) const DOCTOR_RENDER_TARGET: &str = "doctor output";

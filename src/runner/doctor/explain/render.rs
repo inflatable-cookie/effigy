@@ -1,4 +1,3 @@
-use super::super::super::render::encode_json;
 use super::super::render_support;
 use super::super::text_blocks;
 use super::contracts::{self, DeferralOutcome, SelectionOutcome};
@@ -6,7 +5,7 @@ use crate::runner::error::RunnerError;
 use effigy_cli::TaskInvocation;
 use effigy_core::widgets::NoticeLevel;
 use effigy_manifest::LoadedCatalog;
-use effigy_ui::Renderer;
+use effigy_ui::{encode_json, Renderer};
 
 pub(super) fn render_explain_json(
     request: &TaskInvocation,
@@ -20,7 +19,7 @@ pub(super) fn render_explain_json(
         request, resolved, task_name, selection, deferral, candidates,
     );
     let payload = contracts::explain_json_payload(&contract);
-    encode_json(&payload, true)
+    Ok(encode_json(&payload, true)?)
 }
 
 pub(super) fn render_explain_text(

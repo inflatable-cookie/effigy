@@ -97,7 +97,8 @@ fn prepare_filtered_listing<'a>(
     resolved_root: &std::path::Path,
     filter: &str,
 ) -> Result<PreparedFilteredListing<'a>, RunnerError> {
-    let selector = super::super::util::parse_task_selector(filter)?;
+    let selector =
+        effigy_tasks::parse_task_selector(filter).map_err(RunnerError::task_invocation)?;
     let catalog_matches = matched_catalog_tasks(catalogs, &selector);
     let deferred_builtins = deferred_builtins_from_catalogs(catalogs, resolved_root);
     let builtin_matches = builtin_matches(&selector, &deferred_builtins);

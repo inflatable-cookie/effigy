@@ -835,6 +835,7 @@ dependencies = [
  "anstyle",
  "effigy-core",
  "indicatif",
+ "serde_json",
  "tabled",
 ]
 

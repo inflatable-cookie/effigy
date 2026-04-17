@@ -4,8 +4,8 @@ use serde_json::json;
 
 use effigy_cli::help::ui::{render_help, render_help_with_deferred_builtins};
 use effigy_cli::HelpTopic;
+use effigy_ui::{encode_json, render_utf8, standard_renderer};
 
-use super::super::render::{encode_json, render_utf8, standard_renderer};
 use super::response::schema_payload;
 use crate::runner::error::RunnerError;
 use effigy_tasks::TaskRuntimeArgs;
@@ -91,7 +91,7 @@ pub(in crate::runner) fn render_builtin_help_text(
                 "text": text,
             }),
         );
-        return encode_json(&payload, true);
+        return Ok(encode_json(&payload, true)?);
     }
     Ok(text)
 }
