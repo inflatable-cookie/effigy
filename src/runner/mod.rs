@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 mod bootstrap_command;
-mod builtin;
 mod builtin_ports;
 mod cache;
 mod changelog_command;

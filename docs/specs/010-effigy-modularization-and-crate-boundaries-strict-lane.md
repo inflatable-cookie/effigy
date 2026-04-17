@@ -1389,16 +1389,56 @@ That post-`212` boundary decision is now made too:
   clippy` (-D warnings, standard allowlist), `cargo test --workspace`.
   Card `250` is now unblocked as a mechanical extraction.
 
+- `260` landed card `250` (implement `effigy-builtin` extraction).
+  `src/runner/builtin/**` (120 files, ~10,114 lines) moved into
+  the new `crates/effigy-builtin` workspace crate behind a narrow
+  `BuiltinError` → `RunnerError` boundary. `BuiltinError` mirrors
+  `RunnerError` variant shapes one-for-one (TaskInvocation, Ui,
+  TaskManifestCompose, TaskCommandLaunch, TaskLockConflict,
+  TaskLockIo, BuiltinTestNonZero, BuiltinScanNonZero,
+  DoctorNonZero) plus four wrapper variants (Manifest, Managed,
+  Routing, Scan) so the `From<BuiltinError> for RunnerError` impl
+  at the runner's edge is a pure re-shape. The
+  `BuiltinRuntimePorts` trait definition moved with the crate,
+  pulling `LockScope`, `UnlockResult`, and `TaskCacheEntry` along
+  as `pub` types in `effigy_builtin::ports`; the runner keeps the
+  `RunnerBuiltinPorts` concrete impl at `src/runner/builtin_ports.rs`
+  (now importing the trait from `effigy_builtin`) and re-imports
+  the relocated types through `runner::locking::{model,io}` and
+  `runner::cache::model` for internal consumers. Lock-guard
+  erasure uses an opaque `BuiltinLockGuards(Box<dyn Any + Send>)`
+  wrapper so the builtin layer holds guards across call scopes
+  without seeing the runner's concrete `LockGuard`.
+  `BUILTIN_TASKS` and `DEFAULT_BUILTIN_TEST_MAX_PARALLEL` now live
+  in `effigy_builtin::constants` as `pub const`s; the two
+  non-builtin callers (`runner::tasks_probe::resolve`,
+  `runner::tasks_listing::row_projection`) route direct. The
+  runner's `src/runner/test_support.rs` flipped its re-exports to
+  `effigy_builtin::test_support::*` (which itself re-exports from
+  each sub-module's `test_support` sibling — `completion`, `config`,
+  `unlock`, `watch`, `test`). No transitional shim in `src/lib.rs`
+  — every caller imports from `effigy_builtin::*` directly. One
+  test-side generalization: `assert_parser_task_invocation_error`
+  in `tests/runner_tests/prelude/case_tables/assertions.rs` grew
+  an `E: Into<RunnerError>` bound so parser tests can feed it
+  either `Result<_, RunnerError>` or `Result<_, BuiltinError>`.
+  Unused manifest re-exports (`ManifestCompositionEdge`,
+  `ManifestCompositionOverride`, `ManifestCompositionValueSource`)
+  pruned from `src/runner/manifest.rs` since their only consumers
+  were under builtin. Full validation green — `cargo build
+  --all-targets`, `cargo fmt --all --check`, `cargo clippy
+  --all-targets` (with standard allowlist), `cargo test --workspace`
+  (634 tests in the runner lib plus the rest of the workspace, all
+  passing). With card `250` landed, the bounded batch for spec 010
+  is exhausted and the `g02.010` strict lane closes.
+
 ## Next Task
 
-Execute [`250-implement-effigy-builtin-extraction.md`](batch-cards/250-implement-effigy-builtin-extraction.md).
-With port inversion and pure-helper relocation landed, card `250`
-is the mechanical crate move: all eleven builtin tasks plus
-dispatcher / registry / arg_parser / test_support migrate into a
-new `effigy-builtin` crate, the `BuiltinRuntimePorts` trait
-definition goes with them as a `pub trait`, and
-`From<BuiltinError> for RunnerError` lives at the runner boundary.
-The 010 lane then closes with card `250`, at which point a
-pause-boundary decide card sets up the next roadmap pivot
-(release-closure resumption or a follow-up modularization pause
-decision).
+Spec 010's active scope is exhausted. The `g02.010` strict lane
+closes with card `250`. The next move depends on steering signal
+— options include resuming release closure (card `115`'s deferred
+execution path), opening a fresh modularization spec for the
+remaining runner-internal coupling (`locking`, `cache`, `execute`
+cleanups), or pausing strict-lane execution entirely for a new
+roadmap pivot. Draft a pause-boundary decide card once the next
+pivot is chosen; until then the lane sits closed.

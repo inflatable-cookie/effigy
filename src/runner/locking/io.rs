@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use super::model::LockScope;
 use crate::runner::error::RunnerError;
 
+pub(in crate::runner) use effigy_builtin::UnlockResult;
+
 #[path = "io/files.rs"]
 mod files;
 #[path = "io/paths.rs"]
@@ -36,11 +38,6 @@ impl Drop for LockGuard {
         }
         let _ = fs::remove_file(&self.path);
     }
-}
-
-pub(in crate::runner) struct UnlockResult {
-    pub(in crate::runner) removed: Vec<String>,
-    pub(in crate::runner) missing: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

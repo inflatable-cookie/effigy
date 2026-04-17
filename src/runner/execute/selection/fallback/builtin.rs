@@ -1,9 +1,9 @@
 use effigy_cli::TaskInvocation;
 
-use super::super::super::super::builtin::try_run_builtin_task;
 use super::super::super::preflight::ExecutionPreflight;
 use crate::runner::builtin_ports::RunnerBuiltinPorts;
 use crate::runner::error::RunnerError;
+use effigy_builtin::try_run_builtin_task;
 use effigy_tasks::TaskSelector;
 
 pub(super) fn resolve_builtin_selection_output(
@@ -20,6 +20,7 @@ pub(super) fn resolve_builtin_selection_output(
         &preflight.catalogs,
         &preflight.invocation_cwd,
     )
+    .map_err(RunnerError::from)
 }
 
 pub(super) fn removed_builtin_invocation_error(selector: &TaskSelector) -> Option<RunnerError> {

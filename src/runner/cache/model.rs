@@ -1,4 +1,10 @@
-use serde::{Deserialize, Serialize};
+//! Runner-side cache model types.
+//!
+//! `TaskCacheEntry` was relocated into `effigy-builtin` under card 250
+//! so the `BuiltinRuntimePorts` trait can carry it without pulling
+//! runner-internal types; it is re-exported here for the runner's
+//! cache store / ops modules. `TaskCacheCheck` remains runner-only
+//! because no port surface references it.
 
 #[derive(Debug)]
 pub(in crate::runner) struct TaskCacheCheck {
@@ -8,17 +14,4 @@ pub(in crate::runner) struct TaskCacheCheck {
     pub(in crate::runner) fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(in crate::runner) struct TaskCacheEntry {
-    pub(in crate::runner) key: String,
-    pub(in crate::runner) task_name: String,
-    pub(in crate::runner) manifest_path: String,
-    pub(in crate::runner) catalog_root: String,
-    pub(in crate::runner) fingerprint: String,
-    pub(in crate::runner) command: String,
-    pub(in crate::runner) inputs: Vec<String>,
-    pub(in crate::runner) outputs: Vec<String>,
-    pub(in crate::runner) env_keys: Vec<String>,
-    pub(in crate::runner) outputs_exist: bool,
-    pub(in crate::runner) updated_at_epoch_ms: u128,
-}
+pub(in crate::runner) use effigy_builtin::TaskCacheEntry;

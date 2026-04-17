@@ -402,6 +402,64 @@ fn map_manifest_error(error: ManifestError) -> RunnerError {
     }
 }
 
+/// Lifts `BuiltinError` from `effigy-builtin` into `RunnerError` at
+/// the runner's edge. Variant shapes mirror one-for-one (card 250),
+/// with the `Manifest` variant bridging through
+/// `map_manifest_error` to match the pattern used by `ScanError` and
+/// `RoutingError`.
+impl From<effigy_builtin::BuiltinError> for RunnerError {
+    fn from(value: effigy_builtin::BuiltinError) -> Self {
+        use effigy_builtin::BuiltinError as B;
+        match value {
+            B::TaskInvocation(message) => Self::TaskInvocation(message),
+            B::Ui(message) => Self::Ui(message),
+            B::TaskManifestCompose { path, detail } => Self::TaskManifestCompose { path, detail },
+            B::TaskCommandLaunch { command, error } => Self::TaskCommandLaunch { command, error },
+            B::TaskLockConflict {
+                scope,
+                lock_path,
+                holder_pid,
+                holder_started_at_epoch_ms,
+                holder_heartbeat_at_epoch_ms,
+                holder_hostname,
+                holder_workspace_root,
+                remediation,
+            } => Self::TaskLockConflict {
+                scope,
+                lock_path,
+                holder_pid,
+                holder_started_at_epoch_ms,
+                holder_heartbeat_at_epoch_ms,
+                holder_hostname,
+                holder_workspace_root,
+                remediation,
+            },
+            B::TaskLockIo { path, error } => Self::TaskLockIo { path, error },
+            B::BuiltinTestNonZero { failures, rendered } => {
+                Self::BuiltinTestNonZero { failures, rendered }
+            }
+            B::BuiltinScanNonZero {
+                finding_count,
+                rendered,
+            } => Self::BuiltinScanNonZero {
+                finding_count,
+                rendered,
+            },
+            B::DoctorNonZero {
+                error_count,
+                rendered,
+            } => Self::DoctorNonZero {
+                error_count,
+                rendered,
+            },
+            B::Manifest(error) => map_manifest_error(error),
+            B::Managed(error) => Self::from(error),
+            B::Routing(error) => Self::from(error),
+            B::Scan(error) => Self::from(error),
+        }
+    }
+}
+
 impl From<effigy_containers::exec::ContainerExecError> for RunnerError {
     fn from(value: effigy_containers::exec::ContainerExecError) -> Self {
         match value {
