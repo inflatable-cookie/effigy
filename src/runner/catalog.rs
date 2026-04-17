@@ -1,5 +1,9 @@
 #[path = "catalog/discovery.rs"]
 mod discovery;
+#[path = "catalog/error.rs"]
+mod error;
+#[path = "catalog/manifest_load.rs"]
+mod manifest_load;
 #[path = "catalog/selection.rs"]
 mod selection;
 
@@ -7,6 +11,8 @@ use std::path::Path;
 
 use effigy_manifest::{LoadedCatalog, TaskSelection};
 use effigy_tasks::TaskSelector;
+
+pub(in crate::runner) use error::RoutingError;
 
 pub(super) use discovery::{
     default_alias, discover_catalogs, discover_catalogs_allow_missing, discover_manifest_paths,

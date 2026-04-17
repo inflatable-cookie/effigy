@@ -21,7 +21,7 @@ pub(super) fn resolve_task_selection<'a>(
         &preflight.invocation_cwd,
     ) {
         Ok(selection) => Ok(result::selected(selection)),
-        Err(error) => resolve_selection_error(task, preflight, error),
+        Err(error) => resolve_selection_error(task, preflight, error.into()),
     }
 }
 

@@ -2,17 +2,16 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, FileType};
 use std::path::{Path, PathBuf};
 
-use super::super::manifest::load_task_manifest;
-use super::super::model::constants::TASK_MANIFEST_FILE;
-use super::super::{RunnerError, TaskManifest};
-use effigy_manifest::LoadedCatalog;
+use super::error::RoutingError;
+use super::manifest_load::{load_task_manifest, TASK_MANIFEST_FILE};
+use effigy_manifest::{LoadedCatalog, TaskManifest};
 
 pub(in crate::runner) fn discover_catalogs(
     workspace_root: &Path,
-) -> Result<Vec<LoadedCatalog>, RunnerError> {
+) -> Result<Vec<LoadedCatalog>, RoutingError> {
     let manifest_paths = discover_manifest_paths(workspace_root)?;
     if manifest_paths.is_empty() {
-        return Err(RunnerError::TaskCatalogsMissing {
+        return Err(RoutingError::TaskCatalogsMissing {
             root: workspace_root.to_path_buf(),
         });
     }
@@ -34,7 +33,7 @@ pub(in crate::runner) fn discover_catalogs(
             .unwrap_or_else(|| default_alias(&catalog_root, workspace_root));
 
         if let Some(first_path) = alias_map.insert(alias.clone(), manifest_path.clone()) {
-            return Err(RunnerError::TaskCatalogAliasConflict {
+            return Err(RoutingError::TaskCatalogAliasConflict {
                 alias,
                 first_path,
                 second_path: manifest_path,
@@ -61,17 +60,17 @@ pub(in crate::runner) fn discover_catalogs(
 
 pub(in crate::runner) fn discover_catalogs_allow_missing(
     workspace_root: &Path,
-) -> Result<Vec<LoadedCatalog>, RunnerError> {
+) -> Result<Vec<LoadedCatalog>, RoutingError> {
     match discover_catalogs(workspace_root) {
         Ok(catalogs) => Ok(catalogs),
-        Err(RunnerError::TaskCatalogsMissing { .. }) => Ok(Vec::new()),
+        Err(RoutingError::TaskCatalogsMissing { .. }) => Ok(Vec::new()),
         Err(error) => Err(error),
     }
 }
 
 pub(in crate::runner) fn discover_manifest_paths(
     workspace_root: &Path,
-) -> Result<Vec<PathBuf>, RunnerError> {
+) -> Result<Vec<PathBuf>, RoutingError> {
     let mut pending: Vec<PathBuf> = vec![workspace_root.to_path_buf()];
     let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
     let mut manifests_by_catalog: HashMap<PathBuf, PathBuf> = HashMap::new();
@@ -131,7 +130,7 @@ pub(in crate::runner) fn default_alias(catalog_root: &Path, workspace_root: &Pat
         .unwrap_or_else(|| "catalog".to_owned())
 }
 
-fn load_catalog_manifest(manifest_path: &Path) -> Result<TaskManifest, RunnerError> {
+fn load_catalog_manifest(manifest_path: &Path) -> Result<TaskManifest, RoutingError> {
     load_task_manifest(manifest_path)
 }
 
@@ -142,8 +141,8 @@ fn catalog_depth(workspace_root: &Path, catalog_root: &Path) -> usize {
         .unwrap_or(usize::MAX)
 }
 
-fn task_catalog_read_dir_error(path: &Path, error: std::io::Error) -> RunnerError {
-    RunnerError::TaskCatalogReadDir {
+fn task_catalog_read_dir_error(path: &Path, error: std::io::Error) -> RoutingError {
+    RoutingError::TaskCatalogReadDir {
         path: path.to_path_buf(),
         error,
     }

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use super::super::super::scripts::command_names;
-use crate::runner::catalog::discover_catalogs;
+use crate::runner::catalog::{discover_catalogs, RoutingError};
 use crate::runner::error::RunnerError;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -30,8 +30,8 @@ pub(super) fn discover_completion_candidates(
                 }
             }
         }
-        Err(RunnerError::TaskCatalogsMissing { .. }) => {}
-        Err(error) => return Err(error),
+        Err(RoutingError::TaskCatalogsMissing { .. }) => {}
+        Err(error) => return Err(error.into()),
     }
     manifest_stamps.sort_by(|a, b| a.path.cmp(&b.path));
 
