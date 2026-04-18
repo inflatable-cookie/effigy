@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress (effigy-exec crate shipped, awaiting runner integration)
+Status: Complete (transparent container execution is now product-real and consumer-proven)
 Owner: Platform
 Created: 2026-04-16
 Depends on: 006, 011
@@ -53,14 +53,14 @@ tools are in the container, almost every command needs this wrapper.
 
 ## 2) Goals
 
-- [ ] Define `context = "dev"` manifest field for marking the execution context.
-- [ ] Define routing rules: which commands route through the container, which
+- [x] Define `context = "dev"` manifest field for marking the execution context.
+- [x] Define routing rules: which commands route through the container, which
       stay on the host.
-- [ ] Implement CWD mapping (host path -> container working directory).
-- [ ] Implement `effigy exec <command>` for explicit container execution.
-- [ ] Implement exec alias declarations in the manifest.
-- [ ] Define effigy-in-container handoff protocol.
-- [ ] Define behavior when the context container is not running (prompt vs
+- [x] Implement CWD mapping (host path -> container working directory).
+- [x] Implement `effigy exec <command>` for explicit container execution.
+- [x] Implement exec alias declarations in the manifest.
+- [x] Define effigy-in-container handoff protocol.
+- [x] Define behavior when the context container is not running (prompt vs
       auto-start vs error).
 
 ## 3) Non-Goals
@@ -89,7 +89,7 @@ Commands that always run on the host:
 - `effigy doctor`
 - `effigy container *`
 - `effigy gateway *`
-- `effigy catalog *`
+- `effigy service *` (with `catalog` / `catalogue` compatibility aliases)
 - `effigy release *`
 - `effigy tasks`
 - `effigy help`
@@ -165,7 +165,20 @@ These extensions happen after `g02.010` modularization completes. Library logic
 - Unit tests for routing rule resolution.
 - Integration tests with a running container verifying exec passthrough.
 
+## Landed State
+
+- `effigy-exec` ships the routing, CWD mapping, alias, and handoff logic as a
+  clean library boundary.
+- Manifest `context = "dev"` and `[containers.<name>.exec]` are wired through
+  CLI, schema, and runner integration.
+- Standard task execution routes through the dev container when appropriate and
+  preserves working-directory semantics across host and container.
+- `effigy exec` is a first-class product command.
+- Bare alias commands resolve through the same container exec surface.
+- `underlay-reference` proves explicit exec, alias fallback, and routed-task
+  execution on a real consumer repo.
+
 ## Next Task
 
-Depends on `g02.011` completion. Begin with a decision batch on routing rules
-and container-not-running behavior.
+`g02.012` is complete. Return to planning and choose the next bounded
+integration batch from the remaining active roadmap lanes.

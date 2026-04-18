@@ -186,9 +186,10 @@ User customization layers on top:
 2. **User-global:** `~/.effigy/catalog/`
 3. **Bundled:** embedded in the binary (lowest priority)
 
-`effigy catalog list` shows available services. `effigy catalog extract
+`effigy service list` shows available services. `effigy service extract
 <service>` extracts a bundled fragment to the override directory for
-customization.
+customization. `catalog` and `catalogue` remain compatibility aliases for the
+same surface.
 
 ### Eject
 
@@ -809,7 +810,7 @@ When `g02.010` finishes, these crates wire into the runner:
    call `deregister_route`.
 4. **Exec routing**: before task execution, call
    `effigy-exec::routing::route()` to determine host vs container target.
-5. **CLI commands**: add `effigy exec`, `effigy gateway`, `effigy catalog`
+5. **CLI commands**: add `effigy exec`, `effigy gateway`, `effigy service`
    subcommands.
 6. **Port allocation**: when `host.ports` are omitted, allocate from
    `effigy-gateway::ports::PortRegistry`.

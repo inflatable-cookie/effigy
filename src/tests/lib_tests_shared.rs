@@ -6,7 +6,8 @@ pub(super) use effigy_cli::{
     ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs,
     DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSubcommand,
     DistributionArgs, DistributionSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand,
-    DoctorArgs, HelpTopic, ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
+    DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic, ReleaseArgs,
+    ReleaseSubcommand, ServiceArgs, ServiceSubcommand, TaskInvocation, TasksArgs,
 };
 pub(super) use effigy_ui::PlainRenderer;
 pub(super) use std::path::PathBuf;

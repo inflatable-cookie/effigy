@@ -1,128 +1,14 @@
-//! CLI command handler for `effigy distribution` subcommands.
-
 use std::path::{Path, PathBuf};
 
 use effigy_distribution::{
-    allocate_distribution_temp_dir, check_glibc_floor_command, effective_brew_formula,
-    effective_repo_url, first_publish_command, generate_closeout_command, load_distribution_policy,
-    preflight_command, validate_artifacts_command, validate_metadata_command,
-    write_summary_command, EffectiveDistributionPolicy,
+    allocate_distribution_temp_dir, check_glibc_floor_command, first_publish_command,
+    generate_closeout_command, preflight_command, validate_artifacts_command,
+    validate_metadata_command, write_summary_command, EffectiveDistributionPolicy,
 };
 
-use crate::runner::command_context::{current_working_dir, resolve_repo_root};
-use effigy_cli::{DistributionArgs, DistributionSubcommand};
+use super::RunnerError;
 
-use super::error::RunnerError;
-
-pub(super) fn run_distribution(args: DistributionArgs) -> Result<String, RunnerError> {
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
-    let repo_root = resolved.resolved_root;
-    let distribution_policy = load_distribution_policy(&repo_root)?;
-
-    match args.subcommand {
-        DistributionSubcommand::ValidateMetadata { tag } => run_validate_metadata(
-            &repo_root,
-            &distribution_policy,
-            tag.as_deref(),
-            args.output_json,
-        ),
-        DistributionSubcommand::CheckGlibcFloor {
-            binary_path,
-            max_glibc,
-        } => run_check_glibc_floor(
-            &resolve_repo_input(&repo_root, binary_path),
-            &max_glibc,
-            args.output_json,
-        ),
-        DistributionSubcommand::Preflight {
-            tag,
-            skip_docs,
-            skip_smoke,
-            output_path,
-        } => run_preflight(
-            &repo_root,
-            &distribution_policy,
-            tag.as_deref(),
-            skip_docs,
-            skip_smoke,
-            output_path
-                .as_ref()
-                .map(|path| resolve_repo_input(&repo_root, path.clone())),
-            args.output_json,
-        ),
-        DistributionSubcommand::FirstPublish {
-            tag,
-            crate_version,
-            repo_url,
-            brew_formula,
-            skip_homebrew,
-            artifacts_dir,
-        } => run_first_publish(
-            &repo_root,
-            &distribution_policy,
-            &tag,
-            crate_version.as_deref(),
-            &repo_url,
-            &brew_formula,
-            skip_homebrew,
-            artifacts_dir
-                .as_ref()
-                .map(|path| resolve_repo_input(&repo_root, path.clone())),
-            args.output_json,
-        ),
-        DistributionSubcommand::ValidateArtifacts {
-            artifacts_dir,
-            expect_homebrew,
-        } => run_validate_artifacts(
-            &repo_root,
-            &distribution_policy,
-            &resolve_repo_input(&repo_root, artifacts_dir),
-            expect_homebrew,
-            args.output_json,
-        ),
-        DistributionSubcommand::GenerateCloseout {
-            tag,
-            artifacts_dir,
-            output_path,
-            owner,
-            expect_homebrew,
-        } => run_generate_closeout(
-            &repo_root,
-            &distribution_policy,
-            &tag,
-            &resolve_repo_input(&repo_root, artifacts_dir),
-            output_path
-                .as_ref()
-                .map(|path| resolve_repo_input(&repo_root, path.clone())),
-            &owner,
-            expect_homebrew,
-            args.output_json,
-        ),
-        DistributionSubcommand::WriteSummary {
-            tag,
-            artifacts_dir,
-            crate_version,
-            repo_url,
-            brew_formula,
-            homebrew_executed,
-            log_files,
-        } => run_write_summary(
-            &repo_root,
-            &distribution_policy,
-            &tag,
-            &resolve_repo_input(&repo_root, artifacts_dir),
-            crate_version.as_deref(),
-            &effective_repo_url(&distribution_policy, &repo_url),
-            &effective_brew_formula(&distribution_policy, &brew_formula),
-            homebrew_executed,
-            &log_files,
-            args.output_json,
-        ),
-    }
-}
-
-fn run_preflight(
+pub(super) fn run_preflight(
     repo_root: &Path,
     distribution_policy: &EffectiveDistributionPolicy,
     tag: Option<&str>,
@@ -145,7 +31,7 @@ fn run_preflight(
     .map_err(Into::into)
 }
 
-fn run_check_glibc_floor(
+pub(super) fn run_check_glibc_floor(
     binary_path: &Path,
     max_glibc: &str,
     output_json: bool,
@@ -153,7 +39,7 @@ fn run_check_glibc_floor(
     check_glibc_floor_command(binary_path, max_glibc, output_json).map_err(Into::into)
 }
 
-fn run_first_publish(
+pub(super) fn run_first_publish(
     repo_root: &Path,
     distribution_policy: &EffectiveDistributionPolicy,
     tag: &str,
@@ -173,8 +59,6 @@ fn run_first_publish(
     }
 
     let crate_version = crate_version.unwrap_or_else(|| tag.trim_start_matches('v'));
-    let repo_url = effective_repo_url(distribution_policy, repo_url);
-    let brew_formula = effective_brew_formula(distribution_policy, brew_formula);
     let (artifacts_dir, cleanup_artifacts_dir) = if let Some(path) = artifacts_dir {
         std::fs::create_dir_all(&path)
             .map_err(|err| RunnerError::task_invocation_failed_write(&path, err))?;
@@ -195,8 +79,8 @@ fn run_first_publish(
         distribution_policy,
         tag,
         crate_version,
-        &repo_url,
-        &brew_formula,
+        repo_url,
+        brew_formula,
         skip_homebrew,
         &artifacts_dir,
         &work_dir,
@@ -212,7 +96,7 @@ fn run_first_publish(
     result
 }
 
-fn run_validate_metadata(
+pub(super) fn run_validate_metadata(
     repo_root: &Path,
     distribution_policy: &EffectiveDistributionPolicy,
     tag: Option<&str>,
@@ -221,7 +105,7 @@ fn run_validate_metadata(
     validate_metadata_command(repo_root, distribution_policy, tag, output_json).map_err(Into::into)
 }
 
-fn run_validate_artifacts(
+pub(super) fn run_validate_artifacts(
     repo_root: &Path,
     distribution_policy: &EffectiveDistributionPolicy,
     artifacts_dir: &Path,
@@ -238,7 +122,7 @@ fn run_validate_artifacts(
     .map_err(Into::into)
 }
 
-fn run_generate_closeout(
+pub(super) fn run_generate_closeout(
     repo_root: &Path,
     distribution_policy: &EffectiveDistributionPolicy,
     tag: &str,
@@ -275,7 +159,7 @@ fn run_generate_closeout(
     }
 }
 
-fn run_write_summary(
+pub(super) fn run_write_summary(
     repo_root: &Path,
     distribution_policy: &EffectiveDistributionPolicy,
     tag: &str,
@@ -301,14 +185,3 @@ fn run_write_summary(
     )
     .map_err(Into::into)
 }
-
-fn resolve_repo_input(repo_root: &Path, path: PathBuf) -> PathBuf {
-    if path.is_absolute() {
-        path
-    } else {
-        repo_root.join(path)
-    }
-}
-
-#[cfg(test)]
-mod tests;

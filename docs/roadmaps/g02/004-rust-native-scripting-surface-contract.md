@@ -1,6 +1,6 @@
 # g02.004 Rust-Native Scripting Surface Contract
 
-Status: paused
+Status: Complete
 Updated: 2026-04-14
 
 ## Goal
@@ -170,6 +170,8 @@ This milestone is ready to execute only when Effigy has:
 
 ## Next Task
 
-Resume this milestone only when a safe external Rhai pilot is back in scope or
-another internal scripting capability gap appears that is not better handled
-inside the optional distribution lane.
+This roadmap is complete on the current product boundary.
+
+If a later external Rhai pilot or new internal scripting gap reopens the
+question, do it as fresh planning rather than keeping `g02.004` artificially
+live.

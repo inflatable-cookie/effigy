@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Paused
+Status: Complete
 Owner: Platform
 Created: 2026-04-15
 Depends on: 002, 004, 005, 006, 007, 025, 027
@@ -1323,13 +1323,17 @@ That post-`212` boundary decision is now made too:
 
 ## Next Task
 
-Keep `g02.010` active. The next move is to turn the audited `/src`
-cleanup queue into bounded execution cards, in this order:
+This roadmap is complete on the current architecture boundary.
+
+The audited `/src` cleanup queue was executed in full:
 
 1. `src/runner/demo_command.rs`
 2. `src/runner/release_command.rs`
 3. `src/runner/container_command.rs`
 4. `src/tests/runner_tests/prelude.rs` and `prelude/managed.rs`
 
-Only after that queue is clearer should the lane reopen the broader
-"built-in tasks vs task-routing core vs pause" decision.
+Any later shell-cleanup or crate-extraction follow-up should reopen from
+fresh planning instead of keeping `g02.010` artificially live.
+
+Successor work now shifts back to the remaining `g02` product lanes,
+especially `g02.011`–`g02.016`.

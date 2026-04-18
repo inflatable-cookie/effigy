@@ -290,19 +290,28 @@ pub struct ManifestContainersConfig {
     pub environments: BTreeMap<String, ManifestContainerConfig>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct ManifestContainerConfig {
     #[serde(default)]
     pub driver: Option<ManifestContainerDriver>,
     #[serde(default)]
     pub startup: Option<ManifestContainerStartup>,
     #[serde(default)]
+    pub context: Option<String>,
+    #[serde(default)]
     pub profile: Option<String>,
-    pub compose_file: String,
+    #[serde(default)]
+    pub compose_file: Option<String>,
     #[serde(default)]
     pub project_name: Option<String>,
     #[serde(default)]
     pub primary_service: Option<String>,
+    #[serde(default)]
+    pub services: BTreeMap<String, ManifestContainerServiceConfig>,
+    #[serde(default)]
+    pub exec: Option<ManifestContainerExecConfig>,
+    #[serde(default)]
+    pub dns: Option<ManifestContainerDnsConfig>,
     #[serde(default)]
     pub lifecycle: Option<ManifestContainerLifecycleConfig>,
     #[serde(default)]
@@ -311,6 +320,43 @@ pub struct ManifestContainerConfig {
     pub host: Option<ManifestContainerHostConfig>,
     #[serde(default)]
     pub ui: Option<ManifestContainerUiConfig>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestContainerDnsConfig {
+    pub domain: String,
+    #[serde(default)]
+    pub tls: Option<bool>,
+    #[serde(default)]
+    pub port: Option<u16>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ManifestContainerServiceConfig {
+    pub catalog: String,
+    #[serde(default)]
+    pub variant: Option<String>,
+    #[serde(default)]
+    pub config: Option<String>,
+    #[serde(flatten)]
+    pub params: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestContainerExecConfig {
+    #[serde(default)]
+    pub working_dir: Option<String>,
+    #[serde(default)]
+    pub aliases: BTreeMap<String, ManifestContainerExecAliasConfig>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestContainerExecAliasConfig {
+    pub service: String,
+    pub command: String,
 }
 
 #[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]
@@ -340,7 +386,7 @@ pub enum ManifestContainerShutdownMode {
     Immediate,
 }
 
-#[derive(Debug, serde::Deserialize, Default)]
+#[derive(Debug, Clone, serde::Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestContainerLifecycleConfig {
     #[serde(default)]
@@ -369,7 +415,7 @@ pub struct ManifestContainerHostConfig {
     pub mounts: Vec<String>,
 }
 
-#[derive(Debug, serde::Deserialize, Default)]
+#[derive(Debug, Clone, serde::Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestContainerUiConfig {
     #[serde(default)]
@@ -733,7 +779,15 @@ pub struct ManifestReleaseGateDetails {
 
 #[cfg(test)]
 mod tests {
-    use super::ManifestJsPackageManager;
+    use super::{
+        ManifestContainerDnsConfig, ManifestContainerServiceConfig, ManifestContainersConfig,
+        ManifestJsPackageManager,
+    };
+
+    #[derive(Debug, serde::Deserialize)]
+    struct ContainerWrapper {
+        containers: ManifestContainersConfig,
+    }
 
     #[test]
     fn js_package_manager_binary_names_are_stable() {
@@ -761,5 +815,198 @@ mod tests {
             ManifestJsPackageManager::Direct.vitest_command(),
             ("vitest run", "direct")
         );
+    }
+
+    #[test]
+    fn containers_config_accepts_catalog_backed_services() {
+        let parsed: ContainerWrapper = toml::from_str(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+context = "dev"
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+extensions = ["pdo_mysql", "redis"]
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "laravel"
+
+[containers.web.services.db]
+catalog = "mariadb"
+version = "10.11"
+"#,
+        )
+        .expect("parse containers");
+
+        let web = parsed
+            .containers
+            .environments
+            .get("web")
+            .expect("web container");
+        assert_eq!(web.context.as_deref(), Some("dev"));
+        assert!(web.compose_file.is_none());
+        assert_eq!(web.primary_service.as_deref(), Some("app"));
+
+        let app = web.services.get("app").expect("app service");
+        assert_eq!(app.catalog, "php-fpm");
+        assert_eq!(
+            app.params.get("version"),
+            Some(&toml::Value::String("8.3".to_string()))
+        );
+        assert_eq!(
+            app.params.get("extensions"),
+            Some(&toml::Value::Array(vec![
+                toml::Value::String("pdo_mysql".to_string()),
+                toml::Value::String("redis".to_string()),
+            ]))
+        );
+
+        let web_service = web.services.get("web").expect("web service");
+        assert_eq!(web_service.catalog, "nginx");
+        assert_eq!(web_service.variant.as_deref(), Some("laravel"));
+    }
+
+    #[test]
+    fn container_service_config_preserves_flattened_params() {
+        let parsed: ManifestContainerServiceConfig = toml::from_str(
+            r#"
+catalog = "redis"
+memory = 128
+enabled = true
+"#,
+        )
+        .expect("parse service");
+
+        assert_eq!(parsed.catalog, "redis");
+        assert_eq!(parsed.variant, None);
+        assert_eq!(
+            parsed.params.get("memory"),
+            Some(&toml::Value::Integer(128))
+        );
+        assert_eq!(
+            parsed.params.get("enabled"),
+            Some(&toml::Value::Boolean(true))
+        );
+    }
+
+    #[test]
+    fn container_config_accepts_context_with_direct_compose_file() {
+        let parsed: ContainerWrapper = toml::from_str(
+            r#"
+[containers]
+default = "dev"
+
+[containers.dev]
+context = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+        )
+        .expect("parse containers");
+
+        let dev = parsed
+            .containers
+            .environments
+            .get("dev")
+            .expect("dev container");
+        assert_eq!(dev.context.as_deref(), Some("dev"));
+        assert_eq!(
+            dev.compose_file.as_deref(),
+            Some("infra/dev/docker-compose.yml")
+        );
+    }
+
+    #[test]
+    fn container_config_accepts_exec_working_dir_and_aliases() {
+        let parsed: ContainerWrapper = toml::from_str(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+context = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.web.exec]
+working_dir = "/var/www/html"
+
+[containers.web.exec.aliases.mysql]
+service = "db"
+command = "mysql"
+
+[containers.web.exec.aliases.artisan]
+service = "app"
+command = "php artisan"
+"#,
+        )
+        .expect("parse containers");
+
+        let exec = parsed
+            .containers
+            .environments
+            .get("web")
+            .expect("web container")
+            .exec
+            .as_ref()
+            .expect("exec config");
+        assert_eq!(exec.working_dir.as_deref(), Some("/var/www/html"));
+        let mysql = exec.aliases.get("mysql").expect("mysql alias");
+        assert_eq!(mysql.service, "db");
+        assert_eq!(mysql.command, "mysql");
+        let artisan = exec.aliases.get("artisan").expect("artisan alias");
+        assert_eq!(artisan.command, "php artisan");
+    }
+
+    #[test]
+    fn container_config_accepts_dns_domain_and_tls() {
+        let parsed: ContainerWrapper = toml::from_str(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.web.dns]
+domain = "clientname.test"
+tls = true
+port = 4173
+"#,
+        )
+        .expect("parse containers");
+
+        let dns = parsed
+            .containers
+            .environments
+            .get("web")
+            .expect("web container")
+            .dns
+            .as_ref()
+            .expect("dns config");
+        assert_eq!(dns.domain, "clientname.test");
+        assert_eq!(dns.tls, Some(true));
+        assert_eq!(dns.port, Some(4173));
+    }
+
+    #[test]
+    fn container_dns_config_defaults_tls_to_none() {
+        let parsed: ManifestContainerDnsConfig = toml::from_str(
+            r#"
+domain = "clientname.test"
+"#,
+        )
+        .expect("parse dns");
+
+        assert_eq!(parsed.domain, "clientname.test");
+        assert_eq!(parsed.tls, None);
+        assert_eq!(parsed.port, None);
     }
 }

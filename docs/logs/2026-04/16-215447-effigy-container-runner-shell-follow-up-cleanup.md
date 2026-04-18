@@ -23,7 +23,7 @@ Moved into `effigy-containers`:
 - Effigy invocation prefix shaping for session plans
 
 Rewired in:
-- [src/runner/container_command.rs](../../../src/runner/container_command.rs)
+- [src/runner/container_command/mod.rs](../../../src/runner/container_command/mod.rs)
 
 ## Result
 

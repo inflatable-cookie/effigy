@@ -113,6 +113,38 @@ fn parse_distribution_help_is_scoped() {
 }
 
 #[test]
+fn parse_exec_help_is_scoped() {
+    let cmd =
+        parse_command(vec!["exec".to_owned(), "--help".to_owned()]).expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Exec));
+}
+
+#[test]
+fn parse_gateway_help_is_scoped() {
+    let cmd = parse_command(vec!["gateway".to_owned(), "--help".to_owned()])
+        .expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Gateway));
+}
+
+#[test]
+fn parse_service_help_alias_is_scoped() {
+    let cmd = parse_command(vec!["service".to_owned(), "--help".to_owned()])
+        .expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Service));
+}
+
+#[test]
+fn parse_catalog_and_catalogue_help_aliases_are_scoped() {
+    let catalog = parse_command(vec!["catalog".to_owned(), "--help".to_owned()])
+        .expect("catalog help should parse");
+    let catalogue = parse_command(vec!["catalogue".to_owned(), "--help".to_owned()])
+        .expect("catalogue help should parse");
+
+    assert_eq!(catalog, Command::Help(HelpTopic::Service));
+    assert_eq!(catalogue, Command::Help(HelpTopic::Service));
+}
+
+#[test]
 fn parse_container_help_is_scoped() {
     let cmd = parse_command(vec!["container".to_owned(), "--help".to_owned()])
         .expect("parse should succeed");

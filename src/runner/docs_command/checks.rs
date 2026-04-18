@@ -1,7 +1,6 @@
-//! CLI command handler for `effigy docs` subcommands.
-
 use std::path::{Path, PathBuf};
 
+use effigy_cli::DocsBlockRequirement;
 use effigy_docs_policy::{
     add_log_index_report, check_contains, check_forbidden, check_headings, check_paths,
     check_workflow_paths,
@@ -13,105 +12,18 @@ use effigy_docs_policy::{
     contains_check_report, forbidden_check_report, heading_check_report, index_check_report,
     insert_log_index_entry, json_examples_check_report, link_check_report,
     next_action_check_report, normalize_log_index_relative_path, path_check_report,
-    resolve_docs_index_spec, resolve_docs_next_action_spec, resolve_repo_input,
-    scan_markdown_links, workflow_path_check_report, AddLogIndexReportInputs, DocsCheckReport,
-    DocsPolicyError, JsonExamplesReportInputs,
+    resolve_docs_index_spec, resolve_docs_next_action_spec, scan_markdown_links,
+    workflow_path_check_report, AddLogIndexReportInputs, JsonExamplesReportInputs,
 };
 
-use crate::runner::command_context::{current_working_dir, resolve_repo_root};
-use crate::runner::manifest::{load_task_manifest, ManifestDocsPolicyConfig};
-use effigy_cli::{DocsArgs, DocsBlockRequirement, DocsSubcommand};
+use super::report::dispatch_docs_report;
+use super::{
+    load_docs_policy_config, map_docs_policy_error, resolve_repo_input, RunnerError,
+    DEFAULT_JSON_EXAMPLES_FILE, DEFAULT_JSON_EXAMPLES_SECTION, DEFAULT_LOGS_DIR,
+    DEFAULT_WORKFLOW_DOCS_DIR,
+};
 
-use super::error::RunnerError;
-
-const DEFAULT_JSON_EXAMPLES_FILE: &str = "docs/guides/026-json-payload-examples.md";
-const DEFAULT_JSON_EXAMPLES_SECTION: &str = "Completion Candidates";
-const DEFAULT_LOGS_DIR: &str = "docs/logs";
-const DEFAULT_WORKFLOW_DOCS_DIR: &str = "docs";
-
-pub(super) fn run_docs(args: DocsArgs) -> Result<String, RunnerError> {
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
-    let repo_root = resolved.resolved_root;
-
-    match args.subcommand {
-        DocsSubcommand::CheckLinks { paths } => {
-            run_check_links(&repo_root, &paths, args.output_json)
-        }
-        DocsSubcommand::CheckJsonExamples {
-            file,
-            section,
-            min_blocks,
-            required,
-            required_blocks,
-        } => run_check_json_examples(
-            &repo_root,
-            file.as_ref(),
-            section.as_deref(),
-            min_blocks,
-            &required,
-            &required_blocks,
-            args.output_json,
-        ),
-        DocsSubcommand::CheckHeadings {
-            paths,
-            required_headings,
-        } => run_check_headings(&repo_root, &paths, &required_headings, args.output_json),
-        DocsSubcommand::CheckPaths { paths } => {
-            run_check_paths(&repo_root, &paths, args.output_json)
-        }
-        DocsSubcommand::CheckContains {
-            paths,
-            required_text,
-        } => run_check_contains(&repo_root, &paths, &required_text, args.output_json),
-        DocsSubcommand::CheckForbidden {
-            paths,
-            forbidden_text,
-        } => run_check_forbidden(&repo_root, &paths, &forbidden_text, args.output_json),
-        DocsSubcommand::CheckIndex {
-            policy_index,
-            dir,
-            index,
-        } => run_check_index(
-            &repo_root,
-            policy_index.as_deref(),
-            dir.as_ref(),
-            index.as_ref(),
-            args.output_json,
-        ),
-        DocsSubcommand::CheckNextAction { policy_name } => {
-            run_check_next_action(&repo_root, policy_name.as_deref(), args.output_json)
-        }
-        DocsSubcommand::CheckWorkflowPaths { dir } => {
-            run_check_workflow_paths(&repo_root, dir.as_ref(), args.output_json)
-        }
-        DocsSubcommand::AddLogIndex { log_path } => {
-            run_add_log_index(&repo_root, &log_path, args.output_json)
-        }
-    }
-}
-
-/// Surface a docs-policy check report in the form the user requested.
-///
-/// `ok` reports produce a success string or json payload; failing reports
-/// produce a `RunnerError::task_invocation` whose body carries the report
-/// failure text (or the json payload, in json mode).
-fn dispatch_docs_report(report: DocsCheckReport, output_json: bool) -> Result<String, RunnerError> {
-    if output_json {
-        let rendered = report.json.to_string();
-        if report.ok {
-            Ok(rendered)
-        } else {
-            Err(RunnerError::task_invocation(rendered))
-        }
-    } else if report.ok {
-        Ok(report.success_text)
-    } else {
-        Err(RunnerError::task_invocation(report.failure_text))
-    }
-}
-
-fn run_check_links(
+pub(super) fn run_check_links(
     repo_root: &Path,
     paths: &[PathBuf],
     output_json: bool,
@@ -124,7 +36,7 @@ fn run_check_links(
     dispatch_docs_report(link_check_report(&files, &failures), output_json)
 }
 
-fn run_check_json_examples(
+pub(super) fn run_check_json_examples(
     repo_root: &Path,
     file_override: Option<&PathBuf>,
     section_override: Option<&str>,
@@ -182,7 +94,7 @@ fn run_check_json_examples(
     )
 }
 
-fn run_check_headings(
+pub(super) fn run_check_headings(
     repo_root: &Path,
     paths: &[PathBuf],
     required_headings: &[String],
@@ -208,7 +120,7 @@ fn run_check_headings(
     )
 }
 
-fn run_check_contains(
+pub(super) fn run_check_contains(
     repo_root: &Path,
     paths: &[PathBuf],
     required_text: &[String],
@@ -234,7 +146,7 @@ fn run_check_contains(
     )
 }
 
-fn run_check_paths(
+pub(super) fn run_check_paths(
     repo_root: &Path,
     paths: &[PathBuf],
     output_json: bool,
@@ -249,7 +161,7 @@ fn run_check_paths(
     dispatch_docs_report(path_check_report(&resolved_paths, &findings), output_json)
 }
 
-fn run_check_forbidden(
+pub(super) fn run_check_forbidden(
     repo_root: &Path,
     paths: &[PathBuf],
     forbidden_text: &[String],
@@ -275,7 +187,7 @@ fn run_check_forbidden(
     )
 }
 
-fn run_check_index(
+pub(super) fn run_check_index(
     repo_root: &Path,
     policy_index: Option<&str>,
     dir_override: Option<&PathBuf>,
@@ -314,17 +226,7 @@ fn run_check_index(
     dispatch_docs_report(index_check_report(&spec, &missing, &extra), output_json)
 }
 
-fn load_docs_policy_config(repo_root: &Path) -> Result<ManifestDocsPolicyConfig, RunnerError> {
-    let manifest_path = repo_root.join("effigy.toml");
-    if !manifest_path.is_file() {
-        return Ok(ManifestDocsPolicyConfig::default());
-    }
-    Ok(load_task_manifest(&manifest_path)?
-        .docs_policy
-        .unwrap_or_default())
-}
-
-fn run_check_next_action(
+pub(super) fn run_check_next_action(
     repo_root: &Path,
     policy_name: Option<&str>,
     output_json: bool,
@@ -338,7 +240,7 @@ fn run_check_next_action(
     dispatch_docs_report(next_action_check_report(&spec, &findings), output_json)
 }
 
-fn run_add_log_index(
+pub(super) fn run_add_log_index(
     repo_root: &Path,
     log_path: &Path,
     output_json: bool,
@@ -382,7 +284,7 @@ fn run_add_log_index(
     )
 }
 
-fn run_check_workflow_paths(
+pub(super) fn run_check_workflow_paths(
     repo_root: &Path,
     dir_override: Option<&PathBuf>,
     output_json: bool,
@@ -406,16 +308,3 @@ fn run_check_workflow_paths(
 
     dispatch_docs_report(workflow_path_check_report(&dir, &findings), output_json)
 }
-
-fn map_docs_policy_error(error: DocsPolicyError) -> RunnerError {
-    match error {
-        DocsPolicyError::Io { path, error } => {
-            RunnerError::task_invocation_failed_read(&path, error)
-        }
-        DocsPolicyError::Message(message) => RunnerError::task_invocation(message),
-    }
-}
-
-#[cfg(test)]
-#[path = "docs_command/tests.rs"]
-mod tests;

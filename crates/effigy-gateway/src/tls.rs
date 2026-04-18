@@ -46,32 +46,56 @@ impl TlsConfig {
 
     /// Check whether the mkcert CA is installed in the system trust store.
     pub fn ca_installed() -> bool {
-        // mkcert -check returns 0 if the CA is installed.
-        Command::new("mkcert")
+        if !mkcert_ca_exists() {
+            return false;
+        }
+
+        let check = Command::new("mkcert")
             .arg("-check")
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+            .stderr(std::process::Stdio::piped())
+            .output();
+        if let Ok(output) = check {
+            if output.status.success() {
+                return true;
+            }
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.contains("flag provided but not defined: -check") {
+                return false;
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            macos_mkcert_ca_installed()
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            mkcert_ca_exists()
+        }
     }
 
     /// Install the mkcert CA into the system trust store.
     ///
     /// This typically requires user interaction (sudo prompt).
     pub fn install_ca() -> Result<(), GatewayError> {
-        let status = Command::new("mkcert")
+        let output = Command::new("mkcert")
             .arg("-install")
-            .status()
+            .output()
             .map_err(|e| GatewayError::TlsError {
                 domain: "<CA>".to_string(),
                 reason: format!("failed to run mkcert -install: {e}"),
             })?;
 
-        if !status.success() {
+        if !output.status.success() {
             return Err(GatewayError::TlsError {
                 domain: "<CA>".to_string(),
-                reason: format!("mkcert -install failed with exit code {status}"),
+                reason: format!(
+                    "mkcert -install failed with exit code {}{}",
+                    output.status,
+                    format_command_output(&output.stdout, &output.stderr)
+                ),
             });
         }
 
@@ -87,8 +111,10 @@ impl TlsConfig {
             reason: format!("failed to create certs directory: {e}"),
         })?;
 
-        let cert_path = self.certs_dir.join(format!("{domain}.pem"));
-        let key_path = self.certs_dir.join(format!("{domain}-key.pem"));
+        let CertPaths {
+            cert: cert_path,
+            key: key_path,
+        } = self.cert_paths(domain);
 
         // Skip if certificate already exists.
         if cert_path.exists() && key_path.exists() {
@@ -98,22 +124,26 @@ impl TlsConfig {
             });
         }
 
-        let status = Command::new("mkcert")
+        let output = Command::new("mkcert")
             .arg("-cert-file")
             .arg(&cert_path)
             .arg("-key-file")
             .arg(&key_path)
             .arg(domain)
-            .status()
+            .output()
             .map_err(|e| GatewayError::TlsError {
                 domain: domain.to_string(),
                 reason: format!("failed to run mkcert: {e}"),
             })?;
 
-        if !status.success() {
+        if !output.status.success() {
             return Err(GatewayError::TlsError {
                 domain: domain.to_string(),
-                reason: format!("mkcert failed with exit code {status}"),
+                reason: format!(
+                    "mkcert failed with exit code {}{}",
+                    output.status,
+                    format_command_output(&output.stdout, &output.stderr)
+                ),
             });
         }
 
@@ -125,8 +155,10 @@ impl TlsConfig {
 
     /// Load a certificate and key from disk for use with rustls.
     pub fn load_cert(&self, domain: &str) -> Result<CertPaths, GatewayError> {
-        let cert_path = self.certs_dir.join(format!("{domain}.pem"));
-        let key_path = self.certs_dir.join(format!("{domain}-key.pem"));
+        let CertPaths {
+            cert: cert_path,
+            key: key_path,
+        } = self.cert_paths(domain);
 
         if !cert_path.exists() {
             return Err(GatewayError::TlsCertNotFound { path: cert_path });
@@ -139,6 +171,22 @@ impl TlsConfig {
             cert: cert_path,
             key: key_path,
         })
+    }
+
+    /// Return the expected certificate and key paths for a domain.
+    pub fn cert_paths(&self, domain: &str) -> CertPaths {
+        CertPaths {
+            cert: self.certs_dir.join(format!("{domain}.pem")),
+            key: self.certs_dir.join(format!("{domain}-key.pem")),
+        }
+    }
+
+    /// Remove a certificate and key for a domain if they exist.
+    pub fn remove_cert(&self, domain: &str) -> Result<(), GatewayError> {
+        let paths = self.cert_paths(domain);
+        remove_file_if_exists(&paths.cert)?;
+        remove_file_if_exists(&paths.key)?;
+        Ok(())
     }
 }
 
@@ -290,6 +338,12 @@ impl SniCertResolver {
         certs.remove(domain);
     }
 
+    /// Remove all registered certificates.
+    pub fn clear(&self) {
+        let mut certs = self.certs.write().expect("cert resolver lock poisoned");
+        certs.clear();
+    }
+
     /// Load and add a certificate from PEM files.
     pub fn load_and_add(
         &self,
@@ -321,9 +375,141 @@ impl SniCertResolver {
     /// Build a `rustls::ServerConfig` using this resolver.
     pub fn into_server_config(self) -> rustls::ServerConfig {
         let resolver = Arc::new(self);
-        rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_cert_resolver(resolver)
+        server_config_from_resolver(resolver)
+    }
+}
+
+/// Build a `rustls::ServerConfig` using a shared resolver.
+pub fn server_config_from_resolver(resolver: Arc<SniCertResolver>) -> rustls::ServerConfig {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_cert_resolver(resolver)
+}
+
+/// Reload a resolver from the certificate directory.
+pub fn sync_sni_resolver_from_dir(
+    resolver: &SniCertResolver,
+    certs_dir: &Path,
+) -> Result<usize, GatewayError> {
+    resolver.clear();
+
+    if !certs_dir.is_dir() {
+        return Ok(0);
+    }
+
+    let entries = std::fs::read_dir(certs_dir).map_err(|e| GatewayError::TlsError {
+        domain: certs_dir.display().to_string(),
+        reason: format!("failed to read certs directory: {e}"),
+    })?;
+    let mut loaded = 0;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let filename = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+
+        if filename.ends_with(".pem") && !filename.ends_with("-key.pem") {
+            let domain = filename.trim_end_matches(".pem");
+            let key_path = certs_dir.join(format!("{domain}-key.pem"));
+
+            if key_path.exists() {
+                match load_certified_key(&path, &key_path) {
+                    Ok(cert) => {
+                        resolver.add_cert(domain.to_string(), cert);
+                        loaded += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            domain = domain,
+                            error = %e,
+                            "skipping cert with load error"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(loaded)
+}
+
+fn remove_file_if_exists(path: &Path) -> Result<(), GatewayError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(GatewayError::Io(error)),
+    }
+}
+
+fn mkcert_ca_exists() -> bool {
+    let Some(caroot) = mkcert_ca_root() else {
+        return false;
+    };
+    caroot.join("rootCA.pem").is_file()
+}
+
+fn mkcert_ca_root() -> Option<PathBuf> {
+    let output = Command::new("mkcert").arg("-CAROOT").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if path.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(path))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_mkcert_ca_installed() -> bool {
+    [
+        "/Library/Keychains/System.keychain",
+        "~/Library/Keychains/login.keychain-db",
+    ]
+    .into_iter()
+    .any(|keychain| {
+        Command::new("sh")
+            .args([
+                "-lc",
+                &format!(
+                    "security find-certificate -a -c mkcert {} >/dev/null 2>&1",
+                    shell_quote(keychain)
+                ),
+            ])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_owned();
+    }
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn format_command_output(stdout: &[u8], stderr: &[u8]) -> String {
+    let stdout = String::from_utf8_lossy(stdout).trim().to_owned();
+    let stderr = String::from_utf8_lossy(stderr).trim().to_owned();
+    let detail = [stdout, stderr]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if detail.is_empty() {
+        String::new()
+    } else {
+        format!(": {detail}")
     }
 }
 
@@ -363,50 +549,7 @@ impl ResolvesServerCert for SniCertResolver {
 /// Each pair is loaded and registered under the domain name.
 pub fn build_sni_resolver_from_dir(certs_dir: &Path) -> Result<SniCertResolver, GatewayError> {
     let resolver = SniCertResolver::new();
-
-    if !certs_dir.is_dir() {
-        return Ok(resolver);
-    }
-
-    let entries = std::fs::read_dir(certs_dir).map_err(|e| GatewayError::TlsError {
-        domain: certs_dir.display().to_string(),
-        reason: format!("failed to read certs directory: {e}"),
-    })?;
-
-    // Collect cert files (exclude key files).
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-
-        let filename = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-
-        // Match <domain>.pem but not <domain>-key.pem.
-        if filename.ends_with(".pem") && !filename.ends_with("-key.pem") {
-            let domain = filename.trim_end_matches(".pem");
-            let key_path = certs_dir.join(format!("{domain}-key.pem"));
-
-            if key_path.exists() {
-                match load_certified_key(&path, &key_path) {
-                    Ok(cert) => {
-                        resolver.add_cert(domain.to_string(), cert);
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            domain = domain,
-                            error = %e,
-                            "skipping cert with load error"
-                        );
-                    }
-                }
-            }
-        }
-    }
-
+    let _ = sync_sni_resolver_from_dir(&resolver, certs_dir)?;
     Ok(resolver)
 }
 

@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Paused
+Status: Complete
 Owner: Platform
 Created: 2026-04-15
 Depends on: 002, 027
@@ -383,5 +383,13 @@ cross-project rollout milestones stay queued behind it.
 
 ## Next Task
 
-Keep `g02.006` paused on the current v1 container boundary and activate
-`g02.007` for distribution release closure work.
+This roadmap is complete on the current v1 container boundary.
+
+Successor work now belongs in:
+
+- `g02.011` service catalog and compose assembly integration
+- `g02.012` transparent execution integration
+- `g02.013` managed `effigy dev`
+- `g02.014` gateway integration
+- `g02.015` persistent data lifecycle
+- `g02.016` multi-project coordination

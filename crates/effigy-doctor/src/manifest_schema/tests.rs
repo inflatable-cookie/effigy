@@ -62,10 +62,23 @@ default = "web"
 [containers.web]
 driver = "colima"
 startup = "attached"
+context = "dev"
 profile = "default"
 compose_file = "infra/dev/docker-compose.yml"
 project_name = "effigy-web-dev"
 primary_service = "app"
+
+[containers.web.dns]
+domain = "effigy.test"
+tls = true
+port = 8080
+
+[containers.web.exec]
+working_dir = "/workspace"
+
+[containers.web.exec.aliases.mysql]
+service = "db"
+command = "mysql"
 
 [containers.web.lifecycle]
 on_task_exit = "stop"
@@ -142,6 +155,101 @@ fn validate_manifest_schema_accepts_current_repo_manifest() {
     assert!(
         sink.findings.is_empty(),
         "expected repo manifest to validate cleanly, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_accepts_catalog_backed_container_services() {
+    let manifest: Value = toml::from_str(
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+extensions = ["pdo_mysql", "redis"]
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "laravel"
+
+[containers.web.services.db]
+catalog = "mariadb"
+version = "10.11"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.is_empty(),
+        "expected no schema findings, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_accepts_container_dns_config() {
+    let manifest: Value = toml::from_str(
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.web.dns]
+domain = "clientname.test"
+tls = true
+port = 4173
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.is_empty(),
+        "expected no schema findings, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_rejects_non_integer_container_dns_port() {
+    let manifest: Value = toml::from_str(
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.web.dns]
+domain = "clientname.test"
+port = "web"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings
+            .iter()
+            .any(|finding| finding.evidence.contains("containers.web.dns.port")),
+        "expected dns port finding, got: {:?}",
         sink.findings
     );
 }

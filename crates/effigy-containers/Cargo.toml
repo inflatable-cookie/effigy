@@ -6,5 +6,6 @@ license = "MIT"
 description = "Container policy contracts for Effigy"
 
 [dependencies]
+effigy-catalog = { path = "../effigy-catalog" }
 effigy-manifest = { path = "../effigy-manifest" }
 serde_json = "1"

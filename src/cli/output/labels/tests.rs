@@ -2,13 +2,17 @@ use super::{command_kind_and_name, help_topic_label};
 use effigy_cli::{
     BootstrapArgs, Command, ContainerArgs, ContainerSubcommand, ContractsArgs, ContractsSubcommand,
     DemoArgs, DemoListQuery, DemoSubcommand, DistributionArgs, DistributionSubcommand, DoctorArgs,
-    HelpTopic, ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
+    ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic, ReleaseArgs, ReleaseSubcommand,
+    ServiceArgs, ServiceSubcommand, TaskInvocation, TasksArgs,
 };
 
 #[test]
 fn help_topic_label_maps_all_topics() {
     assert_eq!(help_topic_label(HelpTopic::General), "general");
     assert_eq!(help_topic_label(HelpTopic::Changelog), "changelog");
+    assert_eq!(help_topic_label(HelpTopic::Exec), "exec");
+    assert_eq!(help_topic_label(HelpTopic::Gateway), "gateway");
+    assert_eq!(help_topic_label(HelpTopic::Service), "service");
     assert_eq!(help_topic_label(HelpTopic::Demo), "demo");
     assert_eq!(help_topic_label(HelpTopic::Docs), "docs");
     assert_eq!(help_topic_label(HelpTopic::Contracts), "contracts");
@@ -28,6 +32,21 @@ fn help_topic_label_maps_all_topics() {
 fn command_kind_and_name_maps_command_variants() {
     let version = Command::Version;
     let help = Command::Help(HelpTopic::Doctor);
+    let exec = Command::Exec(ExecArgs {
+        repo_override: None,
+        output_json: false,
+        service: None,
+        command: vec!["php".to_owned(), "-v".to_owned()],
+    });
+    let service = Command::Service(ServiceArgs {
+        subcommand: ServiceSubcommand::List,
+        repo_override: None,
+        output_json: false,
+    });
+    let gateway = Command::Gateway(GatewayArgs {
+        subcommand: GatewaySubcommand::Status,
+        output_json: false,
+    });
     let doctor = Command::Doctor(DoctorArgs {
         repo_override: None,
         output_json: false,
@@ -90,6 +109,15 @@ fn command_kind_and_name_maps_command_variants() {
         ("version", "version".to_owned())
     );
     assert_eq!(command_kind_and_name(&help), ("help", "doctor".to_owned()));
+    assert_eq!(command_kind_and_name(&exec), ("exec", "exec".to_owned()));
+    assert_eq!(
+        command_kind_and_name(&gateway),
+        ("gateway", "gateway".to_owned())
+    );
+    assert_eq!(
+        command_kind_and_name(&service),
+        ("service", "service".to_owned())
+    );
     assert_eq!(command_kind_and_name(&demo), ("demo", "demo".to_owned()));
     assert_eq!(
         command_kind_and_name(&release),

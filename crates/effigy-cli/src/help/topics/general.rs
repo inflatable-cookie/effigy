@@ -19,6 +19,21 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
             Some("tasks"),
         ),
         (
+            "effigy service",
+            "Inspect the layered service catalog and extract bundled fragments for override ownership",
+            Some("service"),
+        ),
+        (
+            "effigy exec",
+            "Run one ad-hoc command inside the manifest's dev-context container",
+            None,
+        ),
+        (
+            "effigy gateway",
+            "Operate the host-native local DNS and reverse-proxy gateway",
+            None,
+        ),
+        (
             "effigy config",
             "Show config keys/examples or inspect the effective composed manifest and focused path sources",
             None,

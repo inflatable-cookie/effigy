@@ -22,12 +22,13 @@ pub use composition::{
 };
 pub use config_sections::{
     ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy, ManifestContainerConfig,
-    ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
-    ManifestContainerStartup, ManifestContainersConfig, ManifestDemoConfig, ManifestDemoMode,
-    ManifestDemoStatus, ManifestDistributionConfig, ManifestDistributionMetadataConfig,
-    ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
-    ManifestDocsPolicyConfig, ManifestEnvSchemaConfig, ManifestPackageManagerConfig,
-    ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
+    ManifestContainerDnsConfig, ManifestContainerDriver, ManifestContainerExecAliasConfig,
+    ManifestContainerExecConfig, ManifestContainerOnTaskExit, ManifestContainerServiceConfig,
+    ManifestContainerShutdownMode, ManifestContainerStartup, ManifestContainersConfig,
+    ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus, ManifestDistributionConfig,
+    ManifestDistributionMetadataConfig, ManifestDistributionPackageConfig,
+    ManifestDistributionPreflightConfig, ManifestDocsPolicyConfig, ManifestEnvSchemaConfig,
+    ManifestPackageManagerConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
 };
 pub use loaded_catalog::{DeferredCommand, LoadedCatalog, TaskResolverFn, TaskSelection};
 use task_defs::deserialize_tasks;

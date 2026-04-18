@@ -4,6 +4,9 @@ pub fn help_topic_label(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::General => "general",
         HelpTopic::Changelog => "changelog",
+        HelpTopic::Exec => "exec",
+        HelpTopic::Gateway => "gateway",
+        HelpTopic::Service => "service",
         HelpTopic::Demo => "demo",
         HelpTopic::Docs => "docs",
         HelpTopic::Contracts => "contracts",
@@ -25,6 +28,9 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
         Command::Version => ("version", "version".to_owned()),
         Command::Help(topic) => ("help", help_topic_label(*topic).to_owned()),
         Command::Changelog(_) => ("changelog", "changelog".to_owned()),
+        Command::Exec(_) => ("exec", "exec".to_owned()),
+        Command::Gateway(_) => ("gateway", "gateway".to_owned()),
+        Command::Service(_) => ("service", "service".to_owned()),
         Command::Demo(_) => ("demo", "demo".to_owned()),
         Command::Docs(_) => ("docs", "docs".to_owned()),
         Command::Contracts(_) => ("contracts", "contracts".to_owned()),
@@ -35,6 +41,7 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
         Command::Doctor(_) => ("doctor", "doctor".to_owned()),
         Command::Tasks(_) => ("tasks", "tasks".to_owned()),
         Command::Task(task) => ("task", task.name.clone()),
+        Command::InternalGateway(_) => ("task", "__gateway-run".to_owned()),
         Command::InternalRhai(_) => ("task", "__rhai-step".to_owned()),
     }
 }

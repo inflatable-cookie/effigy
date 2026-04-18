@@ -7,6 +7,26 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Add transparent container exec integration for `g02.012`, including
+  manifest-owned `[containers.<name>.exec]` aliases and working-dir config,
+  explicit `effigy exec ...`, bare alias fallback like `effigy mysql`, and
+  task-routing handoff/CWD mapping for dev-context container execution.
+- Add manifest-owned `[containers.<name>.dns]` gateway registration on top of
+  the container surface, so `effigy container up/down/reset` and attached
+  owner-exit shutdown now write and remove route-table entries for declared
+  project hostnames.
+- Add optional `[containers.<name>.dns].port` so multi-port container stacks
+  can choose which declared host HTTP port the gateway should proxy during
+  route registration instead of always taking the first host-port mapping.
+- Add the first `effigy gateway` product surface with `up`, `down`, and
+  `status` commands, a root-owned hidden gateway daemon entrypoint, JSON/plain
+  lifecycle output, and macOS resolver setup/teardown hooks around the
+  host-native DNS/proxy gateway.
+- Add gateway TLS closeout on top of that surface with `effigy gateway
+  setup-tls`, route-owned mkcert certificate generation/cleanup for
+  `[containers.<name>.dns].tls = true`, HTTPS bind/status projection, and
+  live cert reload so TLS routes can come and go without restarting the
+  gateway.
 - Add Rhai-backed manifest run steps through `rhai = "path/to/script.rhai"`,
   with a first Effigy-native host API for args, env,
   path/file helpers, JSON/TOML helpers, structured subprocess execution, and
@@ -42,6 +62,14 @@ During v0.x, MINOR bumps may include breaking changes.
   built-ins without shelling back through `cargo run --bin effigy`.
 
 ### Changed
+- Make `effigy gateway up`, `gateway down`, and `gateway setup-tls` request
+  admin approval on demand for host setup instead of requiring operators to
+  rerun the whole command under `sudo`, while keeping gateway state rooted in
+  the calling user's `~/.effigy/gateway`.
+- Rename the service-catalog CLI surface from `effigy catalog ...` to
+  `effigy service ...`, while keeping `catalog` and `catalogue` as
+  compatibility aliases through the v0.3 line so the container fragment
+  feature reads more clearly at the command line.
 - Migrate Effigy's `link:local` task from a shell script to a file-backed Rhai
   step so the new embedded scripting path is exercised by a real repo-local
   operator task instead of a synthetic fixture.

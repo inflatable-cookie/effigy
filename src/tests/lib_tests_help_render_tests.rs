@@ -6,8 +6,11 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("Commands"));
     assert!(rendered.contains("effigy help"));
     assert!(rendered.contains("effigy version"));
+    assert!(rendered.contains("effigy exec"));
+    assert!(rendered.contains("effigy gateway"));
     assert!(rendered.contains("effigy config"));
     assert!(rendered.contains("effigy demo"));
+    assert!(rendered.contains("effigy service"));
     assert!(rendered.contains("effigy doctor"));
     assert!(rendered.contains("effigy docs"));
     assert!(rendered.contains("effigy contracts"));
@@ -138,6 +141,38 @@ fn render_distribution_help_shows_validation_options() {
 }
 
 #[test]
+fn render_exec_help_shows_service_and_examples() {
+    let rendered = render_help_text(HelpTopic::Exec);
+    assert!(rendered.contains("exec Help"));
+    assert!(rendered.contains("effigy exec [--repo <PATH>] [--service <NAME>]"));
+    assert!(rendered.contains("effigy exec composer install"));
+    assert!(rendered.contains("[containers.<name>.exec.aliases]"));
+}
+
+#[test]
+fn render_gateway_help_shows_lifecycle_examples() {
+    let rendered = render_help_text(HelpTopic::Gateway);
+    assert!(rendered.contains("gateway Help"));
+    assert!(rendered.contains("effigy gateway up"));
+    assert!(rendered.contains("effigy gateway down"));
+    assert!(rendered.contains("effigy gateway status"));
+    assert!(rendered.contains("effigy gateway setup-tls"));
+    assert!(rendered.contains("/etc/resolver/test"));
+}
+
+#[test]
+fn render_service_help_shows_extract_options() {
+    let rendered = render_help_text(HelpTopic::Service);
+    assert!(rendered.contains("service Help"));
+    assert!(rendered.contains("effigy service list"));
+    assert!(rendered.contains("effigy service extract <SERVICE>"));
+    assert!(rendered.contains("effigy catalog ..."));
+    assert!(rendered.contains("effigy catalogue ..."));
+    assert!(rendered.contains("--dir <PATH>"));
+    assert!(rendered.contains("project-local"));
+}
+
+#[test]
 fn render_container_help_shows_runtime_options() {
     let rendered = render_help_text(HelpTopic::Container);
     assert!(rendered.contains("container Help"));
@@ -146,6 +181,7 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("effigy container <NAME> logs"));
     assert!(rendered.contains("effigy container <NAME> shell"));
     assert!(rendered.contains("effigy container <NAME> reset"));
+    assert!(rendered.contains("effigy container <NAME> eject"));
     assert!(rendered.contains("--attach"));
     assert!(rendered.contains("--detach"));
     assert!(rendered.contains("--service <NAME>"));

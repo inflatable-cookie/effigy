@@ -1,0 +1,262 @@
+use effigy_exec::routing::{route, ExecContext, ExecTarget, RoutingDecision, TaskOverrides};
+use effigy_manifest::{ManifestContainerConfig, ManifestContainersConfig, ManifestTask};
+
+use crate::runner::error::RunnerError;
+
+#[derive(Debug)]
+pub(in crate::runner) struct RoutedTaskExecution {
+    pub(in crate::runner) decision: RoutingDecision,
+}
+
+pub(in crate::runner) fn route_standard_task_execution(
+    command_name: &str,
+    task: &ManifestTask,
+    containers: Option<&ManifestContainersConfig>,
+    is_container_running: impl Fn(&str) -> Result<bool, RunnerError>,
+) -> Result<RoutedTaskExecution, RunnerError> {
+    if std::env::var_os("EFFIGY_INTERNAL_CONTAINER_HANDOFF").is_some() {
+        return Ok(RoutedTaskExecution {
+            decision: RoutingDecision::host("running inside an effigy container handoff"),
+        });
+    }
+
+    let task_overrides = TaskOverrides {
+        host: task.host.unwrap_or(false),
+        container_session: task.container_session.clone(),
+    };
+    let explicit_container = task
+        .container_session
+        .as_deref()
+        .filter(|value| *value != "none")
+        .map(str::to_owned);
+
+    let (dev_container, target_container, target_primary_service) =
+        resolve_routing_containers(containers, explicit_container.as_deref())?;
+    let container_running = match target_container.as_deref() {
+        Some(name) => is_container_running(name)?,
+        None => false,
+    };
+
+    let context = match (dev_container, target_primary_service) {
+        (Some(dev_container), Some(primary_service)) => ExecContext {
+            dev_container: Some(dev_container),
+            primary_service: Some(primary_service),
+            container_running,
+        },
+        _ => ExecContext::none(),
+    };
+
+    Ok(RoutedTaskExecution {
+        decision: route(command_name, &context, &task_overrides),
+    })
+}
+
+fn resolve_routing_containers(
+    containers: Option<&ManifestContainersConfig>,
+    explicit_container: Option<&str>,
+) -> Result<(Option<String>, Option<String>, Option<String>), RunnerError> {
+    let Some(containers) = containers else {
+        return Ok((None, None, None));
+    };
+
+    let dev_containers = containers
+        .environments
+        .iter()
+        .filter(|(_, config)| config.context.as_deref() == Some("dev"))
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    if dev_containers.len() > 1 {
+        return Err(RunnerError::task_invocation(format!(
+            "multiple containers claim context = \"dev\": {}",
+            dev_containers
+                .iter()
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+
+    let dev_container = dev_containers.into_iter().next();
+    let target_container = explicit_container
+        .map(str::to_owned)
+        .or_else(|| dev_container.clone());
+    let target_primary_service = target_container
+        .as_deref()
+        .map(|name| primary_service_for(containers, name))
+        .transpose()?;
+
+    Ok((dev_container, target_container, target_primary_service))
+}
+
+fn primary_service_for(
+    containers: &ManifestContainersConfig,
+    container_name: &str,
+) -> Result<String, RunnerError> {
+    let config = containers.environments.get(container_name).ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "container `{container_name}` is not defined in `[containers]`"
+        ))
+    })?;
+    container_primary_service(container_name, config)
+}
+
+fn container_primary_service(
+    container_name: &str,
+    config: &ManifestContainerConfig,
+) -> Result<String, RunnerError> {
+    config.primary_service.clone().ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "container `{container_name}` must declare `primary_service` for transparent execution"
+        ))
+    })
+}
+
+pub(in crate::runner) fn routed_container_target(
+    decision: &RoutingDecision,
+) -> Option<(&str, &str)> {
+    match &decision.target {
+        ExecTarget::Container { container, service } => {
+            Some((container.as_str(), service.as_str()))
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest_task() -> ManifestTask {
+        ManifestTask::default()
+    }
+
+    fn containers_toml(body: &str) -> ManifestContainersConfig {
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            containers: ManifestContainersConfig,
+        }
+
+        toml::from_str::<Wrapper>(body)
+            .expect("parse containers")
+            .containers
+    }
+
+    #[test]
+    fn routes_host_when_no_dev_context_declared() {
+        let containers = containers_toml(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+"#,
+        );
+        let routed =
+            route_standard_task_execution("build", &manifest_task(), Some(&containers), |_| {
+                panic!("running check should not be used without dev context")
+            })
+            .expect("route");
+        assert!(matches!(routed.decision.target, ExecTarget::Host));
+    }
+
+    #[test]
+    fn routes_to_dev_context_container_when_running() {
+        let containers = containers_toml(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+context = "dev"
+primary_service = "app"
+"#,
+        );
+        let routed =
+            route_standard_task_execution("build", &manifest_task(), Some(&containers), |name| {
+                assert_eq!(name, "web");
+                Ok(true)
+            })
+            .expect("route");
+        assert_eq!(
+            routed_container_target(&routed.decision),
+            Some(("web", "app"))
+        );
+    }
+
+    #[test]
+    fn host_override_beats_dev_context() {
+        let containers = containers_toml(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+context = "dev"
+primary_service = "app"
+"#,
+        );
+        let mut task = manifest_task();
+        task.host = Some(true);
+
+        let routed = route_standard_task_execution("build", &task, Some(&containers), |_| Ok(true))
+            .expect("route");
+        assert!(matches!(routed.decision.target, ExecTarget::Host));
+    }
+
+    #[test]
+    fn errors_when_multiple_dev_contexts_exist() {
+        let containers = containers_toml(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+context = "dev"
+primary_service = "app"
+
+[containers.jobs]
+context = "dev"
+primary_service = "worker"
+"#,
+        );
+
+        let error =
+            route_standard_task_execution("build", &manifest_task(), Some(&containers), |_| {
+                Ok(true)
+            })
+            .expect_err("multiple dev contexts should fail");
+        assert!(error
+            .to_string()
+            .contains("multiple containers claim context = \"dev\""));
+    }
+
+    #[test]
+    fn explicit_container_session_uses_target_primary_service() {
+        let containers = containers_toml(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+context = "dev"
+primary_service = "app"
+
+[containers.jobs]
+primary_service = "worker"
+"#,
+        );
+        let mut task = manifest_task();
+        task.container_session = Some("jobs".to_owned());
+
+        let routed = route_standard_task_execution("build", &task, Some(&containers), |name| {
+            assert_eq!(name, "jobs");
+            Ok(true)
+        })
+        .expect("route");
+        assert_eq!(
+            routed_container_target(&routed.decision),
+            Some(("jobs", "worker"))
+        );
+    }
+}

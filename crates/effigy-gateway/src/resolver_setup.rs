@@ -11,7 +11,7 @@
 //! ```
 //!
 //! Writing to `/etc/resolver/` requires root privileges. The caller is
-//! responsible for escalating (typically via `sudo`).
+//! responsible for invoking this through an elevated path.
 
 use std::path::{Path, PathBuf};
 
@@ -74,21 +74,21 @@ pub struct ResolverSpec {
 impl ResolverSpec {
     /// Write the resolver file using sudo.
     ///
-    /// This shells out to `sudo tee` to write the file with elevated
-    /// privileges. The user will be prompted for their password.
+    /// The caller is expected to have already triggered the needed privilege
+    /// escalation path before invoking this.
     pub fn install(&self) -> Result<(), GatewayError> {
         use std::process::{Command, Stdio};
 
         // Ensure the directory exists.
         if !resolver_dir_exists() {
-            let status = Command::new("sudo")
+            let output = Command::new("sudo")
                 .args(["mkdir", "-p", RESOLVER_DIR])
-                .status()
+                .output()
                 .map_err(GatewayError::Io)?;
-            if !status.success() {
+            if !output.status.success() {
                 return Err(GatewayError::DnsBindError {
                     addr: RESOLVER_DIR.to_string(),
-                    reason: "failed to create resolver directory".to_string(),
+                    reason: render_sudo_failure("failed to create resolver directory", &output),
                 });
             }
         }
@@ -97,7 +97,8 @@ impl ResolverSpec {
         let mut child = Command::new("sudo")
             .args(["tee", self.path.to_str().unwrap_or("")])
             .stdin(Stdio::piped())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(GatewayError::Io)?;
 
@@ -106,11 +107,11 @@ impl ResolverSpec {
             stdin.write_all(self.content.as_bytes())?;
         }
 
-        let status = child.wait()?;
-        if !status.success() {
+        let output = child.wait_with_output()?;
+        if !output.status.success() {
             return Err(GatewayError::DnsBindError {
                 addr: self.path.display().to_string(),
-                reason: "failed to write resolver file".to_string(),
+                reason: render_sudo_failure("failed to write resolver file", &output),
             });
         }
 
@@ -123,19 +124,31 @@ impl ResolverSpec {
             return Ok(());
         }
 
-        let status = std::process::Command::new("sudo")
+        let output = std::process::Command::new("sudo")
             .args(["rm", self.path.to_str().unwrap_or("")])
-            .status()
+            .output()
             .map_err(GatewayError::Io)?;
 
-        if !status.success() {
+        if !output.status.success() {
             return Err(GatewayError::DnsBindError {
                 addr: self.path.display().to_string(),
-                reason: "failed to remove resolver file".to_string(),
+                reason: render_sudo_failure("failed to remove resolver file", &output),
             });
         }
 
         Ok(())
+    }
+}
+
+fn render_sudo_failure(context: &str, output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if !stderr.is_empty() {
+        format!("{context}: {stderr}")
+    } else if !stdout.is_empty() {
+        format!("{context}: {stdout}")
+    } else {
+        context.to_string()
     }
 }
 

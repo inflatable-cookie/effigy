@@ -1,6 +1,6 @@
 # g02.005 Optional Distribution Surface Contract
 
-Status: paused
+Status: Complete
 Updated: 2026-04-15
 
 ## Goal
@@ -200,5 +200,8 @@ milestone set out to productize.
 
 ## Next Task
 
-Keep `g02.005` paused until a real published-consumer adoption asks Effigy to
-reopen the fuller `distribution first-publish` orchestration path.
+This roadmap is complete on the proven optional-distribution boundary.
+
+If a later published-consumer adoption needs the fuller
+`distribution first-publish` orchestration path, reopen it as fresh planning
+instead of leaving `g02.005` half-live.

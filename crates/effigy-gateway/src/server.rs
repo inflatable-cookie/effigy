@@ -23,7 +23,9 @@ use crate::error::GatewayError;
 use crate::proxy::{run_proxy_server, run_tls_proxy_server, ProxyConfig};
 use crate::routes::{LiveRouteTable, RouteTable};
 use crate::stats::GatewayStats;
-use crate::tls::TlsConfig;
+use crate::tls::{
+    server_config_from_resolver, sync_sni_resolver_from_dir, SniCertResolver, TlsConfig,
+};
 
 /// Configuration for the full gateway.
 #[derive(Debug, Clone)]
@@ -51,8 +53,11 @@ impl GatewayConfig {
     pub fn standard(gateway_dir: PathBuf) -> Self {
         Self {
             dns: DnsConfig::default(),
-            proxy: ProxyConfig::default(),
-            tls: None,
+            proxy: ProxyConfig {
+                tls_bind_addr: Some(SocketAddr::from(([127, 0, 0, 1], 443))),
+                ..ProxyConfig::default()
+            },
+            tls: Some(TlsConfig::new(gateway_dir.join("certs"))),
             route_table_path: gateway_dir.join("routes.json"),
             pid_file_path: gateway_dir.join("gateway.pid"),
         }
@@ -129,7 +134,13 @@ pub fn remove_pid_file(path: &PathBuf) {
 /// Check whether a process with the given PID is running.
 #[cfg(unix)]
 pub fn process_is_running(pid: u32) -> bool {
-    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "pid="])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 #[cfg(not(unix))]
@@ -232,56 +243,40 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     ));
 
     // Optionally start the HTTPS proxy.
-    let tls_handle =
+    let (_tls_watcher, tls_handle) =
         if let (Some(tls_addr), Some(tls_config)) = (config.proxy.tls_bind_addr, &config.tls) {
-            // Build an SNI resolver that serves the right cert per domain.
-            match crate::tls::build_sni_resolver_from_dir(&tls_config.certs_dir) {
-                Ok(resolver) => {
-                    if resolver.cert_count() == 0 {
-                        info!(
-                            "HTTPS enabled but no certificates found in {} — \
-                         run `effigy gateway setup-tls` first",
-                            tls_config.certs_dir.display()
-                        );
-                        None
-                    } else {
-                        info!(
-                            certs = resolver.cert_count(),
-                            "loaded TLS certificates for HTTPS"
-                        );
-                        let server_config = resolver.into_server_config();
-                        let arc_config = std::sync::Arc::new(server_config);
-                        Some(tokio::spawn(run_tls_proxy_server(
-                            tls_addr,
-                            arc_config,
-                            Arc::clone(&shared_table),
-                            Arc::clone(&stats),
-                            config.proxy.clone(),
-                            shutdown_rx,
-                        )))
-                    }
-                }
-                Err(e) => {
-                    error!(error = %e, "failed to load TLS certs — HTTPS disabled");
-                    None
-                }
+            let certs_dir = tls_config.certs_dir.clone();
+            std::fs::create_dir_all(&certs_dir)?;
+            let resolver = Arc::new(SniCertResolver::new());
+            let cert_count = sync_sni_resolver_from_dir(&resolver, &certs_dir)?;
+            if cert_count == 0 {
+                info!(
+                    "HTTPS enabled but no certificates found in {} — \
+                     run `effigy gateway setup-tls` and start a TLS-enabled route",
+                    certs_dir.display()
+                );
+            } else {
+                info!(certs = cert_count, "loaded TLS certificates for HTTPS");
             }
+            let tls_watcher = setup_tls_watcher(&certs_dir, Arc::clone(&resolver))?;
+            let server_config = Arc::new(server_config_from_resolver(resolver));
+            let handle = tokio::spawn(run_tls_proxy_server(
+                tls_addr,
+                server_config,
+                Arc::clone(&shared_table),
+                Arc::clone(&stats),
+                config.proxy.clone(),
+                shutdown_rx,
+            ));
+            (Some(tls_watcher), Some(handle))
         } else {
-            None
+            (None, None)
         };
 
     // Wait for any server task to finish (typically all stop on shutdown).
     tokio::select! {
-        result = dns_handle => {
-            if let Err(e) = result {
-                error!(error = %e, "DNS server task failed");
-            }
-        }
-        result = proxy_handle => {
-            if let Err(e) = result {
-                error!(error = %e, "proxy server task failed");
-            }
-        }
+        result = dns_handle => handle_server_task_result(result, "DNS server")?,
+        result = proxy_handle => handle_server_task_result(result, "proxy server")?,
         result = async {
             if let Some(handle) = tls_handle {
                 handle.await
@@ -289,11 +284,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
                 // No TLS handle — never resolves, so the other branches win.
                 std::future::pending().await
             }
-        } => {
-            if let Err(e) = result {
-                error!(error = %e, "HTTPS server task failed");
-            }
-        }
+        } => handle_server_task_result(result, "HTTPS server")?,
     }
 
     // Clean up PID file.
@@ -350,6 +341,64 @@ fn setup_file_watcher(
     }
 
     Ok(watcher)
+}
+
+fn setup_tls_watcher(
+    certs_dir: &PathBuf,
+    resolver: Arc<SniCertResolver>,
+) -> Result<RecommendedWatcher, GatewayError> {
+    let watched_dir = certs_dir.clone();
+
+    let mut watcher =
+        notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
+            Ok(ev) => {
+                use notify::EventKind;
+                match ev.kind {
+                    EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
+                        debug!(path = %watched_dir.display(), "TLS cert directory changed, reloading");
+                        match sync_sni_resolver_from_dir(&resolver, &watched_dir) {
+                            Ok(count) => {
+                                debug!(certs = count, "TLS certs reloaded");
+                            }
+                            Err(error) => {
+                                error!(error = %error, "failed to reload TLS certs");
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Err(error) => {
+                error!(error = %error, "TLS watcher error");
+            }
+        })
+        .map_err(|e| GatewayError::WatcherError(e.to_string()))?;
+
+    std::fs::create_dir_all(certs_dir)?;
+    watcher
+        .watch(certs_dir, RecursiveMode::NonRecursive)
+        .map_err(|e| GatewayError::WatcherError(e.to_string()))?;
+
+    Ok(watcher)
+}
+
+fn handle_server_task_result(
+    result: Result<Result<(), GatewayError>, tokio::task::JoinError>,
+    label: &str,
+) -> Result<(), GatewayError> {
+    match result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => {
+            error!(error = %error, "{label} failed");
+            Err(error)
+        }
+        Err(error) => {
+            error!(error = %error, "{label} task failed");
+            Err(GatewayError::WatcherError(format!(
+                "{label} task failed: {error}"
+            )))
+        }
+    }
 }
 
 #[cfg(test)]

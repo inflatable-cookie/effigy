@@ -539,6 +539,7 @@ dependencies = [
  "crossterm 0.29.0",
  "effigy-bootstrap",
  "effigy-builtin",
+ "effigy-catalog",
  "effigy-changelog",
  "effigy-cli",
  "effigy-containers",
@@ -549,6 +550,8 @@ dependencies = [
  "effigy-docs-policy",
  "effigy-doctor",
  "effigy-env",
+ "effigy-exec",
+ "effigy-gateway",
  "effigy-managed",
  "effigy-manifest",
  "effigy-process",
@@ -572,6 +575,7 @@ dependencies = [
  "serde_json",
  "signal-hook",
  "tabled",
+ "tokio",
  "toml",
  "toml_edit 0.25.11+spec-1.1.0",
  "vt100",
@@ -647,6 +651,7 @@ dependencies = [
 name = "effigy-containers"
 version = "0.1.0"
 dependencies = [
+ "effigy-catalog",
  "effigy-manifest",
  "serde_json",
 ]

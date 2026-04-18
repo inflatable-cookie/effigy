@@ -9,7 +9,7 @@ Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
 `171` moves the shared demo runtime-control/process helper layer into
 [crates/effigy-demo/src/process.rs](/Users/tom/Dev/projects/effigy/crates/effigy-demo/src/process.rs).
 
-[src/runner/demo_command.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command.rs)
+[src/runner/demo_command/mod.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command/mod.rs)
 no longer owns the run-backed launch mode surface, terminal sizing helpers,
 PTY wrapping, output capture helpers, or input handoff forwarding helpers
 directly. The runner now adapts those crate-owned process helpers while
@@ -28,7 +28,7 @@ keeping the managed runtime event loop and host orchestration local.
 - new shared crate module:
   [crates/effigy-demo/src/process.rs](/Users/tom/Dev/projects/effigy/crates/effigy-demo/src/process.rs)
 - runner file reduction:
-  [src/runner/demo_command.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command.rs)
+  [src/runner/demo_command/mod.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command/mod.rs)
   `3804 -> 3527` lines
 - moved contracts:
   - `DemoLaunchMode`
