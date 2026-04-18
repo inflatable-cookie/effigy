@@ -21,6 +21,38 @@ pub struct ContainerCommandReport {
     pub success_text: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerStatusService {
+    pub name: String,
+    pub container_name: String,
+    pub status: String,
+    pub ports: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AllocatedPortsSummary {
+    pub base: u16,
+    pub http: u16,
+    pub mysql: u16,
+    pub postgres: u16,
+    pub redis: u16,
+    pub memcached: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerStatusAllEntry {
+    pub repo_root: String,
+    pub container: String,
+    pub project_name: String,
+    pub profile: String,
+    pub primary_service: String,
+    pub dns_domain: Option<String>,
+    pub dns_tls: bool,
+    pub declared_ports: Vec<String>,
+    pub allocated_ports: Option<AllocatedPortsSummary>,
+    pub services: Vec<ContainerStatusService>,
+}
+
 /// Build the `container up` detached-mode report.
 pub fn up_detached_report(
     policy: &EffectiveContainerPolicy,
@@ -191,6 +223,102 @@ pub fn status_report(
         lines.push("compose status:".to_owned());
         lines.push(compose_ps.trim().to_owned());
     }
+    ContainerCommandReport {
+        json,
+        success_text: lines.join("\n"),
+    }
+}
+
+/// Build the `container status --all` report.
+pub fn status_all_report(entries: &[ContainerStatusAllEntry]) -> ContainerCommandReport {
+    let json = json!({
+        "schema": "effigy.container.status-all.v1",
+        "schema_version": 1,
+        "ok": true,
+        "environment_count": entries.len(),
+        "environments": entries.iter().map(|entry| {
+            json!({
+                "repo_root": entry.repo_root,
+                "container": entry.container,
+                "project_name": entry.project_name,
+                "profile": entry.profile,
+                "primary_service": entry.primary_service,
+                "dns_domain": entry.dns_domain,
+                "dns_tls": entry.dns_tls,
+                "declared_ports": entry.declared_ports,
+                "allocated_ports": entry.allocated_ports.as_ref().map(|ports| json!({
+                    "base": ports.base,
+                    "http": ports.http,
+                    "mysql": ports.mysql,
+                    "postgres": ports.postgres,
+                    "redis": ports.redis,
+                    "memcached": ports.memcached,
+                })),
+                "services": entry.services.iter().map(|service| {
+                    json!({
+                        "name": service.name,
+                        "container_name": service.container_name,
+                        "status": service.status,
+                        "ports": service.ports,
+                    })
+                }).collect::<Vec<_>>(),
+            })
+        }).collect::<Vec<_>>(),
+    });
+
+    if entries.is_empty() {
+        return ContainerCommandReport {
+            json,
+            success_text: "[info] no running Effigy-managed container environments found"
+                .to_owned(),
+        };
+    }
+
+    let mut lines = vec![format!(
+        "[ok] {} running Effigy-managed container environment{}",
+        entries.len(),
+        if entries.len() == 1 { "" } else { "s" }
+    )];
+    for entry in entries {
+        lines.push(String::new());
+        lines.push(format!("[container] {}", entry.container));
+        lines.push(format!("repo: {}", entry.repo_root));
+        lines.push(format!("project_name: {}", entry.project_name));
+        lines.push(format!("profile: {}", entry.profile));
+        lines.push(format!("primary_service: {}", entry.primary_service));
+        if let Some(domain) = entry.dns_domain.as_deref() {
+            lines.push(format!(
+                "domain: {}{}",
+                domain,
+                if entry.dns_tls { " (tls)" } else { "" }
+            ));
+        }
+        if !entry.declared_ports.is_empty() {
+            lines.push(format!(
+                "declared_ports: {}",
+                entry.declared_ports.join(", ")
+            ));
+        }
+        if let Some(ports) = entry.allocated_ports.as_ref() {
+            lines.push(format!(
+                "allocated_ports: base={}, http={}, mysql={}, postgres={}, redis={}, memcached={}",
+                ports.base, ports.http, ports.mysql, ports.postgres, ports.redis, ports.memcached
+            ));
+        }
+        lines.push(format!("services: {}", entry.services.len()));
+        for service in &entry.services {
+            let ports = if service.ports.is_empty() {
+                "no published ports".to_owned()
+            } else {
+                service.ports.join(", ")
+            };
+            lines.push(format!(
+                "- {} [{}] {} ({})",
+                service.name, service.container_name, service.status, ports
+            ));
+        }
+    }
+
     ContainerCommandReport {
         json,
         success_text: lines.join("\n"),

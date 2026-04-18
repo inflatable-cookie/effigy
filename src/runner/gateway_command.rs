@@ -137,6 +137,7 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
     let route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let tls = gateway_tls_summary(&config, &route_table);
+    let routes = gateway_route_dashboard(&config, &route_table, &tls);
     let status = server::get_status(&config).ok();
 
     if output_json {
@@ -151,7 +152,8 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
             "https_addr": tls.https_addr.map(|value| value.to_string()),
             "gateway_dir": config_dir_display(&config),
             "tls": render_tls_json(&tls),
-            "routes": render_routes_json(status.as_ref(), &route_table),
+            "route_count": routes.len(),
+            "routes": render_routes_json(&routes),
         })
         .to_string());
     }
@@ -187,15 +189,13 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
                 .unwrap_or_else(|| "disabled".to_owned())
         ),
         format!("tls: {}", render_tls_status_line(&tls)),
+        format!("route_count: {}", routes.len()),
     ];
     if let Some(ref running) = status {
         lines.push(format!("pid: {}", running.pid));
-        lines.push(format!("routes: {}", running.route_count));
-        lines.extend(running.routes.iter().map(render_route_line));
-    } else {
-        lines.push(format!("routes: {}", route_table.len()));
-        lines.extend(route_table.all_routes().into_iter().map(render_route_line));
+        lines.push(format!("live_routes: {}", running.route_count));
     }
+    lines.extend(routes.iter().map(render_route_line));
 
     Ok(lines.join("\n"))
 }
@@ -853,53 +853,75 @@ fn gateway_addr_from_env(key: &str) -> Result<Option<SocketAddr>, RunnerError> {
     })
 }
 
-fn render_route_line(route: &effigy_gateway::Route) -> String {
+#[derive(Debug, Clone)]
+struct GatewayRouteDashboardEntry {
+    domain: String,
+    target: String,
+    source: String,
+    project: String,
+    tls: bool,
+    cert_ready: bool,
+    registered: chrono::DateTime<chrono::Utc>,
+}
+
+fn render_route_line(route: &GatewayRouteDashboardEntry) -> String {
     format!(
-        "- {} -> {} [{}]",
+        "- {} -> {} [source={}, project={}, tls={}]",
         route.domain,
         route.target,
-        match route.source {
-            effigy_gateway::routes::RouteSource::Container => "container",
-            effigy_gateway::routes::RouteSource::Task => "task",
-            effigy_gateway::routes::RouteSource::Manual => "manual",
+        route.source,
+        route.project,
+        if !route.tls {
+            "off".to_owned()
+        } else if route.cert_ready {
+            "ready".to_owned()
+        } else {
+            "missing-cert".to_owned()
         }
     )
 }
 
-fn render_routes_json(
-    status: Option<&GatewayStatus>,
+fn render_routes_json(routes: &[GatewayRouteDashboardEntry]) -> Vec<serde_json::Value> {
+    routes
+        .iter()
+        .map(|route| {
+            json!({
+                "domain": route.domain,
+                "target": route.target,
+                "source": route.source,
+                "project": route.project,
+                "tls": route.tls,
+                "cert_ready": route.cert_ready,
+                "registered": route.registered,
+            })
+        })
+        .collect()
+}
+
+fn gateway_route_dashboard(
+    config: &GatewayConfig,
     route_table: &RouteTable,
-) -> Vec<serde_json::Value> {
-    match status {
-        Some(value) => value
-            .routes
-            .iter()
-            .map(|route| {
-                json!({
-                    "domain": route.domain,
-                    "target": route.target,
-                    "source": format!("{:?}", route.source).to_lowercase(),
-                    "project": route.project,
-                    "tls": route.tls,
-                    "registered": route.registered,
-                })
-            })
-            .collect(),
-        None => route_table
-            .all_routes()
-            .into_iter()
-            .map(|route| {
-                json!({
-                    "domain": route.domain,
-                    "target": route.target,
-                    "source": format!("{:?}", route.source).to_lowercase(),
-                    "project": route.project,
-                    "tls": route.tls,
-                    "registered": route.registered,
-                })
-            })
-            .collect(),
-    }
+    tls: &GatewayTlsSummary,
+) -> Vec<GatewayRouteDashboardEntry> {
+    let tls_config = config.tls.as_ref();
+    route_table
+        .all_routes()
+        .into_iter()
+        .map(|route| {
+            let cert_ready = route.tls
+                && tls_config.is_some_and(|value| value.load_cert(&route.domain).is_ok())
+                && tls.mkcert_available;
+            GatewayRouteDashboardEntry {
+                domain: route.domain.clone(),
+                target: route.target.clone(),
+                source: format!("{:?}", route.source).to_lowercase(),
+                project: route.project.clone(),
+                tls: route.tls,
+                cert_ready,
+                registered: route.registered,
+            }
+        })
+        .collect()
 }
 
 fn config_dir_display(config: &GatewayConfig) -> String {
@@ -1073,9 +1095,16 @@ mod tests {
             .into_iter()
             .collect(),
         };
+        let config = GatewayConfig::standard(PathBuf::from("/tmp/effigy/gateway"));
+        let tls = gateway_tls_summary(&config, &table);
 
-        let rendered = serde_json::to_string(&render_routes_json(None, &table)).expect("json");
+        let rendered = serde_json::to_string(&render_routes_json(&gateway_route_dashboard(
+            &config, &table, &tls,
+        )))
+        .expect("json");
         assert!(rendered.contains("demo.test"));
+        assert!(rendered.contains("\"project\":\"/tmp/demo\""));
+        assert!(rendered.contains("\"cert_ready\":false"));
     }
 
     #[test]
@@ -1148,9 +1177,8 @@ mod tests {
 
     #[test]
     fn build_gateway_elevated_shell_command_includes_gateway_env_and_subcommand() {
-        let shell_command =
-            build_gateway_elevated_shell_command(GatewaySubcommand::SetupTls, true)
-                .expect("shell command");
+        let shell_command = build_gateway_elevated_shell_command(GatewaySubcommand::SetupTls, true)
+            .expect("shell command");
 
         assert!(shell_command.contains("EFFIGY_GATEWAY_ESCALATED='1'"));
         assert!(shell_command.contains("EFFIGY_INTERNAL_SUPPRESS_HEADER='1'"));

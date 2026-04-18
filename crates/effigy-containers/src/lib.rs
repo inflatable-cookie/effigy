@@ -6,8 +6,9 @@ pub mod report;
 pub mod session;
 
 pub use report::{
-    down_report, eject_report, logs_report, reset_report, status_report, up_detached_report,
-    ContainerCommandReport,
+    down_report, eject_report, logs_report, reset_report, status_all_report, status_report,
+    up_detached_report, AllocatedPortsSummary, ContainerCommandReport, ContainerStatusAllEntry,
+    ContainerStatusService,
 };
 
 use std::ffi::OsStr;
@@ -145,6 +146,34 @@ pub fn load_container_policy(
         config,
         &loaded.effective_manifest,
     )
+}
+
+pub fn load_all_container_policies(
+    repo_root: &Path,
+) -> Result<Vec<EffectiveContainerPolicy>, ContainerPolicyError> {
+    let manifest_path = repo_root.join("effigy.toml");
+    let loaded = load_task_manifest_with_inspection(&manifest_path)?;
+    let containers = loaded.manifest.containers.ok_or_else(|| {
+        ContainerPolicyError::TaskInvocation(
+            "manifest does not define a `[containers]` registry".to_owned(),
+        )
+    })?;
+
+    let mut policies = containers
+        .environments
+        .iter()
+        .map(|(name, config)| {
+            build_effective_policy(
+                repo_root,
+                &containers,
+                name,
+                config,
+                &loaded.effective_manifest,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    policies.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(policies)
 }
 
 pub fn validate_container_policy(

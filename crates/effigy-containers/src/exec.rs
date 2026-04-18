@@ -10,9 +10,21 @@ use crate::{
         colima_start_command, colima_status_command, parse_colima_running,
         shutdown_compose_commands,
     },
-    compose::compose_invocation,
+    compose::{compose_invocation, resolve_compose_backend, ComposeBackend},
     EffectiveContainerPolicy,
 };
+
+const DOCKER_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningComposeContainer {
+    pub container_name: String,
+    pub status: String,
+    pub ports: Vec<String>,
+    pub project_name: Option<String>,
+    pub working_dir: Option<String>,
+    pub service: Option<String>,
+}
 
 #[derive(Debug)]
 pub enum ContainerExecError {
@@ -110,6 +122,34 @@ pub fn run_docker_capture(
     run_command_capture_os(repo_root, program, &args, label)
 }
 
+pub fn list_running_compose_containers() -> Result<Vec<RunningComposeContainer>, ContainerExecError>
+{
+    let output = match resolve_compose_backend() {
+        ComposeBackend::Docker => run_command_capture(
+            Path::new("."),
+            "docker",
+            &["ps", "--format", DOCKER_PS_FORMAT],
+            "docker ps",
+        )?,
+        ComposeBackend::ColimaNerdctl => run_command_capture(
+            Path::new("."),
+            "colima",
+            &[
+                "nerdctl",
+                "--profile",
+                "default",
+                "--",
+                "ps",
+                "--format",
+                DOCKER_PS_FORMAT,
+            ],
+            "colima nerdctl ps",
+        )?,
+    };
+
+    parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))
+}
+
 pub fn run_command_capture(
     repo_root: &Path,
     program: &str,
@@ -165,4 +205,77 @@ fn format_args(args: &[OsString]) -> String {
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn parse_running_compose_containers(
+    stdout: &str,
+) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
+    let mut rows = Vec::new();
+    for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
+        let mut parts = line.splitn(6, '\t');
+        let container_name = parts.next().unwrap_or_default().trim().to_owned();
+        let status = parts.next().unwrap_or_default().trim().to_owned();
+        let ports = parts
+            .next()
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let project_name = parts
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let working_dir = parts
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let service = parts
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+
+        if container_name.is_empty() || status.is_empty() {
+            return Err(ContainerExecError::Failure {
+                command: "docker ps".to_owned(),
+                code: None,
+                stdout: stdout.to_owned(),
+                stderr: format!("failed to parse docker ps row: {line}"),
+            });
+        }
+
+        rows.push(RunningComposeContainer {
+            container_name,
+            status,
+            ports,
+            project_name,
+            working_dir,
+            service,
+        });
+    }
+
+    Ok(rows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_running_compose_containers_splits_tab_fields() {
+        let parsed = parse_running_compose_containers(
+            "demo-app-1\tUp 2 minutes\t0.0.0.0:18080->80/tcp, :::18080->80/tcp\tdemo-web-dev\t/tmp/demo\tapp\n",
+        )
+        .expect("parse");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].container_name, "demo-app-1");
+        assert_eq!(parsed[0].project_name.as_deref(), Some("demo-web-dev"));
+        assert_eq!(parsed[0].working_dir.as_deref(), Some("/tmp/demo"));
+        assert_eq!(parsed[0].service.as_deref(), Some("app"));
+        assert_eq!(parsed[0].ports.len(), 2);
+    }
 }

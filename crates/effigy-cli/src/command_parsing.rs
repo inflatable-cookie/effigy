@@ -1602,7 +1602,32 @@ fn parse_container_status<I>(name: Option<String>, args: I) -> Result<Command, C
 where
     I: IntoIterator<Item = String>,
 {
-    parse_named_container_simple_subcommand(name, args, |name| ContainerSubcommand::Status { name })
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut all = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--all" => all = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    if all && name.is_some() {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container <NAME> status` does not accept `--all`; use `effigy container status --all` for cross-project discovery".to_owned(),
+        ));
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Status { name, all },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_container_reset<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>

@@ -124,5 +124,5 @@ efficiency.
 
 ## Next Task
 
-Depends on `g02.011` (service declarations with ports) and `g02.014` (gateway
-for route dashboard). Port allocation can be developed independently.
+The first bounded coordination batch is now landed. Stop in planning and
+choose the next `g02.016` follow-up on a bounded product surface.

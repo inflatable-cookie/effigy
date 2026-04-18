@@ -27,6 +27,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `[containers.<name>.dns].tls = true`, HTTPS bind/status projection, and
   live cert reload so TLS routes can come and go without restarting the
   gateway.
+- Add `effigy container status --all` plus a fuller `effigy gateway status`
+  route dashboard so operators can inspect running Effigy-managed environments
+  and shared registered domains across repos from one product-owned status
+  surface.
 - Add Rhai-backed manifest run steps through `rhai = "path/to/script.rhai"`,
   with a first Effigy-native host API for args, env,
   path/file helpers, JSON/TOML helpers, structured subprocess execution, and

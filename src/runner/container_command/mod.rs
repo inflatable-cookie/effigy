@@ -19,6 +19,15 @@ mod session;
 mod signals;
 
 pub(super) fn run_container(args: ContainerArgs) -> Result<String, RunnerError> {
+    if let ContainerSubcommand::Status { name: _, all: true } = &args.subcommand {
+        if args.repo_override.is_some() {
+            return Err(RunnerError::task_invocation(
+                "`effigy container status --all` does not accept `--repo`; it discovers running environments across repos",
+            ));
+        }
+        return lifecycle::run_container_status_all(args.output_json);
+    }
+
     let cwd = current_working_dir()?;
     let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
     let repo_root = resolved.resolved_root;
@@ -38,9 +47,10 @@ pub(super) fn run_container(args: ContainerArgs) -> Result<String, RunnerError> 
         ContainerSubcommand::Down { name } => {
             run_container_down(&repo_root, name.as_deref(), args.output_json)
         }
-        ContainerSubcommand::Status { name } => {
+        ContainerSubcommand::Status { name, all: false } => {
             run_container_status(&repo_root, name.as_deref(), args.output_json)
         }
+        ContainerSubcommand::Status { all: true, .. } => unreachable!("handled above"),
         ContainerSubcommand::Logs {
             name,
             service,

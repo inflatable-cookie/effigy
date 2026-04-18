@@ -38,6 +38,8 @@ Active strict planning lanes:
 
 - `g02.007` is paused until the remaining `g02` feature/integration spine is complete
 - the `g02.014` gateway strict lane is now complete through card `270`
+- the `g02.016` multi-project coordination strict lane is now active with
+  `272` landed as the first execution batch
 
 Rules:
 
@@ -53,5 +55,5 @@ Rules:
 
 ## Next Task
 
-Return to the remaining `g02` integration spine. The gateway lane is closed;
-broader coordination/dashboard work belongs to `g02.016`.
+`g02.016` now has its first landed status/dashboard batch. Stop in planning
+and choose the next bounded follow-up.

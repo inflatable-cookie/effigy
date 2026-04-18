@@ -115,3 +115,25 @@ fn parse_container_eject_is_supported() {
         })
     );
 }
+
+#[test]
+fn parse_container_status_all_is_supported() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "status".to_owned(),
+        "--all".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Status {
+                name: None,
+                all: true,
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
