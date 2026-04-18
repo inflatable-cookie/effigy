@@ -181,6 +181,7 @@ variant = "laravel"
 [containers.web.services.db]
 catalog = "mariadb"
 version = "10.11"
+shared = true
 "#,
     )
     .expect("parse manifest");

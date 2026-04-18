@@ -1,9 +1,9 @@
 use super::{
     effective_attach_mode, eject_generated_compose, load_all_container_policies,
-    load_container_policy, stats_all_report, status_all_report, validate_container_policy,
-    with_test_effigy_home, AllocatedPortsSummary, ContainerPolicyError, ContainerStatsAllEntry,
-    ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService, EffectiveAttachMode,
-    EffectiveComposeSource,
+    load_container_policy, stats_all_report, status_all_report, status_report,
+    validate_container_policy, with_test_effigy_home, AllocatedPortsSummary, ContainerPolicyError,
+    ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
+    EffectiveAttachMode, EffectiveComposeSource, SharedServiceBinding,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -286,6 +286,87 @@ variant = "default"
 }
 
 #[test]
+fn generated_compose_rewrites_shared_backing_services() {
+    with_temp_effigy_home("catalog-shared-db", |home| {
+        let root = temp_repo("catalog-shared-db");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.db]
+catalog = "mariadb"
+shared = true
+version = "10.11"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, None).expect("policy");
+        assert_eq!(policy.shared_services.len(), 1);
+        let shared = &policy.shared_services[0];
+        assert_eq!(shared.service_name, "db");
+        assert_eq!(shared.catalog, "mariadb");
+        assert_eq!(shared.container_port, 3306);
+
+        let compose = fs::read_to_string(root.join("infra/dev/.effigy-compose.generated.yml"))
+            .expect("compose");
+        assert!(!compose.contains("\n  db:\n"));
+        assert!(compose.contains("DB_HOST: host.docker.internal"));
+        assert!(compose.contains(&format!("DB_PORT: '{}'", shared.host_port)));
+
+        assert!(shared.compose_file.exists());
+        let shared_compose = fs::read_to_string(&shared.compose_file).expect("read shared compose");
+        assert!(shared_compose.contains(&format!("{}:3306", shared.host_port)));
+        assert!(home
+            .join("shared-services")
+            .join(&shared.project_name)
+            .join(".effigy-compose.generated.yml")
+            .exists());
+    });
+}
+
+#[test]
+fn generated_compose_rejects_unsupported_shared_catalog() {
+    with_temp_effigy_home("catalog-shared-unsupported", |_| {
+        let root = temp_repo("catalog-shared-unsupported");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+shared = true
+"#,
+        )
+        .expect("write manifest");
+
+        let error = load_container_policy(&root, None).expect_err("should fail");
+        assert!(error
+            .to_string()
+            .contains("unsupported shared catalog `php-fpm`"));
+    });
+}
+
+#[test]
 fn load_container_policy_rejects_compose_file_and_services_together() {
     let root = temp_repo("mixed-compose-source");
     fs::write(
@@ -484,4 +565,45 @@ fn stats_all_report_renders_resource_inventory_and_warning() {
     assert!(report.success_text.contains("cpu=1.25%"));
     assert!(report.success_text.contains("memory=12.4MiB / 8GiB"));
     assert!(report.success_text.contains("cpu=unavailable"));
+}
+
+#[test]
+fn status_report_renders_shared_service_targets() {
+    let root = temp_repo("status-shared-services");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let mut policy = load_container_policy(&root, None).expect("policy");
+    policy.shared_services = vec![SharedServiceBinding {
+        service_name: "db".to_owned(),
+        catalog: "mariadb".to_owned(),
+        project_name: "effigy-shared-mariadb-deadbeef".to_owned(),
+        compose_file: PathBuf::from("/tmp/shared/.effigy-compose.generated.yml"),
+        host: "host.docker.internal".to_owned(),
+        host_port: 8106,
+        container_port: 3306,
+    }];
+
+    let report = status_report(&policy, true, None, None);
+
+    assert!(report.success_text.contains("shared_services: 1"));
+    assert!(report
+        .success_text
+        .contains("db [mariadb] -> host.docker.internal:8106"));
+    assert_eq!(
+        report.json["shared_services"][0]["project_name"],
+        "effigy-shared-mariadb-deadbeef"
+    );
 }

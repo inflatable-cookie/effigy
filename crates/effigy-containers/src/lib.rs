@@ -12,6 +12,7 @@ pub use report::{
 };
 
 use std::ffi::OsStr;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use effigy_catalog::{
@@ -29,6 +30,7 @@ const DEFAULT_COLIMA_PROFILE: &str = "default";
 const DEFAULT_ATTACH_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_HEALTH_TIMEOUT_SECS: u64 = 60;
 const GENERATED_COMPOSE_DIR: &str = "infra/dev";
+const SHARED_SERVICE_HOST: &str = "host.docker.internal";
 
 #[cfg(test)]
 thread_local! {
@@ -58,6 +60,7 @@ pub struct EffectiveContainerPolicy {
     pub compose_source: EffectiveComposeSource,
     pub compose_files: Vec<PathBuf>,
     pub compose_file_display: String,
+    pub shared_services: Vec<SharedServiceBinding>,
     pub project_name: String,
     pub primary_service: String,
     pub dns_domain: Option<String>,
@@ -72,6 +75,46 @@ pub struct EffectiveContainerPolicy {
     pub on_task_exit: ManifestContainerOnTaskExit,
     pub shutdown: ManifestContainerShutdownMode,
     pub detach_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedServiceBinding {
+    pub service_name: String,
+    pub catalog: String,
+    pub project_name: String,
+    pub compose_file: PathBuf,
+    pub host: String,
+    pub host_port: u16,
+    pub container_port: u16,
+}
+
+impl SharedServiceBinding {
+    pub fn standard_env_vars(&self) -> Vec<(String, String)> {
+        let port = self.host_port.to_string();
+        match self.catalog.as_str() {
+            "mariadb" => vec![
+                ("DB_HOST".to_owned(), self.host.clone()),
+                ("DB_PORT".to_owned(), port.clone()),
+                ("MYSQL_HOST".to_owned(), self.host.clone()),
+                ("MYSQL_PORT".to_owned(), port),
+            ],
+            "postgres" => vec![
+                ("POSTGRES_HOST".to_owned(), self.host.clone()),
+                ("POSTGRES_PORT".to_owned(), port.clone()),
+                ("PGHOST".to_owned(), self.host.clone()),
+                ("PGPORT".to_owned(), port),
+            ],
+            "redis" => vec![
+                ("REDIS_HOST".to_owned(), self.host.clone()),
+                ("REDIS_PORT".to_owned(), port),
+            ],
+            "memcached" => vec![
+                ("MEMCACHED_HOST".to_owned(), self.host.clone()),
+                ("MEMCACHED_PORT".to_owned(), port),
+            ],
+            _ => Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -242,7 +285,7 @@ fn build_effective_policy(
             .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
         format!("{repo}-{name}-dev")
     });
-    let (compose_files, compose_file_display, effective_ports) =
+    let (compose_files, compose_file_display, effective_ports, shared_services) =
         resolve_compose_source(repo_root, name, config, &project_name, effective_manifest)?;
     let primary_service = config.primary_service.clone().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
@@ -275,6 +318,7 @@ fn build_effective_policy(
         },
         compose_files,
         compose_file_display,
+        shared_services,
         project_name,
         primary_service,
         dns_domain: Some(dns.domain).filter(|value| !value.trim().is_empty()),
@@ -324,7 +368,7 @@ fn resolve_compose_source(
     config: &ManifestContainerConfig,
     project_name: &str,
     effective_manifest: &str,
-) -> Result<(Vec<PathBuf>, String, Vec<String>), ContainerPolicyError> {
+) -> Result<(Vec<PathBuf>, String, Vec<String>, Vec<SharedServiceBinding>), ContainerPolicyError> {
     if config.compose_file.is_some() && !config.services.is_empty() {
         return Err(ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` cannot combine `compose_file` with `[containers.{container_name}.services]`"
@@ -335,7 +379,12 @@ fn resolve_compose_source(
         let compose_file =
             repo_relative_path(repo_root, compose_file, "containers.*.compose_file")?;
         let display = path_relative_to_repo(repo_root, &compose_file);
-        return Ok((vec![compose_file], display, configured_host_ports(config)));
+        return Ok((
+            vec![compose_file],
+            display,
+            configured_host_ports(config),
+            Vec::new(),
+        ));
     }
 
     if config.services.is_empty() {
@@ -344,7 +393,30 @@ fn resolve_compose_source(
         )));
     }
 
-    let services = build_service_declarations(repo_root, &config.services)?;
+    let shared_services = resolve_shared_service_bindings(config)?;
+    let local_services = config
+        .services
+        .iter()
+        .filter(|(_name, service)| !service.shared.unwrap_or(false))
+        .map(|(name, service)| (name.clone(), service.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    if local_services.is_empty() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` cannot mark every generated service as `shared = true`; at least one local service must remain"
+        )));
+    }
+    if config.primary_service.as_ref().is_some_and(|primary| {
+        shared_services
+            .iter()
+            .any(|service| service.service_name == *primary)
+    }) {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` cannot use shared service `{}` as `primary_service`",
+            config.primary_service.as_deref().unwrap_or_default()
+        )));
+    }
+
+    let services = build_service_declarations(repo_root, &local_services)?;
     let resolver = CatalogResolver::new(
         project_local_catalog_dir(repo_root),
         user_global_catalog_dir(),
@@ -352,15 +424,47 @@ fn resolve_compose_source(
     let assembler = ComposeAssembler::new(resolver);
     let mut assembly =
         assembler.assemble(&services, project_name, &repo_root.display().to_string())?;
-    let effective_ports =
-        apply_generated_compose_port_policy(repo_root, project_name, config, &mut assembly)?;
+    apply_shared_service_env_policy(project_name, &shared_services, &mut assembly)?;
+    let configured_bindings = configured_host_ports(config)
+        .iter()
+        .map(|raw| parse_port_binding(raw))
+        .collect::<Result<Vec<_>, _>>()?;
+    let shared_container_ports = shared_services
+        .iter()
+        .map(|service| service.container_port)
+        .collect::<std::collections::BTreeSet<_>>();
+    let conflicting_shared_ports = configured_bindings
+        .iter()
+        .filter(|binding| shared_container_ports.contains(&binding.container))
+        .map(|binding| format!("{}:{}", binding.host, binding.container))
+        .collect::<Vec<_>>();
+    if !conflicting_shared_ports.is_empty() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` cannot bind shared service port mappings through `[containers.{container_name}.host].ports`: {}",
+            conflicting_shared_ports.join(", ")
+        )));
+    }
+    let effective_ports = apply_generated_compose_port_policy(
+        repo_root,
+        project_name,
+        &configured_bindings,
+        &mut assembly,
+    )?;
     let output = ComposeOutput::new(repo_root.join(GENERATED_COMPOSE_DIR));
     let manifest_cache_key = if effective_ports.is_empty() {
         effective_manifest.to_owned()
     } else {
         format!(
-            "{effective_manifest}\n# effective_ports={}",
-            effective_ports.join(",")
+            "{effective_manifest}\n# effective_ports={}\n# shared_services={}",
+            effective_ports.join(","),
+            shared_services
+                .iter()
+                .map(|service| format!(
+                    "{}:{}:{}",
+                    service.catalog, service.project_name, service.host_port
+                ))
+                .collect::<Vec<_>>()
+                .join(",")
         )
     };
     let write = output.write(&assembly, &manifest_cache_key)?;
@@ -374,7 +478,7 @@ fn resolve_compose_source(
         .map(|path| path_relative_to_repo(repo_root, path))
         .collect::<Vec<_>>()
         .join(", ");
-    Ok((compose_files, display, effective_ports))
+    Ok((compose_files, display, effective_ports, shared_services))
 }
 
 fn build_service_declarations(
@@ -403,10 +507,216 @@ fn build_service_declarations(
         .collect()
 }
 
+fn resolve_shared_service_bindings(
+    config: &ManifestContainerConfig,
+) -> Result<Vec<SharedServiceBinding>, ContainerPolicyError> {
+    let mut bindings = Vec::new();
+    for (service_name, service) in &config.services {
+        if !service.shared.unwrap_or(false) {
+            continue;
+        }
+        validate_supported_shared_service(service_name, service)?;
+        let shared_project_name = shared_service_project_name(service);
+        let output_dir = shared_service_output_dir(&shared_project_name)?;
+        let declaration = ServiceDeclaration {
+            name: service_name.clone(),
+            catalog: service.catalog.clone(),
+            params: service
+                .params
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+            variant: None,
+            config: None,
+        };
+        let resolver = CatalogResolver::new(None, user_global_catalog_dir());
+        let assembler = ComposeAssembler::new(resolver);
+        let mut assembly = assembler.assemble(
+            &[declaration],
+            &shared_project_name,
+            &output_dir.display().to_string(),
+        )?;
+        let effective_ports = apply_generated_compose_port_policy(
+            &output_dir,
+            &shared_project_name,
+            &[],
+            &mut assembly,
+        )?;
+        if effective_ports.len() != 1 {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "shared service `{service_name}` must expose exactly one published port on the bounded shared-service path"
+            )));
+        }
+        let binding = parse_port_binding(&effective_ports[0])?;
+        let output = ComposeOutput::new(output_dir);
+        let write = output.write(&assembly, &shared_project_name)?;
+        bindings.push(SharedServiceBinding {
+            service_name: service_name.clone(),
+            catalog: service.catalog.clone(),
+            project_name: shared_project_name,
+            compose_file: write.compose_path,
+            host: SHARED_SERVICE_HOST.to_owned(),
+            host_port: binding.host,
+            container_port: binding.container,
+        });
+    }
+    bindings.sort_by(|left, right| left.service_name.cmp(&right.service_name));
+    Ok(bindings)
+}
+
+fn validate_supported_shared_service(
+    service_name: &str,
+    service: &ManifestContainerServiceConfig,
+) -> Result<(), ContainerPolicyError> {
+    match service.catalog.as_str() {
+        "mariadb" | "postgres" | "redis" | "memcached" => {}
+        other => {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "service `{service_name}` uses unsupported shared catalog `{other}`; the bounded shared-service path only supports `mariadb`, `postgres`, `redis`, and `memcached`"
+            )));
+        }
+    }
+    if service.variant.is_some() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "service `{service_name}` cannot combine `shared = true` with `variant`; the bounded shared-service path only supports standalone backing-service catalogs"
+        )));
+    }
+    if service.config.is_some() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "service `{service_name}` cannot combine `shared = true` with `config`; the bounded shared-service path only supports standalone backing-service catalogs"
+        )));
+    }
+    Ok(())
+}
+
+fn shared_service_project_name(service: &ManifestContainerServiceConfig) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    service.catalog.hash(&mut hasher);
+    service.variant.hash(&mut hasher);
+    service.config.hash(&mut hasher);
+    for (key, value) in &service.params {
+        key.hash(&mut hasher);
+        value.to_string().hash(&mut hasher);
+    }
+    format!(
+        "effigy-shared-{}-{:08x}",
+        service.catalog,
+        (hasher.finish() & 0xffff_ffff) as u32
+    )
+}
+
+fn shared_service_output_dir(project_name: &str) -> Result<PathBuf, ContainerPolicyError> {
+    let Some(home) = effigy_home_dir() else {
+        return Err(ContainerPolicyError::TaskInvocation(
+            "`HOME` is not set; cannot resolve shared service state directory".to_owned(),
+        ));
+    };
+    Ok(home.join("shared-services").join(project_name))
+}
+
+fn apply_shared_service_env_policy(
+    project_name: &str,
+    shared_services: &[SharedServiceBinding],
+    assembly: &mut effigy_catalog::assembly::AssemblyResult,
+) -> Result<(), ContainerPolicyError> {
+    if shared_services.is_empty() {
+        return Ok(());
+    }
+
+    let mut parsed: YamlValue =
+        serde_yaml::from_str(&assembly.compose_yaml).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "generated compose for `{project_name}` is invalid YAML before shared-service rewrite: {error}"
+            ))
+        })?;
+    let Some(services) = parsed
+        .get_mut("services")
+        .and_then(YamlValue::as_mapping_mut)
+    else {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "generated compose for `{project_name}` is missing a `services` mapping"
+        )));
+    };
+
+    let env_vars = shared_services
+        .iter()
+        .flat_map(SharedServiceBinding::standard_env_vars)
+        .collect::<Vec<_>>();
+
+    for service in services.values_mut() {
+        let Some(service) = service.as_mapping_mut() else {
+            continue;
+        };
+        inject_service_env_vars(service, &env_vars)?;
+    }
+
+    assembly.compose_yaml = serde_yaml::to_string(&parsed).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "failed to serialize generated compose for `{project_name}` after shared-service rewrite: {error}"
+        ))
+    })?;
+    Ok(())
+}
+
+fn inject_service_env_vars(
+    service: &mut serde_yaml::Mapping,
+    env_vars: &[(String, String)],
+) -> Result<(), ContainerPolicyError> {
+    let key = YamlValue::String("environment".to_owned());
+    let environment = match service.get_mut(&key) {
+        Some(value) => value,
+        None => {
+            service.insert(key.clone(), YamlValue::Mapping(serde_yaml::Mapping::new()));
+            service
+                .get_mut(&key)
+                .expect("environment mapping should exist after insertion")
+        }
+    };
+
+    let environment = match environment {
+        YamlValue::Mapping(mapping) => mapping,
+        YamlValue::Sequence(sequence) => {
+            let mut mapping = serde_yaml::Mapping::new();
+            for entry in sequence.iter() {
+                let Some(raw) = entry.as_str() else {
+                    return Err(ContainerPolicyError::TaskInvocation(
+                        "shared-service env injection only supports string list `environment` entries".to_owned(),
+                    ));
+                };
+                let Some((name, value)) = raw.split_once('=') else {
+                    return Err(ContainerPolicyError::TaskInvocation(format!(
+                        "shared-service env injection expected `KEY=VALUE` environment entry, got `{raw}`"
+                    )));
+                };
+                mapping.insert(
+                    YamlValue::String(name.trim().to_owned()),
+                    YamlValue::String(value.trim().to_owned()),
+                );
+            }
+            *environment = YamlValue::Mapping(mapping);
+            environment
+                .as_mapping_mut()
+                .expect("environment mapping should exist after conversion")
+        }
+        _ => {
+            return Err(ContainerPolicyError::TaskInvocation(
+                "shared-service env injection only supports mapping or string-list `environment` entries".to_owned(),
+            ))
+        }
+    };
+
+    for (name, value) in env_vars {
+        environment
+            .entry(YamlValue::String(name.clone()))
+            .or_insert_with(|| YamlValue::String(value.clone()));
+    }
+    Ok(())
+}
+
 fn apply_generated_compose_port_policy(
     repo_root: &Path,
     project_name: &str,
-    config: &ManifestContainerConfig,
+    explicit_bindings: &[PortBinding],
     assembly: &mut effigy_catalog::assembly::AssemblyResult,
 ) -> Result<Vec<String>, ContainerPolicyError> {
     let mut parsed: YamlValue =
@@ -424,11 +734,6 @@ fn apply_generated_compose_port_policy(
         )));
     };
 
-    let explicit_ports = configured_host_ports(config);
-    let explicit_bindings = explicit_ports
-        .iter()
-        .map(|raw| parse_port_binding(raw))
-        .collect::<Result<Vec<_>, _>>()?;
     let mut used_explicit_ports = std::collections::BTreeSet::<u16>::new();
     let mut effective_ports = Vec::new();
 

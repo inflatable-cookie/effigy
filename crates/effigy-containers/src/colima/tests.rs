@@ -66,6 +66,7 @@ fn test_policy(profile: &str) -> EffectiveContainerPolicy {
         compose_source: crate::EffectiveComposeSource::Direct,
         compose_files: vec![std::path::PathBuf::from("docker-compose.yml")],
         compose_file_display: "docker-compose.yml".to_string(),
+        shared_services: vec![],
         project_name: "test-project".to_string(),
         primary_service: "app".to_string(),
         dns_domain: None,

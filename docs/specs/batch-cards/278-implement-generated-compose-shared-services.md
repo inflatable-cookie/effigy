@@ -1,6 +1,6 @@
 # 278 Implement Generated-Compose Shared Services
 
-Status: ready
+Status: landed
 Updated: 2026-04-18
 Roadmap: `g02.016`
 Spec: `docs/specs/016-multi-project-coordination-strict-lane.md`
@@ -63,7 +63,29 @@ The substrate already exists:
 - focused tests cover manifest acceptance, generated compose rewrite, shared
   instance reuse, and status/report shaping
 
+## Result
+
+This batch is now landed.
+
+What changed:
+
+- generated-compose manifests can now mark supported backing services with
+  `shared = true`
+- Effigy now resolves those shared declarations into stable shared compose
+  projects under `~/.effigy/shared-services/` with stable host-port
+  allocation from the existing registry
+- `container up` now ensures those shared instances are running before the
+  consumer stack starts, while generated consumer compose drops the local
+  duplicate service and injects standard host/port env vars that point at the
+  shared target
+- `container down/reset/status` and related text/JSON shaping now report the
+  bounded shared-service state honestly, including the explicit leave-running
+  behavior for this batch
+- direct `compose_file` ownership, unsupported catalogs, generated Dockerfile
+  cases, and explicit shared-service teardown all remain out of scope on
+  purpose
+
 ## Next Task
 
-Implement this batch, validate it, then close `g02.016` on the bounded
-product surface that is actually shipped.
+No further execution lives on this card. Close `g02.016` on this shipped
+boundary, then reopen planning around `g02.015`.

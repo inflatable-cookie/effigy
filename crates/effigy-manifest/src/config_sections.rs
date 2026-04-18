@@ -339,6 +339,8 @@ pub struct ManifestContainerServiceConfig {
     pub variant: Option<String>,
     #[serde(default)]
     pub config: Option<String>,
+    #[serde(default)]
+    pub shared: Option<bool>,
     #[serde(flatten)]
     pub params: BTreeMap<String, toml::Value>,
 }
@@ -877,6 +879,7 @@ version = "10.11"
         let parsed: ManifestContainerServiceConfig = toml::from_str(
             r#"
 catalog = "redis"
+shared = true
 memory = 128
 enabled = true
 "#,
@@ -885,6 +888,7 @@ enabled = true
 
         assert_eq!(parsed.catalog, "redis");
         assert_eq!(parsed.variant, None);
+        assert_eq!(parsed.shared, Some(true));
         assert_eq!(
             parsed.params.get("memory"),
             Some(&toml::Value::Integer(128))

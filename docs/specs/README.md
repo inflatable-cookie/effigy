@@ -17,7 +17,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Active Spec Set
 
-- [`016-multi-project-coordination-strict-lane.md`](./016-multi-project-coordination-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -27,11 +26,12 @@ Paused but still useful:
 
 Recently completed:
 
+- [`016-multi-project-coordination-strict-lane.md`](./016-multi-project-coordination-strict-lane.md)
 - [`014-rust-native-gateway-strict-lane.md`](./014-rust-native-gateway-strict-lane.md)
 - [`012-container-context-and-transparent-execution-strict-lane.md`](./012-container-context-and-transparent-execution-strict-lane.md)
 - [`011-service-catalog-and-compose-assembly-strict-lane.md`](./011-service-catalog-and-compose-assembly-strict-lane.md)
 
 ## Next Task
 
-Execute card `278` to land bounded generated-compose shared services and close
-`g02.016`.
+Stop in planning and reopen `g02.015` on one explicit strict-lane/batch-card
+boundary.
