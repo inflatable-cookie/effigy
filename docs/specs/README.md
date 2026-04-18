@@ -17,6 +17,7 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Active Spec Set
 
+- [`016-multi-project-coordination-strict-lane.md`](./016-multi-project-coordination-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -32,7 +33,5 @@ Recently completed:
 
 ## Next Task
 
-The bounded `g02.014` lane is complete through card `270`.
-
-Return to the remaining roadmap spine rather than reopening gateway planning
-work that now belongs to `g02.016`.
+`272` is landed. Stop in planning and decide the next bounded `g02.016`
+follow-up instead of improvising execution.

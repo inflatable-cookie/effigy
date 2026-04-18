@@ -1,6 +1,8 @@
 use super::{
-    effective_attach_mode, eject_generated_compose, load_container_policy,
-    validate_container_policy, ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource,
+    effective_attach_mode, eject_generated_compose, load_all_container_policies,
+    load_container_policy, status_all_report, validate_container_policy, AllocatedPortsSummary,
+    ContainerPolicyError, ContainerStatusAllEntry, ContainerStatusService, EffectiveAttachMode,
+    EffectiveComposeSource,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -260,4 +262,66 @@ primary_service = "app"
     assert!(error
         .to_string()
         .contains("direct `compose_file` ownership"));
+}
+
+#[test]
+fn load_all_container_policies_returns_every_declared_environment() {
+    let root = temp_repo("all-policies");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.worker]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "jobs"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policies = load_all_container_policies(&root).expect("policies");
+    assert_eq!(policies.len(), 2);
+    assert_eq!(policies[0].name, "web");
+    assert_eq!(policies[1].name, "worker");
+}
+
+#[test]
+fn status_all_report_renders_environment_inventory() {
+    let report = status_all_report(&[ContainerStatusAllEntry {
+        repo_root: "/tmp/demo".to_owned(),
+        container: "web".to_owned(),
+        project_name: "demo-web-dev".to_owned(),
+        profile: "default".to_owned(),
+        primary_service: "app".to_owned(),
+        dns_domain: Some("demo.test".to_owned()),
+        dns_tls: true,
+        declared_ports: vec!["18080:80".to_owned()],
+        allocated_ports: Some(AllocatedPortsSummary {
+            base: 8100,
+            http: 8100,
+            mysql: 8106,
+            postgres: 8132,
+            redis: 8179,
+            memcached: 8111,
+        }),
+        services: vec![ContainerStatusService {
+            name: "app".to_owned(),
+            container_name: "demo-app-1".to_owned(),
+            status: "Up 2 minutes".to_owned(),
+            ports: vec!["0.0.0.0:18080->80/tcp".to_owned()],
+        }],
+    }]);
+
+    assert!(report.success_text.contains("running Effigy-managed"));
+    assert!(report.success_text.contains("demo.test (tls)"));
+    assert!(report.success_text.contains("allocated_ports: base=8100"));
+    assert_eq!(report.json["environment_count"], 1);
+    assert_eq!(report.json["environments"][0]["container"], "web");
 }

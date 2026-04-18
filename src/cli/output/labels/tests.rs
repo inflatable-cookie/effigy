@@ -83,7 +83,10 @@ fn command_kind_and_name_maps_command_variants() {
         output_json: false,
     });
     let container = Command::Container(ContainerArgs {
-        subcommand: ContainerSubcommand::Status { name: None },
+        subcommand: ContainerSubcommand::Status {
+            name: None,
+            all: false,
+        },
         repo_override: None,
         output_json: false,
     });

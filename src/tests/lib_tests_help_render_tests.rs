@@ -178,12 +178,14 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("container Help"));
     assert!(rendered.contains("effigy container up"));
     assert!(rendered.contains("effigy container <NAME> up"));
+    assert!(rendered.contains("effigy container status --all"));
     assert!(rendered.contains("effigy container <NAME> logs"));
     assert!(rendered.contains("effigy container <NAME> shell"));
     assert!(rendered.contains("effigy container <NAME> reset"));
     assert!(rendered.contains("effigy container <NAME> eject"));
     assert!(rendered.contains("--attach"));
     assert!(rendered.contains("--detach"));
+    assert!(rendered.contains("--all"));
     assert!(rendered.contains("--service <NAME>"));
     assert!(rendered.contains("--command <CMD>"));
     assert!(rendered.contains("--follow"));

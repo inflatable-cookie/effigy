@@ -53,6 +53,13 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. The gateway now has a real TLS product path, including
   `setup-tls`, route-owned cert lifecycle, honest readiness/status projection,
   and one real HTTPS consumer proof.
+- [`271-plan-multi-project-coordination-status-batch.md`](./271-plan-multi-project-coordination-status-batch.md)
+  is complete. The broad `g02.016` coordination roadmap now has one bounded
+  first execution target instead of a vague handoff from gateway closeout.
+- [`272-implement-cross-project-status-and-route-dashboard-foundation.md`](./272-implement-cross-project-status-and-route-dashboard-foundation.md)
+  is complete. The first real `g02.016` coordination surface is now landed:
+  `container status --all` plus a fuller shared route dashboard in
+  `gateway status`.
 
 ## Archive Rule
 
@@ -65,5 +72,5 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-No further `g02.014` execution lives here. The bounded gateway lane is
-complete; broader route-dashboard coordination belongs to `g02.016`.
+No further `g02.016` execution is ready yet. Stop in planning and choose the
+next bounded follow-up after the landed status/dashboard batch.

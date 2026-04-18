@@ -416,6 +416,7 @@ pub enum ContainerSubcommand {
     },
     Status {
         name: Option<String>,
+        all: bool,
     },
     Logs {
         name: Option<String>,
@@ -545,6 +546,7 @@ pub enum CliParseError {
         value: String,
         expected: String,
     },
+    InvalidArguments(String),
     UnknownArgument(String),
 }
 
@@ -567,6 +569,7 @@ impl std::fmt::Display for CliParseError {
                 value,
                 expected,
             } => write!(f, "{flag} value `{value}` is invalid (expected {expected})"),
+            CliParseError::InvalidArguments(message) => write!(f, "{message}"),
             CliParseError::UnknownArgument(arg) => write!(f, "unknown argument: {arg}"),
         }
     }

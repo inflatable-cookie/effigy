@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -6,12 +7,14 @@ use effigy_containers::{
     down_report, effective_attach_mode, eject_generated_compose, eject_report,
     exec::{
         capture_compose_ps, colima_is_running, ensure_colima_running,
-        shutdown_container as shutdown_container_via_exec,
+        list_running_compose_containers, shutdown_container as shutdown_container_via_exec,
     },
     health::{probe_health_status, wait_for_ready},
-    load_container_policy, reset_report, status_report, up_detached_report,
-    validate_container_policy, EffectiveAttachMode, EffectiveContainerPolicy,
+    load_all_container_policies, load_container_policy, reset_report, status_all_report,
+    status_report, up_detached_report, validate_container_policy, AllocatedPortsSummary,
+    ContainerStatusAllEntry, ContainerStatusService, EffectiveAttachMode, EffectiveContainerPolicy,
 };
+use effigy_gateway::ports::PortRegistry;
 use serde_json::json;
 
 use super::gateway_registration::{
@@ -221,6 +224,97 @@ pub(super) fn run_container_status(
     ))
 }
 
+pub(super) fn run_container_status_all(output_json: bool) -> Result<String, RunnerError> {
+    let rows = list_running_compose_containers()
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let registry = load_port_registry();
+    let mut grouped: BTreeMap<(String, String), Vec<_>> = BTreeMap::new();
+    for row in rows {
+        let Some(project_name) = row.project_name.clone() else {
+            continue;
+        };
+        let Some(repo_root) = row.working_dir.clone() else {
+            continue;
+        };
+        grouped
+            .entry((repo_root, project_name))
+            .or_default()
+            .push(row);
+    }
+
+    let mut environments = Vec::new();
+    for ((repo_root, project_name), mut services) in grouped {
+        let repo_path = Path::new(&repo_root);
+        if !repo_path.join("effigy.toml").is_file() {
+            continue;
+        }
+        let Ok(policies) = load_all_container_policies(repo_path) else {
+            continue;
+        };
+        let Some(policy) = policies
+            .into_iter()
+            .find(|policy| policy.project_name == project_name)
+        else {
+            continue;
+        };
+        services.sort_by(|left, right| {
+            left.service
+                .as_deref()
+                .unwrap_or(left.container_name.as_str())
+                .cmp(
+                    right
+                        .service
+                        .as_deref()
+                        .unwrap_or(right.container_name.as_str()),
+                )
+        });
+
+        environments.push(ContainerStatusAllEntry {
+            repo_root,
+            container: policy.name.clone(),
+            project_name: policy.project_name.clone(),
+            profile: policy.profile.clone(),
+            primary_service: policy.primary_service.clone(),
+            dns_domain: policy.dns_domain.clone(),
+            dns_tls: policy.dns_tls,
+            declared_ports: policy.declared_ports.clone(),
+            allocated_ports: registry
+                .as_ref()
+                .and_then(|value| value.port_map(&policy.project_name))
+                .map(|ports| AllocatedPortsSummary {
+                    base: ports.base,
+                    http: ports.http,
+                    mysql: ports.mysql,
+                    postgres: ports.postgres,
+                    redis: ports.redis,
+                    memcached: ports.memcached,
+                }),
+            services: services
+                .into_iter()
+                .map(|service| ContainerStatusService {
+                    name: service
+                        .service
+                        .clone()
+                        .unwrap_or_else(|| service.container_name.clone()),
+                    container_name: service.container_name,
+                    status: service.status,
+                    ports: service.ports,
+                })
+                .collect(),
+        });
+    }
+    environments.sort_by(|left, right| {
+        left.repo_root
+            .cmp(&right.repo_root)
+            .then(left.container.cmp(&right.container))
+    });
+
+    Ok(render_container_report(
+        status_all_report(&environments),
+        output_json,
+    ))
+}
+
 pub(super) fn run_container_logs(
     repo_root: &Path,
     name: Option<&str>,
@@ -417,6 +511,12 @@ fn annotate_removed_gateway_route(
     report
         .success_text
         .push_str(&format!("[gateway] removed {domain}"));
+}
+
+fn load_port_registry() -> Option<PortRegistry> {
+    let home = std::env::var_os("HOME")?;
+    let path = Path::new(&home).join(".effigy/ports.json");
+    PortRegistry::load(&path).ok()
 }
 
 #[cfg(test)]
