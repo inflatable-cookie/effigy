@@ -5,6 +5,8 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::{Command, Output};
 
+use serde_json::Value as JsonValue;
+
 use crate::{
     colima::{
         colima_start_command, colima_status_command, parse_colima_running,
@@ -15,6 +17,7 @@ use crate::{
 };
 
 const DOCKER_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}";
+const DOCKER_STATS_FORMAT: &str = "{{ json . }}";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunningComposeContainer {
@@ -24,6 +27,20 @@ pub struct RunningComposeContainer {
     pub project_name: Option<String>,
     pub working_dir: Option<String>,
     pub service: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningContainerStats {
+    pub container_name: String,
+    pub cpu_percent: Option<String>,
+    pub memory_usage: Option<String>,
+    pub memory_percent: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningContainerStatsCapture {
+    pub stats: Vec<RunningContainerStats>,
+    pub warning: Option<String>,
 }
 
 #[derive(Debug)]
@@ -150,6 +167,85 @@ pub fn list_running_compose_containers() -> Result<Vec<RunningComposeContainer>,
     parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))
 }
 
+pub fn capture_running_container_stats(container_names: &[String]) -> RunningContainerStatsCapture {
+    if container_names.is_empty() {
+        return RunningContainerStatsCapture {
+            stats: Vec::new(),
+            warning: None,
+        };
+    }
+
+    let mut command = vec!["stats", "--no-stream", "--format", DOCKER_STATS_FORMAT];
+    let names = container_names
+        .iter()
+        .map(|name| name.as_str())
+        .collect::<Vec<_>>();
+    command.extend(names.iter().copied());
+
+    let output = match resolve_compose_backend() {
+        ComposeBackend::Docker => {
+            run_command_capture_allow_failure(Path::new("."), "docker", &command)
+        }
+        ComposeBackend::ColimaNerdctl => {
+            let mut nerdctl_command = vec!["nerdctl", "--profile", "default", "--"];
+            nerdctl_command.extend(command.iter().copied());
+            run_command_capture_allow_failure(Path::new("."), "colima", &nerdctl_command)
+        }
+    };
+
+    let Ok(output) = output else {
+        return RunningContainerStatsCapture {
+            stats: Vec::new(),
+            warning: Some("failed to launch runtime stats collection".to_owned()),
+        };
+    };
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!(
+                "runtime stats command exited with status {:?}",
+                output.status.code()
+            )
+        };
+        return RunningContainerStatsCapture {
+            stats: Vec::new(),
+            warning: Some(format!("resource stats unavailable: {detail}")),
+        };
+    }
+
+    match parse_running_container_stats(&String::from_utf8_lossy(&output.stdout)) {
+        Ok(stats) => {
+            let stats_names = stats
+                .iter()
+                .map(|sample| sample.container_name.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            let missing = container_names
+                .iter()
+                .filter(|name| !stats_names.contains(name.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            let warning = if missing.is_empty() {
+                None
+            } else {
+                Some(format!(
+                    "runtime stats were unavailable for: {}",
+                    missing.join(", ")
+                ))
+            };
+            RunningContainerStatsCapture { stats, warning }
+        }
+        Err(error) => RunningContainerStatsCapture {
+            stats: Vec::new(),
+            warning: Some(format!("resource stats unavailable: {error}")),
+        },
+    }
+}
+
 pub fn run_command_capture(
     repo_root: &Path,
     program: &str,
@@ -261,6 +357,55 @@ fn parse_running_compose_containers(
     Ok(rows)
 }
 
+fn parse_running_container_stats(
+    stdout: &str,
+) -> Result<Vec<RunningContainerStats>, ContainerExecError> {
+    let mut rows = Vec::new();
+    for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
+        let parsed: JsonValue =
+            serde_json::from_str(line).map_err(|error| ContainerExecError::Failure {
+                command: "docker stats".to_owned(),
+                code: None,
+                stdout: stdout.to_owned(),
+                stderr: format!("failed to parse stats row as json: {error}"),
+            })?;
+        let Some(object) = parsed.as_object() else {
+            return Err(ContainerExecError::Failure {
+                command: "docker stats".to_owned(),
+                code: None,
+                stdout: stdout.to_owned(),
+                stderr: format!("stats row was not a json object: {line}"),
+            });
+        };
+        let container_name = json_string_field(object, &["Name", "name", "Container", "container"])
+            .ok_or_else(|| ContainerExecError::Failure {
+                command: "docker stats".to_owned(),
+                code: None,
+                stdout: stdout.to_owned(),
+                stderr: format!("stats row missing container name field: {line}"),
+            })?;
+        rows.push(RunningContainerStats {
+            container_name,
+            cpu_percent: json_string_field(object, &["CPUPerc", "cpu_percent", "CPU"]),
+            memory_usage: json_string_field(object, &["MemUsage", "memory_usage", "Memory"]),
+            memory_percent: json_string_field(object, &["MemPerc", "memory_percent"]),
+        });
+    }
+
+    Ok(rows)
+}
+
+fn json_string_field(object: &serde_json::Map<String, JsonValue>, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        object
+            .get(*key)
+            .and_then(JsonValue::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,5 +422,18 @@ mod tests {
         assert_eq!(parsed[0].working_dir.as_deref(), Some("/tmp/demo"));
         assert_eq!(parsed[0].service.as_deref(), Some("app"));
         assert_eq!(parsed[0].ports.len(), 2);
+    }
+
+    #[test]
+    fn parse_running_container_stats_reads_json_lines() {
+        let parsed = parse_running_container_stats(
+            r#"{"Name":"demo-app-1","CPUPerc":"1.25%","MemUsage":"12.4MiB / 8GiB","MemPerc":"0.15%"}"#,
+        )
+        .expect("parse");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].container_name, "demo-app-1");
+        assert_eq!(parsed[0].cpu_percent.as_deref(), Some("1.25%"));
+        assert_eq!(parsed[0].memory_usage.as_deref(), Some("12.4MiB / 8GiB"));
+        assert_eq!(parsed[0].memory_percent.as_deref(), Some("0.15%"));
     }
 }

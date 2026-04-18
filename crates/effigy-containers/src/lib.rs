@@ -6,9 +6,9 @@ pub mod report;
 pub mod session;
 
 pub use report::{
-    down_report, eject_report, logs_report, reset_report, status_all_report, status_report,
-    up_detached_report, AllocatedPortsSummary, ContainerCommandReport, ContainerStatusAllEntry,
-    ContainerStatusService,
+    down_report, eject_report, logs_report, reset_report, stats_all_report, status_all_report,
+    status_report, up_detached_report, AllocatedPortsSummary, ContainerCommandReport,
+    ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
 };
 
 use std::ffi::OsStr;

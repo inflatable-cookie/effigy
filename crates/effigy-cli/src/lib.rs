@@ -418,6 +418,9 @@ pub enum ContainerSubcommand {
         name: Option<String>,
         all: bool,
     },
+    Stats {
+        all: bool,
+    },
     Logs {
         name: Option<String>,
         service: Option<String>,

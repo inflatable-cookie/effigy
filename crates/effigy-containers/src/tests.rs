@@ -1,8 +1,9 @@
 use super::{
     effective_attach_mode, eject_generated_compose, load_all_container_policies,
-    load_container_policy, status_all_report, validate_container_policy, with_test_effigy_home,
-    AllocatedPortsSummary, ContainerPolicyError, ContainerStatusAllEntry, ContainerStatusService,
-    EffectiveAttachMode, EffectiveComposeSource,
+    load_container_policy, stats_all_report, status_all_report, validate_container_policy,
+    with_test_effigy_home, AllocatedPortsSummary, ContainerPolicyError, ContainerStatsAllEntry,
+    ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService, EffectiveAttachMode,
+    EffectiveComposeSource,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -438,4 +439,49 @@ fn status_all_report_renders_environment_inventory() {
     assert!(report.success_text.contains("allocated_ports: base=8100"));
     assert_eq!(report.json["environment_count"], 1);
     assert_eq!(report.json["environments"][0]["container"], "web");
+}
+
+#[test]
+fn stats_all_report_renders_resource_inventory_and_warning() {
+    let report = stats_all_report(
+        &[ContainerStatsAllEntry {
+            repo_root: "/tmp/demo".to_owned(),
+            container: "web".to_owned(),
+            project_name: "demo-web-dev".to_owned(),
+            profile: "default".to_owned(),
+            primary_service: "app".to_owned(),
+            services: vec![
+                ContainerStatsService {
+                    name: "app".to_owned(),
+                    container_name: "demo-app-1".to_owned(),
+                    status: "Up 2 minutes".to_owned(),
+                    cpu_percent: Some("1.25%".to_owned()),
+                    memory_usage: Some("12.4MiB / 8GiB".to_owned()),
+                    memory_percent: Some("0.15%".to_owned()),
+                },
+                ContainerStatsService {
+                    name: "web".to_owned(),
+                    container_name: "demo-web-1".to_owned(),
+                    status: "Up 2 minutes".to_owned(),
+                    cpu_percent: None,
+                    memory_usage: None,
+                    memory_percent: None,
+                },
+            ],
+        }],
+        Some("runtime stats were unavailable for: demo-web-1"),
+    );
+
+    assert_eq!(report.json["schema"], "effigy.container.stats-all.v1");
+    assert_eq!(report.json["environment_count"], 1);
+    assert_eq!(
+        report.json["stats_warning"],
+        "runtime stats were unavailable for: demo-web-1"
+    );
+    assert!(report
+        .success_text
+        .contains("[warn] runtime stats were unavailable"));
+    assert!(report.success_text.contains("cpu=1.25%"));
+    assert!(report.success_text.contains("memory=12.4MiB / 8GiB"));
+    assert!(report.success_text.contains("cpu=unavailable"));
 }

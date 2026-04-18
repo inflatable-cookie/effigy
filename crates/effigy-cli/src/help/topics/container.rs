@@ -21,6 +21,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container <NAME> down [--repo <PATH>] [--json]",
             "effigy container status [--repo <PATH>] [--json]",
             "effigy container status --all [--json]",
+            "effigy container stats --all [--json]",
             "effigy container <NAME> status [--repo <PATH>] [--json]",
             "effigy container <NAME> logs [--repo <PATH>] [--service <NAME>] [--follow] [--json]",
             "effigy container <NAME> shell [--repo <PATH>] [--service <NAME>] [--command <CMD>]",
@@ -47,7 +48,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ),
             (
                 "--all",
-                "For `status`, discover running Effigy-managed environments across repos instead of one manifest target",
+                "For `status` or `stats`, discover running Effigy-managed environments across repos instead of one manifest target",
             ),
             (
                 "--command <CMD>",
@@ -70,6 +71,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container web up --detach",
             "effigy container web status",
             "effigy container status --all",
+            "effigy container stats --all",
             "effigy container web logs --follow",
             "effigy container web shell --command \"php artisan tinker\"",
             "effigy container web reset",

@@ -102,6 +102,9 @@ What is now also real in the product path:
   the same effective host-port bindings
 - gateway registration now stays honest for generated stacks that proxy
   through auto-assigned host ports rather than explicit manifest bindings
+- `effigy container stats --all` now provides one cross-project resource view
+  for running Effigy-managed containers, with honest partial/unavailable stats
+  reporting instead of pretending runtime collection always succeeds
 
 ## Exit Condition
 
@@ -115,4 +118,5 @@ This strict lane is complete when:
 
 ## Next Task
 
-Execute `276` to land bounded cross-project container resource stats.
+Stop in planning and decide whether shared services earns a bounded final
+`g02.016` batch or an explicit deferral.

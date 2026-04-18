@@ -1,6 +1,6 @@
 # 276 Implement Container Resource Stats Foundation
 
-Status: ready
+Status: landed
 Updated: 2026-04-18
 Roadmap: `g02.016`
 Spec: `docs/specs/016-multi-project-coordination-strict-lane.md`
@@ -52,7 +52,25 @@ The substrate already exists:
 - the surface degrades clearly when runtime stats are unavailable
 - focused tests cover parser/help/runner and container-side shaping
 
+## Result
+
+This batch is now landed.
+
+What changed:
+
+- `effigy container stats --all` is now a real CLI/help/parser/runner surface
+- cross-project running-environment discovery is now reused for one bounded
+  resource view instead of inventing a parallel path
+- the container surface now collects live CPU and memory stats from the
+  runtime for discovered Effigy-managed containers and renders them in text
+  and JSON
+- the stats surface stays honest when runtime stats are partial or unavailable
+  by emitting a warning and leaving affected service samples empty instead of
+  failing the whole report
+- focused tests cover parser/help, runner `--repo` rejection, and
+  container-side stats parsing/report shaping
+
 ## Next Task
 
-Implement this batch, then decide whether `g02.016` still wants shared
-services or an explicit bounded deferral.
+Stop in planning and decide whether `g02.016` still wants shared services or
+an explicit bounded deferral.

@@ -72,8 +72,9 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. The next `g02.016` follow-up is now explicit again:
   cross-project resource stats before any shared-service widening.
 - [`276-implement-container-resource-stats-foundation.md`](./276-implement-container-resource-stats-foundation.md)
-  is ready. The next live batch is bounded cross-project container resource
-  stats.
+  is complete. The container surface now has one bounded cross-project
+  resource view through `container stats --all`, including honest warnings
+  when runtime stats are partial or unavailable.
 
 ## Archive Rule
 
@@ -86,4 +87,5 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Execute `276` to land the next bounded `g02.016` batch.
+Stop in planning and decide whether `g02.016` wants one bounded
+shared-service follow-up or an explicit deferral.

@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress (status and generated-compose auto-allocation landed; resource visibility still pending)
+Status: In Progress (status, generated-compose auto-allocation, and bounded resource visibility landed; shared-service follow-up undecided)
 Owner: Platform
 Created: 2026-04-16
 Depends on: 011, 014
@@ -49,7 +49,7 @@ With multiple projects:
       Effigy-owned generated compose.
 - [x] Implement `effigy container status --all` across repos.
 - [x] Implement `effigy gateway status` with full route dashboard.
-- [ ] Implement `effigy container stats` for resource visibility.
+- [x] Implement bounded `effigy container stats --all` for resource visibility.
 - [ ] Define optional `shared = true` service flag for shared instances.
 
 ## 3) Non-Goals
@@ -88,11 +88,11 @@ gateway), uptime.
 ### 4.3 Resource Visibility
 
 ```bash
-effigy container stats
+effigy container stats --all
 ```
 
 Shows CPU and memory usage per container, grouped by project. Uses Docker
-stats API.
+stats output on the shipped container runtime path.
 
 ### 4.4 Shared Services
 
@@ -125,4 +125,5 @@ efficiency.
 
 ## Next Task
 
-Execute card `276` to land bounded cross-project container resource stats.
+Stop in planning and decide whether this lane still wants one bounded
+shared-service follow-up or an explicit deferral.
