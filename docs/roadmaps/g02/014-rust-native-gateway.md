@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress (effigy-gateway crate shipped, awaiting runner integration)
+Status: In Progress (crate shipped; command integration and route registration still open)
 Owner: Platform
 Created: 2026-04-16
 Depends on: 006
@@ -188,5 +188,6 @@ route table.
 
 ## Next Task
 
-Can begin in parallel with `g02.011`. Start with a decision batch on the
-DNS resolver port, proxy port, and route table format.
+`g02.014` is now the active integration lane. Execute `266` first: make the
+host-native `effigy gateway up/down/status` surface real, then wire DNS
+contract and route registration in the next batch.

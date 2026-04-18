@@ -17,21 +17,21 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Active Spec Set
 
-- [`010-effigy-modularization-and-crate-boundaries-strict-lane.md`](./010-effigy-modularization-and-crate-boundaries-strict-lane.md)
-- [`007-distribution-release-and-consumer-rollout-strict-lane.md`](./007-distribution-release-and-consumer-rollout-strict-lane.md)
-- [`011-service-catalog-and-compose-assembly-strict-lane.md`](./011-service-catalog-and-compose-assembly-strict-lane.md)
-- [`012-container-context-and-transparent-execution-strict-lane.md`](./012-container-context-and-transparent-execution-strict-lane.md)
+- [`014-rust-native-gateway-strict-lane.md`](./014-rust-native-gateway-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
+
+Paused but still useful:
+
+- [`007-distribution-release-and-consumer-rollout-strict-lane.md`](./007-distribution-release-and-consumer-rollout-strict-lane.md)
+- [`010-effigy-modularization-and-crate-boundaries-strict-lane.md`](./010-effigy-modularization-and-crate-boundaries-strict-lane.md)
+
+Recently completed:
+
+- [`012-container-context-and-transparent-execution-strict-lane.md`](./012-container-context-and-transparent-execution-strict-lane.md)
+- [`011-service-catalog-and-compose-assembly-strict-lane.md`](./011-service-catalog-and-compose-assembly-strict-lane.md)
 
 ## Next Task
 
-The release-closure batch is complete, but release execution remains deferred
-while live `g02.010` work is still active in the parallel thread.
+`g02.012` is closed. `g02.014` is now the active strict lane.
 
-`g02.010` is reopened post-`250` with a four-card follow-up chain
-(`252`–`255`) covering runner-root tidy, doctor-runner extraction,
-and test-harness prelude flattening. Card `252` is the ready card;
-details in [`batch-cards/README.md`](./batch-cards/README.md).
-
-Once that chain closes, return to `115` for explicit human-approved
-release execution.
+Card `266` is ready and owns the host-native gateway command foundation.
