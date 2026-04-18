@@ -33,5 +33,5 @@ Recently completed:
 
 ## Next Task
 
-`272` is landed. Stop in planning and decide the next bounded `g02.016`
-follow-up instead of improvising execution.
+Execute card `276` to land bounded cross-project container resource stats for
+`g02.016`.

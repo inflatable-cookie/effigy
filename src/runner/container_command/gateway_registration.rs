@@ -83,7 +83,14 @@ fn resolve_gateway_route(
 
 fn first_declared_host_port(policy: &EffectiveContainerPolicy) -> Result<u16, RunnerError> {
     if let Some(port) = policy.dns_port {
-        return selected_declared_host_port(policy, port);
+        return if policy.ports_declared_explicitly {
+            selected_declared_host_port(policy, port)
+        } else {
+            selected_effective_container_port(policy, port)
+        };
+    }
+    if !policy.ports_declared_explicitly {
+        return first_effective_http_host_port(policy);
     }
     let Some(raw) = policy.declared_ports.first() else {
         return Err(RunnerError::task_invocation(format!(
@@ -117,14 +124,71 @@ fn selected_declared_host_port(
     )))
 }
 
+fn selected_effective_container_port(
+    policy: &EffectiveContainerPolicy,
+    selected_port: u16,
+) -> Result<u16, RunnerError> {
+    for raw in &policy.declared_ports {
+        let binding = parse_port_binding(policy, raw)?;
+        if binding.1 == selected_port {
+            return Ok(binding.0);
+        }
+    }
+    Err(RunnerError::task_invocation(format!(
+        "container `{}` declares `[containers.{}.dns].port = {selected_port}` but the generated compose does not expose that container port",
+        policy.name, policy.name
+    )))
+}
+
+fn first_effective_http_host_port(policy: &EffectiveContainerPolicy) -> Result<u16, RunnerError> {
+    let mut first_binding: Option<u16> = None;
+    for raw in &policy.declared_ports {
+        let (host, container) = parse_port_binding(policy, raw)?;
+        if first_binding.is_none() {
+            first_binding = Some(host);
+        }
+        if matches!(container, 80 | 3000 | 8025 | 9000 | 9001 | 9200) {
+            return Ok(host);
+        }
+    }
+    first_binding.ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "container `{}` declares `[containers.{}.dns]` but no effective published ports are available for gateway registration",
+            policy.name, policy.name
+        ))
+    })
+}
+
 fn parse_host_port(policy: &EffectiveContainerPolicy, raw: &str) -> Result<u16, RunnerError> {
-    let host = raw.split(':').next().unwrap_or_default().trim();
-    host.parse::<u16>().map_err(|error| {
+    parse_port_binding(policy, raw).map(|binding| binding.0)
+}
+
+fn parse_port_binding(
+    policy: &EffectiveContainerPolicy,
+    raw: &str,
+) -> Result<(u16, u16), RunnerError> {
+    let mut parts = raw.split(':');
+    let host = parts.next().unwrap_or_default().trim();
+    let container = parts.next().unwrap_or_default().trim();
+    if host.is_empty() || container.is_empty() || parts.next().is_some() {
+        return Err(RunnerError::task_invocation(format!(
+            "container `{}` has invalid host port mapping `{raw}` for gateway registration",
+            policy.name
+        )));
+    }
+    let host_port = host.parse::<u16>().map_err(|error| {
         RunnerError::task_invocation(format!(
             "container `{}` has invalid host port mapping `{raw}` for gateway registration: {error}",
             policy.name
         ))
-    })
+    })?;
+    let container_port = container.parse::<u16>().map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "container `{}` has invalid container port mapping `{raw}` for gateway registration: {error}",
+            policy.name
+        ))
+    })?;
+    Ok((host_port, container_port))
 }
 
 fn gateway_route_table_path() -> Result<PathBuf, RunnerError> {
@@ -156,6 +220,7 @@ mod tests {
             dns_tls: true,
             dns_port: None,
             declared_ports: vec!["8080:80".to_owned()],
+            ports_declared_explicitly: true,
             declared_mounts: vec![],
             health_check: None,
             health_timeout_secs: 60,
@@ -210,6 +275,19 @@ mod tests {
 
         let error = resolve_gateway_route(&policy).expect_err("should fail");
         assert!(error.to_string().contains("dns].port = 9001"));
+    }
+
+    #[test]
+    fn uses_effective_container_port_when_ports_are_auto_allocated() {
+        let mut policy = test_policy();
+        policy.ports_declared_explicitly = false;
+        policy.dns_port = Some(8025);
+        policy.declared_ports = vec!["8126:1025".to_owned(), "8125:8025".to_owned()];
+
+        let route = resolve_gateway_route(&policy)
+            .expect("route")
+            .expect("some route");
+        assert_eq!(route.target, "127.0.0.1:8125");
     }
 
     #[test]

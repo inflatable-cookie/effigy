@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress (port registry shipped in effigy-gateway, integration deferred)
+Status: In Progress (status and generated-compose auto-allocation landed; resource visibility still pending)
 Owner: Platform
 Created: 2026-04-16
 Depends on: 011, 014
@@ -44,10 +44,11 @@ With multiple projects:
 
 ## 2) Goals
 
-- [ ] Define port allocation registry at `~/.effigy/ports.json`.
-- [ ] Implement automatic port assignment when `host.ports` are omitted.
-- [ ] Implement `effigy container status --all` across repos.
-- [ ] Implement `effigy gateway status` with full route dashboard.
+- [x] Define port allocation registry at `~/.effigy/ports.json`.
+- [x] Implement automatic port assignment when `host.ports` are omitted for
+      Effigy-owned generated compose.
+- [x] Implement `effigy container status --all` across repos.
+- [x] Implement `effigy gateway status` with full route dashboard.
 - [ ] Implement `effigy container stats` for resource visibility.
 - [ ] Define optional `shared = true` service flag for shared instances.
 
@@ -124,5 +125,4 @@ efficiency.
 
 ## Next Task
 
-The first bounded coordination batch is now landed. Stop in planning and
-choose the next `g02.016` follow-up on a bounded product surface.
+Execute card `276` to land bounded cross-project container resource stats.

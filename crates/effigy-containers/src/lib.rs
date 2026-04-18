@@ -17,16 +17,25 @@ use std::path::{Path, PathBuf};
 use effigy_catalog::{
     assembly::ServiceDeclaration, CatalogError, CatalogResolver, ComposeAssembler, ComposeOutput,
 };
+use effigy_gateway::ports::PortRegistry;
 use effigy_manifest::{
     load_task_manifest_with_inspection, ManifestContainerConfig, ManifestContainerDriver,
     ManifestContainerOnTaskExit, ManifestContainerServiceConfig, ManifestContainerShutdownMode,
     ManifestContainerStartup, ManifestContainersConfig, ManifestError,
 };
+use serde_yaml::Value as YamlValue;
 
 const DEFAULT_COLIMA_PROFILE: &str = "default";
 const DEFAULT_ATTACH_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_HEALTH_TIMEOUT_SECS: u64 = 60;
 const GENERATED_COMPOSE_DIR: &str = "infra/dev";
+
+#[cfg(test)]
+thread_local! {
+    static TEST_EFFIGY_HOME: std::cell::RefCell<Option<PathBuf>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectiveAttachMode {
@@ -55,6 +64,7 @@ pub struct EffectiveContainerPolicy {
     pub dns_tls: bool,
     pub dns_port: Option<u16>,
     pub declared_ports: Vec<String>,
+    pub ports_declared_explicitly: bool,
     pub declared_mounts: Vec<String>,
     pub health_check: Option<String>,
     pub health_timeout_secs: u64,
@@ -232,7 +242,7 @@ fn build_effective_policy(
             .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
         format!("{repo}-{name}-dev")
     });
-    let (compose_files, compose_file_display) =
+    let (compose_files, compose_file_display, effective_ports) =
         resolve_compose_source(repo_root, name, config, &project_name, effective_manifest)?;
     let primary_service = config.primary_service.clone().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
@@ -270,7 +280,8 @@ fn build_effective_policy(
         dns_domain: Some(dns.domain).filter(|value| !value.trim().is_empty()),
         dns_tls: dns.tls.unwrap_or(false),
         dns_port: dns.port,
-        declared_ports: host.ports,
+        declared_ports: effective_ports,
+        ports_declared_explicitly: !host.ports.is_empty(),
         declared_mounts: host.mounts,
         health_check: health.check,
         health_timeout_secs: health.timeout_secs.unwrap_or(DEFAULT_HEALTH_TIMEOUT_SECS),
@@ -313,7 +324,7 @@ fn resolve_compose_source(
     config: &ManifestContainerConfig,
     project_name: &str,
     effective_manifest: &str,
-) -> Result<(Vec<PathBuf>, String), ContainerPolicyError> {
+) -> Result<(Vec<PathBuf>, String, Vec<String>), ContainerPolicyError> {
     if config.compose_file.is_some() && !config.services.is_empty() {
         return Err(ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` cannot combine `compose_file` with `[containers.{container_name}.services]`"
@@ -324,7 +335,7 @@ fn resolve_compose_source(
         let compose_file =
             repo_relative_path(repo_root, compose_file, "containers.*.compose_file")?;
         let display = path_relative_to_repo(repo_root, &compose_file);
-        return Ok((vec![compose_file], display));
+        return Ok((vec![compose_file], display, configured_host_ports(config)));
     }
 
     if config.services.is_empty() {
@@ -339,9 +350,20 @@ fn resolve_compose_source(
         user_global_catalog_dir(),
     );
     let assembler = ComposeAssembler::new(resolver);
-    let assembly = assembler.assemble(&services, project_name, &repo_root.display().to_string())?;
+    let mut assembly =
+        assembler.assemble(&services, project_name, &repo_root.display().to_string())?;
+    let effective_ports =
+        apply_generated_compose_port_policy(repo_root, project_name, config, &mut assembly)?;
     let output = ComposeOutput::new(repo_root.join(GENERATED_COMPOSE_DIR));
-    let write = output.write(&assembly, effective_manifest)?;
+    let manifest_cache_key = if effective_ports.is_empty() {
+        effective_manifest.to_owned()
+    } else {
+        format!(
+            "{effective_manifest}\n# effective_ports={}",
+            effective_ports.join(",")
+        )
+    };
+    let write = output.write(&assembly, &manifest_cache_key)?;
 
     let mut compose_files = vec![write.compose_path];
     if output.has_override() {
@@ -352,7 +374,7 @@ fn resolve_compose_source(
         .map(|path| path_relative_to_repo(repo_root, path))
         .collect::<Vec<_>>()
         .join(", ");
-    Ok((compose_files, display))
+    Ok((compose_files, display, effective_ports))
 }
 
 fn build_service_declarations(
@@ -381,15 +403,215 @@ fn build_service_declarations(
         .collect()
 }
 
+fn apply_generated_compose_port_policy(
+    repo_root: &Path,
+    project_name: &str,
+    config: &ManifestContainerConfig,
+    assembly: &mut effigy_catalog::assembly::AssemblyResult,
+) -> Result<Vec<String>, ContainerPolicyError> {
+    let mut parsed: YamlValue =
+        serde_yaml::from_str(&assembly.compose_yaml).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "generated compose for `{project_name}` is invalid YAML before port policy rewrite: {error}"
+            ))
+        })?;
+    let Some(services) = parsed
+        .get_mut("services")
+        .and_then(YamlValue::as_mapping_mut)
+    else {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "generated compose for `{project_name}` is missing a `services` mapping"
+        )));
+    };
+
+    let explicit_ports = configured_host_ports(config);
+    let explicit_bindings = explicit_ports
+        .iter()
+        .map(|raw| parse_port_binding(raw))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut used_explicit_ports = std::collections::BTreeSet::<u16>::new();
+    let mut effective_ports = Vec::new();
+
+    let mut registry = if explicit_bindings.is_empty() {
+        Some(load_port_registry()?.unwrap_or_default())
+    } else {
+        None
+    };
+
+    let mut service_names = services
+        .keys()
+        .filter_map(YamlValue::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    service_names.sort();
+
+    for service_name in service_names {
+        let Some(service) = services
+            .get_mut(YamlValue::String(service_name.clone()))
+            .and_then(YamlValue::as_mapping_mut)
+        else {
+            continue;
+        };
+        let Some(ports) = service
+            .get_mut(YamlValue::String("ports".to_owned()))
+            .and_then(YamlValue::as_sequence_mut)
+        else {
+            continue;
+        };
+
+        for port in ports.iter_mut() {
+            let Some(raw) = port.as_str() else {
+                continue;
+            };
+            let binding = parse_port_binding(raw)?;
+            let host_port = if explicit_bindings.is_empty() {
+                let registry = registry.as_mut().expect("registry exists");
+                registry
+                    .assign_port(
+                        project_name,
+                        &repo_root.display().to_string(),
+                        binding.container,
+                    )
+                    .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
+            } else {
+                let Some(explicit) = explicit_bindings
+                    .iter()
+                    .find(|candidate| candidate.container == binding.container)
+                else {
+                    continue;
+                };
+                used_explicit_ports.insert(explicit.container);
+                explicit.host
+            };
+            *port = YamlValue::String(format!("{host_port}:{}", binding.container));
+            effective_ports.push(format!("{host_port}:{}", binding.container));
+        }
+    }
+
+    if let Some(registry) = registry.as_ref() {
+        save_port_registry(registry)?;
+    }
+
+    if !explicit_bindings.is_empty() {
+        let unused = explicit_bindings
+            .iter()
+            .filter(|binding| !used_explicit_ports.contains(&binding.container))
+            .map(|binding| format!("{}:{}", binding.host, binding.container))
+            .collect::<Vec<_>>();
+        if !unused.is_empty() {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "generated compose for `{project_name}` does not expose manifest `host.ports` mapping(s): {}",
+                unused.join(", ")
+            )));
+        }
+    }
+
+    assembly.compose_yaml = serde_yaml::to_string(&parsed).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "failed to serialize generated compose for `{project_name}` after port policy rewrite: {error}"
+        ))
+    })?;
+    Ok(effective_ports)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PortBinding {
+    host: u16,
+    container: u16,
+}
+
+fn parse_port_binding(raw: &str) -> Result<PortBinding, ContainerPolicyError> {
+    let mut parts = raw.split(':');
+    let host = parts.next().unwrap_or_default().trim();
+    let container = parts.next().unwrap_or_default().trim();
+    if host.is_empty() || container.is_empty() || parts.next().is_some() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "unsupported port mapping `{raw}`; expected `<host-port>:<container-port>`"
+        )));
+    }
+    Ok(PortBinding {
+        host: host.parse::<u16>().map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "invalid host port mapping `{raw}`: {error}"
+            ))
+        })?,
+        container: container.parse::<u16>().map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "invalid container port mapping `{raw}`: {error}"
+            ))
+        })?,
+    })
+}
+
+fn load_port_registry() -> Result<Option<PortRegistry>, ContainerPolicyError> {
+    let Some(home) = effigy_home_dir() else {
+        return Ok(None);
+    };
+    let path = home.join("ports.json");
+    PortRegistry::load(&path)
+        .map(Some)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
+}
+
+fn save_port_registry(registry: &PortRegistry) -> Result<(), ContainerPolicyError> {
+    let Some(home) = effigy_home_dir() else {
+        return Ok(());
+    };
+    let path = home.join("ports.json");
+    registry
+        .save(&path)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
+}
+
 fn project_local_catalog_dir(repo_root: &Path) -> Option<PathBuf> {
     let path = repo_root.join(GENERATED_COMPOSE_DIR).join("catalog");
     path.is_dir().then_some(path)
 }
 
 fn user_global_catalog_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    let path = PathBuf::from(home).join(".effigy").join("catalog");
+    let path = effigy_home_dir()?.join("catalog");
     path.is_dir().then_some(path)
+}
+
+fn effigy_home_dir() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = test_effigy_home_override() {
+        return Some(path);
+    }
+
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(".effigy"))
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_effigy_home<T>(path: &Path, run: impl FnOnce() -> T) -> T {
+    struct ResetGuard(Option<PathBuf>);
+
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            TEST_EFFIGY_HOME.with(|slot| {
+                *slot.borrow_mut() = previous;
+            });
+        }
+    }
+
+    let previous = TEST_EFFIGY_HOME.with(|slot| slot.borrow_mut().replace(path.to_path_buf()));
+    let _guard = ResetGuard(previous);
+    run()
+}
+
+#[cfg(test)]
+fn test_effigy_home_override() -> Option<PathBuf> {
+    TEST_EFFIGY_HOME.with(|slot| slot.borrow().clone())
+}
+
+fn configured_host_ports(config: &ManifestContainerConfig) -> Vec<String> {
+    config
+        .host
+        .as_ref()
+        .map(|host| host.ports.clone())
+        .unwrap_or_default()
 }
 
 fn validate_declared_mounts(
