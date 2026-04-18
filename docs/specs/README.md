@@ -33,5 +33,5 @@ Recently completed:
 
 ## Next Task
 
-Stop in planning and decide whether `g02.016` wants one bounded shared-service
-follow-up or an explicit deferral.
+Execute card `278` to land bounded generated-compose shared services and close
+`g02.016`.

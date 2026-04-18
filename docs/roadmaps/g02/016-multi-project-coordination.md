@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress (status, generated-compose auto-allocation, and bounded resource visibility landed; shared-service follow-up undecided)
+Status: In Progress (status, generated-compose auto-allocation, and bounded resource visibility landed; final shared-service closeout batch ready)
 Owner: Platform
 Created: 2026-04-16
 Depends on: 011, 014
@@ -106,8 +106,13 @@ When `shared = true`, effigy uses a shared instance instead of a per-project
 one. The shared instance runs as a separate compose project managed by effigy
 (similar to the gateway).
 
-This is opt-in, clearly documented as trading isolation for resource
-efficiency.
+Bounded closeout target:
+
+- generated-compose only
+- supported standalone backing-service catalogs only
+- on-demand shared-instance startup and reuse from `container up`
+- honest leave-running behavior on `container down/reset` instead of
+  pretending the product already has refcounted shared-service teardown
 
 ## 5) Implementation Approach
 
@@ -125,5 +130,5 @@ efficiency.
 
 ## Next Task
 
-Stop in planning and decide whether this lane still wants one bounded
-shared-service follow-up or an explicit deferral.
+Execute card `278` to land bounded generated-compose shared services and close
+`g02.016`.
