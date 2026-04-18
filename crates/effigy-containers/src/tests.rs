@@ -5,6 +5,7 @@ use super::{
     ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
     EffectiveAttachMode, EffectiveComposeSource, SharedServiceBinding,
 };
+use effigy_catalog::volumes::VolumeClassification;
 use std::fs;
 use std::path::PathBuf;
 
@@ -605,5 +606,82 @@ primary_service = "app"
     assert_eq!(
         report.json["shared_services"][0]["project_name"],
         "effigy-shared-mariadb-deadbeef"
+    );
+}
+
+#[test]
+fn generated_compose_policy_includes_managed_volumes() {
+    let root = temp_repo("managed-volumes");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.db]
+catalog = "mariadb"
+"#,
+    )
+    .expect("write manifest");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert!(policy
+        .managed_volumes
+        .iter()
+        .any(|volume| volume.name.ends_with("-db-data")));
+    assert!(policy.managed_volumes.iter().any(|volume| volume.persist));
+}
+
+#[test]
+fn reset_report_renders_keep_data_volume_actions() {
+    let root = temp_repo("reset-report");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let report = super::reset_report(
+        &policy,
+        true,
+        true,
+        Some(&VolumeClassification {
+            keep: vec!["demo-web-dev-db-data".to_owned()],
+            remove: vec!["demo-web-dev-cache-data".to_owned()],
+        }),
+    );
+
+    assert!(report
+        .success_text
+        .contains("preserved persistent data volumes"));
+    assert!(report
+        .success_text
+        .contains("kept_volumes: demo-web-dev-db-data"));
+    assert!(report
+        .success_text
+        .contains("removed_volumes: demo-web-dev-cache-data"));
+    assert_eq!(report.json["keep_data"], true);
+    assert_eq!(report.json["volumes"]["kept"][0], "demo-web-dev-db-data");
+    assert_eq!(
+        report.json["volumes"]["removed"][0],
+        "demo-web-dev-cache-data"
     );
 }

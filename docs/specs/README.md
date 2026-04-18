@@ -34,4 +34,4 @@ Recently completed:
 
 ## Next Task
 
-Execute card `280` to land the first bounded `g02.015` lifecycle batch.
+Execute card `282` to land bounded `effigy container data list` inventory.

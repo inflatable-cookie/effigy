@@ -5,6 +5,7 @@
 //! subprocess calls, signal handling) and delegates the presentation
 //! contract to this module.
 
+use effigy_catalog::volumes::VolumeClassification;
 use serde_json::{json, Value as JsonValue};
 
 use crate::compose::shutdown_label;
@@ -145,7 +146,13 @@ pub fn down_report(
 pub fn reset_report(
     policy: &EffectiveContainerPolicy,
     colima_running: bool,
+    keep_data: bool,
+    volume_actions: Option<&VolumeClassification>,
 ) -> ContainerCommandReport {
+    let volume_actions = volume_actions.cloned().unwrap_or(VolumeClassification {
+        remove: Vec::new(),
+        keep: Vec::new(),
+    });
     let json = json!({
         "schema": "effigy.container.reset.v1",
         "schema_version": 1,
@@ -154,19 +161,43 @@ pub fn reset_report(
         "profile": policy.profile,
         "shared_services": shared_services_json(policy),
         "colima_running": colima_running,
+        "keep_data": keep_data,
+        "volumes": {
+            "kept": volume_actions.keep,
+            "removed": volume_actions.remove,
+        },
     });
-    let success_text = if colima_running {
-        format!(
-            "[ok] reset container environment `{}` and removed compose-managed volumes",
-            policy.name
-        )
+    let mut lines = vec![if colima_running {
+        if keep_data {
+            format!(
+                "[ok] reset container environment `{}` and preserved persistent data volumes",
+                policy.name
+            )
+        } else {
+            format!(
+                "[ok] reset container environment `{}` and removed compose-managed volumes",
+                policy.name
+            )
+        }
     } else {
         format!(
             "[ok] skipped reset for `{}` because Colima profile `{}` is not running",
             policy.name, policy.profile
         )
-    };
-    ContainerCommandReport { json, success_text }
+    }];
+    if colima_running && !volume_actions.keep.is_empty() {
+        lines.push(format!("kept_volumes: {}", volume_actions.keep.join(", ")));
+    }
+    if colima_running && !volume_actions.remove.is_empty() {
+        lines.push(format!(
+            "removed_volumes: {}",
+            volume_actions.remove.join(", ")
+        ));
+    }
+    ContainerCommandReport {
+        json,
+        success_text: lines.join("\n"),
+    }
 }
 
 /// Build the `container eject` report.

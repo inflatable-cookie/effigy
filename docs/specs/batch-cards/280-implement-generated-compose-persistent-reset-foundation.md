@@ -1,6 +1,6 @@
 # 280 Implement Generated-Compose Persistent Reset Foundation
 
-Status: ready
+Status: landed
 Updated: 2026-04-18
 Roadmap: `g02.015`
 Spec: `docs/specs/015-persistent-data-and-volume-lifecycle-strict-lane.md`
@@ -48,7 +48,25 @@ knows should survive.
 - focused tests cover parser/help, classification/report shaping, and runner
   behavior
 
+## Result
+
+This batch is now landed.
+
+What changed:
+
+- `effigy container reset --keep-data` is now a real CLI/help/parser/runner
+  surface on the generated-compose path
+- effective container policy now carries generated-compose managed-volume
+  retention metadata from the shipped catalog assembly substrate
+- keep-data reset now tears the stack down without `-v`, then removes only
+  ephemeral named volumes through the active container runtime backend
+- text and JSON output now report `keep_data` plus the kept/removed volume
+  lists honestly instead of pretending reset is still one undifferentiated
+  wipe
+- direct `compose_file` ownership now fails explicitly for `reset --keep-data`
+  instead of claiming trustworthy retention behavior Effigy does not own yet
+
 ## Next Task
 
-Implement this batch, validate it, then stop in planning for the next bounded
-`g02.015` widening step.
+No further execution lives on this card. Stop in planning and choose the next
+bounded `g02.015` widening step.

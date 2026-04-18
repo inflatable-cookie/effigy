@@ -214,6 +214,7 @@ mod tests {
             compose_source: EffectiveComposeSource::Direct,
             compose_files: vec![PathBuf::from("/tmp/docker-compose.yml")],
             compose_file_display: "docker-compose.yml".to_owned(),
+            managed_volumes: vec![],
             shared_services: vec![],
             project_name: "demo-web-dev".to_owned(),
             primary_service: "app".to_owned(),

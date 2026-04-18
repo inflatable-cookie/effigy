@@ -433,6 +433,7 @@ pub enum ContainerSubcommand {
     },
     Reset {
         name: Option<String>,
+        keep_data: bool,
     },
     Eject {
         name: Option<String>,

@@ -1637,7 +1637,26 @@ fn parse_container_reset<I>(name: Option<String>, args: I) -> Result<Command, Cl
 where
     I: IntoIterator<Item = String>,
 {
-    parse_named_container_simple_subcommand(name, args, |name| ContainerSubcommand::Reset { name })
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut keep_data = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--keep-data" => keep_data = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Reset { name, keep_data },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_container_stats<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>

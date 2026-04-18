@@ -190,6 +190,8 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("--service <NAME>"));
     assert!(rendered.contains("--command <CMD>"));
     assert!(rendered.contains("--follow"));
+    assert!(rendered.contains("--keep-data"));
+    assert!(rendered.contains("effigy container web reset --keep-data"));
     assert!(rendered.contains("attached sessions shut the environment down on owner exit"));
 }
 

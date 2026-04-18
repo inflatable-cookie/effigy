@@ -37,8 +37,8 @@ Container infrastructure design document:
 Active strict planning lanes:
 
 - `g02.007` is paused until the remaining `g02` feature/integration spine is complete
-- the `g02.015` persistent data strict lane is now active with `279` landed
-  and `280` ready as the first bounded lifecycle batch
+- the `g02.015` persistent data strict lane is now active with `280` and
+  `281` landed, and `282` ready as the next bounded lifecycle batch
 - the `g02.014` gateway strict lane is now complete through card `270`
 - the `g02.016` multi-project coordination strict lane is now complete through
   card `278`
@@ -57,4 +57,4 @@ Rules:
 
 ## Next Task
 
-Execute card `280` to land the first bounded `g02.015` lifecycle batch.
+Execute card `282` to land bounded `effigy container data list` inventory.
