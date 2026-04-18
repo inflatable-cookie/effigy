@@ -24,7 +24,7 @@ Current milestones:
 - [`011-service-catalog-and-compose-assembly.md`](./011-service-catalog-and-compose-assembly.md) (complete; the crate foundation, runner integration, operator-facing catalog/eject surface, and real-project proof are now all landed)
 - [`012-container-context-and-transparent-execution.md`](./012-container-context-and-transparent-execution.md) (complete; transparent task routing, explicit exec, alias fallback, CWD mapping, handoff strategy, and one real consumer proof are now all landed)
 - [`013-dev-front-door-and-managed-lifecycle.md`](./013-dev-front-door-and-managed-lifecycle.md) (planned; single-command `effigy dev` front door using the managed-process concurrent runtime with embedded terminal and health gate)
-- [`014-rust-native-gateway.md`](./014-rust-native-gateway.md) (in progress; `effigy-gateway` crate shipped with DNS resolver, streaming HTTP/HTTPS proxy, WebSocket upgrade, route table, macOS resolver, port registry — 62 tests, awaiting runner integration)
+- [`014-rust-native-gateway.md`](./014-rust-native-gateway.md) (complete; bounded gateway integration is shipped through command ownership, route lifecycle, and real plain HTTP/HTTPS consumer proofs, with broader dashboard residue deferred to `g02.016`)
 - [`015-persistent-data-and-volume-lifecycle.md`](./015-persistent-data-and-volume-lifecycle.md) (in progress; volume management shipped in `effigy-catalog::volumes`, seeding and Rhai hooks deferred to integration phase)
 - [`016-multi-project-coordination.md`](./016-multi-project-coordination.md) (in progress; port allocation registry shipped in `effigy-gateway::ports`, cross-project status deferred to integration phase)
 - [`017-remaining-shell-cleanup-and-crate-extraction-program.md`](./017-remaining-shell-cleanup-and-crate-extraction-program.md) (closed; the queued shell-cleanup and extraction jobs that were worth doing are now landed, and the remaining root-crate untidiness is acceptable rather than roadmap-worthy)
@@ -36,10 +36,8 @@ Container infrastructure design document:
 
 Active strict planning lanes:
 
-- [`../specs/014-rust-native-gateway-strict-lane.md`](../specs/014-rust-native-gateway-strict-lane.md)
 - `g02.007` is paused until the remaining `g02` feature/integration spine is complete
-- cards `260` through `265` are landed; `266` is now the live `g02.014`
-  ready card
+- the `g02.014` gateway strict lane is now complete through card `270`
 
 Rules:
 
@@ -55,4 +53,5 @@ Rules:
 
 ## Next Task
 
-Execute `266`, then continue the bounded `g02.014` gateway integration chain.
+Return to the remaining `g02` integration spine. The gateway lane is closed;
+broader coordination/dashboard work belongs to `g02.016`.

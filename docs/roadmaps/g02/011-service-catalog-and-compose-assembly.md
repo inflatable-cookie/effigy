@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Complete (crate shipped, awaiting runner integration after g02.010)
+Status: Complete
 Owner: Platform
 Created: 2026-04-16
 Depends on: 006, 010
@@ -64,7 +64,7 @@ docker-compose.yml and Dockerfiles that:
 - [ ] Support Docker Compose multi-file override for project-specific
       customization.
 - [ ] Support catalog layering: project-local > user-global > bundled.
-- [ ] Implement `effigy catalog list` and `effigy catalog extract`.
+- [ ] Implement `effigy service list` and `effigy service extract`.
 - [ ] Implement `effigy container eject` for full compose ownership.
 - [ ] Ensure VirtioFS is configured for Colima profiles (critical for PHP
       file-serving performance on macOS).
@@ -196,5 +196,7 @@ Successor milestones `g02.012`–`g02.016` all build on this foundation.
 
 ## Next Task
 
-Activate `docs/specs/011-service-catalog-and-compose-assembly-strict-lane.md`
-and begin with a decision batch on the fragment template format.
+This roadmap is complete. The crate foundation, product-facing catalog/eject
+surface, and one real-project proof are all landed.
+
+Move to `g02.012` for transparent execution integration, starting with `264`.

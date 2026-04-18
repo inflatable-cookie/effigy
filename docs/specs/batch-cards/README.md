@@ -37,8 +37,22 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. The visible `g02.012` exec surface is now landed: explicit
   exec, aliases, CWD mapping, handoff behavior, and a real consumer proof.
 - [`266-implement-gateway-command-foundation.md`](./266-implement-gateway-command-foundation.md)
-  is ready next. It starts `g02.014` product integration with the host-native
-  `gateway up/down/status` surface and lifecycle ownership.
+  is complete. The host-native `gateway up/down/status` surface, detached
+  daemon path, and startup diagnostics are now landed.
+- [`267-implement-gateway-route-registration-foundation.md`](./267-implement-gateway-route-registration-foundation.md)
+  is complete. Manifest DNS declaration and container lifecycle route
+  registration are now wired into the product path.
+- [`268-prove-plain-http-gateway-hostname-loop-in-one-real-project.md`](./268-prove-plain-http-gateway-hostname-loop-in-one-real-project.md)
+  is complete. The plain HTTP hostname loop is now proven on one real project,
+  and the proof hardened gateway registration with
+  `[containers.<name>.dns].port` for multi-port stacks.
+- [`269-plan-gateway-tls-closeout-batch.md`](./269-plan-gateway-tls-closeout-batch.md)
+  is complete. The remaining gateway TLS work is now bounded on a trustworthy
+  product boundary instead of left implicit.
+- [`270-implement-gateway-tls-closeout.md`](./270-implement-gateway-tls-closeout.md)
+  is complete. The gateway now has a real TLS product path, including
+  `setup-tls`, route-owned cert lifecycle, honest readiness/status projection,
+  and one real HTTPS consumer proof.
 
 ## Archive Rule
 
@@ -51,4 +65,5 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Execute card `266` — make the host-native gateway command surface real.
+No further `g02.014` execution lives here. The bounded gateway lane is
+complete; broader route-dashboard coordination belongs to `g02.016`.

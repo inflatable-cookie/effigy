@@ -37,6 +37,7 @@ description = "Unified task runner with nested catalog resolution"
 [dependencies]
 effigy-bootstrap = { path = "crates/effigy-bootstrap" }
 effigy-builtin = { path = "crates/effigy-builtin" }
+effigy-catalog = { path = "crates/effigy-catalog" }
 effigy-changelog = { path = "crates/effigy-changelog" }
 effigy-cli = { path = "crates/effigy-cli" }
 effigy-contracts = { path = "crates/effigy-contracts" }
@@ -47,6 +48,8 @@ effigy-doctor = { path = "crates/effigy-doctor" }
 effigy-docs-policy = { path = "crates/effigy-docs-policy" }
 effigy-distribution = { path = "crates/effigy-distribution" }
 effigy-env = { path = "crates/effigy-env" }
+effigy-exec = { path = "crates/effigy-exec" }
+effigy-gateway = { path = "crates/effigy-gateway" }
 effigy-managed = { path = "crates/effigy-managed" }
 effigy-manifest = { path = "crates/effigy-manifest" }
 effigy-process = { path = "crates/effigy-process" }
@@ -79,3 +82,4 @@ zeroize = "1"
 regex = "1"
 rhai = { version = "1", features = ["serde"] }
 signal-hook = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread"] }

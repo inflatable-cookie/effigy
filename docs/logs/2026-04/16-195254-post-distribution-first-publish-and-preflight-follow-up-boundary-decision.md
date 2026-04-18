@@ -4,7 +4,7 @@
 
 The distribution seam can pause.
 
-After `193`, [src/runner/distribution_command.rs](/Users/tom/Dev/projects/effigy/src/runner/distribution_command.rs)
+After `193`, [src/runner/distribution_command/mod.rs](/Users/tom/Dev/projects/effigy/src/runner/distribution_command/mod.rs)
 is down to runner-shell behavior:
 - repo/path resolution
 - default output-path selection

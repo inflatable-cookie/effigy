@@ -1,6 +1,6 @@
 # 007 Distribution Release And Consumer Rollout Strict Lane
 
-Status: active
+Status: paused
 Updated: 2026-04-17
 Roadmap: `g02.007`
 
@@ -14,8 +14,8 @@ The shipped distribution surface now has:
 - in-process Rhai dispatch for the rehearsal path
 - one explicit release-closure card
 
-The modularization lane is still active in a parallel thread, so release
-execution remains deferred even though release closure is complete.
+The modularization detour is now closed cleanly, but release execution is no
+longer the next product move.
 
 ## Governing Refs
 
@@ -36,9 +36,10 @@ This strict lane remains responsible for:
 
 ## Current Posture
 
-`strict-active`
+`strict-paused`
 
-`g02.010` is still active in a parallel thread. `g02.007` remains active too.
+`g02.010` is complete on a trustworthy boundary. `g02.007` is now paused while
+the remaining `g02` feature and integration work ships first.
 
 The release-prep hardening chain is real:
 
@@ -63,10 +64,11 @@ That hardening detour is now fully closed:
 
 The next move is no longer another hardening batch.
 
-Release execution is technically ready and `115` is complete, but `g02.010`
-is still live in a parallel thread.
+Release execution is technically ready and `115` is complete.
 
-Release execution stays deferred until that thread closes.
+The remaining gate is now product sequencing: finish the remaining
+`g02.011`–`g02.016` feature spine, then cut one explicit human-approved
+`v0.3` release.
 
 ## Batch Model
 
@@ -95,5 +97,8 @@ claims.
 
 ## Next Task
 
-Finish the remaining live `g02.010` work in the parallel thread, then return
-to `115` for explicit human-approved release execution.
+Leave `g02.007` paused while the remaining `g02` feature and integration work
+lands.
+
+Return to `115` only after the rest of the `g02` spine is complete and the
+repo is ready for one explicit human-approved `v0.3` release cut.

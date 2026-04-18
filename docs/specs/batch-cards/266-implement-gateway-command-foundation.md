@@ -1,6 +1,6 @@
 # 266 Implement Gateway Command Foundation
 
-Status: ready
+Status: landed
 Updated: 2026-04-18
 Roadmap: `g02.014`
 Spec: `docs/specs/014-rust-native-gateway-strict-lane.md`
@@ -37,7 +37,21 @@ project route registration into it.
   silent no-op behavior
 - the batch leaves route registration as the explicit next integration step
 
+## Landed Outcome
+
+- `effigy gateway up`, `down`, and `status` are now real CLI and runner
+  surfaces with JSON/plain output
+- the root product owns a hidden gateway daemon entrypoint and detached spawn
+  path for the host-native gateway process
+- early daemon failures now report the real bind/startup error instead of a
+  fake clean exit
+- resolver setup/teardown failures surface as warnings or clear operator-facing
+  guidance instead of silent no-op behavior
+- one real machine proved the full `up` / `status` / `down` lifecycle with
+  unprivileged override ports, while the default privileged path now fails fast
+  with an explicit permission requirement
+
 ## Next Task
 
-Implement now. If this lands cleanly, the next ready batch should wire
-manifest DNS and route registration through the container lifecycle.
+No further execution lives on this card. Wire manifest DNS and route
+registration through the container lifecycle next.

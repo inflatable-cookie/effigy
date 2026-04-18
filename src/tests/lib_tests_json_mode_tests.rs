@@ -1,6 +1,7 @@
 use super::prelude::{
     apply_global_json_flag, command_requests_json, BootstrapArgs, Command, DemoArgs, DemoListQuery,
-    DemoSubcommand, DoctorArgs, ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
+    DemoSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, ReleaseArgs, ReleaseSubcommand,
+    TaskInvocation, TasksArgs,
 };
 
 #[test]
@@ -52,6 +53,10 @@ fn command_requests_json_checks_task_or_global_mode() {
         verbose: false,
         explain: None,
     });
+    let cmd_gateway = Command::Gateway(GatewayArgs {
+        subcommand: GatewaySubcommand::Status,
+        output_json: true,
+    });
     let cmd_demo = Command::Demo(DemoArgs {
         subcommand: DemoSubcommand::List {
             query: DemoListQuery::default(),
@@ -73,6 +78,7 @@ fn command_requests_json_checks_task_or_global_mode() {
         output_json: true,
     });
     assert!(command_requests_json(&cmd_doctor, false));
+    assert!(command_requests_json(&cmd_gateway, false));
     assert!(command_requests_json(&cmd_demo, false));
     assert!(command_requests_json(&cmd_bootstrap, false));
     assert!(command_requests_json(&cmd_release, false));
@@ -94,6 +100,10 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         fix: false,
         verbose: false,
         explain: None,
+    });
+    let gateway_cmd = Command::Gateway(GatewayArgs {
+        subcommand: GatewaySubcommand::Status,
+        output_json: false,
     });
     let demo_cmd = Command::Demo(DemoArgs {
         subcommand: DemoSubcommand::List {
@@ -119,6 +129,7 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
     let version_applied = apply_global_json_flag(version_cmd, true);
     let tasks_applied = apply_global_json_flag(tasks_cmd, true);
     let doctor_applied = apply_global_json_flag(doctor_cmd, true);
+    let gateway_applied = apply_global_json_flag(gateway_cmd, true);
     let demo_applied = apply_global_json_flag(demo_cmd, true);
     let bootstrap_applied = apply_global_json_flag(bootstrap_cmd, true);
     let release_applied = apply_global_json_flag(release_cmd, true);
@@ -130,6 +141,10 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
     match doctor_applied {
         Command::Doctor(args) => assert!(args.output_json),
         other => panic!("expected doctor command, got: {other:?}"),
+    }
+    match gateway_applied {
+        Command::Gateway(args) => assert!(args.output_json),
+        other => panic!("expected gateway command, got: {other:?}"),
     }
     match demo_applied {
         Command::Demo(args) => assert!(args.output_json),

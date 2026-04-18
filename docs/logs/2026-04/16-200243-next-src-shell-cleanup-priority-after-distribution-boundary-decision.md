@@ -5,7 +5,7 @@
 The next `/src` priority is `demo_command.rs`.
 
 Distribution is now paused on an honest adapter shell. The next highest-value
-cleanup target is [src/runner/demo_command.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command.rs),
+cleanup target is [src/runner/demo_command/mod.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command/mod.rs),
 which is still the largest mixed-responsibility runner file in the root crate.
 
 ## Why This Decision

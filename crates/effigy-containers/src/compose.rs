@@ -32,18 +32,18 @@ pub fn resolve_compose_backend() -> ComposeBackend {
 
 /// Build docker compose arguments for a given policy and subcommand.
 ///
-/// Prepends `compose -f <file> -p <project>` before the caller's args.
+/// Prepends `compose -f <file>... -p <project>` before the caller's args.
 pub fn compose_args<'a>(
     policy: &EffectiveContainerPolicy,
     tail: impl IntoIterator<Item = &'a str>,
 ) -> Vec<OsString> {
-    let mut args = vec![
-        OsString::from("compose"),
-        OsString::from("-f"),
-        policy.compose_file.as_os_str().to_os_string(),
-        OsString::from("-p"),
-        OsString::from(policy.project_name.as_str()),
-    ];
+    let mut args = vec![OsString::from("compose")];
+    for compose_file in &policy.compose_files {
+        args.push(OsString::from("-f"));
+        args.push(compose_file.as_os_str().to_os_string());
+    }
+    args.push(OsString::from("-p"));
+    args.push(OsString::from(policy.project_name.as_str()));
     args.extend(tail.into_iter().map(OsString::from));
     args
 }

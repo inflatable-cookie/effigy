@@ -5,8 +5,9 @@ use crate::{
     ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs,
     DemoHistoryOutcome, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus,
     DemoSubcommand, DistributionArgs, DistributionSubcommand, DocsArgs, DocsBlockRequirement,
-    DocsSubcommand, DoctorArgs, HelpTopic, InternalRhaiArgs, ReleaseArgs, ReleaseSubcommand,
-    TaskInvocation, TasksArgs,
+    DocsSubcommand, DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic,
+    InternalGatewayArgs, InternalRhaiArgs, ReleaseArgs, ReleaseSubcommand, ServiceArgs,
+    ServiceSubcommand, TaskInvocation, TasksArgs,
 };
 
 use super::value_parsing::{next_required_value, parse_pretty_bool, parse_repo_path};
@@ -25,6 +26,9 @@ where
         "--version" | "version" => parse_version_command(args),
         "--help" | "-h" | "help" => Ok(Command::Help(HelpTopic::General)),
         "changelog" => parse_changelog_command(args),
+        "exec" => parse_exec_command(args),
+        "gateway" => parse_gateway_command(args),
+        "service" | "catalog" | "catalogue" => parse_service_command(args),
         "demo" => parse_demo_command(args),
         "docs" => parse_docs_command(args),
         "contracts" => parse_contracts_command(args),
@@ -35,6 +39,7 @@ where
         "doctor" => parse_doctor(args),
         "tasks" | "catalogs" => parse_tasks(args),
         "__rhai-step" => parse_internal_rhai_command(args),
+        "__gateway-run" => Ok(Command::InternalGateway(InternalGatewayArgs)),
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
     }
@@ -123,7 +128,10 @@ fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
         "watch" => Some(HelpTopic::Watch),
         "init" => Some(HelpTopic::Init),
         "migrate" => Some(HelpTopic::Migrate),
+        "exec" => Some(HelpTopic::Exec),
+        "gateway" => Some(HelpTopic::Gateway),
         "demo" => Some(HelpTopic::Demo),
+        "service" | "catalog" | "catalogue" => Some(HelpTopic::Service),
         "docs" => Some(HelpTopic::Docs),
         "contracts" => Some(HelpTopic::Contracts),
         "distribution" => Some(HelpTopic::Distribution),
@@ -132,6 +140,168 @@ fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
         "release" => Some(HelpTopic::Release),
         _ => None,
     }
+}
+
+fn parse_gateway_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcmd) = args.next() else {
+        return Ok(Command::Help(HelpTopic::Gateway));
+    };
+
+    let mut output_json = false;
+    let subcommand = match subcmd.as_str() {
+        "--help" | "-h" => return Ok(Command::Help(HelpTopic::Gateway)),
+        "up" => GatewaySubcommand::Up,
+        "down" => GatewaySubcommand::Down,
+        "status" => GatewaySubcommand::Status,
+        "setup-tls" => GatewaySubcommand::SetupTls,
+        other => return Err(unknown_argument(other)),
+    };
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Gateway)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Gateway(GatewayArgs {
+        subcommand,
+        output_json,
+    }))
+}
+
+fn parse_exec_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut service: Option<String> = None;
+    let mut command = Vec::new();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--service" => {
+                service = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--service".to_owned(),
+                    },
+                )?);
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Exec)),
+            "--" => {
+                command.extend(args);
+                break;
+            }
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => {
+                command.push(arg);
+                command.extend(args);
+                break;
+            }
+        }
+    }
+
+    if command.is_empty() {
+        return Ok(Command::Help(HelpTopic::Exec));
+    }
+
+    Ok(Command::Exec(ExecArgs {
+        repo_override,
+        output_json,
+        service,
+        command,
+    }))
+}
+
+fn parse_service_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcmd) = args.next() else {
+        return Ok(Command::Help(HelpTopic::Service));
+    };
+
+    match subcmd.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::Service)),
+        "list" => parse_service_list(args),
+        "extract" => parse_service_extract(args),
+        other => Err(unknown_argument(other)),
+    }
+}
+
+fn parse_service_list<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Service)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Service(ServiceArgs {
+        subcommand: ServiceSubcommand::List,
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_service_extract<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(service) = args.next() else {
+        return Err(CliParseError::MissingFlagValue {
+            flag: "<SERVICE>".to_owned(),
+        });
+    };
+
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut dir: Option<PathBuf> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--dir" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--dir".to_owned(),
+                    },
+                )?;
+                dir = Some(PathBuf::from(value));
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Service)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Service(ServiceArgs {
+        subcommand: ServiceSubcommand::Extract { service, dir },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_demo_command<I>(args: I) -> Result<Command, CliParseError>
@@ -1357,7 +1527,7 @@ fn parse_container_command<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
-    const ACTIONS: [&str; 6] = ["up", "down", "status", "logs", "shell", "reset"];
+    const ACTIONS: [&str; 7] = ["up", "down", "status", "logs", "shell", "reset", "eject"];
 
     let mut args = args.into_iter();
     let Some(first) = args.next() else {
@@ -1384,6 +1554,7 @@ where
         "logs" => parse_container_logs(name, args),
         "shell" => parse_container_shell(name, args),
         "reset" => parse_container_reset(name, args),
+        "eject" => parse_container_eject(name, args),
         other => Err(unknown_argument(other)),
     }
 }
@@ -1439,6 +1610,13 @@ where
     I: IntoIterator<Item = String>,
 {
     parse_named_container_simple_subcommand(name, args, |name| ContainerSubcommand::Reset { name })
+}
+
+fn parse_container_eject<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    parse_named_container_simple_subcommand(name, args, |name| ContainerSubcommand::Eject { name })
 }
 
 fn parse_container_logs<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>

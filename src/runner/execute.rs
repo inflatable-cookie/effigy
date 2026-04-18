@@ -16,6 +16,8 @@ mod preflight;
 mod process;
 #[path = "execute/process_run.rs"]
 mod process_run;
+#[path = "execute/routing.rs"]
+mod routing;
 #[path = "execute/selection.rs"]
 mod selection;
 

@@ -17,7 +17,6 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Active Spec Set
 
-- [`014-rust-native-gateway-strict-lane.md`](./014-rust-native-gateway-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -27,11 +26,13 @@ Paused but still useful:
 
 Recently completed:
 
+- [`014-rust-native-gateway-strict-lane.md`](./014-rust-native-gateway-strict-lane.md)
 - [`012-container-context-and-transparent-execution-strict-lane.md`](./012-container-context-and-transparent-execution-strict-lane.md)
 - [`011-service-catalog-and-compose-assembly-strict-lane.md`](./011-service-catalog-and-compose-assembly-strict-lane.md)
 
 ## Next Task
 
-`g02.012` is closed. `g02.014` is now the active strict lane.
+The bounded `g02.014` lane is complete through card `270`.
 
-Card `266` is ready and owns the host-native gateway command foundation.
+Return to the remaining roadmap spine rather than reopening gateway planning
+work that now belongs to `g02.016`.

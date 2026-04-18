@@ -319,6 +319,9 @@ impl From<effigy_containers::ContainerPolicyError> for RunnerError {
             effigy_containers::ContainerPolicyError::Manifest(error) => {
                 Self::task_invocation(error.to_string())
             }
+            effigy_containers::ContainerPolicyError::Catalog(error) => {
+                Self::task_invocation(error.to_string())
+            }
             effigy_containers::ContainerPolicyError::TaskInvocation(message) => {
                 Self::task_invocation(message)
             }

@@ -1,7 +1,7 @@
 # 012 Container Context and Transparent Execution Strict Lane
 
-Status: active
-Updated: 2026-04-16
+Status: complete
+Updated: 2026-04-18
 Roadmap: `g02.012`
 
 ## Context
@@ -33,7 +33,7 @@ execution context routing.
 
 ## Current Posture
 
-`active`
+`complete`
 
 The `effigy-exec` crate is shipped as an isolated library with 53 tests:
 
@@ -58,31 +58,43 @@ The `effigy-exec` crate is shipped as an isolated library with 53 tests:
   expiry. Standard probe spec and result builder.
 
 All logic is pure — no I/O, no Docker calls, no dependency on other effigy
-crates. Integration into the manifest schema, CLI, and container command
-dispatch happens after `g02.010` completes.
+crates. The remaining work is product integration, but it now depends on the
+`g02.011` service-catalog/container integration spine rather than on
+`g02.010`.
 
-## Isolation Constraint
+## Integration Constraint
 
-This lane writes only to `crates/effigy-exec/` (already shipped). Integration
-into `src/`, `crates/effigy-containers/`, `crates/effigy-manifest/`, or
-`crates/effigy-cli/` happens after `g02.010` modularization completes.
+The isolated crate work is already shipped, and `g02.011` is now complete.
+The next work here is product integration on top of that now-real container
+surface:
+
+- start with bounded routing integration before adding the wider exec surface
+- keep routing, aliases, and handoff as separate batches instead of one large
+  runner rewrite
+- preserve the clean shell/domain boundary established in `g02.010`
 
 ## Remaining Integration Work
 
-When `g02.010` finishes, the integration path is:
+The bounded continuation chain is now fully landed:
 
-1. Add `context` field to `ContainerConfig` in `effigy-manifest`.
-2. Add `exec` and `exec.aliases` sections to `ContainerConfig`.
-3. Add `host` field to `ManifestTask`.
-4. Wire `effigy-exec::routing::route()` into the task dispatch path in the
-   runner. Before executing a task, call `route()` to determine the target.
-5. Wire `effigy-exec::cwd::CwdMapper` into the container exec path.
-6. Wire `effigy-exec::detection` into container session startup to probe
-   capabilities and cache them.
-7. Add `effigy exec <command>` CLI subcommand that bypasses task routing
-   and directly executes in the dev container.
-8. Register exec aliases as pseudo-tasks in the task catalog so
-   `effigy mysql` resolves through the alias table.
+1. `264` — context-routing foundation: manifest context support plus
+   `effigy-exec::routing::route()` in normal task dispatch
+2. `265` — explicit exec and alias surface: manifest `exec` support,
+   `effigy exec`, CWD mapping, container handoff, and alias fallback
+
+What is now real in the product path:
+
+- `containers.*.context = "dev"` in the manifest
+- `tasks.*.host = true` as a host-routing override
+- standard task dispatch routes through `effigy-exec::routing::route()`
+- standard routed tasks execute through the container path instead of assuming
+  host-only shell execution
+- stopped routed containers fail with a clear product error
+- `effigy exec` routes ad-hoc commands through the dev container
+- exec aliases resolve from the manifest, including bare-command fallback
+- routed task execution preserves CWD semantics and chooses handoff vs raw exec
+- `underlay-reference` proves explicit exec, alias fallback, and routed-task
+  execution on a real consumer repo
 
 ## Exit Condition
 
@@ -94,6 +106,9 @@ This strict lane is complete when:
 - exec aliases resolve from the manifest
 - one real project proves the loop
 
+All exit conditions are now met.
+
 ## Next Task
 
-Integration waits for `g02.010` to complete. The library crate is ready.
+This lane is closed. Return to planning and choose the next bounded integration
+card from the remaining active roadmap lanes.

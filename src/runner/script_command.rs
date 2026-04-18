@@ -124,7 +124,13 @@ fn run_effigy_command(
 fn apply_default_repo_override(command: &mut effigy_cli::Command, repo_root: &Path) {
     let repo_root = repo_root.to_path_buf();
     match command {
+        effigy_cli::Command::Exec(args) if args.repo_override.is_none() => {
+            args.repo_override = Some(repo_root)
+        }
         effigy_cli::Command::Demo(args) if args.repo_override.is_none() => {
+            args.repo_override = Some(repo_root)
+        }
+        effigy_cli::Command::Service(args) if args.repo_override.is_none() => {
             args.repo_override = Some(repo_root)
         }
         effigy_cli::Command::Docs(args) if args.repo_override.is_none() => {

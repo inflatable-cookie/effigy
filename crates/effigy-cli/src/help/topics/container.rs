@@ -24,6 +24,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container <NAME> logs [--repo <PATH>] [--service <NAME>] [--follow] [--json]",
             "effigy container <NAME> shell [--repo <PATH>] [--service <NAME>] [--command <CMD>]",
             "effigy container <NAME> reset [--repo <PATH>] [--json]",
+            "effigy container <NAME> eject [--repo <PATH>] [--json]",
             "effigy --json container up [--repo <PATH>]",
         ],
     )?;
@@ -66,6 +67,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container web logs --follow",
             "effigy container web shell --command \"php artisan tinker\"",
             "effigy container web reset",
+            "effigy container web eject",
         ],
     )?;
     Ok(())

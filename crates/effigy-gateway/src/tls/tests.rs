@@ -37,3 +37,10 @@ fn cert_paths_for_domain() {
         GatewayError::TlsCertNotFound { .. }
     ));
 }
+
+#[test]
+fn remove_cert_ignores_missing_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = TlsConfig::new(dir.path().to_path_buf());
+    config.remove_cert("missing.test").unwrap();
+}

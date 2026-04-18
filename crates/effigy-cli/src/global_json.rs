@@ -26,6 +26,9 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
 
     match &mut cmd {
         Command::Version => {}
+        Command::Exec(args) => args.output_json = true,
+        Command::Gateway(args) => args.output_json = true,
+        Command::Service(args) => args.output_json = true,
         Command::Task(task) => {
             if !task.args.iter().any(|arg| arg == "--json") {
                 task.args.insert(0, "--json".to_owned());
@@ -41,6 +44,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Release(args) => args.output_json = true,
         Command::Tasks(args) => args.output_json = true,
         Command::Doctor(args) => args.output_json = true,
+        Command::InternalGateway(_) => {}
         Command::InternalRhai(_) => {}
         Command::Help(_) => {}
     }
@@ -53,6 +57,9 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
     }
     match cmd {
         Command::Version => false,
+        Command::Exec(args) => args.output_json,
+        Command::Gateway(args) => args.output_json,
+        Command::Service(args) => args.output_json,
         Command::Changelog(args) => args.output_json,
         Command::Demo(args) => args.output_json,
         Command::Docs(args) => args.output_json,
@@ -64,6 +71,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Tasks(args) => args.output_json,
         Command::Doctor(args) => args.output_json,
         Command::Task(task) => task.args.iter().any(|arg| arg == "--json"),
+        Command::InternalGateway(_) => false,
         Command::InternalRhai(_) => false,
         Command::Help(_) => false,
     }

@@ -8,6 +8,8 @@ pub struct ManifestTask {
     #[serde(default)]
     pub run: Option<ManifestManagedRun>,
     #[serde(default)]
+    pub host: Option<bool>,
+    #[serde(default)]
     pub container_session: Option<String>,
     #[serde(default)]
     pub lock: Option<String>,

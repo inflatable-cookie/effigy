@@ -10,6 +10,9 @@ mod value_parsing;
 pub enum Command {
     Version,
     Changelog(ChangelogArgs),
+    Exec(ExecArgs),
+    Gateway(GatewayArgs),
+    Service(ServiceArgs),
     Demo(DemoArgs),
     Docs(DocsArgs),
     Contracts(ContractsArgs),
@@ -22,6 +25,8 @@ pub enum Command {
     Task(TaskInvocation),
     #[doc(hidden)]
     InternalRhai(InternalRhaiArgs),
+    #[doc(hidden)]
+    InternalGateway(InternalGatewayArgs),
     Help(HelpTopic),
 }
 
@@ -38,6 +43,9 @@ pub struct InternalRhaiArgs {
 pub enum HelpTopic {
     General,
     Changelog,
+    Exec,
+    Gateway,
+    Service,
     Demo,
     Docs,
     Contracts,
@@ -286,6 +294,27 @@ pub struct ContractsArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecArgs {
+    pub repo_override: Option<PathBuf>,
+    pub output_json: bool,
+    pub service: Option<String>,
+    pub command: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayArgs {
+    pub subcommand: GatewaySubcommand,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceArgs {
+    pub subcommand: ServiceSubcommand,
+    pub repo_override: Option<PathBuf>,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DistributionArgs {
     pub subcommand: DistributionSubcommand,
     pub repo_override: Option<PathBuf>,
@@ -355,6 +384,27 @@ pub enum DistributionSubcommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceSubcommand {
+    List,
+    Extract {
+        service: String,
+        dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GatewaySubcommand {
+    Up,
+    Down,
+    Status,
+    SetupTls,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
+pub struct InternalGatewayArgs;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerSubcommand {
     Up {
         name: Option<String>,
@@ -378,6 +428,9 @@ pub enum ContainerSubcommand {
         command: Option<String>,
     },
     Reset {
+        name: Option<String>,
+    },
+    Eject {
         name: Option<String>,
     },
 }

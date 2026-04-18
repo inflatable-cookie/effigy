@@ -1,283 +1,33 @@
-use std::io::{IsTerminal, Write};
+use std::io::Write;
 use std::path::Path;
 
-use effigy_cli::{ReleaseArgs, ReleaseSubcommand};
 use effigy_core::resolver::ResolvedTarget;
 use effigy_release::{
     append_indexed_review_hint, build_execute_stale_review_items,
     build_execute_working_tree_review_items,
     build_release_prepare_plan as build_release_prepare_plan_via_release,
-    collect_release_execute_plan as collect_release_execute_plan_via_release,
-    collect_release_gate_run, collect_release_simulation as collect_release_simulation_via_release,
-    collect_release_status as collect_release_status_via_release,
-    execute_release as execute_release_via_release,
-    execute_release_prepare as execute_release_prepare_via_release,
-    git_remote_url as git_remote_url_via_release, load_release_config,
     load_release_context as load_release_context_via_release,
-    parse_indexed_review_inspection_request, remediation_hints_for_blockers,
-    render_execute_final_review_lines, render_execute_review_item_detail_lines,
-    render_execute_review_menu_lines, render_execute_stale_review_lines,
-    render_execute_state_review_lines, render_execute_working_tree_review_lines,
-    render_prepare_final_review_lines, render_prepare_gate_review_lines,
-    render_prepare_mutation_detail_lines, render_prepare_mutation_review_lines,
-    render_prepare_review_menu_lines, render_prepare_version_review_lines,
-    render_release_execute_plan_json as render_release_execute_plan_json_payload,
-    render_release_execute_plan_text,
-    render_release_executed_json as render_release_executed_json_payload,
-    render_release_executed_text,
-    render_release_gate_run_json as render_release_gate_run_json_payload,
-    render_release_gate_run_lines, render_release_gate_run_text,
-    render_release_prepare_plan_json as render_release_prepare_plan_json_payload,
-    render_release_prepare_plan_text,
-    render_release_prepared_json as render_release_prepared_json_payload,
-    render_release_prepared_text, render_release_reprepare_handoff_lines,
-    render_release_resume_drift_lines,
-    render_release_resume_json as render_release_resume_json_payload,
-    render_release_resume_menu_lines, render_release_resume_text,
-    render_release_simulation_json as render_release_simulation_json_payload,
-    render_release_simulation_text, render_release_state_discard_confirmation_lines,
-    render_release_state_discarded_text,
-    render_release_status_json as render_release_status_json_payload, render_release_status_text,
-    render_release_verify_install_json as render_release_verify_install_json_payload,
-    render_release_verify_install_text,
-    resolve_verify_install_tag as resolve_verify_install_tag_via_release,
-    run_release_gates_with_progress,
-    run_release_verify_install as run_release_verify_install_via_release, BlockedPreflightAction,
-    ExecuteMenuAction, ExecuteReviewState, GateExecutionReport, PrepareMenuAction,
-    PrepareReviewState, ReleaseBlockedStage, ReleaseContext, ReleaseExecutePlan, ReleaseExecuted,
-    ReleaseGateRun, ReleasePreparePlan, ReleasePrepared, ReleaseSimulation, ReleaseStatus,
-    ReleaseVerifyInstall, ResolvedGate, ResumeMenuAction,
+    parse_indexed_review_inspection_request, render_execute_final_review_lines,
+    render_execute_review_item_detail_lines, render_execute_review_menu_lines,
+    render_execute_stale_review_lines, render_execute_state_review_lines,
+    render_execute_working_tree_review_lines, render_prepare_final_review_lines,
+    render_prepare_gate_review_lines, render_prepare_mutation_detail_lines,
+    render_prepare_mutation_review_lines, render_prepare_review_menu_lines,
+    render_prepare_version_review_lines, render_release_execute_plan_text,
+    render_release_gate_run_lines, render_release_reprepare_handoff_lines,
+    render_release_resume_drift_lines, render_release_state_discard_confirmation_lines,
+    render_release_state_discarded_text, BlockedPreflightAction, ExecuteMenuAction,
+    ExecuteReviewState, GateExecutionReport, PrepareMenuAction, PrepareReviewState, ReleaseContext,
+    ReleaseExecutePlan, ReleasePreparePlan, ResumeMenuAction,
 };
 
-use super::command_context::{current_working_dir, resolve_repo_root};
-use super::RunnerError;
+use super::ops::{
+    collect_release_execute_plan, execute_release, execute_release_prepare,
+    run_standalone_release_gates, validate_prepare_version_override,
+};
+use super::*;
 
-const RELEASE_PREPARED_STATE_FILE: &str = ".release-prepared.json";
-const RELEASE_STATE_STALE_THRESHOLD_SECS: i64 = 60 * 60;
-
-pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd, args.repo_override)?;
-
-    match args.subcommand {
-        ReleaseSubcommand::Status { check_gates } => {
-            let status = collect_release_status(&resolved, check_gates)?;
-            if args.output_json {
-                let rendered = render_release_status_json_payload(&status);
-                if status.ready {
-                    return Ok(rendered);
-                }
-                return Err(RunnerError::CommandJsonFailure { rendered });
-            }
-
-            let rendered = render_release_status_text(&status);
-            if status.ready {
-                Ok(rendered)
-            } else {
-                Err(RunnerError::task_invocation(rendered))
-            }
-        }
-        ReleaseSubcommand::Gates => {
-            let gate_run = run_standalone_release_gates(&resolved)?;
-            if args.output_json {
-                let rendered = render_release_gate_run_json_payload(&gate_run);
-                if gate_run.passed {
-                    return Ok(rendered);
-                }
-                return Err(RunnerError::CommandJsonFailure { rendered });
-            }
-
-            let rendered = render_release_gate_run_text(&gate_run);
-            if gate_run.passed {
-                Ok(rendered)
-            } else {
-                Err(RunnerError::task_invocation(rendered))
-            }
-        }
-        ReleaseSubcommand::Resume { allow_stale } => {
-            let resume_plan = collect_release_execute_plan(&resolved, allow_stale)?;
-            if args.output_json {
-                let rendered = render_release_resume_json_payload(
-                    &resume_plan,
-                    &remediation_hints_for_blockers(
-                        &resume_plan.blockers,
-                        ReleaseBlockedStage::Execute,
-                    ),
-                );
-                if resume_plan.state_loaded {
-                    return Ok(rendered);
-                }
-                return Err(RunnerError::CommandJsonFailure { rendered });
-            }
-
-            if !resume_plan.state_loaded {
-                return Err(RunnerError::task_invocation(render_release_resume_text(
-                    &resume_plan,
-                )));
-            }
-            run_interactive_release_resume(&resolved, allow_stale)
-        }
-        ReleaseSubcommand::VerifyInstall { tag, repo_url } => {
-            let verification = run_release_verify_install(&resolved, tag, repo_url)?;
-            if args.output_json {
-                let rendered = render_release_verify_install_json_payload(&verification);
-                if verification.verified {
-                    return Ok(rendered);
-                }
-                return Err(RunnerError::CommandJsonFailure { rendered });
-            }
-
-            let rendered = render_release_verify_install_text(&verification);
-            if verification.verified {
-                Ok(rendered)
-            } else {
-                Err(RunnerError::task_invocation(rendered))
-            }
-        }
-        ReleaseSubcommand::Simulate { version_override } => {
-            let requested_version_override = parse_release_version_override(
-                &resolved.resolved_root,
-                version_override.as_deref(),
-                "simulate",
-            )?;
-            let simulation = collect_release_simulation(&resolved, requested_version_override)?;
-            if args.output_json {
-                let rendered = render_release_simulation_json_payload(&simulation);
-                if simulation.ready {
-                    return Ok(rendered);
-                }
-                return Err(RunnerError::CommandJsonFailure { rendered });
-            }
-
-            let rendered = render_release_simulation_text(&simulation);
-            if simulation.ready {
-                Ok(rendered)
-            } else {
-                Err(RunnerError::task_invocation(rendered))
-            }
-        }
-        ReleaseSubcommand::Prepare {
-            plan,
-            check_gates,
-            yes,
-            version_override,
-        } => {
-            if plan && yes {
-                return Err(RunnerError::task_invocation(
-                    "`release prepare` cannot combine `--plan`/`--dry-run` and `--yes`".to_owned(),
-                ));
-            }
-            let requested_version_override = parse_release_version_override(
-                &resolved.resolved_root,
-                version_override.as_deref(),
-                "prepare",
-            )?;
-            if plan {
-                let prepare_plan = collect_release_prepare_plan(
-                    &resolved,
-                    check_gates,
-                    requested_version_override,
-                )?;
-                if args.output_json {
-                    let rendered = render_release_prepare_plan_json_payload(&prepare_plan);
-                    if prepare_plan.ready {
-                        return Ok(rendered);
-                    }
-                    return Err(RunnerError::CommandJsonFailure { rendered });
-                }
-
-                let rendered = render_release_prepare_plan_text(&prepare_plan);
-                if prepare_plan.ready {
-                    Ok(rendered)
-                } else {
-                    Err(RunnerError::task_invocation(rendered))
-                }
-            } else if yes {
-                let prepared =
-                    execute_release_prepare(&resolved, check_gates, requested_version_override)?;
-                if args.output_json {
-                    let rendered = render_release_prepared_json_payload(&prepared);
-                    if prepared.prepared {
-                        return Ok(rendered);
-                    }
-                    return Err(RunnerError::CommandJsonFailure { rendered });
-                }
-
-                let rendered = render_release_prepared_text(&prepared);
-                if prepared.prepared {
-                    Ok(rendered)
-                } else {
-                    Err(RunnerError::task_invocation(rendered))
-                }
-            } else if args.output_json {
-                Err(RunnerError::task_invocation(
-                    "interactive release preparation is only available in text mode; use `effigy release prepare --plan` or `effigy release prepare --yes` when `--json` is enabled"
-                        .to_owned(),
-                ))
-            } else {
-                if version_override.is_some() {
-                    return Err(RunnerError::task_invocation(
-                        "`release prepare --version` is only supported with `--plan` or `--yes`; plain interactive `release prepare` already supports custom version review".to_owned(),
-                    ));
-                }
-                run_interactive_release_prepare(&resolved, check_gates)
-            }
-        }
-        ReleaseSubcommand::Execute {
-            plan,
-            yes,
-            allow_stale,
-        } => {
-            if plan && yes {
-                return Err(RunnerError::task_invocation(
-                    "`release execute` cannot combine `--plan`/`--dry-run` and `--yes`".to_owned(),
-                ));
-            }
-            if plan {
-                let execute_plan = collect_release_execute_plan(&resolved, allow_stale)?;
-                if args.output_json {
-                    let rendered = render_release_execute_plan_json_payload(&execute_plan);
-                    if execute_plan.ready {
-                        return Ok(rendered);
-                    }
-                    return Err(RunnerError::CommandJsonFailure { rendered });
-                }
-
-                let rendered = render_release_execute_plan_text(&execute_plan);
-                if execute_plan.ready {
-                    Ok(rendered)
-                } else {
-                    Err(RunnerError::task_invocation(rendered))
-                }
-            } else if yes {
-                let executed = execute_release(&resolved, allow_stale)?;
-                if args.output_json {
-                    let rendered = render_release_executed_json_payload(&executed);
-                    if executed.executed {
-                        return Ok(rendered);
-                    }
-                    return Err(RunnerError::CommandJsonFailure { rendered });
-                }
-
-                let rendered = render_release_executed_text(&executed);
-                if executed.executed {
-                    Ok(rendered)
-                } else {
-                    Err(RunnerError::task_invocation(rendered))
-                }
-            } else if args.output_json {
-                Err(RunnerError::task_invocation(
-                    "interactive release execution is only available in text mode; use `effigy release execute --plan` or `effigy release execute --yes` when `--json` is enabled"
-                        .to_owned(),
-                ))
-            } else {
-                run_interactive_release_execute(&resolved, allow_stale)
-            }
-        }
-    }
-}
-
-fn run_interactive_release_prepare(
+pub(super) fn run_interactive_release_prepare(
     resolved: &ResolvedTarget,
     requested_check_gates: bool,
 ) -> Result<String, RunnerError> {
@@ -290,7 +40,7 @@ fn run_interactive_release_prepare(
     };
     let mut plan =
         build_release_prepare_plan_via_release(&context, check_gates, gate_report.clone(), None)?;
-    let rendered_plan = render_release_prepare_plan_text(&plan);
+    let rendered_plan = effigy_release::render_release_prepare_plan_text(&plan);
     if !plan.ready {
         return Err(RunnerError::task_invocation(rendered_plan));
     }
@@ -363,7 +113,7 @@ fn run_interactive_release_prepare(
     }
 
     let prepared = execute_release_prepare(resolved, check_gates, plan.planned_version.clone())?;
-    let rendered = render_release_prepared_text(&prepared);
+    let rendered = effigy_release::render_release_prepared_text(&prepared);
     if prepared.prepared {
         Ok(rendered)
     } else {
@@ -371,7 +121,7 @@ fn run_interactive_release_prepare(
     }
 }
 
-fn run_interactive_release_execute(
+pub(super) fn run_interactive_release_execute(
     resolved: &ResolvedTarget,
     allow_stale: bool,
 ) -> Result<String, RunnerError> {
@@ -510,7 +260,7 @@ fn run_interactive_release_execute(
                 }
 
                 let executed = execute_release(resolved, plan.stale_override_used)?;
-                let rendered = render_release_executed_text(&executed);
+                let rendered = effigy_release::render_release_executed_text(&executed);
                 if executed.executed {
                     return Ok(rendered);
                 }
@@ -525,7 +275,7 @@ fn run_interactive_release_execute(
     }
 }
 
-fn run_interactive_release_resume(
+pub(super) fn run_interactive_release_resume(
     resolved: &ResolvedTarget,
     allow_stale: bool,
 ) -> Result<String, RunnerError> {
@@ -648,7 +398,7 @@ fn prompt_release_resume_menu(plan: &ReleaseExecutePlan) -> Result<ResumeMenuAct
     loop {
         let response = prompt_release_text_input(
             "Release Resume Recovery Menu",
-            &render_release_resume_menu_lines(plan),
+            &effigy_release::render_release_resume_menu_lines(plan),
             "Recovery menu choice",
         )?;
         match response.trim().to_ascii_lowercase().as_str() {
@@ -780,7 +530,10 @@ fn prompt_prepare_mutation_browser(plan: &ReleasePreparePlan) -> Result<(), Runn
     }
 }
 
-fn parse_prepare_mutation_inspection_request(input: &str, mutation_count: usize) -> Option<usize> {
+pub(super) fn parse_prepare_mutation_inspection_request(
+    input: &str,
+    mutation_count: usize,
+) -> Option<usize> {
     parse_indexed_review_inspection_request(input, mutation_count)
 }
 
@@ -1015,223 +768,15 @@ fn print_release_interactive_notice(message: &str) -> Result<(), RunnerError> {
         })
 }
 
-fn validate_prepare_version_override(
-    context: &ReleaseContext,
-    suggested_version: &semver::Version,
-    raw_version: &str,
-) -> Result<semver::Version, String> {
-    let version = semver::Version::parse(raw_version.trim())
-        .map_err(|error| format!("`{}` is not valid semver: {error}", raw_version.trim()))?;
-    if version <= context.current_version {
-        return Err(format!(
-            "{version} must be greater than current version {}",
-            context.current_version
-        ));
-    }
-    if context
-        .parsed_changelog
-        .find_version(&version.to_string())
-        .is_some()
-    {
-        return Err(format!(
-            "changelog already contains release version {version}"
-        ));
-    }
-    if version == *suggested_version {
-        return Ok(version);
-    }
-    Ok(version)
-}
-
-fn parse_release_version_override(
-    repo_root: &Path,
-    raw_version: Option<&str>,
-    subcommand: &str,
-) -> Result<Option<semver::Version>, RunnerError> {
-    let Some(raw_version) = raw_version else {
-        return Ok(None);
-    };
-    let context = load_release_context_via_release(repo_root)?;
-    let suggested_version = context.next_version.clone().ok_or_else(|| {
-        RunnerError::task_invocation(format!(
-            "release {subcommand} `--version` requires a changelog-derived suggested version"
-        ))
-    })?;
-    let version = validate_prepare_version_override(&context, &suggested_version, raw_version)
-        .map_err(|message| {
-            RunnerError::task_invocation(format!(
-                "invalid `release {subcommand} --version`: {message}"
-            ))
-        })?;
-    Ok(Some(version))
-}
-
-fn collect_release_status(
-    resolved: &ResolvedTarget,
-    check_gates: bool,
-) -> Result<ReleaseStatus, RunnerError> {
-    let context = load_release_context_via_release(&resolved.resolved_root)?;
-    if check_gates && !context.config.gates.is_empty() {
-        emit_release_progress_line("checking release gates for status");
-    }
-    let gate_report = if check_gates {
-        run_release_gates(&resolved.resolved_root, &context.config.gates, true)
-    } else {
-        GateExecutionReport::empty()
-    };
-    Ok(collect_release_status_via_release(
-        &context,
-        check_gates,
-        gate_report,
-    ))
-}
-
-fn collect_release_prepare_plan(
-    resolved: &ResolvedTarget,
-    check_gates: bool,
-    version_override: Option<semver::Version>,
-) -> Result<ReleasePreparePlan, RunnerError> {
-    let context = load_release_context_via_release(&resolved.resolved_root)?;
-    build_release_prepare_plan(&context, check_gates, version_override)
-}
-
-fn build_release_prepare_plan(
-    context: &ReleaseContext,
-    check_gates: bool,
-    version_override: Option<semver::Version>,
-) -> Result<ReleasePreparePlan, RunnerError> {
-    if check_gates && !context.config.gates.is_empty() {
-        emit_release_progress_line("checking release gates for prepare plan");
-    }
-    let gate_report = if check_gates {
-        run_release_gates(&context.repo_root, &context.config.gates, true)
-    } else {
-        GateExecutionReport::empty()
-    };
-    build_release_prepare_plan_via_release(context, check_gates, gate_report, version_override)
-        .map_err(Into::into)
-}
-
-fn collect_release_simulation(
-    resolved: &ResolvedTarget,
-    version_override: Option<semver::Version>,
-) -> Result<ReleaseSimulation, RunnerError> {
-    let context = load_release_context_via_release(&resolved.resolved_root)?;
-    if !context.config.gates.is_empty() {
-        emit_release_progress_line("checking release gates for simulation");
-    }
-    let gate_report = run_release_gates(&resolved.resolved_root, &context.config.gates, true);
-    let prepare_plan = build_release_prepare_plan_via_release(
-        &context,
-        true,
-        gate_report.clone(),
-        version_override,
-    )?;
-    Ok(collect_release_simulation_via_release(
-        &resolved.resolved_root,
-        RELEASE_PREPARED_STATE_FILE,
-        prepare_plan,
-        &gate_report,
-    ))
-}
-
-fn execute_release_prepare(
-    resolved: &ResolvedTarget,
-    check_gates: bool,
-    version_override: Option<semver::Version>,
-) -> Result<ReleasePrepared, RunnerError> {
-    execute_release_prepare_via_release(
-        resolved.resolved_root.clone(),
-        RELEASE_PREPARED_STATE_FILE,
-        check_gates,
-        version_override,
-        emit_release_progress_line,
+fn run_release_gates(
+    root: &Path,
+    gates: &[effigy_release::ResolvedGate],
+    fail_fast: bool,
+) -> effigy_release::GateExecutionReport {
+    effigy_release::run_release_gates_with_progress(
+        root,
+        gates,
+        fail_fast,
+        super::ops::emit_release_progress_line,
     )
-    .map_err(Into::into)
 }
-
-fn run_standalone_release_gates(resolved: &ResolvedTarget) -> Result<ReleaseGateRun, RunnerError> {
-    let config = load_release_config(&resolved.resolved_root)?;
-    if !config.gates.is_empty() {
-        emit_release_progress_line("running standalone release gates");
-    }
-    let report = run_release_gates(&resolved.resolved_root, &config.gates, true);
-    Ok(collect_release_gate_run(
-        resolved.resolved_root.clone(),
-        config.gates.len(),
-        report,
-    ))
-}
-
-fn run_release_verify_install(
-    resolved: &ResolvedTarget,
-    tag: Option<String>,
-    repo_url: Option<String>,
-) -> Result<ReleaseVerifyInstall, RunnerError> {
-    let tag = resolve_verify_install_tag_via_release(tag, std::env::var("GITHUB_REF_NAME").ok())?;
-    let repo_url = resolve_verify_install_repo_url(resolved, repo_url)?;
-    run_release_verify_install_via_release(resolved.resolved_root.clone(), tag, repo_url)
-        .map_err(Into::into)
-}
-
-fn collect_release_execute_plan(
-    resolved: &ResolvedTarget,
-    allow_stale: bool,
-) -> Result<ReleaseExecutePlan, RunnerError> {
-    collect_release_execute_plan_via_release(
-        resolved.resolved_root.clone(),
-        RELEASE_PREPARED_STATE_FILE,
-        RELEASE_STATE_STALE_THRESHOLD_SECS,
-        allow_stale,
-    )
-    .map_err(Into::into)
-}
-
-fn execute_release(
-    resolved: &ResolvedTarget,
-    allow_stale: bool,
-) -> Result<ReleaseExecuted, RunnerError> {
-    execute_release_via_release(
-        resolved.resolved_root.clone(),
-        RELEASE_PREPARED_STATE_FILE,
-        RELEASE_STATE_STALE_THRESHOLD_SECS,
-        allow_stale,
-        emit_release_progress_line,
-    )
-    .map_err(Into::into)
-}
-
-fn run_release_gates(root: &Path, gates: &[ResolvedGate], fail_fast: bool) -> GateExecutionReport {
-    run_release_gates_with_progress(root, gates, fail_fast, emit_release_progress_line)
-}
-
-fn resolve_verify_install_repo_url(
-    resolved: &ResolvedTarget,
-    repo_url: Option<String>,
-) -> Result<String, RunnerError> {
-    if let Some(repo_url) = repo_url {
-        let trimmed = repo_url.trim().to_owned();
-        if trimmed.is_empty() {
-            return Err(RunnerError::task_invocation(
-                "release verify-install `--repo-url` must not be empty".to_owned(),
-            ));
-        }
-        return Ok(effigy_release::normalize_verify_install_repo_url(&trimmed));
-    }
-
-    let detected = git_remote_url_via_release(&resolved.resolved_root, "origin")?;
-    Ok(effigy_release::normalize_verify_install_repo_url(&detected))
-}
-
-fn release_progress_enabled() -> bool {
-    std::io::stderr().is_terminal()
-}
-
-fn emit_release_progress_line(message: &str) {
-    if release_progress_enabled() {
-        eprintln!("[release] {message}");
-    }
-}
-
-#[cfg(test)]
-mod tests;

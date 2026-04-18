@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress (crate shipped; command integration and route registration still open)
+Status: Complete (bounded gateway lane shipped; broader coordination/dashboard follow-through belongs to `g02.016`)
 Owner: Platform
 Created: 2026-04-16
 Depends on: 006
@@ -48,17 +48,17 @@ With multiple projects running simultaneously:
 
 ## 2) Goals
 
-- [ ] Implement DNS resolver for `*.test` using `hickory-dns`.
-- [ ] Implement reverse proxy using `hyper` / `tower` with hostname-based
+- [x] Implement DNS resolver for `*.test` using `hickory-dns`.
+- [x] Implement reverse proxy using `hyper` / `tower` with hostname-based
       routing.
-- [ ] Implement TLS termination using mkcert-generated certificates.
-- [ ] Define `effigy gateway up/down/status` command surface.
-- [ ] Define `dns.domain` manifest field for per-project domains.
-- [ ] Implement file-based route table at `~/.effigy/gateway/routes.json`.
-- [ ] Implement route registration on `container up` / deregistration on
+- [x] Implement TLS termination using mkcert-generated certificates.
+- [x] Define `effigy gateway up/down/status` command surface.
+- [x] Define `dns.domain` manifest field for per-project domains.
+- [x] Implement file-based route table at `~/.effigy/gateway/routes.json`.
+- [x] Implement route registration on `container up` / deregistration on
       `container down`.
-- [ ] Implement macOS `/etc/resolver/test` setup and teardown.
-- [ ] Implement `effigy gateway setup-tls` for one-time mkcert CA
+- [x] Implement macOS `/etc/resolver/test` setup and teardown.
+- [x] Implement `effigy gateway setup-tls` for one-time mkcert CA
       installation.
 - [ ] Support non-container project routes via task lifecycle.
 - [ ] Prove with multiple projects running simultaneously.
@@ -188,6 +188,24 @@ route table.
 
 ## Next Task
 
-`g02.014` is now the active integration lane. Execute `266` first: make the
-host-native `effigy gateway up/down/status` surface real, then wire DNS
-contract and route registration in the next batch.
+The plain HTTP hostname loop is now proven on a real consumer repo, and the
+proof fixed one real product gap: multi-port stacks can now select the gateway
+target with optional `[containers.<name>.dns].port`.
+
+Card `270` is now landed.
+
+The bounded gateway lane is complete:
+
+- the product owns `gateway up/down/status/setup-tls`
+- containers can register plain HTTP or TLS routes through the manifest path
+- one real consumer proof exists for the plain HTTP hostname loop
+- one real consumer proof now exists for the HTTPS hostname loop, including
+  route-owned cert generation and teardown cleanup
+
+What remains is intentionally outside this bounded lane:
+
+- non-container task-owned routes
+- fuller cross-project route/status dashboard work
+- broader simultaneous multi-project coordination
+
+That residue belongs to `g02.016`, not a reopened `g02.014` lane.

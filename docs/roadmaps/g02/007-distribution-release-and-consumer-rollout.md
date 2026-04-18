@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress
+Status: Paused
 Owner: Platform
 Created: 2026-04-15
 Depends on: 005, 027
@@ -34,10 +34,10 @@ Close the distribution lane properly by:
 
 ## Current Focus
 
-The release lane is active again.
+The release lane is intentionally deferred now.
 
-The local Linux rehearsal proof, Rhai dispatch hardening, and modularization
-detour are now all behind us. `115` is complete and the release posture is now:
+The local Linux rehearsal proof, Rhai dispatch hardening, modularization, and
+release-closure prep are all done. `115` is complete and the release posture is now:
 
 - local Linux rehearsal is real
 - release closure is complete
@@ -60,9 +60,9 @@ Shipped proof already in place:
 
 The release gate is now broader product readiness, not repo hardening.
 
-`115` is complete, but `g02.010` is still active in a parallel thread.
-
-Release execution remains deferred until that live modularization work closes.
+This roadmap is paused by explicit product sequencing, not by missing release
+prep. The user wants one `v0.3` cut after the remaining `g02` feature lanes
+ship, test, and verify together.
 
 ## Exit Condition
 
@@ -72,5 +72,8 @@ it is no longer only an Effigy-local product claim.
 
 ## Next Task
 
-Finish the remaining live `g02.010` work in the parallel thread, then return
-to `115` for explicit human-approved release execution.
+Keep `g02.007` out of the active queue while the remaining `g02` feature and
+integration work lands.
+
+Return to `115` only after the `g02.011`–`g02.016` feature spine is complete
+and the repo is ready for one explicit human-approved `v0.3` release cut.

@@ -1,6 +1,6 @@
 # 010 Effigy Modularization And Crate Boundaries Strict Lane
 
-Status: strict-active
+Status: paused
 Updated: 2026-04-17
 Roadmap: `g02.010`
 
@@ -38,10 +38,11 @@ The active strict lane is:
 
 ## Current Posture
 
-`strict-active`
+`strict-paused`
 
-`g02.010` is active. `g02.007` is queued again, and `115` is no longer the
-active next move.
+`g02.010` is complete on a trustworthy boundary. `g02.007` is intentionally
+deferred, and the remaining `g02.011`–`g02.016` integration spine is now the
+next product move.
 
 The first classification batch is now done.
 
@@ -1565,8 +1566,76 @@ That post-`212` boundary decision is now made too:
   `cargo fmt --all --check` clean, `cargo clippy --all-targets
   -- -D warnings` (standard allowlist) clean. No behavior change.
 
+That earlier closeout is no longer the live continuation state:
+
+- a fresh `/src` audit after the doctor and prelude work showed the
+  remaining root-crate cleanup queue is still real
+- the highest-pressure seams are now mixed runner shell files, not the
+  already-set crate boundaries
+- the active bounded chain is therefore:
+  - `256` split `src/runner/demo_command.rs`
+  - `257` split `src/runner/release_command.rs`
+  - `258` split `src/runner/container_command.rs`
+  - `259` shrink the runner test prelude surface again without
+    reintroducing nested-prelude churn
+- only after that chain lands should the lane reopen the broader
+  "pause vs more extraction planning vs release handoff" decision
+
+Card `256` is now landed too:
+
+- `src/runner/demo_command.rs` is now a real module directory
+  (`demo_command/{mod,render,query,execute}.rs`)
+- the runner entrypoint stayed small while render/query/execution
+  responsibilities moved into focused local modules
+- focused validation passed for the batch:
+  - `cargo check -q`
+  - `cargo test -q demo_command`
+  - `cargo fmt --all -- --check`
+
+Card `257` is now landed too:
+
+- `src/runner/release_command.rs` is now a real module directory
+  (`release_command/{mod,interactive,ops}.rs`)
+- the runner entrypoint stayed small while interactive review flow
+  and release-operation helpers moved into focused local modules
+- focused validation passed for the batch:
+  - `cargo check -q`
+  - `cargo test -q release_command`
+  - `cargo fmt --all -- --check`
+
+Card `258` is now landed too:
+
+- `src/runner/container_command.rs` is now a real module directory
+  (`container_command/{mod,lifecycle,session,signals}.rs`)
+- the runner entrypoint stayed small while lifecycle, attached-session,
+  and process/signal helpers moved into focused local modules
+- focused validation passed for the batch:
+  - `cargo check -q`
+  - `cargo test -q container`
+  - `cargo fmt --all -- --check`
+
+Card `259` is now landed too:
+
+- `src/tests/runner_tests/prelude/managed.rs` is now a real helper
+  directory (`managed/{mod,cases,fixtures,assertions,helpers}.rs`)
+- the root runner-test prelude is slimmer now that its internal facade
+  block lives behind `prelude/support.rs` instead of inline next to the
+  flat export surface
+- test call sites stayed flat; no nested-prelude chain came back
+- focused validation passed for the batch:
+  - `cargo check -q`
+  - `cargo test -q managed_and_locking_tests`
+  - `cargo fmt --all -- --check`
+
 ## Next Task
 
-`g02.010` lane closes cleanly. The roadmap returns to card
-`115`'s deferred release-closure execution, or planning can
-open a fresh lane decision — whichever the operator picks.
+The four-card `/src` cleanup chain is now complete, and the remaining
+root-crate files no longer justify holding product work behind another live
+modularization detour.
+
+Keep `g02.010` closed on the current trustworthy boundary. Any later
+shell-cleanup or crate-extraction follow-up should reopen from fresh
+planning instead of pretending this lane is still the active blocker.
+
+Successor work now belongs to the post-modularization integration spine in
+`g02.011`–`g02.016`, with release still deferred until that work is done.
