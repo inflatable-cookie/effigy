@@ -79,8 +79,8 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. The final `g02.016` move is now explicit again: bounded
   generated-compose shared services instead of a vague shared-service promise.
 - [`278-implement-generated-compose-shared-services.md`](./278-implement-generated-compose-shared-services.md)
-  is ready. The next live batch is the final bounded shared-services slice for
-  `g02.016`.
+  is complete. `g02.016` is now closed on the shipped bounded shared-services
+  path.
 
 ## Archive Rule
 
@@ -93,4 +93,5 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Execute `278` to land the final bounded `g02.016` batch.
+No card is ready. Stop in planning and reopen `g02.015` on one explicit
+strict-lane/batch-card boundary.

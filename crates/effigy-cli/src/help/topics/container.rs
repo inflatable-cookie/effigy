@@ -10,6 +10,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
         &[
             "Operate one manifest-defined Colima-backed container environment by name or through the manifest default alias.",
             "V1 stays explicit: host-facing ports and repo-relative mounts are declared in `[containers.*.host]`, and attached sessions shut the environment down on owner exit by default.",
+            "Generated compose also supports bounded `shared = true` backing services for standalone shared databases and caches on the product-owned path.",
         ],
     )?;
     render_usage_section(

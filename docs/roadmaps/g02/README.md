@@ -26,7 +26,7 @@ Current milestones:
 - [`013-dev-front-door-and-managed-lifecycle.md`](./013-dev-front-door-and-managed-lifecycle.md) (planned; single-command `effigy dev` front door using the managed-process concurrent runtime with embedded terminal and health gate)
 - [`014-rust-native-gateway.md`](./014-rust-native-gateway.md) (complete; bounded gateway integration is shipped through command ownership, route lifecycle, and real plain HTTP/HTTPS consumer proofs, with broader dashboard residue deferred to `g02.016`)
 - [`015-persistent-data-and-volume-lifecycle.md`](./015-persistent-data-and-volume-lifecycle.md) (in progress; volume management shipped in `effigy-catalog::volumes`, seeding and Rhai hooks deferred to integration phase)
-- [`016-multi-project-coordination.md`](./016-multi-project-coordination.md) (in progress; port allocation registry shipped in `effigy-gateway::ports`, cross-project status deferred to integration phase)
+- [`016-multi-project-coordination.md`](./016-multi-project-coordination.md) (complete; cross-project status, route dashboard, generated-compose auto-allocation, resource stats, and bounded shared services are all shipped)
 - [`017-remaining-shell-cleanup-and-crate-extraction-program.md`](./017-remaining-shell-cleanup-and-crate-extraction-program.md) (closed; the queued shell-cleanup and extraction jobs that were worth doing are now landed, and the remaining root-crate untidiness is acceptable rather than roadmap-worthy)
 - [`018-research-promotion-and-carry-forward.md`](./018-research-promotion-and-carry-forward.md) (planned; carries the unfinished promotion and future-facing residue from the closed `g01` research phases)
 
@@ -38,9 +38,8 @@ Active strict planning lanes:
 
 - `g02.007` is paused until the remaining `g02` feature/integration spine is complete
 - the `g02.014` gateway strict lane is now complete through card `270`
-- the `g02.016` multi-project coordination strict lane is now active with
-  `272`, `274`, `275`, `276`, and `277` landed, and `278` ready as the final
-  bounded follow-up
+- the `g02.016` multi-project coordination strict lane is now complete through
+  card `278`
 
 Rules:
 
@@ -56,5 +55,5 @@ Rules:
 
 ## Next Task
 
-Execute card `278` to land bounded generated-compose shared services and close
-`g02.016`.
+Stop in planning and reopen `g02.015` on one explicit strict-lane/batch-card
+boundary.

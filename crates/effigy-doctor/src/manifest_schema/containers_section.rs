@@ -136,6 +136,15 @@ fn validate_container_services(
         if let Some(config) = table.get("config") {
             validate_string_field(context, &service_path, Some(config), "config");
         }
+        if let Some(shared) = table.get("shared") {
+            if shared.as_bool().is_none() {
+                context.unsupported_value(
+                    &format!("{service_path}.shared"),
+                    SchemaContext::value_type(shared),
+                    "expected boolean",
+                );
+            }
+        }
     }
 }
 

@@ -88,6 +88,7 @@ pub fn up_detached_report(
         "compose_file": policy.compose_file_display,
         "project_name": policy.project_name,
         "primary_service": policy.primary_service,
+        "shared_services": shared_services_json(policy),
         "attach_mode": "detached",
         "colima_started": colima_started,
         "ports": policy.declared_ports,
@@ -103,6 +104,7 @@ pub fn up_detached_report(
         "[ok] container `{}` is ready in detached mode",
         policy.name
     ));
+    append_shared_service_lines(&mut lines, policy);
     lines.push(format!(
         "[next] inspect state with `effigy container {} status`",
         policy.name
@@ -124,6 +126,7 @@ pub fn down_report(
         "ok": true,
         "container": policy.name,
         "profile": policy.profile,
+        "shared_services": shared_services_json(policy),
         "colima_running": colima_running,
         "shutdown": shutdown_label(policy.shutdown),
     });
@@ -149,6 +152,7 @@ pub fn reset_report(
         "ok": true,
         "container": policy.name,
         "profile": policy.profile,
+        "shared_services": shared_services_json(policy),
         "colima_running": colima_running,
     });
     let success_text = if colima_running {
@@ -204,6 +208,7 @@ pub fn status_report(
         "compose_file": policy.compose_file_display,
         "project_name": policy.project_name,
         "primary_service": policy.primary_service,
+        "shared_services": shared_services_json(policy),
         "colima_running": colima_running,
         "health": health,
         "ports": policy.declared_ports,
@@ -231,6 +236,7 @@ pub fn status_report(
     if !policy.ui_tabs.is_empty() {
         lines.push(format!("ui_tabs: {}", policy.ui_tabs.join(", ")));
     }
+    append_shared_service_lines(&mut lines, policy);
     lines.push(format!(
         "detach_timeout_secs: {}",
         policy.detach_timeout_secs
@@ -448,5 +454,39 @@ fn yes_no(value: bool) -> &'static str {
         "yes"
     } else {
         "no"
+    }
+}
+
+fn shared_services_json(policy: &EffectiveContainerPolicy) -> Vec<JsonValue> {
+    policy
+        .shared_services
+        .iter()
+        .map(|service| {
+            json!({
+                "service_name": service.service_name,
+                "catalog": service.catalog,
+                "project_name": service.project_name,
+                "target_host": service.host,
+                "target_port": service.host_port,
+                "container_port": service.container_port,
+            })
+        })
+        .collect()
+}
+
+fn append_shared_service_lines(lines: &mut Vec<String>, policy: &EffectiveContainerPolicy) {
+    if policy.shared_services.is_empty() {
+        return;
+    }
+    lines.push(format!("shared_services: {}", policy.shared_services.len()));
+    for service in &policy.shared_services {
+        lines.push(format!(
+            "- {} [{}] -> {}:{} (project={})",
+            service.service_name,
+            service.catalog,
+            service.host,
+            service.host_port,
+            service.project_name
+        ));
     }
 }

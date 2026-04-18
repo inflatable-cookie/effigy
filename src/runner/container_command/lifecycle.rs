@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use effigy_containers::{
-    compose::compose_args,
+    compose::{compose_args, resolve_compose_backend, ComposeBackend},
     down_report, effective_attach_mode, eject_generated_compose, eject_report,
     exec::{
         capture_compose_ps, capture_running_container_stats, colima_is_running,
@@ -107,6 +107,7 @@ pub(super) fn run_container_up(
     {
         return render_attached_session_closeout(repo_root, &policy, colima_started, "signal");
     }
+    let shared_service_notes = ensure_shared_services_running(&policy)?;
     run_docker_capture(
         repo_root,
         &policy,
@@ -130,6 +131,7 @@ pub(super) fn run_container_up(
 
     if attach_mode == EffectiveAttachMode::Detached {
         let mut report = up_detached_report(&policy, colima_started, health);
+        annotate_shared_service_notes(&mut report, &shared_service_notes);
         annotate_registered_gateway_route(&mut report, gateway_route.as_ref());
         return Ok(render_container_report(report, output_json));
     }
@@ -156,6 +158,7 @@ pub(super) fn run_container_down(
     }
     let removed_gateway_domain = deregister_gateway_route_for_container(&policy)?;
     let mut report = down_report(&policy, colima_running);
+    annotate_left_running_shared_services(&mut report, &policy);
     annotate_removed_gateway_route(&mut report, removed_gateway_domain.as_deref());
     Ok(render_container_report(report, output_json))
 }
@@ -178,6 +181,7 @@ pub(super) fn run_container_reset(
     }
     let removed_gateway_domain = deregister_gateway_route_for_container(&policy)?;
     let mut report = reset_report(&policy, colima_running);
+    annotate_left_running_shared_services(&mut report, &policy);
     annotate_removed_gateway_route(&mut report, removed_gateway_domain.as_deref());
     Ok(render_container_report(report, output_json))
 }
@@ -600,6 +604,149 @@ fn annotate_removed_gateway_route(
         .push_str(&format!("[gateway] removed {domain}"));
 }
 
+fn ensure_shared_services_running(
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<String>, RunnerError> {
+    let mut notes = Vec::new();
+    for service in &policy.shared_services {
+        let workdir = service.compose_file.parent().ok_or_else(|| {
+            RunnerError::task_invocation("shared service compose file has no parent directory")
+        })?;
+        run_shared_compose_capture(
+            workdir,
+            &policy.profile,
+            &shared_compose_args(service, ["up", "-d"]),
+            &format!("docker compose up (shared {})", service.service_name),
+        )?;
+        notes.push(format!(
+            "{} [{}] -> {}:{}",
+            service.service_name, service.catalog, service.host, service.host_port
+        ));
+    }
+    Ok(notes)
+}
+
+fn annotate_shared_service_notes(
+    report: &mut effigy_containers::ContainerCommandReport,
+    notes: &[String],
+) {
+    if notes.is_empty() {
+        return;
+    }
+    if let Some(json_object) = report.json.as_object_mut() {
+        json_object.insert(
+            "shared_service_actions".to_owned(),
+            json!({
+                "action": "ensured",
+                "services": notes,
+            }),
+        );
+    }
+    for note in notes {
+        report.success_text.push('\n');
+        report
+            .success_text
+            .push_str(&format!("[shared] ensured {note}"));
+    }
+}
+
+fn annotate_left_running_shared_services(
+    report: &mut effigy_containers::ContainerCommandReport,
+    policy: &EffectiveContainerPolicy,
+) {
+    if policy.shared_services.is_empty() {
+        return;
+    }
+    let services = policy
+        .shared_services
+        .iter()
+        .map(|service| {
+            format!(
+                "{} [{}] -> {}:{}",
+                service.service_name, service.catalog, service.host, service.host_port
+            )
+        })
+        .collect::<Vec<_>>();
+    if let Some(json_object) = report.json.as_object_mut() {
+        json_object.insert(
+            "shared_service_actions".to_owned(),
+            json!({
+                "action": "left-running",
+                "services": services,
+            }),
+        );
+    }
+    for service in services {
+        report.success_text.push('\n');
+        report
+            .success_text
+            .push_str(&format!("[shared] left running {service}"));
+    }
+}
+
+fn shared_compose_args<'a>(
+    service: &effigy_containers::SharedServiceBinding,
+    tail: impl IntoIterator<Item = &'a str>,
+) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("compose"),
+        OsString::from("-f"),
+        service.compose_file.as_os_str().to_os_string(),
+        OsString::from("-p"),
+        OsString::from(service.project_name.as_str()),
+    ];
+    args.extend(tail.into_iter().map(OsString::from));
+    args
+}
+
+fn run_shared_compose_capture(
+    repo_root: &Path,
+    profile: &str,
+    args: &[OsString],
+    label: &str,
+) -> Result<std::process::Output, RunnerError> {
+    let (program, args) = match resolve_compose_backend() {
+        ComposeBackend::Docker => ("docker", args.to_vec()),
+        ComposeBackend::ColimaNerdctl => {
+            let mut resolved = vec![
+                OsString::from("nerdctl"),
+                OsString::from("--profile"),
+                OsString::from(profile),
+                OsString::from("--"),
+            ];
+            resolved.extend(args.iter().cloned());
+            ("colima", resolved)
+        }
+    };
+    std::process::Command::new(program)
+        .current_dir(repo_root)
+        .args(&args)
+        .output()
+        .map_err(|error| RunnerError::TaskCommandLaunch {
+            command: format!("{label} ({program} {})", format_shared_args(&args)),
+            error,
+        })
+        .and_then(|output| {
+            if output.status.success() {
+                Ok(output)
+            } else {
+                Err(RunnerError::task_invocation(format!(
+                    "{label} failed (code {:?})\nstdout:\n{}\nstderr:\n{}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                )))
+            }
+        })
+}
+
+fn format_shared_args(args: &[OsString]) -> String {
+    args.iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn load_port_registry() -> Option<PortRegistry> {
     let home = std::env::var_os("HOME")?;
     let path = Path::new(&home).join(".effigy/ports.json");
@@ -608,9 +755,20 @@ fn load_port_registry() -> Option<PortRegistry> {
 
 #[cfg(test)]
 mod tests {
-    use super::run_container_eject;
+    use super::{
+        annotate_left_running_shared_services, annotate_shared_service_notes, run_container_eject,
+    };
+    use effigy_containers::{
+        down_report, up_detached_report, EffectiveComposeSource, EffectiveContainerPolicy,
+        SharedServiceBinding,
+    };
+    use effigy_manifest::{
+        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
+        ManifestContainerStartup,
+    };
+    use serde_json::json;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn temp_repo(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -622,6 +780,51 @@ mod tests {
         ));
         fs::create_dir_all(&root).expect("mkdir");
         root
+    }
+
+    fn test_policy(shared_services: Vec<SharedServiceBinding>) -> EffectiveContainerPolicy {
+        EffectiveContainerPolicy {
+            name: "web".to_owned(),
+            driver: ManifestContainerDriver::Colima,
+            startup: ManifestContainerStartup::Detached,
+            profile: "default".to_owned(),
+            compose_source: EffectiveComposeSource::Direct,
+            compose_files: vec![PathBuf::from("docker-compose.yml")],
+            compose_file_display: "docker-compose.yml".to_owned(),
+            shared_services,
+            project_name: "demo-web-dev".to_owned(),
+            primary_service: "app".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            declared_ports: vec!["8080:80".to_owned()],
+            ports_declared_explicitly: true,
+            declared_mounts: vec![],
+            health_check: None,
+            health_timeout_secs: 60,
+            ui_tabs: vec![],
+            on_task_exit: ManifestContainerOnTaskExit::Stop,
+            shutdown: ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+        }
+    }
+
+    fn shared_service(name: &str, catalog: &str, host_port: u16) -> SharedServiceBinding {
+        SharedServiceBinding {
+            service_name: name.to_owned(),
+            catalog: catalog.to_owned(),
+            project_name: format!("effigy-shared-{catalog}"),
+            compose_file: Path::new("/tmp").join(format!("{name}-{catalog}.yml")),
+            host: "host.docker.internal".to_owned(),
+            host_port,
+            container_port: match catalog {
+                "mariadb" => 3306,
+                "postgres" => 5432,
+                "redis" => 6379,
+                "memcached" => 11211,
+                other => panic!("unexpected shared catalog {other}"),
+            },
+        }
     }
 
     #[test]
@@ -656,5 +859,64 @@ variant = "default"
         let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read manifest");
         assert!(manifest.contains("compose_file = \"infra/dev/docker-compose.yml\""));
         assert!(!manifest.contains("[containers.web.services.app]"));
+    }
+
+    #[test]
+    fn annotate_shared_service_notes_adds_text_and_json() {
+        let policy = test_policy(vec![]);
+        let mut report = up_detached_report(&policy, false, Some("ready"));
+
+        annotate_shared_service_notes(
+            &mut report,
+            &[
+                "db [mariadb] -> host.docker.internal:8106".to_owned(),
+                "cache [redis] -> host.docker.internal:8110".to_owned(),
+            ],
+        );
+
+        assert!(report
+            .success_text
+            .contains("[shared] ensured db [mariadb] -> host.docker.internal:8106"));
+        assert!(report
+            .success_text
+            .contains("[shared] ensured cache [redis] -> host.docker.internal:8110"));
+        assert_eq!(
+            report.json["shared_service_actions"],
+            json!({
+                "action": "ensured",
+                "services": [
+                    "db [mariadb] -> host.docker.internal:8106",
+                    "cache [redis] -> host.docker.internal:8110"
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn annotate_left_running_shared_services_adds_text_and_json() {
+        let policy = test_policy(vec![
+            shared_service("db", "mariadb", 8106),
+            shared_service("cache", "redis", 8110),
+        ]);
+        let mut report = down_report(&policy, true);
+
+        annotate_left_running_shared_services(&mut report, &policy);
+
+        assert!(report
+            .success_text
+            .contains("[shared] left running db [mariadb] -> host.docker.internal:8106"));
+        assert!(report
+            .success_text
+            .contains("[shared] left running cache [redis] -> host.docker.internal:8110"));
+        assert_eq!(
+            report.json["shared_service_actions"],
+            json!({
+                "action": "left-running",
+                "services": [
+                    "db [mariadb] -> host.docker.internal:8106",
+                    "cache [redis] -> host.docker.internal:8110"
+                ]
+            })
+        );
     }
 }

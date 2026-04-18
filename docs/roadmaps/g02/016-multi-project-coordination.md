@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress (status, generated-compose auto-allocation, and bounded resource visibility landed; final shared-service closeout batch ready)
+Status: Complete (cross-project status, route dashboard, generated-compose auto-allocation, resource stats, and bounded shared services shipped)
 Owner: Platform
 Created: 2026-04-16
 Depends on: 011, 014
@@ -50,7 +50,7 @@ With multiple projects:
 - [x] Implement `effigy container status --all` across repos.
 - [x] Implement `effigy gateway status` with full route dashboard.
 - [x] Implement bounded `effigy container stats --all` for resource visibility.
-- [ ] Define optional `shared = true` service flag for shared instances.
+- [x] Define optional `shared = true` service flag for shared instances.
 
 ## 3) Non-Goals
 
@@ -128,7 +128,30 @@ Bounded closeout target:
 - Unit tests for port allocation logic.
 - Integration test with multiple compose projects running simultaneously.
 
+## Outcome
+
+`g02.016` is now complete on a bounded product surface.
+
+What shipped:
+
+- `effigy container status --all` for cross-project running-environment
+  visibility
+- fuller `effigy gateway status` route/dashboard output on top of shared route
+  state
+- generated-compose host-port auto-allocation through the shared port
+  registry when `host.ports` is omitted
+- `effigy container stats --all` for one bounded cross-project resource view
+- bounded generated-compose shared services for `mariadb`, `postgres`,
+  `redis`, and `memcached`
+
+What remains intentionally outside this roadmap:
+
+- shared services for direct `compose_file` ownership
+- refcounted shared-service teardown or garbage collection
+- broader orchestration beyond the shipped bounded coordination surfaces
+
 ## Next Task
 
-Execute card `278` to land bounded generated-compose shared services and close
-`g02.016`.
+Reopen planning around `g02.015` so persistent data and volume lifecycle work
+gets one explicit strict-lane/batch-card continuation instead of staying as a
+broad in-progress roadmap note.

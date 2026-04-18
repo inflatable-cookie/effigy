@@ -40,6 +40,10 @@ During v0.x, MINOR bumps may include breaking changes.
   view, collecting live CPU and memory usage for running Effigy-managed
   containers across repos while degrading honestly when runtime stats are
   partial or unavailable.
+- Add bounded generated-compose shared services through `shared = true` for
+  standalone backing-service catalogs, so `container up` can start and reuse
+  shared MariaDB, Postgres, Redis, and Memcached instances while generated
+  consumer compose rewrites local stacks to point at those shared targets.
 - Add Rhai-backed manifest run steps through `rhai = "path/to/script.rhai"`,
   with a first Effigy-native host API for args, env,
   path/file helpers, JSON/TOML helpers, structured subprocess execution, and

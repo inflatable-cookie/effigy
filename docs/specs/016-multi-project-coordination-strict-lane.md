@@ -1,6 +1,6 @@
 # 016 Multi-Project Coordination Strict Lane
 
-Status: active
+Status: complete
 Updated: 2026-04-18
 Roadmap: `g02.016`
 
@@ -34,7 +34,7 @@ This lane owns:
 
 ## Current Posture
 
-`active`
+`complete`
 
 Shipped substrate that this lane builds on:
 
@@ -120,6 +120,17 @@ The final bounded follow-up is now explicit too:
 - `container down/reset` stays honest and leaves shared instances running in
   this batch rather than pretending to solve refcounted teardown
 
+What is now also real in the product path:
+
+- generated-compose manifests can now mark supported standalone backing
+  services with `shared = true`
+- Effigy now resolves those declarations into stable shared compose projects
+  with shared host-port allocation under `~/.effigy/shared-services/`
+- generated consumer compose now removes local duplicate shared services and
+  injects standard host/port env vars that point at the shared instance
+- the normal container lifecycle surfaces now report shared-service state
+  honestly, including the bounded leave-running behavior on `down/reset`
+
 ## Exit Condition
 
 This strict lane is complete when:
@@ -130,7 +141,10 @@ This strict lane is complete when:
 - any remaining auto-allocation, resource visibility, or shared-service work
   is either shipped or explicitly deferred on a trustworthy boundary
 
+This exit condition is now met on the shipped bounded shared-services path.
+
 ## Next Task
 
-Execute `278` to land bounded generated-compose shared services and close
-`g02.016`.
+Stop in planning. The next open integration lane is `g02.015`, which now
+needs one explicit strict-lane/batch-card reopening pass instead of another
+`g02.016` execution step.

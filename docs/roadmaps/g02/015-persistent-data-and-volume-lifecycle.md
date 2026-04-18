@@ -152,5 +152,6 @@ Shell scripts also supported: `pull_production = "scripts/pull-prod.sh"`.
 
 ## Next Task
 
-Depends on `g02.011` for catalog fragments with volume defaults. Volume
-management commands can be developed independently.
+The dependency chain is now clear enough to reopen this lane. Create one
+explicit strict-lane/batch-card planning pass for `g02.015` instead of
+leaving persistent-data integration as a broad in-progress note.
