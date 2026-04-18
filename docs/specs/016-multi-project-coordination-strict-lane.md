@@ -92,6 +92,10 @@ What is now real in the product path:
    boundary instead of letting the lane drift back into roadmap ambiguity
 6. `276` — bounded cross-project container resource stats on top of the now
    landed status discovery surface
+7. `277` — decide the final shared-services closeout boundary instead of
+   choosing between a vague roadmap promise and a deferral
+8. `278` — bounded generated-compose shared services for supported backing
+   catalogs only
 
 What is now also real in the product path:
 
@@ -106,6 +110,16 @@ What is now also real in the product path:
   for running Effigy-managed containers, with honest partial/unavailable stats
   reporting instead of pretending runtime collection always succeeds
 
+The final bounded follow-up is now explicit too:
+
+- generated-compose only
+- only for standalone backing-service catalogs that Effigy can run as shared
+  instances without extra generated artifacts: `mariadb`, `postgres`, `redis`,
+  and `memcached`
+- `container up` owns shared-instance startup and reuse
+- `container down/reset` stays honest and leaves shared instances running in
+  this batch rather than pretending to solve refcounted teardown
+
 ## Exit Condition
 
 This strict lane is complete when:
@@ -118,5 +132,5 @@ This strict lane is complete when:
 
 ## Next Task
 
-Stop in planning and decide whether shared services earns a bounded final
-`g02.016` batch or an explicit deferral.
+Execute `278` to land bounded generated-compose shared services and close
+`g02.016`.

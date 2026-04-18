@@ -75,6 +75,12 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. The container surface now has one bounded cross-project
   resource view through `container stats --all`, including honest warnings
   when runtime stats are partial or unavailable.
+- [`277-plan-shared-services-closeout-batch.md`](./277-plan-shared-services-closeout-batch.md)
+  is complete. The final `g02.016` move is now explicit again: bounded
+  generated-compose shared services instead of a vague shared-service promise.
+- [`278-implement-generated-compose-shared-services.md`](./278-implement-generated-compose-shared-services.md)
+  is ready. The next live batch is the final bounded shared-services slice for
+  `g02.016`.
 
 ## Archive Rule
 
@@ -87,5 +93,4 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Stop in planning and decide whether `g02.016` wants one bounded
-shared-service follow-up or an explicit deferral.
+Execute `278` to land the final bounded `g02.016` batch.

@@ -39,8 +39,8 @@ Active strict planning lanes:
 - `g02.007` is paused until the remaining `g02` feature/integration spine is complete
 - the `g02.014` gateway strict lane is now complete through card `270`
 - the `g02.016` multi-project coordination strict lane is now active with
-  `272`, `274`, `275`, and `276` landed, and the lane now back in planning on
-  the remaining shared-service question
+  `272`, `274`, `275`, `276`, and `277` landed, and `278` ready as the final
+  bounded follow-up
 
 Rules:
 
@@ -56,5 +56,5 @@ Rules:
 
 ## Next Task
 
-Stop in planning and decide whether `g02.016` wants one bounded shared-service
-follow-up or an explicit deferral.
+Execute card `278` to land bounded generated-compose shared services and close
+`g02.016`.
