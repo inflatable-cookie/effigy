@@ -85,8 +85,14 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. The reopened `g02.015` lane now has one explicit first
   execution target instead of a broad persistence handoff.
 - [`280-implement-generated-compose-persistent-reset-foundation.md`](./280-implement-generated-compose-persistent-reset-foundation.md)
-  is ready. The next live batch is the first bounded `g02.015` lifecycle
-  slice through generated-compose `container reset --keep-data`.
+  is complete. The first bounded `g02.015` lifecycle slice is now landed
+  through generated-compose `container reset --keep-data`.
+- [`281-plan-volume-inventory-batch.md`](./281-plan-volume-inventory-batch.md)
+  is complete. The next `g02.015` widening step is now explicit again:
+  volume inventory before transfer or hook orchestration.
+- [`282-implement-container-data-list-foundation.md`](./282-implement-container-data-list-foundation.md)
+  is ready. The next live batch is bounded `effigy container data list`
+  inventory.
 
 ## Archive Rule
 
@@ -99,4 +105,4 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Execute `280` to land the first bounded `g02.015` lifecycle batch.
+Execute `282` to land bounded `effigy container data list` inventory.

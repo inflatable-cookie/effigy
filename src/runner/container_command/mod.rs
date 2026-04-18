@@ -83,8 +83,8 @@ pub(super) fn run_container(args: ContainerArgs) -> Result<String, RunnerError> 
             command.as_deref(),
             args.output_json,
         ),
-        ContainerSubcommand::Reset { name } => {
-            run_container_reset(&repo_root, name.as_deref(), args.output_json)
+        ContainerSubcommand::Reset { name, keep_data } => {
+            run_container_reset(&repo_root, name.as_deref(), keep_data, args.output_json)
         }
         ContainerSubcommand::Eject { name } => {
             run_container_eject(&repo_root, name.as_deref(), args.output_json)

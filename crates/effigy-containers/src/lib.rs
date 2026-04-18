@@ -16,7 +16,8 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use effigy_catalog::{
-    assembly::ServiceDeclaration, CatalogError, CatalogResolver, ComposeAssembler, ComposeOutput,
+    assembly::ServiceDeclaration, volumes::ManagedVolume, CatalogError, CatalogResolver,
+    ComposeAssembler, ComposeOutput,
 };
 use effigy_gateway::ports::PortRegistry;
 use effigy_manifest::{
@@ -60,6 +61,7 @@ pub struct EffectiveContainerPolicy {
     pub compose_source: EffectiveComposeSource,
     pub compose_files: Vec<PathBuf>,
     pub compose_file_display: String,
+    pub managed_volumes: Vec<ManagedVolume>,
     pub shared_services: Vec<SharedServiceBinding>,
     pub project_name: String,
     pub primary_service: String,
@@ -285,7 +287,7 @@ fn build_effective_policy(
             .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
         format!("{repo}-{name}-dev")
     });
-    let (compose_files, compose_file_display, effective_ports, shared_services) =
+    let (compose_files, compose_file_display, managed_volumes, effective_ports, shared_services) =
         resolve_compose_source(repo_root, name, config, &project_name, effective_manifest)?;
     let primary_service = config.primary_service.clone().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
@@ -318,6 +320,7 @@ fn build_effective_policy(
         },
         compose_files,
         compose_file_display,
+        managed_volumes,
         shared_services,
         project_name,
         primary_service,
@@ -368,7 +371,16 @@ fn resolve_compose_source(
     config: &ManifestContainerConfig,
     project_name: &str,
     effective_manifest: &str,
-) -> Result<(Vec<PathBuf>, String, Vec<String>, Vec<SharedServiceBinding>), ContainerPolicyError> {
+) -> Result<
+    (
+        Vec<PathBuf>,
+        String,
+        Vec<ManagedVolume>,
+        Vec<String>,
+        Vec<SharedServiceBinding>,
+    ),
+    ContainerPolicyError,
+> {
     if config.compose_file.is_some() && !config.services.is_empty() {
         return Err(ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` cannot combine `compose_file` with `[containers.{container_name}.services]`"
@@ -382,6 +394,7 @@ fn resolve_compose_source(
         return Ok((
             vec![compose_file],
             display,
+            Vec::new(),
             configured_host_ports(config),
             Vec::new(),
         ));
@@ -478,7 +491,17 @@ fn resolve_compose_source(
         .map(|path| path_relative_to_repo(repo_root, path))
         .collect::<Vec<_>>()
         .join(", ");
-    Ok((compose_files, display, effective_ports, shared_services))
+    Ok((
+        compose_files,
+        display,
+        assembly
+            .volumes
+            .iter()
+            .map(ManagedVolume::from_volume_info)
+            .collect(),
+        effective_ports,
+        shared_services,
+    ))
 }
 
 fn build_service_declarations(

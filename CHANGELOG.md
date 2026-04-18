@@ -44,6 +44,10 @@ During v0.x, MINOR bumps may include breaking changes.
   standalone backing-service catalogs, so `container up` can start and reuse
   shared MariaDB, Postgres, Redis, and Memcached instances while generated
   consumer compose rewrites local stacks to point at those shared targets.
+- Add generated-compose `effigy container reset --keep-data`, so persistent
+  named volumes declared through shipped catalog metadata survive reset while
+  ephemeral volumes are still removed and direct `compose_file` ownership is
+  rejected honestly on this bounded path.
 - Add Rhai-backed manifest run steps through `rhai = "path/to/script.rhai"`,
   with a first Effigy-native host API for args, env,
   path/file helpers, JSON/TOML helpers, structured subprocess execution, and

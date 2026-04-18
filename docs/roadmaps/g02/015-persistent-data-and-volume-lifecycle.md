@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress (strict lane reopened; generated-compose persistent reset foundation is the first ready batch)
+Status: In Progress (generated-compose persistent reset is landed; bounded volume inventory is the next ready batch)
 Owner: Platform
 Created: 2026-04-16
 Depends on: 006, 011
@@ -50,7 +50,7 @@ Without persistent data management:
 - [ ] Define `data.volumes` manifest field for persistent named volumes.
 - [ ] Define `data.media` manifest field for media mount declarations.
 - [ ] Ensure catalog fragments declare appropriate default volumes.
-- [ ] Implement `effigy container reset --keep-data`.
+- [x] Implement `effigy container reset --keep-data`.
 - [ ] Implement `effigy container data list` — volume names, sizes.
 - [ ] Implement `effigy container data export <volume> <path>`.
 - [ ] Implement `effigy container data import <volume> <path>`.
@@ -152,5 +152,4 @@ Shell scripts also supported: `pull_production = "scripts/pull-prod.sh"`.
 
 ## Next Task
 
-Execute card `280` to land generated-compose `container reset --keep-data` on
-the product path.
+Execute card `282` to land bounded `effigy container data list` inventory.

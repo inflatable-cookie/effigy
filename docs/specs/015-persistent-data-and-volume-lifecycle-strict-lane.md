@@ -64,8 +64,11 @@ The bounded continuation chain now starts with:
    volume substrate
 2. `280` — first execution batch: generated-compose persistent reset
    foundation through `effigy container reset --keep-data`
+3. `281` — decide the next widening step now that the first lifecycle surface
+   is real
+4. `282` — bounded volume inventory through `effigy container data list`
 
-What that first product batch will make real:
+What is now real in the product path:
 
 - `effigy container reset --keep-data` on the generated-compose path
 - persistent-vs-ephemeral volume classification from shipped catalog metadata
@@ -73,12 +76,12 @@ What that first product batch will make real:
 - explicit rejection or bounded fallback for direct `compose_file` ownership
   where Effigy does not have trustworthy retention metadata yet
 
-The next planning checkpoint after `280` should decide whether the next
-bounded widening is:
+The next bounded widening is now explicit too:
 
-- `container data list/export/import`
-- media mount ownership
-- or task-owned `pull_production` / proof follow-through
+- `effigy container data list` for one environment
+- read-only inventory before transfer or hook orchestration
+- export/import, media lifecycle, and `pull_production` still left for later
+  planning after inventory is real
 
 ## Exit Condition
 
@@ -91,4 +94,4 @@ This strict lane is complete when:
 
 ## Next Task
 
-Execute `280` to land the first bounded `g02.015` lifecycle batch.
+Execute `282` to land bounded `effigy container data list` inventory.

@@ -1,7 +1,11 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
+use std::process::Output;
 
+use effigy_catalog::volumes::{
+    classify_for_reset, reset_commands, DockerCommand, VolumeClassification,
+};
 use effigy_containers::{
     compose::{compose_args, resolve_compose_backend, ComposeBackend},
     down_report, effective_attach_mode, eject_generated_compose, eject_report,
@@ -14,7 +18,7 @@ use effigy_containers::{
     load_all_container_policies, load_container_policy, reset_report, stats_all_report,
     status_all_report, status_report, up_detached_report, validate_container_policy,
     AllocatedPortsSummary, ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry,
-    ContainerStatusService, EffectiveAttachMode, EffectiveContainerPolicy,
+    ContainerStatusService, EffectiveAttachMode, EffectiveComposeSource, EffectiveContainerPolicy,
 };
 use effigy_gateway::ports::PortRegistry;
 use serde_json::json;
@@ -166,21 +170,47 @@ pub(super) fn run_container_down(
 pub(super) fn run_container_reset(
     repo_root: &Path,
     name: Option<&str>,
+    keep_data: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let policy = load_container_policy(repo_root, name)?;
     validate_container_policy(repo_root, &policy)?;
+    if keep_data && policy.compose_source != EffectiveComposeSource::Generated {
+        return Err(RunnerError::task_invocation(format!(
+            "container `{}` uses direct `compose_file` ownership; `reset --keep-data` is only supported on the generated-compose path in this batch",
+            policy.name
+        )));
+    }
     let colima_running = colima_is_running(&policy, repo_root)?;
+    let volume_actions = if keep_data {
+        Some(classify_for_reset(&policy.managed_volumes, true))
+    } else if !policy.managed_volumes.is_empty() {
+        Some(classify_for_reset(&policy.managed_volumes, false))
+    } else {
+        None
+    };
     if colima_running {
-        run_docker_capture(
-            repo_root,
-            &policy,
-            &compose_args(&policy, ["down", "-v", "--remove-orphans"]),
-            "docker compose down -v",
-        )?;
+        if keep_data {
+            run_docker_capture(
+                repo_root,
+                &policy,
+                &compose_args(&policy, ["down", "--remove-orphans"]),
+                "docker compose down",
+            )?;
+            if let Some(classification) = volume_actions.as_ref() {
+                remove_reset_volumes(repo_root, &policy, classification)?;
+            }
+        } else {
+            run_docker_capture(
+                repo_root,
+                &policy,
+                &compose_args(&policy, ["down", "-v", "--remove-orphans"]),
+                "docker compose down -v",
+            )?;
+        }
     }
     let removed_gateway_domain = deregister_gateway_route_for_container(&policy)?;
-    let mut report = reset_report(&policy, colima_running);
+    let mut report = reset_report(&policy, colima_running, keep_data, volume_actions.as_ref());
     annotate_left_running_shared_services(&mut report, &policy);
     annotate_removed_gateway_route(&mut report, removed_gateway_domain.as_deref());
     Ok(render_container_report(report, output_json))
@@ -626,6 +656,17 @@ fn ensure_shared_services_running(
     Ok(notes)
 }
 
+fn remove_reset_volumes(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    classification: &VolumeClassification,
+) -> Result<(), RunnerError> {
+    for command in reset_commands(classification) {
+        run_runtime_volume_capture(repo_root, &policy.profile, &command)?;
+    }
+    Ok(())
+}
+
 fn annotate_shared_service_notes(
     report: &mut effigy_containers::ContainerCommandReport,
     notes: &[String],
@@ -740,6 +781,55 @@ fn run_shared_compose_capture(
         })
 }
 
+fn run_runtime_volume_capture(
+    repo_root: &Path,
+    profile: &str,
+    command: &DockerCommand,
+) -> Result<Output, RunnerError> {
+    let (program, args) = match resolve_compose_backend() {
+        ComposeBackend::Docker => (command.program.as_str(), runtime_args(&command.args)),
+        ComposeBackend::ColimaNerdctl => {
+            let mut resolved = vec![
+                OsString::from("nerdctl"),
+                OsString::from("--profile"),
+                OsString::from(profile),
+                OsString::from("--"),
+            ];
+            resolved.extend(runtime_args(&command.args));
+            ("colima", resolved)
+        }
+    };
+    std::process::Command::new(program)
+        .current_dir(repo_root)
+        .args(&args)
+        .output()
+        .map_err(|error| RunnerError::TaskCommandLaunch {
+            command: format!(
+                "{} ({program} {})",
+                command.description,
+                format_shared_args(&args)
+            ),
+            error,
+        })
+        .and_then(|output| {
+            if output.status.success() {
+                Ok(output)
+            } else {
+                Err(RunnerError::task_invocation(format!(
+                    "{} failed (code {:?})\nstdout:\n{}\nstderr:\n{}",
+                    command.description,
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                )))
+            }
+        })
+}
+
+fn runtime_args(args: &[String]) -> Vec<OsString> {
+    args.iter().map(OsString::from).collect()
+}
+
 fn format_shared_args(args: &[OsString]) -> String {
     args.iter()
         .map(|arg| arg.to_string_lossy().into_owned())
@@ -757,6 +847,7 @@ fn load_port_registry() -> Option<PortRegistry> {
 mod tests {
     use super::{
         annotate_left_running_shared_services, annotate_shared_service_notes, run_container_eject,
+        run_container_reset,
     };
     use effigy_containers::{
         down_report, up_detached_report, EffectiveComposeSource, EffectiveContainerPolicy,
@@ -791,6 +882,7 @@ mod tests {
             compose_source: EffectiveComposeSource::Direct,
             compose_files: vec![PathBuf::from("docker-compose.yml")],
             compose_file_display: "docker-compose.yml".to_owned(),
+            managed_volumes: vec![],
             shared_services,
             project_name: "demo-web-dev".to_owned(),
             primary_service: "app".to_owned(),
@@ -918,5 +1010,29 @@ variant = "default"
                 ]
             })
         );
+    }
+
+    #[test]
+    fn run_container_reset_keep_data_rejects_direct_compose_ownership() {
+        let root = temp_repo("reset-keep-data-direct");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+        )
+        .expect("write manifest");
+        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+        fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+        let error = run_container_reset(&root, None, true, false).expect_err("should fail");
+        assert!(error
+            .to_string()
+            .contains("`reset --keep-data` is only supported on the generated-compose path"));
     }
 }
