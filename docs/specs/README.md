@@ -17,6 +17,7 @@ lane needs tighter execution grammar than the roadmap alone provides.
 
 ## Active Spec Set
 
+- [`015-persistent-data-and-volume-lifecycle-strict-lane.md`](./015-persistent-data-and-volume-lifecycle-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -33,5 +34,4 @@ Recently completed:
 
 ## Next Task
 
-Stop in planning and reopen `g02.015` on one explicit strict-lane/batch-card
-boundary.
+Execute card `280` to land the first bounded `g02.015` lifecycle batch.

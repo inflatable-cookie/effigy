@@ -81,6 +81,12 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`278-implement-generated-compose-shared-services.md`](./278-implement-generated-compose-shared-services.md)
   is complete. `g02.016` is now closed on the shipped bounded shared-services
   path.
+- [`279-plan-persistent-reset-foundation-batch.md`](./279-plan-persistent-reset-foundation-batch.md)
+  is complete. The reopened `g02.015` lane now has one explicit first
+  execution target instead of a broad persistence handoff.
+- [`280-implement-generated-compose-persistent-reset-foundation.md`](./280-implement-generated-compose-persistent-reset-foundation.md)
+  is ready. The next live batch is the first bounded `g02.015` lifecycle
+  slice through generated-compose `container reset --keep-data`.
 
 ## Archive Rule
 
@@ -93,5 +99,4 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-No card is ready. Stop in planning and reopen `g02.015` on one explicit
-strict-lane/batch-card boundary.
+Execute `280` to land the first bounded `g02.015` lifecycle batch.

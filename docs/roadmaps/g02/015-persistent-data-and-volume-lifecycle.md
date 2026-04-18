@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress (volume management shipped in effigy-catalog, integration deferred)
+Status: In Progress (strict lane reopened; generated-compose persistent reset foundation is the first ready batch)
 Owner: Platform
 Created: 2026-04-16
 Depends on: 006, 011
@@ -152,6 +152,5 @@ Shell scripts also supported: `pull_production = "scripts/pull-prod.sh"`.
 
 ## Next Task
 
-The dependency chain is now clear enough to reopen this lane. Create one
-explicit strict-lane/batch-card planning pass for `g02.015` instead of
-leaving persistent-data integration as a broad in-progress note.
+Execute card `280` to land generated-compose `container reset --keep-data` on
+the product path.
