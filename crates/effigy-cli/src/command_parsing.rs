@@ -1527,7 +1527,9 @@ fn parse_container_command<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
-    const ACTIONS: [&str; 7] = ["up", "down", "status", "logs", "shell", "reset", "eject"];
+    const ACTIONS: [&str; 8] = [
+        "up", "down", "status", "stats", "logs", "shell", "reset", "eject",
+    ];
 
     let mut args = args.into_iter();
     let Some(first) = args.next() else {
@@ -1551,6 +1553,7 @@ where
         "up" => parse_container_up(name, args),
         "down" => parse_container_down(name, args),
         "status" => parse_container_status(name, args),
+        "stats" => parse_container_stats(name, args),
         "logs" => parse_container_logs(name, args),
         "shell" => parse_container_shell(name, args),
         "reset" => parse_container_reset(name, args),
@@ -1635,6 +1638,43 @@ where
     I: IntoIterator<Item = String>,
 {
     parse_named_container_simple_subcommand(name, args, |name| ContainerSubcommand::Reset { name })
+}
+
+fn parse_container_stats<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut all = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--all" => all = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    if name.is_some() {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container <NAME> stats` is not supported yet; use `effigy container stats --all` for the bounded cross-project resource view".to_owned(),
+        ));
+    }
+    if !all {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container stats` currently requires `--all`; use `effigy container stats --all` for cross-project resource discovery".to_owned(),
+        ));
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Stats { all },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_container_eject<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>

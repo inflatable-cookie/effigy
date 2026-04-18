@@ -53,6 +53,26 @@ pub struct ContainerStatusAllEntry {
     pub services: Vec<ContainerStatusService>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerStatsService {
+    pub name: String,
+    pub container_name: String,
+    pub status: String,
+    pub cpu_percent: Option<String>,
+    pub memory_usage: Option<String>,
+    pub memory_percent: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerStatsAllEntry {
+    pub repo_root: String,
+    pub container: String,
+    pub project_name: String,
+    pub profile: String,
+    pub primary_service: String,
+    pub services: Vec<ContainerStatsService>,
+}
+
 /// Build the `container up` detached-mode report.
 pub fn up_detached_report(
     policy: &EffectiveContainerPolicy,
@@ -315,6 +335,82 @@ pub fn status_all_report(entries: &[ContainerStatusAllEntry]) -> ContainerComman
             lines.push(format!(
                 "- {} [{}] {} ({})",
                 service.name, service.container_name, service.status, ports
+            ));
+        }
+    }
+
+    ContainerCommandReport {
+        json,
+        success_text: lines.join("\n"),
+    }
+}
+
+/// Build the `container stats --all` report.
+pub fn stats_all_report(
+    entries: &[ContainerStatsAllEntry],
+    stats_warning: Option<&str>,
+) -> ContainerCommandReport {
+    let json = json!({
+        "schema": "effigy.container.stats-all.v1",
+        "schema_version": 1,
+        "ok": true,
+        "environment_count": entries.len(),
+        "stats_warning": stats_warning,
+        "environments": entries.iter().map(|entry| {
+            json!({
+                "repo_root": entry.repo_root,
+                "container": entry.container,
+                "project_name": entry.project_name,
+                "profile": entry.profile,
+                "primary_service": entry.primary_service,
+                "services": entry.services.iter().map(|service| {
+                    json!({
+                        "name": service.name,
+                        "container_name": service.container_name,
+                        "status": service.status,
+                        "cpu_percent": service.cpu_percent,
+                        "memory_usage": service.memory_usage,
+                        "memory_percent": service.memory_percent,
+                        "stats_available": service.cpu_percent.is_some()
+                            || service.memory_usage.is_some()
+                            || service.memory_percent.is_some(),
+                    })
+                }).collect::<Vec<_>>(),
+            })
+        }).collect::<Vec<_>>(),
+    });
+
+    if entries.is_empty() {
+        return ContainerCommandReport {
+            json,
+            success_text: "[info] no running Effigy-managed container environments found"
+                .to_owned(),
+        };
+    }
+
+    let mut lines = vec![format!(
+        "[ok] {} running Effigy-managed container environment{}",
+        entries.len(),
+        if entries.len() == 1 { "" } else { "s" }
+    )];
+    if let Some(warning) = stats_warning {
+        lines.push(format!("[warn] {warning}"));
+    }
+    for entry in entries {
+        lines.push(String::new());
+        lines.push(format!("[container] {}", entry.container));
+        lines.push(format!("repo: {}", entry.repo_root));
+        lines.push(format!("project_name: {}", entry.project_name));
+        lines.push(format!("profile: {}", entry.profile));
+        lines.push(format!("primary_service: {}", entry.primary_service));
+        lines.push(format!("services: {}", entry.services.len()));
+        for service in &entry.services {
+            let cpu = service.cpu_percent.as_deref().unwrap_or("unavailable");
+            let memory = service.memory_usage.as_deref().unwrap_or("unavailable");
+            let memory_percent = service.memory_percent.as_deref().unwrap_or("unavailable");
+            lines.push(format!(
+                "- {} [{}] {} (cpu={}, memory={}, memory_percent={})",
+                service.name, service.container_name, service.status, cpu, memory, memory_percent
             ));
         }
     }

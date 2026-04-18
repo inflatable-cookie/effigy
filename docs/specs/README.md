@@ -33,5 +33,5 @@ Recently completed:
 
 ## Next Task
 
-Execute card `276` to land bounded cross-project container resource stats for
-`g02.016`.
+Stop in planning and decide whether `g02.016` wants one bounded shared-service
+follow-up or an explicit deferral.

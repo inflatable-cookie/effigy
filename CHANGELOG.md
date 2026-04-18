@@ -36,6 +36,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `~/.effigy/ports.json` registry through compose generation, container
   policy/status, and gateway route registration while keeping direct
   `compose_file` ownership explicit-ports-only.
+- Add `effigy container stats --all` for one bounded cross-project resource
+  view, collecting live CPU and memory usage for running Effigy-managed
+  containers across repos while degrading honestly when runtime stats are
+  partial or unavailable.
 - Add Rhai-backed manifest run steps through `rhai = "path/to/script.rhai"`,
   with a first Effigy-native host API for args, env,
   path/file helpers, JSON/TOML helpers, structured subprocess execution, and

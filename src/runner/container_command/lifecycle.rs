@@ -6,13 +6,15 @@ use effigy_containers::{
     compose::compose_args,
     down_report, effective_attach_mode, eject_generated_compose, eject_report,
     exec::{
-        capture_compose_ps, colima_is_running, ensure_colima_running,
-        list_running_compose_containers, shutdown_container as shutdown_container_via_exec,
+        capture_compose_ps, capture_running_container_stats, colima_is_running,
+        ensure_colima_running, list_running_compose_containers,
+        shutdown_container as shutdown_container_via_exec, RunningComposeContainer,
     },
     health::{probe_health_status, wait_for_ready},
-    load_all_container_policies, load_container_policy, reset_report, status_all_report,
-    status_report, up_detached_report, validate_container_policy, AllocatedPortsSummary,
-    ContainerStatusAllEntry, ContainerStatusService, EffectiveAttachMode, EffectiveContainerPolicy,
+    load_all_container_policies, load_container_policy, reset_report, stats_all_report,
+    status_all_report, status_report, up_detached_report, validate_container_policy,
+    AllocatedPortsSummary, ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry,
+    ContainerStatusService, EffectiveAttachMode, EffectiveContainerPolicy,
 };
 use effigy_gateway::ports::PortRegistry;
 use serde_json::json;
@@ -225,9 +227,126 @@ pub(super) fn run_container_status(
 }
 
 pub(super) fn run_container_status_all(output_json: bool) -> Result<String, RunnerError> {
+    let registry = load_port_registry();
+    let environments = discover_running_environments()?
+        .into_iter()
+        .map(|environment| {
+            let policy = environment.policy;
+            let repo_root = environment.repo_root;
+            ContainerStatusAllEntry {
+                repo_root,
+                container: policy.name.clone(),
+                project_name: policy.project_name.clone(),
+                profile: policy.profile.clone(),
+                primary_service: policy.primary_service.clone(),
+                dns_domain: policy.dns_domain.clone(),
+                dns_tls: policy.dns_tls,
+                declared_ports: policy.declared_ports.clone(),
+                allocated_ports: registry
+                    .as_ref()
+                    .and_then(|value| value.port_map(&policy.project_name))
+                    .map(|ports| AllocatedPortsSummary {
+                        base: ports.base,
+                        http: ports.http,
+                        mysql: ports.mysql,
+                        postgres: ports.postgres,
+                        redis: ports.redis,
+                        memcached: ports.memcached,
+                    }),
+                services: environment
+                    .services
+                    .into_iter()
+                    .map(|service| ContainerStatusService {
+                        name: service
+                            .service
+                            .clone()
+                            .unwrap_or_else(|| service.container_name.clone()),
+                        container_name: service.container_name,
+                        status: service.status,
+                        ports: service.ports,
+                    })
+                    .collect(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    Ok(render_container_report(
+        status_all_report(&environments),
+        output_json,
+    ))
+}
+
+pub(super) fn run_container_stats_all(output_json: bool) -> Result<String, RunnerError> {
+    let environments = discover_running_environments()?;
+    let stats = capture_running_container_stats(
+        &environments
+            .iter()
+            .flat_map(|environment| {
+                environment
+                    .services
+                    .iter()
+                    .map(|service| service.container_name.clone())
+            })
+            .collect::<Vec<_>>(),
+    );
+    let stats_by_container = stats
+        .stats
+        .into_iter()
+        .map(|sample| {
+            let container_name = sample.container_name.clone();
+            (container_name, sample)
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let environments = environments
+        .into_iter()
+        .map(|environment| {
+            let policy = environment.policy;
+            let repo_root = environment.repo_root;
+            ContainerStatsAllEntry {
+                repo_root,
+                container: policy.name.clone(),
+                project_name: policy.project_name.clone(),
+                profile: policy.profile.clone(),
+                primary_service: policy.primary_service.clone(),
+                services: environment
+                    .services
+                    .into_iter()
+                    .map(|service| {
+                        let sample = stats_by_container.get(&service.container_name);
+                        ContainerStatsService {
+                            name: service
+                                .service
+                                .clone()
+                                .unwrap_or_else(|| service.container_name.clone()),
+                            container_name: service.container_name,
+                            status: service.status,
+                            cpu_percent: sample.and_then(|value| value.cpu_percent.clone()),
+                            memory_usage: sample.and_then(|value| value.memory_usage.clone()),
+                            memory_percent: sample.and_then(|value| value.memory_percent.clone()),
+                        }
+                    })
+                    .collect(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    Ok(render_container_report(
+        stats_all_report(&environments, stats.warning.as_deref()),
+        output_json,
+    ))
+}
+
+#[derive(Debug)]
+struct DiscoveredRunningEnvironment {
+    repo_root: String,
+    policy: EffectiveContainerPolicy,
+    services: Vec<RunningComposeContainer>,
+}
+
+fn discover_running_environments() -> Result<Vec<DiscoveredRunningEnvironment>, RunnerError> {
     let rows = list_running_compose_containers()
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let registry = load_port_registry();
     let mut grouped: BTreeMap<(String, String), Vec<_>> = BTreeMap::new();
     for row in rows {
         let Some(project_name) = row.project_name.clone() else {
@@ -269,50 +388,18 @@ pub(super) fn run_container_status_all(output_json: bool) -> Result<String, Runn
                 )
         });
 
-        environments.push(ContainerStatusAllEntry {
+        environments.push(DiscoveredRunningEnvironment {
             repo_root,
-            container: policy.name.clone(),
-            project_name: policy.project_name.clone(),
-            profile: policy.profile.clone(),
-            primary_service: policy.primary_service.clone(),
-            dns_domain: policy.dns_domain.clone(),
-            dns_tls: policy.dns_tls,
-            declared_ports: policy.declared_ports.clone(),
-            allocated_ports: registry
-                .as_ref()
-                .and_then(|value| value.port_map(&policy.project_name))
-                .map(|ports| AllocatedPortsSummary {
-                    base: ports.base,
-                    http: ports.http,
-                    mysql: ports.mysql,
-                    postgres: ports.postgres,
-                    redis: ports.redis,
-                    memcached: ports.memcached,
-                }),
-            services: services
-                .into_iter()
-                .map(|service| ContainerStatusService {
-                    name: service
-                        .service
-                        .clone()
-                        .unwrap_or_else(|| service.container_name.clone()),
-                    container_name: service.container_name,
-                    status: service.status,
-                    ports: service.ports,
-                })
-                .collect(),
+            policy,
+            services,
         });
     }
     environments.sort_by(|left, right| {
         left.repo_root
             .cmp(&right.repo_root)
-            .then(left.container.cmp(&right.container))
+            .then(left.policy.name.cmp(&right.policy.name))
     });
-
-    Ok(render_container_report(
-        status_all_report(&environments),
-        output_json,
-    ))
+    Ok(environments)
 }
 
 pub(super) fn run_container_logs(
