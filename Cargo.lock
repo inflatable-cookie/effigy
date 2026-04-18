@@ -652,8 +652,10 @@ name = "effigy-containers"
 version = "0.1.0"
 dependencies = [
  "effigy-catalog",
+ "effigy-gateway",
  "effigy-manifest",
  "serde_json",
+ "serde_yaml",
 ]
 
 [[package]]

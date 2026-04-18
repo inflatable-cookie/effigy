@@ -60,6 +60,20 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. The first real `g02.016` coordination surface is now landed:
   `container status --all` plus a fuller shared route dashboard in
   `gateway status`.
+- [`273-plan-port-auto-allocation-batch.md`](./273-plan-port-auto-allocation-batch.md)
+  is complete. The next `g02.016` follow-up is now explicit: generated-compose
+  port auto-allocation before any stats or shared-service widening.
+- [`274-implement-generated-compose-port-auto-allocation.md`](./274-implement-generated-compose-port-auto-allocation.md)
+  is complete. Generated compose now owns effective host-port publication on
+  the product path: explicit manifest `host.ports` is wired through generated
+  compose, and omitted `host.ports` now allocate stable ports through the
+  shared registry.
+- [`275-plan-resource-stats-batch.md`](./275-plan-resource-stats-batch.md)
+  is complete. The next `g02.016` follow-up is now explicit again:
+  cross-project resource stats before any shared-service widening.
+- [`276-implement-container-resource-stats-foundation.md`](./276-implement-container-resource-stats-foundation.md)
+  is ready. The next live batch is bounded cross-project container resource
+  stats.
 
 ## Archive Rule
 
@@ -72,5 +86,4 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-No further `g02.016` execution is ready yet. Stop in planning and choose the
-next bounded follow-up after the landed status/dashboard batch.
+Execute `276` to land the next bounded `g02.016` batch.

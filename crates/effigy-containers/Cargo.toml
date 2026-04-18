@@ -7,5 +7,7 @@ description = "Container policy contracts for Effigy"
 
 [dependencies]
 effigy-catalog = { path = "../effigy-catalog" }
+effigy-gateway = { path = "../effigy-gateway" }
 effigy-manifest = { path = "../effigy-manifest" }
 serde_json = "1"
+serde_yaml = "0.9"

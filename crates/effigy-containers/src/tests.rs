@@ -1,8 +1,8 @@
 use super::{
     effective_attach_mode, eject_generated_compose, load_all_container_policies,
-    load_container_policy, status_all_report, validate_container_policy, AllocatedPortsSummary,
-    ContainerPolicyError, ContainerStatusAllEntry, ContainerStatusService, EffectiveAttachMode,
-    EffectiveComposeSource,
+    load_container_policy, status_all_report, validate_container_policy, with_test_effigy_home,
+    AllocatedPortsSummary, ContainerPolicyError, ContainerStatusAllEntry, ContainerStatusService,
+    EffectiveAttachMode, EffectiveComposeSource,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -17,6 +17,12 @@ fn temp_repo(name: &str) -> PathBuf {
     ));
     fs::create_dir_all(&root).expect("mkdir");
     root
+}
+
+fn with_temp_effigy_home<T>(name: &str, run: impl FnOnce(PathBuf) -> T) -> T {
+    let home = temp_repo(&format!("home-{name}")).join(".effigy");
+    fs::create_dir_all(&home).expect("mkdir effigy home");
+    with_test_effigy_home(&home, || run(home.clone()))
 }
 
 #[test]
@@ -118,10 +124,11 @@ fn load_container_policy_requires_registry() {
 
 #[test]
 fn load_container_policy_generates_compose_from_catalog_services() {
-    let root = temp_repo("catalog-services");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
+    with_temp_effigy_home("catalog-services", |_| {
+        let root = temp_repo("catalog-services");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
 [containers]
 default = "web"
 
@@ -141,33 +148,140 @@ version = "8.3"
 catalog = "nginx"
 variant = "default"
 "#,
-    )
-    .expect("write manifest");
+        )
+        .expect("write manifest");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+        let policy = load_container_policy(&root, None).expect("policy");
 
-    assert_eq!(policy.primary_service, "app");
-    assert_eq!(policy.compose_source, EffectiveComposeSource::Generated);
-    assert_eq!(policy.dns_domain.as_deref(), Some("clientname.test"));
-    assert!(policy.dns_tls);
-    assert_eq!(policy.dns_port, Some(8080));
-    assert_eq!(policy.compose_files.len(), 1);
-    assert!(
-        policy
-            .compose_file_display
-            .contains(".effigy-compose.generated.yml"),
-        "display should reference generated compose, got {}",
-        policy.compose_file_display
-    );
+        assert_eq!(policy.primary_service, "app");
+        assert_eq!(policy.compose_source, EffectiveComposeSource::Generated);
+        assert_eq!(policy.dns_domain.as_deref(), Some("clientname.test"));
+        assert!(policy.dns_tls);
+        assert_eq!(policy.dns_port, Some(8080));
+        assert_eq!(policy.compose_files.len(), 1);
+        assert!(
+            policy
+                .compose_file_display
+                .contains(".effigy-compose.generated.yml"),
+            "display should reference generated compose, got {}",
+            policy.compose_file_display
+        );
 
-    let compose_path = root.join("infra/dev/.effigy-compose.generated.yml");
-    assert_eq!(policy.compose_files[0], compose_path);
-    assert!(compose_path.exists(), "generated compose file should exist");
+        let compose_path = root.join("infra/dev/.effigy-compose.generated.yml");
+        assert_eq!(policy.compose_files[0], compose_path);
+        assert!(compose_path.exists(), "generated compose file should exist");
 
-    let compose = fs::read_to_string(compose_path).expect("read generated compose");
-    assert!(compose.contains("services:"));
-    assert!(compose.contains("app:"));
-    assert!(compose.contains("web:"));
+        let compose = fs::read_to_string(compose_path).expect("read generated compose");
+        assert!(compose.contains("services:"));
+        assert!(compose.contains("app:"));
+        assert!(compose.contains("web:"));
+        assert!(!policy.ports_declared_explicitly);
+        let http_port = policy
+            .declared_ports
+            .iter()
+            .filter_map(|value| value.split_once(':'))
+            .find(|(_, container)| *container == "80")
+            .map(|(host, _)| host.to_owned())
+            .expect("generated compose should expose a host port for container port 80");
+        assert!(compose.contains(&format!("{http_port}:80")));
+    });
+}
+
+#[test]
+fn generated_compose_uses_explicit_host_ports_when_declared() {
+    with_temp_effigy_home("catalog-explicit-host-ports", |_| {
+        let root = temp_repo("catalog-explicit-host-ports");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.host]
+ports = ["18080:80", "13306:3306"]
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.db]
+catalog = "mariadb"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, None).expect("policy");
+        let compose = fs::read_to_string(root.join("infra/dev/.effigy-compose.generated.yml"))
+            .expect("compose");
+
+        assert!(compose.contains("18080:80"));
+        assert!(compose.contains("13306:3306"));
+        assert!(policy.ports_declared_explicitly);
+        assert!(policy
+            .declared_ports
+            .iter()
+            .any(|value| value == "18080:80"));
+        assert!(policy
+            .declared_ports
+            .iter()
+            .any(|value| value == "13306:3306"));
+    });
+}
+
+#[test]
+fn generated_compose_auto_allocates_stable_project_ports() {
+    with_temp_effigy_home("catalog-auto-ports", |_| {
+        let root = temp_repo("catalog-auto-ports");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.db]
+catalog = "mariadb"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+"#,
+        )
+        .expect("write manifest");
+
+        let first = load_container_policy(&root, None).expect("first policy");
+        let second = load_container_policy(&root, None).expect("second policy");
+        assert!(!first.ports_declared_explicitly);
+        assert_eq!(first.declared_ports, second.declared_ports);
+        let http_port = first
+            .declared_ports
+            .iter()
+            .filter_map(|value| value.split_once(':'))
+            .find(|(_, container)| *container == "80")
+            .map(|(host, _)| host.parse::<u16>().expect("host port"))
+            .expect("expected generated compose HTTP port");
+        let mysql_port = first
+            .declared_ports
+            .iter()
+            .filter_map(|value| value.split_once(':'))
+            .find(|(_, container)| *container == "3306")
+            .map(|(host, _)| host.parse::<u16>().expect("host port"))
+            .expect("expected generated compose MySQL port");
+        assert_eq!(mysql_port, http_port + 6);
+    });
 }
 
 #[test]

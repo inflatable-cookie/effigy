@@ -8,6 +8,7 @@ fn allocation_contains_ports_in_range() {
         base: 8100,
         range: 100,
         project: "/tmp".to_string(),
+        assigned_ports: HashMap::new(),
     };
     assert!(alloc.contains(8100));
     assert!(alloc.contains(8150));
@@ -22,16 +23,19 @@ fn allocation_overlap_detection() {
         base: 8100,
         range: 100,
         project: "/a".to_string(),
+        assigned_ports: HashMap::new(),
     };
     let b = PortAllocation {
         base: 8150,
         range: 100,
         project: "/b".to_string(),
+        assigned_ports: HashMap::new(),
     };
     let c = PortAllocation {
         base: 8200,
         range: 100,
         project: "/c".to_string(),
+        assigned_ports: HashMap::new(),
     };
     assert!(a.overlaps(&b));
     assert!(b.overlaps(&a));
@@ -45,6 +49,7 @@ fn allocation_port_for_offset() {
         base: 8200,
         range: 100,
         project: "/tmp".to_string(),
+        assigned_ports: HashMap::new(),
     };
     assert_eq!(alloc.port_for(ServicePortOffsets::HTTP), 8200);
     assert_eq!(alloc.port_for(ServicePortOffsets::MYSQL), 8206);
@@ -166,6 +171,27 @@ fn port_map_generation() {
 fn port_map_nonexistent_returns_none() {
     let reg = PortRegistry::new();
     assert!(reg.port_map("nonexistent").is_none());
+}
+
+#[test]
+fn assign_port_uses_stable_preferred_offsets() {
+    let mut reg = PortRegistry::new();
+    assert_eq!(
+        reg.assign_port("client", "/projects/client", 80).unwrap(),
+        8100
+    );
+    assert_eq!(
+        reg.assign_port("client", "/projects/client", 3306).unwrap(),
+        8106
+    );
+    assert_eq!(
+        reg.assign_port("client", "/projects/client", 8025).unwrap(),
+        8125
+    );
+    assert_eq!(
+        reg.assign_port("client", "/projects/client", 80).unwrap(),
+        8100
+    );
 }
 
 // ── Persistence ──────────────────────────────────────────────────

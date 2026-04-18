@@ -65,6 +65,10 @@ pub struct PortAllocation {
 
     /// Absolute path to the project directory.
     pub project: String,
+
+    /// Stable container-port to host-port assignments within this range.
+    #[serde(default)]
+    pub assigned_ports: HashMap<u16, u16>,
 }
 
 impl PortAllocation {
@@ -139,7 +143,13 @@ impl PortRegistry {
                 reason: format!("port registry serialize: {e}"),
             })?;
 
-        let temp_path = path.with_extension("json.tmp");
+        let temp_path = path.with_extension(format!(
+            "json.tmp.{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|value| value.as_nanos())
+                .unwrap_or_default()
+        ));
         std::fs::write(&temp_path, &content).map_err(|e| GatewayError::RouteTableWriteError {
             path: temp_path.clone(),
             reason: e.to_string(),
@@ -172,6 +182,7 @@ impl PortRegistry {
             base,
             range: DEFAULT_RANGE,
             project: project_path.to_string(),
+            assigned_ports: HashMap::new(),
         };
         self.allocations.insert(project_name.to_string(), alloc);
         &self.allocations[project_name]
@@ -191,6 +202,7 @@ impl PortRegistry {
             base,
             range,
             project: project_path.to_string(),
+            assigned_ports: HashMap::new(),
         };
 
         // Check for conflicts.
@@ -255,13 +267,83 @@ impl PortRegistry {
     /// Returns a map of service type → allocated host port.
     pub fn port_map(&self, project_name: &str) -> Option<PortMap> {
         self.get(project_name).map(|alloc| PortMap {
-            http: alloc.port_for(ServicePortOffsets::HTTP),
-            mysql: alloc.port_for(ServicePortOffsets::MYSQL),
-            postgres: alloc.port_for(ServicePortOffsets::POSTGRES),
-            redis: alloc.port_for(ServicePortOffsets::REDIS),
-            memcached: alloc.port_for(ServicePortOffsets::MEMCACHED),
+            http: alloc
+                .assigned_ports
+                .get(&80)
+                .copied()
+                .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::HTTP)),
+            mysql: alloc
+                .assigned_ports
+                .get(&3306)
+                .copied()
+                .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::MYSQL)),
+            postgres: alloc
+                .assigned_ports
+                .get(&5432)
+                .copied()
+                .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::POSTGRES)),
+            redis: alloc
+                .assigned_ports
+                .get(&6379)
+                .copied()
+                .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::REDIS)),
+            memcached: alloc
+                .assigned_ports
+                .get(&11211)
+                .copied()
+                .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::MEMCACHED)),
             base: alloc.base,
         })
+    }
+
+    /// Resolve a stable host port for one exposed container port.
+    pub fn assign_port(
+        &mut self,
+        project_name: &str,
+        project_path: &str,
+        container_port: u16,
+    ) -> Result<u16, GatewayError> {
+        if !self.allocations.contains_key(project_name) {
+            let _ = self.allocate(project_name, project_path);
+        }
+        let allocation = self
+            .allocations
+            .get_mut(project_name)
+            .expect("allocation should exist");
+
+        if let Some(host_port) = allocation.assigned_ports.get(&container_port) {
+            return Ok(*host_port);
+        }
+
+        if let Some(offset) = preferred_offset_for(container_port) {
+            let host_port = allocation.port_for(offset);
+            if !allocation
+                .assigned_ports
+                .values()
+                .any(|value| *value == host_port)
+            {
+                allocation.assigned_ports.insert(container_port, host_port);
+                return Ok(host_port);
+            }
+        }
+
+        let host_port = (allocation.base..allocation.end())
+            .find(|port| {
+                !allocation
+                    .assigned_ports
+                    .values()
+                    .any(|value| value == port)
+            })
+            .ok_or_else(|| GatewayError::RouteTableWriteError {
+                path: Path::new("~/.effigy/ports.json").to_path_buf(),
+                reason: format!(
+                    "port registry: project `{project_name}` exhausted allocated range {}..{}",
+                    allocation.base,
+                    allocation.end()
+                ),
+            })?;
+        allocation.assigned_ports.insert(container_port, host_port);
+        Ok(host_port)
     }
 
     /// Number of registered allocations.
@@ -296,6 +378,23 @@ pub struct PortMap {
     pub memcached: u16,
     /// Base port for custom services.
     pub base: u16,
+}
+
+fn preferred_offset_for(container_port: u16) -> Option<u16> {
+    match container_port {
+        80 => Some(ServicePortOffsets::HTTP),
+        1025 => Some(26),
+        3000 => Some(30),
+        3306 => Some(ServicePortOffsets::MYSQL),
+        5432 => Some(ServicePortOffsets::POSTGRES),
+        6379 => Some(ServicePortOffsets::REDIS),
+        8025 => Some(25),
+        9000 => Some(40),
+        9001 => Some(41),
+        9200 => Some(20),
+        11211 => Some(ServicePortOffsets::MEMCACHED),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

@@ -83,8 +83,25 @@ What is now real in the product path:
   of only a narrow lifecycle probe, including route owner/project visibility
   and per-route TLS certificate readiness
 
-Later continuation should stay explicit after `272` lands rather than guessed
-from the roadmap.
+3. `273` — decide the post-status/dashboard follow-up on a trustworthy
+   product boundary instead of leaving `g02.016` ambiguous
+4. `274` — generated-compose port auto-allocation using the shipped
+   `PortRegistry` substrate, while keeping direct `compose_file` ownership out
+   of scope
+5. `275` — decide the post-auto-allocation follow-up on a trustworthy product
+   boundary instead of letting the lane drift back into roadmap ambiguity
+6. `276` — bounded cross-project container resource stats on top of the now
+   landed status discovery surface
+
+What is now also real in the product path:
+
+- generated compose now rewrites published host ports through shared
+  `PortRegistry` allocation when `host.ports` is omitted
+- explicit manifest `host.ports` is now wired through generated compose too,
+  so product-owned generated stacks and downstream gateway registration see
+  the same effective host-port bindings
+- gateway registration now stays honest for generated stacks that proxy
+  through auto-assigned host ports rather than explicit manifest bindings
 
 ## Exit Condition
 
@@ -98,6 +115,4 @@ This strict lane is complete when:
 
 ## Next Task
 
-The first `g02.016` execution batch is now landed. Stop in planning and decide
-the next bounded follow-up: port auto-allocation, resource stats, or explicit
-deferral.
+Execute `276` to land bounded cross-project container resource stats.

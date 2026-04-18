@@ -31,6 +31,11 @@ During v0.x, MINOR bumps may include breaking changes.
   route dashboard so operators can inspect running Effigy-managed environments
   and shared registered domains across repos from one product-owned status
   surface.
+- Add stable generated-compose host-port auto-allocation when
+  `[containers.<name>.host].ports` is omitted, wiring the shared
+  `~/.effigy/ports.json` registry through compose generation, container
+  policy/status, and gateway route registration while keeping direct
+  `compose_file` ownership explicit-ports-only.
 - Add Rhai-backed manifest run steps through `rhai = "path/to/script.rhai"`,
   with a first Effigy-native host API for args, env,
   path/file helpers, JSON/TOML helpers, structured subprocess execution, and

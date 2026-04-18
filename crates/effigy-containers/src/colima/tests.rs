@@ -72,6 +72,7 @@ fn test_policy(profile: &str) -> EffectiveContainerPolicy {
         dns_tls: false,
         dns_port: None,
         declared_ports: vec![],
+        ports_declared_explicitly: false,
         declared_mounts: vec![],
         health_check: None,
         health_timeout_secs: 60,
