@@ -28,6 +28,9 @@ fn implicit_deferred_builtins_for_root_with_catalogs(
 }
 
 fn implicit_deferred_builtins_for_root(root: &Path) -> BTreeSet<String> {
+    if !has_root_manifest(root) || !implicit_root_deferral_is_enabled(root) {
+        return BTreeSet::new();
+    }
     let catalogs = effigy_routing::discover_catalogs_allow_missing(root).unwrap_or_default();
     implicit_deferred_builtins_for_root_with_catalogs(root, &catalogs)
 }
@@ -46,6 +49,9 @@ pub(crate) fn deferred_builtins_for_root(root: &Path) -> BTreeSet<String> {
     if !explicit.is_empty() {
         return explicit;
     }
+    if !has_root_manifest(root) {
+        return BTreeSet::new();
+    }
     implicit_deferred_builtins_for_root(root)
 }
 
@@ -62,4 +68,50 @@ pub(crate) fn deferred_builtins_from_catalogs(
         return explicit;
     }
     implicit_deferred_builtins_for_root_with_catalogs(resolved_root, catalogs)
+}
+
+fn has_root_manifest(root: &Path) -> bool {
+    root.join(effigy_manifest::TASK_MANIFEST_FILE).is_file()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::deferred_builtins_for_root;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_workspace(name: &str) -> std::path::PathBuf {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("effigy-deferral-builtins-{name}-{ts}"));
+        fs::create_dir_all(&root).expect("mkdir workspace");
+        root
+    }
+
+    #[test]
+    fn deferred_builtins_ignore_unanchored_directories() {
+        let root = temp_workspace("unanchored");
+        fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
+        fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
+
+        let builtins = deferred_builtins_for_root(&root);
+        assert!(builtins.is_empty(), "got: {builtins:?}");
+    }
+
+    #[test]
+    fn deferred_builtins_keep_implicit_root_deferral_when_manifest_exists() {
+        let root = temp_workspace("anchored-implicit");
+        fs::write(
+            root.join("effigy.toml"),
+            "[tasks.dev]\nrun = \"printf dev\"\n",
+        )
+        .expect("write manifest");
+        fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
+        fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
+
+        let builtins = deferred_builtins_for_root(&root);
+        assert!(builtins.contains("release"), "got: {builtins:?}");
+    }
 }
