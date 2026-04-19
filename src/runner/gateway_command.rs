@@ -12,7 +12,7 @@ use super::error::RunnerError;
 #[cfg(test)]
 use daemon::normalize_gateway_daemon_output;
 use daemon::{spawn_gateway_daemon, stop_gateway_process, wait_for_pid_file};
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 use elevation::build_gateway_elevated_shell_command;
 use elevation::{
     ensure_gateway_up_privileges, gateway_down_requires_elevation, gateway_invocation_is_escalated,
@@ -676,6 +676,7 @@ mod tests {
         assert!(rendered.contains("[warn] resolver setup skipped"));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn build_gateway_elevated_shell_command_includes_gateway_env_and_subcommand() {
         let shell_command = build_gateway_elevated_shell_command(GatewaySubcommand::SetupTls, true)

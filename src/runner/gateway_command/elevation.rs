@@ -66,6 +66,7 @@ pub(super) fn gateway_down_requires_elevation(
         }
         #[cfg(not(target_os = "macos"))]
         {
+            let _ = config;
             false
         }
     }
