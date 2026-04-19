@@ -331,8 +331,8 @@ Tasks:
 - [ ] Add changelog validation to CI (fail PR if changelog is malformed)
 - [ ] Replace `sed`-based changelog extraction in `release-binaries.yml` with
   `effigy changelog extract`
-- [ ] Update `prepare-release.sh` to use `effigy changelog analyze` for bump
-  recommendation
+- [ ] Update the native release prepare flow to use `effigy changelog analyze`
+  for bump recommendation where that analysis should be shared explicitly
 - [ ] Document changelog conventions in developer guide
 
 ## Completion Criteria

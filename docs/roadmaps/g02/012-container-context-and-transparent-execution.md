@@ -89,7 +89,7 @@ Commands that always run on the host:
 - `effigy doctor`
 - `effigy container *`
 - `effigy gateway *`
-- `effigy service *` (with `catalog` / `catalogue` compatibility aliases)
+- `effigy service *`
 - `effigy release *`
 - `effigy tasks`
 - `effigy help`

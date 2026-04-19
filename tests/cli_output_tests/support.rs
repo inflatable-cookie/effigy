@@ -60,6 +60,19 @@ pub(super) fn run_json_cli_command(root: &Path, args: &[&str]) -> Output {
         .expect("run effigy")
 }
 
+pub(super) fn run_cli_command(root: &Path, args: &[&str]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    for arg in args {
+        command.arg(arg);
+    }
+    command
+        .arg("--repo")
+        .arg(root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy")
+}
+
 pub(super) fn parse_stdout_json(output: &Output) -> Value {
     let stdout = String::from_utf8(output.stdout.clone()).expect("utf8 stdout");
     serde_json::from_str(&stdout).expect("json parse")

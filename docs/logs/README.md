@@ -41,6 +41,17 @@ Historical workflow-reference exception:
 - do not rewrite historical log evidence only to match current repo layout
 - active docs outside `docs/logs/` must use current workflow paths (`.github/workflows/*.yml`)
 
+Historical command-surface exception:
+
+- logs may mention retired wrapper scripts or older command names when they
+  document what existed at the time
+- treat references such as `scripts/check-release-gates.sh`,
+  `scripts/check-release-install-from-tag.sh`, `scripts/check-release-smoke.sh`,
+  `scripts/install-local-bin-links.sh`, and `scripts/prepare-release.sh` as
+  historical evidence only, not current operator guidance
+- active docs outside `docs/logs/` must point at the current native Effigy
+  surfaces instead
+
 ## Recent Release Notes
 
 - [`../guides/036-release-notes-authoring-template-and-examples.md`](../guides/036-release-notes-authoring-template-and-examples.md) (authoring template + examples)

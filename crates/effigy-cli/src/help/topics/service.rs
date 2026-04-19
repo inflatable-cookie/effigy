@@ -10,7 +10,6 @@ pub(crate) fn render_service_help<R: HelpRenderer>(renderer: &mut R) -> HelpResu
         &[
             "Inspect the layered service catalog used by catalog-backed container environments.",
             "Extraction writes bundled fragments into a project-local override directory so repos can take ownership without patching the bundled service catalog.",
-            "Compatibility aliases: `effigy catalog ...` and `effigy catalogue ...`.",
         ],
     )?;
     render_usage_section(

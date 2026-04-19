@@ -66,3 +66,19 @@ jobs:
 
       - name: Run doc tests
         run: cargo test --doc
+
+  released-surface:
+    name: Released Surface Baseline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run released-surface regression lane
+        run: cargo run --bin effigy -- qa:released-surface --repo .

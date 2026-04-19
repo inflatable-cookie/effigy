@@ -79,21 +79,26 @@ fn parse_service_extract_supports_dir_override() {
 }
 
 #[test]
-fn parse_catalog_aliases_map_to_service_surface() {
+fn parse_catalog_aliases_fall_back_to_task_routing() {
     let catalog = parse_command(vec!["catalog".to_owned(), "list".to_owned()])
-        .expect("catalog alias should parse");
+        .expect("catalog token should route as a task selector");
     let catalogue = parse_command(vec!["catalogue".to_owned(), "list".to_owned()])
-        .expect("catalogue alias should parse");
+        .expect("catalogue token should route as a task selector");
 
     assert_eq!(
         catalog,
-        Command::Service(ServiceArgs {
-            subcommand: ServiceSubcommand::List,
-            repo_override: None,
-            output_json: false,
+        Command::Task(crate::tests::prelude::TaskInvocation {
+            name: "catalog".to_owned(),
+            args: vec!["list".to_owned()],
         })
     );
-    assert_eq!(catalogue, catalog);
+    assert_eq!(
+        catalogue,
+        Command::Task(crate::tests::prelude::TaskInvocation {
+            name: "catalogue".to_owned(),
+            args: vec!["list".to_owned()],
+        })
+    );
 }
 
 #[test]

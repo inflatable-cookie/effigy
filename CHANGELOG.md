@@ -123,9 +123,8 @@ During v0.x, MINOR bumps may include breaking changes.
   rerun the whole command under `sudo`, while keeping gateway state rooted in
   the calling user's `~/.effigy/gateway`.
 - Rename the service-catalog CLI surface from `effigy catalog ...` to
-  `effigy service ...`, while keeping `catalog` and `catalogue` as
-  compatibility aliases through the v0.3 line so the container fragment
-  feature reads more clearly at the command line.
+  `effigy service ...` so the container fragment feature reads more clearly at
+  the command line.
 - Migrate Effigy's `link:local` task from a shell script to a file-backed Rhai
   step so the new embedded scripting path is exercised by a real repo-local
   operator task instead of a synthetic fixture.

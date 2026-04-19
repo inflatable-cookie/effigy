@@ -49,8 +49,8 @@ Implementation status (2026-04-17):
   computed from changelog content, not from commit messages.
 - Human approval is required at every decision point. Agents propose; humans
   approve.
-- Effigy's own release process (`prepare-release.sh`, `check-release-gates.sh`)
-  is migrated onto this system, proving the design.
+- Effigy's own release process (`effigy release prepare`, `effigy release
+  gates`) is migrated onto this system, proving the design.
 - Other projects adopt the same `effigy release prepare` workflow without
   custom scripts.
 
@@ -138,7 +138,7 @@ docs = "cargo doc --workspace --no-deps"
 
 # Optional: custom gate with description
 [release.gates.smoke]
-command = "./scripts/check-release-smoke.sh"
+command = "cargo run --bin effigy -- smoke:release"
 description = "Smoke test the release binary"
 
 # Tag format
@@ -534,63 +534,50 @@ Implementation note (2026-03-11):
 
 Migrate Effigy's own release process onto the new system.
 
-This is the critical validation step. Effigy's current release flow uses
-`prepare-release.sh` and `check-release-gates.sh`. Those scripts must be
-replaced by the new `effigy release` commands.
+This is the critical validation step. Effigy's release flow now runs through
+the built-in `effigy release` commands directly rather than wrapper scripts.
 
-### Current → New mapping:
+### Native mapping:
 
 | Current | New |
 |---------|-----|
-| `./scripts/prepare-release.sh` | `effigy release prepare` |
-| `./scripts/check-release-gates.sh` | `effigy release gates` (+ optional `effigy release verify-install` when `--tag` is provided) |
+| prepare workflow | `effigy release prepare` |
+| release-gate validation | `effigy release gates` (+ optional `effigy release verify-install` when `--tag` is provided) |
 | Manual `git tag` + `git push` | `effigy release execute` |
 | `sed` extraction in release-binaries.yml | `effigy changelog extract` |
 
 ### Migration tasks:
 
 - [x] Add `[release]` section to Effigy's `effigy.toml`
-- [x] Configure gates to match current `check-release-gates.sh` checks
+- [x] Configure gates to match the real self-hosted release checks
 - [x] Configure version file as `Cargo.toml` with `Cargo.lock` sync
-- [x] Run parallel validation: old scripts and new system produce same results
+- [x] Run migration validation proving the built-in commands preserve the
+  intended release behavior
 - [x] Update `release-binaries.yml` to use `effigy changelog extract` for
   release notes (requires human approval per CLAUDE.md)
 - [x] Update guide 049 (Release Protocol) section 6c to reference new commands
 - [x] Update guide 014 (Release Checklist) to reference new workflow
-- [x] Retire `prepare-release.sh`, `check-release-gates.sh`, and
-  `check-release-install-from-tag.sh` after the explicit wrapper-retirement
-  criteria in guide `049` are met
+- [x] Retire the legacy release wrapper scripts after the explicit
+  wrapper-retirement criteria in guide `049` are met
 - [x] Execute first release using `effigy release prepare` + `effigy release
   execute`
 
 Implementation note (2026-03-11):
 - Effigy’s root `effigy.toml` now declares `[release]` with the baseline gate
-  set mirrored from `scripts/check-release-gates.sh`, and local self-hosted
+  set mirrored from the real self-hosted release checks, and local self-hosted
   release-gate validation now runs through `effigy release gates`
   (with `cargo qa-release` as the cargo alias).
 - `Cargo.lock` sync during prepare is now shipped for Cargo-based repos, with a
-  fixture-level parity test against `prepare-release.sh --apply`.
+  fixture-level migration proof against the earlier wrapper-era prepare path.
 - Effigy now also ships `effigy release verify-install` for the tag-install
-  validation path, and `scripts/check-release-install-from-tag.sh` delegates to
-  that built-in command as a compatibility wrapper.
-- `scripts/check-release-gates.sh` now also delegates to the built-in
-  `effigy release gates` surface and optionally chains `release verify-install`
-  when a tag is provided, so both legacy release shell entrypoints are thin
-  wrappers over the shipped release commands.
-- The old/new migration proof is now covered in tests: `prepare-release.sh
-  --apply` has fixture parity with `effigy release prepare --yes`, the no-tag
-  gate wrapper runs the same built-in `release gates` path on fixtures, and the
-  tagged install wrapper runs the same built-in `release verify-install` path.
+  validation path.
+- The wrapper-era migration proof is now covered in tests and logs, but the
+  wrappers themselves have since been retired from the live repo.
 - The remaining self-hosting work is now about workflow adoption and successful
   operator usage, not uncertainty about the shipped command mappings.
-- Wrapper-retirement is now a policy checkpoint rather than a code gap:
-  maintainers should retire the three release compatibility wrappers only after
-  two consecutive real built-in releases complete green without wrapper
-  fallback and no active downstream contract still depends on the script paths.
-- The release checklist template (`014`) and repo-level operator guidance now
-  point maintainers at `effigy release simulate/status/prepare/execute` as the
-  preferred workflow, while keeping the wrapper scripts documented as backup
-  entrypoints for external callers and migration safety.
+- Wrapper-retirement is no longer pending in the live repo; the release
+  checklist template (`014`) and repo-level operator guidance now point
+  maintainers directly at `effigy release simulate/status/prepare/execute`.
 - Release-note authoring guidance now explicitly uses `effigy changelog extract
   CHANGELOG.md --version X.Y.Z` as the pre-cutover baseline for drafting notes,
   so the remaining workflow edit is just an approved automation swap rather than
@@ -728,4 +715,4 @@ These invariants must hold across all implementations:
 - Implementation brief: `northstar/bundle-docs/research/handoff/IMPLEMENTATION_BRIEF.md`
 - Boundary memo: `northstar/bundle-docs/research/translation-memos/northstar-effigy-boundary.md`
 - Current release protocol: `docs/guides/049-ci-binary-distribution-and-release-protocol.md`
-- Current release scripts: `scripts/prepare-release.sh`, `scripts/check-release-gates.sh`
+- Current release protocol: `docs/guides/049-ci-binary-distribution-and-release-protocol.md`

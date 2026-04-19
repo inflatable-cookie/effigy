@@ -1,0 +1,13 @@
+{
+  "source_baseline_tag": "v0.2.13",
+  "target_release_tag": "v0.3.0",
+  "target_release_kind": "minor",
+  "requires_migration_notes": true,
+  "intentional_breaks": [
+    {
+      "surface": "legacy release wrapper scripts",
+      "change": "Removed compatibility-only shell entrypoints for release checks, release smoke, install-link setup, install-from-tag verification, and release prepare flow.",
+      "migration_note": "Call the native Effigy surfaces directly instead: `effigy release gates`, `effigy release verify-install`, `effigy smoke:release`, `effigy bootstrap:local`, and `effigy release prepare` / `effigy release prepare --plan`."
+    }
+  ]
+}

@@ -15,6 +15,15 @@ lane needs tighter execution grammar than the roadmap alone provides.
   batch cards from the active tree so the next generation does not inherit dead
   planning debris
 
+Historical command-reference rule:
+
+- active specs may preserve wrapper-script or old command references when they
+  are documenting the planning state that existed at the time
+- do not treat those references as current operator guidance unless the same
+  command is still present in active guides/contracts
+- current release/runtime/operator guidance lives in the active guides and
+  contracts, not in old planning text
+
 ## Active Spec Set
 
 - [`007-distribution-release-and-consumer-rollout-strict-lane.md`](./007-distribution-release-and-consumer-rollout-strict-lane.md)

@@ -166,8 +166,6 @@ fn render_service_help_shows_extract_options() {
     assert!(rendered.contains("service Help"));
     assert!(rendered.contains("effigy service list"));
     assert!(rendered.contains("effigy service extract <SERVICE>"));
-    assert!(rendered.contains("effigy catalog ..."));
-    assert!(rendered.contains("effigy catalogue ..."));
     assert!(rendered.contains("--dir <PATH>"));
     assert!(rendered.contains("project-local"));
 }

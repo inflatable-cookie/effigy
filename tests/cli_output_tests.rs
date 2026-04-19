@@ -6,6 +6,10 @@ mod core_output_tests;
 mod help_and_flags_tests;
 #[path = "cli_output_tests/json_envelope_tests/mod.rs"]
 mod json_envelope_tests;
+#[path = "cli_output_tests/released_surface_transition_tests.rs"]
+mod released_surface_transition_tests;
+#[path = "cli_output_tests/released_surface_v0_2_13_tests.rs"]
+mod released_surface_v0_2_13_tests;
 #[path = "cli_output_tests/support.rs"]
 mod support;
 #[path = "cli_output_tests/tasks_rendering_tests/mod.rs"]
