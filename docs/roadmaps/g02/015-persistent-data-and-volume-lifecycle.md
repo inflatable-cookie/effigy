@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress (generated-compose persistent reset is landed; bounded volume inventory is the next ready batch)
+Status: Complete (generated-compose persistent reset, inventory, transfer, media lifecycle, bounded `pull_production` orchestration, and one real-project proof are landed)
 Owner: Platform
 Created: 2026-04-16
 Depends on: 006, 011
@@ -48,15 +48,16 @@ Without persistent data management:
 ## 2) Goals
 
 - [ ] Define `data.volumes` manifest field for persistent named volumes.
-- [ ] Define `data.media` manifest field for media mount declarations.
+- [x] Define `data.media` manifest field for media mount declarations.
 - [ ] Ensure catalog fragments declare appropriate default volumes.
 - [x] Implement `effigy container reset --keep-data`.
-- [ ] Implement `effigy container data list` — volume names, sizes.
-- [ ] Implement `effigy container data export <volume> <path>`.
-- [ ] Implement `effigy container data import <volume> <path>`.
-- [ ] Define seeding as task-based (no special seed abstraction).
-- [ ] Define `data.pull_production` as a Rhai or shell hook.
-- [ ] Prove with a project that has complex seeding requirements.
+- [x] Implement `effigy container data list` — volume names, sizes.
+- [x] Implement `effigy container data export <volume> <path>`.
+- [x] Implement `effigy container data import <volume> <path>`.
+- [x] Define bounded generated-compose `data.media` lifecycle declarations.
+- [x] Define seeding as task-based (no special seed abstraction).
+- [x] Define `data.pull_production` as a Rhai or shell hook.
+- [x] Prove with a real project that uses the shipped generated-compose persistent-data contract.
 
 ## 3) Non-Goals
 
@@ -150,6 +151,19 @@ Shell scripts also supported: `pull_production = "scripts/pull-prod.sh"`.
 - Integration test for volume export/import round-trip.
 - Task-based seeding test with a mock Rhai script.
 
+## Proof Outcome
+
+The closing consumer proof landed in `/Users/tom/Dev/projects/acowtancy/farmyard`.
+
+That proof also exposed and closed two real product gaps:
+
+- generated top-level compose volume declarations now pin explicit runtime
+  names so managed-volume reporting and transfer stay aligned on the
+  Colima/nerdctl path
+- generated compose output now regenerates when rendered compose content
+  changes, even if the manifest checksum is unchanged
+
 ## Next Task
 
-Execute card `282` to land bounded `effigy container data list` inventory.
+No further execution lives on this roadmap. Stop in planning and choose which
+remaining `g02` lane should resume next.

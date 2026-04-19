@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use effigy_core::widgets::SummaryCounts;
+use effigy_core::widgets::{KeyValue, SummaryCounts};
 use effigy_process::ProcessSupervisor;
 use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
 use effigy_ui::Renderer;
@@ -25,6 +25,8 @@ pub fn run_managed_task_tui(
         tab_order,
         fail_on_non_zero,
         profile,
+        gateway_auto_start: _,
+        readiness: _,
         ..
     } = plan;
     let specs = managed_process_specs(processes);
@@ -59,6 +61,7 @@ pub fn run_managed_task_runtime(
         .filter(|process| process.shutdown_on_exit)
         .map(|process| process.name.clone())
         .collect::<Vec<String>>();
+    let readiness_fields = managed_runtime_readiness_fields(&plan);
     let specs = managed_process_specs(plan.processes.iter().cloned());
     let expected = specs.len();
     let supervisor = ProcessSupervisor::spawn(repo_root.to_path_buf(), specs)?;
@@ -70,7 +73,7 @@ pub fn run_managed_task_runtime(
         task_name,
         &plan,
         Vec::new(),
-        Vec::new(),
+        readiness_fields,
         &["Running managed profile in temporary stream mode."],
     )?;
     let non_zero_exits = stream::collect_stream_non_zero_exits(
@@ -94,4 +97,32 @@ pub fn run_managed_task_runtime(
         err: 0,
     })?;
     render_utf8(renderer.into_inner())
+}
+
+fn managed_runtime_readiness_fields(plan: &ManagedTaskPlan) -> Vec<KeyValue> {
+    vec![
+        KeyValue::new(
+            "gateway-auto-start",
+            if plan.gateway_auto_start {
+                "enabled"
+            } else {
+                "disabled"
+            },
+        ),
+        KeyValue::new(
+            "readiness-wait",
+            if plan.readiness.health_wait {
+                "enabled"
+            } else {
+                "disabled"
+            },
+        ),
+        KeyValue::new(
+            "ready-message",
+            plan.readiness
+                .ready_message
+                .clone()
+                .unwrap_or_else(|| "disabled".to_owned()),
+        ),
+    ]
 }

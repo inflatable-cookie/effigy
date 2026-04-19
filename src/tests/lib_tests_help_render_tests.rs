@@ -180,6 +180,9 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("effigy container <NAME> up"));
     assert!(rendered.contains("effigy container status --all"));
     assert!(rendered.contains("effigy container stats --all"));
+    assert!(rendered.contains("effigy container data list"));
+    assert!(rendered.contains("effigy container data export <VOLUME> <PATH>"));
+    assert!(rendered.contains("effigy container data import <VOLUME> <PATH>"));
     assert!(rendered.contains("effigy container <NAME> logs"));
     assert!(rendered.contains("effigy container <NAME> shell"));
     assert!(rendered.contains("effigy container <NAME> reset"));
@@ -191,6 +194,9 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("--command <CMD>"));
     assert!(rendered.contains("--follow"));
     assert!(rendered.contains("--keep-data"));
+    assert!(rendered.contains("effigy container web data list"));
+    assert!(rendered.contains("effigy container web data export"));
+    assert!(rendered.contains("effigy container web data import"));
     assert!(rendered.contains("effigy container web reset --keep-data"));
     assert!(rendered.contains("attached sessions shut the environment down on owner exit"));
 }
@@ -259,6 +265,13 @@ fn render_tasks_help_shows_resolve_and_json_options() {
     assert!(rendered.contains("--pretty <true|false>"));
     assert!(rendered.contains("effigy tasks --resolve <catalog>/<task>"));
     assert!(rendered.contains("effigy tasks --json --resolve test"));
+}
+
+#[test]
+fn render_container_help_shows_pull_production_surface() {
+    let rendered = render_help_text(HelpTopic::Container);
+    assert!(rendered.contains("data pull-production"));
+    assert!(rendered.contains("effigy container web data pull-production"));
 }
 
 #[test]

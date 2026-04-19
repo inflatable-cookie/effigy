@@ -87,3 +87,15 @@ impl Drop for EnvGuard {
         }
     }
 }
+
+pub(super) struct ExecutableOverrideGuard {
+    _guard: effigy_core::executable_override::ScopedExecutableOverride,
+}
+
+impl ExecutableOverrideGuard {
+    pub(super) fn set(path: impl Into<String>) -> Self {
+        Self {
+            _guard: effigy_core::executable_override::set_scoped(Some(path.into())),
+        }
+    }
+}

@@ -42,23 +42,22 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01/029-northstar-effigy-consumer-adoption-kit.md` is complete.
 - `g01/028-script-surface-reduction-and-builtins.md` reduces repo shell logic into Effigy-native command surfaces and is complete.
 - `g02/001-bootstrap-command-and-clone-contract.md` started the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up, and is now complete: released plus live-pilot validated on `loophole` and `songsprout`.
-- `g02/002-manifest-composition-and-override-contract.md` defines the general split-manifest model so features do not invent their own file-loading semantics, and its foundation plus inspectability are already shipped.
+- `g02/002-manifest-composition-and-override-contract.md` is complete; the general split-manifest model, override contract, and inspectability surface are now shipped.
 - `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy; the lane shipped and released in `v0.2.13`, including registry loading, inspection, lifecycle control, one-demo history, attached and PTY-backed terminal runner semantics, browser demo tabs, browser terminal replay/input/resize consumption, concurrent-runner session plus interaction projection, browser-owned live attached terminal sessions for browser-launched run-backed interactive demos, bounded single-process concurrent-runner browser live-session parity, runner-owned concurrent-runtime projection-shape truth, projected-runtime process summary truth, and projected-output provenance truth.
 - `g02/004-rust-native-scripting-surface-contract.md` is paused after the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached a clean internal boundary.
 - `g02/005-optional-distribution-surface-contract.md` is paused after one real consumer proof plus bounded widening made the optional distribution boundary trustworthy for metadata validation, artifact validation, and closeout evidence reuse.
 - `g02/006-colima-container-environment-contract.md` is now paused after the real-machine `colima nerdctl` live-stop and closeout path was hardened strongly enough to stop carrying a deferred warning.
-- `g02/007-distribution-release-and-consumer-rollout.md` remains in progress; release closure is complete, but release execution stays deferred while live `g02.010` work remains open.
-- `g02/010-effigy-modularization-and-crate-boundaries.md` remains in progress because the parallel thread still owns remaining live work even though some pause-oriented docs were written.
-- `g02/008-demo-and-manifest-import-rollout.md` queues the remaining demo and manifest-import adoption work across the intended cohort.
-- `g02/009-vault-backed-varlock-rollout.md` queues the vault-backed rollout for the shipped env-schema / varlock foundation.
+- `g02/007-distribution-release-and-consumer-rollout.md` is now the active release-prep lane for the deliberate `v0.3` cut.
+- `g02/010-effigy-modularization-and-crate-boundaries.md` is complete.
+- `g02/008-demo-and-manifest-import-rollout.md` remains planned, but stays outside the current `v0.3` release-prep queue.
+- `g02/009-vault-backed-varlock-rollout.md` remains planned, but stays outside the current `v0.3` release-prep queue.
 - `g02/017-remaining-shell-cleanup-and-crate-extraction-program.md` queues the substantial parallel cleanup jobs for the remaining heavy `/src` seams and any justified final crate splits.
-- `g02/018-research-promotion-and-carry-forward.md` carries the unfinished research-promotion residue from the closed `g01` research phases.
+- research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
 
 - `g02.007`
-- release execution batch: deferred — `115` is complete but blocked behind live `g02.010` work
-- parallel strict lane still active: `g02.010`
+- release-prep path: return to `115` and the release protocol surfaces
 
 ## Research Program
 
@@ -94,8 +93,8 @@ Before rollover:
 
 ## Next Task
 
-Finish the remaining live `g02.010` work in the parallel thread, then return
-to `115` for explicit human-approved release execution.
+Return to `115` for deliberate `v0.3` release prep and explicit human-approved
+release execution.
 
 
 ## Historical language boundary

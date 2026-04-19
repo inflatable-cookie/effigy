@@ -13,9 +13,11 @@
 //! is responsible for execution. This keeps the module testable without
 //! requiring Docker.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 
 use crate::assembly::VolumeInfo;
 
@@ -36,6 +38,13 @@ pub struct ManagedVolume {
 
     /// Mount point inside the container.
     pub mount_point: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeVolumeMetadata {
+    pub name: String,
+    pub mount_point: Option<String>,
+    pub size_bytes: Option<u64>,
 }
 
 impl ManagedVolume {
@@ -223,6 +232,57 @@ pub fn reset_commands(classification: &VolumeClassification) -> Vec<DockerComman
         .remove
         .iter()
         .map(|name| remove_volume_command(name))
+        .collect()
+}
+
+pub fn parse_listed_volume_names(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|line| line.split('\t').next())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+pub fn parse_inspect_volume_metadata(output: &str) -> Option<RuntimeVolumeMetadata> {
+    let parsed = serde_json::from_str::<JsonValue>(output).ok()?;
+    let first = parsed.as_array()?.first()?;
+    let name = first.get("Name")?.as_str()?.to_owned();
+    let mount_point = first
+        .get("Mountpoint")
+        .and_then(JsonValue::as_str)
+        .map(str::to_owned);
+    let size_bytes = first
+        .get("UsageData")
+        .and_then(|value| value.get("Size"))
+        .and_then(JsonValue::as_u64);
+    Some(RuntimeVolumeMetadata {
+        name,
+        mount_point,
+        size_bytes,
+    })
+}
+
+pub fn merge_runtime_volume_metadata(
+    volumes: &[ManagedVolume],
+    runtime: &[RuntimeVolumeMetadata],
+) -> Vec<ManagedVolume> {
+    let runtime_by_name = runtime
+        .iter()
+        .map(|entry| (entry.name.as_str(), entry))
+        .collect::<BTreeMap<_, _>>();
+
+    volumes
+        .iter()
+        .cloned()
+        .map(|mut volume| {
+            if let Some(metadata) = runtime_by_name.get(volume.name.as_str()) {
+                volume.mount_point = metadata.mount_point.clone();
+                volume.size_bytes = metadata.size_bytes;
+            }
+            volume
+        })
         .collect()
 }
 

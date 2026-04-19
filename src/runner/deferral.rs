@@ -9,9 +9,7 @@ mod select;
 #[path = "deferral/trace.rs"]
 mod trace;
 
-pub(crate) use builtins::{
-    builtin_can_be_explicitly_deferred, deferred_builtins_for_root, deferred_builtins_from_catalogs,
-};
+pub(crate) use builtins::{deferred_builtins_for_root, deferred_builtins_from_catalogs};
 pub(super) use policy::should_attempt_deferral;
 #[cfg(test)]
 pub(crate) use run::reset_composer_home_cache_for_tests;

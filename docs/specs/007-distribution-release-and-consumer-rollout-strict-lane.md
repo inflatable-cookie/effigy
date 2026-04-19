@@ -1,6 +1,6 @@
 # 007 Distribution Release And Consumer Rollout Strict Lane
 
-Status: paused
+Status: active
 Updated: 2026-04-17
 Roadmap: `g02.007`
 
@@ -36,10 +36,18 @@ This strict lane remains responsible for:
 
 ## Current Posture
 
-`strict-paused`
+`active`
 
-`g02.010` is complete on a trustworthy boundary. `g02.007` is now paused while
-the remaining `g02` feature and integration work ships first.
+`g02.010` is complete on a trustworthy boundary.
+
+The earlier release pause was sequencing-only. This thread has now resolved the
+remaining queue posture strongly enough to return to release prep:
+
+- `g02.002` is complete
+- `g02.018` is rehomed into research intake rather than staying in the active
+  roadmap queue
+- `g02.008` and `g02.009` remain planned rollout lanes, but they are not part
+  of the current release-prep batch
 
 The release-prep hardening chain is real:
 
@@ -66,9 +74,8 @@ The next move is no longer another hardening batch.
 
 Release execution is technically ready and `115` is complete.
 
-The remaining gate is now product sequencing: finish the remaining
-`g02.011`–`g02.016` feature spine, then cut one explicit human-approved
-`v0.3` release.
+The remaining gate is now deliberate release execution discipline, not product
+sequencing.
 
 ## Batch Model
 
@@ -97,8 +104,7 @@ claims.
 
 ## Next Task
 
-Leave `g02.007` paused while the remaining `g02` feature and integration work
-lands.
+Return to `115` and the release protocol surfaces for deliberate `v0.3`
+release prep.
 
-Return to `115` only after the rest of the `g02` spine is complete and the
-repo is ready for one explicit human-approved `v0.3` release cut.
+Stop before any irreversible release action unless explicitly requested.

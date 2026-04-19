@@ -2,6 +2,7 @@ use crate::tests::prelude::{
     parse_command, Command, ContainerArgs, ContainerSubcommand, ExecArgs, HelpTopic, PathBuf,
     ServiceArgs, ServiceSubcommand,
 };
+use effigy_cli::ContainerDataSubcommand;
 
 #[test]
 fn parse_service_help_is_scoped() {
@@ -173,6 +174,108 @@ fn parse_container_reset_keep_data_is_supported() {
             subcommand: ContainerSubcommand::Reset {
                 name: Some("web".to_owned()),
                 keep_data: true,
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_data_list_is_supported() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "web".to_owned(),
+        "data".to_owned(),
+        "list".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Data {
+                name: Some("web".to_owned()),
+                subcommand: ContainerDataSubcommand::List,
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_data_export_is_supported() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "web".to_owned(),
+        "data".to_owned(),
+        "export".to_owned(),
+        "fixture-web-dev-db-data".to_owned(),
+        "./backup.tar.gz".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Data {
+                name: Some("web".to_owned()),
+                subcommand: ContainerDataSubcommand::Export {
+                    volume: "fixture-web-dev-db-data".to_owned(),
+                    path: PathBuf::from("./backup.tar.gz"),
+                },
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_data_import_is_supported() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "web".to_owned(),
+        "data".to_owned(),
+        "import".to_owned(),
+        "fixture-web-dev-db-data".to_owned(),
+        "./backup.tar.gz".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Data {
+                name: Some("web".to_owned()),
+                subcommand: ContainerDataSubcommand::Import {
+                    volume: "fixture-web-dev-db-data".to_owned(),
+                    path: PathBuf::from("./backup.tar.gz"),
+                },
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_data_pull_production_is_supported() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "web".to_owned(),
+        "data".to_owned(),
+        "pull-production".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Data {
+                name: Some("web".to_owned()),
+                subcommand: ContainerDataSubcommand::PullProduction,
             },
             repo_override: None,
             output_json: true,

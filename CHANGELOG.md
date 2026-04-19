@@ -7,6 +7,24 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Add the first bounded `g02.013` managed dev-task foundation, including
+  `[tasks.<name>.managed].container_lifecycle`, `concurrent` lifecycle roles,
+  plan/schema/docs support, and managed runtime ownership for starting and
+  stopping a repo-owned `container_session` through one task-owned lifecycle
+  process.
+- Add bounded `g02.013` managed shell-role support, so `concurrent` entries
+  can declare `role = "shell"` and open the task-owned primary-service
+  container shell through the shipped `effigy container shell` path.
+- Add bounded `g02.013` managed readiness UX support, so repo-owned managed dev
+  tasks can declare `managed.health_wait` plus `managed.ready_message`, render
+  that contract in plan/docs/schema output, and project one honest ready
+  message through the lifecycle-owned runtime path after detached container
+  startup reaches ready state.
+- Add bounded `g02.013` managed gateway auto-start support, so repo-owned
+  managed dev tasks can declare `managed.gateway = true`, validate that
+  contract against lifecycle-owned container sessions, render it in plan/docs
+  output, and trigger the shipped `effigy gateway up` path before the managed
+  runtime starts.
 - Add transparent container exec integration for `g02.012`, including
   manifest-owned `[containers.<name>.exec]` aliases and working-dir config,
   explicit `effigy exec ...`, bare alias fallback like `effigy mysql`, and
@@ -48,6 +66,23 @@ During v0.x, MINOR bumps may include breaking changes.
   named volumes declared through shipped catalog metadata survive reset while
   ephemeral volumes are still removed and direct `compose_file` ownership is
   rejected honestly on this bounded path.
+- Add bounded `effigy container data list` on the generated-compose path so
+  operators can inspect Effigy-managed named volumes with
+  persistent-vs-ephemeral classification and best-effort runtime size metadata
+  before wider data lifecycle commands land.
+- Add bounded generated-compose `effigy container data export` and
+  `effigy container data import`, so operators can move Effigy-managed named
+  volumes through the product surface without widening into hook orchestration
+  or direct-`compose_file` ownership semantics yet.
+- Add bounded generated-compose `[containers.<name>.data].media` support, so
+  repo-owned media directories can be declared through the container data
+  surface, prepared automatically, and mounted onto generated services that
+  already bind the repo root without widening direct `compose_file` ownership.
+- Add bounded generated-compose `effigy container data pull-production` plus
+  manifest-owned `[containers.<name>.data].pull_production`, so one product
+  entrypoint can bring the environment to ready state and run a repo-relative
+  Rhai or shell production-pull hook without widening direct `compose_file`
+  ownership.
 - Add Rhai-backed manifest run steps through `rhai = "path/to/script.rhai"`,
   with a first Effigy-native host API for args, env,
   path/file helpers, JSON/TOML helpers, structured subprocess execution, and
@@ -138,6 +173,15 @@ During v0.x, MINOR bumps may include breaking changes.
   via `sh -lc` instead of treating the whole command as one argv token.
 - Move `release:linux:rehearse` off `cargo run --bin effigy` subprocess
   re-entry and onto the running Effigy process through the new Rhai host API.
+
+### Fixed
+- Pin explicit runtime `name` values on generated top-level named volumes so
+  managed-volume reporting, reset retention, and data export/import stay
+  aligned on the Colima/nerdctl path instead of drifting into double-prefixed
+  runtime volume names.
+- Regenerate generated compose output when the rendered compose content changes
+  even if the manifest checksum is unchanged, preventing stale compose
+  artifacts after assembly-layer fixes.
 
 ## [0.2.13] - 2026-04-13
 

@@ -224,6 +224,8 @@ mod tests {
             declared_ports: vec!["8080:80".to_owned()],
             ports_declared_explicitly: true,
             declared_mounts: vec![],
+            declared_media_mounts: vec![],
+            pull_production_hook: None,
             health_check: None,
             health_timeout_secs: 60,
             ui_tabs: vec![],

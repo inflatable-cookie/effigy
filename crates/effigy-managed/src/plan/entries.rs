@@ -1,15 +1,18 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use effigy_manifest::{LoadedCatalog, ManifestManagedConcurrentEntry, TaskResolverFn};
+use effigy_manifest::{
+    LoadedCatalog, ManifestManagedConcurrentEntry, ManifestTask, TaskResolverFn,
+};
 use effigy_tasks::TaskSelector;
 
 use super::{invalid_managed_process_definition, select_run_or_task};
 use crate::references;
-use crate::{ManagedProcessSpec, DEFAULT_MANAGED_SHELL_RUN};
+use crate::{ManagedProcessRole, ManagedProcessSpec, DEFAULT_MANAGED_SHELL_RUN};
 
 pub fn resolve_concurrent_process_entries<'a>(
     selector: &TaskSelector,
+    task: &ManifestTask,
     entries: &[ManifestManagedConcurrentEntry],
     catalog: &LoadedCatalog,
     catalogs: &'a [LoadedCatalog],
@@ -19,7 +22,7 @@ pub fn resolve_concurrent_process_entries<'a>(
     let mut used_names = HashSet::<String>::new();
     let mut resolved = Vec::<super::ConcurrentResolvedProcess>::with_capacity(entries.len());
     for (index, entry) in entries.iter().enumerate() {
-        let normalized = normalize_entry(entry, index);
+        let normalized = normalize_entry(selector, task, entry, index)?;
         let process_name = normalized.process_name;
         if !used_names.insert(process_name.clone()) {
             return Err(invalid_managed_process_definition(
@@ -41,6 +44,7 @@ pub fn resolve_concurrent_process_entries<'a>(
         resolved.push(super::ConcurrentResolvedProcess {
             spec: ManagedProcessSpec {
                 name: process_name,
+                role: normalized.role,
                 run,
                 cwd,
                 start_after_ms: normalized.start_after_ms,
@@ -56,6 +60,7 @@ pub fn resolve_concurrent_process_entries<'a>(
 
 struct NormalizedConcurrentEntry {
     process_name: String,
+    role: ManagedProcessRole,
     start_rank: usize,
     tab_rank: usize,
     start_after_ms: u64,
@@ -63,27 +68,36 @@ struct NormalizedConcurrentEntry {
 }
 
 fn normalize_entry(
+    selector: &TaskSelector,
+    task: &ManifestTask,
     entry: &ManifestManagedConcurrentEntry,
     index: usize,
-) -> NormalizedConcurrentEntry {
+) -> Result<NormalizedConcurrentEntry, crate::ManagedError> {
     let ordinal = index + 1;
+    let role = normalize_role(selector, task, entry)?;
     let process_name = entry
         .name
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+        .or_else(|| match role {
+            ManagedProcessRole::Lifecycle => Some("lifecycle".to_owned()),
+            ManagedProcessRole::Shell => Some("shell".to_owned()),
+            ManagedProcessRole::Standard => None,
+        })
         .or_else(|| entry.task.clone())
         .unwrap_or_else(|| format!("process-{ordinal}"));
     let start_rank = entry.start.unwrap_or(ordinal);
     let tab_rank = entry.tab.unwrap_or(start_rank);
-    NormalizedConcurrentEntry {
+    Ok(NormalizedConcurrentEntry {
         process_name,
+        role,
         start_rank,
         tab_rank,
         start_after_ms: entry.start_after_ms.unwrap_or(0),
-        shutdown_on_exit: entry.shutdown_on_exit.unwrap_or(false),
-    }
+        shutdown_on_exit: lifecycle_shutdown_on_exit(selector, entry, role)?,
+    })
 }
 
 fn resolve_process_run_and_cwd<'a>(
@@ -95,6 +109,9 @@ fn resolve_process_run_and_cwd<'a>(
     task_scope_cwd: &Path,
     resolver: TaskResolverFn<'a>,
 ) -> Result<(String, PathBuf), crate::ManagedError> {
+    if matches!(entry.role.as_deref(), Some("lifecycle") | Some("shell")) {
+        return Ok((String::new(), task_scope_cwd.to_path_buf()));
+    }
     match select_run_or_task(
         entry.run.as_deref(),
         entry.task.as_deref(),
@@ -168,4 +185,89 @@ fn resolve_shell_process_run(
         .and_then(|shell| shell.run.clone())
         .unwrap_or_else(|| DEFAULT_MANAGED_SHELL_RUN.to_owned());
     Ok((shell_run, task_scope_cwd.to_path_buf()))
+}
+
+fn normalize_role(
+    selector: &TaskSelector,
+    task: &ManifestTask,
+    entry: &ManifestManagedConcurrentEntry,
+) -> Result<ManagedProcessRole, crate::ManagedError> {
+    let process = entry
+        .name
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("process");
+    match entry.role.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        None => Ok(ManagedProcessRole::Standard),
+        Some("lifecycle") => {
+            if !task
+                .managed
+                .as_ref()
+                .is_some_and(|managed| managed.container_lifecycle)
+            {
+                return Err(invalid_managed_process_definition(
+                    selector,
+                    process,
+                    "`role = \"lifecycle\"` requires `[tasks.<name>.managed] container_lifecycle = true`",
+                ));
+            }
+            if task.container_session.is_none() {
+                return Err(invalid_managed_process_definition(
+                    selector,
+                    process,
+                    "`role = \"lifecycle\"` requires `container_session = \"<name>\"` on the task",
+                ));
+            }
+            if entry.run.is_some() || entry.task.is_some() {
+                return Err(invalid_managed_process_definition(
+                    selector,
+                    process,
+                    "`role = \"lifecycle\"` owns container startup/shutdown in this batch; omit `run` and `task`",
+                ));
+            }
+            Ok(ManagedProcessRole::Lifecycle)
+        }
+        Some("shell") => {
+            if task.container_session.is_none() {
+                return Err(invalid_managed_process_definition(
+                    selector,
+                    process,
+                    "`role = \"shell\"` requires `container_session = \"<name>\"` on the task",
+                ));
+            }
+            if entry.run.is_some() || entry.task.is_some() {
+                return Err(invalid_managed_process_definition(
+                    selector,
+                    process,
+                    "`role = \"shell\"` owns the container shell in this batch; omit `run` and `task`",
+                ));
+            }
+            Ok(ManagedProcessRole::Shell)
+        }
+        Some(role) => Err(invalid_managed_process_definition(
+            selector,
+            process,
+            &format!(
+                "unsupported `role = \"{role}\"` in this batch; supported roles: `lifecycle`, `shell`"
+            ),
+        )),
+    }
+}
+
+fn lifecycle_shutdown_on_exit(
+    selector: &TaskSelector,
+    entry: &ManifestManagedConcurrentEntry,
+    role: ManagedProcessRole,
+) -> Result<bool, crate::ManagedError> {
+    if role != ManagedProcessRole::Lifecycle {
+        return Ok(entry.shutdown_on_exit.unwrap_or(false));
+    }
+    if entry.shutdown_on_exit == Some(false) {
+        return Err(invalid_managed_process_definition(
+            selector,
+            entry.name.as_deref().unwrap_or("lifecycle"),
+            "`role = \"lifecycle\"` must keep `shutdown_on_exit = true`",
+        ));
+    }
+    Ok(true)
 }

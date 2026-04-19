@@ -1,6 +1,6 @@
 # 015 Persistent Data And Volume Lifecycle Strict Lane
 
-Status: active
+Status: complete
 Updated: 2026-04-18
 Roadmap: `g02.015`
 
@@ -32,7 +32,7 @@ This lane owns:
 
 ## Current Posture
 
-`active`
+`complete`
 
 Shipped substrate that this lane builds on:
 
@@ -67,21 +67,39 @@ The bounded continuation chain now starts with:
 3. `281` — decide the next widening step now that the first lifecycle surface
    is real
 4. `282` — bounded volume inventory through `effigy container data list`
+5. `283` — choose the next bounded widening step after landed inventory
+6. `284` — bounded generated-compose transfer through `data export/import`
+7. `285` — choose the next bounded widening step after landed transfer
+8. `286` — bounded media bind-mount lifecycle on the generated-compose path
+9. `287` — choose the next bounded widening step after landed media lifecycle
+10. `288` — bounded generated-compose `data.pull_production` hook ownership
+11. `289` — decide whether the lane closes now or needs one real-project proof
+12. `290` — prove the generated-compose persistent-data loop in one real project
 
 What is now real in the product path:
 
 - `effigy container reset --keep-data` on the generated-compose path
 - persistent-vs-ephemeral volume classification from shipped catalog metadata
 - honest text/JSON reporting of which volumes were kept vs removed
+- `effigy container data list` for one generated-compose environment with
+  bounded runtime size and mount metadata when the runtime can provide it
+- bounded generated-compose `data export` and `data import` for explicit
+  managed volume names
+- bounded generated-compose `[containers.<name>.data].media` declarations with
+  repo-owned directory preparation and compose mounts on repo-bound services
+- bounded generated-compose `[containers.<name>.data].pull_production`
+  ownership through one product entrypoint and repo-relative shell/Rhai hooks
 - explicit rejection or bounded fallback for direct `compose_file` ownership
   where Effigy does not have trustworthy retention metadata yet
 
-The next bounded widening is now explicit too:
+The final proof is now real:
 
-- `effigy container data list` for one environment
-- read-only inventory before transfer or hook orchestration
-- export/import, media lifecycle, and `pull_production` still left for later
-  planning after inventory is real
+- task-owned seeding stayed on the shipped task, `container_session`, exec, and
+  Rhai surfaces rather than widening into a new product abstraction batch
+- one bounded real-project proof landed through `farmyard`
+- the proof exposed and closed two real product gaps: runtime volume-name
+  drift on generated compose, and stale generated compose reuse when only
+  assembly logic changed
 
 ## Exit Condition
 
@@ -94,4 +112,5 @@ This strict lane is complete when:
 
 ## Next Task
 
-Execute `282` to land bounded `effigy container data list` inventory.
+No further execution lives on `g02.015`. Stop in planning and choose the next
+remaining `g02` lane deliberately.

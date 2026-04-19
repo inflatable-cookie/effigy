@@ -26,9 +26,7 @@ mod tasks_probe;
 mod tasks_view;
 mod util;
 
-pub(crate) use deferral::{
-    builtin_can_be_explicitly_deferred, deferred_builtins_for_root, deferred_builtins_from_catalogs,
-};
+pub(crate) use deferral::{deferred_builtins_for_root, deferred_builtins_from_catalogs};
 pub use entrypoints::{resolve_command_root, run_command};
 pub use error::RunnerError;
 

@@ -178,6 +178,11 @@ fn assemble_php_mariadb_redis_stack() {
         "missing named volume:\n{}",
         result.compose_yaml
     );
+    assert!(
+        result.compose_yaml.contains("name: test-project-db-data"),
+        "missing explicit runtime volume name:\n{}",
+        result.compose_yaml
+    );
 
     // Should have a Dockerfile for php-fpm.
     assert!(result.dockerfiles.contains_key("app"));
@@ -250,6 +255,33 @@ fn assemble_full_lemp_stack() {
         result.config_files.keys().collect::<Vec<_>>()
     );
     assert!(result.config_files["web.conf"].contains("fastcgi_pass"));
+}
+
+#[test]
+fn generated_compose_pins_runtime_volume_names() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "db".to_string(),
+        catalog: "postgres".to_string(),
+        params: HashMap::new(),
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler.assemble(&services, "farmyard-dev", ".").unwrap();
+
+    assert!(
+        result.compose_yaml.contains("farmyard-dev-db-data:"),
+        "missing top-level volume key:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result.compose_yaml.contains("name: farmyard-dev-db-data"),
+        "missing explicit runtime volume name:\n{}",
+        result.compose_yaml
+    );
 }
 
 #[test]

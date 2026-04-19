@@ -273,4 +273,4 @@ Upon completion, Effigy has:
 - Environment/security patterns documented
 
 Next: carry the unfinished DX promotion and future-facing residue into
-[`g02.018`](../g02/018-research-promotion-and-carry-forward.md).
+[`docs/research/carry-forward-intake.md`](../../research/carry-forward-intake.md).

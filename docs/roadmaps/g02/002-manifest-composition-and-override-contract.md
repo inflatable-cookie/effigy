@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress
+Status: Complete
 Owner: Platform
 Created: 2026-04-11
 Depends on: 027, 028
@@ -239,7 +239,7 @@ that is explained in tooling.
 
 - [x] Prove that at least tasks/docs/release or another cross-feature slice can
       use the same composition model cleanly
-- [ ] Prove that demo planning can rely on the contract without needing a
+- [x] Prove that demo planning can rely on the contract without needing a
       demo-only loader
 
 ### Batch 02.5 - First Implementation Slice
@@ -254,20 +254,20 @@ that is explained in tooling.
 
 ### Batch 02.6 - Explainability and Operator UX Hardening
 
-- [ ] Improve conflict diagnostics so they identify the path and competing
+- [x] Improve conflict diagnostics so they identify the path and competing
       source fragments clearly
-- [ ] Improve inspection output so effective sources and overridden paths are
+- [x] Improve inspection output so effective sources and overridden paths are
       easier to trace quickly
-- [ ] Decide whether one narrower `effigy config` query surface is warranted
+- [x] Decide whether one narrower `effigy config` query surface is warranted
       before `g02.003` depends on composition
-- [ ] Prove the explainability contract in both text and JSON output
+- [x] Prove the explainability contract in both text and JSON output
 
 ## 8) Acceptance Criteria
 
 - [x] Effigy has one documented root composition direction for arbitrary
       manifest content
 - [x] Override behavior is explicit rather than implied
-- [ ] Split-file config does not require feature-specific semantics
+- [x] Split-file config does not require feature-specific semantics
 - [x] The design is inspectable enough that operators and agents can understand
       the effective config shape
 
@@ -401,8 +401,29 @@ Preferred proof:
 That is enough to validate feature-agnostic composition before `g02.003`
 depends on it. A real-repo migration can remain a later proof wave.
 
+## 12) Outcome
+
+Status: complete
+
+The general composition contract is now real product surface.
+
+What landed strongly enough to close the lane:
+
+- `[manifest].include` ships on the normal manifest path with nested fragments,
+  explicit override paths, cycle detection, and failure-first conflict
+  behavior
+- `effigy config --inspect` plus `--path <dotted.path>` expose include order,
+  override facts, effective value sources, and the final merged manifest in
+  both text and JSON
+- demos, docs policy, release config, and other surfaces now point at the same
+  general composition model instead of inventing feature-local loaders
+
+The explainability hardening work already closed in the shipped product path.
+Any later composition polish is optional follow-up, not a `g02.002` blocker.
+
 ## Next Task
 
-Use the active `g02.002` strict lane to harden composition explainability and
-operator UX next, then decide whether the surface is ready for `g02.003`
-planning to depend on directly.
+No further execution lives on `g02.002`.
+
+Return to `g02.007` for the deliberate `v0.3` release-prep and release-cut
+path.

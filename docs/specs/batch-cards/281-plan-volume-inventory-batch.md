@@ -60,4 +60,5 @@ The next explicit execution batch is now card `282`.
 
 ## Next Task
 
-Execute `282` to land bounded `effigy container data list` inventory.
+No further execution lives on this card. The inventory decision it made is now
+landed; continue from the active post-inventory planning card instead.

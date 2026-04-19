@@ -50,6 +50,136 @@ concurrent = [{ name = "term", task = "shell" }]
             expected_process: "term",
             expected_detail_substring: Some("task `shell` must use process name `shell`"),
         },
+        ManagedInvalidDefinitionCase {
+            workspace: "managed-lifecycle-missing-managed-flag",
+            manifest: r#"[tasks.dev]
+mode = "tui"
+container_session = "web"
+concurrent = [{ role = "lifecycle" }]
+"#,
+            expected_task: "dev",
+            expected_process: "process",
+            expected_detail_substring: Some("requires `[tasks.<name>.managed] container_lifecycle = true`"),
+        },
+        ManagedInvalidDefinitionCase {
+            workspace: "managed-lifecycle-missing-container-session",
+            manifest: r#"[tasks.dev]
+mode = "tui"
+concurrent = [{ role = "lifecycle" }]
+
+[tasks.dev.managed]
+container_lifecycle = true
+"#,
+            expected_task: "dev",
+            expected_process: "process",
+            expected_detail_substring: Some("requires `container_session = \"<name>\"`"),
+        },
+        ManagedInvalidDefinitionCase {
+            workspace: "managed-lifecycle-rejects-run",
+            manifest: r#"[tasks.dev]
+mode = "tui"
+container_session = "web"
+concurrent = [{ role = "lifecycle", run = "printf nope" }]
+
+[tasks.dev.managed]
+container_lifecycle = true
+"#,
+            expected_task: "dev",
+            expected_process: "process",
+            expected_detail_substring: Some("omit `run` and `task`"),
+        },
+        ManagedInvalidDefinitionCase {
+            workspace: "managed-shell-missing-container-session",
+            manifest: r#"[tasks.dev]
+mode = "tui"
+concurrent = [{ role = "shell" }]
+"#,
+            expected_task: "dev",
+            expected_process: "process",
+            expected_detail_substring: Some("`role = \"shell\"` requires `container_session = \"<name>\"`"),
+        },
+        ManagedInvalidDefinitionCase {
+            workspace: "managed-shell-rejects-run",
+            manifest: r#"[tasks.dev]
+mode = "tui"
+container_session = "web"
+concurrent = [{ role = "shell", run = "printf nope" }]
+"#,
+            expected_task: "dev",
+            expected_process: "process",
+            expected_detail_substring: Some("owns the container shell in this batch; omit `run` and `task`"),
+        },
+        ManagedInvalidDefinitionCase {
+            workspace: "managed-health-wait-missing-container-session",
+            manifest: r#"[tasks.dev]
+mode = "tui"
+concurrent = [{ role = "lifecycle" }]
+
+[tasks.dev.managed]
+container_lifecycle = true
+health_wait = true
+"#,
+            expected_task: "dev",
+            expected_process: "process",
+            expected_detail_substring: Some("`role = \"lifecycle\"` requires `container_session = \"<name>\"`"),
+        },
+        ManagedInvalidDefinitionCase {
+            workspace: "managed-health-wait-missing-lifecycle",
+            manifest: r#"[tasks.dev]
+mode = "tui"
+container_session = "web"
+concurrent = [{ name = "api", run = "printf api" }]
+
+[tasks.dev.managed]
+health_wait = true
+"#,
+            expected_task: "dev",
+            expected_process: "managed",
+            expected_detail_substring: Some("requires one `concurrent` entry with `role = \"lifecycle\"`"),
+        },
+        ManagedInvalidDefinitionCase {
+            workspace: "managed-ready-message-requires-health-wait",
+            manifest: r#"[tasks.dev]
+mode = "tui"
+container_session = "web"
+concurrent = [{ role = "lifecycle" }]
+
+[tasks.dev.managed]
+container_lifecycle = true
+ready_message = "http://project.test"
+"#,
+            expected_task: "dev",
+            expected_process: "managed",
+            expected_detail_substring: Some("`managed.ready_message` requires `managed.health_wait = true`"),
+        },
+        ManagedInvalidDefinitionCase {
+            workspace: "managed-gateway-missing-container-session",
+            manifest: r#"[tasks.dev]
+mode = "tui"
+concurrent = [{ role = "lifecycle" }]
+
+[tasks.dev.managed]
+container_lifecycle = true
+gateway = true
+"#,
+            expected_task: "dev",
+            expected_process: "process",
+            expected_detail_substring: Some("`role = \"lifecycle\"` requires `container_session = \"<name>\"`"),
+        },
+        ManagedInvalidDefinitionCase {
+            workspace: "managed-gateway-missing-lifecycle",
+            manifest: r#"[tasks.dev]
+mode = "tui"
+container_session = "web"
+concurrent = [{ name = "api", run = "printf api" }]
+
+[tasks.dev.managed]
+gateway = true
+"#,
+            expected_task: "dev",
+            expected_process: "managed",
+            expected_detail_substring: Some("`managed.gateway = true` requires one `concurrent` entry with `role = \"lifecycle\"`"),
+        },
     ];
 
     assert_managed_invalid_definition_case_table(&cases);

@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
 use crate::{
-    BootstrapArgs, ChangelogArgs, ChangelogSubcommand, Command, ContainerArgs, ContainerSubcommand,
-    ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs,
-    DemoHistoryOutcome, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus,
-    DemoSubcommand, DistributionArgs, DistributionSubcommand, DocsArgs, DocsBlockRequirement,
-    DocsSubcommand, DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic,
-    InternalGatewayArgs, InternalRhaiArgs, ReleaseArgs, ReleaseSubcommand, ServiceArgs,
-    ServiceSubcommand, TaskInvocation, TasksArgs,
+    BootstrapArgs, ChangelogArgs, ChangelogSubcommand, Command, ContainerArgs,
+    ContainerDataSubcommand, ContainerSubcommand, ContractsArgs, ContractsCheckMode,
+    ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs, DemoHistoryOutcome, DemoListGap,
+    DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSubcommand, DistributionArgs,
+    DistributionSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, ExecArgs,
+    GatewayArgs, GatewaySubcommand, HelpTopic, InternalGatewayArgs, InternalRhaiArgs, ReleaseArgs,
+    ReleaseSubcommand, ServiceArgs, ServiceSubcommand, TaskInvocation, TasksArgs,
 };
 
 use super::value_parsing::{next_required_value, parse_pretty_bool, parse_repo_path};
@@ -161,7 +161,7 @@ where
         other => return Err(unknown_argument(other)),
     };
 
-    while let Some(arg) = args.next() {
+    for arg in args {
         match arg.as_str() {
             "--json" => output_json = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Gateway)),
@@ -1527,8 +1527,8 @@ fn parse_container_command<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
-    const ACTIONS: [&str; 8] = [
-        "up", "down", "status", "stats", "logs", "shell", "reset", "eject",
+    const ACTIONS: [&str; 9] = [
+        "up", "down", "status", "stats", "logs", "shell", "reset", "data", "eject",
     ];
 
     let mut args = args.into_iter();
@@ -1557,6 +1557,7 @@ where
         "logs" => parse_container_logs(name, args),
         "shell" => parse_container_shell(name, args),
         "reset" => parse_container_reset(name, args),
+        "data" => parse_container_data(name, args),
         "eject" => parse_container_eject(name, args),
         other => Err(unknown_argument(other)),
     }
@@ -1701,6 +1702,144 @@ where
     I: IntoIterator<Item = String>,
 {
     parse_named_container_simple_subcommand(name, args, |name| ContainerSubcommand::Eject { name })
+}
+
+fn parse_container_data<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcmd) = args.next() else {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container data` requires a subcommand; use `list`, `export`, `import`, or `pull-production` in this batch".to_owned(),
+        ));
+    };
+
+    match subcmd.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::Container)),
+        "list" => parse_container_data_list(name, args),
+        "export" => parse_container_data_export(name, args),
+        "import" => parse_container_data_import(name, args),
+        "pull-production" => parse_container_data_pull_production(name, args),
+        other => Err(unknown_argument(other)),
+    }
+}
+
+fn parse_container_data_list<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Data {
+            name,
+            subcommand: ContainerDataSubcommand::List,
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_container_data_export<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    parse_container_data_transfer(name, args, "export", |volume, path| {
+        ContainerDataSubcommand::Export { volume, path }
+    })
+}
+
+fn parse_container_data_import<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    parse_container_data_transfer(name, args, "import", |volume, path| {
+        ContainerDataSubcommand::Import { volume, path }
+    })
+}
+
+fn parse_container_data_pull_production<I>(
+    name: Option<String>,
+    args: I,
+) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Data {
+            name,
+            subcommand: ContainerDataSubcommand::PullProduction,
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_container_data_transfer<I>(
+    name: Option<String>,
+    args: I,
+    action: &str,
+    build: impl FnOnce(String, PathBuf) -> ContainerDataSubcommand,
+) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let volume = args.next().ok_or_else(|| {
+        CliParseError::InvalidArguments(format!(
+            "`effigy container data {action}` requires <VOLUME> and <PATH>"
+        ))
+    })?;
+    let path = PathBuf::from(args.next().ok_or_else(|| {
+        CliParseError::InvalidArguments(format!(
+            "`effigy container data {action}` requires <VOLUME> and <PATH>"
+        ))
+    })?);
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Data {
+            name,
+            subcommand: build(volume, path),
+        },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_container_logs<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>

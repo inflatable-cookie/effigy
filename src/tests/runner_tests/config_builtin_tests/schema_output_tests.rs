@@ -38,9 +38,15 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
             "teardown_policy = \"always\"",
             "[test.runners]",
             "concurrent = [",
+            "[tasks.dev.managed]",
+            "container_lifecycle = true",
+            "gateway = true",
+            "health_wait = true",
+            "ready_message = \"http://projectname.test\"",
+            "role = \"shell\"",
             "task = \"test vitest \\\"user service\\\"\"",
             "run = [{ id = \"tests\", task = \"test vitest \\\"user service\\\"\" }, { id = \"report\", run = \"printf validate-ok\", depends_on = [\"tests\"] }]",
-            "{ task = \"catalog-a/api\", start = 1, tab = 3, shutdown_on_exit = true }",
+            "{ name = \"services\", role = \"lifecycle\", start = 1, tab = 1, shutdown_on_exit = true }",
         ],
     );
 }

@@ -6727,6 +6727,109 @@ fn write_container_fixture(root: &std::path::Path, health_check: Option<&str>, m
     write_container_fixture_with_task(root, health_check, mount, false);
 }
 
+fn write_generated_container_volume_fixture(root: &std::path::Path) {
+    fs::create_dir_all(root.join("app")).expect("mkdir app dir");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "attached"
+profile = "dev"
+project_name = "fixture-web-dev"
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "node"
+version = "22"
+
+[containers.web.services.db]
+catalog = "mariadb"
+"#,
+    )
+    .expect("write generated container manifest");
+}
+
+fn write_generated_container_media_fixture(root: &std::path::Path) {
+    fs::create_dir_all(root.join("app")).expect("mkdir app dir");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "attached"
+profile = "dev"
+project_name = "fixture-web-dev"
+primary_service = "app"
+
+[containers.web.data]
+media = ["storage/uploads:/var/www/html/storage/uploads"]
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+
+[containers.web.services.db]
+catalog = "mariadb"
+"#,
+    )
+    .expect("write generated media manifest");
+}
+
+fn write_generated_container_pull_production_fixture(root: &std::path::Path) {
+    fs::create_dir_all(root.join("app")).expect("mkdir app dir");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts dir");
+    fs::write(
+        root.join("scripts/pull-production.sh"),
+        r#"#!/bin/sh
+set -eu
+printf "%s" "$EFFIGY_CONTAINER_NAME" > "$PWD/pull-production.txt"
+"#,
+    )
+    .expect("write pull script");
+    let mut perms = fs::metadata(root.join("scripts/pull-production.sh"))
+        .expect("stat pull script")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(root.join("scripts/pull-production.sh"), perms).expect("chmod pull script");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "attached"
+profile = "dev"
+project_name = "fixture-web-dev"
+primary_service = "app"
+
+[containers.web.data]
+pull_production = "scripts/pull-production.sh"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+"#,
+    )
+    .expect("write generated pull-production manifest");
+}
+
 fn write_container_fixture_with_task(
     root: &std::path::Path,
     health_check: Option<&str>,
@@ -6873,12 +6976,31 @@ printf "%s\n" "$*" >> "$EFFIGY_TEST_DOCKER_ARGS_FILE"
 subcmd=""
 for arg in "$@"; do
   case "$arg" in
-    up|down|ps|logs|exec|kill)
+    up|down|ps|logs|exec|kill|run)
       subcmd="$arg"
       break
       ;;
   esac
 done
+if [ "${1:-}" = "volume" ] && [ "${2:-}" = "ls" ]; then
+  printf "fixture-web-dev-app-node-modules\tlocal\t\n"
+  printf "fixture-web-dev-db-data\tlocal\t\n"
+  exit 0
+fi
+if [ "${1:-}" = "volume" ] && [ "${2:-}" = "inspect" ]; then
+  case "${3:-}" in
+    fixture-web-dev-db-data)
+      printf '[{"Name":"fixture-web-dev-db-data","Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-db-data/_data","UsageData":{"Size":4096}}]\n'
+      ;;
+    fixture-web-dev-app-node-modules)
+      printf '[{"Name":"fixture-web-dev-app-node-modules","Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-app-node-modules/_data","UsageData":{"Size":1024}}]\n'
+      ;;
+    *)
+      printf "[]\n"
+      ;;
+  esac
+  exit 0
+fi
 case "$subcmd" in
   up)
     printf "compose-up\n"
@@ -6901,6 +7023,33 @@ case "$subcmd" in
     ;;
   exec)
     printf "exec-ok\n"
+    ;;
+  run)
+    case "$*" in
+      *" czf "*)
+        output_dir=""
+        output_file=""
+        for arg in "$@"; do
+          case "$arg" in
+            *:/output)
+              output_dir="${arg%:/output}"
+              ;;
+            /output/*)
+              output_file="${arg#/output/}"
+              ;;
+          esac
+        done
+        : > "$output_dir/$output_file"
+        printf "export-ok\n"
+        ;;
+      *" xzf "*)
+        printf "import-ok\n"
+        ;;
+      *)
+        printf "unexpected docker run invocation: %s\n" "$*" >&2
+        exit 1
+        ;;
+    esac
     ;;
   down)
     printf "compose-down\n"
@@ -6955,6 +7104,264 @@ fn cli_container_status_json_reports_default_container_contract() {
     assert_eq!(parsed["result"]["colima_running"], false);
     assert_eq!(parsed["result"]["ports"][0], "8080:80");
     assert_eq!(parsed["result"]["mounts"][0], "./app:/workspace");
+}
+
+#[test]
+fn cli_container_data_list_json_reports_managed_volumes() {
+    let root = temp_workspace("container-data-list");
+    write_generated_container_volume_fixture(&root);
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+
+    fs::write(&colima_state, "running\n").expect("seed colima state");
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("data")
+        .arg("list")
+        .arg("--repo")
+        .arg(&root)
+        .arg("--json")
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "data list failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.container.data-list.v1");
+    assert_eq!(parsed["result"]["container"], "web");
+    assert_eq!(parsed["result"]["project_name"], "fixture-web-dev");
+    assert_eq!(parsed["result"]["volume_count"], 2);
+    assert_eq!(
+        parsed["result"]["volumes"][0]["classification"],
+        "ephemeral"
+    );
+    assert_eq!(
+        parsed["result"]["volumes"][1]["classification"],
+        "persistent"
+    );
+    assert_eq!(parsed["result"]["volumes"][0]["size_bytes"], 1024);
+    assert_eq!(parsed["result"]["volumes"][1]["size_bytes"], 4096);
+    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
+    assert!(docker_invocations.contains("volume ls"));
+    assert!(docker_invocations.contains("volume inspect fixture-web-dev-db-data"));
+}
+
+#[test]
+fn cli_generated_container_status_json_reports_media_mounts() {
+    let root = temp_workspace("container-generated-media-status");
+    write_generated_container_media_fixture(&root);
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("status")
+        .arg("--repo")
+        .arg(&root)
+        .arg("--json")
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "status failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(
+        parsed["result"]["media_mounts"][0],
+        "storage/uploads:/var/www/html/storage/uploads"
+    );
+    let compose = fs::read_to_string(root.join("infra/dev/.effigy-compose.generated.yml"))
+        .expect("read compose");
+    let expected = format!(
+        "{}:/var/www/html/storage/uploads",
+        root.join("storage/uploads").display()
+    );
+    assert!(compose.contains(&expected), "compose: {compose}");
+}
+
+#[test]
+fn cli_container_data_export_json_reports_transfer_contract() {
+    let root = temp_workspace("container-data-export");
+    write_generated_container_volume_fixture(&root);
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let archive = root.join("backup.tar.gz");
+
+    fs::write(&colima_state, "running\n").expect("seed colima state");
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("data")
+        .arg("export")
+        .arg("fixture-web-dev-db-data")
+        .arg(&archive)
+        .arg("--repo")
+        .arg(&root)
+        .arg("--json")
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "data export failed: {output:?}");
+    assert!(archive.exists(), "expected export archive to exist");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(
+        parsed["result"]["schema"],
+        "effigy.container.data-export.v1"
+    );
+    assert_eq!(parsed["result"]["action"], "export");
+    assert_eq!(
+        parsed["result"]["volume"]["name"],
+        "fixture-web-dev-db-data"
+    );
+    assert_eq!(
+        parsed["result"]["output_path"],
+        archive.display().to_string()
+    );
+    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
+    assert!(docker_invocations.contains("run --rm"));
+    assert!(docker_invocations.contains("fixture-web-dev-db-data:/source:ro"));
+}
+
+#[test]
+fn cli_container_data_import_json_reports_transfer_contract() {
+    let root = temp_workspace("container-data-import");
+    write_generated_container_volume_fixture(&root);
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let archive = root.join("backup.tar.gz");
+    fs::write(&archive, "fake archive").expect("write archive");
+
+    fs::write(&colima_state, "running\n").expect("seed colima state");
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("data")
+        .arg("import")
+        .arg("fixture-web-dev-db-data")
+        .arg(&archive)
+        .arg("--repo")
+        .arg(&root)
+        .arg("--json")
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "data import failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(
+        parsed["result"]["schema"],
+        "effigy.container.data-import.v1"
+    );
+    assert_eq!(parsed["result"]["action"], "import");
+    assert_eq!(
+        parsed["result"]["volume"]["name"],
+        "fixture-web-dev-db-data"
+    );
+    assert_eq!(
+        parsed["result"]["input_path"],
+        archive.display().to_string()
+    );
+    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
+    assert!(docker_invocations.contains("run --rm"));
+    assert!(docker_invocations.contains("fixture-web-dev-db-data:/target"));
+}
+
+#[test]
+fn cli_container_data_pull_production_json_reports_hook_contract() {
+    let root = temp_workspace("container-data-pull-production");
+    write_generated_container_pull_production_fixture(&root);
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("data")
+        .arg("pull-production")
+        .arg("--repo")
+        .arg(&root)
+        .arg("--json")
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    assert!(
+        output.status.success(),
+        "pull-production failed: {output:?}"
+    );
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(
+        parsed["result"]["schema"],
+        "effigy.container.data-pull-production.v1"
+    );
+    assert_eq!(parsed["result"]["hook"], "scripts/pull-production.sh");
+    assert_eq!(parsed["result"]["container"], "web");
+    assert_eq!(
+        fs::read_to_string(root.join("pull-production.txt")).expect("read marker"),
+        "web"
+    );
+    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
+    assert!(
+        docker_invocations.contains(" up -d"),
+        "got: {docker_invocations}"
+    );
 }
 
 #[test]

@@ -41,6 +41,34 @@ fn write_and_cache_hit() {
 }
 
 #[test]
+fn write_regenerates_when_rendered_compose_changes_under_same_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = ComposeOutput::new(dir.path().to_path_buf());
+
+    let first = crate::assembly::AssemblyResult {
+        compose_yaml: "services:\n  app:\n    image: test:v1\n".to_string(),
+        dockerfiles: HashMap::new(),
+        config_files: HashMap::new(),
+        volumes: Vec::new(),
+    };
+    let second = crate::assembly::AssemblyResult {
+        compose_yaml: "services:\n  app:\n    image: test:v2\n".to_string(),
+        dockerfiles: HashMap::new(),
+        config_files: HashMap::new(),
+        volumes: Vec::new(),
+    };
+
+    let write1 = output.write(&first, "manifest-v1").unwrap();
+    assert!(write1.regenerated);
+
+    let write2 = output.write(&second, "manifest-v1").unwrap();
+    assert!(write2.regenerated);
+
+    let stored = std::fs::read_to_string(output.generated_compose_path()).unwrap();
+    assert_eq!(stored, second.compose_yaml);
+}
+
+#[test]
 fn write_creates_dockerfiles_and_configs() {
     let dir = tempfile::tempdir().unwrap();
     let output = ComposeOutput::new(dir.path().to_path_buf());

@@ -15,17 +15,29 @@ use effigy_cli::{
 use super::error::RunnerError;
 use super::execute::run_manifest_task_with_cwd;
 pub(in crate::runner) fn run_internal_rhai(args: InternalRhaiArgs) -> Result<String, RunnerError> {
+    execute_repo_rhai_script(
+        &required_repo_root(&args)?,
+        &required_task_name(&args)?,
+        &args.file,
+        &load_script_args_for_internal(&args)?,
+    )?;
+    Ok(String::new())
+}
+
+pub(in crate::runner) fn execute_repo_rhai_script(
+    repo_root: &Path,
+    task_name: &str,
+    file: &Path,
+    args: &[String],
+) -> Result<(), RunnerError> {
     let context = ScriptContext {
-        cwd: std::env::current_dir().map_err(RunnerError::Cwd)?,
-        repo_root: required_repo_root(&args)?,
-        task_name: required_task_name(&args)?,
+        cwd: repo_root.to_path_buf(),
+        repo_root: repo_root.to_path_buf(),
+        task_name: task_name.to_owned(),
         stop_requested: install_stop_requested_flag().map_err(map_rhai_error)?,
     };
-    let script = load_script(&args.file, &context.cwd).map_err(map_rhai_error)?;
-    let script_args = load_script_args_for_internal(&args)?;
-    execute_rhai_script(&context, &script, &script_args, &host_callbacks())
-        .map_err(map_rhai_error)?;
-    Ok(String::new())
+    let script = load_script(file, &context.cwd).map_err(map_rhai_error)?;
+    execute_rhai_script(&context, &script, args, &host_callbacks()).map_err(map_rhai_error)
 }
 
 fn required_repo_root(args: &InternalRhaiArgs) -> Result<PathBuf, RunnerError> {
