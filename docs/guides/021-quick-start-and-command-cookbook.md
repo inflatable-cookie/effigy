@@ -40,6 +40,19 @@ effigy doctor --verbose
 If routing or task ownership is not obvious yet, stop and use
 `effigy tasks --resolve <selector>` before guessing.
 
+If the repo is web- or service-heavy, the first useful local-dev path is now:
+
+```sh
+effigy service list
+effigy container up
+effigy gateway status
+effigy exec <command>
+effigy dev
+```
+
+Use those in order when the repo has bundled service fragments, a managed
+container environment, local domains, and one repo-owned `dev` front door.
+
 ## 2) Minimal `effigy.toml`
 
 ```toml
@@ -73,6 +86,16 @@ When a repo has a multi-process dev stack, move that lifecycle into the
 manifest too. A managed `concurrent` entry can set `shutdown_on_exit = true`
 when one process should shut the rest of the stack down cleanly, such as an
 Electron main window or a primary app shell.
+
+When a repo wants `effigy dev` to own the environment rather than just the tab
+runtime, prefer the shipped managed-task contract:
+
+- `container_session = "<name>"` on the task
+- `[tasks.<name>.managed].container_lifecycle = true`
+- optional `managed.health_wait`, `managed.ready_message`, and
+  `managed.gateway = true`
+- `role = "lifecycle"` and `role = "shell"` in `concurrent` where the fuller
+  local-dev contract fits
 
 For more patterns, use
 [`022-manifest-cookbook.md`](./022-manifest-cookbook.md).
@@ -124,6 +147,19 @@ effigy config --schema --minimal
 
 Use these when the repo still depends on scattered scripts and ad-hoc setup.
 
+### Bring up a local service stack
+
+```sh
+effigy service list
+effigy container up
+effigy gateway status
+effigy exec composer install
+effigy dev
+```
+
+Use this chain when the repo has local service fragments, one named container
+environment, local domains, and one repo-owned managed dev task.
+
 ### Bootstrap a repo from anywhere
 
 ```sh
@@ -151,6 +187,8 @@ Use JSON mode when CI, scripts, or agents are consuming Effigy output.
   [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - Need more manifest patterns:
   [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- Need the shipped managed-session and repo-owned `effigy dev` contract:
+  [`012-dev-process-manager-tui.md`](./012-dev-process-manager-tui.md)
 - Need the demo registry and browser/operator surface:
   [`058-demo-system-guide.md`](./058-demo-system-guide.md)
 - Need a generic migration path from demo scripts to native demos:
@@ -175,17 +213,21 @@ After this guide, you should be able to:
 
 - discover what a repo exposes through Effigy
 - create or recognize a minimal `effigy.toml`
+- recognize the service/container/gateway/exec/dev chain when a repo has a
+  fuller local-dev surface
 - run a task, inspect routing, and switch to JSON mode without guessing
 
 ## Related Guides
 
 - [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
 - [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
+- [`012-dev-process-manager-tui.md`](./012-dev-process-manager-tui.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
+- [`063-container-system-guide.md`](./063-container-system-guide.md)
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)

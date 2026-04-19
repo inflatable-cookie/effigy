@@ -13,6 +13,14 @@ Effigy's distribution surface is intended to be:
 That means a repo can use one distribution primitive, or adopt a fuller
 distribution flow, without accepting a single mandatory release protocol.
 
+The current release boundary is blunt:
+
+- Effigy is using this surface natively for its own release and distribution
+  work
+- several primitives are already reusable across other repos
+- the broader `distribution first-publish` story is still intentionally
+  bounded rather than universally generic
+
 ## What Exists Today
 
 Effigy already ships these distribution commands:
@@ -69,8 +77,9 @@ This contract is still intentionally bounded:
 - metadata file requirements
 - closeout defaults
 
-That is enough to make `validate-metadata`, `preflight`, `first-publish`,
-`write-summary`, and `generate-closeout` meaningfully repo-configurable
+That is enough to make `validate-metadata`, `preflight`, bounded
+`first-publish`, `write-summary`, and `generate-closeout` meaningfully
+repo-configurable
 without forcing a full release-orchestration model on every repo.
 
 When a repo adopts `[distribution]`, `validate-metadata` no longer assumes
@@ -106,7 +115,8 @@ publish flow.
 ### Use a Fuller Distribution Flow
 
 If your repo wants Effigy to orchestrate preflight and first-publish checks,
-the intended direction is an optional manifest-driven distribution contract.
+the intended direction is still an optional manifest-driven distribution
+contract rather than a mandatory Effigy-shaped release model.
 
 That surface is now being productized so repos can opt in to:
 
@@ -129,9 +139,9 @@ without inheriting Effigy's exact release policy.
 - `distribution validate-artifacts`
 - `distribution generate-closeout`
 - `distribution write-summary`
-- `distribution first-publish` when package/publish/closeout policy fits your
-  repo and any Effigy-specific install probes are either supported or disabled
-  through `[distribution.publish]`
+- bounded `distribution first-publish` when package/publish/closeout policy
+  fits your repo and any Effigy-specific install probes are either supported or
+  disabled through `[distribution.publish]`
 
 The current consumer proof in `convergence` shows that `validate-artifacts`
 and `generate-closeout` already compose credibly with repo-owned
@@ -139,17 +149,17 @@ and `generate-closeout` already compose credibly with repo-owned
 `[distribution.closeout]` policy even outside Effigy's self-hosting release
 flow.
 
-### Still Effigy-Biased Today
+### Still Bounded Or Effigy-Biased Today
 
 - `distribution preflight`
 - `distribution first-publish` for repos that need a non-Cargo install source
   or a broader publish-orchestration model than the current built-in matrix
 
-Those commands currently carry more Effigy-specific assumptions about things
-like docs and smoke task shape, Cargo-centric publish/install flow, and the
-exact built-in verification matrix. The active product direction is to keep
-moving those assumptions behind optional manifest config instead of baking them
-into the command surface.
+Those commands currently carry more Effigy-specific or Cargo-centric
+assumptions about things like docs and smoke task shape, publish/install flow,
+and the exact built-in verification matrix. The active product direction is to
+keep moving those assumptions behind optional manifest config instead of baking
+them into the command surface.
 
 ## Recommended Adoption Pattern
 
@@ -163,6 +173,12 @@ into the command surface.
    your repo's release model.
 
 This keeps distribution support helpful instead of prescriptive.
+
+If you need one sentence for release notes or rollout planning, use this:
+
+- Effigy ships native release/distribution tooling for its own repo and a
+  reusable primitive layer for other repos, while the fuller first-publish path
+  remains intentionally bounded.
 
 ## Related Guides
 
@@ -183,5 +199,5 @@ areas still remain intentionally repo-owned.
 
 If you want reusable distribution support across repos, start with the current
 optional `[distribution]` contract for metadata validation, artifact evidence,
-and closeout first, then decide whether another published-consumer proof is
-needed before widening the full first-publish orchestration path again.
+and closeout first, then decide whether another consumer proof is needed
+before widening the full first-publish orchestration path again.

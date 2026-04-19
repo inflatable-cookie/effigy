@@ -13,7 +13,7 @@ Pick the snippet by the repo shape in front of you:
 
 - small single-language repo: start with `Single Rust Repo` or `JS App`
 - multi-catalog workspace: use `Mixed Monorepo Root + Child Catalogs`
-- local dev stack: use `Managed TUI Dev Stack`
+- local dev stack: use `Managed Dev Front Door`
 - test ownership and env clarity: use `Built-in Test Suites` and `Cargo
   Isolation`
 - repo-health checks: use `Repository Scanner Config`
@@ -122,7 +122,7 @@ effigy api/dev
 effigy web/validate
 ```
 
-## 4) Managed TUI Dev Stack
+## 4) Managed Dev Front Door
 
 ```toml
 [catalog]
@@ -131,18 +131,26 @@ alias = "app"
 [tasks.dev]
 mode = "tui"
 fail_on_non_zero = true
+container_session = "default"
+
+[tasks.dev.managed]
+container_lifecycle = true
+health_wait = true
+ready_message = "App ready at http://project.test"
+gateway = true
 
 concurrent = [
-  { task = "app/api", start = 1, tab = 2 },
+  { name = "app", role = "lifecycle", start = 1, tab = 1 },
   { task = "app/worker", start = 2, tab = 3, start_after_ms = 1200 },
-  { run = "bun run web:dev", start = 3, tab = 1, shutdown_on_exit = true },
-  { task = "shell", start = 4, tab = 4 }
+  { run = "bun run web:dev", start = 3, tab = 2, shutdown_on_exit = true },
+  { name = "terminal", role = "shell", start = 4, tab = 4 }
 ]
 
 [tasks.dev.profiles.admin]
 concurrent = [
-  { task = "app/api", start = 1, tab = 2 },
-  { run = "bun run admin:dev", start = 2, tab = 1 }
+  { name = "app", role = "lifecycle", start = 1, tab = 1 },
+  { run = "bun run admin:dev", start = 2, tab = 2 },
+  { name = "terminal", role = "shell", start = 3, tab = 3 }
 ]
 ```
 
@@ -153,9 +161,17 @@ effigy dev
 effigy dev admin
 ```
 
+Use this when the repo wants one named task to own the local environment and
+the tab runtime together. The fuller shipped contract lets `effigy dev`:
+
+- start the named `container_session`
+- wait on container health before showing readiness
+- project one repo-owned ready message
+- auto-start the shipped gateway when the container declares local domains
+- open an embedded container shell with `role = "shell"`
+
 Use `shutdown_on_exit = true` on the process that should act as the session
-root. This is especially useful for Electron-style stacks where closing the
-main app window should stop the rest of the dev processes too.
+root when one app process should still stop the rest of the managed stack.
 
 ## 5) Built-in Test Suites as Source of Truth
 

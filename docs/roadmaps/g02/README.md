@@ -28,6 +28,7 @@ Current milestones:
 - [`015-persistent-data-and-volume-lifecycle.md`](./015-persistent-data-and-volume-lifecycle.md) (complete; reset retention, inventory, transfer, media and pull hooks, real-project proof, and proof-exposed volume/caching fixes are all shipped)
 - [`016-multi-project-coordination.md`](./016-multi-project-coordination.md) (complete; cross-project status, route dashboard, generated-compose auto-allocation, resource stats, and bounded shared services are all shipped)
 - [`017-remaining-shell-cleanup-and-crate-extraction-program.md`](./017-remaining-shell-cleanup-and-crate-extraction-program.md) (closed; the queued shell-cleanup and extraction jobs that were worth doing are now landed, and the remaining root-crate untidiness is acceptable rather than roadmap-worthy)
+- [`019-v0-3-surface-audit-and-ux-simplification.md`](./019-v0-3-surface-audit-and-ux-simplification.md) (planned; the `v0.3` audit follow-up will align front-door docs, release refs, and local-dev UX around the shipped surface without widening product scope)
 Container infrastructure design document:
 
 - [`../architecture/020-container-infrastructure-design.md`](../architecture/020-container-infrastructure-design.md)
@@ -59,3 +60,6 @@ Resume `g02.007` for the deliberate `v0.3` release-prep path.
 
 Return to `115` and the release protocol surfaces, then stop before any
 irreversible release action unless explicitly requested.
+
+After that lane settles, move to `g02.019` for the surfaced audit cleanup and
+UX-simplification batch.

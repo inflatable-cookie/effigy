@@ -376,7 +376,7 @@ fn v0_2_13_repo_owned_smoke_task_runs_against_the_binary() {
     );
 }
 
-fn parse_result<'a>(json: &'a Value) -> &'a Value {
+fn parse_result(json: &Value) -> &Value {
     json.get("result").expect("result")
 }
 

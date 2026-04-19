@@ -34,14 +34,23 @@ For narrative workflow guidance instead of lookup, start with:
 - Need health checks or routing diagnosis for one selector: use `effigy doctor`.
 - Need tests, watch mode, init, or migrate: use `effigy test`, `watch`,
   `init`, or `migrate`.
+- Need to inspect bundled service fragments or take local ownership: use
+  `effigy service`.
+- Need one ad-hoc command inside the dev container without opening a shell:
+  use `effigy exec`.
+- Need host-local DNS, route status, or TLS setup for container domains: use
+  `effigy gateway`.
 - Need machine-readable output: add `--json`.
 - Need repo-health scanners: use `effigy scan`.
 - Need to clone or update a repo and run its declared bring-up path: use
   `effigy bootstrap`.
 - Need proof/demo discovery, inspection, or one-off proof execution: use
   `effigy demo`.
-- Need a host-clean local web/service environment: use `effigy container`.
+- Need a host-clean local web/service environment or data lifecycle tools: use
+  `effigy container`.
 - Need release workflows: use `effigy release`.
+- Need distribution validation, GLIBC checks, artifact validation, or
+  first-publish evidence: use `effigy distribution`.
 
 ## 1) Primary Commands
 
@@ -49,11 +58,14 @@ For narrative workflow guidance instead of lookup, start with:
 | --- | --- | --- | --- | --- |
 | `effigy help` / `effigy --help` | Show CLI help and topic guidance | `--json` | `effigy.help.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
 | `effigy tasks` | List discovered catalogs/tasks and probe routing | `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1` | `016-task-routing-precedence.md` |
+| `effigy service` | Inspect the layered service catalog and extract bundled fragments into repo-owned overrides | `list`, `extract`, `--repo`, `--dir`, `--json` | service commands render command-envelope JSON with catalog payloads | `063-container-system-guide.md` |
+| `effigy exec` | Run one ad-hoc command inside the manifest's dev-context container | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
+| `effigy gateway` | Operate the host-native local DNS and reverse-proxy gateway for container-owned routes | `up`, `down`, `status`, `setup-tls`, `--json` | gateway commands render command-envelope JSON with gateway payloads | `063-container-system-guide.md` |
 | `effigy doctor` | Run health checks and optional explain-mode selection diagnostics | `--repo`, `--fix`, `--verbose`, `--json` | `effigy.doctor.v1`, `effigy.doctor.explain.v1` | `018-doctor-explain-mode.md` |
 | `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion | `check-links`, `check-json-examples`, `check-headings`, `check-paths`, `check-contains`, `check-forbidden`, `check-index`, `check-next-action`, `check-workflow-paths`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1` | `029-docs-qa-checklist-and-validation.md` |
 | `effigy contracts` | Validate reusable JSON contract artifacts such as selection payloads and schema-index contract coverage | `check-json`, `validate-selection`, `--repo`, `--index`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--contract`, `--artifact`, `--json` | `effigy.contracts.check-json.v1`, `effigy.contracts.selection-validation.v1` | `017-json-output-contracts.md` |
-| `effigy distribution` | Run non-publish distribution preflight checks, validate release/distribution metadata, write first-publish summary contracts, check artifact bundles, and generate acceptance closeout logs from captured artifacts | `preflight`, `validate-metadata`, `validate-artifacts`, `generate-closeout`, `write-summary`, `--repo`, `--tag`, `--skip-docs`, `--skip-smoke`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--output`, `--owner`, `--expect-homebrew`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.distribution.preflight.v1`, `effigy.distribution.metadata.v1`, `effigy.distribution.artifacts.v1`, `effigy.distribution.closeout.v1`, `effigy.distribution.summary.v1` | `044-distribution-first-publish-execution-runbook.md` |
-| `effigy container` | Operate manifest-defined Colima-backed local container environments for web/service-heavy repos without making `dev` a global built-in | `up`, `down`, `status`, `logs`, `shell`, `reset`, `--repo`, `--attach`, `--detach`, `--service`, `--command`, `--follow`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1` | `063-container-system-guide.md` |
+| `effigy distribution` | Run distribution preflight, GLIBC floor validation, first-publish evidence capture, artifact validation, and closeout generation | `preflight`, `validate-metadata`, `check-glibc-floor`, `first-publish`, `validate-artifacts`, `generate-closeout`, `write-summary`, `--repo`, `--tag`, `--skip-docs`, `--skip-smoke`, `--skip-homebrew`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--output`, `--owner`, `--expect-homebrew`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.distribution.preflight.v1`, `effigy.distribution.metadata.v1`, `effigy.distribution.artifacts.v1`, `effigy.distribution.closeout.v1`, `effigy.distribution.summary.v1` | `062-distribution-system-guide.md` |
+| `effigy container` | Operate manifest-defined Colima-backed local environments, data lifecycle, shared-service reuse, and cross-project status views | `up`, `down`, `status`, `stats`, `logs`, `shell`, `data`, `reset`, `eject`, `--repo`, `--attach`, `--detach`, `--service`, `--command`, `--follow`, `--all`, `--keep-data`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1` | `063-container-system-guide.md` |
 | `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, and optionally start the declared dev task | `<git-url>`, `--path`, `--branch`, `--start`, `--plan`, `--json` | `effigy.bootstrap.v1` | `057-bootstrap-repo-bringup.md` |
 | `effigy demo` | Discover repo-owned proof demos, browse them in the demo browser, inspect active/latest state, query retained attempt history, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `history`, `run`, `stop`, `input`, `resize`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.history.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.input.v1`, `effigy.demo.resize.v1`, `effigy.demo.rerun.v1` | `058-demo-system-guide.md` |
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--json`, `--markdown`, `--out`, `--fail-on-findings`, `--show-warnings` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
@@ -104,18 +116,40 @@ effigy docs check-workflow-paths [--repo <PATH>] [--dir <PATH>] [--json]
 effigy docs add-log-index [--repo <PATH>] <LOG_FILE> [--json]
 effigy contracts check-json [--repo <PATH>] [--index <PATH>] [--fast|--full] [--changed-only <BASE>] [--print-selected|--print-selected=json] [--json]
 effigy contracts validate-selection [--repo <PATH>] [--contract <PATH>] [--artifact <PATH>] [--json]
+effigy service list [--repo <PATH>] [--json]
+effigy service extract <SERVICE> [--repo <PATH>] [--dir <PATH>] [--json]
+effigy exec [--repo <PATH>] [--service <NAME>] [--json] <COMMAND> [ARGS...]
+effigy gateway up [--json]
+effigy gateway down [--json]
+effigy gateway status [--json]
+effigy gateway setup-tls [--json]
 effigy distribution preflight [--repo <PATH>] [--tag <TAG>] [--skip-docs] [--skip-smoke] [--output <PATH>] [--json]
 effigy distribution validate-metadata [--repo <PATH>] [--tag <TAG>] [--json]
+effigy distribution check-glibc-floor [--repo <PATH>] --binary <PATH> --max-glibc <VER> [--json]
+effigy distribution first-publish [--repo <PATH>] --tag <TAG> [--crate-version <VER>] [--repo-url <URL>] [--brew-formula <NAME>] [--skip-homebrew] [--artifacts-dir <DIR>] [--json]
 effigy distribution validate-artifacts [--repo <PATH>] --artifacts-dir <DIR> [--expect-homebrew] [--json]
 effigy distribution generate-closeout [--repo <PATH>] --tag <TAG> --artifacts-dir <DIR> [--output <PATH>] [--owner <NAME>] [--expect-homebrew] [--json]
 effigy distribution write-summary [--repo <PATH>] --tag <TAG> --artifacts-dir <DIR> [--crate-version <VER>] [--repo-url <URL>] [--brew-formula <NAME>] [--homebrew-executed] [--log-file <NAME>]... [--json]
 effigy container up [--repo <PATH>] [--attach|--detach] [--json]
 effigy container <NAME> up [--repo <PATH>] [--attach|--detach] [--json]
+effigy container down [--repo <PATH>] [--json]
 effigy container <NAME> down [--repo <PATH>] [--json]
+effigy container status [--repo <PATH>] [--json]
+effigy container status --all [--json]
+effigy container stats --all [--json]
 effigy container <NAME> status [--repo <PATH>] [--json]
+effigy container data list [--repo <PATH>] [--json]
+effigy container <NAME> data list [--repo <PATH>] [--json]
+effigy container data export <VOLUME> <PATH> [--repo <PATH>] [--json]
+effigy container <NAME> data export <VOLUME> <PATH> [--repo <PATH>] [--json]
+effigy container data import <VOLUME> <PATH> [--repo <PATH>] [--json]
+effigy container <NAME> data import <VOLUME> <PATH> [--repo <PATH>] [--json]
+effigy container data pull-production [--repo <PATH>] [--json]
+effigy container <NAME> data pull-production [--repo <PATH>] [--json]
 effigy container <NAME> logs [--repo <PATH>] [--service <NAME>] [--follow] [--json]
 effigy container <NAME> shell [--repo <PATH>] [--service <NAME>] [--command <CMD>]
-effigy container <NAME> reset [--repo <PATH>] [--json]
+effigy container <NAME> reset [--repo <PATH>] [--keep-data] [--json]
+effigy container <NAME> eject [--repo <PATH>] [--json]
 effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--start] [--plan] [--json]
 effigy demo list [--search <TEXT>] [--owner <NAME>] [--tag <TAG>] [--mode <MODE>] [--cover <AREA>] [--status <STATUS>] [--gap <GAP>] [--stale-only] [--group-by <FIELD>] [--repo <PATH>] [--json]
 effigy demo browser [--group-by <FIELD>] [--repo <PATH>]
@@ -167,7 +201,16 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
 - `tasks --pretty false` is valid only with `--json`.
 - `watch --json` requires bounded mode (`--once` or `--max-runs`).
 - `watch --owner` is required; `external` owner blocks nested watch loops.
+- `exec` uses the manifest dev-context container and defaults to that
+  environment's `primary_service` unless `--service` is supplied.
+- `gateway up`, `gateway down`, and `gateway setup-tls` may request host admin
+  approval when resolver or certificate setup needs it.
 - `container shell` is interactive and intentionally does not support `--json`.
+- `container status --all` and `container stats --all` are cross-project views
+  rather than one-manifest queries.
+- generated-compose data lifecycle commands (`data list`, `data export`,
+  `data import`, `data pull-production`, `reset --keep-data`) stay on the
+  product-owned path and do not widen direct `compose_file` ownership.
 - `bootstrap` is stateless by default: destination is cwd-relative unless `--path`
   is supplied.
 - `bootstrap` runs `start` only when `--start` is supplied.
