@@ -67,6 +67,10 @@ pub fn discover_catalogs_allow_missing(
 }
 
 pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, RoutingError> {
+    if !has_root_manifest(workspace_root) {
+        return Ok(Vec::new());
+    }
+
     let mut pending: Vec<PathBuf> = vec![workspace_root.to_path_buf()];
     let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
     let mut manifests_by_catalog: HashMap<PathBuf, PathBuf> = HashMap::new();
@@ -171,4 +175,8 @@ fn file_type_matches(file_type: &FileType, path: &Path, want: EntryKind) -> bool
 fn is_task_manifest_file(file_type: &FileType, path: &Path) -> bool {
     file_type_matches(file_type, path, EntryKind::File)
         && path.file_name().and_then(|n| n.to_str()) == Some(TASK_MANIFEST_FILE)
+}
+
+fn has_root_manifest(workspace_root: &Path) -> bool {
+    workspace_root.join(TASK_MANIFEST_FILE).is_file()
 }

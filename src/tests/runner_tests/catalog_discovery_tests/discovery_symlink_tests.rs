@@ -38,6 +38,8 @@ fn discover_catalogs_reports_alias_conflict_for_symlinked_catalog() {
     let external = create_workspace_dir(&root, "external");
     let underlay_src = create_workspace_dir(&external, "underlay");
 
+    write_manifest(&root.join("effigy.toml"), "");
+
     write_manifest(
         &catalog_b.join("effigy.toml"),
         r#"[catalog]
@@ -54,4 +56,25 @@ alias = "catalog_b"
 
     let err = discover_catalogs(&root).expect_err("expected alias conflict");
     assert_catalog_alias_conflict(err.into(), "catalog_b");
+}
+
+#[test]
+fn discover_catalogs_requires_root_manifest_anchor_before_scanning_children() {
+    let root = temp_workspace("catalog-discovery-root-anchor");
+    let catalog_a = create_workspace_dir(&root, "catalog_a");
+
+    write_manifest(
+        &catalog_a.join("effigy.toml"),
+        r#"[catalog]
+alias = "catalog_a"
+"#,
+    );
+
+    let err = discover_catalogs(&root).expect_err("expected missing root manifest");
+    match err {
+        effigy_routing::RoutingError::TaskCatalogsMissing { root: missing_root } => {
+            assert_eq!(missing_root, root);
+        }
+        other => panic!("unexpected error: {other}"),
+    }
 }

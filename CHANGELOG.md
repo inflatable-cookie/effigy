@@ -181,6 +181,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Regenerate generated compose output when the rendered compose content changes
   even if the manifest checksum is unchanged, preventing stale compose
   artifacts after assembly-layer fixes.
+- Stop `effigy --help` and other builtin-deferral probes from recursively
+  scanning arbitrary unanchored directories like `~/`; deferred builtin
+  discovery now only walks child catalogs after a root `effigy.toml` anchor
+  exists.
 
 ## [0.2.13] - 2026-04-13
 
