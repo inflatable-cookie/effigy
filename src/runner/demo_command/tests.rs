@@ -219,7 +219,11 @@ fn browser_terminal_size_override_reads_valid_env_values() {
 fn wrap_pty_shell_command_prefixes_stty_with_terminal_size() {
     let wrapped = wrap_pty_shell_command("printf demo", Some((96, 28)));
 
+    #[cfg(target_os = "macos")]
     assert_eq!(wrapped, "stty cols 96 rows 28 >/dev/null 2>&1; printf demo");
+
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(wrapped, "printf demo");
 }
 
 #[test]
