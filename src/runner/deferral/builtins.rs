@@ -3,7 +3,7 @@ use std::path::Path;
 
 use effigy_manifest::LoadedCatalog;
 
-use super::policy::{EXPLICITLY_DEFERRABLE_COMMAND_BUILTINS, IMPLICITLY_DEFERRED_COMMAND_BUILTINS};
+use super::policy::IMPLICITLY_DEFERRED_COMMAND_BUILTINS;
 use super::select::implicit_root_deferral_is_enabled;
 
 fn implicit_deferred_builtins() -> BTreeSet<String> {
@@ -62,8 +62,4 @@ pub(crate) fn deferred_builtins_from_catalogs(
         return explicit;
     }
     implicit_deferred_builtins_for_root_with_catalogs(resolved_root, catalogs)
-}
-
-pub(crate) fn builtin_can_be_explicitly_deferred(name: &str) -> bool {
-    EXPLICITLY_DEFERRABLE_COMMAND_BUILTINS.contains(&name)
 }

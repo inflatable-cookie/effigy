@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-04-16
 Depends on: 011, 012
@@ -49,15 +49,15 @@ That's five steps that should be one.
 
 ## 2) Goals
 
-- [ ] Define the `effigy dev` task pattern using managed-process concurrent
+- [x] Define the `effigy dev` task pattern using managed-process concurrent
       runtime.
-- [ ] Define `tasks.dev.managed` section for gateway auto-start, health wait,
+- [x] Define `tasks.dev.managed` section for gateway auto-start, health wait,
       and ready message.
-- [ ] Implement container lifecycle as a managed process with shutdown-on-exit.
-- [ ] Implement embedded terminal tab (shell into primary service).
-- [ ] Implement health-check gate with TUI-visible "ready" indicator.
-- [ ] Implement gateway auto-start when `dns.domain` is configured.
-- [ ] One real project proof where `effigy dev` is the only command needed.
+- [x] Implement container lifecycle as a managed process with shutdown-on-exit.
+- [x] Implement embedded terminal tab (shell into primary service).
+- [x] Implement health-check gate with TUI-visible "ready" indicator.
+- [x] Implement gateway auto-start when `dns.domain` is configured.
+- [x] One real project proof where `effigy dev` is the only command needed.
 
 ## 3) Non-Goals
 
@@ -139,7 +139,29 @@ New logic sits in `effigy-containers` (lifecycle management) and the TUI layer
   TUI state.
 - Real-project proof where `effigy dev` is the daily driver.
 
+## 6) Outcome
+
+`g02.013` is complete.
+
+What shipped on the product path:
+
+- manifest-owned managed dev-task metadata through `tasks.<name>.managed`
+- lifecycle-role ownership for named `container_session` startup and shutdown
+- shell-role embedding through the shipped primary-service container shell path
+- readiness gating plus ready-message projection on the managed runtime path
+- gateway auto-start through the shipped `effigy gateway up` surface when the
+  named container session declares DNS
+- one real-project proof in `underlay-reference` that `effigy dev` can replace
+  the prior multi-command startup routine on a trustworthy boundary
+
+What the final proof exposed:
+
+- the consumer repo carried stale local API DB wiring that no longer matched
+  its compose-owned Postgres service
+- that gap was fixed in-batch in the consumer repo and did not require another
+  Effigy roadmap batch
+
 ## Next Task
 
-Depends on `g02.012` completion and `g02.010` managed-process runtime being
-available.
+No further execution lives on this roadmap item. Stop in planning and choose
+the next remaining `g02` lane deliberately.

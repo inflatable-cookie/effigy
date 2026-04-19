@@ -435,9 +435,21 @@ pub enum ContainerSubcommand {
         name: Option<String>,
         keep_data: bool,
     },
+    Data {
+        name: Option<String>,
+        subcommand: ContainerDataSubcommand,
+    },
     Eject {
         name: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContainerDataSubcommand {
+    List,
+    Export { volume: String, path: PathBuf },
+    Import { volume: String, path: PathBuf },
+    PullProduction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

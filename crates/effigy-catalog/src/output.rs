@@ -68,7 +68,10 @@ impl ComposeOutput {
         // Check if regeneration is needed.
         let current_checksum = simple_checksum(manifest_content);
         if let Ok(stored) = std::fs::read_to_string(&checksum_path) {
-            if stored.trim() == current_checksum && compose_path.exists() {
+            let compose_matches = std::fs::read_to_string(&compose_path)
+                .map(|existing| existing == result.compose_yaml)
+                .unwrap_or(false);
+            if stored.trim() == current_checksum && compose_matches {
                 return Ok(WriteResult {
                     compose_path,
                     dockerfile_paths: HashMap::new(),

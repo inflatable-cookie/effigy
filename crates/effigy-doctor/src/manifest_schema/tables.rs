@@ -97,6 +97,8 @@ pub(super) fn validate_concurrent_array(
             table,
             &[
                 "name",
+                "label",
+                "role",
                 "task",
                 "run",
                 "start",

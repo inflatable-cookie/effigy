@@ -22,6 +22,8 @@ pub struct ManifestTask {
     #[serde(default)]
     pub fail_on_non_zero: Option<bool>,
     #[serde(default)]
+    pub managed: Option<ManifestTaskManagedConfig>,
+    #[serde(default)]
     pub concurrent: Vec<ManifestManagedConcurrentEntry>,
     #[serde(default)]
     pub profiles: IndexMap<String, ManifestManagedProfile>,
@@ -29,11 +31,28 @@ pub struct ManifestTask {
     pub cache: Option<ManifestTaskCache>,
 }
 
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestTaskManagedConfig {
+    #[serde(default)]
+    pub container_lifecycle: bool,
+    #[serde(default)]
+    pub gateway: bool,
+    #[serde(default)]
+    pub health_wait: bool,
+    #[serde(default)]
+    pub ready_message: Option<String>,
+}
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestManagedConcurrentEntry {
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
     #[serde(default)]
     pub task: Option<String>,
     #[serde(default)]

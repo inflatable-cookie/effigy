@@ -37,7 +37,8 @@ surfaces without collapsing back into root-crate churn.
 ## Out Of Scope
 
 - release execution
-- cross-repo rollout work in `g02.008`, `g02.009`, or `g02.018`
+- cross-repo rollout work in `g02.008`, `g02.009`, or later research-intake
+  follow-up
 - broad speculative redesign beyond the shipped crate foundations
 
 ## Acceptance Criteria

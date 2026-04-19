@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Paused
+Status: In Progress
 Owner: Platform
 Created: 2026-04-15
 Depends on: 005, 027
@@ -60,9 +60,18 @@ Shipped proof already in place:
 
 The release gate is now broader product readiness, not repo hardening.
 
-This roadmap is paused by explicit product sequencing, not by missing release
-prep. The user wants one `v0.3` cut after the remaining `g02` feature lanes
-ship, test, and verify together.
+The earlier pause was about product sequencing, not missing release prep.
+
+That sequencing checkpoint is now resolved for this thread:
+
+- `g02.002` is closed
+- `g02.018` is rehomed into research intake instead of staying in the active
+  roadmap queue
+- `g02.008` and `g02.009` remain valid rollout work, but they are intentionally
+  out of the current `v0.3` release-prep thread
+
+The lane now returns to deliberate release prep for one explicit human-approved
+`v0.3` cut.
 
 ## Exit Condition
 
@@ -72,8 +81,7 @@ it is no longer only an Effigy-local product claim.
 
 ## Next Task
 
-Keep `g02.007` out of the active queue while the remaining `g02` feature and
-integration work lands.
+Return to `115` and the release protocol surfaces for deliberate `v0.3`
+release prep.
 
-Return to `115` only after the `g02.011`–`g02.016` feature spine is complete
-and the repo is ready for one explicit human-approved `v0.3` release cut.
+Stop before any irreversible release action unless explicitly requested.

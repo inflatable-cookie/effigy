@@ -103,6 +103,13 @@ fn render_task_env_value(value: &str, project_root: &Path) -> String {
 }
 
 fn resolve_effigy_invocation_prefix() -> Result<String, ManagedError> {
+    if let Some(explicit) = effigy_core::executable_override::current() {
+        let trimmed = explicit.trim();
+        if !trimmed.is_empty() {
+            return Ok(shell_quote(trimmed));
+        }
+    }
+
     if let Ok(explicit) = std::env::var("EFFIGY_EXECUTABLE") {
         let trimmed = explicit.trim();
         if !trimmed.is_empty() {

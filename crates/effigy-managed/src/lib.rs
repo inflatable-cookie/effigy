@@ -29,7 +29,7 @@ pub use plan::{
     invalid_managed_process_definition, resolve_managed_concurrent_task_plan,
     ManagedConcurrentPlanInput,
 };
-pub use presentation::run_or_render_managed_task;
+pub use presentation::{managed_execution_mode, run_or_render_managed_task, ManagedExecutionMode};
 pub use profiles::{
     available_concurrent_profiles, has_concurrent_profile, has_concurrent_schema,
     resolve_concurrent_profile, select_concurrent_profile, ResolvedConcurrentProfile,
@@ -41,9 +41,17 @@ pub use run_spec::{
 };
 
 /// Pure-data plan shapes moved in from `runner::model::managed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedProcessRole {
+    Standard,
+    Lifecycle,
+    Shell,
+}
+
 #[derive(Debug, Clone)]
 pub struct ManagedProcessSpec {
     pub name: String,
+    pub role: ManagedProcessRole,
     pub run: String,
     pub cwd: PathBuf,
     pub start_after_ms: u64,
@@ -58,6 +66,14 @@ pub struct ManagedTaskPlan {
     pub tab_order: Vec<String>,
     pub fail_on_non_zero: bool,
     pub passthrough: Vec<String>,
+    pub gateway_auto_start: bool,
+    pub readiness: ManagedTaskReadiness,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ManagedTaskReadiness {
+    pub health_wait: bool,
+    pub ready_message: Option<String>,
 }
 
 /// Default shell command used when a managed profile's `shell` entry

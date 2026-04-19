@@ -242,6 +242,10 @@ impl ComposeAssembler {
                     YamlValue::String("driver".to_string()),
                     YamlValue::String("local".to_string()),
                 );
+                vol_def.insert(
+                    YamlValue::String("name".to_string()),
+                    YamlValue::String(vol.name.clone()),
+                );
                 vol_map.insert(
                     YamlValue::String(vol.name.clone()),
                     YamlValue::Mapping(vol_def),

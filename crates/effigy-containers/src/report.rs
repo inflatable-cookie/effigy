@@ -74,6 +74,26 @@ pub struct ContainerStatsAllEntry {
     pub services: Vec<ContainerStatsService>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerDataVolumeEntry {
+    pub name: String,
+    pub service: String,
+    pub persist: bool,
+    pub size_bytes: Option<u64>,
+    pub mount_point: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContainerDataTransferAction {
+    Export,
+    Import,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerDataHookResult {
+    pub hook: String,
+}
+
 /// Build the `container up` detached-mode report.
 pub fn up_detached_report(
     policy: &EffectiveContainerPolicy,
@@ -94,6 +114,7 @@ pub fn up_detached_report(
         "colima_started": colima_started,
         "ports": policy.declared_ports,
         "mounts": policy.declared_mounts,
+        "media_mounts": policy.declared_media_mounts,
         "ui_tabs": policy.ui_tabs,
         "health": health,
     });
@@ -222,6 +243,50 @@ pub fn eject_report(
     ContainerCommandReport { json, success_text }
 }
 
+/// Build the `container data pull-production` report.
+pub fn data_pull_production_report(
+    policy: &EffectiveContainerPolicy,
+    result: &ContainerDataHookResult,
+    colima_started: bool,
+    health: Option<&'static str>,
+) -> ContainerCommandReport {
+    let json = json!({
+        "schema": "effigy.container.data-pull-production.v1",
+        "schema_version": 1,
+        "ok": true,
+        "container": policy.name,
+        "profile": policy.profile,
+        "compose_file": policy.compose_file_display,
+        "project_name": policy.project_name,
+        "primary_service": policy.primary_service,
+        "shared_services": shared_services_json(policy),
+        "hook": result.hook,
+        "colima_started": colima_started,
+        "health": health,
+    });
+    let mut lines = Vec::new();
+    if colima_started {
+        lines.push(format!("[ok] started Colima profile `{}`", policy.profile));
+    }
+    lines.push(format!(
+        "[ok] ran production data hook for container `{}`",
+        policy.name
+    ));
+    lines.push(format!("hook: {}", result.hook));
+    if let Some(health) = health {
+        lines.push(format!("health: {health}"));
+    }
+    append_shared_service_lines(&mut lines, policy);
+    lines.push(format!(
+        "[next] inspect state with `effigy container {} status`",
+        policy.name
+    ));
+    ContainerCommandReport {
+        json,
+        success_text: lines.join("\n"),
+    }
+}
+
 /// Build the `container status` report.
 pub fn status_report(
     policy: &EffectiveContainerPolicy,
@@ -247,6 +312,7 @@ pub fn status_report(
         "ui_tabs": policy.ui_tabs,
         "detach_timeout_secs": policy.detach_timeout_secs,
         "compose_ps": compose_ps,
+        "media_mounts": policy.declared_media_mounts,
     });
 
     let mut lines = vec![
@@ -263,6 +329,12 @@ pub fn status_report(
     }
     if !policy.declared_mounts.is_empty() {
         lines.push(format!("mounts: {}", policy.declared_mounts.join(", ")));
+    }
+    if !policy.declared_media_mounts.is_empty() {
+        lines.push(format!(
+            "media_mounts: {}",
+            policy.declared_media_mounts.join(", ")
+        ));
     }
     if !policy.ui_tabs.is_empty() {
         lines.push(format!("ui_tabs: {}", policy.ui_tabs.join(", ")));
@@ -480,6 +552,139 @@ pub fn logs_report(
     }
 }
 
+pub fn data_list_report(
+    policy: &EffectiveContainerPolicy,
+    colima_running: bool,
+    volumes: &[ContainerDataVolumeEntry],
+) -> ContainerCommandReport {
+    let json = json!({
+        "schema": "effigy.container.data-list.v1",
+        "schema_version": 1,
+        "ok": true,
+        "container": policy.name,
+        "profile": policy.profile,
+        "project_name": policy.project_name,
+        "compose_source": match policy.compose_source {
+            crate::EffectiveComposeSource::Direct => "direct",
+            crate::EffectiveComposeSource::Generated => "generated",
+        },
+        "colima_running": colima_running,
+        "volume_count": volumes.len(),
+        "volumes": volumes.iter().map(|volume| {
+            json!({
+                "name": volume.name,
+                "service": volume.service,
+                "classification": if volume.persist { "persistent" } else { "ephemeral" },
+                "persist": volume.persist,
+                "size_bytes": volume.size_bytes,
+                "mount_point": volume.mount_point,
+                "size_available": volume.size_bytes.is_some(),
+            })
+        }).collect::<Vec<_>>(),
+    });
+
+    if volumes.is_empty() {
+        return ContainerCommandReport {
+            json,
+            success_text: format!(
+                "[info] container `{}` has no Effigy-managed named volumes",
+                policy.name
+            ),
+        };
+    }
+
+    let mut lines = vec![
+        format!(
+            "[ok] {} managed data volume{} for `{}`",
+            volumes.len(),
+            if volumes.len() == 1 { "" } else { "s" },
+            policy.name
+        ),
+        format!("project_name: {}", policy.project_name),
+        format!(
+            "runtime_metadata: {}",
+            if colima_running {
+                "best-effort"
+            } else {
+                "unavailable (Colima profile is not running)"
+            }
+        ),
+    ];
+    for volume in volumes {
+        let classification = if volume.persist {
+            "persistent"
+        } else {
+            "ephemeral"
+        };
+        let size = volume
+            .size_bytes
+            .map(format_bytes)
+            .unwrap_or_else(|| "unavailable".to_owned());
+        let mount_point = volume.mount_point.as_deref().unwrap_or("unavailable");
+        lines.push(format!(
+            "- {} [{}] {} (size={}, mount_point={})",
+            volume.name, volume.service, classification, size, mount_point
+        ));
+    }
+
+    ContainerCommandReport {
+        json,
+        success_text: lines.join("\n"),
+    }
+}
+
+pub fn data_transfer_report(
+    policy: &EffectiveContainerPolicy,
+    action: ContainerDataTransferAction,
+    volume: &ContainerDataVolumeEntry,
+    archive_path: &std::path::Path,
+) -> ContainerCommandReport {
+    let action_label = match action {
+        ContainerDataTransferAction::Export => "export",
+        ContainerDataTransferAction::Import => "import",
+    };
+    let path_label = match action {
+        ContainerDataTransferAction::Export => "output_path",
+        ContainerDataTransferAction::Import => "input_path",
+    };
+    let schema = match action {
+        ContainerDataTransferAction::Export => "effigy.container.data-export.v1",
+        ContainerDataTransferAction::Import => "effigy.container.data-import.v1",
+    };
+    let archive_path = archive_path.display().to_string();
+    let mut json = json!({
+        "schema": schema,
+        "schema_version": 1,
+        "ok": true,
+        "container": policy.name,
+        "profile": policy.profile,
+        "project_name": policy.project_name,
+        "action": action_label,
+        "volume": {
+            "name": volume.name,
+            "service": volume.service,
+            "classification": if volume.persist { "persistent" } else { "ephemeral" },
+            "persist": volume.persist,
+        },
+    });
+    if let Some(json_object) = json.as_object_mut() {
+        json_object.insert(path_label.to_owned(), json!(archive_path));
+    }
+    let success_text = format!(
+        "[ok] {}ed managed volume `{}` for `{}` {} {}",
+        action_label,
+        volume.name,
+        policy.name,
+        if matches!(action, ContainerDataTransferAction::Export) {
+            "to"
+        } else {
+            "from"
+        },
+        archive_path
+    );
+    ContainerCommandReport { json, success_text }
+}
+
 fn yes_no(value: bool) -> &'static str {
     if value {
         "yes"
@@ -519,5 +724,21 @@ fn append_shared_service_lines(lines: &mut Vec<String>, policy: &EffectiveContai
             service.host_port,
             service.project_name
         ));
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+
+    let mut value = bytes as f64;
+    let mut unit = 0usize;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
     }
 }

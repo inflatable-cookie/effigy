@@ -286,6 +286,5 @@ Upon completion, Effigy has:
 - Cataloged DAG execution edge cases
 - Established TUI pattern library
 
-Next: treat the remaining research-program promotion work as part of the
-cross-phase carry-forward in
-[`g02.018`](../g02/018-research-promotion-and-carry-forward.md).
+Next: treat the remaining research-program promotion work as research intake in
+[`docs/research/carry-forward-intake.md`](../../research/carry-forward-intake.md).

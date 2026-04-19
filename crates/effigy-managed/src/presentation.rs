@@ -12,6 +12,13 @@ use crate::ManagedError;
 use crate::ManagedTaskPlan;
 use crate::{render_utf8, text_renderer};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedExecutionMode {
+    RenderPlan,
+    Stream,
+    Tui,
+}
+
 fn render_managed_task_plan(
     task_name: &str,
     repo_root: &Path,
@@ -44,12 +51,24 @@ pub fn run_or_render_managed_task(
     manifest_path: &Path,
     plan: ManagedTaskPlan,
 ) -> Result<String, ManagedError> {
+    match managed_execution_mode() {
+        ManagedExecutionMode::Stream => {
+            runtime::run_managed_task_runtime(task_name, repo_root, plan)
+        }
+        ManagedExecutionMode::Tui => runtime::run_managed_task_tui(task_name, repo_root, plan),
+        ManagedExecutionMode::RenderPlan => {
+            render_managed_task_plan(task_name, repo_root, manifest_path, plan)
+        }
+    }
+}
+
+pub fn managed_execution_mode() -> ManagedExecutionMode {
     let tui_override = std::env::var("EFFIGY_MANAGED_TUI").ok();
-    let should_stream = std::env::var("EFFIGY_MANAGED_STREAM")
+    if std::env::var("EFFIGY_MANAGED_STREAM")
         .ok()
-        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
-    if should_stream {
-        return runtime::run_managed_task_runtime(task_name, repo_root, plan);
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    {
+        return ManagedExecutionMode::Stream;
     }
 
     let should_tui = match tui_override.as_deref() {
@@ -60,8 +79,8 @@ pub fn run_or_render_managed_task(
         _ => std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
     };
     if should_tui {
-        return runtime::run_managed_task_tui(task_name, repo_root, plan);
+        ManagedExecutionMode::Tui
+    } else {
+        ManagedExecutionMode::RenderPlan
     }
-
-    render_managed_task_plan(task_name, repo_root, manifest_path, plan)
 }

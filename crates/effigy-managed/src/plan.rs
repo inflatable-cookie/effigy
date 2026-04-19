@@ -4,7 +4,9 @@ use effigy_manifest::{LoadedCatalog, ManifestTask, TaskResolverFn};
 use effigy_tasks::TaskSelector;
 
 use crate::profiles::ResolvedConcurrentProfile;
-use crate::{ManagedError, ManagedProcessSpec, ManagedTaskPlan};
+use crate::{
+    ManagedError, ManagedProcessRole, ManagedProcessSpec, ManagedTaskPlan, ManagedTaskReadiness,
+};
 
 #[path = "plan/entries.rs"]
 mod entries;
@@ -52,38 +54,144 @@ pub fn resolve_managed_concurrent_task_plan(
 
     let mut resolved = entries::resolve_concurrent_process_entries(
         selector,
+        task,
         profile.entries,
         catalog,
         catalogs,
         task_scope_cwd,
         resolver,
     )?;
-    Ok(build_managed_task_plan(
+    build_managed_task_plan(
+        selector,
         task,
         &profile.profile_name,
         passthrough,
         &mut resolved,
-    ))
+    )
 }
 
 fn build_managed_task_plan(
+    selector: &TaskSelector,
     task: &ManifestTask,
     profile_name: &str,
     passthrough: &[String],
     resolved: &mut [ConcurrentResolvedProcess],
-) -> ManagedTaskPlan {
+) -> Result<ManagedTaskPlan, ManagedError> {
+    validate_lifecycle_role_usage(selector, task, resolved)?;
     ordering::sort_resolved_processes(resolved);
     let tab_order = ordering::build_tab_order(resolved);
     let processes = resolved.iter().map(|entry| entry.spec.clone()).collect();
 
-    ManagedTaskPlan {
+    Ok(ManagedTaskPlan {
         mode: "tui".to_owned(),
         profile: profile_name.to_owned(),
         processes,
         tab_order,
         fail_on_non_zero: task.fail_on_non_zero.unwrap_or(true),
         passthrough: passthrough.iter().skip(1).cloned().collect(),
+        gateway_auto_start: task.managed.as_ref().is_some_and(|managed| managed.gateway),
+        readiness: ManagedTaskReadiness {
+            health_wait: task
+                .managed
+                .as_ref()
+                .is_some_and(|managed| managed.health_wait),
+            ready_message: task
+                .managed
+                .as_ref()
+                .and_then(|managed| managed.ready_message.clone()),
+        },
+    })
+}
+
+fn validate_lifecycle_role_usage(
+    selector: &TaskSelector,
+    task: &ManifestTask,
+    resolved: &[ConcurrentResolvedProcess],
+) -> Result<(), ManagedError> {
+    let lifecycle_count = resolved
+        .iter()
+        .filter(|entry| entry.spec.role == ManagedProcessRole::Lifecycle)
+        .count();
+    if lifecycle_count > 1 {
+        return Err(invalid_managed_process_definition(
+            selector,
+            "lifecycle",
+            "only one `role = \"lifecycle\"` entry is supported in this batch",
+        ));
     }
+    if task
+        .managed
+        .as_ref()
+        .is_some_and(|managed| managed.container_lifecycle)
+        && lifecycle_count == 0
+    {
+        return Err(invalid_managed_process_definition(
+            selector,
+            "managed",
+            "`managed.container_lifecycle = true` requires one `concurrent` entry with `role = \"lifecycle\"`",
+        ));
+    }
+    if task.managed.as_ref().is_some_and(|managed| managed.gateway) {
+        if task.container_session.is_none() {
+            return Err(invalid_managed_process_definition(
+                selector,
+                "managed",
+                "`managed.gateway = true` requires `container_session = \"<name>\"` on the task",
+            ));
+        }
+        if lifecycle_count == 0 {
+            return Err(invalid_managed_process_definition(
+                selector,
+                "managed",
+                "`managed.gateway = true` requires one `concurrent` entry with `role = \"lifecycle\"`",
+            ));
+        }
+    }
+    if task
+        .managed
+        .as_ref()
+        .is_some_and(|managed| managed.health_wait)
+    {
+        if task.container_session.is_none() {
+            return Err(invalid_managed_process_definition(
+                selector,
+                "managed",
+                "`managed.health_wait = true` requires `container_session = \"<name>\"` on the task",
+            ));
+        }
+        if lifecycle_count == 0 {
+            return Err(invalid_managed_process_definition(
+                selector,
+                "managed",
+                "`managed.health_wait = true` requires one `concurrent` entry with `role = \"lifecycle\"`",
+            ));
+        }
+    }
+    if let Some(ready_message) = task
+        .managed
+        .as_ref()
+        .and_then(|managed| managed.ready_message.as_deref())
+    {
+        if ready_message.trim().is_empty() {
+            return Err(invalid_managed_process_definition(
+                selector,
+                "managed",
+                "`managed.ready_message` must be a non-empty string",
+            ));
+        }
+        if !task
+            .managed
+            .as_ref()
+            .is_some_and(|managed| managed.health_wait)
+        {
+            return Err(invalid_managed_process_definition(
+                selector,
+                "managed",
+                "`managed.ready_message` requires `managed.health_wait = true` in this batch",
+            ));
+        }
+    }
+    Ok(())
 }
 
 enum RunOrTaskRef<'a> {

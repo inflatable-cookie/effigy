@@ -74,6 +74,11 @@ fn run_tasks_rejects_invalid_manifest_shapes() {
             expected: &["unknown field `processes`", "data did not match any variant"],
         },
         ManifestParseRejectionCase {
+            workspace: "reject-unknown-task-managed-field",
+            manifest: "[tasks.dev]\nmode = \"tui\"\n\n[tasks.dev.managed]\ncontainer_lifecycl = true\n",
+            expected: &["unknown field `container_lifecycl`", "data did not match any variant"],
+        },
+        ManifestParseRejectionCase {
             workspace: "reject-legacy-managed-profile-list-entry",
             manifest: "[tasks.dev]\nmode = \"tui\"\n\n[tasks.dev.profiles]\ndefault = [\"catalog_a/api\"]\n",
             expected: &["invalid type", "data did not match any variant"],

@@ -22,13 +22,14 @@ pub use composition::{
 };
 pub use config_sections::{
     ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy, ManifestContainerConfig,
-    ManifestContainerDnsConfig, ManifestContainerDriver, ManifestContainerExecAliasConfig,
-    ManifestContainerExecConfig, ManifestContainerOnTaskExit, ManifestContainerServiceConfig,
-    ManifestContainerShutdownMode, ManifestContainerStartup, ManifestContainersConfig,
-    ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus, ManifestDistributionConfig,
-    ManifestDistributionMetadataConfig, ManifestDistributionPackageConfig,
-    ManifestDistributionPreflightConfig, ManifestDocsPolicyConfig, ManifestEnvSchemaConfig,
-    ManifestPackageManagerConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
+    ManifestContainerDataConfig, ManifestContainerDnsConfig, ManifestContainerDriver,
+    ManifestContainerExecAliasConfig, ManifestContainerExecConfig, ManifestContainerOnTaskExit,
+    ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
+    ManifestContainersConfig, ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus,
+    ManifestDistributionConfig, ManifestDistributionMetadataConfig,
+    ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
+    ManifestDocsPolicyConfig, ManifestEnvSchemaConfig, ManifestPackageManagerConfig,
+    ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
 };
 pub use loaded_catalog::{DeferredCommand, LoadedCatalog, TaskResolverFn, TaskSelection};
 use task_defs::deserialize_tasks;
@@ -36,6 +37,7 @@ pub use task_runtime::{
     ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedConcurrentEntry,
     ManifestManagedProfile, ManifestManagedRun, ManifestManagedRunStep,
     ManifestManagedRunStepTable, ManifestRunStepEnv, ManifestTask, ManifestTaskCache,
+    ManifestTaskManagedConfig,
 };
 use test_config::ManifestTestConfig;
 pub use test_config::{ManifestCargoEnvMatchMode, ManifestTestSuiteTeardownPolicy};

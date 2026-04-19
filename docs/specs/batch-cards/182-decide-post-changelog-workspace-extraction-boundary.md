@@ -1,7 +1,7 @@
 # 182 Decide Post Changelog Workspace Extraction Boundary
 
-Status: ready
-Updated: 2026-04-16
+Status: complete
+Updated: 2026-04-19
 Roadmap: `g02.010`
 Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
 
@@ -34,7 +34,17 @@ workspace-worthy seam before `g02.010` can pause for release closure.
 - `cargo run --bin effigy -- qa:docs`
 - `git diff --check`
 
+## Outcome
+
+This boundary decision is already closed.
+
+What it established:
+
+- `181` did not finish the release seam honestly
+- one last bounded release extraction still existed in interactive review and
+  release text projection
+- `183` became the next explicit batch for `g02.010`
+
 ## Next Task
 
-Execute this boundary decision, then either pause `g02.010` for release
-resumption or open one final bounded release-shell extraction card.
+Execute `183-implement-effigy-release-review-and-text-projection-follow-up-extraction.md`.

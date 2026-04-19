@@ -35,7 +35,7 @@ Recently completed milestones:
 - [`029-northstar-effigy-consumer-adoption-kit.md`](./029-northstar-effigy-consumer-adoption-kit.md) (complete)
 
 Research carry-forward:
-- [`../g02/018-research-promotion-and-carry-forward.md`](../g02/018-research-promotion-and-carry-forward.md) (planned)
+- [`../../research/carry-forward-intake.md`](../../research/carry-forward-intake.md)
 
 Release and distribution:
 - no open `g01` release/distribution milestones remain
@@ -50,9 +50,9 @@ Rules:
 
 There are no remaining live `g01` blockers before `v0.3`.
 
-The remaining blocker is now entirely in `g02`:
+The remaining blocker is now entirely in `g02` release prep:
 
-1. [`../g02/010-effigy-modularization-and-crate-boundaries.md`](../g02/010-effigy-modularization-and-crate-boundaries.md)
+1. [`../g02/007-distribution-release-and-consumer-rollout.md`](../g02/007-distribution-release-and-consumer-rollout.md)
 
 
 ## Historical language boundary

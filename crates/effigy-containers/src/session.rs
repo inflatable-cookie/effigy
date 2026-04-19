@@ -170,7 +170,80 @@ pub fn attached_session_process_plans(
     plans
 }
 
+pub fn managed_lifecycle_command(
+    repo_root: &Path,
+    container_name: Option<&str>,
+    owner_task: &str,
+    health_wait: bool,
+    ready_message: Option<&str>,
+    executable: &str,
+) -> String {
+    let repo = shell_quote(&repo_root.display().to_string());
+    let owner_task = shell_quote(owner_task);
+    let selector = container_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "default");
+    let up = effigy_container_command(executable, selector, "up --detach", &repo);
+    let status = effigy_container_command(executable, selector, "status", &repo);
+    let down = effigy_container_command(executable, selector, "down", &repo);
+    let label = selector.unwrap_or("default");
+    let readiness_status = if health_wait {
+        "waiting for readiness via detached container startup"
+    } else {
+        "startup does not declare managed readiness waiting"
+    };
+    let ready_banner = ready_message
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("container `{label}` is ready"));
+    format!(
+        "sh -lc {script}",
+        script = shell_quote(&format!(
+            "started=0; cleanup() {{ if [ \"$started\" = 1 ]; then {down} >/dev/null 2>&1 || true; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; {up}; started=1; printf 'managed ready: %s\\n' {ready_banner}; while true; do printf '\\033[2J\\033[H'; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; printf 'ready_message: %s\\n\\n' {ready_banner}; {status} || true; sleep 0.2; done",
+            label = shell_quote(label),
+            readiness_status = shell_quote(readiness_status),
+            ready_banner = shell_quote(&ready_banner),
+        )),
+    )
+}
+
+pub fn managed_lifecycle_shutdown_command(
+    repo_root: &Path,
+    container_name: Option<&str>,
+    executable: &str,
+) -> String {
+    let repo = shell_quote(&repo_root.display().to_string());
+    let selector = container_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "default");
+    effigy_container_command(executable, selector, "down", &repo)
+}
+
+pub fn managed_shell_command(
+    repo_root: &Path,
+    container_name: Option<&str>,
+    executable: &str,
+) -> String {
+    let repo = shell_quote(&repo_root.display().to_string());
+    let selector = container_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "default");
+    effigy_container_command(executable, selector, "shell", &repo)
+}
+
+pub fn managed_gateway_command(executable: &str) -> String {
+    format!("{executable} gateway up")
+}
+
 pub fn resolve_effigy_invocation_prefix() -> Result<String, std::io::Error> {
+    if let Some(explicit) = effigy_core::executable_override::current() {
+        let trimmed = explicit.trim();
+        if !trimmed.is_empty() {
+            return Ok(shell_quote(trimmed));
+        }
+    }
+
     if let Ok(explicit) = std::env::var("EFFIGY_EXECUTABLE") {
         let trimmed = explicit.trim();
         if !trimmed.is_empty() {
@@ -225,6 +298,21 @@ fn attached_logs_command(
         name = shell_quote(&policy.name),
         service = shell_quote(service),
     )
+}
+
+fn effigy_container_command(
+    executable: &str,
+    container_name: Option<&str>,
+    subcommand: &str,
+    repo: &str,
+) -> String {
+    match container_name {
+        Some(name) => format!(
+            "{executable} container {name} {subcommand} --repo {repo}",
+            name = shell_quote(name),
+        ),
+        None => format!("{executable} container {subcommand} --repo {repo}"),
+    }
 }
 
 fn shell_quote(value: &str) -> String {

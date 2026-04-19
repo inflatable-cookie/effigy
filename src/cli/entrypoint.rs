@@ -14,7 +14,7 @@ pub fn run_cli(raw_args: Vec<String>) {
     let (args, global_json_mode) = strip_global_json_flags(raw_args);
     let output_mode = OutputMode::from_env();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let parsed = match parse_command_with_explicit_builtin_deferral(args, &cwd) {
+    let parsed = match parse_command_with_builtin_deferral(args, &cwd) {
         Ok(cmd) => cmd,
         Err(err) => {
             if global_json_mode {
@@ -123,7 +123,7 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
     }
 }
 
-fn parse_command_with_explicit_builtin_deferral(
+fn parse_command_with_builtin_deferral(
     args: Vec<String>,
     cwd: &Path,
 ) -> Result<Command, effigy_cli::CliParseError> {
@@ -131,7 +131,7 @@ fn parse_command_with_explicit_builtin_deferral(
         return parse_command(args);
     };
 
-    let Some(root) = explicit_deferred_builtin_root(first, &args[1..], cwd) else {
+    let Some(root) = deferred_builtin_root(&args[1..], cwd) else {
         return parse_command(args);
     };
     let deferred_builtins = crate::runner::deferred_builtins_for_root(&root);
@@ -145,14 +145,13 @@ fn parse_command_with_explicit_builtin_deferral(
     }))
 }
 
-fn explicit_deferred_builtin_root(cmd: &str, tail: &[String], cwd: &Path) -> Option<PathBuf> {
-    if !crate::runner::builtin_can_be_explicitly_deferred(cmd) {
-        return None;
-    }
+fn deferred_builtin_root(tail: &[String], cwd: &Path) -> Option<PathBuf> {
     let repo_override = repo_override_from_args(tail);
     effigy_core::resolver::resolve_target_root(cwd.to_path_buf(), repo_override)
         .ok()
         .map(|resolved| resolved.resolved_root)
+        .or_else(|| repo_override_from_args(tail))
+        .or_else(|| Some(cwd.to_path_buf()))
 }
 
 fn repo_override_from_args(args: &[String]) -> Option<PathBuf> {

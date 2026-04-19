@@ -149,3 +149,48 @@ fn from_volume_info() {
     assert_eq!(managed.service, "db");
     assert!(managed.size_bytes.is_none());
 }
+
+#[test]
+fn parse_listed_volume_names_reads_first_column() {
+    let names =
+        parse_listed_volume_names("proj-db-data\tlocal\tlabel=value\nproj-cache-data\tlocal\t\n");
+    assert_eq!(names, vec!["proj-db-data", "proj-cache-data"]);
+}
+
+#[test]
+fn parse_inspect_volume_metadata_reads_mount_and_size() {
+    let metadata = parse_inspect_volume_metadata(
+        r#"[{
+            "Name": "proj-db-data",
+            "Mountpoint": "/var/lib/docker/volumes/proj-db-data/_data",
+            "UsageData": {
+                "Size": 4096
+            }
+        }]"#,
+    )
+    .expect("metadata");
+
+    assert_eq!(metadata.name, "proj-db-data");
+    assert_eq!(
+        metadata.mount_point.as_deref(),
+        Some("/var/lib/docker/volumes/proj-db-data/_data")
+    );
+    assert_eq!(metadata.size_bytes, Some(4096));
+}
+
+#[test]
+fn merge_runtime_volume_metadata_updates_matching_entries_only() {
+    let merged = merge_runtime_volume_metadata(
+        &test_volumes(),
+        &[RuntimeVolumeMetadata {
+            name: "proj-db-data".to_owned(),
+            mount_point: Some("/data/db".to_owned()),
+            size_bytes: Some(2048),
+        }],
+    );
+
+    assert_eq!(merged[0].size_bytes, Some(2048));
+    assert_eq!(merged[0].mount_point.as_deref(), Some("/data/db"));
+    assert!(merged[1].size_bytes.is_none());
+    assert!(merged[2].size_bytes.is_none());
+}

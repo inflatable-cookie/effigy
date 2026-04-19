@@ -1,6 +1,6 @@
 # 282 Implement Container Data List Foundation
 
-Status: ready
+Status: landed
 Updated: 2026-04-18
 Roadmap: `g02.015`
 Spec: `docs/specs/015-persistent-data-and-volume-lifecycle-strict-lane.md`
@@ -42,7 +42,24 @@ surface. That leaves the data lifecycle story half-blind.
 - output stays clear when runtime size metadata is unavailable
 - focused tests cover parser/help, policy/report shaping, and runner behavior
 
+## Result
+
+This batch is now landed.
+
+What changed:
+
+- `effigy container data list` is now a real CLI/help/parser/runner surface on
+  the generated-compose path
+- the container runner now hydrates managed-volume inventory with best-effort
+  runtime size and mount metadata when the active runtime can provide it
+- text and JSON output now report persistent-vs-ephemeral classification
+  honestly while degrading cleanly when runtime metadata is unavailable
+- direct `compose_file` ownership now fails explicitly for `data list` instead
+  of claiming trustworthy volume inventory Effigy does not own yet
+- focused parser/help, report-shaping, runner, and CLI integration coverage now
+  exists for the new product surface
+
 ## Next Task
 
-Implement this batch, validate it, then stop in planning for the next bounded
-`g02.015` widening step.
+No further execution lives on this card. Stop in planning and decide the next
+bounded `g02.015` widening step after inventory.

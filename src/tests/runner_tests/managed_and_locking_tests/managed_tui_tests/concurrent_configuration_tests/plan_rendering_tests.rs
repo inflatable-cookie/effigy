@@ -29,6 +29,82 @@ fn setup_single_definition_ordered_profile_entries(root: &Path) {
     write_ranked_catalog_tasks(root);
 }
 
+fn setup_lifecycle_entry(root: &Path) {
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+mode = "tui"
+container_session = "web"
+concurrent = [
+  { role = "lifecycle", start = 1, tab = 1 },
+  { name = "api", run = "printf api", start = 2, tab = 2, shutdown_on_exit = true }
+]
+
+[tasks.dev.managed]
+container_lifecycle = true
+"#,
+    );
+}
+
+fn setup_lifecycle_and_shell_entry(root: &Path) {
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+mode = "tui"
+container_session = "web"
+concurrent = [
+  { role = "lifecycle", start = 1, tab = 1 },
+  { name = "terminal", role = "shell", start = 2, tab = 2 },
+  { name = "api", run = "printf api", start = 3, tab = 3, shutdown_on_exit = true }
+]
+
+[tasks.dev.managed]
+container_lifecycle = true
+"#,
+    );
+}
+
+fn setup_lifecycle_readiness_entry(root: &Path) {
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+mode = "tui"
+container_session = "web"
+concurrent = [
+  { role = "lifecycle", start = 1, tab = 1 },
+  { name = "terminal", role = "shell", start = 2, tab = 2 },
+  { name = "api", run = "printf api", start = 3, tab = 3, shutdown_on_exit = true }
+]
+
+[tasks.dev.managed]
+container_lifecycle = true
+health_wait = true
+ready_message = "http://project.test"
+"#,
+    );
+}
+
+fn setup_lifecycle_gateway_and_readiness_entry(root: &Path) {
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+mode = "tui"
+container_session = "web"
+concurrent = [
+  { role = "lifecycle", start = 1, tab = 1 },
+  { name = "terminal", role = "shell", start = 2, tab = 2 },
+  { name = "api", run = "printf api", start = 3, tab = 3, shutdown_on_exit = true }
+]
+
+[tasks.dev.managed]
+container_lifecycle = true
+gateway = true
+health_wait = true
+ready_message = "http://project.test"
+"#,
+    );
+}
+
 #[test]
 fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
     let _guard = lock_test();
@@ -63,6 +139,64 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
             ],
             expected_absent: &[],
             setup: setup_single_definition_ordered_profile_entries,
+        },
+        ManagedOutputCase {
+            workspace: "managed-lifecycle-entry",
+            invocation: ManagedInvocation::DevWithRepo,
+            args: &[],
+            expected: &[
+                "Managed Task Plan",
+                "tab-order: lifecycle, api",
+                "lifecycle",
+                "container web up --detach",
+                "container web down",
+                "shutdown-on-exit: lifecycle, api",
+            ],
+            expected_absent: &[],
+            setup: setup_lifecycle_entry,
+        },
+        ManagedOutputCase {
+            workspace: "managed-lifecycle-and-shell-entry",
+            invocation: ManagedInvocation::DevWithRepo,
+            args: &[],
+            expected: &[
+                "Managed Task Plan",
+                "tab-order: lifecycle, terminal, api",
+                "lifecycle",
+                "shell",
+                "container web up --detach",
+                "container web shell",
+                "shutdown-on-exit: lifecycle, api",
+            ],
+            expected_absent: &[],
+            setup: setup_lifecycle_and_shell_entry,
+        },
+        ManagedOutputCase {
+            workspace: "managed-lifecycle-readiness-entry",
+            invocation: ManagedInvocation::DevWithRepo,
+            args: &[],
+            expected: &[
+                "Managed Task Plan",
+                "readiness-wait: enabled",
+                "ready-message: http://project.test",
+                "container web up --detach",
+                "container web shell",
+            ],
+            expected_absent: &[],
+            setup: setup_lifecycle_readiness_entry,
+        },
+        ManagedOutputCase {
+            workspace: "managed-lifecycle-gateway-and-readiness-entry",
+            invocation: ManagedInvocation::DevWithRepo,
+            args: &[],
+            expected: &[
+                "Managed Task Plan",
+                "gateway-auto-start: enabled",
+                "readiness-wait: enabled",
+                "ready-message: http://project.test",
+            ],
+            expected_absent: &[],
+            setup: setup_lifecycle_gateway_and_readiness_entry,
         },
     ];
 

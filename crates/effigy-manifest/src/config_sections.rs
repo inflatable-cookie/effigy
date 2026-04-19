@@ -319,6 +319,8 @@ pub struct ManifestContainerConfig {
     #[serde(default)]
     pub host: Option<ManifestContainerHostConfig>,
     #[serde(default)]
+    pub data: Option<ManifestContainerDataConfig>,
+    #[serde(default)]
     pub ui: Option<ManifestContainerUiConfig>,
 }
 
@@ -415,6 +417,15 @@ pub struct ManifestContainerHostConfig {
     pub ports: Vec<String>,
     #[serde(default)]
     pub mounts: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestContainerDataConfig {
+    #[serde(default)]
+    pub media: Vec<String>,
+    #[serde(default)]
+    pub pull_production: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]

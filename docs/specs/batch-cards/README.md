@@ -91,8 +91,63 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. The next `g02.015` widening step is now explicit again:
   volume inventory before transfer or hook orchestration.
 - [`282-implement-container-data-list-foundation.md`](./282-implement-container-data-list-foundation.md)
-  is ready. The next live batch is bounded `effigy container data list`
-  inventory.
+  is complete. The bounded inventory surface is now landed through
+  `effigy container data list`.
+- [`283-plan-volume-transfer-batch.md`](./283-plan-volume-transfer-batch.md)
+  is complete. The post-inventory widening decision is now explicit again:
+  transfer comes before hook orchestration.
+- [`284-implement-container-data-transfer-foundation.md`](./284-implement-container-data-transfer-foundation.md)
+  is complete. The bounded generated-compose transfer surface is now landed.
+- [`285-plan-post-transfer-data-lifecycle-batch.md`](./285-plan-post-transfer-data-lifecycle-batch.md)
+  is complete. The post-transfer widening decision is now explicit again:
+  media lifecycle comes before hook or seeding orchestration.
+- [`286-implement-media-bind-mount-lifecycle-foundation.md`](./286-implement-media-bind-mount-lifecycle-foundation.md)
+  is complete. Bounded generated-compose media bind-mount lifecycle is now
+  landed through manifest-owned `data.media`.
+- [`287-plan-post-media-data-orchestration-batch.md`](./287-plan-post-media-data-orchestration-batch.md)
+  is complete. The post-media orchestration decision is now explicit again:
+  `pull_production` comes before any seed-specific widening.
+- [`288-implement-container-data-pull-production-foundation.md`](./288-implement-container-data-pull-production-foundation.md)
+  is complete. Bounded generated-compose `data.pull_production` hook
+  ownership is now landed.
+- [`289-plan-post-pull-production-lane-closeout.md`](./289-plan-post-pull-production-lane-closeout.md)
+  is complete. The lane decision is now explicit again: one real-project proof
+  comes before closeout, and task-owned seeding stays on the shipped task and
+  Rhai surface rather than widening product abstraction.
+- [`290-prove-generated-compose-persistent-data-loop-in-one-real-project.md`](./290-prove-generated-compose-persistent-data-loop-in-one-real-project.md)
+  is complete. The generated-compose persistent-data contract is now proven in
+  one real project, and `g02.015` is closed on a trustworthy boundary.
+- [`291-plan-dev-front-door-foundation-batch.md`](./291-plan-dev-front-door-foundation-batch.md)
+  is complete. The broad `g02.013` dev-front-door roadmap now has one bounded
+  first execution target instead of a vague daily-driver handoff.
+- [`292-implement-managed-dev-task-and-lifecycle-foundation.md`](./292-implement-managed-dev-task-and-lifecycle-foundation.md)
+  is complete. The first bounded `g02.013` product slice is now landed:
+  manifest-owned managed dev-task metadata plus container lifecycle ownership
+  inside the managed runtime.
+- [`293-decide-post-lifecycle-foundation-follow-up.md`](./293-decide-post-lifecycle-foundation-follow-up.md)
+  is complete. The next `g02.013` gap is now explicit: shell role before
+  readiness UX or gateway auto-start.
+- [`294-implement-managed-dev-shell-role-foundation.md`](./294-implement-managed-dev-shell-role-foundation.md)
+  is complete. The managed dev runtime now has a bounded embedded shell-role
+  path through the shipped primary-service container shell.
+- [`295-decide-post-shell-role-follow-up.md`](./295-decide-post-shell-role-follow-up.md)
+  is complete. The next `g02.013` gap is now explicit again: readiness UX
+  before gateway auto-start.
+- [`296-implement-managed-dev-readiness-ux-foundation.md`](./296-implement-managed-dev-readiness-ux-foundation.md)
+  is complete. The managed dev runtime now has a bounded readiness UX contract
+  through `managed.health_wait` plus `managed.ready_message`.
+- [`297-decide-post-readiness-foundation-follow-up.md`](./297-decide-post-readiness-foundation-follow-up.md)
+  is complete. The next `g02.013` gap is now explicit again: gateway auto-start
+  before the final real-project proof.
+- [`298-implement-managed-dev-gateway-auto-start-foundation.md`](./298-implement-managed-dev-gateway-auto-start-foundation.md)
+  is complete. The managed dev runtime now has a bounded gateway auto-start
+  path through the shipped `effigy gateway up` surface.
+- [`299-decide-post-gateway-foundation-follow-up.md`](./299-decide-post-gateway-foundation-follow-up.md)
+  is complete. The final `g02.013` gap is now explicit: one real-project proof
+  before lane closeout.
+- [`300-prove-managed-dev-front-door-in-one-real-project.md`](./300-prove-managed-dev-front-door-in-one-real-project.md)
+  is complete. The managed dev front door is now proven in one real project,
+  and `g02.013` is closed on a trustworthy boundary.
 
 ## Archive Rule
 
@@ -105,4 +160,5 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-Execute `282` to land bounded `effigy container data list` inventory.
+No ready batch card is active now. Stop in planning and choose the next lane
+or roadmap batch deliberately.

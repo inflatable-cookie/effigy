@@ -27,6 +27,8 @@ Use it to answer:
 - `templates/`: reusable templates for research and implementation traceability
 - `discovery-intake.md`: policy for secondary-channel triage and intake rules
 - `discovery-triage-log.md`: staging area for signals from secondary channels
+- `carry-forward-intake.md`: future-facing research residue that should stay
+  out of the active product roadmap queue until re-researched and promoted
 
 ## Operating Model
 

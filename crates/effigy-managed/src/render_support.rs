@@ -6,7 +6,7 @@ use effigy_process::ProcessSpec;
 use effigy_ui::Renderer;
 
 use crate::ManagedError;
-use crate::{ManagedProcessSpec, ManagedTaskPlan};
+use crate::{ManagedProcessRole, ManagedProcessSpec, ManagedTaskPlan};
 
 pub fn managed_process_specs<I>(processes: I) -> Vec<ProcessSpec>
 where
@@ -71,6 +71,21 @@ pub fn managed_plan_overview_fields(
         KeyValue::new("repo-root", repo_root.display().to_string()),
         KeyValue::new("manifest", manifest_path.display().to_string()),
         KeyValue::new("tab-order", plan.tab_order.join(", ")),
+        KeyValue::new(
+            "gateway-auto-start",
+            managed_gateway_auto_start_label(plan.gateway_auto_start),
+        ),
+        KeyValue::new(
+            "readiness-wait",
+            managed_readiness_wait_label(plan.readiness.health_wait),
+        ),
+        KeyValue::new(
+            "ready-message",
+            plan.readiness
+                .ready_message
+                .clone()
+                .unwrap_or_else(|| "disabled".to_owned()),
+        ),
     ]
 }
 
@@ -81,6 +96,7 @@ pub fn write_managed_plan_process_table(
     renderer.table(&TableSpec::new(
         vec![
             "process".to_owned(),
+            "role".to_owned(),
             "cwd".to_owned(),
             "run".to_owned(),
             "start-after-ms".to_owned(),
@@ -116,6 +132,7 @@ fn managed_plan_process_rows(plan: &ManagedTaskPlan) -> Vec<Vec<String>> {
         .map(|process| {
             vec![
                 process.name.clone(),
+                managed_process_role_label(process.role).to_owned(),
                 process.cwd.display().to_string(),
                 process.run.clone(),
                 process.start_after_ms.to_string(),
@@ -123,6 +140,14 @@ fn managed_plan_process_rows(plan: &ManagedTaskPlan) -> Vec<Vec<String>> {
             ]
         })
         .collect::<Vec<Vec<String>>>()
+}
+
+fn managed_process_role_label(role: ManagedProcessRole) -> &'static str {
+    match role {
+        ManagedProcessRole::Standard => "standard",
+        ManagedProcessRole::Lifecycle => "lifecycle",
+        ManagedProcessRole::Shell => "shell",
+    }
 }
 
 fn managed_fail_on_non_zero_label(enabled: bool) -> &'static str {
@@ -147,6 +172,22 @@ fn managed_shutdown_on_exit_label(processes: &[ManagedProcessSpec]) -> String {
 }
 
 fn managed_process_shutdown_on_exit_label(enabled: bool) -> &'static str {
+    if enabled {
+        "enabled"
+    } else {
+        "disabled"
+    }
+}
+
+fn managed_readiness_wait_label(enabled: bool) -> &'static str {
+    if enabled {
+        "enabled"
+    } else {
+        "disabled"
+    }
+}
+
+fn managed_gateway_auto_start_label(enabled: bool) -> &'static str {
     if enabled {
         "enabled"
     } else {

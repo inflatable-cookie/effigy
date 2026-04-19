@@ -76,6 +76,8 @@ fn test_policy(profile: &str) -> EffectiveContainerPolicy {
         declared_ports: vec![],
         ports_declared_explicitly: false,
         declared_mounts: vec![],
+        declared_media_mounts: vec![],
+        pull_production_hook: None,
         health_check: None,
         health_timeout_secs: 60,
         ui_tabs: vec![],
