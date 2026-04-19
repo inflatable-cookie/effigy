@@ -1,4 +1,5 @@
 use super::*;
+use effigy_demo::wrap_pty_shell_command;
 
 pub(in crate::runner::demo_command) fn execute_run_backed_demo(
     repo_root: &Path,

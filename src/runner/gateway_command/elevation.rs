@@ -4,8 +4,6 @@ use std::process::Command as ProcessCommand;
 use std::process::Stdio;
 
 use effigy_cli::GatewaySubcommand;
-#[cfg(not(target_os = "macos"))]
-use effigy_gateway::resolver_setup;
 #[cfg(target_os = "macos")]
 use effigy_gateway::resolver_setup::{self, ResolverSpec};
 use effigy_gateway::routes::RouteTable;
@@ -36,6 +34,7 @@ pub(super) fn gateway_up_requires_elevation(config: &GatewayConfig) -> bool {
         }
         #[cfg(not(target_os = "macos"))]
         {
+            let _ = config;
             false
         }
     }
@@ -238,7 +237,7 @@ fn run_gateway_elevated_via_sudo(
     subcommand: GatewaySubcommand,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let command = build_gateway_elevated_command(subcommand, output_json)?;
+    let mut command = build_gateway_elevated_command(subcommand, output_json)?;
     let output = command.stdin(Stdio::inherit()).output().map_err(|error| {
         RunnerError::TaskCommandLaunch {
             command: "sudo".to_owned(),

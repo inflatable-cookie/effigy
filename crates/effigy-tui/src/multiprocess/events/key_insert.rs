@@ -11,15 +11,14 @@ pub(super) fn handle_insert_key(
     state: &mut SessionState,
 ) -> Result<(), MultiProcessTuiError> {
     match key.code {
-        KeyCode::Enter => {
-            if !state.input_line.is_empty() {
-                let target = &state.process_names[state.active_index];
-                let mut payload = state.input_line.clone();
-                payload.push('\n');
-                supervisor.send_input(target, &payload)?;
-                state.input_line.clear();
-            }
+        KeyCode::Enter if !state.input_line.is_empty() => {
+            let target = &state.process_names[state.active_index];
+            let mut payload = state.input_line.clone();
+            payload.push('\n');
+            supervisor.send_input(target, &payload)?;
+            state.input_line.clear();
         }
+        KeyCode::Enter => {}
         KeyCode::Backspace => {
             state.input_line.pop();
         }

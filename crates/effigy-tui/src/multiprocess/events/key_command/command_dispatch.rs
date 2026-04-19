@@ -10,13 +10,12 @@ pub(super) fn handle_command_key(
     max_offset: usize,
 ) -> LoopControl {
     match key.code {
-        KeyCode::Char('i') => {
-            if state.process_names[state.active_index] != "shell" {
-                state.input_mode = InputMode::Insert;
-                state.show_help = false;
-                state.show_options = false;
-            }
+        KeyCode::Char('i') if state.process_names[state.active_index] != "shell" => {
+            state.input_mode = InputMode::Insert;
+            state.show_help = false;
+            state.show_options = false;
         }
+        KeyCode::Char('i') => {}
         KeyCode::Char('h') => {
             state.show_help = !state.show_help;
             if state.show_help {
