@@ -3857,10 +3857,7 @@ where
 {
     std::thread::spawn(move || {
         let mut buffer = [0u8; 4096];
-        loop {
-            let Ok(read) = reader.read(&mut buffer) else {
-                break;
-            };
+        while let Ok(read) = reader.read(&mut buffer) {
             if read == 0 {
                 break;
             }

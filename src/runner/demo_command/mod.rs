@@ -41,13 +41,15 @@ use effigy_demo::{
     sanitize_pty_transcript, spawn_input_handoff_forward, spawn_output_capture,
     spawn_stdin_forward, spawn_stdin_handoff_capture, stop_input_handoff_forward,
     successful_demo_attempt, task_is_concurrent_runner_backed, terminated_demo_attempt,
-    update_active_terminal_resize, wrap_pty_shell_command, write_active_attempt_record,
+    update_active_terminal_resize, write_active_attempt_record,
     write_latest_attempt_receipt as persist_latest_demo_attempt_receipt, DemoEntrypoint,
     DemoExecutionAttempt, DemoGroup, DemoHistoricalAttempt, DemoInvocationKind, DemoLaunchMode,
     DemoLogPaths, DemoRecord, DemoRecordGroupBy, OutputMirror, PersistedDemoActiveAttempt,
     PersistedDemoActivePhase, DEMO_DEFAULT_TERMINAL_COLS, DEMO_DEFAULT_TERMINAL_ROWS,
     DEMO_MANAGED_EVENT_POLL_INTERVAL_MS, DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT,
 };
+#[cfg(test)]
+use effigy_demo::wrap_pty_shell_command;
 #[cfg(test)]
 use effigy_demo::{
     browser_terminal_size_override, DEMO_BROWSER_TERMINAL_COLS_ENV, DEMO_BROWSER_TERMINAL_ROWS_ENV,
