@@ -5,7 +5,7 @@
 The next `/src` priority is `demo_command.rs`.
 
 Distribution is now paused on an honest adapter shell. The next highest-value
-cleanup target is [src/runner/demo_command/mod.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command/mod.rs),
+cleanup target is [src/runner/demo_command/mod.rs](../../../src/runner/demo_command/mod.rs),
 which is still the largest mixed-responsibility runner file in the root crate.
 
 ## Why This Decision
@@ -50,5 +50,5 @@ distribution after the domain seam is already clean enough to pause.
 ## Next Task
 
 Execute
-[`196-implement-effigy-demo-runner-shell-follow-up-cleanup.md`](../../specs/batch-cards/196-implement-effigy-demo-runner-shell-follow-up-cleanup.md)
+[`196-implement-effigy-demo-runner-shell-follow-up-cleanup.md`](../../../specs/batch-cards/196-implement-effigy-demo-runner-shell-follow-up-cleanup.md)
 to reduce the next largest mixed-responsibility runner shell.

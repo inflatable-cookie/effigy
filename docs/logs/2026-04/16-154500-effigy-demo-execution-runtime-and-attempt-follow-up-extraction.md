@@ -7,9 +7,9 @@ Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
 ## Summary
 
 `169` moves the shared demo execution-attempt and log-path layer into
-[crates/effigy-demo/src/execution.rs](/Users/tom/Dev/projects/effigy/crates/effigy-demo/src/execution.rs).
+[crates/effigy-demo/src/execution.rs](../../../crates/effigy-demo/src/execution.rs).
 
-[src/runner/demo_command/mod.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command/mod.rs)
+[src/runner/demo_command/mod.rs](../../../src/runner/demo_command/mod.rs)
 no longer owns `DemoExecutionAttempt`, `DemoLogPaths`, or the receipt/log
 persistence shaping for executed attempts directly. The runner now adapts those
 crate-owned contracts through thinner wrappers while keeping the raw process
@@ -26,9 +26,9 @@ loop and host orchestration local.
 ## Evidence
 
 - new shared crate module:
-  [crates/effigy-demo/src/execution.rs](/Users/tom/Dev/projects/effigy/crates/effigy-demo/src/execution.rs)
+  [crates/effigy-demo/src/execution.rs](../../../crates/effigy-demo/src/execution.rs)
 - runner file reduction:
-  [src/runner/demo_command/mod.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command/mod.rs)
+  [src/runner/demo_command/mod.rs](../../../src/runner/demo_command/mod.rs)
   `3964 -> 3804` lines
 - moved contracts:
   - `DemoExecutionAttempt`

@@ -4,7 +4,7 @@
 
 The distribution seam can pause.
 
-After `193`, [src/runner/distribution_command/mod.rs](/Users/tom/Dev/projects/effigy/src/runner/distribution_command/mod.rs)
+After `193`, [src/runner/distribution_command/mod.rs](../../../src/runner/distribution_command/mod.rs)
 is down to runner-shell behavior:
 - repo/path resolution
 - default output-path selection
@@ -50,5 +50,5 @@ cluster.
 ## Next Task
 
 Execute
-[`195-decide-next-src-shell-cleanup-priority-after-distribution-boundary.md`](../../specs/batch-cards/195-decide-next-src-shell-cleanup-priority-after-distribution-boundary.md)
+[`195-decide-next-src-shell-cleanup-priority-after-distribution-boundary.md`](../../../specs/batch-cards/195-decide-next-src-shell-cleanup-priority-after-distribution-boundary.md)
 to choose the next remaining `/src` seam.

@@ -9,7 +9,7 @@ Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
 `170` keeps the demo runner seam open.
 
 `169` removed the shared attempt/log execution layer cleanly, but
-[src/runner/demo_command/mod.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command/mod.rs)
+[src/runner/demo_command/mod.rs](../../../src/runner/demo_command/mod.rs)
 still owns a reusable runtime-control cluster. That cluster is still larger and
 more domain-shaped than the next obvious `/src` seams, so the right move is
 one more bounded `effigy-demo` extraction batch instead of shifting to another
@@ -24,7 +24,7 @@ file.
 
 ## Evidence
 
-- [src/runner/demo_command/mod.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command/mod.rs):
+- [src/runner/demo_command/mod.rs](../../../src/runner/demo_command/mod.rs):
   `3804` lines
 - remaining reusable demo-domain cluster:
   - concurrent-runner runtime state and event-loop handling

@@ -10,7 +10,7 @@ Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
 
 `crates/effigy-tui/src/demo_browser.rs` now owns `DemoBrowserApp`, the browser
 run loop, the host/runtime loop helpers, and the generic invoke-json boundary
-used by that app shell. The root file [src/tui/demo_browser.rs](/Users/tom/Dev/projects/effigy/src/tui/demo_browser.rs)
+used by that app shell. The root file [src/tui/demo_browser.rs](../../../src/tui/demo_browser.rs)
 is now reduced to the direct Effigy command bridge plus browser tests.
 
 ## Vision Target Delta

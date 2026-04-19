@@ -133,9 +133,11 @@ pub(super) fn run_generate_closeout(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let output_path = output_path.map(|path| {
-        path.strip_prefix(repo_root)
-            .map(Path::to_path_buf)
-            .unwrap_or(path)
+        if path.is_absolute() {
+            path
+        } else {
+            repo_root.join(path)
+        }
     });
     let rendered = generate_closeout_command(
         distribution_policy,
@@ -150,10 +152,13 @@ pub(super) fn run_generate_closeout(
     if output_json {
         Ok(rendered)
     } else if let Some(path) = rendered.strip_prefix("[ok] wrote log: ") {
-        Ok(format!(
-            "[ok] wrote log: {}",
-            repo_root.join(path).display()
-        ))
+        let rendered_path = PathBuf::from(path);
+        let display_path = if rendered_path.is_absolute() {
+            rendered_path
+        } else {
+            repo_root.join(rendered_path)
+        };
+        Ok(format!("[ok] wrote log: {}", display_path.display()))
     } else {
         Ok(rendered)
     }

@@ -7,7 +7,7 @@ Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
 ## Summary
 
 `165` widened `effigy-demo` with an active-state layer in
-[crates/effigy-demo/src/active.rs](/Users/tom/Dev/projects/effigy/crates/effigy-demo/src/active.rs).
+[crates/effigy-demo/src/active.rs](../../../crates/effigy-demo/src/active.rs).
 
 That crate now owns:
 
@@ -18,7 +18,7 @@ That crate now owns:
 - terminal handoff file preparation and cleanup
 - recent-output loading from repo-relative paths
 
-[src/runner/demo_command/mod.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command/mod.rs) now uses thin adapter wrappers over that API instead of owning the active-state file contract inline.
+[src/runner/demo_command/mod.rs](../../../src/runner/demo_command/mod.rs) now uses thin adapter wrappers over that API instead of owning the active-state file contract inline.
 
 ## Vision Target Delta
 
