@@ -1,5 +1,6 @@
 use crate::tests::prelude::{
     parse_command, strip_global_json_flag, strip_global_json_flags, Command, HelpTopic,
+    TaskInvocation,
 };
 
 #[test]
@@ -134,14 +135,26 @@ fn parse_service_help_alias_is_scoped() {
 }
 
 #[test]
-fn parse_catalog_and_catalogue_help_aliases_are_scoped() {
+fn parse_catalog_and_catalogue_help_aliases_fall_back_to_task_routing() {
     let catalog = parse_command(vec!["catalog".to_owned(), "--help".to_owned()])
-        .expect("catalog help should parse");
+        .expect("catalog token should route as a task selector");
     let catalogue = parse_command(vec!["catalogue".to_owned(), "--help".to_owned()])
-        .expect("catalogue help should parse");
+        .expect("catalogue token should route as a task selector");
 
-    assert_eq!(catalog, Command::Help(HelpTopic::Service));
-    assert_eq!(catalogue, Command::Help(HelpTopic::Service));
+    assert_eq!(
+        catalog,
+        Command::Task(TaskInvocation {
+            name: "catalog".to_owned(),
+            args: vec!["--help".to_owned()],
+        })
+    );
+    assert_eq!(
+        catalogue,
+        Command::Task(TaskInvocation {
+            name: "catalogue".to_owned(),
+            args: vec!["--help".to_owned()],
+        })
+    );
 }
 
 #[test]

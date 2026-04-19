@@ -38,8 +38,9 @@
 ]
 "qa:json" = "cargo run --bin effigy -- contracts check-json --fast --print-selected=text"
 "qa:json:ci" = "cargo run --bin effigy -- contracts check-json --full --print-selected=json"
+"qa:released-surface" = "cargo test --test cli_output_tests released_surface_ -- --nocapture"
 "qa:gates" = [{ task = "qa:docs" }, { task = "qa:json" }]
-"qa:ci" = [{ task = "qa:docs" }, { task = "qa:json:ci" }]
+"qa:ci" = [{ task = "qa:docs" }, { task = "qa:json:ci" }, { task = "qa:released-surface" }]
 "prepush:test:json-mode" = "cargo test --test cli_output_tests cli_json_mode"
 "prepush:test:lib" = "cargo test --lib"
 "prepush:test:cli-output" = "cargo test --test cli_output_tests"

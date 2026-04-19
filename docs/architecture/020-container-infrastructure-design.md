@@ -188,8 +188,7 @@ User customization layers on top:
 
 `effigy service list` shows available services. `effigy service extract
 <service>` extracts a bundled fragment to the override directory for
-customization. `catalog` and `catalogue` remain compatibility aliases for the
-same surface.
+customization.
 
 ### Eject
 

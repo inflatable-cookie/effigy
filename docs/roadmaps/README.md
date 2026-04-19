@@ -102,3 +102,12 @@ release execution.
 - New roadmaps and actively maintained roadmap updates must use roadmap IDs and batch language.
 - Older imported roadmap bodies may retain internal `Phase X.Y` execution headings as historical record.
 - Leave those historical headings alone unless that roadmap is reopened for active work, then normalize it in the same batch.
+
+## Historical command boundary
+
+- older roadmap bodies may retain wrapper-script names or superseded command
+  spellings when they describe the implementation path that existed at the time
+- treat those references as historical planning evidence, not current operator
+  guidance
+- active release/runtime usage should be taken from the guides, contracts, and
+  current roadmap front matter rather than old roadmap body details

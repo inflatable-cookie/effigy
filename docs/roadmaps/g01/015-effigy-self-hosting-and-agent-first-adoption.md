@@ -232,7 +232,7 @@ Agent docs should also define:
 - [x] `rg -n "g01\\.015|015-" docs/roadmaps docs/README.md README.md`
 - [x] roadmap indexes updated to point at `g01.015`
 - [x] `./scripts/check-doc-links.sh README.md docs/roadmaps/README.md docs/roadmaps/g01/README.md docs/roadmaps/g01/015-effigy-self-hosting-and-agent-first-adoption.md`
-- [x] `bash -n scripts/effigy-dev scripts/install-local-bin-links.sh`
+- [x] `cargo run --bin effigy -- bootstrap:local --repo .`
 - [x] `zsh -ic 'type -a effigy; type -a effigy-dev'`
 - [x] `zsh -ic 'effigy-dev tasks'`
 - [x] `zsh -ic 'effigy-dev test --plan'`

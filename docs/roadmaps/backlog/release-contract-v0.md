@@ -56,7 +56,7 @@ A version can be tagged for channel publication only if all are true:
   - prefixed built-ins (`catalog_a/tasks`, `catalog_a/test`)
   - `test --plan`
 - [x] Install validation from release tag is automated:
-  - `./scripts/check-release-install-from-tag.sh --tag <tag>`
+  - `effigy release verify-install --tag <tag>`
 - [ ] Release notes drafted with change summary and migration notes (if needed).
 - [ ] Rollback candidate tag identified (previous known-good).
 - [x] Distribution metadata validated (crate metadata, install docs, checksum path):

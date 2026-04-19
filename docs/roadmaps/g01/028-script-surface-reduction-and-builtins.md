@@ -125,14 +125,17 @@ But those wrappers should contain minimal logic and delegate immediately.
 
 ### Group C - Thin compatibility wrappers
 
-- `scripts/check-release-gates.sh`
-- `scripts/check-release-install-from-tag.sh`
-- `scripts/prepare-release.sh`
-- `scripts/check-release-smoke.sh`
+Resolved:
+- the release wrapper cluster has been retired from the live repo
+- the native replacement surfaces are:
+  - `effigy release gates`
+  - `effigy release verify-install`
+  - `effigy release prepare`
+  - `effigy smoke:release`
+  - `effigy bootstrap:local`
 
 ### Group D - Local-machine helpers
 
-- `scripts/install-local-bin-links.sh`
 - `scripts/effigy-dev`
 
 ## Wave 1 - Docs and Contracts Built-ins
