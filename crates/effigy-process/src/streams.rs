@@ -49,10 +49,7 @@ fn emit_complete_lines(
     line_kind: &ProcessEventKind,
     line_buffer: &mut Vec<u8>,
 ) {
-    loop {
-        let Some(index) = line_buffer.iter().position(|byte| *byte == b'\n') else {
-            break;
-        };
+    while let Some(index) = line_buffer.iter().position(|byte| *byte == b'\n') {
         let line = line_buffer.drain(..=index).collect::<Vec<u8>>();
         let text = decode_line(&line);
         let _ = tx.send(ProcessEvent {
