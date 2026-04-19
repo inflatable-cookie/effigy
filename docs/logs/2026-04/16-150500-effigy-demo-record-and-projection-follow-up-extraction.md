@@ -7,9 +7,9 @@ Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
 ## Summary
 
 `167` moves the shared demo record/projection layer into
-[crates/effigy-demo/src/records.rs](/Users/tom/Dev/projects/effigy/crates/effigy-demo/src/records.rs).
+[crates/effigy-demo/src/records.rs](../../../crates/effigy-demo/src/records.rs).
 
-[src/runner/demo_command/mod.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command/mod.rs)
+[src/runner/demo_command/mod.rs](../../../src/runner/demo_command/mod.rs)
 no longer owns `DemoRecord`, `DemoActionAvailability`, `DemoGroup`,
 `DemoEntrypoint`, or the shared history/grouping projection helpers directly.
 The runner now adapts those crate-owned contracts through thinner query and
@@ -26,9 +26,9 @@ text-render helpers.
 ## Evidence
 
 - new shared crate module:
-  [crates/effigy-demo/src/records.rs](/Users/tom/Dev/projects/effigy/crates/effigy-demo/src/records.rs)
+  [crates/effigy-demo/src/records.rs](../../../crates/effigy-demo/src/records.rs)
 - runner file reduction:
-  [src/runner/demo_command/mod.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command/mod.rs)
+  [src/runner/demo_command/mod.rs](../../../src/runner/demo_command/mod.rs)
   `4292 -> 3964` lines
 - moved contracts:
   - `DemoRecord`

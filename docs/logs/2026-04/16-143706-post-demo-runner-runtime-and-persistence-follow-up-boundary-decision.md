@@ -9,7 +9,7 @@ Spec: `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
 `166` keeps the demo runner seam open.
 
 `165` removed a real persistence cluster, but
-[src/runner/demo_command/mod.rs](/Users/tom/Dev/projects/effigy/src/runner/demo_command/mod.rs) still
+[src/runner/demo_command/mod.rs](../../../src/runner/demo_command/mod.rs) still
 owns one more reusable demo-domain layer around records and projections. That
 is still larger and more reusable than the next obvious `/src` seams, so the
 right move is one more bounded `effigy-demo` extraction batch instead of
