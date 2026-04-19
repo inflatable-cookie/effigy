@@ -1,16 +1,19 @@
 # 063 - Container System Guide
 
-Effigy's first bounded container surface gives a repo an explicit way to define
-named local container environments without making `effigy dev` globally
-special.
+Effigy's shipped container surface gives a repo an explicit way to define named
+local environments without making `effigy dev` globally special.
 
-The v1 goal is narrow:
+The current v1 goal is still explicit rather than magical:
 
 - declare one or more named Colima-backed container environments in
   `effigy.toml`
 - bring them up and down through `effigy container ...`
+- project local domains through the shipped gateway when the manifest declares
+  `[containers.<name>.dns]`
 - keep host-facing ports, repo mounts, and the primary interactive service
   explicit
+- support bounded generated-compose data lifecycle and shared backing services
+  on the product-owned path
 - make attached sessions shut down the environment on owner exit by default
 - let repos expose named container sessions through ordinary task names
   without embedding raw compose commands
@@ -26,11 +29,19 @@ The v1 goal is narrow:
 ```sh
 effigy container up
 effigy container <NAME> up
+effigy container down
 effigy container <NAME> down
+effigy container status --all
+effigy container stats --all
 effigy container <NAME> status
+effigy container <NAME> data list
+effigy container <NAME> data export <VOLUME> <PATH>
+effigy container <NAME> data import <VOLUME> <PATH>
+effigy container <NAME> data pull-production
 effigy container <NAME> logs
 effigy container <NAME> shell
-effigy container <NAME> reset
+effigy container <NAME> reset --keep-data
+effigy container <NAME> eject
 ```
 
 Default-resolution rule:
@@ -42,9 +53,27 @@ Useful flags:
 
 - `--attach` / `--detach` override the manifest startup mode for `up`
 - `--service <NAME>` focuses `logs` or `shell` on one explicit service
+- `--all` turns `status` and `stats` into cross-project views
 - `--command <CMD>` runs one shell command string inside the service via
   `sh -lc`
+- `--keep-data` preserves generated-compose persistent named volumes during
+  `reset`
 - `--json` returns machine-readable payloads for non-interactive paths
+
+## Local Dev Chain
+
+For repos using the fuller `v0.3` local-dev surface, `container` now sits in a
+clearer operator chain:
+
+1. use `effigy service` to inspect or extract bundled service fragments
+2. use `effigy container up` to bring the local environment to ready state
+3. use `effigy gateway` when the manifest declares local domains or TLS-backed
+   routes
+4. use `effigy exec ...` for one ad-hoc command inside the dev container
+5. use a repo-owned managed task such as `effigy dev` when the repo wants one
+   named session front door
+
+The container command is the middle of that chain, not the whole story.
 
 ## Task Composition
 
@@ -103,6 +132,9 @@ Current v1 rules:
 - `host.mounts` must stay repo-relative and may not escape the repo root
 - host access is explicit through declared `ports`
 - readiness may be declared through one environment `health.check`
+- gateway route ownership stays explicit through `[containers.<name>.dns]`
+- the richer data lifecycle commands stay on the generated-compose path instead
+  of widening direct `compose_file` ownership
 
 ## Runtime Behavior
 
@@ -132,6 +164,25 @@ Current `down` behavior is intentionally narrow:
 
 - it tears down the compose environment
 - it does not stop the Colima profile itself
+
+Cross-project views:
+
+- `effigy container status --all` shows running Effigy-managed environments
+  across repos
+- `effigy container stats --all` adds bounded CPU and memory usage for those
+  running environments when runtime stats are available
+
+Generated-compose data lifecycle:
+
+- `data list` shows Effigy-managed named volumes with persistent versus
+  ephemeral classification
+- `data export` and `data import` move bounded generated-compose volumes
+  through the product surface
+- `data pull-production` runs one repo-owned production-pull hook through the
+  container data contract
+- `reset --keep-data` keeps persistent named volumes while still removing
+  ephemeral ones
+- `eject` gives the repo an explicit way to take compose ownership locally
 
 ## Host Runtime Fallback
 
@@ -164,6 +215,15 @@ The `108` widening proof also showed one remaining environment-shaped edge:
   through one reliable shutdown path, and the real `contact-patch` proof exits
   cleanly under timed `SIGINT`
 
+Gateway integration is now part of the shipped path:
+
+- `[containers.<name>.dns]` registers and removes route-table entries through
+  container lifecycle
+- `[containers.<name>.dns].port` lets one route choose a specific declared host
+  port
+- `[containers.<name>.dns].tls = true` works with `effigy gateway setup-tls`
+  and the route-owned certificate path
+
 Effigy itself now also uses this surface for local Linux release rehearsal:
 
 - `release:linux:env` opens the named `linux-release` container as an attached
@@ -181,11 +241,12 @@ product shape.
 Still explicitly open:
 
 - no broad multi-driver abstraction
-- no host DNS or service-registration magic
 - no richer per-service health DSL yet
-- no proof yet that a real consumer's existing multi-process `dev` stack can
-  layer container-session ownership into one unified session without another
-  bounded batch
+- generated-compose-only data lifecycle and shared-service widening; direct
+  `compose_file` ownership stays intentionally narrower
+- the front-door local-dev story still needs guide alignment so the shipped
+  `service` -> `container` -> `gateway` -> `exec` -> managed-task chain reads
+  cleanly everywhere
 
 ## Related
 

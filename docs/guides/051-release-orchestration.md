@@ -394,7 +394,8 @@ For Effigy itself:
 
 - `smoke:release` is the repo's native binary-artifact smoke task
 - `effigy distribution first-publish` is the repo's native publish/install
-  orchestration entrypoint
+  orchestration entrypoint inside a still-bounded Cargo-centric distribution
+  contract
 - `scripts/check-linux-glibc-floor.sh` remains an intentional shell boundary
   because it depends on Linux binary-inspection tooling
 
@@ -406,6 +407,8 @@ Still intentionally not shipped:
   beyond a single semver override, or full inline/unified diffs before apply
 - automatic workflow migration in `.github/workflows/` without explicit human
   approval
+- a claim that the fuller `distribution first-publish` path is already
+  universally generic across non-Cargo consumer repos
 
 ## Expected Outcome
 

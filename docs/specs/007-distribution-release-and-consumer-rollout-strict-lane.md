@@ -68,7 +68,8 @@ That hardening detour is now fully closed:
 - `cargo run --bin effigy -- qa:ci` passes
 - `cargo run --bin effigy -- release simulate` now reports
   `Ready to prepare and execute: yes`
-- the suggested release is `v0.2.14`
+- the live release-prep target is the deliberate `v0.3` cut, not a `v0.2.14`
+  patch line that this repo no longer intends to ship
 
 The next move is no longer another hardening batch.
 
@@ -76,6 +77,15 @@ Release execution is technically ready and `115` is complete.
 
 The remaining gate is now deliberate release execution discipline, not product
 sequencing.
+
+Supported-boundary rule for this lane:
+
+- treat the shipped distribution surface as strong native self-hosting plus a
+  reusable primitive layer
+- do not describe the fuller `distribution first-publish` path as universally
+  generic beyond its current bounded Cargo-centric contract
+- keep release messaging explicit about that distinction until later rollout
+  work proves a broader boundary
 
 ## Batch Model
 

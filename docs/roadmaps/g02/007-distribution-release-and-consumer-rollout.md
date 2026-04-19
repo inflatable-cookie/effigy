@@ -43,7 +43,7 @@ release-closure prep are all done. `115` is complete and the release posture is 
 - release closure is complete
 - `qa:ci` passes
 - `release simulate` says `Ready to prepare and execute: yes`
-- the suggested release is `v0.2.14`
+- the repo is now deliberately targeting `v0.3`, not a `v0.2.14` patch release
 
 Shipped proof already in place:
 
@@ -72,6 +72,13 @@ That sequencing checkpoint is now resolved for this thread:
 
 The lane now returns to deliberate release prep for one explicit human-approved
 `v0.3` cut.
+
+Supported-boundary rule:
+
+- release messaging should frame the distribution surface as strong native
+  self-hosting plus reusable validation/evidence primitives
+- it should not over-claim the fuller `distribution first-publish` path as
+  universally generic while that path remains intentionally bounded
 
 ## Exit Condition
 

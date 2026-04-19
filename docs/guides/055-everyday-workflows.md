@@ -105,7 +105,39 @@ Deep dive:
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 
-## 4) Move Friction Into The Manifest
+## 4) Use One Local-Dev Chain
+
+For web or service-heavy repos, the clean daily path should read as one chain
+instead of a pile of unrelated commands:
+
+```sh
+effigy service list
+effigy container up
+effigy gateway status
+effigy exec composer install
+effigy dev
+```
+
+Use the commands in this order:
+
+- `service` when you need to inspect or extract bundled service fragments
+- `container` when you need to bring the local environment up, inspect it, or
+  manage its data
+- `gateway` when the repo declares local domains or TLS-backed routes
+- `exec` when you need one ad-hoc command in the dev container without opening
+  a long-lived shell
+- a repo-owned managed task such as `effigy dev` when the repo wants one named
+  front door for the whole local session
+
+The important shift is that local bring-up should feel like one product-owned
+path, not one-off compose commands plus wrapper scripts plus tribal knowledge.
+
+Deep dive:
+- [`063-container-system-guide.md`](./063-container-system-guide.md)
+- [`012-dev-process-manager-tui.md`](./012-dev-process-manager-tui.md)
+- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+
+## 5) Move Friction Into The Manifest
 
 When a workflow still depends on memory, shell aliases, or repo-specific setup,
 move that detail into `effigy.toml`.
@@ -124,7 +156,7 @@ Deep dive:
 - [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
 - [`050-env-schema-integration.md`](./050-env-schema-integration.md)
 
-## 5) Make Automation Boring
+## 6) Make Automation Boring
 
 When humans and tools use the same commands, the machine-facing path should
 stay just as clear:
@@ -143,7 +175,7 @@ Deep dive:
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 
-## 6) Treat Proof Demos As A First-Class Operator Surface
+## 7) Treat Proof Demos As A First-Class Operator Surface
 
 When a repo has demo or proof scripts that people actually need to discover,
 run, inspect, and review, move them into `[demos.<id>]` instead of keeping
@@ -165,7 +197,28 @@ Deep dive:
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 
-## 7) When Effigy Still Feels Hard
+## 8) Use Native Release And Distribution Surfaces
+
+When release or packaging work still depends on wrapper-script memory, the
+default path should be native:
+
+```sh
+effigy release status --check-gates
+effigy release prepare --plan
+effigy distribution preflight --tag v0.3.0
+effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-v0.3.0
+```
+
+Use `release` for repo-owned release readiness and mutation flow. Use
+`distribution` for artifact validation, GLIBC checks, first-publish evidence,
+and closeout material where that bounded surface fits your repo.
+
+Deep dive:
+- [`051-release-orchestration.md`](./051-release-orchestration.md)
+- [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+
+## 9) When Effigy Still Feels Hard
 
 That usually means the product surface or manifest still needs work.
 
@@ -192,8 +245,12 @@ After this guide, you should have a clearer default path for:
 
 - discovering work
 - running tasks and tests
+- using one coherent local-dev path for services, containers, gateway, exec,
+  and repo-owned dev sessions
 - using built-ins for health, watch, and scans
 - using demos as an explicit proof surface instead of script sprawl
+- using native release and distribution commands instead of wrapper-script
+  bundles
 - spotting the next piece of repo friction that should move into Effigy
 
 ## Related Guides
@@ -204,7 +261,10 @@ After this guide, you should have a clearer default path for:
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
 - [`050-env-schema-integration.md`](./050-env-schema-integration.md)
+- [`051-release-orchestration.md`](./051-release-orchestration.md)
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+- [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
+- [`063-container-system-guide.md`](./063-container-system-guide.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 

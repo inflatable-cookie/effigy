@@ -13,7 +13,9 @@ protocols defined here.
 
 ## 1) Current State
 
-- Version: `0.2.5`
+- Release posture: deliberate `v0.3` prep is active; use exact versions in
+  consumer CI instead of relying on this guide to imply a moving "current"
+  number
 - Active workflows in `.github/workflows/`:
   - `ci.yml` — PR and push validation (format, clippy, tests)
   - `release-binaries.yml` — tag-triggered: gates → build → GitHub Release → Homebrew tap
@@ -143,7 +145,7 @@ The preferred way to install Effigy in GitHub Actions workflows:
 ```yaml
 - uses: inflatable-cookie/setup-effigy@v1
   with:
-    version: '0.2.3'
+    version: 'X.Y.Z'
 ```
 
 This handles platform detection, downloading, and caching automatically.
@@ -157,7 +159,7 @@ For non-GitHub-Actions CI systems, or if the action is not suitable:
 ```yaml
 - name: Install effigy
   run: |
-    EFFIGY_VERSION="${EFFIGY_VERSION:-0.2.3}"
+    EFFIGY_VERSION="${EFFIGY_VERSION:-X.Y.Z}"
     TARGET="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
     case "$TARGET" in
       linux-x86_64)   TRIPLE="x86_64-unknown-linux-gnu" ;;
@@ -211,6 +213,13 @@ Released-surface rule for deliberate `0.x` minor cuts:
 - the current recorded intentional break for that cut is retirement of the
   legacy release wrapper scripts; keep that fixture aligned with the real
   migration story when more deliberate breaks are approved
+
+Supported-boundary rule for `v0.3` messaging:
+
+- describe Effigy's release/distribution story as strong native self-hosting
+  plus reusable validation/evidence primitives
+- do not describe the fuller `distribution first-publish` path as universally
+  generic while it still carries bounded Cargo-centric assumptions
 
 ### 6b) Tagging Rules
 
@@ -491,7 +500,7 @@ Features:
 ```yaml
 - uses: inflatable-cookie/setup-effigy@v1
   with:
-    version: '0.2.3'
+    version: 'X.Y.Z'
 ```
 
 ## 10) Rollback
