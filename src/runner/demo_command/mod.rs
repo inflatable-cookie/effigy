@@ -21,6 +21,8 @@ use effigy_demo::projection::{
     demo_table_spec, recent_attempts_table_spec,
 };
 use effigy_demo::runtime::{DemoActiveAttempt, DemoConcurrentRuntimeState, DemoRuntimeBackend};
+#[cfg(test)]
+use effigy_demo::wrap_pty_shell_command;
 use effigy_demo::{
     active_attempt_is_stop_requested, append_demo_terminal_input, build_attempt_id,
     build_demo_groups as build_extracted_demo_groups, clear_active_attempt_state,
@@ -48,8 +50,6 @@ use effigy_demo::{
     PersistedDemoActivePhase, DEMO_DEFAULT_TERMINAL_COLS, DEMO_DEFAULT_TERMINAL_ROWS,
     DEMO_MANAGED_EVENT_POLL_INTERVAL_MS, DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT,
 };
-#[cfg(test)]
-use effigy_demo::wrap_pty_shell_command;
 #[cfg(test)]
 use effigy_demo::{
     browser_terminal_size_override, DEMO_BROWSER_TERMINAL_COLS_ENV, DEMO_BROWSER_TERMINAL_ROWS_ENV,
