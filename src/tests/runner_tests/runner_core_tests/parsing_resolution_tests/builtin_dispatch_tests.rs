@@ -30,6 +30,7 @@ fn run_manifest_task_prefixed_builtin_help_is_supported() {
     let root = temp_workspace("builtin-help-prefixed-catalog");
     let catalog_a = root.join("catalog_a");
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
+    write_manifest(&root.join("effigy.toml"), "");
     write_manifest(
         &catalog_a.join("effigy.toml"),
         r#"[catalog]

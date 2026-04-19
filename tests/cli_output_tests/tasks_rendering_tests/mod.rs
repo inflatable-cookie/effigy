@@ -45,6 +45,7 @@ fn run_effigy(args: &[&str], repo: Option<&Path>, color: bool) -> String {
 
 fn write_catalog_build_workspace(name: &str) -> PathBuf {
     let root = temp_workspace(name);
+    fs::write(root.join("effigy.toml"), "").expect("write root manifest");
     let catalog = root.join("cattle-grid");
     fs::create_dir_all(&catalog).expect("mkdir catalog");
     fs::write(

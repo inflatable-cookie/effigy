@@ -826,7 +826,7 @@ fn read_toml_version(source: &ResolvedVersionSource) -> Result<semver::Version, 
             source.path.display()
         ))
     })?;
-    let parsed = raw.parse::<toml::Value>().map_err(|error| {
+    let parsed = toml::from_str::<toml::Value>(&raw).map_err(|error| {
         ReleaseError::TaskInvocation(format!(
             "failed to parse {}: {error}",
             source.path.display()
@@ -936,7 +936,7 @@ fn render_updated_toml_contents(
             source.path.display()
         ))
     })?;
-    let parsed = raw.parse::<toml::Value>().map_err(|error| {
+    let parsed = toml::from_str::<toml::Value>(&raw).map_err(|error| {
         ReleaseError::TaskInvocation(format!(
             "failed to parse {}: {error}",
             source.path.display()

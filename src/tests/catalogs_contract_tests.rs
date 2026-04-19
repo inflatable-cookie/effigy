@@ -48,6 +48,7 @@ fn catalogs_json_pretty_contract_uses_tasks_schema_top_level_shape() {
     let root = temp_workspace("catalogs-contract-json-pretty");
     let catalog_a = root.join("catalog_a");
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
+    write_manifest(&root.join("effigy.toml"), "");
 
     write_manifest(
         &catalog_a.join("effigy.toml"),
@@ -83,6 +84,7 @@ fn catalogs_json_compact_contract_is_single_line_and_valid_json() {
     let root = temp_workspace("catalogs-contract-json-compact");
     let catalog_a = root.join("catalog_a");
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
+    write_manifest(&root.join("effigy.toml"), "");
 
     write_manifest(
         &catalog_a.join("effigy.toml"),

@@ -1,7 +1,7 @@
 use crate::runner::tests::prelude::{
     assert_builtin_ok_empty, assert_output_contains_all, create_workspace_dir,
     create_workspace_path, run_builtin_ok, setup_root_and_catalog_a_ping, temp_workspace,
-    write_catalog_tasks,
+    write_catalog_tasks, write_root_manifest,
 };
 
 #[test]
@@ -22,6 +22,7 @@ fn run_manifest_task_relative_prefix_resolves_catalog_by_path() {
     let root = temp_workspace("relative-prefix-path");
     let catalog_b = create_workspace_dir(&root, "catalog_b");
     let froyo = create_workspace_dir(&root, "froyo");
+    write_root_manifest(&root, "");
 
     write_catalog_tasks(
         &catalog_b,
@@ -43,6 +44,7 @@ fn run_manifest_task_relative_prefix_prefers_alias_collision_over_path_resolutio
     let catalog_b = create_workspace_dir(&root, "catalog_b");
     let alias_override = create_workspace_dir(&root, "alias-override");
     let froyo = create_workspace_dir(&root, "froyo");
+    write_root_manifest(&root, "");
 
     write_catalog_tasks(
         &catalog_b,
@@ -72,6 +74,7 @@ fn run_manifest_task_relative_prefix_supports_multi_parent_traversal() {
     let root = temp_workspace("relative-prefix-multi-parent");
     let app = create_workspace_path(&root, "apps/web/src");
     let shared = create_workspace_path(&root, "shared");
+    write_root_manifest(&root, "");
 
     write_catalog_tasks(&shared, Some("shared"), &[("lint", "printf shared-lint")]);
 

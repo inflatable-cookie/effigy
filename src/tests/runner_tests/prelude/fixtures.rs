@@ -18,6 +18,8 @@ pub(in crate::runner::tests) fn setup_root_with_catalog_tasks(
     let root = temp_workspace(name);
     if include_root_dev_task {
         write_root_dev_task_manifest(&root);
+    } else {
+        write_root_manifest(&root, "");
     }
     for (dir_name, tasks) in catalogs {
         let dir = create_workspace_dir(&root, dir_name);

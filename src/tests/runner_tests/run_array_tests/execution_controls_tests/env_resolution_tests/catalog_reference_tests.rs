@@ -1,11 +1,12 @@
 use crate::runner::tests::prelude::{
     assert_run_array_task_invocation_error_case_table, assert_run_array_task_output_case_table,
     write_catalog_api_single_env_capture_manifest, write_catalog_api_unreachable_manifest,
-    write_catalog_manifest_with_alias, write_env_files, Path, RunArrayTaskInvocationErrorCase,
-    RunArrayTaskOutputCase,
+    write_catalog_manifest_with_alias, write_env_files, write_root_manifest, Path,
+    RunArrayTaskInvocationErrorCase, RunArrayTaskOutputCase,
 };
 
 fn setup_relative_catalog_env_reference(root: &Path, marker: &Path) {
+    write_root_manifest(root, "");
     write_catalog_manifest_with_alias(
         root,
         "sub-project1",
@@ -24,6 +25,7 @@ MY_VAR = "my value""#,
 }
 
 fn setup_relative_catalog_dotenv_env_reference(root: &Path, marker: &Path) {
+    write_root_manifest(root, "");
     write_catalog_manifest_with_alias(root, "sub-project1", "project1", "");
     write_env_files(root, &[("sub-project1/.env", "MY_VAR=from-dotenv\n")]);
     write_catalog_api_single_env_capture_manifest(
@@ -37,6 +39,7 @@ fn setup_relative_catalog_dotenv_env_reference(root: &Path, marker: &Path) {
 }
 
 fn setup_missing_relative_catalog_env_reference(root: &Path) {
+    write_root_manifest(root, "");
     write_catalog_manifest_with_alias(
         root,
         "sub-project1",

@@ -5,6 +5,7 @@ fn run_doctor_executes_discovered_health_task() {
     let root = temp_workspace("doctor-health-delegation");
     let catalog_a = root.join("catalog_a");
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
+    write_manifest(&root.join("effigy.toml"), "");
 
     write_manifest(
         &catalog_a.join("effigy.toml"),
