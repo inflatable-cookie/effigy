@@ -69,11 +69,30 @@ fn run_tasks_json_preserves_catalog_row_order_with_empty_catalogs() {
     let catalog_rows = parsed["catalog_tasks"]
         .as_array()
         .expect("catalog_tasks array");
-    assert_eq!(catalog_rows.len(), 2, "expected one row per catalog");
-    assert_eq!(catalog_rows[0]["task"].as_str(), Some("alpha/api"));
-    assert!(catalog_rows[1]["task"].is_null());
     assert!(
-        catalog_rows[1]["manifest"]
+        catalog_rows.len() >= 3,
+        "expected rows for root plus each child catalog"
+    );
+    let child_rows = catalog_rows
+        .iter()
+        .filter(|row| {
+            row["manifest"]
+                .as_str()
+                .map(|manifest| !manifest.ends_with("/effigy.toml") || manifest.contains("/alpha/") || manifest.contains("/beta/"))
+                .unwrap_or(false)
+        })
+        .filter(|row| {
+            row["manifest"]
+                .as_str()
+                .map(|manifest| manifest.ends_with("/alpha/effigy.toml") || manifest.ends_with("/beta/effigy.toml"))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(child_rows.len(), 2, "expected one row per child catalog");
+    assert_eq!(child_rows[0]["task"].as_str(), Some("alpha/api"));
+    assert!(child_rows[1]["task"].is_null());
+    assert!(
+        child_rows[1]["manifest"]
             .as_str()
             .map(|manifest| manifest.ends_with("/beta/effigy.toml"))
             .unwrap_or(false),

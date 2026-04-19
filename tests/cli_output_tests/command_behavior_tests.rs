@@ -6662,6 +6662,8 @@ fn cli_explicitly_deferred_release_bypasses_builtin_release_command() {
 #[test]
 fn cli_implicit_legacy_release_bypasses_builtin_release_command_by_default() {
     let root = temp_workspace("cli-implicit-deferred-release");
+    fs::write(root.join("effigy.toml"), "[tasks.dev]\nrun = \"printf dev\"\n")
+        .expect("write manifest");
     fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
     fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
 
@@ -7334,6 +7336,7 @@ fn cli_container_data_pull_production_json_reports_hook_contract() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
+        .env("HOME", &root)
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)

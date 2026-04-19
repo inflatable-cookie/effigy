@@ -126,6 +126,7 @@ fn tasks_json_contract_with_resolve_has_diagnostics_and_probe_fields() {
     let root = temp_workspace("tasks-json-contract-resolve");
     let catalog_a = root.join("catalog_a");
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
+    write_manifest(&root.join("effigy.toml"), "");
     write_manifest(
         &catalog_a.join("effigy.toml"),
         "[catalog]\nalias = \"catalog_a\"\n[tasks.api]\nrun = \"printf api\"\n",
@@ -157,6 +158,7 @@ fn tasks_filtered_json_contract_with_resolve_has_diagnostics_and_probe_fields() 
     let root = temp_workspace("tasks-filtered-json-contract-resolve");
     let catalog_a = root.join("catalog_a");
     fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
+    write_manifest(&root.join("effigy.toml"), "");
     write_manifest(
         &catalog_a.join("effigy.toml"),
         "[catalog]\nalias = \"catalog_a\"\n[tasks.build]\nrun = \"printf build\"\n",

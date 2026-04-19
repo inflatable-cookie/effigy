@@ -12,7 +12,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-use hickory_proto::op::{MessageType, OpCode, ResponseCode};
+use hickory_proto::op::{OpCode, ResponseCode};
 use hickory_proto::rr::rdata::A;
 use hickory_proto::rr::{RData, Record, RecordType};
 use tokio::net::UdpSocket;
@@ -199,22 +199,19 @@ fn handle_dns_query(
     };
 
     // Only handle standard queries.
-    if request.op_code() != OpCode::Query {
+    if request.metadata.op_code != OpCode::Query {
         return (None, false);
     }
 
-    let mut response = Message::new();
-    response.set_id(request.id());
-    response.set_message_type(MessageType::Response);
-    response.set_op_code(OpCode::Query);
-    response.set_recursion_desired(request.recursion_desired());
-    response.set_recursion_available(false);
+    let mut response = Message::response(request.metadata.id, OpCode::Query);
+    response.metadata.recursion_desired = request.metadata.recursion_desired;
+    response.metadata.recursion_available = false;
 
     let mut answered = false;
     let mut matched_tld = false;
     let mut resolved_route = false;
 
-    for query in request.queries() {
+    for query in &request.queries {
         // We only serve A records. But if the query is for our TLD
         // (even for AAAA), we mark it as matched so we return NoError
         // instead of Refused. This prevents slow dual-stack lookups
@@ -284,14 +281,14 @@ fn handle_dns_query(
         // Either we have an answer, or the query was for our TLD (even
         // if we don't have A records for it, e.g., AAAA queries).
         // Return NoError so browsers don't retry with different strategies.
-        response.set_response_code(ResponseCode::NoError);
+        response.metadata.response_code = ResponseCode::NoError;
     } else {
         // Not our TLD — refuse.
-        response.set_response_code(ResponseCode::Refused);
+        response.metadata.response_code = ResponseCode::Refused;
     }
 
     // Copy the original questions into the response.
-    response.add_queries(request.queries().iter().cloned());
+    response.add_queries(request.queries.iter().cloned());
 
     (response.to_bytes().ok(), resolved_route)
 }

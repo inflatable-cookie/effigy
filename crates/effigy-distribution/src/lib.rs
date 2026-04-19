@@ -1086,7 +1086,7 @@ pub fn validate_metadata_command(
             path: cargo_path.clone(),
             error,
         })?;
-    let cargo: toml::Value = cargo.parse().map_err(|error: toml::de::Error| {
+    let cargo: toml::Value = toml::from_str(&cargo).map_err(|error: toml::de::Error| {
         DistributionExecutionError::Message(format!(
             "failed to parse {}: {error}",
             cargo_path.display()

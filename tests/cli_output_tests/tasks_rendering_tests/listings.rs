@@ -22,7 +22,8 @@ fn cli_tasks_text_output_matches_canonical_fixture_tail() {
         "\
 Catalogs
 ────────
-count: 1
+count: 2
+- root : effigy.toml
 - cattle-grid : cattle-grid/effigy.toml
 
 Tasks

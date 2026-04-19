@@ -130,7 +130,7 @@ impl HealthScaffoldFixer {
     }
 
     fn parse_manifest_source(&mut self, source: &str) -> Option<Value> {
-        match source.parse::<Value>() {
+        match toml::from_str::<Value>(source) {
             Ok(value) => Some(value),
             Err(error) => {
                 self.skipped(format!(

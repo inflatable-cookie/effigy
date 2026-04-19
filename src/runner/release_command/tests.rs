@@ -54,7 +54,7 @@ fn version_field_path_defaults_follow_known_formats() {
 
 #[test]
 fn toml_and_json_path_helpers_follow_dot_segments() {
-    let toml: toml::Value = "[package]\nversion = \"0.2.4\"\n".parse().expect("toml");
+    let toml: toml::Value = toml::from_str("[package]\nversion = \"0.2.4\"\n").expect("toml");
     let json: serde_json::Value =
         serde_json::from_str("{\"package\":{\"version\":\"0.2.4\"}}").expect("json");
 
@@ -70,7 +70,7 @@ fn toml_and_json_path_helpers_follow_dot_segments() {
 
 #[test]
 fn detect_pyproject_path_prefers_project_version_when_present() {
-    let parsed: toml::Value = "[project]\nversion = \"0.2.4\"\n".parse().expect("toml");
+    let parsed: toml::Value = toml::from_str("[project]\nversion = \"0.2.4\"\n").expect("toml");
     assert_eq!(
         detect_pyproject_version_path(&parsed),
         Some("project.version")

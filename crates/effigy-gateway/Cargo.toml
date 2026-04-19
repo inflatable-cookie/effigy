@@ -7,8 +7,8 @@ description = "DNS resolver and reverse proxy gateway for Effigy local developme
 
 [dependencies]
 # DNS resolution
-hickory-server = "0.25"
-hickory-proto = "0.25"
+hickory-server = "0.26"
+hickory-proto = "0.26"
 
 # HTTP reverse proxy
 hyper = { version = "1", features = ["http1", "server", "client"] }

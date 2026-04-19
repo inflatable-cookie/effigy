@@ -6,4 +6,4 @@ license = "MIT"
 description = "Process supervision subsystem for Effigy (spawn, stdio streaming, shutdown, diagnostics)"
 
 [dependencies]
-nix = { version = "0.29", default-features = false, features = ["process", "signal"] }
+nix = { version = "0.31", default-features = false, features = ["process", "signal"] }

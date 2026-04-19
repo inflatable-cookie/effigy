@@ -8,7 +8,7 @@ description = "Service catalog and compose assembly for Effigy container environ
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+toml = "1"
 minijinja = "2"
 indexmap = { version = "2", features = ["serde"] }
 rust-embed = "8"

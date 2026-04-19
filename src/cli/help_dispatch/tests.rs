@@ -45,6 +45,11 @@ fn build_help_payload_for_root_hides_explicitly_deferred_builtins() {
 #[test]
 fn build_help_payload_for_root_hides_implicitly_deferred_release_builtin() {
     let root = temp_workspace("help-hidden-implicit-release");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf dev\"\n",
+    )
+    .expect("write manifest");
     fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
     fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
 
