@@ -106,32 +106,10 @@ pub(super) fn build_raw_exec_args(
 pub(super) fn resolve_exec_working_dir(
     repo_root: &Path,
     container_name: &str,
-    config: &ManifestContainerConfig,
+    _config: &ManifestContainerConfig,
 ) -> Result<PathBuf, RunnerError> {
-    if let Some(working_dir) = config.working_dir.as_ref() {
-        return Ok(PathBuf::from(working_dir));
-    }
-
-    let Some(host) = config.host.as_ref() else {
-        return Err(missing_working_dir_error(container_name));
-    };
-    let canonical_root = repo_root
-        .canonicalize()
-        .unwrap_or_else(|_| repo_root.to_path_buf());
-    for mount in &host.mounts {
-        let mut parts = mount.splitn(3, ':');
-        let source = parts.next().unwrap_or_default().trim();
-        let target = parts.next().unwrap_or_default().trim();
-        if target.is_empty() {
-            continue;
-        }
-        let resolved_source = repo_root.join(source);
-        let canonical_source = resolved_source.canonicalize().unwrap_or(resolved_source);
-        if canonical_source == canonical_root {
-            return Ok(PathBuf::from(target));
-        }
-    }
-    Err(missing_working_dir_error(container_name))
+    effigy_containers::load_container_exec_working_dir(repo_root, Some(container_name))
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
 pub(super) fn ensure_container_running(
@@ -191,10 +169,4 @@ fn map_host_cwd(
         .host_to_container(invocation_cwd)
         .map(|path| path.to_string_lossy().into_owned())
         .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn missing_working_dir_error(container_name: &str) -> RunnerError {
-    RunnerError::task_invocation(format!(
-        "container `{container_name}` must declare `[containers.{container_name}].working_dir` or a repo-root host mount for CWD mapping"
-    ))
 }

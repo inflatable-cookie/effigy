@@ -1,32 +1,28 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use effigy_manifest::config_sections::ManifestContainerWorkspaceConfig;
-use effigy_manifest::ManifestContainerConfig;
+use effigy_manifest::ManifestWorkspaceConfig;
 
-use crate::{resolve_container_exec_working_dir, ContainerPolicyError, EffectiveContainerPolicy};
+use crate::{ContainerPolicyError, EffectiveContainerPolicy};
 
 pub(crate) fn materialize_runtime_workspace_mount_rewrite(
     repo_root: &Path,
     container_name: &str,
-    config: &ManifestContainerConfig,
+    workspace: &ManifestWorkspaceConfig,
+    working_dir: &Path,
     primary_service: &str,
     compose_files: &mut Vec<PathBuf>,
 ) -> Result<(), ContainerPolicyError> {
-    let Some(workspace) = config.workspace.as_ref() else {
-        return Ok(());
-    };
     let Some(source_compose) = compose_files.first().cloned() else {
         return Ok(());
     };
-    let working_dir = resolve_container_exec_working_dir(repo_root, container_name, config)?;
     let rewritten = rewrite_workspace_mounts_for_direct_compose(
         repo_root,
         container_name,
         workspace,
         primary_service,
         &source_compose,
-        &working_dir,
+        working_dir,
     )?;
     compose_files[0] = rewritten;
     Ok(())
@@ -89,7 +85,7 @@ struct RenderedWorkspaceMount {
 fn rewrite_workspace_mounts_for_direct_compose(
     repo_root: &Path,
     container_name: &str,
-    workspace: &ManifestContainerWorkspaceConfig,
+    workspace: &ManifestWorkspaceConfig,
     primary_service: &str,
     source_compose: &Path,
     working_dir: &Path,
@@ -162,7 +158,7 @@ fn rewrite_workspace_mounts_for_direct_compose(
 fn build_workspace_runtime_mounts(
     repo_root: &Path,
     container_name: &str,
-    workspace: &ManifestContainerWorkspaceConfig,
+    workspace: &ManifestWorkspaceConfig,
     working_dir: &Path,
 ) -> Result<Vec<RenderedWorkspaceMount>, ContainerPolicyError> {
     let workspace_root = working_dir.parent().ok_or_else(|| {

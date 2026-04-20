@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Breaking
+- Move default workspace container config onto `[systems.<name>]` itself,
+  replacing the extra `[systems.<name>.workspace_defaults]` layer, and route
+  workspace `workdir`, `user`, `home`, and `extra_mounts` resolution through
+  that system-level config plus per-workspace overrides.
+
 ### Added
 - Add the first composed `system`/`workspace` task-runtime contract, including
   manifest-owned `[systems]` definitions, per-system default workspaces,

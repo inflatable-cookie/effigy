@@ -84,7 +84,7 @@ pub(super) fn resolve_public_workspace_container(
     )?;
 
     match binding {
-        ContainerExecutionBinding::Container { name } => Ok(name),
+        ContainerExecutionBinding::Container { name, .. } => Ok(name),
         ContainerExecutionBinding::Inline { .. } => Err(RunnerError::task_invocation(format!(
             "`effigy {surface}` does not support inline workspace containers yet"
         ))),

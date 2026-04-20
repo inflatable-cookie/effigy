@@ -35,8 +35,8 @@ pub(in crate::runner) fn route_standard_task_execution(
     let task_overrides = TaskOverrides {
         host: task.host.unwrap_or(false) || matches!(binding, ContainerExecutionBinding::Host),
         container: match &binding {
-            ContainerExecutionBinding::Container { name: None } => Some("default".to_owned()),
-            ContainerExecutionBinding::Container { name: Some(name) } => Some(name.clone()),
+            ContainerExecutionBinding::Container { name: None, .. } => Some("default".to_owned()),
+            ContainerExecutionBinding::Container { name: Some(name), .. } => Some(name.clone()),
             ContainerExecutionBinding::Host => None,
             ContainerExecutionBinding::Inline { .. } => {
                 return Err(RunnerError::task_invocation(format!(
@@ -47,7 +47,7 @@ pub(in crate::runner) fn route_standard_task_execution(
         },
     };
     let explicit_container = match binding {
-        ContainerExecutionBinding::Container { name } => {
+        ContainerExecutionBinding::Container { name, .. } => {
             name.or_else(|| containers.and_then(|config| config.default.clone()))
         }
         ContainerExecutionBinding::Inline { .. } => None,

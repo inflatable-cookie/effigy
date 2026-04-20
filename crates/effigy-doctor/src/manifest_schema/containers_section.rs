@@ -45,7 +45,6 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
                 "lifecycle",
                 "health",
                 "host",
-                "workspace",
                 "ui",
             ],
         );
@@ -70,9 +69,6 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
         }
         if let Some(host) = table.get("host") {
             validate_container_host(context, &path, host);
-        }
-        if let Some(workspace) = table.get("workspace") {
-            validate_container_workspace(context, &path, workspace);
         }
         if let Some(ui) = table.get("ui") {
             validate_container_ui(context, &path, ui);
@@ -263,25 +259,6 @@ fn validate_container_host(context: &mut SchemaContext<'_, '_>, base_path: &str,
     validate_allowed_keys(context, &path, table, &["ports", "mounts"]);
     validate_string_array(context, &format!("{path}.ports"), table.get("ports"));
     validate_string_array(context, &format!("{path}.mounts"), table.get("mounts"));
-}
-
-fn validate_container_workspace(
-    context: &mut SchemaContext<'_, '_>,
-    base_path: &str,
-    value: &Value,
-) {
-    let path = format!("{base_path}.workspace");
-    let Some(table) = require_table(context, &path, value, "expected table") else {
-        return;
-    };
-    validate_allowed_keys(context, &path, table, &["extra_mounts", "user", "home"]);
-    validate_string_array(
-        context,
-        &format!("{path}.extra_mounts"),
-        table.get("extra_mounts"),
-    );
-    validate_string_field(context, &path, table.get("user"), "user");
-    validate_string_field(context, &path, table.get("home"), "home");
 }
 
 fn validate_container_ui(context: &mut SchemaContext<'_, '_>, base_path: &str, value: &Value) {

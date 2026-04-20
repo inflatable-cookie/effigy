@@ -25,13 +25,22 @@ pub(super) fn validate_systems_section(context: &mut SchemaContext<'_, '_>, syst
             context,
             &system_path,
             system_table,
-            &["default_workspace", "workspaces"],
+            &[
+                "default_workspace",
+                "workspaces",
+                "container",
+                "workdir",
+                "user",
+                "home",
+                "extra_mounts",
+            ],
         );
         validate_optional_non_empty_string_field(
             context,
             system_table.get("default_workspace"),
             &format!("{system_path}.default_workspace"),
         );
+        validate_workspace_fields(context, &system_path, system_table);
         if let Some(workspaces) = system_table.get("workspaces") {
             validate_workspaces_table(context, &format!("{system_path}.workspaces"), workspaces);
         }
@@ -45,24 +54,45 @@ fn validate_workspaces_table(context: &mut SchemaContext<'_, '_>, path: &str, wo
 
     for (workspace_name, workspace_value) in workspace_table {
         let workspace_path = format!("{path}.{workspace_name}");
-        let Some(table) =
-            require_table(context, &workspace_path, workspace_value, "expected table")
-        else {
-            continue;
-        };
-        validate_allowed_keys(context, &workspace_path, table, &["container", "workdir"]);
-        validate_optional_non_empty_string_field(
+        validate_workspace_entry(context, &workspace_path, workspace_value);
+    }
+}
+
+fn validate_workspace_entry(context: &mut SchemaContext<'_, '_>, path: &str, value: &Value) {
+    let Some(table) = require_table(context, path, value, "expected table") else {
+        return;
+    };
+    validate_allowed_keys(
+        context,
+        path,
+        table,
+        &["container", "workdir", "user", "home", "extra_mounts"],
+    );
+    validate_workspace_fields(context, path, table);
+}
+
+fn validate_workspace_fields(
+    context: &mut SchemaContext<'_, '_>,
+    path: &str,
+    table: &toml::map::Map<String, Value>,
+) {
+    validate_optional_non_empty_string_field(
+        context,
+        table.get("workdir"),
+        &format!("{path}.workdir"),
+    );
+    validate_optional_non_empty_string_field(context, table.get("user"), &format!("{path}.user"));
+    validate_optional_non_empty_string_field(context, table.get("home"), &format!("{path}.home"));
+    if let Some(extra_mounts) = table.get("extra_mounts") {
+        super::values::validate_string_array(
             context,
-            table.get("workdir"),
-            &format!("{workspace_path}.workdir"),
+            &format!("{path}.extra_mounts"),
+            extra_mounts,
+            "expected array of strings",
         );
-        if let Some(container) = table.get("container") {
-            validate_workspace_container(
-                context,
-                &format!("{workspace_path}.container"),
-                container,
-            );
-        }
+    }
+    if let Some(container) = table.get("container") {
+        validate_workspace_container(context, &format!("{path}.container"), container);
     }
 }
 

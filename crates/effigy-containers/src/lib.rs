@@ -26,10 +26,11 @@ use std::path::{Path, PathBuf};
 
 use effigy_catalog::{volumes::ManagedVolume, CatalogError, ComposeOutput};
 use effigy_manifest::{
-    load_task_manifest_with_inspection, ManifestContainerConfig, ManifestContainerDriver,
-    ManifestContainerOnTaskExit, ManifestContainerShutdownMode, ManifestContainerStartup,
-    ManifestContainersConfig, ManifestError, ManifestInlineWorkspaceContainerConfig,
-    TASK_MANIFEST_FILE,
+    load_task_manifest_with_inspection, resolve_task_execution_binding, ManifestContainerConfig,
+    ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
+    ManifestContainerStartup, ManifestContainersConfig, ManifestError,
+    ManifestInlineWorkspaceContainerConfig, ManifestTask, ManifestWorkspaceConfig,
+    ResolvedTaskExecutionBinding, ResolvedWorkspaceContainer, TASK_MANIFEST_FILE,
 };
 
 const DEFAULT_COLIMA_PROFILE: &str = "default";
@@ -179,9 +180,20 @@ pub fn load_container_policy(
     repo_root: &Path,
     requested_name: Option<&str>,
 ) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
+    load_container_policy_with_workspace(repo_root, requested_name, None)
+}
+
+pub fn load_container_policy_with_workspace(
+    repo_root: &Path,
+    requested_name: Option<&str>,
+    workspace_override: Option<&ManifestWorkspaceConfig>,
+) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
     let manifest_path = repo_root.join("effigy.toml");
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
-    let containers = loaded.manifest.containers.ok_or_else(|| {
+    let inferred_workspace = workspace_override
+        .cloned()
+        .or_else(|| infer_default_workspace_for_container(&loaded.manifest, requested_name));
+    let containers = loaded.manifest.containers.as_ref().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
@@ -204,6 +216,7 @@ pub fn load_container_policy(
         &name,
         config,
         &loaded.effective_manifest,
+        inferred_workspace.as_ref(),
     )
 }
 
@@ -212,7 +225,7 @@ pub fn load_all_container_policies(
 ) -> Result<Vec<EffectiveContainerPolicy>, ContainerPolicyError> {
     let manifest_path = repo_root.join("effigy.toml");
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
-    let containers = loaded.manifest.containers.ok_or_else(|| {
+    let containers = loaded.manifest.containers.as_ref().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
@@ -228,6 +241,7 @@ pub fn load_all_container_policies(
                 name,
                 config,
                 &loaded.effective_manifest,
+                infer_default_workspace_for_container(&loaded.manifest, Some(name)).as_ref(),
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -241,7 +255,9 @@ pub fn load_container_exec_working_dir(
 ) -> Result<PathBuf, ContainerPolicyError> {
     let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
-    let containers = loaded.manifest.containers.ok_or_else(|| {
+    let inferred_workspace =
+        infer_default_workspace_for_container(&loaded.manifest, requested_name);
+    let containers = loaded.manifest.containers.as_ref().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
@@ -259,7 +275,7 @@ pub fn load_container_exec_working_dir(
         ))
     })?;
 
-    resolve_container_exec_working_dir(repo_root, &name, config)
+    resolve_container_exec_working_dir(repo_root, &name, config, inferred_workspace.as_ref())
 }
 
 pub fn load_inline_workspace_container_policy(
@@ -421,6 +437,7 @@ fn build_effective_policy(
     name: &str,
     config: &ManifestContainerConfig,
     effective_manifest: &str,
+    workspace: Option<&ManifestWorkspaceConfig>,
 ) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
     let driver = config.driver.unwrap_or(ManifestContainerDriver::Colima);
     let profile = config
@@ -448,13 +465,18 @@ fn build_effective_policy(
         ))
     })?;
     if config.compose_file.is_some() && driver == ManifestContainerDriver::Colima {
-        materialize_runtime_workspace_mount_rewrite(
-            repo_root,
-            name,
-            config,
-            &primary_service,
-            &mut compose_files,
-        )?;
+        if let Some(workspace) = workspace {
+            let working_dir =
+                resolve_container_exec_working_dir(repo_root, name, config, Some(workspace))?;
+            materialize_runtime_workspace_mount_rewrite(
+                repo_root,
+                name,
+                workspace,
+                &working_dir,
+                &primary_service,
+                &mut compose_files,
+            )?;
+        }
         materialize_runtime_dns_override(repo_root, name, &profile, &mut compose_files)?;
     }
     let dns = config.dns.as_ref().cloned().unwrap_or_default();
@@ -473,7 +495,6 @@ fn build_effective_policy(
     let host = config.host.as_ref().cloned().unwrap_or_default();
     let data = config.data.as_ref().cloned().unwrap_or_default();
     let health = config.health.as_ref().cloned().unwrap_or_default();
-    let workspace = config.workspace.as_ref();
     let lifecycle = config.lifecycle.as_ref();
     let _ = containers;
 
@@ -526,6 +547,29 @@ fn build_effective_policy(
     })
 }
 
+fn infer_default_workspace_for_container(
+    manifest: &effigy_manifest::TaskManifest,
+    requested_container_name: Option<&str>,
+) -> Option<ManifestWorkspaceConfig> {
+    let binding = resolve_task_execution_binding(manifest, "container", &ManifestTask::default())
+        .ok()?;
+    let ResolvedTaskExecutionBinding::Workspace(binding) = binding? else {
+        return None;
+    };
+    let resolved_name = match binding.container.as_ref() {
+        Some(ResolvedWorkspaceContainer::Named(name)) => name.as_str(),
+        _ => return None,
+    };
+    match binding.container {
+        Some(ResolvedWorkspaceContainer::Named(_))
+            if requested_container_name.is_none_or(|name| name == resolved_name) =>
+        {
+            Some(binding.workspace_config)
+        }
+        _ => None,
+    }
+}
+
 fn resolve_container_name(
     containers: &ManifestContainersConfig,
     requested_name: Option<&str>,
@@ -559,7 +603,15 @@ fn resolve_container_exec_working_dir(
     repo_root: &Path,
     container_name: &str,
     config: &ManifestContainerConfig,
+    workspace: Option<&ManifestWorkspaceConfig>,
 ) -> Result<PathBuf, ContainerPolicyError> {
+    if let Some(workdir) = workspace
+        .and_then(|workspace| workspace.workdir.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(PathBuf::from(workdir));
+    }
     if let Some(working_dir) = config.working_dir.as_ref() {
         return Ok(PathBuf::from(working_dir));
     }

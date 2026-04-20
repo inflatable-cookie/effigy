@@ -198,7 +198,17 @@ fn load_inline_workspace_container_policy_writes_compose_and_derives_exec_dir() 
 
 #[test]
 fn validate_container_policy_rejects_mounts_outside_repo() {
-    let root = temp_repo("mount");
+    let parent = std::env::temp_dir().join(format!(
+        "effigy-mount-validation-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    let root = parent.join("repo");
+    let outside = parent.join("outside");
+    fs::create_dir_all(&root).expect("mkdir repo");
+    fs::create_dir_all(&outside).expect("mkdir outside");
     fs::write(
         root.join("effigy.toml"),
         r#"
@@ -637,15 +647,16 @@ fn direct_compose_policy_rewrites_workspace_mounts_from_manifest_contract() {
 [containers]
 default = "stack"
 
+[systems.dev]
+container = "stack"
+user = "dev"
+home = "/home/dev"
+workdir = "/workspace-root/underlay-reference"
+extra_mounts = ["../underlay", "../poodle"]
+
 [containers.stack]
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "workspace"
-working_dir = "/workspace-root/underlay-reference"
-
-[containers.stack.workspace]
-user = "dev"
-home = "/home/dev"
-extra_mounts = ["../underlay", "../poodle"]
 "#,
     )
     .expect("write manifest");
@@ -719,15 +730,16 @@ fn load_workspace_ownership_targets_collects_named_volume_targets() {
 [containers]
 default = "stack"
 
+[systems.dev]
+container = "stack"
+user = "dev"
+home = "/home/dev"
+workdir = "/workspace-root/underlay-reference"
+extra_mounts = ["../underlay"]
+
 [containers.stack]
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "workspace"
-working_dir = "/workspace-root/underlay-reference"
-
-[containers.stack.workspace]
-user = "dev"
-home = "/home/dev"
-extra_mounts = ["../underlay"]
 "#,
     )
     .expect("write manifest");

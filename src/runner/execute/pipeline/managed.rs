@@ -52,7 +52,7 @@ pub(super) fn run_managed_task(
         &effigy_routing::resolve_task_selection,
     )?;
     let Some(mut plan) = plan else {
-        if let ContainerExecutionBinding::Container { name } = &container_binding {
+        if let ContainerExecutionBinding::Container { name, .. } = &container_binding {
             let repo_for_task = selection.catalog.catalog_root.clone();
             let lock_scopes = vec![crate::runner::manifest::task_lock_scope(
                 selection.task,
