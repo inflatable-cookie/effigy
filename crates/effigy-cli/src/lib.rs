@@ -11,6 +11,8 @@ pub enum Command {
     Version,
     Changelog(ChangelogArgs),
     Exec(ExecArgs),
+    System(SystemArgs),
+    Workspace(WorkspaceArgs),
     Gateway(GatewayArgs),
     Service(ServiceArgs),
     Demo(DemoArgs),
@@ -44,6 +46,8 @@ pub enum HelpTopic {
     General,
     Changelog,
     Exec,
+    System,
+    Workspace,
     Gateway,
     Service,
     Demo,
@@ -329,6 +333,22 @@ pub struct ContainerArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemArgs {
+    pub subcommand: SystemSubcommand,
+    pub system: Option<String>,
+    pub repo_override: Option<PathBuf>,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceArgs {
+    pub workspace: Option<String>,
+    pub system: Option<String>,
+    pub repo_override: Option<PathBuf>,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootstrapArgs {
     pub repo_url: String,
     pub path: Option<PathBuf>,
@@ -442,6 +462,15 @@ pub enum ContainerSubcommand {
     Eject {
         name: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SystemSubcommand {
+    Up,
+    Down,
+    Status,
+    Logs { follow: bool },
+    Repair,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

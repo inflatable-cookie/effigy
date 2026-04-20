@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use effigy_manifest::LoadedCatalog;
+use effigy_manifest::{resolve_task_execution_binding_from_systems, LoadedCatalog};
 use effigy_routing::select_catalog_and_task;
 use effigy_tasks::parse_task_reference_invocation;
 
@@ -70,9 +70,17 @@ impl<'a, 'b> ReferenceChecker<'a, 'b> {
             }
         };
 
+        let execution_binding = resolve_task_execution_binding_from_systems(
+            selection.catalog.manifest.systems.as_ref(),
+            &selector.task_name,
+            selection.task,
+        )
+        .ok()
+        .flatten();
+
         if selection.task.run.is_none()
             && selection.task.mode.is_none()
-            && selection.task.container_session.is_none()
+            && execution_binding.is_none()
         {
             task_references::add_non_runnable_reference(
                 self.state,

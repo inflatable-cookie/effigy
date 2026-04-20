@@ -2,17 +2,20 @@ use std::path::Path;
 
 use super::super::super::cache::ops::check_task_cache;
 use super::super::super::exec_command::{
-    capture_routed_task_container_exec, run_routed_task_container_exec,
+    capture_routed_task_container_exec, capture_routed_task_container_exec_with_policy,
+    run_routed_task_container_exec, run_routed_task_container_exec_with_policy,
 };
 use super::super::super::locking::io::acquire_scopes;
 use super::super::context::ExecutionTaskContext;
 use super::super::preflight::ExecutionPreflight;
 use super::super::routing::{route_standard_task_execution, routed_container_target};
+use super::super::{resolve_container_execution_binding, ContainerExecutionBinding};
 use super::{super::cache_hit, super::json_payload, super::process_run, command};
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
-use effigy_containers::exec::colima_is_running;
-use effigy_containers::load_container_policy;
+use effigy_containers::compose::compose_args;
+use effigy_containers::exec::{colima_is_running, ensure_colima_running, run_docker_capture};
+use effigy_containers::{load_container_policy, validate_container_policy};
 use effigy_env::resolver::ResolvedEnv;
 use effigy_env::schema_support::{
     resolve_catalog_env_schema as shared_resolve_env_schema, SchemaSupportConfig,
@@ -41,7 +44,7 @@ pub(super) fn run_standard_task(
         &preflight.resolved.resolved_root,
         &[crate::runner::manifest::task_lock_scope(
             selection.task,
-            &preflight.selector.task_name,
+            &preflight.selector,
         )],
     )?;
 
@@ -67,9 +70,26 @@ pub(super) fn run_standard_task(
         env_schema_resolved.as_ref().map(|r| r.secret_env());
     let secret_ref = secret_pairs.as_deref();
 
+    let container_binding = resolve_container_execution_binding(
+        selection.catalog.manifest.systems.as_ref(),
+        &preflight.selector.task_name,
+        selection.task,
+        "standard task execution",
+    )?;
+    if let ContainerExecutionBinding::Inline { .. } = &container_binding {
+        return run_inline_workspace_standard_task(
+            preflight,
+            selection,
+            &context,
+            secret_ref,
+            &container_binding,
+        );
+    }
+
     let routed = route_standard_task_execution(
         &preflight.selector.task_name,
         selection.task,
+        selection.catalog.manifest.systems.as_ref(),
         selection.catalog.manifest.containers.as_ref(),
         |container_name| {
             let policy =
@@ -129,6 +149,96 @@ pub(super) fn run_standard_task(
         &context,
         secret_ref,
     )
+}
+
+fn run_inline_workspace_standard_task(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+    context: &ExecutionTaskContext<'_>,
+    secret_ref: Option<&[(&str, &SecretString)]>,
+    container_binding: &ContainerExecutionBinding,
+) -> Result<String, RunnerError> {
+    let repo_root = &selection.catalog.catalog_root;
+    let policy = container_binding
+        .load_effective_policy(repo_root)?
+        .ok_or_else(|| RunnerError::task_invocation("missing inline workspace container policy"))?;
+    validate_container_policy(repo_root, &policy)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let working_dir = container_binding
+        .exec_working_dir(repo_root)?
+        .ok_or_else(|| RunnerError::task_invocation("missing inline workspace exec working dir"))?;
+
+    let _colima_started = ensure_colima_running(&policy, repo_root)?;
+    run_docker_capture(
+        repo_root,
+        &policy,
+        &compose_args(&policy, ["up", "-d"]),
+        "docker compose up",
+    )?;
+
+    let exec_result = if preflight.output_json {
+        let output = capture_routed_task_container_exec_with_policy(
+            repo_root,
+            &preflight.invocation_cwd,
+            &preflight.selector,
+            &preflight.runtime_args_exec.passthrough,
+            &policy,
+            &working_dir,
+            policy.primary_service.as_str(),
+            context.command(),
+            secret_ref,
+        );
+        let _ = run_docker_capture(
+            repo_root,
+            &policy,
+            &compose_args(&policy, ["down", "--remove-orphans"]),
+            "docker compose down",
+        );
+        let output = output?;
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let rendered = json_payload::render_task_command_json(
+            &preflight.selector.task_name,
+            &preflight.selector,
+            context.repo_for_task(),
+            context.command(),
+            output.status.code(),
+            &stdout,
+            &stderr,
+        )?;
+        if output.status.success() {
+            Ok(rendered)
+        } else {
+            Err(RunnerError::CommandJsonFailure { rendered })
+        }
+    } else {
+        let result = run_routed_task_container_exec_with_policy(
+            repo_root,
+            &preflight.invocation_cwd,
+            &preflight.selector,
+            &preflight.runtime_args_exec.passthrough,
+            &policy,
+            &working_dir,
+            policy.primary_service.as_str(),
+            context.command(),
+            secret_ref,
+        );
+        let _ = run_docker_capture(
+            repo_root,
+            &policy,
+            &compose_args(&policy, ["down", "--remove-orphans"]),
+            "docker compose down",
+        );
+        result.map(|_| {
+            if preflight.runtime_args_raw.verbose_root {
+                context.render_resolution_trace()
+            } else {
+                String::new()
+            }
+        })
+    };
+
+    exec_result
 }
 
 fn resolve_env_schema_if_present(

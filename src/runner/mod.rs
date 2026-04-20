@@ -20,6 +20,7 @@ mod manifest;
 mod release_command;
 mod script_command;
 mod service_command;
+mod system_command;
 mod tasks_command;
 mod tasks_listing;
 mod tasks_probe;

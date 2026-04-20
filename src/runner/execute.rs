@@ -1,3 +1,5 @@
+#[path = "execute/binding.rs"]
+mod binding;
 #[path = "execute/cache_hit.rs"]
 mod cache_hit;
 #[path = "execute/context.rs"]
@@ -21,5 +23,8 @@ mod routing;
 #[path = "execute/selection.rs"]
 mod selection;
 
+pub(in crate::runner) use binding::{
+    resolve_container_execution_binding, ContainerExecutionBinding,
+};
 pub(super) use describe::{catalog_task_label, task_run_preview};
 pub(super) use entry::{run_manifest_task, run_manifest_task_with_cwd};

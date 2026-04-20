@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 mod composition;
 pub mod config_sections;
+pub mod execution_binding;
 mod loaded_catalog;
 mod task_defs;
 pub mod task_runtime;
@@ -28,8 +29,15 @@ pub use config_sections::{
     ManifestContainersConfig, ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus,
     ManifestDistributionConfig, ManifestDistributionMetadataConfig,
     ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
-    ManifestDocsPolicyConfig, ManifestEnvSchemaConfig, ManifestPackageManagerConfig,
-    ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
+    ManifestDocsPolicyConfig, ManifestEnvSchemaConfig, ManifestInlineWorkspaceContainerConfig,
+    ManifestPackageManagerConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
+    ManifestSystemConfig, ManifestSystemsConfig, ManifestWorkspaceConfig,
+    ManifestWorkspaceContainerRef,
+};
+pub use execution_binding::{
+    resolve_task_execution_binding, resolve_task_execution_binding_from_systems,
+    ExecutionBindingResolveError, ResolvedInlineWorkspaceContainer, ResolvedTaskExecutionBinding,
+    ResolvedWorkspaceBinding, ResolvedWorkspaceContainer,
 };
 pub use loaded_catalog::{DeferredCommand, LoadedCatalog, TaskResolverFn, TaskSelection};
 use task_defs::deserialize_tasks;
@@ -108,6 +116,8 @@ pub struct TaskManifest {
     pub bootstrap: Option<ManifestBootstrapConfig>,
     #[serde(default)]
     pub containers: Option<ManifestContainersConfig>,
+    #[serde(default)]
+    pub systems: Option<ManifestSystemsConfig>,
     #[serde(default)]
     pub distribution: Option<ManifestDistributionConfig>,
     #[serde(default)]

@@ -4,6 +4,8 @@ use crate::runner::tests::prelude::{
     thread, write_lock_files, write_root_manifest, Duration, ManagedUnlockInvocationErrorCase,
     ManagedUnlockSuccessCase,
 };
+use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn run_manifest_task_rejects_live_lock_conflict() {
@@ -69,6 +71,51 @@ run = "printf ok"
     let out = run_dev(&root, &[]).expect("expired lease should be reclaimed");
 
     assert_output_equals(&out, "");
+}
+
+#[cfg(unix)]
+#[test]
+fn run_manifest_task_reclaims_lock_from_reused_live_pid_that_is_not_effigy() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-stale-live-non-effigy");
+    write_root_manifest(
+        &root,
+        r#"[tasks.dev]
+run = "printf ok"
+"#,
+    );
+
+    let mut child = Command::new("sleep")
+        .arg("5")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn sleep");
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_millis();
+    write_lock_files(
+        &root,
+        &[(
+            "task-dev.lock",
+            &format!(
+                r#"{{"scope":"task:dev","pid":{},"started_at_epoch_ms":{},"heartbeat_at_epoch_ms":{},"hostname":"test-host","workspace_root":"{}"}}"#,
+                child.id(),
+                now,
+                now,
+                root.display()
+            ),
+        )],
+    );
+
+    let out = run_dev(&root, &[]).expect("non-effigy live pid lock should be reclaimed");
+    assert_output_equals(&out, "");
+
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[test]

@@ -28,7 +28,7 @@ widening.
 
 - exercise the generated-compose persistent-data loop in one real project
 - prove that task-based seeding and production-pull workflows are adequate on
-  the shipped task, exec, `container_session`, and Rhai surfaces
+  the shipped task, exec, workspace binding, and Rhai surfaces
 - land any bounded fixes required to make the proof trustworthy
 - close `g02.015` if the proof succeeds without exposing another roadmap-sized
   gap

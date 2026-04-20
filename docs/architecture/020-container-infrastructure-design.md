@@ -11,7 +11,8 @@ complete local development environment platform.
 
 The v1 container surface (`g02.006`) shipped a narrow, trustworthy foundation:
 named container environments, Colima + Docker Compose lifecycle, attached
-sessions, task integration via `container_session`. This design extends that
+sessions, and task integration through the released `system` / `workspace`
+execution contract. This design extends that
 foundation into a system where any project can declare its service stack in the
 manifest, get a working environment from a single command, and interact with it
 transparently from the host.
@@ -273,8 +274,8 @@ Is there a dev-context container declared?
 Individual tasks can override:
 
 - `host = true` — forces host execution
-- `container_session = "other"` — targets a different container
-- `container_session = "none"` — explicitly skips container routing
+- `workspace = "other"` plus system resolution — targets a different workspace
+  and therefore a different backing container
 
 ### Effigy-in-container handoff
 
@@ -335,8 +336,17 @@ Starting a dev environment should be one command, not a sequence of
 provide a unified TUI experience:
 
 ```toml
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
 [tasks.dev]
-container_session = "web"
+workspace = "app"
 mode = "attached"
 
 [tasks.dev.managed]
@@ -518,12 +528,21 @@ Seeding is not a special abstraction. It's a normal task that runs inside the
 container:
 
 ```toml
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
 [tasks.seed]
-container_session = "web"
+workspace = "app"
 run = "rhai:scripts/seed.rhai"
 
 [tasks."seed:fresh"]
-container_session = "web"
+workspace = "app"
 run = [
     "php artisan migrate:fresh",
     "rhai:scripts/import-migration-bundle.rhai",
@@ -678,8 +697,17 @@ working_dir = "/var/www/html"
 [containers.web.exec.aliases]
 mysql = { service = "db", command = "mysql" }
 
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
 [tasks.dev]
-container_session = "web"
+workspace = "app"
 mode = "attached"
 
 [tasks.dev.managed]
@@ -702,11 +730,11 @@ role = "shell"
 run = "php vendor/bin/phpunit"
 
 [tasks.seed]
-container_session = "web"
+workspace = "app"
 run = "rhai:scripts/seed.rhai"
 
 [tasks."data:rebuild"]
-container_session = "web"
+workspace = "app"
 run = "rhai:scripts/rebuild-data.rhai"
 ```
 

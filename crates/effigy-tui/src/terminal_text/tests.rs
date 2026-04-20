@@ -140,3 +140,18 @@ fn vt_logs_clamps_overscroll_without_panicking() {
     }));
     assert!(result.is_ok(), "overscroll should be clamped safely");
 }
+
+#[test]
+fn vt_logs_reports_full_scrollback_range_not_one_screen_only() {
+    let mut parser = VtParser::new(8, 40, 200);
+    for i in 0..40 {
+        parser.process(format!("line-{i}\n").as_bytes());
+    }
+
+    let (_, _, max_offset) = vt_logs(&mut parser, 8, 40, 0, false);
+
+    assert!(
+        max_offset > 7,
+        "expected scrollback beyond one visible screen, got {max_offset}"
+    );
+}

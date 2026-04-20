@@ -1,12 +1,14 @@
 use super::{
     data_list_report, data_transfer_report, effective_attach_mode, eject_generated_compose,
-    load_all_container_policies, load_container_policy, stats_all_report, status_all_report,
-    status_report, validate_container_policy, with_test_effigy_home, AllocatedPortsSummary,
+    load_all_container_policies, load_container_policy, load_inline_workspace_container_policy,
+    resolve_inline_workspace_exec_working_dir, stats_all_report, status_all_report, status_report,
+    validate_container_policy, with_test_effigy_home, AllocatedPortsSummary,
     ContainerDataTransferAction, ContainerDataVolumeEntry, ContainerPolicyError,
     ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
     EffectiveAttachMode, EffectiveComposeSource, SharedServiceBinding,
 };
 use effigy_catalog::volumes::VolumeClassification;
+use effigy_manifest::ManifestInlineWorkspaceContainerConfig;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -57,6 +59,42 @@ primary_service = "app"
     assert_eq!(
         policy.compose_files,
         vec![root.join("infra/dev/docker-compose.yml")]
+    );
+}
+
+#[test]
+fn load_inline_workspace_container_policy_writes_compose_and_derives_exec_dir() {
+    let root = temp_repo("inline-workspace-policy");
+    let inline = ManifestInlineWorkspaceContainerConfig {
+        image: Some("node:22".to_owned()),
+        mount: Some("./:/workspace".to_owned()),
+        extra: Default::default(),
+    };
+
+    let policy =
+        load_inline_workspace_container_policy(&root, "dev__app", &inline, None).expect("policy");
+    let working_dir =
+        resolve_inline_workspace_exec_working_dir(&root, "dev__app", &inline, None).expect("cwd");
+
+    assert_eq!(policy.name, "dev__app");
+    assert_eq!(policy.primary_service, "workspace");
+    assert_eq!(policy.compose_source, EffectiveComposeSource::Direct);
+    assert_eq!(working_dir, PathBuf::from("/workspace"));
+    assert!(policy.compose_files[0].is_file(), "compose file missing");
+    let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+    assert!(compose.contains("image: \"node:22\""), "compose: {compose}");
+    assert!(
+        compose.contains("working_dir: \"/workspace\""),
+        "compose: {compose}"
+    );
+    assert!(
+        compose.contains(&root.display().to_string()),
+        "compose should use absolute host path: {compose}"
+    );
+    let dns_override = fs::read_to_string(&policy.compose_files[1]).expect("read dns override");
+    assert!(
+        dns_override.contains("workspace:\n    dns:"),
+        "dns override should target workspace service: {dns_override}"
     );
 }
 
@@ -393,6 +431,130 @@ catalog = "php-fpm"
     assert!(error
         .to_string()
         .contains("cannot combine `compose_file` with"));
+}
+
+#[test]
+fn direct_compose_policy_writes_runtime_dns_override_for_declared_services() {
+    let root = temp_repo("direct-compose-runtime-dns");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        r#"
+services:
+  app:
+    image: "node:22"
+  db:
+    image: "postgres:16"
+"#,
+    )
+    .expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert_eq!(policy.compose_files.len(), 2);
+    let dns_override = fs::read_to_string(&policy.compose_files[1]).expect("read dns override");
+    assert!(
+        dns_override.contains("app:\n    dns:"),
+        "dns override should target app service: {dns_override}"
+    );
+    assert!(
+        dns_override.contains("db:\n    dns:"),
+        "dns override should target db service: {dns_override}"
+    );
+    assert!(
+        dns_override.contains("\"1.1.1.1\""),
+        "dns override: {dns_override}"
+    );
+    assert!(
+        dns_override.contains("\"8.8.8.8\""),
+        "dns override: {dns_override}"
+    );
+}
+
+#[test]
+fn direct_compose_policy_rewrites_workspace_mounts_from_manifest_contract() {
+    let parent = std::env::temp_dir().join(format!(
+        "effigy-direct-compose-workspace-mounts-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    let root = parent.join("underlay-reference");
+    let underlay = parent.join("underlay");
+    let poodle = parent.join("poodle");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir repo");
+    fs::create_dir_all(&underlay).expect("mkdir underlay");
+    fs::create_dir_all(&poodle).expect("mkdir poodle");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "stack"
+
+[containers.stack]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "workspace"
+
+[containers.stack.exec]
+working_dir = "/workspace-root/underlay-reference"
+
+[containers.stack.workspace]
+extra_mounts = ["../underlay", "../poodle"]
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        r#"
+services:
+  workspace:
+    image: "node:22"
+    volumes:
+      - ../../../:/workspace-root
+      - stack-cache:/cache
+volumes:
+  stack-cache: {}
+"#,
+    )
+    .expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let rewritten =
+        fs::read_to_string(&policy.compose_files[0]).expect("read rewritten workspace compose");
+
+    assert!(
+        rewritten.contains(":/workspace-root/underlay-reference"),
+        "rewritten compose: {rewritten}"
+    );
+    assert!(
+        rewritten.contains(":/workspace-root/underlay"),
+        "rewritten compose: {rewritten}"
+    );
+    assert!(
+        rewritten.contains(":/workspace-root/poodle"),
+        "rewritten compose: {rewritten}"
+    );
+    assert!(
+        !rewritten.contains("../../../:/workspace-root"),
+        "rewritten compose should remove broad parent mount: {rewritten}"
+    );
+    assert!(
+        rewritten.contains("- stack-cache:/cache"),
+        "rewritten compose should preserve named volumes: {rewritten}"
+    );
 }
 
 #[test]

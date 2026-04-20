@@ -14,7 +14,7 @@ managed runtime.
 ## In Scope
 
 - add bounded managed-task readiness metadata under `tasks.<name>.managed`
-- let a managed dev task wait on the task-owned `container_session` health path
+- let a managed dev task wait on the task-owned workspace container health path
   before declaring ready
 - project a ready-state message through the managed runtime on the product path
 - cover the readiness contract in schema/help/tests where needed
@@ -23,13 +23,13 @@ managed runtime.
 
 - gateway auto-start
 - broader multi-service health orchestration beyond the task-owned container
-  session
+  surface
 - real-project proof work
 
 ## Acceptance Criteria
 
 - manifests can declare bounded readiness metadata on a managed dev task
-- the managed runtime can wait for the target container session to become ready
+- the managed runtime can wait for the target workspace container to become ready
   before presenting the task as ready
 - a manifest-owned ready message appears on the product path without pretending
   gateway automation is already shipped

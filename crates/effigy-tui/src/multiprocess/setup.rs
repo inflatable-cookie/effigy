@@ -23,6 +23,11 @@ pub(super) fn prepare_runtime_session(
         .filter(|process| process.shutdown_on_exit)
         .map(|process| process.name.clone())
         .collect();
+    let vt_enabled_processes = processes
+        .iter()
+        .filter(|process| process.pty)
+        .map(|process| process.name.clone())
+        .collect();
 
     let supervisor = ProcessSupervisor::spawn(repo_root, processes)?;
     let terminal = init_terminal()?;
@@ -33,6 +38,7 @@ pub(super) fn prepare_runtime_session(
         VT_PARSER_SCROLLBACK,
     );
     state.shutdown_on_exit_processes = shutdown_on_exit_processes;
+    state.vt_enabled_processes = vt_enabled_processes;
     let diagnostics = RuntimeDiagnostics::from_env();
     let vt_emulator_enabled = vt_emulator_enabled_from_env();
 

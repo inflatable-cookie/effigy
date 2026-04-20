@@ -9,8 +9,7 @@
 //! 1. If no dev-context container is declared → host (current behavior).
 //! 2. If the command is a host-native built-in → host.
 //! 3. If the task explicitly declares `host = true` → host.
-//! 4. If the task explicitly declares `container_session = "none"` → host.
-//! 5. If the task declares `container_session = "<name>"` → that container.
+//! 4. If the task explicitly binds to a specific container → that container.
 //! 6. Otherwise → the dev-context container.
 
 /// Describes the project's execution context configuration.
@@ -56,8 +55,8 @@ pub struct TaskOverrides {
     /// If true, force host execution regardless of context.
     pub host: bool,
 
-    /// Explicit container session override. "none" means host.
-    pub container_session: Option<String>,
+    /// Explicit container target override.
+    pub container: Option<String>,
 }
 
 /// The result of a routing decision.
@@ -125,22 +124,18 @@ pub fn route(
         return RoutingDecision::host("task declares host = true");
     }
 
-    // 4. Explicit `container_session = "none"`.
-    if let Some(ref session) = task_overrides.container_session {
-        if session == "none" {
-            return RoutingDecision::host("task declares container_session = \"none\"");
-        }
-        // 5. Explicit container session targeting a different container.
+    // 4. Explicit container target override.
+    if let Some(ref container) = task_overrides.container {
         return if context.container_running {
             RoutingDecision::container(
-                session.clone(),
+                container.clone(),
                 service.clone(),
-                format!("task declares container_session = \"{session}\""),
+                format!("task declares explicit container = \"{container}\""),
             )
         } else {
             RoutingDecision::not_running(
-                session.clone(),
-                format!("container '{session}' is not running"),
+                container.clone(),
+                format!("container '{container}' is not running"),
             )
         };
     }

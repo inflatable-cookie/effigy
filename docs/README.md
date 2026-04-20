@@ -54,6 +54,16 @@ deeper links only when you need them.
   and
   [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md)
 
+### I want container-backed dev to feel normal instead of all-or-nothing
+
+- Start with
+  [`guides/064-system-workspace-and-dev-contract.md`](./guides/064-system-workspace-and-dev-contract.md)
+- Then use
+  [`guides/063-container-system-guide.md`](./guides/063-container-system-guide.md)
+  for the current implementation surface and
+  [`architecture/020-container-infrastructure-design.md`](./architecture/020-container-infrastructure-design.md)
+  for the deeper substrate design
+
 ### I want automation, CI, or agents to consume Effigy safely
 
 - Start with
@@ -98,6 +108,8 @@ For full repo adoption:
   [`guides/055-everyday-workflows.md`](./guides/055-everyday-workflows.md)
 - Manifest patterns:
   [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md)
+- System/workspace/dev contract:
+  [`guides/064-system-workspace-and-dev-contract.md`](./guides/064-system-workspace-and-dev-contract.md)
 - Command reference:
   [`guides/025-command-reference-matrix.md`](./guides/025-command-reference-matrix.md)
 - Troubleshooting:

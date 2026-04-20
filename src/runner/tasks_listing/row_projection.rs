@@ -43,7 +43,7 @@ pub(super) fn project_catalog_task_display_rows(
 ) -> (TaskSignatureProjection, Vec<ManagedProfileDisplayRow>) {
     let task_row = TaskSignatureProjection::new(
         catalog_task_label(catalog, task_name),
-        task_run_preview(task),
+        task_run_preview(catalog, task_name, task),
     );
     let managed_profiles = managed_profile_display_rows(catalog, task_name, task);
     (task_row, managed_profiles)

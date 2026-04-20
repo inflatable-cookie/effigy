@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use effigy_manifest::{LoadedCatalog, ManifestManagedRun, TaskResolverFn, TaskSelection};
+use effigy_manifest::{
+    resolve_task_execution_binding_from_systems, LoadedCatalog, ManifestManagedRun, TaskResolverFn,
+    TaskSelection,
+};
 
 use super::parser::{is_builtin_task_selector, ParsedTaskRef};
 use crate::profiles::has_concurrent_schema;
@@ -93,9 +96,16 @@ where
         );
     }
 
+    let execution_binding = resolve_task_execution_binding_from_systems(
+        selection.catalog.manifest.systems.as_ref(),
+        task_name,
+        selection.task,
+    )
+    .map_err(|error| ManagedError::task_invocation(error.to_string()))?;
+
     if selection.task.mode.is_some()
         || has_concurrent_schema(selection.task)
-        || selection.task.container_session.is_some()
+        || execution_binding.is_some()
     {
         return render_builtin_reference_invocation(selector_rendered, args_rendered);
     }

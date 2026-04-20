@@ -2,7 +2,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use effigy_manifest::{
-    LoadedCatalog, ManifestManagedConcurrentEntry, ManifestTask, TaskResolverFn,
+    resolve_task_execution_binding_from_systems, LoadedCatalog, ManifestManagedConcurrentEntry,
+    ManifestTask, ResolvedTaskExecutionBinding, TaskResolverFn,
 };
 use effigy_tasks::TaskSelector;
 
@@ -22,7 +23,7 @@ pub fn resolve_concurrent_process_entries<'a>(
     let mut used_names = HashSet::<String>::new();
     let mut resolved = Vec::<super::ConcurrentResolvedProcess>::with_capacity(entries.len());
     for (index, entry) in entries.iter().enumerate() {
-        let normalized = normalize_entry(selector, task, entry, index)?;
+        let normalized = normalize_entry(selector, task, entry, index, catalog)?;
         let process_name = normalized.process_name;
         if !used_names.insert(process_name.clone()) {
             return Err(invalid_managed_process_definition(
@@ -34,6 +35,7 @@ pub fn resolve_concurrent_process_entries<'a>(
 
         let (run, cwd) = resolve_process_run_and_cwd(
             selector,
+            task,
             &process_name,
             entry,
             catalog,
@@ -47,6 +49,7 @@ pub fn resolve_concurrent_process_entries<'a>(
                 role: normalized.role,
                 run,
                 cwd,
+                service: normalized.service,
                 start_after_ms: normalized.start_after_ms,
                 shutdown_on_exit: normalized.shutdown_on_exit,
             },
@@ -61,6 +64,7 @@ pub fn resolve_concurrent_process_entries<'a>(
 struct NormalizedConcurrentEntry {
     process_name: String,
     role: ManagedProcessRole,
+    service: Option<String>,
     start_rank: usize,
     tab_rank: usize,
     start_after_ms: u64,
@@ -72,9 +76,10 @@ fn normalize_entry(
     task: &ManifestTask,
     entry: &ManifestManagedConcurrentEntry,
     index: usize,
+    catalog: &LoadedCatalog,
 ) -> Result<NormalizedConcurrentEntry, crate::ManagedError> {
     let ordinal = index + 1;
-    let role = normalize_role(selector, task, entry)?;
+    let role = normalize_role(selector, task, entry, catalog)?;
     let process_name = entry
         .name
         .as_deref()
@@ -93,6 +98,12 @@ fn normalize_entry(
     Ok(NormalizedConcurrentEntry {
         process_name,
         role,
+        service: entry
+            .service
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
         start_rank,
         tab_rank,
         start_after_ms: entry.start_after_ms.unwrap_or(0),
@@ -102,6 +113,7 @@ fn normalize_entry(
 
 fn resolve_process_run_and_cwd<'a>(
     selector: &TaskSelector,
+    task: &ManifestTask,
     process_name: &str,
     entry: &ManifestManagedConcurrentEntry,
     catalog: &LoadedCatalog,
@@ -132,6 +144,7 @@ fn resolve_process_run_and_cwd<'a>(
     )? {
         super::RunOrTaskRef::Task(task_ref) => resolve_task_process_run_and_cwd(
             selector,
+            task,
             process_name,
             task_ref,
             catalog,
@@ -145,6 +158,7 @@ fn resolve_process_run_and_cwd<'a>(
 
 fn resolve_task_process_run_and_cwd<'a>(
     selector: &TaskSelector,
+    _task: &ManifestTask,
     process_name: &str,
     task_ref: &str,
     catalog: &LoadedCatalog,
@@ -191,15 +205,34 @@ fn normalize_role(
     selector: &TaskSelector,
     task: &ManifestTask,
     entry: &ManifestManagedConcurrentEntry,
+    catalog: &LoadedCatalog,
 ) -> Result<ManagedProcessRole, crate::ManagedError> {
+    let has_container_backed_binding =
+        task_has_container_backed_execution_binding(catalog, selector, task)?;
     let process = entry
         .name
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("process");
     match entry.role.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
-        None => Ok(ManagedProcessRole::Standard),
+        None => {
+            if entry.service.is_some() {
+                return Err(invalid_managed_process_definition(
+                    selector,
+                    process,
+                    "`service` is only supported on `role = \"shell\"` entries",
+                ));
+            }
+            Ok(ManagedProcessRole::Standard)
+        }
         Some("lifecycle") => {
+            if entry.service.is_some() {
+                return Err(invalid_managed_process_definition(
+                    selector,
+                    process,
+                    "`role = \"lifecycle\"` does not accept `service`",
+                ));
+            }
             if !task
                 .managed
                 .as_ref()
@@ -211,11 +244,11 @@ fn normalize_role(
                     "`role = \"lifecycle\"` requires `[tasks.<name>.managed] container_lifecycle = true`",
                 ));
             }
-            if task.container_session.is_none() {
+            if !has_container_backed_binding {
                 return Err(invalid_managed_process_definition(
                     selector,
                     process,
-                    "`role = \"lifecycle\"` requires `container_session = \"<name>\"` on the task",
+                    "`role = \"lifecycle\"` requires a container-backed execution binding on the task (`workspace`)",
                 ));
             }
             if entry.run.is_some() || entry.task.is_some() {
@@ -228,11 +261,11 @@ fn normalize_role(
             Ok(ManagedProcessRole::Lifecycle)
         }
         Some("shell") => {
-            if task.container_session.is_none() {
+            if !has_container_backed_binding {
                 return Err(invalid_managed_process_definition(
                     selector,
                     process,
-                    "`role = \"shell\"` requires `container_session = \"<name>\"` on the task",
+                    "`role = \"shell\"` requires a container-backed execution binding on the task (`workspace`)",
                 ));
             }
             if entry.run.is_some() || entry.task.is_some() {
@@ -252,6 +285,23 @@ fn normalize_role(
             ),
         )),
     }
+}
+
+fn task_has_container_backed_execution_binding(
+    catalog: &LoadedCatalog,
+    selector: &TaskSelector,
+    task: &ManifestTask,
+) -> Result<bool, crate::ManagedError> {
+    let binding = resolve_task_execution_binding_from_systems(
+        catalog.manifest.systems.as_ref(),
+        &selector.task_name,
+        task,
+    )
+    .map_err(|error| crate::ManagedError::task_invocation(error.to_string()))?;
+    Ok(matches!(
+        binding,
+        Some(ResolvedTaskExecutionBinding::Workspace(_))
+    ))
 }
 
 fn lifecycle_shutdown_on_exit(

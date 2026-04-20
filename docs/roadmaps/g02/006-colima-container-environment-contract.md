@@ -68,8 +68,8 @@ That creates four failures:
 - [x] Define `effigy container` as a first-class command surface.
 - [x] Define a manifest registry of named container environments.
 - [x] Support a manifest-defined default container alias.
-- [ ] Let tasks reference named container controls explicitly.
-      Shipped through `container_session = "..."` task aliases.
+- [x] Let tasks reference named container controls explicitly.
+      Shipped through the later `system` / `workspace` task contract.
 - [x] Define an attached session model where one owner process governs
       container lifecycle and teardown.
 - [ ] Reuse Effigy's multi-tab session model for status, logs, and service
@@ -164,8 +164,17 @@ Task integration should be explicit and repo-owned.
 Preferred direction:
 
 ```toml
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
 [tasks]
-dev = { container_session = "default" }
+dev = { workspace = "app" }
 ```
 
 or, if lower-level composition is needed:
@@ -227,17 +236,17 @@ The operator should be able to understand:
 Need to decide whether v1 ships:
 
 - only a dedicated `container up --attach` flow
-- or a first-class `container_session` task primitive
+- or a first-class task-owned attached-session primitive
 
 Decision for `106`:
 
 - v1 keeps `effigy container ...` as the primary product surface
-- v1 does not require a first-class `container_session` task primitive before
+- v1 does not require a first-class task-owned attached-session primitive before
   implementation starts
 - repos may initially compose container control through ordinary task entries
   that reference named containers
 - if the first implementation proof shows that attached-session ergonomics are
-  too awkward in plain task composition, a dedicated `container_session`
+  too awkward in plain task composition, a dedicated task-level session
   primitive can become the next bounded follow-up rather than a hidden v1
   dependency
 
@@ -307,8 +316,7 @@ Decision for `106`:
   - primary-service log follow
   - extra service tabs derived from `ui.tabs`
 - repos can now expose one attached container session through
-  `container_session = "..."` task aliases without embedding raw compose
-  commands
+  task-owned workspace bindings without embedding raw compose commands
 - no-Docker-host fallback through `colima nerdctl` plus Colima startup with
   `--runtime containerd`
 - one honest consumer proof in `contact-patch`

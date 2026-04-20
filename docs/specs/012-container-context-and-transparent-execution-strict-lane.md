@@ -40,7 +40,8 @@ The `effigy-exec` crate is shipped as an isolated library with 53 tests:
 - **Routing engine** (`routing.rs`): determines host vs container execution
   for any command. Host-native allowlist for management commands (doctor,
   container, gateway, release, etc.). Per-task overrides: `host = true`,
-  `container_session = "none"` or `"<name>"`. Container-not-running
+  plus explicit workspace/container targeting through resolved task binding.
+  Container-not-running
   detection with clear user guidance. Decision struct with human-readable
   reason for every routing choice.
 

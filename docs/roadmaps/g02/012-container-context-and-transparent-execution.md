@@ -103,8 +103,9 @@ Commands that route through the context container:
 Individual task overrides:
 
 - `host = true` — forces host execution
-- `container_session = "none"` — explicitly skips container routing
-- `container_session = "<name>"` — targets a different container
+- `workspace = "<name>"` — targets a different resolved workspace/container
+- `system = "<name>"` — switches the task onto another declared system before
+  workspace resolution
 
 ### 4.3 CWD Mapping
 

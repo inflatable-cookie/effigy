@@ -5,8 +5,11 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{thread, time::Duration};
 
+use anstyle::Style;
 use chrono::Utc;
 use effigy_core::path_error_text::{failed_to_read_path, failed_to_write_path};
+use effigy_ui::theme::{resolve_color_enabled, Theme};
+use effigy_ui::OutputMode;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Position, Scope};
 #[cfg(unix)]
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
@@ -140,10 +143,10 @@ pub fn execute_rhai_script(
 
 fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks: HostCallbacks) {
     engine.register_fn("log", |message: ImmutableString| {
-        println!("{message}");
+        let _ = emit_host_log(message.as_str(), false);
     });
     engine.register_fn("log_warn", |message: ImmutableString| {
-        eprintln!("{message}");
+        let _ = emit_host_log(message.as_str(), true);
     });
 
     engine.register_fn("env", |name: ImmutableString| -> String {
@@ -442,6 +445,66 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks
             .map_err(rhai_runtime_error)
         },
     );
+}
+
+fn emit_host_log(message: &str, stderr: bool) -> std::io::Result<()> {
+    use std::io::{self, IsTerminal, Write};
+
+    let color_enabled = if stderr {
+        resolve_color_enabled(OutputMode::from_env(), io::stderr().is_terminal())
+    } else {
+        resolve_color_enabled(OutputMode::from_env(), io::stdout().is_terminal())
+    };
+    let rendered = render_host_log_message(message, color_enabled);
+    if stderr {
+        let mut handle = io::stderr().lock();
+        handle.write_all(rendered.as_bytes())?;
+        if !message.ends_with('\n') {
+            handle.write_all(b"\n")?;
+        }
+        handle.flush()
+    } else {
+        let mut handle = io::stdout().lock();
+        handle.write_all(rendered.as_bytes())?;
+        if !message.ends_with('\n') {
+            handle.write_all(b"\n")?;
+        }
+        handle.flush()
+    }
+}
+
+fn render_host_log_message(message: &str, color_enabled: bool) -> String {
+    message
+        .split_inclusive('\n')
+        .map(|line| render_host_log_line(line, color_enabled))
+        .collect()
+}
+
+fn render_host_log_line(line: &str, color_enabled: bool) -> String {
+    const STATUS_PREFIXES: [(&str, fn(&Theme) -> Style); 8] = [
+        ("[ok]", |theme| theme.success),
+        ("[check]", |theme| theme.warning),
+        ("[error]", |theme| theme.error),
+        ("[warning]", |theme| theme.warning),
+        ("[warn]", |theme| theme.warning),
+        ("[info]", |theme| theme.label),
+        ("[next]", |theme| theme.accent),
+        ("[note]", |theme| theme.accent_soft),
+    ];
+
+    for (prefix, style) in STATUS_PREFIXES {
+        if let Some(rest) = line.strip_prefix(prefix) {
+            return format!("{}{}", style_prefix(prefix, color_enabled, style(&Theme::default())), rest);
+        }
+    }
+    line.to_owned()
+}
+
+fn style_prefix(prefix: &str, color_enabled: bool, style: Style) -> String {
+    if !color_enabled {
+        return prefix.to_owned();
+    }
+    format!("{}{}{}", style.render(), prefix, style.render_reset())
 }
 
 fn process_result_map(output: std::process::Output) -> Map {

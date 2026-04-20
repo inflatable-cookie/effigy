@@ -15,6 +15,7 @@ mod manifest_section;
 mod package_manager;
 mod release_section;
 mod scan_section;
+mod systems_section;
 mod tables;
 mod tasks;
 mod test_section;
@@ -35,6 +36,7 @@ use manifest_section::validate_manifest_section;
 use package_manager::validate_package_manager_section;
 use release_section::validate_release_section;
 use scan_section::validate_scan_section;
+use systems_section::validate_systems_section;
 use tables::validate_known_table;
 use tasks::validate_tasks_table;
 use test_section::validate_test_section;
@@ -72,6 +74,9 @@ pub fn validate_manifest_schema(manifest_path: &Path, value: &Value, sink: &mut 
     }
     if let Some(containers) = table.get("containers") {
         validate_containers_section(&mut context, containers);
+    }
+    if let Some(systems) = table.get("systems") {
+        validate_systems_section(&mut context, systems);
     }
     if let Some(distribution) = table.get("distribution") {
         validate_distribution_section(&mut context, distribution);

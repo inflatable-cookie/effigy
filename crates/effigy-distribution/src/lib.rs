@@ -1,6 +1,8 @@
+use anstyle::Style;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::io::IsTerminal;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
@@ -9,6 +11,8 @@ use effigy_manifest::{
     load_task_manifest, ManifestDistributionConfig, ManifestDistributionMetadataConfig,
     ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig, ManifestError,
 };
+use effigy_ui::theme::{resolve_color_enabled, Theme};
+use effigy_ui::OutputMode;
 use regex::Regex;
 use serde_json::json;
 
@@ -1049,8 +1053,9 @@ pub fn check_glibc_floor_command(
     if let Some(required) = required_glibc {
         if ok {
             Ok(format!(
-                "[ok] {} GLIBC floor is compatible (requires GLIBC_{required}, max GLIBC_{max_glibc})",
-                binary_path.display()
+                "{} {} GLIBC floor is compatible (requires GLIBC_{required}, max GLIBC_{max_glibc})",
+                styled_status_prefix("[ok]", Theme::default().success),
+                binary_path.display(),
             ))
         } else {
             Err(DistributionExecutionError::Message(format!(
@@ -1060,10 +1065,18 @@ pub fn check_glibc_floor_command(
         }
     } else {
         Ok(format!(
-            "[ok] no dynamic GLIBC symbol requirements found: {}",
+            "{} no dynamic GLIBC symbol requirements found: {}",
+            styled_status_prefix("[ok]", Theme::default().success),
             binary_path.display()
         ))
     }
+}
+
+fn styled_status_prefix(prefix: &str, style: Style) -> String {
+    if !resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal()) {
+        return prefix.to_owned();
+    }
+    format!("{}{}{}", style.render(), prefix, style.render_reset())
 }
 
 /// Validate distribution-related metadata in `Cargo.toml` against a

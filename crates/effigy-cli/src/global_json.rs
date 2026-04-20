@@ -27,6 +27,8 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
     match &mut cmd {
         Command::Version => {}
         Command::Exec(args) => args.output_json = true,
+        Command::System(args) => args.output_json = true,
+        Command::Workspace(args) => args.output_json = true,
         Command::Gateway(args) => args.output_json = true,
         Command::Service(args) => args.output_json = true,
         Command::Task(task) => {
@@ -58,6 +60,8 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
     match cmd {
         Command::Version => false,
         Command::Exec(args) => args.output_json,
+        Command::System(args) => args.output_json,
+        Command::Workspace(args) => args.output_json,
         Command::Gateway(args) => args.output_json,
         Command::Service(args) => args.output_json,
         Command::Changelog(args) => args.output_json,

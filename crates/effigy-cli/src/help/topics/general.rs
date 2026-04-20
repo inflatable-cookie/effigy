@@ -29,6 +29,16 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
             None,
         ),
         (
+            "effigy system",
+            "Operate the manifest default system substrate through its default workspace container",
+            None,
+        ),
+        (
+            "effigy workspace",
+            "Ensure the selected system is up, then open the resolved workspace shell",
+            None,
+        ),
+        (
             "effigy gateway",
             "Operate the host-native local DNS and reverse-proxy gateway",
             None,

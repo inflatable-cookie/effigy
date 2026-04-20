@@ -9,6 +9,8 @@ use crate::EffectiveContainerPolicy;
 use effigy_manifest::ManifestContainerShutdownMode;
 use std::ffi::OsString;
 
+const FALLBACK_COLIMA_DNS_SERVERS: [&str; 2] = ["1.1.1.1", "8.8.8.8"];
+
 /// A command specification to be executed by the runner.
 #[derive(Debug, Clone)]
 pub struct CommandSpec {
@@ -42,16 +44,35 @@ pub fn colima_start_command(policy: &EffectiveContainerPolicy) -> CommandSpec {
         ComposeBackend::Docker => "docker",
         ComposeBackend::ColimaNerdctl => "containerd",
     };
+    let mut args = vec![
+        "start".to_string(),
+        "--profile".to_string(),
+        policy.profile.clone(),
+        "--runtime".to_string(),
+        runtime.to_string(),
+    ];
+    for server in FALLBACK_COLIMA_DNS_SERVERS {
+        args.push("--dns".to_string());
+        args.push(server.to_string());
+    }
+    CommandSpec {
+        program: "colima".to_string(),
+        args,
+        label: "colima start".to_string(),
+        allow_failure: false,
+    }
+}
+
+/// Build the command to stop a Colima profile.
+pub fn colima_stop_command(policy: &EffectiveContainerPolicy) -> CommandSpec {
     CommandSpec {
         program: "colima".to_string(),
         args: vec![
-            "start".to_string(),
+            "stop".to_string(),
             "--profile".to_string(),
             policy.profile.clone(),
-            "--runtime".to_string(),
-            runtime.to_string(),
         ],
-        label: "colima start".to_string(),
+        label: "colima stop".to_string(),
         allow_failure: false,
     }
 }

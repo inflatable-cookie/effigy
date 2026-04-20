@@ -22,10 +22,12 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use effigy_catalog::{volumes::ManagedVolume, CatalogError, ComposeOutput};
+use effigy_manifest::config_sections::ManifestContainerWorkspaceConfig;
 use effigy_manifest::{
     load_task_manifest_with_inspection, ManifestContainerConfig, ManifestContainerDriver,
     ManifestContainerOnTaskExit, ManifestContainerShutdownMode, ManifestContainerStartup,
-    ManifestContainersConfig, ManifestError,
+    ManifestContainersConfig, ManifestError, ManifestInlineWorkspaceContainerConfig,
+    TASK_MANIFEST_FILE,
 };
 
 const DEFAULT_COLIMA_PROFILE: &str = "default";
@@ -33,6 +35,7 @@ const DEFAULT_ATTACH_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_HEALTH_TIMEOUT_SECS: u64 = 60;
 const GENERATED_COMPOSE_DIR: &str = "infra/dev";
 const SHARED_SERVICE_HOST: &str = "host.docker.internal";
+const RUNTIME_DNS_FALLBACK_SERVERS: [&str; 2] = ["1.1.1.1", "8.8.8.8"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectiveAttachMode {
@@ -62,6 +65,7 @@ pub struct EffectiveContainerPolicy {
     pub dns_domain: Option<String>,
     pub dns_tls: bool,
     pub dns_port: Option<u16>,
+    pub dns_routes: Vec<EffectiveDnsRoute>,
     pub declared_ports: Vec<String>,
     pub ports_declared_explicitly: bool,
     pub declared_mounts: Vec<String>,
@@ -73,6 +77,13 @@ pub struct EffectiveContainerPolicy {
     pub on_task_exit: ManifestContainerOnTaskExit,
     pub shutdown: ManifestContainerShutdownMode,
     pub detach_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveDnsRoute {
+    pub domain: String,
+    pub tls: bool,
+    pub port: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,6 +238,150 @@ pub fn load_all_container_policies(
     Ok(policies)
 }
 
+pub fn load_container_exec_working_dir(
+    repo_root: &Path,
+    requested_name: Option<&str>,
+) -> Result<PathBuf, ContainerPolicyError> {
+    let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
+    let loaded = load_task_manifest_with_inspection(&manifest_path)?;
+    let containers = loaded.manifest.containers.ok_or_else(|| {
+        ContainerPolicyError::TaskInvocation(
+            "manifest does not define a `[containers]` registry".to_owned(),
+        )
+    })?;
+    let name = requested_name
+        .map(str::to_owned)
+        .or_else(|| containers.default.clone())
+        .ok_or_else(|| {
+            ContainerPolicyError::TaskInvocation(
+                "container name omitted but `[containers].default` is not defined".to_owned(),
+            )
+        })?;
+    let config = containers.environments.get(&name).ok_or_else(|| {
+        let available = containers
+            .environments
+            .keys()
+            .map(|entry| format!("`{entry}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        ContainerPolicyError::TaskInvocation(format!(
+            "container `{name}` is not defined in `[containers]` (available: {available})"
+        ))
+    })?;
+
+    resolve_container_exec_working_dir(repo_root, &name, config)
+}
+
+pub fn load_inline_workspace_container_policy(
+    repo_root: &Path,
+    synthetic_name: &str,
+    container: &ManifestInlineWorkspaceContainerConfig,
+    workdir: Option<&str>,
+) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
+    let image = container.image.as_deref().ok_or_else(|| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "inline workspace container `{synthetic_name}` must declare `image`"
+        ))
+    })?;
+    let compose_dir = repo_root
+        .join(".effigy")
+        .join("inline-workspaces")
+        .join(synthetic_name);
+    std::fs::create_dir_all(&compose_dir).map_err(|error| ContainerPolicyError::Read {
+        path: compose_dir.clone(),
+        error,
+    })?;
+    let compose_path = compose_dir.join("docker-compose.yml");
+    let effective_workdir =
+        resolve_inline_workspace_exec_working_dir(repo_root, synthetic_name, container, workdir)?;
+    let volume_mount = container
+        .mount
+        .as_deref()
+        .map(|mount| inline_workspace_compose_mount(repo_root, synthetic_name, mount))
+        .transpose()?;
+    let compose = render_inline_workspace_compose(
+        image,
+        effective_workdir.as_path(),
+        volume_mount.as_deref(),
+    );
+    std::fs::write(&compose_path, compose).map_err(|error| ContainerPolicyError::Read {
+        path: compose_path.clone(),
+        error,
+    })?;
+    let repo = repo_root
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("repo")
+        .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
+    let mut compose_files = vec![compose_path.clone()];
+    materialize_runtime_dns_override(
+        repo_root,
+        synthetic_name,
+        DEFAULT_COLIMA_PROFILE,
+        &mut compose_files,
+    )?;
+    Ok(EffectiveContainerPolicy {
+        name: synthetic_name.to_owned(),
+        driver: ManifestContainerDriver::Colima,
+        startup: ManifestContainerStartup::Attached,
+        profile: DEFAULT_COLIMA_PROFILE.to_owned(),
+        compose_source: EffectiveComposeSource::Direct,
+        compose_files,
+        compose_file_display: compose_path
+            .strip_prefix(repo_root)
+            .unwrap_or(&compose_path)
+            .display()
+            .to_string(),
+        managed_volumes: Vec::new(),
+        shared_services: Vec::new(),
+        project_name: format!("{repo}-{synthetic_name}-inline"),
+        primary_service: "workspace".to_owned(),
+        dns_domain: None,
+        dns_tls: false,
+        dns_port: None,
+        dns_routes: Vec::new(),
+        declared_ports: Vec::new(),
+        ports_declared_explicitly: false,
+        declared_mounts: container.mount.clone().into_iter().collect(),
+        declared_media_mounts: Vec::new(),
+        pull_production_hook: None,
+        health_check: None,
+        health_timeout_secs: DEFAULT_HEALTH_TIMEOUT_SECS,
+        ui_tabs: Vec::new(),
+        on_task_exit: ManifestContainerOnTaskExit::Stop,
+        shutdown: ManifestContainerShutdownMode::Graceful,
+        detach_timeout_secs: DEFAULT_ATTACH_TIMEOUT_SECS,
+    })
+}
+
+pub fn resolve_inline_workspace_exec_working_dir(
+    repo_root: &Path,
+    synthetic_name: &str,
+    container: &ManifestInlineWorkspaceContainerConfig,
+    workdir: Option<&str>,
+) -> Result<PathBuf, ContainerPolicyError> {
+    if let Some(workdir) = workdir.map(str::trim).filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(workdir));
+    }
+    let mount = container.mount.as_deref().ok_or_else(|| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "inline workspace container `{synthetic_name}` must declare `mount` or workspace `workdir` for exec CWD mapping"
+        ))
+    })?;
+    let (_source, target, _options) = parse_mount_parts(mount).ok_or_else(|| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "inline workspace container `{synthetic_name}` mount `{mount}` must use `source:target` form"
+        ))
+    })?;
+    if target.is_empty() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "inline workspace container `{synthetic_name}` mount `{mount}` must declare a non-empty target path"
+        )));
+    }
+    let _ = repo_root;
+    Ok(PathBuf::from(target))
+}
+
 pub fn validate_container_policy(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -276,6 +431,11 @@ fn build_effective_policy(
     config: &ManifestContainerConfig,
     effective_manifest: &str,
 ) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
+    let driver = config.driver.unwrap_or(ManifestContainerDriver::Colima);
+    let profile = config
+        .profile
+        .clone()
+        .unwrap_or_else(|| DEFAULT_COLIMA_PROFILE.to_owned());
     let project_name = config.project_name.clone().unwrap_or_else(|| {
         let repo = repo_root
             .file_name()
@@ -284,14 +444,47 @@ fn build_effective_policy(
             .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
         format!("{repo}-{name}-dev")
     });
-    let (compose_files, compose_file_display, managed_volumes, effective_ports, shared_services) =
-        resolve_compose_source(repo_root, name, config, &project_name, effective_manifest)?;
+    let (
+        mut compose_files,
+        compose_file_display,
+        managed_volumes,
+        effective_ports,
+        shared_services,
+    ) = resolve_compose_source(repo_root, name, config, &project_name, effective_manifest)?;
     let primary_service = config.primary_service.clone().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
             "container `{name}` must declare `primary_service`"
         ))
     })?;
+    if config.compose_file.is_some() && driver == ManifestContainerDriver::Colima {
+        materialize_runtime_workspace_mount_rewrite(
+            repo_root,
+            name,
+            config,
+            &primary_service,
+            &mut compose_files,
+        )?;
+        materialize_runtime_dns_override(repo_root, name, &profile, &mut compose_files)?;
+    }
     let dns = config.dns.as_ref().cloned().unwrap_or_default();
+    let mut dns_routes = Vec::new();
+    if !dns.domain.trim().is_empty() {
+        dns_routes.push(EffectiveDnsRoute {
+            domain: dns.domain.clone(),
+            tls: dns.tls.unwrap_or(false),
+            port: dns.port,
+        });
+    }
+    for route in dns.routes {
+        if route.domain.trim().is_empty() {
+            continue;
+        }
+        dns_routes.push(EffectiveDnsRoute {
+            domain: route.domain,
+            tls: route.tls.unwrap_or(false),
+            port: route.port,
+        });
+    }
     let host = config.host.as_ref().cloned().unwrap_or_default();
     let data = config.data.as_ref().cloned().unwrap_or_default();
     let health = config.health.as_ref().cloned().unwrap_or_default();
@@ -305,12 +498,9 @@ fn build_effective_policy(
 
     Ok(EffectiveContainerPolicy {
         name: name.to_owned(),
-        driver: config.driver.unwrap_or(ManifestContainerDriver::Colima),
+        driver,
         startup: config.startup.unwrap_or(ManifestContainerStartup::Attached),
-        profile: config
-            .profile
-            .clone()
-            .unwrap_or_else(|| DEFAULT_COLIMA_PROFILE.to_owned()),
+        profile,
         compose_source: if config.compose_file.is_some() {
             EffectiveComposeSource::Direct
         } else {
@@ -325,6 +515,7 @@ fn build_effective_policy(
         dns_domain: Some(dns.domain).filter(|value| !value.trim().is_empty()),
         dns_tls: dns.tls.unwrap_or(false),
         dns_port: dns.port,
+        dns_routes,
         declared_ports: effective_ports,
         ports_declared_explicitly: !host.ports.is_empty(),
         declared_mounts: host.mounts,
@@ -343,6 +534,518 @@ fn build_effective_policy(
             .and_then(|value| value.detach_timeout_secs)
             .unwrap_or(DEFAULT_ATTACH_TIMEOUT_SECS),
     })
+}
+
+fn resolve_container_exec_working_dir(
+    repo_root: &Path,
+    container_name: &str,
+    config: &ManifestContainerConfig,
+) -> Result<PathBuf, ContainerPolicyError> {
+    if let Some(working_dir) = config
+        .exec
+        .as_ref()
+        .and_then(|exec| exec.working_dir.as_ref())
+    {
+        return Ok(PathBuf::from(working_dir));
+    }
+
+    let Some(host) = config.host.as_ref() else {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` must declare `[containers.{container_name}.exec].working_dir` or a repo-root host mount for CWD mapping"
+        )));
+    };
+    let canonical_root = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
+    for mount in &host.mounts {
+        let mut parts = mount.splitn(3, ':');
+        let source = parts.next().unwrap_or_default().trim();
+        let target = parts.next().unwrap_or_default().trim();
+        if target.is_empty() {
+            continue;
+        }
+        let resolved_source = repo_root.join(source);
+        let canonical_source = resolved_source.canonicalize().unwrap_or(resolved_source);
+        if canonical_source == canonical_root {
+            return Ok(PathBuf::from(target));
+        }
+    }
+    Err(ContainerPolicyError::TaskInvocation(format!(
+        "container `{container_name}` must declare `[containers.{container_name}.exec].working_dir` or a repo-root host mount for CWD mapping"
+    )))
+}
+
+fn inline_workspace_compose_mount(
+    repo_root: &Path,
+    synthetic_name: &str,
+    mount: &str,
+) -> Result<String, ContainerPolicyError> {
+    let (source, target, options) = parse_mount_parts(mount).ok_or_else(|| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "inline workspace container `{synthetic_name}` mount `{mount}` must use `source:target` form"
+        ))
+    })?;
+    let resolved_source = repo_root.join(source);
+    let canonical_root = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
+    let canonical_source = resolved_source
+        .canonicalize()
+        .unwrap_or_else(|_| resolved_source.clone());
+    if !canonical_source.starts_with(&canonical_root) {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "inline workspace container `{synthetic_name}` mount source `{source}` escapes the repo root"
+        )));
+    }
+    let mut rendered = format!("{}:{target}", canonical_source.display());
+    if let Some(options) = options.filter(|value| !value.is_empty()) {
+        rendered.push(':');
+        rendered.push_str(options);
+    }
+    Ok(rendered)
+}
+
+fn parse_mount_parts(mount: &str) -> Option<(&str, &str, Option<&str>)> {
+    let mut parts = mount.splitn(3, ':');
+    let source = parts.next()?.trim();
+    let target = parts.next()?.trim();
+    let options = parts.next().map(str::trim);
+    Some((source, target, options))
+}
+
+fn render_inline_workspace_compose(
+    image: &str,
+    workdir: &Path,
+    volume_mount: Option<&str>,
+) -> String {
+    let workdir = workdir.display().to_string();
+    let mut out = String::new();
+    out.push_str("services:\n");
+    out.push_str("  workspace:\n");
+    out.push_str(&format!("    image: \"{}\"\n", image.replace('"', "\\\"")));
+    out.push_str(&format!(
+        "    working_dir: \"{}\"\n",
+        workdir.replace('"', "\\\"")
+    ));
+    out.push_str("    command:\n");
+    out.push_str("      - sh\n");
+    out.push_str("      - -lc\n");
+    out.push_str("      - while true; do sleep 3600; done\n");
+    if let Some(volume_mount) = volume_mount {
+        out.push_str("    volumes:\n");
+        out.push_str(&format!(
+            "      - \"{}\"\n",
+            volume_mount.replace('"', "\\\"")
+        ));
+    }
+    out
+}
+
+#[derive(Debug, Clone)]
+struct RenderedWorkspaceMount {
+    target: String,
+    rendered: String,
+}
+
+fn materialize_runtime_workspace_mount_rewrite(
+    repo_root: &Path,
+    container_name: &str,
+    config: &ManifestContainerConfig,
+    primary_service: &str,
+    compose_files: &mut Vec<PathBuf>,
+) -> Result<(), ContainerPolicyError> {
+    let Some(workspace) = config.workspace.as_ref() else {
+        return Ok(());
+    };
+    let Some(source_compose) = compose_files.first().cloned() else {
+        return Ok(());
+    };
+    let working_dir = resolve_container_exec_working_dir(repo_root, container_name, config)?;
+    let rewritten = rewrite_workspace_mounts_for_direct_compose(
+        repo_root,
+        container_name,
+        workspace,
+        primary_service,
+        &source_compose,
+        &working_dir,
+    )?;
+    compose_files[0] = rewritten;
+    Ok(())
+}
+
+fn rewrite_workspace_mounts_for_direct_compose(
+    repo_root: &Path,
+    container_name: &str,
+    workspace: &ManifestContainerWorkspaceConfig,
+    primary_service: &str,
+    source_compose: &Path,
+    working_dir: &Path,
+) -> Result<PathBuf, ContainerPolicyError> {
+    let workspace_root = working_dir.parent().ok_or_else(|| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` workspace exec working dir `{}` must have a parent directory",
+            working_dir.display()
+        ))
+    })?;
+    let compose_dir = source_compose.parent().ok_or_else(|| ContainerPolicyError::Read {
+        path: source_compose.to_path_buf(),
+        error: std::io::Error::other("compose file has no parent directory"),
+    })?;
+    let content =
+        std::fs::read_to_string(source_compose).map_err(|error| ContainerPolicyError::Read {
+            path: source_compose.to_path_buf(),
+            error,
+        })?;
+    let mut parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "failed to parse compose file {} for workspace mount rewrite: {error}",
+            source_compose.display()
+        ))
+    })?;
+    let services = parsed
+        .get_mut("services")
+        .and_then(serde_yaml::Value::as_mapping_mut)
+        .ok_or_else(|| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "compose file {} is missing a `services` mapping for workspace mount rewrite",
+                source_compose.display()
+            ))
+        })?;
+    let service = services
+        .get_mut(serde_yaml::Value::String(primary_service.to_owned()))
+        .and_then(serde_yaml::Value::as_mapping_mut)
+        .ok_or_else(|| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "compose file {} does not define primary service `{primary_service}` for workspace mount rewrite",
+                source_compose.display()
+            ))
+        })?;
+    let injected_mounts =
+        build_workspace_runtime_mounts(repo_root, container_name, workspace, working_dir)?;
+    rewrite_workspace_service_volumes(
+        service,
+        compose_dir,
+        repo_root,
+        workspace_root,
+        working_dir,
+        &injected_mounts,
+    )?;
+
+    let rewrite_path = compose_dir.join(format!(".effigy-{container_name}.workspace.compose.yml"));
+    let rendered = serde_yaml::to_string(&parsed).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "failed to serialize workspace mount rewrite for `{container_name}`: {error}"
+        ))
+    })?;
+    std::fs::write(&rewrite_path, rendered).map_err(|error| ContainerPolicyError::Read {
+        path: rewrite_path.clone(),
+        error,
+    })?;
+    Ok(rewrite_path)
+}
+
+fn build_workspace_runtime_mounts(
+    repo_root: &Path,
+    container_name: &str,
+    workspace: &ManifestContainerWorkspaceConfig,
+    working_dir: &Path,
+) -> Result<Vec<RenderedWorkspaceMount>, ContainerPolicyError> {
+    let workspace_root = working_dir.parent().ok_or_else(|| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` workspace exec working dir `{}` must have a parent directory",
+            working_dir.display()
+        ))
+    })?;
+    let canonical_repo_root = repo_root
+        .canonicalize()
+        .map_err(|error| ContainerPolicyError::Read {
+            path: repo_root.to_path_buf(),
+            error,
+        })?;
+    let mut mounts = vec![RenderedWorkspaceMount {
+        target: working_dir.display().to_string(),
+        rendered: format!("{}:{}", canonical_repo_root.display(), working_dir.display()),
+    }];
+    for raw in &workspace.extra_mounts {
+        mounts.push(parse_workspace_extra_mount(
+            repo_root,
+            container_name,
+            workspace_root,
+            raw,
+        )?);
+    }
+    Ok(mounts)
+}
+
+fn parse_workspace_extra_mount(
+    repo_root: &Path,
+    container_name: &str,
+    workspace_root: &Path,
+    raw: &str,
+) -> Result<RenderedWorkspaceMount, ContainerPolicyError> {
+    let mut parts = raw.splitn(3, ':');
+    let source_raw = parts.next().unwrap_or_default().trim();
+    let target_raw = parts.next().map(str::trim).filter(|value| !value.is_empty());
+    let options = parts.next().map(str::trim).filter(|value| !value.is_empty());
+    if source_raw.is_empty() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` workspace extra mount `{raw}` is invalid: source path is empty"
+        )));
+    }
+    let source_path = Path::new(source_raw);
+    let resolved_source = if source_path.is_absolute() {
+        source_path.to_path_buf()
+    } else {
+        repo_root.join(source_path)
+    };
+    let canonical_source = resolved_source.canonicalize().map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` workspace extra mount source `{source_raw}` is invalid: {error}"
+        ))
+    })?;
+    let target = if let Some(target) = target_raw {
+        target.to_owned()
+    } else {
+        let basename = canonical_source
+            .file_name()
+            .and_then(OsStr::to_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                ContainerPolicyError::TaskInvocation(format!(
+                    "container `{container_name}` workspace extra mount `{raw}` must declare an explicit target because the source has no basename"
+                ))
+            })?;
+        workspace_root.join(basename).display().to_string()
+    };
+    let mut rendered = format!("{}:{target}", canonical_source.display());
+    if let Some(options) = options {
+        rendered.push(':');
+        rendered.push_str(options);
+    }
+    Ok(RenderedWorkspaceMount { target, rendered })
+}
+
+fn rewrite_workspace_service_volumes(
+    service: &mut serde_yaml::Mapping,
+    compose_dir: &Path,
+    repo_root: &Path,
+    workspace_root: &Path,
+    working_dir: &Path,
+    injected_mounts: &[RenderedWorkspaceMount],
+) -> Result<(), ContainerPolicyError> {
+    let key = serde_yaml::Value::String("volumes".to_owned());
+    let volumes = match service.get_mut(&key) {
+        Some(serde_yaml::Value::Sequence(sequence)) => sequence,
+        Some(_) => {
+            return Err(ContainerPolicyError::TaskInvocation(
+                "workspace mount rewrite only supports sequence `volumes` entries".to_owned(),
+            ))
+        }
+        None => {
+            service.insert(key.clone(), serde_yaml::Value::Sequence(Vec::new()));
+            service
+                .get_mut(&key)
+                .and_then(serde_yaml::Value::as_sequence_mut)
+                .expect("volumes sequence should exist after insertion")
+        }
+    };
+
+    let canonical_repo_root = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
+    let workspace_root_rendered = workspace_root.display().to_string();
+    let working_dir_rendered = working_dir.display().to_string();
+    let injected_targets = injected_mounts
+        .iter()
+        .map(|mount| mount.target.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut rewritten = injected_mounts
+        .iter()
+        .map(|mount| serde_yaml::Value::String(mount.rendered.clone()))
+        .collect::<Vec<_>>();
+
+    for entry in volumes.iter() {
+        let Some(raw) = entry.as_str() else {
+            rewritten.push(entry.clone());
+            continue;
+        };
+        let Some((source, target, _options)) = parse_mount_parts(raw) else {
+            rewritten.push(entry.clone());
+            continue;
+        };
+        if injected_targets.contains(target) {
+            continue;
+        }
+        if target == workspace_root_rendered {
+            if let Some(canonical_source) = resolve_bind_mount_source(compose_dir, source) {
+                if canonical_repo_root.starts_with(&canonical_source) {
+                    continue;
+                }
+            }
+        }
+        if target == working_dir_rendered {
+            if let Some(canonical_source) = resolve_bind_mount_source(compose_dir, source) {
+                if canonical_source == canonical_repo_root {
+                    continue;
+                }
+            }
+        }
+        rewritten.push(entry.clone());
+    }
+
+    *volumes = rewritten;
+    Ok(())
+}
+
+fn resolve_bind_mount_source(compose_dir: &Path, source: &str) -> Option<PathBuf> {
+    if !looks_like_bind_mount_source(source) {
+        return None;
+    }
+    let source_path = Path::new(source);
+    let resolved = if source_path.is_absolute() {
+        source_path.to_path_buf()
+    } else {
+        compose_dir.join(source_path)
+    };
+    Some(resolved.canonicalize().unwrap_or(resolved))
+}
+
+fn looks_like_bind_mount_source(source: &str) -> bool {
+    source.starts_with('/')
+        || source.starts_with("./")
+        || source.starts_with("../")
+        || source == "."
+        || source == ".."
+        || source.contains('/')
+}
+
+fn materialize_runtime_dns_override(
+    repo_root: &Path,
+    container_name: &str,
+    profile: &str,
+    compose_files: &mut Vec<PathBuf>,
+) -> Result<(), ContainerPolicyError> {
+    let services = collect_compose_service_names(compose_files)?;
+    if services.is_empty() {
+        return Ok(());
+    }
+    let dns_servers = resolve_runtime_dns_servers(profile);
+    if dns_servers.is_empty() {
+        return Ok(());
+    }
+    let override_dir = repo_root.join(".effigy").join("runtime-dns");
+    std::fs::create_dir_all(&override_dir).map_err(|error| ContainerPolicyError::Read {
+        path: override_dir.clone(),
+        error,
+    })?;
+    let override_path = override_dir.join(format!("{container_name}.compose.override.yml"));
+    let override_yaml = render_runtime_dns_override(&services, &dns_servers);
+    std::fs::write(&override_path, override_yaml).map_err(|error| ContainerPolicyError::Read {
+        path: override_path.clone(),
+        error,
+    })?;
+    compose_files.push(override_path);
+    Ok(())
+}
+
+fn collect_compose_service_names(
+    compose_files: &[PathBuf],
+) -> Result<Vec<String>, ContainerPolicyError> {
+    let mut names = std::collections::BTreeSet::new();
+    for compose_file in compose_files {
+        let content =
+            std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
+                path: compose_file.clone(),
+                error,
+            })?;
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "failed to parse compose file {} for runtime DNS override generation: {error}",
+                compose_file.display()
+            ))
+        })?;
+        let Some(services) = parsed
+            .get("services")
+            .and_then(serde_yaml::Value::as_mapping)
+        else {
+            continue;
+        };
+        for key in services.keys() {
+            if let Some(name) = key.as_str() {
+                names.insert(name.to_owned());
+            }
+        }
+    }
+    Ok(names.into_iter().collect())
+}
+
+fn resolve_runtime_dns_servers(profile: &str) -> Vec<String> {
+    let Some(colima_home) = colima_home_dir() else {
+        return RUNTIME_DNS_FALLBACK_SERVERS
+            .iter()
+            .map(|server| (*server).to_owned())
+            .collect();
+    };
+    let config_path = colima_home.join(profile).join("colima.yaml");
+    let Ok(content) = std::fs::read_to_string(&config_path) else {
+        return RUNTIME_DNS_FALLBACK_SERVERS
+            .iter()
+            .map(|server| (*server).to_owned())
+            .collect();
+    };
+    let Ok(parsed) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
+        return RUNTIME_DNS_FALLBACK_SERVERS
+            .iter()
+            .map(|server| (*server).to_owned())
+            .collect();
+    };
+    let Some(dns) = parsed
+        .get("network")
+        .and_then(|network| network.get("dns"))
+        .and_then(serde_yaml::Value::as_sequence)
+    else {
+        return RUNTIME_DNS_FALLBACK_SERVERS
+            .iter()
+            .map(|server| (*server).to_owned())
+            .collect();
+    };
+    let resolved = dns
+        .iter()
+        .filter_map(serde_yaml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if resolved.is_empty() {
+        RUNTIME_DNS_FALLBACK_SERVERS
+            .iter()
+            .map(|server| (*server).to_owned())
+            .collect()
+    } else {
+        resolved
+    }
+}
+
+fn colima_home_dir() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("COLIMA_HOME").map(PathBuf::from) {
+        return Some(home);
+    }
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(".colima"))
+}
+
+fn render_runtime_dns_override(services: &[String], dns_servers: &[String]) -> String {
+    let mut out = String::new();
+    out.push_str("services:\n");
+    for service in services {
+        out.push_str(&format!("  {service}:\n"));
+        out.push_str("    dns:\n");
+        for server in dns_servers {
+            out.push_str(&format!("      - \"{}\"\n", server.replace('"', "\\\"")));
+        }
+    }
+    out
 }
 
 pub fn eject_generated_compose(

@@ -78,13 +78,20 @@ fn run_tasks_json_preserves_catalog_row_order_with_empty_catalogs() {
         .filter(|row| {
             row["manifest"]
                 .as_str()
-                .map(|manifest| !manifest.ends_with("/effigy.toml") || manifest.contains("/alpha/") || manifest.contains("/beta/"))
+                .map(|manifest| {
+                    !manifest.ends_with("/effigy.toml")
+                        || manifest.contains("/alpha/")
+                        || manifest.contains("/beta/")
+                })
                 .unwrap_or(false)
         })
         .filter(|row| {
             row["manifest"]
                 .as_str()
-                .map(|manifest| manifest.ends_with("/alpha/effigy.toml") || manifest.ends_with("/beta/effigy.toml"))
+                .map(|manifest| {
+                    manifest.ends_with("/alpha/effigy.toml")
+                        || manifest.ends_with("/beta/effigy.toml")
+                })
                 .unwrap_or(false)
         })
         .collect::<Vec<_>>();

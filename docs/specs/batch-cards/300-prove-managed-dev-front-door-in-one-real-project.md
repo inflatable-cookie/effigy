@@ -46,9 +46,9 @@ This batch landed through `/Users/tom/Dev/projects/underlay-reference`.
 What the proof established:
 
 - `underlay-reference` now uses one repo-owned managed `dev` front door with
-  `container_session = "stack"` plus managed lifecycle, shell, readiness, and
-  gateway behavior on the shipped Effigy contract
-- `effigy dev` starts the named container environment, auto-starts the gateway,
+  a workspace-backed container binding plus managed lifecycle, shell,
+  readiness, and gateway behavior on the shipped Effigy contract
+- `effigy dev` starts the resolved workspace container, auto-starts the gateway,
   waits for the container health gate, and exposes the managed shell/runtime
   tabs on the real product path
 - while the TUI is live, `effigy gateway status --json` reports the managed

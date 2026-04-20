@@ -6,6 +6,12 @@ pub(super) fn state_with_process(name: &str) -> SessionState {
     SessionState::new(vec![name.to_owned()], 2000, 240, 8000)
 }
 
+pub(super) fn state_with_vt_process(name: &str) -> SessionState {
+    let mut state = state_with_process(name);
+    state.vt_enabled_processes.insert(name.to_owned());
+    state
+}
+
 pub(super) fn diagnostics() -> RuntimeDiagnostics {
     RuntimeDiagnostics::from_env()
 }

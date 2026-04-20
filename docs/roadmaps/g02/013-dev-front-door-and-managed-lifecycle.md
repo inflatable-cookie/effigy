@@ -72,8 +72,17 @@ That's five steps that should be one.
 ### 4.1 Task Definition
 
 ```toml
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
 [tasks.dev]
-container_session = "web"
+workspace = "app"
 mode = "attached"
 
 [tasks.dev.managed]
@@ -146,11 +155,11 @@ New logic sits in `effigy-containers` (lifecycle management) and the TUI layer
 What shipped on the product path:
 
 - manifest-owned managed dev-task metadata through `tasks.<name>.managed`
-- lifecycle-role ownership for named `container_session` startup and shutdown
+- lifecycle-role ownership for workspace-backed container startup and shutdown
 - shell-role embedding through the shipped primary-service container shell path
 - readiness gating plus ready-message projection on the managed runtime path
 - gateway auto-start through the shipped `effigy gateway up` surface when the
-  named container session declares DNS
+  resolved workspace container declares DNS
 - one real-project proof in `underlay-reference` that `effigy dev` can replace
   the prior multi-command startup routine on a trustworthy boundary
 

@@ -7,9 +7,9 @@ use effigy_containers::{
     EffectiveContainerPolicy,
 };
 
-use super::gateway_registration::register_gateway_route_for_container;
+use super::gateway_registration::register_gateway_routes_for_container;
 use super::support::{
-    annotate_registered_gateway_route, annotate_shared_service_notes,
+    annotate_registered_gateway_routes, annotate_shared_service_notes,
     ensure_shared_services_running, wait_for_container_ready,
 };
 use super::{render_container_report, RunnerError};
@@ -104,7 +104,7 @@ pub(super) fn run_container_data_pull_production(
         "docker compose up",
     )?;
     let health = wait_for_container_ready(&policy, None)?;
-    let gateway_route = register_gateway_route_for_container(repo_root, &policy)?;
+    let gateway_routes = register_gateway_routes_for_container(repo_root, &policy)?;
     hooks::execute_pull_production_hook(repo_root, &policy, &hook)?;
 
     let mut report = data_pull_production_report(
@@ -114,7 +114,7 @@ pub(super) fn run_container_data_pull_production(
         health,
     );
     annotate_shared_service_notes(&mut report, &shared_service_notes);
-    annotate_registered_gateway_route(&mut report, gateway_route.as_ref());
+    annotate_registered_gateway_routes(&mut report, &gateway_routes);
     Ok(render_container_report(report, output_json))
 }
 
@@ -217,6 +217,7 @@ mod tests {
             dns_domain: None,
             dns_tls: false,
             dns_port: None,
+            dns_routes: vec![],
             declared_ports: vec!["8080:80".to_owned()],
             ports_declared_explicitly: true,
             declared_mounts: vec![],

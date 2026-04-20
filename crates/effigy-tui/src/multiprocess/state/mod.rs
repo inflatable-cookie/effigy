@@ -40,6 +40,7 @@ pub struct SessionState {
     pub shutdown_on_exit_processes: HashSet<String>,
     pub shutdown_requested: bool,
     pub spinner_tick: usize,
+    pub vt_enabled_processes: HashSet<String>,
     pub vt_parsers: HashMap<String, VtParser>,
     pub vt_saw_chunk: HashMap<String, bool>,
 }

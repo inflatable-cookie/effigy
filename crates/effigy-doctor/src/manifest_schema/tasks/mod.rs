@@ -41,14 +41,12 @@ pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &
         };
 
         validate_task_table_keys(context, task_name, task_table);
+        validate_task_host_field(context, task_name, task_table.get("host"));
         validate_task_lock_field(context, task_name, task_table.get("lock"));
         validate_task_mode(context, task_name, task_table.get("mode"));
         validate_task_run_field(context, task_name, task_table.get("run"));
-        validate_task_container_session_field(
-            context,
-            task_name,
-            task_table.get("container_session"),
-        );
+        validate_task_system_field(context, task_name, task_table.get("system"));
+        validate_task_workspace_field(context, task_name, task_table.get("workspace"));
         validate_task_managed_field(context, task_name, task_table.get("managed"));
         validate_task_env_field(context, task_name, task_table.get("env"));
         validate_task_env_file_field(context, task_name, task_table.get("env_file"));
@@ -99,7 +97,9 @@ fn validate_task_table_keys(
         task_table,
         &[
             "run",
-            "container_session",
+            "host",
+            "system",
+            "workspace",
             "lock",
             "env",
             "env_file",
@@ -110,6 +110,14 @@ fn validate_task_table_keys(
             "profiles",
         ],
     );
+}
+
+fn validate_task_host_field(
+    context: &mut SchemaContext<'_, '_>,
+    task_name: &str,
+    host: Option<&Value>,
+) {
+    validate_optional_boolean_field(context, host, &format!("tasks.{task_name}.host"));
 }
 
 fn validate_task_lock_field(
@@ -147,18 +155,6 @@ fn validate_task_run_field(
     }
 }
 
-fn validate_task_container_session_field(
-    context: &mut SchemaContext<'_, '_>,
-    task_name: &str,
-    container_session: Option<&Value>,
-) {
-    validate_optional_non_empty_string_field(
-        context,
-        container_session,
-        &format!("tasks.{task_name}.container_session"),
-    );
-}
-
 fn validate_task_env_field(
     context: &mut SchemaContext<'_, '_>,
     task_name: &str,
@@ -169,6 +165,26 @@ fn validate_task_env_field(
         env,
         &format!("tasks.{task_name}.env"),
         "expected table of string values",
+    );
+}
+
+fn validate_task_system_field(
+    context: &mut SchemaContext<'_, '_>,
+    task_name: &str,
+    system: Option<&Value>,
+) {
+    validate_optional_non_empty_string_field(context, system, &format!("tasks.{task_name}.system"));
+}
+
+fn validate_task_workspace_field(
+    context: &mut SchemaContext<'_, '_>,
+    task_name: &str,
+    workspace: Option<&Value>,
+) {
+    validate_optional_non_empty_string_field(
+        context,
+        workspace,
+        &format!("tasks.{task_name}.workspace"),
     );
 }
 

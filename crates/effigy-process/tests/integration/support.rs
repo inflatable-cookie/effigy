@@ -3,6 +3,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use nix::sys::signal::kill;
+#[cfg(unix)]
+use nix::unistd::Pid;
+
 pub(super) fn temp_workspace(name: &str) -> PathBuf {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -35,4 +40,9 @@ pub(super) fn process_spec_with_delay(
         start_after_ms,
         ..process_spec(name, run, cwd)
     }
+}
+
+#[cfg(unix)]
+pub(super) fn process_exists(pid: i32) -> bool {
+    kill(Pid::from_raw(pid), None).is_ok()
 }

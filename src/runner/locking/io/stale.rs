@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nix::errno::Errno;
@@ -21,6 +23,37 @@ pub(super) fn pid_is_alive(pid: u32) -> bool {
         Err(Errno::ESRCH) => false,
         Err(_) => true,
     }
+}
+
+#[cfg(unix)]
+fn pid_command_line(pid: u32) -> Option<String> {
+    let output = Command::new("ps")
+        .args(["-o", "command=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let rendered = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(rendered)
+    }
+}
+
+#[cfg(unix)]
+fn pid_looks_like_effigy(pid: u32) -> bool {
+    pid_command_line(pid).is_some_and(|command| {
+        command.contains("effigy")
+            || command.contains("cargo run --bin effigy")
+            || command.contains("/Cargo.toml --bin effigy")
+    })
+}
+
+#[cfg(not(unix))]
+fn pid_looks_like_effigy(_pid: u32) -> bool {
+    true
 }
 
 pub(super) fn now_epoch_ms() -> u128 {
@@ -73,6 +106,9 @@ pub(super) fn lock_heartbeat_epoch_ms(record: &super::LockRecord) -> u128 {
 
 pub(super) fn lock_is_stale(record: &super::LockRecord) -> bool {
     if !pid_is_alive(record.pid) {
+        return true;
+    }
+    if !pid_looks_like_effigy(record.pid) {
         return true;
     }
     let heartbeat_at = lock_heartbeat_epoch_ms(record);

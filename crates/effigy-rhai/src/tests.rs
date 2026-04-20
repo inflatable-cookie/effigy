@@ -1,6 +1,7 @@
 use super::{
     execute_rhai_script, install_stop_requested_flag, load_script, load_script_args_from_env,
-    resolve_script_path, EffigyCommandError, HostCallbacks, ScriptContext, EFFIGY_RHAI_ARGS_JSON,
+    render_host_log_message, resolve_script_path, EffigyCommandError, HostCallbacks,
+    ScriptContext, EFFIGY_RHAI_ARGS_JSON,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -113,4 +114,23 @@ fn run_effigy_json_surfaces_callback_errors_as_runtime_errors() {
     let error = execute_rhai_script(&context, "run_effigy_json([\"demo\"]);", &[], &callbacks)
         .expect_err("must fail");
     assert!(error.to_string().contains("boom"));
+}
+
+#[test]
+fn host_log_message_colors_known_status_prefixes() {
+    let rendered = render_host_log_message("[ok] passed\n[check] running\n[next] inspect\n", true);
+
+    assert!(rendered.contains("\u{1b}["), "expected ansi styles in: {rendered:?}");
+    assert!(rendered.contains("[ok]"));
+    assert!(rendered.contains(" passed"));
+    assert!(rendered.contains("[check]"));
+    assert!(rendered.contains(" running"));
+    assert!(rendered.contains("[next]"));
+    assert!(rendered.contains(" inspect"));
+}
+
+#[test]
+fn host_log_message_leaves_plain_text_unchanged_without_color() {
+    let rendered = render_host_log_message("plain\n[warn] careful\n", false);
+    assert_eq!(rendered, "plain\n[warn] careful\n");
 }

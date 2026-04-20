@@ -14,7 +14,7 @@ interactive terminal session inside the managed task's target container.
 
 - add explicit `role = "shell"` support for managed concurrent entries
 - reuse the shipped `effigy container shell` path against the task-owned
-  `container_session`
+  workspace container binding
 - make the shell role honest in both plan rendering and runtime wiring
 - cover the bounded shell-role contract in schema/help/tests where needed
 

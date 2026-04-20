@@ -11,7 +11,9 @@ pub(super) fn handle_chunk_event_impl(
     vt_emulator_enabled: bool,
 ) {
     let had_output = state.mark_process_received_output(&event_item.process);
-    if !vt_emulator_enabled {
+    let vt_active = vt_emulator_enabled && state.vt_enabled_for(&event_item.process);
+    if !vt_active {
+        record_chunk_diagnostics(event_item, diagnostics);
         return;
     }
     if !had_output {
@@ -30,6 +32,13 @@ pub(super) fn handle_chunk_event_impl(
     };
     parser.process(chunk);
     state.set_vt_saw_chunk_for(&event_item.process, true);
+    record_chunk_diagnostics(event_item, diagnostics);
+}
+
+fn record_chunk_diagnostics(event_item: &ProcessEvent, diagnostics: &mut RuntimeDiagnostics) {
+    let Some(chunk) = event_item.chunk.as_ref() else {
+        return;
+    };
     match event_item.kind {
         ProcessEventKind::StdoutChunk => {
             diagnostics.record_stdout_chunk(&event_item.process, chunk.len())

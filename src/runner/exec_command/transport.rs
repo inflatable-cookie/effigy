@@ -13,6 +13,13 @@ use effigy_exec::detection::{build_capabilities_from_results, standard_probe_spe
 use crate::runner::error::RunnerError;
 
 const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF";
+const CONTAINER_COLOR_ENV: [(&str, &str); 3] = [
+    ("EFFIGY_COLOR", "always"),
+    ("CLICOLOR_FORCE", "1"),
+    ("FORCE_COLOR", "3"),
+];
+const CONTAINER_TTY_COLOR_ENV: [(&str, &str); 2] =
+    [("TERM", "xterm-256color"), ("COLORTERM", "truecolor")];
 
 pub(super) fn build_routed_task_exec_args(
     strategy: &effigy_exec::ExecStrategy,
@@ -20,8 +27,9 @@ pub(super) fn build_routed_task_exec_args(
     service: &str,
     mapped_cwd: &str,
 ) -> Vec<OsString> {
-    let mut args = vec![OsString::from("exec")];
+    let mut args = vec![OsString::from("exec"), OsString::from("-T")];
     append_exec_env(&mut args, secret_env);
+    append_color_exec_env(&mut args, false);
 
     match strategy {
         effigy_exec::ExecStrategy::Handoff { args: handoff_args } => {
@@ -47,7 +55,7 @@ pub(super) fn build_routed_task_exec_args(
     args
 }
 
-pub(super) fn run_compose_exec(
+pub(in crate::runner) fn run_compose_exec(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     args: &[OsString],
@@ -87,6 +95,47 @@ pub(super) fn run_compose_exec(
     })
 }
 
+pub(in crate::runner) fn copy_file_into_service(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    host_source: &Path,
+    container_dest: &str,
+) -> Result<(), RunnerError> {
+    let container_id = resolve_compose_service_container_id(repo_root, policy, service)?;
+    let mut args = match resolve_compose_backend() {
+        ComposeBackend::Docker => vec![OsString::from("cp")],
+        ComposeBackend::ColimaNerdctl => vec![
+            OsString::from("nerdctl"),
+            OsString::from("--profile"),
+            OsString::from(policy.profile.as_str()),
+            OsString::from("--"),
+            OsString::from("cp"),
+        ],
+    };
+    args.push(OsString::from(host_source));
+    args.push(OsString::from(format!(
+        "{}:{}",
+        container_id.to_string_lossy(),
+        container_dest
+    )));
+
+    let (program, resolved_args) = match resolve_compose_backend() {
+        ComposeBackend::Docker => ("docker", args),
+        ComposeBackend::ColimaNerdctl => ("colima", args),
+    };
+    let output = run_command_capture_allow_failure(repo_root, program, &resolved_args)?;
+    if !output.status.success() {
+        return Err(RunnerError::TaskCommandFailure {
+            command: format!("{program} {}", format_args(&resolved_args)),
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        });
+    }
+    Ok(())
+}
+
 pub(super) fn parse_compose_exec_args(args: &[OsString]) -> Result<ParsedComposeExec, RunnerError> {
     let exec_index = args
         .iter()
@@ -97,12 +146,17 @@ pub(super) fn parse_compose_exec_args(args: &[OsString]) -> Result<ParsedCompose
 
     let mut env = Vec::new();
     let mut working_dir: Option<OsString> = None;
+    let mut tty = true;
     let mut service: Option<String> = None;
     let mut command = Vec::new();
     while let Some(arg) = iter.next() {
         let value = arg.to_string_lossy();
         if service.is_none() {
             match value.as_ref() {
+                "-T" => {
+                    tty = false;
+                    continue;
+                }
                 "-w" => {
                     working_dir = Some(iter.next().cloned().ok_or_else(|| {
                         RunnerError::task_invocation("missing exec working directory")
@@ -134,6 +188,7 @@ pub(super) fn parse_compose_exec_args(args: &[OsString]) -> Result<ParsedCompose
     Ok(ParsedComposeExec {
         env,
         working_dir,
+        tty,
         service: service
             .ok_or_else(|| RunnerError::task_invocation("missing exec target service"))?,
         command,
@@ -155,7 +210,7 @@ pub(super) fn run_command_capture_allow_failure(
         })
 }
 
-pub(super) fn probe_container_capabilities(
+pub(in crate::runner) fn probe_container_capabilities(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     service: &str,
@@ -179,6 +234,7 @@ pub(super) fn probe_container_capabilities(
 pub(super) struct ParsedComposeExec {
     pub(super) env: Vec<OsString>,
     pub(super) working_dir: Option<OsString>,
+    pub(super) tty: bool,
     pub(super) service: String,
     pub(super) command: Vec<OsString>,
 }
@@ -187,6 +243,19 @@ fn append_exec_env(args: &mut Vec<OsString>, secret_env: Option<&[(&str, &Secret
     for (key, value) in secret_env.unwrap_or(&[]) {
         args.push(OsString::from("-e"));
         args.push(OsString::from(format!("{key}={}", value.expose())));
+    }
+}
+
+pub(in crate::runner) fn append_color_exec_env(args: &mut Vec<OsString>, tty: bool) {
+    for (key, value) in CONTAINER_COLOR_ENV {
+        args.push(OsString::from("-e"));
+        args.push(OsString::from(format!("{key}={value}")));
+    }
+    if tty {
+        for (key, value) in CONTAINER_TTY_COLOR_ENV {
+            args.push(OsString::from("-e"));
+            args.push(OsString::from(format!("{key}={value}")));
+        }
     }
 }
 
@@ -241,6 +310,10 @@ fn resolve_colima_direct_exec_invocation(
         OsString::from("--"),
         OsString::from("exec"),
     ];
+    if parsed.tty {
+        args.push(OsString::from("-i"));
+        args.push(OsString::from("-t"));
+    }
     if let Some(working_dir) = parsed.working_dir {
         args.push(OsString::from("-w"));
         args.push(working_dir);

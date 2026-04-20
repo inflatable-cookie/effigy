@@ -88,4 +88,4 @@ if !path_exists(proof_log) || !is_file(proof_log) {
     throw "[error] expected Linux rehearsal proof log at " + proof_log;
 }
 log("[ok] linux release rehearsal passed");
-log("[next] inspect the artifact at " + copied_binary);
+log("[ok] inspected artifact");

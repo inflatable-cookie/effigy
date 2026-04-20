@@ -66,9 +66,19 @@ This is the fuller shipped `v0.3` shape when the repo wants one named task to
 own the local environment:
 
 ```toml
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+workdir = "."
+
 [tasks.dev]
 mode = "tui"
-container_session = "default"
+workspace = "app"
 
 [tasks.dev.managed]
 container_lifecycle = true
@@ -94,7 +104,7 @@ The shipped managed-task additions live under `[tasks.<name>.managed]`.
 Current bounded fields:
 
 - `container_lifecycle = true`
-  - lets one managed task own the named `container_session`
+  - lets one managed task own the resolved workspace-backed container lifecycle
 - `health_wait = true`
   - waits on the task-owned container health path before projecting readiness
 - `ready_message = "..."`
@@ -102,9 +112,9 @@ Current bounded fields:
   - requires `health_wait = true`
 - `gateway = true`
   - starts the shipped gateway path before the managed runtime starts
-  - requires `container_session = "<name>"` on the task
+  - requires a workspace-backed container binding on the task
   - requires one `concurrent` entry with `role = "lifecycle"`
-  - requires the named container to declare local DNS ownership
+  - requires the resolved container to declare local DNS ownership
 
 Current special concurrent roles:
 
@@ -157,9 +167,19 @@ If omitted, Effigy uses:
 Profile overrides still work on the fuller managed contract:
 
 ```toml
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+workdir = "."
+
 [tasks.dev]
 mode = "tui"
-container_session = "default"
+workspace = "app"
 
 [tasks.dev.managed]
 container_lifecycle = true
@@ -187,7 +207,8 @@ concurrent = [
 - One tab per managed process or role.
 - If a process has `shutdown_on_exit = true`, its exit becomes a full-session
   stop signal for the rest of the managed stack.
-- `role = "lifecycle"` owns the task's named container bring-up and shutdown.
+- `role = "lifecycle"` owns the task's resolved workspace container bring-up
+  and shutdown.
 - `role = "shell"` uses the primary-service container shell and coexists with
   the lifecycle-owned container session.
 - `managed.health_wait = true` delays the final ready projection until the
@@ -235,8 +256,8 @@ not the only way the substrate can be used.
 
 1. Run `effigy dev` from repo root and verify the expected default profile
    opens.
-2. If the repo uses `container_session`, verify the named environment starts
-   and shuts down with the managed session.
+2. If the repo uses a workspace-backed container binding, verify the resolved
+   environment starts and shuts down with the managed session.
 3. If the repo uses `managed.gateway = true`, verify the gateway starts only
    when the container declares the expected local domain route.
 4. If the repo uses `managed.health_wait = true`, verify readiness is delayed

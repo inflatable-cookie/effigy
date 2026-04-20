@@ -11,6 +11,43 @@ pub(super) fn handle_insert_key(
     state: &mut SessionState,
 ) -> Result<(), MultiProcessTuiError> {
     match key.code {
+        KeyCode::Up => {
+            let target = state.active_process().to_owned();
+            state.set_follow_for(&target, false);
+            state
+                .set_scroll_offset_for(&target, state.scroll_offset_for(&target).saturating_sub(1));
+        }
+        KeyCode::Down => {
+            let target = state.active_process().to_owned();
+            state.set_follow_for(&target, false);
+            state
+                .set_scroll_offset_for(&target, state.scroll_offset_for(&target).saturating_add(1));
+        }
+        KeyCode::PageUp => {
+            let target = state.active_process().to_owned();
+            state.set_follow_for(&target, false);
+            state.set_scroll_offset_for(
+                &target,
+                state.scroll_offset_for(&target).saturating_sub(10),
+            );
+        }
+        KeyCode::PageDown => {
+            let target = state.active_process().to_owned();
+            state.set_follow_for(&target, false);
+            state.set_scroll_offset_for(
+                &target,
+                state.scroll_offset_for(&target).saturating_add(10),
+            );
+        }
+        KeyCode::Home => {
+            let target = state.active_process().to_owned();
+            state.set_follow_for(&target, false);
+            state.set_scroll_offset_for(&target, 0);
+        }
+        KeyCode::End => {
+            let target = state.active_process().to_owned();
+            state.set_follow_for(&target, true);
+        }
         KeyCode::Enter if !state.input_line.is_empty() => {
             let target = &state.process_names[state.active_index];
             let mut payload = state.input_line.clone();

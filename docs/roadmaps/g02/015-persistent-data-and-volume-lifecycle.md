@@ -106,12 +106,21 @@ Export/import work at the Docker volume level — tar the volume contents.
 ### 4.4 Seeding as Tasks
 
 ```toml
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
 [tasks.seed]
-container_session = "web"
+workspace = "app"
 run = "rhai:scripts/seed.rhai"
 
 [tasks."seed:fresh"]
-container_session = "web"
+workspace = "app"
 run = [
     "php artisan migrate:fresh",
     "rhai:scripts/import-migration-bundle.rhai",

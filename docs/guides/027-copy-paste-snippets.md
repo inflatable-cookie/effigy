@@ -128,10 +128,20 @@ effigy web/validate
 [catalog]
 alias = "app"
 
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+workdir = "."
+
 [tasks.dev]
 mode = "tui"
 fail_on_non_zero = true
-container_session = "default"
+workspace = "app"
 
 [tasks.dev.managed]
 container_lifecycle = true
@@ -164,7 +174,8 @@ effigy dev admin
 Use this when the repo wants one named task to own the local environment and
 the tab runtime together. The fuller shipped contract lets `effigy dev`:
 
-- start the named `container_session`
+- resolve one repo-owned `workspace`
+- attach that workspace to its backing container through `systems`
 - wait on container health before showing readiness
 - project one repo-owned ready message
 - auto-start the shipped gateway when the container declares local domains

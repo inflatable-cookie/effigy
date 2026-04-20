@@ -30,6 +30,15 @@ fn tasks_cache_comment_profile_contract_is_stable() {
 }
 
 #[test]
+fn task_docs_surface_uses_system_workspace_contract() {
+    let reference = tasks_canonical_lines(ConfigDocProfile::Reference);
+
+    assert!(reference.contains(&"workspace = \"app\""));
+    assert!(reference.contains(&"[systems.dev.workspaces.app]"));
+    assert!(reference.contains(&"container = \"web\""));
+}
+
+#[test]
 fn default_test_sections_reference_and_schema_contract_is_stable() {
     let reference = test_section_lines(true, ConfigDocProfile::Reference, None);
     let schema = test_section_lines(true, ConfigDocProfile::Schema, None);

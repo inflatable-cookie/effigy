@@ -6662,8 +6662,11 @@ fn cli_explicitly_deferred_release_bypasses_builtin_release_command() {
 #[test]
 fn cli_implicit_legacy_release_bypasses_builtin_release_command_by_default() {
     let root = temp_workspace("cli-implicit-deferred-release");
-    fs::write(root.join("effigy.toml"), "[tasks.dev]\nrun = \"printf dev\"\n")
-        .expect("write manifest");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf dev\"\n",
+    )
+    .expect("write manifest");
     fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
     fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
 
@@ -6850,7 +6853,7 @@ fn write_container_fixture_with_task(
         format!("\n[containers.web.health]\ncheck = \"{check}\"\ntimeout_secs = 2\n")
     });
     let task_block = if include_task {
-        "\n[tasks.dev]\ncontainer_session = \"web\"\n"
+        "\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\ncontainer = \"web\"\n\n[tasks.dev]\nworkspace = \"app\"\n"
     } else {
         ""
     };
@@ -7571,8 +7574,8 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
 }
 
 #[test]
-fn cli_task_container_session_stops_environment_on_sigint() {
-    let root = temp_workspace("task-container-session");
+fn cli_task_workspace_binding_stops_environment_on_sigint() {
+    let root = temp_workspace("task-workspace-binding");
     write_container_fixture_with_task(&root, None, "./app:/workspace", true);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");

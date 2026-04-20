@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use super::RunnerError;
+use effigy_containers::exec::ContainerExecError;
 
 #[test]
 fn task_invocation_constructor_preserves_message() {
@@ -40,6 +41,31 @@ fn task_invocation_path_message_constructors_are_stable() {
     match render {
         RunnerError::TaskInvocation(message) => {
             assert_eq!(message, "failed to render /tmp/effigy.toml: render-failed")
+        }
+        other => panic!("unexpected error variant: {other}"),
+    }
+}
+
+#[test]
+fn container_runtime_state_loss_maps_to_task_invocation() {
+    let error = RunnerError::from(ContainerExecError::Failure {
+        command: "colima stop".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: "time=\"2026-04-20T00:17:15+01:00\" level=warning msg=\"error retrieving runtimes: error retrieving current runtime: empty value\"\n[effigy] command timed out after 15s".to_owned(),
+    });
+
+    match error {
+        RunnerError::TaskInvocation(message) => {
+            assert!(
+                message.contains("runtime state is corrupted"),
+                "got: {message}"
+            );
+            assert!(message.contains("colima stop"), "got: {message}");
+            assert!(
+                message.contains("restart or delete the affected Colima profile"),
+                "got: {message}"
+            );
         }
         other => panic!("unexpected error variant: {other}"),
     }

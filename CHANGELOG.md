@@ -7,11 +7,20 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Add the first composed `system`/`workspace` task-runtime contract, including
+  manifest-owned `[systems]` definitions, per-system default workspaces,
+  task-level `system` and `workspace` binding, named workspace-to-container
+  resolution, and inline workspace container sugar that normalizes onto the
+  same execution model.
+- Auto-provision a Linux `effigy` binary into workspace containers on
+  `effigy workspace`, reusing or rebuilding the cached local Linux rehearsal
+  artifact from the current Effigy checkout before installing it into the
+  running workspace service.
 - Add the first bounded `g02.013` managed dev-task foundation, including
   `[tasks.<name>.managed].container_lifecycle`, `concurrent` lifecycle roles,
   plan/schema/docs support, and managed runtime ownership for starting and
-  stopping a repo-owned `container_session` through one task-owned lifecycle
-  process.
+  stopping a repo-owned workspace-backed container through one task-owned
+  lifecycle process.
 - Add bounded `g02.013` managed shell-role support, so `concurrent` entries
   can declare `role = "shell"` and open the task-owned primary-service
   container shell through the shipped `effigy container shell` path.
@@ -22,9 +31,60 @@ During v0.x, MINOR bumps may include breaking changes.
   startup reaches ready state.
 - Add bounded `g02.013` managed gateway auto-start support, so repo-owned
   managed dev tasks can declare `managed.gateway = true`, validate that
-  contract against lifecycle-owned container sessions, render it in plan/docs
-  output, and trigger the shipped `effigy gateway up` path before the managed
-  runtime starts.
+  contract against lifecycle-owned workspace containers, render it in
+  plan/docs output, and trigger the shipped `effigy gateway up` path before
+  the managed runtime starts.
+### Fixed
+- Make `effigy workspace` verify that the bound system's primary service is
+  actually running before it skips bring-up, so stale compose state no longer
+  drops straight into `no running containers from service workspace`.
+- Route `effigy workspace` / `effigy container shell` through the normal exec
+  transport with the container exec working dir and an interactive shell
+  launcher, so the workspace shell opens in the expected directory and no
+  longer wedges on exit behind the isolated lifecycle spawn path.
+- Stop managed shell panes inside workspace-backed `effigy dev` runs from
+  assuming `/bin/zsh` exists in the container; the default handoff shell now
+  falls back through `$SHELL`, `bash`, and `sh`.
+- Stop plain `exit` from an interactive `effigy workspace` shell from
+  surfacing as a transport failure when the shell inherits a non-zero status
+  from the last command; only command-mode container execs now treat non-zero
+  shell exit as an Effigy error.
+- Route host-side workspace-backed managed TUI tasks like `effigy dev`
+  through the same `effigy workspace` shell session path, so the task now
+  starts inside the container and drops back to the workspace shell when the
+  managed session exits instead of maintaining a separate host orchestration
+  stack.
+- Add manifest-owned `[containers.<name>.workspace].extra_mounts` support for
+  direct-compose workspace containers, and rewrite the runtime workspace
+  service bind mounts onto `repo root + explicit extras` instead of requiring
+  one broad parent-directory mount in the checked-in compose file.
+- Route managed standard container panes through `effigy container shell
+  --command` instead of the ad hoc `effigy exec` surface so managed dev
+  sessions use the same transport as the stable shell pane on Colima.
+- Run routed workspace-backed task execs through `compose exec -T` so
+  non-interactive managed/dev task panes do not allocate TTYs on the
+  Colima/containerd path, reducing long-running task dropouts under the
+  `colima nerdctl` fallback surface.
+- Time out managed container shutdowns inside the container exec layer and
+  terminate the whole shutdown process group, so hung `container down`
+  cleanup stops failing as an outer 15s wrapper timeout with orphaned child
+  processes left behind.
+### Changed
+- Show a spinner for non-streaming `effigy system` calls while they are
+  waiting on container runtime output, so long-running `system up/down/logs`
+  paths do not sit silent in interactive terminals.
+- Render Rhai task status prefixes like `[check]`, `[ok]`, `[error]`, and
+  `[next]` with native colour at the task log source, and switch owned
+  `effigy workspace` shutdown onto a transient spinner so exit waits stay
+  visible without leaving an extra notice line behind.
+- Shorten the Linux release rehearsal closeout so it ends on a compact
+  success status instead of a long `[next] inspect the artifact ...` line.
+- Add explicit `effigy system repair` support for bounded Colima profile
+  recovery, so operators can restart one broken workspace runtime through
+  Effigy instead of working through manual `colima` / `limactl` cleanup.
+- Remove the unpublished redundant task field `container_session` and route
+  task-owned container execution entirely through the released `system` /
+  `workspace` contract.
 - Add transparent container exec integration for `g02.012`, including
   manifest-owned `[containers.<name>.exec]` aliases and working-dir config,
   explicit `effigy exec ...`, bare alias fallback like `effigy mysql`, and
@@ -174,10 +234,43 @@ During v0.x, MINOR bumps may include breaking changes.
   re-entry and onto the running Effigy process through the new Rhai host API.
 
 ### Fixed
+- Stop `effigy doctor` from flagging valid task-level `host = true` bindings as
+  unsupported manifest keys after the `system` / `workspace` task-routing
+  migration.
+- Stop forcing macOS PTY transport onto every managed TUI tab; lifecycle and
+  standard app tabs now use plain supervised pipes while the shell tab keeps
+  PTY transport, which lets startup failures surface and terminate honestly
+  instead of getting stranded behind `script`-wrapped waiting tabs.
+- Stop container-backed managed shell and exec tabs from waiting forever when
+  the lifecycle owner fails during startup, by projecting lifecycle failure to
+  dependent processes so they exit with a real error instead of hanging on the
+  first-output spinner.
+- Stop container-backed managed child task refs from re-invoking the host
+  Effigy binary path inside the workspace container; they now resolve to the
+  referenced task command and working directory before the container exec
+  wrapper is applied.
+- Stop VT-backed managed tabs from clamping scrollback to roughly one screen,
+  and allow output scrolling from insert mode as well as command mode.
 - Pin explicit runtime `name` values on generated top-level named volumes so
   managed-volume reporting, reset retention, and data export/import stay
   aligned on the Colima/nerdctl path instead of drifting into double-prefixed
   runtime volume names.
+- Stop managed dev tabs from colliding on one default task lock or racing the
+  container exec surface at startup; prefixed child tasks now scope locks by
+  rendered selector, stale reused-PID locks are reclaimed honestly, and
+  container-backed child commands wait until the workspace service is ready.
+- Hydrate empty container-local JS dependency volumes during managed container
+  startup when the repo declares `[package_manager].js`, so container-backed
+  `vite`/`svelte-kit` tabs do not fail immediately on first launch just
+  because named `node_modules` mounts start empty.
+- Auto-repair broken Colima profile DNS during compose/build bring-up by
+  restarting the selected profile with fallback public resolvers and retrying
+  once when Docker Hub metadata fetches fail with the known
+  `registry-1.docker.io` lookup outage shape.
+- Stop managed TUI and other supervised multiprocess runs from leaking nested
+  child workloads when an immediate task runner exits or is terminated;
+  shutdown now walks descendant process trees instead of only signaling the
+  first child process group.
 - Regenerate generated compose output when the rendered compose content changes
   even if the manifest checksum is unchanged, preventing stale compose
   artifacts after assembly-layer fixes.

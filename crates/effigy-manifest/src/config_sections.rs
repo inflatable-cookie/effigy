@@ -257,6 +257,17 @@ impl ManifestJsPackageManager {
         }
     }
 
+    /// Install command for this manager when Effigy needs to hydrate a
+    /// JS workspace before running tools from `node_modules/.bin`.
+    pub fn install_command(self) -> Option<&'static str> {
+        match self {
+            Self::Bun => Some("bun install"),
+            Self::Pnpm => Some("pnpm install"),
+            Self::Npm => Some("npm install"),
+            Self::Direct => None,
+        }
+    }
+
     /// Vitest invocation for this manager as a `(command, label)` pair.
     ///
     /// The label is used as stable evidence text in plan output, e.g.
@@ -290,6 +301,49 @@ pub struct ManifestContainersConfig {
     pub environments: BTreeMap<String, ManifestContainerConfig>,
 }
 
+#[derive(Debug, serde::Deserialize, Default)]
+pub struct ManifestSystemsConfig {
+    #[serde(default)]
+    pub default: Option<String>,
+    #[serde(flatten)]
+    pub systems: BTreeMap<String, ManifestSystemConfig>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestSystemConfig {
+    #[serde(default)]
+    pub default_workspace: Option<String>,
+    #[serde(default)]
+    pub workspaces: BTreeMap<String, ManifestWorkspaceConfig>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestWorkspaceConfig {
+    #[serde(default)]
+    pub container: Option<ManifestWorkspaceContainerRef>,
+    #[serde(default)]
+    pub workdir: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+pub enum ManifestWorkspaceContainerRef {
+    Named(String),
+    Inline(ManifestInlineWorkspaceContainerConfig),
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct ManifestInlineWorkspaceContainerConfig {
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub mount: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, toml::Value>,
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ManifestContainerConfig {
     #[serde(default)]
@@ -319,6 +373,8 @@ pub struct ManifestContainerConfig {
     #[serde(default)]
     pub host: Option<ManifestContainerHostConfig>,
     #[serde(default)]
+    pub workspace: Option<ManifestContainerWorkspaceConfig>,
+    #[serde(default)]
     pub data: Option<ManifestContainerDataConfig>,
     #[serde(default)]
     pub ui: Option<ManifestContainerUiConfig>,
@@ -327,6 +383,18 @@ pub struct ManifestContainerConfig {
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestContainerDnsConfig {
+    pub domain: String,
+    #[serde(default)]
+    pub tls: Option<bool>,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub routes: Vec<ManifestContainerDnsRouteConfig>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestContainerDnsRouteConfig {
     pub domain: String,
     #[serde(default)]
     pub tls: Option<bool>,
@@ -417,6 +485,13 @@ pub struct ManifestContainerHostConfig {
     pub ports: Vec<String>,
     #[serde(default)]
     pub mounts: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestContainerWorkspaceConfig {
+    #[serde(default)]
+    pub extra_mounts: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
@@ -794,12 +869,18 @@ pub struct ManifestReleaseGateDetails {
 mod tests {
     use super::{
         ManifestContainerDnsConfig, ManifestContainerServiceConfig, ManifestContainersConfig,
-        ManifestJsPackageManager,
+        ManifestInlineWorkspaceContainerConfig, ManifestJsPackageManager, ManifestSystemsConfig,
+        ManifestWorkspaceContainerRef,
     };
 
     #[derive(Debug, serde::Deserialize)]
     struct ContainerWrapper {
         containers: ManifestContainersConfig,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct SystemWrapper {
+        systems: ManifestSystemsConfig,
     }
 
     #[test]
@@ -828,6 +909,23 @@ mod tests {
             ManifestJsPackageManager::Direct.vitest_command(),
             ("vitest run", "direct")
         );
+    }
+
+    #[test]
+    fn js_package_manager_install_commands_are_stable() {
+        assert_eq!(
+            ManifestJsPackageManager::Bun.install_command(),
+            Some("bun install")
+        );
+        assert_eq!(
+            ManifestJsPackageManager::Pnpm.install_command(),
+            Some("pnpm install")
+        );
+        assert_eq!(
+            ManifestJsPackageManager::Npm.install_command(),
+            Some("npm install")
+        );
+        assert_eq!(ManifestJsPackageManager::Direct.install_command(), None);
     }
 
     #[test]
@@ -980,6 +1078,40 @@ command = "php artisan"
     }
 
     #[test]
+    fn container_config_accepts_workspace_extra_mounts() {
+        let parsed: ContainerWrapper = toml::from_str(
+            r#"
+[containers]
+default = "stack"
+
+[containers.stack]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "workspace"
+
+[containers.stack.workspace]
+extra_mounts = ["../underlay", "../poodle:/workspace-root/poodle"]
+"#,
+        )
+        .expect("parse containers");
+
+        let workspace = parsed
+            .containers
+            .environments
+            .get("stack")
+            .expect("stack container")
+            .workspace
+            .as_ref()
+            .expect("workspace config");
+        assert_eq!(
+            workspace.extra_mounts,
+            vec![
+                "../underlay".to_owned(),
+                "../poodle:/workspace-root/poodle".to_owned()
+            ]
+        );
+    }
+
+    #[test]
     fn container_config_accepts_dns_domain_and_tls() {
         let parsed: ContainerWrapper = toml::from_str(
             r#"
@@ -1023,5 +1155,100 @@ domain = "clientname.test"
         assert_eq!(parsed.domain, "clientname.test");
         assert_eq!(parsed.tls, None);
         assert_eq!(parsed.port, None);
+    }
+
+    #[test]
+    fn container_dns_config_accepts_additional_routes() {
+        let parsed: ManifestContainerDnsConfig = toml::from_str(
+            r#"
+domain = "clientname.test"
+routes = [
+  { domain = "admin.clientname.test", port = 8081 },
+  { domain = "mailpit.clientname.test", port = 8025, tls = true }
+]
+"#,
+        )
+        .expect("parse dns with routes");
+
+        assert_eq!(parsed.routes.len(), 2);
+        assert_eq!(parsed.routes[0].domain, "admin.clientname.test");
+        assert_eq!(parsed.routes[0].port, Some(8081));
+        assert_eq!(parsed.routes[0].tls, None);
+        assert_eq!(parsed.routes[1].domain, "mailpit.clientname.test");
+        assert_eq!(parsed.routes[1].port, Some(8025));
+        assert_eq!(parsed.routes[1].tls, Some(true));
+    }
+
+    #[test]
+    fn systems_config_accepts_named_workspaces() {
+        let parsed: SystemWrapper = toml::from_str(
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "app"
+workdir = "/workspace"
+"#,
+        )
+        .expect("parse systems");
+
+        assert_eq!(parsed.systems.default.as_deref(), Some("dev"));
+        let dev = parsed.systems.systems.get("dev").expect("dev system");
+        assert_eq!(dev.default_workspace.as_deref(), Some("app"));
+        let app = dev.workspaces.get("app").expect("app workspace");
+        assert_eq!(app.workdir.as_deref(), Some("/workspace"));
+        match app.container.as_ref().expect("workspace container") {
+            ManifestWorkspaceContainerRef::Named(name) => assert_eq!(name, "app"),
+            ManifestWorkspaceContainerRef::Inline(_) => {
+                panic!("expected named workspace container reference")
+            }
+        }
+    }
+
+    #[test]
+    fn systems_config_accepts_inline_workspace_container_shortcut() {
+        let parsed: SystemWrapper = toml::from_str(
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = { image = "node:22", mount = "./:/workspace", shell = "bash" }
+"#,
+        )
+        .expect("parse systems");
+
+        let app = parsed
+            .systems
+            .systems
+            .get("dev")
+            .expect("dev system")
+            .workspaces
+            .get("app")
+            .expect("app workspace");
+        match app.container.as_ref().expect("workspace container") {
+            ManifestWorkspaceContainerRef::Inline(ManifestInlineWorkspaceContainerConfig {
+                image,
+                mount,
+                extra,
+            }) => {
+                assert_eq!(image.as_deref(), Some("node:22"));
+                assert_eq!(mount.as_deref(), Some("./:/workspace"));
+                assert_eq!(
+                    extra.get("shell"),
+                    Some(&toml::Value::String("bash".to_owned()))
+                );
+            }
+            ManifestWorkspaceContainerRef::Named(_) => {
+                panic!("expected inline workspace container shortcut")
+            }
+        }
     }
 }

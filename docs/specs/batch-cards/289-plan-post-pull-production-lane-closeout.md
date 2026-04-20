@@ -19,7 +19,7 @@ generated-compose path.
 The remaining roadmap residue is narrower:
 
 - whether task-owned seeding needs any more product planning beyond the
-  existing task, `container_session`, exec, and Rhai surfaces
+  existing task, workspace binding, exec, and Rhai surfaces
 - whether the lane needs one real-project proof batch before closeout
 - whether `g02.015` can close on the current bounded contract
 
@@ -27,7 +27,7 @@ Decision:
 
 - no separate seed-specific product batch is needed on this lane; task-owned
   seeding is already adequately carried by the shipped task, exec,
-  `container_session`, and Rhai surfaces
+  workspace binding, and Rhai surfaces
 - `g02.015` should take one bounded real-project proof batch before closeout
   so the persistent-data contract is not left consumer-unproven
 - the next explicit step is `290`, a real-project proof of the generated-compose

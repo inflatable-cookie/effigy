@@ -64,51 +64,61 @@ pub(super) fn rewrite_manifest_for_ejected_compose(
         .map_err(|error| RunnerError::task_invocation_failed_write(&manifest_path, error))
 }
 
-pub(super) fn annotate_registered_gateway_route(
+pub(super) fn annotate_registered_gateway_routes(
     report: &mut effigy_containers::ContainerCommandReport,
-    route: Option<&RegisteredGatewayRoute>,
+    routes: &[RegisteredGatewayRoute],
 ) {
-    let Some(route) = route else {
+    if routes.is_empty() {
         return;
-    };
+    }
     if let Some(json_object) = report.json.as_object_mut() {
         json_object.insert(
-            "gateway_route".to_owned(),
-            json!({
-                "action": "registered",
-                "domain": route.domain,
-                "target": route.target,
-                "tls": route.tls,
-            }),
+            "gateway_routes".to_owned(),
+            json!(routes
+                .iter()
+                .map(|route| json!({
+                    "action": "registered",
+                    "domain": route.domain,
+                    "target": route.target,
+                    "tls": route.tls,
+                }))
+                .collect::<Vec<_>>()),
         );
     }
-    report.success_text.push('\n');
-    report.success_text.push_str(&format!(
-        "[gateway] registered {} -> {}",
-        route.domain, route.target
-    ));
+    for route in routes {
+        report.success_text.push('\n');
+        report.success_text.push_str(&format!(
+            "[gateway] registered {} -> {}",
+            route.domain, route.target
+        ));
+    }
 }
 
-pub(super) fn annotate_removed_gateway_route(
+pub(super) fn annotate_removed_gateway_routes(
     report: &mut effigy_containers::ContainerCommandReport,
-    domain: Option<&str>,
+    domains: &[String],
 ) {
-    let Some(domain) = domain else {
+    if domains.is_empty() {
         return;
-    };
+    }
     if let Some(json_object) = report.json.as_object_mut() {
         json_object.insert(
-            "gateway_route".to_owned(),
-            json!({
-                "action": "removed",
-                "domain": domain,
-            }),
+            "gateway_routes".to_owned(),
+            json!(domains
+                .iter()
+                .map(|domain| json!({
+                    "action": "removed",
+                    "domain": domain,
+                }))
+                .collect::<Vec<_>>()),
         );
     }
-    report.success_text.push('\n');
-    report
-        .success_text
-        .push_str(&format!("[gateway] removed {domain}"));
+    for domain in domains {
+        report.success_text.push('\n');
+        report
+            .success_text
+            .push_str(&format!("[gateway] removed {domain}"));
+    }
 }
 
 pub(super) fn ensure_shared_services_running(

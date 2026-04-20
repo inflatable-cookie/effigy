@@ -51,7 +51,7 @@ The next bounded widening step is generated-compose
 
 Why this comes next:
 
-- task-owned seeding already fits the shipped task, `container_session`, exec,
+- task-owned seeding already fits the shipped task, workspace binding, exec,
   and Rhai surfaces better than a new data-specific abstraction
 - opening a seed-specific execution batch now would widen product semantics
   before proving the remaining manifest-owned orchestration contract

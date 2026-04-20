@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use effigy_manifest::{LoadedCatalog, ManifestTask, TaskResolverFn};
+use effigy_manifest::{
+    resolve_task_execution_binding_from_systems, LoadedCatalog, ManifestTask,
+    ResolvedTaskExecutionBinding, TaskResolverFn,
+};
 use effigy_tasks::TaskSelector;
 
 use crate::profiles::ResolvedConcurrentProfile;
@@ -63,6 +66,7 @@ pub fn resolve_managed_concurrent_task_plan(
     )?;
     build_managed_task_plan(
         selector,
+        catalog,
         task,
         &profile.profile_name,
         passthrough,
@@ -72,12 +76,13 @@ pub fn resolve_managed_concurrent_task_plan(
 
 fn build_managed_task_plan(
     selector: &TaskSelector,
+    catalog: &LoadedCatalog,
     task: &ManifestTask,
     profile_name: &str,
     passthrough: &[String],
     resolved: &mut [ConcurrentResolvedProcess],
 ) -> Result<ManagedTaskPlan, ManagedError> {
-    validate_lifecycle_role_usage(selector, task, resolved)?;
+    validate_lifecycle_role_usage(selector, catalog, task, resolved)?;
     ordering::sort_resolved_processes(resolved);
     let tab_order = ordering::build_tab_order(resolved);
     let processes = resolved.iter().map(|entry| entry.spec.clone()).collect();
@@ -105,9 +110,12 @@ fn build_managed_task_plan(
 
 fn validate_lifecycle_role_usage(
     selector: &TaskSelector,
+    catalog: &LoadedCatalog,
     task: &ManifestTask,
     resolved: &[ConcurrentResolvedProcess],
 ) -> Result<(), ManagedError> {
+    let has_container_backed_binding =
+        task_has_container_backed_execution_binding(catalog, selector, task)?;
     let lifecycle_count = resolved
         .iter()
         .filter(|entry| entry.spec.role == ManagedProcessRole::Lifecycle)
@@ -132,11 +140,11 @@ fn validate_lifecycle_role_usage(
         ));
     }
     if task.managed.as_ref().is_some_and(|managed| managed.gateway) {
-        if task.container_session.is_none() {
+        if !has_container_backed_binding {
             return Err(invalid_managed_process_definition(
                 selector,
                 "managed",
-                "`managed.gateway = true` requires `container_session = \"<name>\"` on the task",
+                "`managed.gateway = true` requires a container-backed execution binding on the task (`workspace`)",
             ));
         }
         if lifecycle_count == 0 {
@@ -152,11 +160,11 @@ fn validate_lifecycle_role_usage(
         .as_ref()
         .is_some_and(|managed| managed.health_wait)
     {
-        if task.container_session.is_none() {
+        if !has_container_backed_binding {
             return Err(invalid_managed_process_definition(
                 selector,
                 "managed",
-                "`managed.health_wait = true` requires `container_session = \"<name>\"` on the task",
+                "`managed.health_wait = true` requires a container-backed execution binding on the task (`workspace`)",
             ));
         }
         if lifecycle_count == 0 {
@@ -192,6 +200,23 @@ fn validate_lifecycle_role_usage(
         }
     }
     Ok(())
+}
+
+fn task_has_container_backed_execution_binding(
+    catalog: &LoadedCatalog,
+    selector: &TaskSelector,
+    task: &ManifestTask,
+) -> Result<bool, ManagedError> {
+    let binding = resolve_task_execution_binding_from_systems(
+        catalog.manifest.systems.as_ref(),
+        &selector.task_name,
+        task,
+    )
+    .map_err(|error| ManagedError::task_invocation(error.to_string()))?;
+    Ok(matches!(
+        binding,
+        Some(ResolvedTaskExecutionBinding::Workspace(_))
+    ))
 }
 
 enum RunOrTaskRef<'a> {

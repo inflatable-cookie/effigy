@@ -16,7 +16,8 @@ use lifecycle::{
     run_container_shell, run_container_status, run_container_up,
 };
 
-pub(in crate::runner) use lifecycle::run_task_container_session;
+pub(in crate::runner) use lifecycle::run_container_shell_session;
+pub(in crate::runner) use lifecycle::run_task_workspace_session;
 
 mod data;
 mod discovery;
@@ -34,7 +35,7 @@ pub(super) fn render_container_report(report: ContainerCommandReport, output_jso
     }
 }
 
-pub(super) fn run_container(args: ContainerArgs) -> Result<String, RunnerError> {
+pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, RunnerError> {
     if let ContainerSubcommand::Status { name: _, all: true } = &args.subcommand {
         if args.repo_override.is_some() {
             return Err(RunnerError::task_invocation(

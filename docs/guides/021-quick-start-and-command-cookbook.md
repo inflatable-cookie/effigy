@@ -90,7 +90,8 @@ Electron main window or a primary app shell.
 When a repo wants `effigy dev` to own the environment rather than just the tab
 runtime, prefer the shipped managed-task contract:
 
-- `container_session = "<name>"` on the task
+- `workspace = "<name>"` on the task
+- `[systems]` plus `[systems.<name>.workspaces.<workspace>]` in the manifest
 - `[tasks.<name>.managed].container_lifecycle = true`
 - optional `managed.health_wait`, `managed.ready_message`, and
   `managed.gateway = true`
@@ -104,6 +105,7 @@ For manifest composition and demo-specific guidance, use:
 
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
 
 ## 3) Commands You Will Reach For First
 
@@ -158,7 +160,8 @@ effigy dev
 ```
 
 Use this chain when the repo has local service fragments, one named container
-environment, local domains, and one repo-owned managed dev task.
+environment, one default `system` / `workspace` binding, local domains, and
+one repo-owned managed dev task.
 
 ### Bootstrap a repo from anywhere
 

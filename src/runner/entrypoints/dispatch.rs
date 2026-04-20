@@ -14,6 +14,7 @@ use super::super::gateway_command::{run_gateway, run_internal_gateway};
 use super::super::release_command::run_release;
 use super::super::script_command::run_internal_rhai;
 use super::super::service_command::run_service;
+use super::super::system_command::{run_system, run_workspace};
 use super::super::tasks_command::run_tasks;
 use crate::runner::error::RunnerError;
 
@@ -23,6 +24,8 @@ pub(super) fn run_command(cmd: Command) -> Result<String, RunnerError> {
         Command::Help(_) => Ok(String::new()),
         Command::Changelog(args) => run_changelog(args),
         Command::Exec(args) => run_exec(args),
+        Command::System(args) => run_system(args),
+        Command::Workspace(args) => run_workspace(args),
         Command::Gateway(args) => run_gateway(args),
         Command::Service(args) => run_service(args),
         Command::Demo(args) => run_demo(args),
