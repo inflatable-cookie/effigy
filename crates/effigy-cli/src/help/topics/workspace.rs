@@ -11,11 +11,11 @@ pub(crate) fn render_workspace_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
     renderer.key_values(&[
         KeyValue::new(
             "<NAME>",
-            "Optional workspace name; defaults to `[systems.<system>].default_workspace`",
+            "Optional workspace name; defaults to `[systems.<system>].default_workspace` or the sole declared workspace",
         ),
         KeyValue::new(
             "--system <NAME>",
-            "Select one explicit manifest system instead of `[systems].default`",
+            "Select one explicit manifest system instead of `[systems].default` or the sole declared system",
         ),
         KeyValue::new("--repo <PATH>", "Override target repository path"),
         KeyValue::new("-h, --help", "Print command help"),

@@ -35,9 +35,10 @@ pub use config_sections::{
     ManifestWorkspaceContainerRef,
 };
 pub use execution_binding::{
-    resolve_task_execution_binding, resolve_task_execution_binding_from_systems,
-    ExecutionBindingResolveError, ResolvedInlineWorkspaceContainer, ResolvedTaskExecutionBinding,
-    ResolvedWorkspaceBinding, ResolvedWorkspaceContainer,
+    resolve_task_execution_binding, resolve_task_execution_binding_from_parts,
+    resolve_task_execution_binding_from_systems, ExecutionBindingResolveError,
+    ResolvedInlineWorkspaceContainer, ResolvedTaskExecutionBinding, ResolvedWorkspaceBinding,
+    ResolvedWorkspaceContainer,
 };
 pub use loaded_catalog::{DeferredCommand, LoadedCatalog, TaskResolverFn, TaskSelection};
 use task_defs::deserialize_tasks;

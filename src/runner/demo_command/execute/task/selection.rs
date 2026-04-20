@@ -129,6 +129,7 @@ pub(super) fn resolve_concurrent_runner_plan(
         &mut plan,
         selection.catalog.catalog_root.as_path(),
         selection.catalog.manifest.systems.as_ref(),
+        selection.catalog.manifest.containers.as_ref(),
         selection.task,
         &resolved.selector.task_name,
     )?;
@@ -139,12 +140,14 @@ fn materialize_demo_special_managed_processes(
     plan: &mut effigy_managed::ManagedTaskPlan,
     repo_root: &Path,
     systems: Option<&ManifestSystemsConfig>,
+    containers: Option<&effigy_manifest::ManifestContainersConfig>,
     task: &ManifestTask,
     task_name: &str,
 ) -> Result<(), RunnerError> {
     let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
     let container_binding = resolve_container_execution_binding(
         systems,
+        containers,
         task_name,
         task,
         "demo concurrent-runner task materialization",

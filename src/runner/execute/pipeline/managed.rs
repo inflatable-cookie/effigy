@@ -37,6 +37,7 @@ pub(super) fn run_managed_task(
     let execution_mode = managed_execution_mode();
     let container_binding = resolve_container_execution_binding(
         selection.catalog.manifest.systems.as_ref(),
+        selection.catalog.manifest.containers.as_ref(),
         &preflight.selector.task_name,
         selection.task,
         "managed task execution",
@@ -158,6 +159,7 @@ fn build_managed_gateway_command(
 ) -> Result<String, RunnerError> {
     let container_binding = resolve_container_execution_binding(
         selection.catalog.manifest.systems.as_ref(),
+        selection.catalog.manifest.containers.as_ref(),
         task_name,
         selection.task,
         "managed gateway startup",
@@ -309,6 +311,7 @@ fn materialize_special_managed_processes(
     let repo_root = selection.catalog.catalog_root.as_path();
     let container_binding = resolve_container_execution_binding(
         selection.catalog.manifest.systems.as_ref(),
+        selection.catalog.manifest.containers.as_ref(),
         &preflight.selector.task_name,
         selection.task,
         "managed process materialization",
@@ -455,6 +458,7 @@ fn build_managed_lifecycle_setup_commands(
     let repo_root = selection.catalog.catalog_root.as_path();
     let container_binding = resolve_container_execution_binding(
         selection.catalog.manifest.systems.as_ref(),
+        selection.catalog.manifest.containers.as_ref(),
         task_name,
         selection.task,
         "managed lifecycle setup",

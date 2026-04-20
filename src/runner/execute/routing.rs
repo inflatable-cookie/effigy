@@ -24,8 +24,13 @@ pub(in crate::runner) fn route_standard_task_execution(
         });
     }
 
-    let binding =
-        resolve_container_execution_binding(systems, command_name, task, "standard task routing")?;
+    let binding = resolve_container_execution_binding(
+        systems,
+        containers,
+        command_name,
+        task,
+        "standard task routing",
+    )?;
 
     let task_overrides = TaskOverrides {
         host: task.host.unwrap_or(false) || matches!(binding, ContainerExecutionBinding::Host),
@@ -186,6 +191,31 @@ primary_service = "app"
             "build",
             &manifest_task(),
             None,
+            Some(&containers),
+            |_| panic!("running check should not be used without dev context"),
+        )
+        .expect("route");
+        assert!(matches!(routed.decision.target, ExecTarget::Host));
+    }
+
+    #[test]
+    fn sole_non_dev_container_and_system_do_not_capture_plain_tasks() {
+        let containers = containers_toml(
+            r#"
+[containers.release]
+primary_service = "builder"
+"#,
+        );
+        let systems = systems_toml(
+            r#"
+[systems.release.workspaces.linux]
+container = "release"
+"#,
+        );
+        let routed = route_standard_task_execution(
+            "build",
+            &manifest_task(),
+            Some(&systems),
             Some(&containers),
             |_| panic!("running check should not be used without dev context"),
         )

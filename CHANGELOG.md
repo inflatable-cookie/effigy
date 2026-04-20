@@ -35,6 +35,10 @@ During v0.x, MINOR bumps may include breaking changes.
   plan/docs output, and trigger the shipped `effigy gateway up` path before
   the managed runtime starts.
 ### Fixed
+- Let single-entry container/system/workspace registries resolve implied
+  defaults, so repos can omit `[containers].default`, `[systems].default`,
+  `[systems.<name>].default_workspace`, and workspace `container = "..."`
+  when there is only one valid choice.
 - Remove the unused `[containers.<name>.ui]` config surface and its
   `ui_tabs` status/report output; attached container sessions now always
   render the built-in `overview` plus `primary_service` tabs instead of
