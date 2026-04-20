@@ -652,7 +652,7 @@ container = "stack"
 user = "dev"
 home = "/home/dev"
 workdir = "/workspace-root/underlay-reference"
-extra_mounts = ["../underlay", "../poodle"]
+mounts = ["../underlay", "../poodle"]
 
 [containers.stack]
 compose_file = "infra/dev/docker-compose.yml"
@@ -735,7 +735,7 @@ container = "stack"
 user = "dev"
 home = "/home/dev"
 workdir = "/workspace-root/underlay-reference"
-extra_mounts = ["../underlay"]
+mounts = ["../underlay"]
 
 [containers.stack]
 compose_file = "infra/dev/docker-compose.yml"

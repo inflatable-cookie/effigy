@@ -255,7 +255,7 @@ fn implied_default_workspace_config(
     let mut workspace = ManifestWorkspaceConfig {
         container: system_config.container.clone(),
         workdir: system_config.workdir.clone(),
-        extra_mounts: system_config.extra_mounts.clone(),
+        mounts: system_config.mounts.clone(),
         user: system_config.user.clone(),
         home: system_config.home.clone(),
     };
@@ -273,7 +273,7 @@ fn merge_workspace_config(
     let mut merged = ManifestWorkspaceConfig {
         container: system_config.container.clone(),
         workdir: system_config.workdir.clone(),
-        extra_mounts: system_config.extra_mounts.clone(),
+        mounts: system_config.mounts.clone(),
         user: system_config.user.clone(),
         home: system_config.home.clone(),
     };
@@ -289,8 +289,8 @@ fn merge_workspace_config(
     if workspace.home.is_some() {
         merged.home = workspace.home.clone();
     }
-    if !workspace.extra_mounts.is_empty() {
-        merged.extra_mounts = workspace.extra_mounts.clone();
+    if !workspace.mounts.is_empty() {
+        merged.mounts = workspace.mounts.clone();
     }
     merged
 }
@@ -385,7 +385,7 @@ run = "npm run dev"
                     workspace_config: ManifestWorkspaceConfig {
                         container: Some(ManifestWorkspaceContainerRef::Named("app".to_owned())),
                         workdir: Some("/workspace".to_owned()),
-                        extra_mounts: vec![],
+                        mounts: vec![],
                         user: None,
                         home: None,
                     },
@@ -425,7 +425,7 @@ run = "npm run dev"
                     workspace_config: ManifestWorkspaceConfig {
                         container: Some(ManifestWorkspaceContainerRef::Named("app".to_owned())),
                         workdir: Some("/workspace".to_owned()),
-                        extra_mounts: vec![],
+                        mounts: vec![],
                         user: None,
                         home: None,
                     },
@@ -464,7 +464,7 @@ run = "npm run dev"
                     workspace_config: ManifestWorkspaceConfig {
                         container: Some(ManifestWorkspaceContainerRef::Named("app".to_owned())),
                         workdir: Some("/workspace".to_owned()),
-                        extra_mounts: vec![],
+                        mounts: vec![],
                         user: None,
                         home: None,
                     },
@@ -502,7 +502,7 @@ run = "npm run dev"
                     workspace_config: ManifestWorkspaceConfig {
                         container: Some(ManifestWorkspaceContainerRef::Named("app".to_owned())),
                         workdir: None,
-                        extra_mounts: vec![],
+                        mounts: vec![],
                         user: None,
                         home: None,
                     },
@@ -572,7 +572,7 @@ run = "npm run dev"
                             }
                         )),
                         workdir: None,
-                        extra_mounts: vec![],
+                        mounts: vec![],
                         user: None,
                         home: None,
                     },

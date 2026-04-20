@@ -9,7 +9,7 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Breaking
 - Move default workspace container config onto `[systems.<name>]` itself,
   replacing the extra `[systems.<name>.workspace_defaults]` layer, and route
-  workspace `workdir`, `user`, `home`, and `extra_mounts` resolution through
+  workspace `workdir`, `user`, `home`, and `mounts` resolution through
   that system-level config plus per-workspace overrides.
 
 ### Added
@@ -94,8 +94,8 @@ During v0.x, MINOR bumps may include breaking changes.
   starts inside the container and drops back to the workspace shell when the
   managed session exits instead of maintaining a separate host orchestration
   stack.
-- Add manifest-owned `[containers.<name>.workspace].extra_mounts` support for
-  direct-compose workspace containers, and rewrite the runtime workspace
+- Add manifest-owned workspace `mounts` support for direct-compose workspace
+  containers, and rewrite the runtime workspace
   service bind mounts onto `repo root + explicit extras` instead of requiring
   one broad parent-directory mount in the checked-in compose file.
 - Route managed standard container panes through `effigy container shell
