@@ -28,7 +28,10 @@ Current milestones:
 - [`015-persistent-data-and-volume-lifecycle.md`](./015-persistent-data-and-volume-lifecycle.md) (complete; reset retention, inventory, transfer, media and pull hooks, real-project proof, and proof-exposed volume/caching fixes are all shipped)
 - [`016-multi-project-coordination.md`](./016-multi-project-coordination.md) (complete; cross-project status, route dashboard, generated-compose auto-allocation, resource stats, and bounded shared services are all shipped)
 - [`017-remaining-shell-cleanup-and-crate-extraction-program.md`](./017-remaining-shell-cleanup-and-crate-extraction-program.md) (closed; the queued shell-cleanup and extraction jobs that were worth doing are now landed, and the remaining root-crate untidiness is acceptable rather than roadmap-worthy)
+- `g02.018` is retired and must not be reused; older logs may still mention it,
+  but the number is intentionally left vacant for traceability
 - [`019-v0-3-surface-audit-and-ux-simplification.md`](./019-v0-3-surface-audit-and-ux-simplification.md) (planned; the `v0.3` audit follow-up will align front-door docs, release refs, and local-dev UX around the shipped surface without widening product scope)
+- [`020-multi-project-gateway-expansion-and-service-dns.md`](./020-multi-project-gateway-expansion-and-service-dns.md) (planned; the post-`v0.3` multi-project networking follow-up will add per-route DNS targets, project/shared loopback-IP service routing, and HTTP post-start port discovery without replacing the current gateway model)
 Container infrastructure design document:
 
 - [`../architecture/020-container-infrastructure-design.md`](../architecture/020-container-infrastructure-design.md)
@@ -63,3 +66,6 @@ irreversible release action unless explicitly requested.
 
 After that lane settles, move to `g02.019` for the surfaced audit cleanup and
 UX-simplification batch.
+
+After `g02.019`, queue `g02.020` for the multi-project gateway and service-DNS
+expansion lane.
