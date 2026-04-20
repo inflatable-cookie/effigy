@@ -37,7 +37,8 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
                 "profile",
                 "compose_file",
                 "services",
-                "exec",
+                "working_dir",
+                "aliases",
                 "dns",
                 "project_name",
                 "primary_service",
@@ -79,8 +80,9 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
         if let Some(services) = table.get("services") {
             validate_container_services(context, &path, services);
         }
-        if let Some(exec) = table.get("exec") {
-            validate_container_exec(context, &path, exec);
+        validate_string_field(context, &path, table.get("working_dir"), "working_dir");
+        if let Some(aliases) = table.get("aliases") {
+            validate_container_aliases(context, &path, aliases);
         }
         if let Some(dns) = table.get("dns") {
             validate_container_dns(context, &path, dns);
@@ -88,25 +90,25 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
     }
 }
 
-fn validate_container_exec(context: &mut SchemaContext<'_, '_>, base_path: &str, value: &Value) {
-    let path = format!("{base_path}.exec");
-    let Some(table) = require_table(context, &path, value, "expected table") else {
-        return;
-    };
-    validate_allowed_keys(context, &path, table, &["working_dir", "aliases"]);
-    validate_string_field(context, &path, table.get("working_dir"), "working_dir");
-
-    let Some(aliases) = table.get("aliases") else {
-        return;
-    };
-    let aliases_path = format!("{path}.aliases");
-    let Some(alias_table) = require_table(context, &aliases_path, aliases, "expected table") else {
+fn validate_container_aliases(context: &mut SchemaContext<'_, '_>, base_path: &str, value: &Value) {
+    let aliases_path = format!("{base_path}.aliases");
+    let Some(alias_table) = require_table(context, &aliases_path, value, "expected table") else {
         return;
     };
     for (alias_name, alias_value) in alias_table {
         let alias_path = format!("{aliases_path}.{alias_name}");
-        let Some(alias_fields) = require_table(context, &alias_path, alias_value, "expected table")
-        else {
+        if let Some(service) = alias_value.as_str() {
+            if service.trim().is_empty() {
+                context.unsupported_value(&alias_path, "string", "expected non-empty service name");
+            }
+            continue;
+        }
+        let Some(alias_fields) = require_table(
+            context,
+            &alias_path,
+            alias_value,
+            "expected string or table",
+        ) else {
             continue;
         };
         validate_allowed_keys(context, &alias_path, alias_fields, &["service", "command"]);
@@ -157,26 +159,7 @@ fn validate_container_dns(context: &mut SchemaContext<'_, '_>, base_path: &str, 
     let Some(table) = require_table(context, &path, value, "expected table") else {
         return;
     };
-    validate_allowed_keys(context, &path, table, &["domain", "tls", "port", "routes"]);
-    validate_string_field(context, &path, table.get("domain"), "domain");
-    if let Some(tls) = table.get("tls") {
-        if tls.as_bool().is_none() {
-            context.unsupported_value(
-                &format!("{path}.tls"),
-                SchemaContext::value_type(tls),
-                "expected boolean",
-            );
-        }
-    }
-    if let Some(port) = table.get("port") {
-        if port.as_integer().is_none() {
-            context.unsupported_value(
-                &format!("{path}.port"),
-                SchemaContext::value_type(port),
-                "expected integer",
-            );
-        }
-    }
+    validate_allowed_keys(context, &path, table, &["routes"]);
     if let Some(routes) = table.get("routes") {
         let Some(entries) = routes.as_array() else {
             context.unsupported_value(
@@ -200,9 +183,10 @@ fn validate_container_dns(context: &mut SchemaContext<'_, '_>, base_path: &str, 
                 context,
                 &route_path,
                 route_table,
-                &["domain", "tls", "port"],
+                &["domain", "tls", "port", "service"],
             );
             validate_string_field(context, &route_path, route_table.get("domain"), "domain");
+            validate_string_field(context, &route_path, route_table.get("service"), "service");
             if let Some(tls) = route_table.get("tls") {
                 if tls.as_bool().is_none() {
                     context.unsupported_value(

@@ -275,9 +275,7 @@ default = "web"
 primary_service = "app"
 
 [containers.web.dns]
-domain = "clientname.test"
-tls = true
-port = 8080
+routes = [{ domain = "clientname.test", tls = true, port = 8080 }]
 
 [containers.web.services.app]
 catalog = "php-fpm"
@@ -642,8 +640,6 @@ default = "stack"
 [containers.stack]
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "workspace"
-
-[containers.stack.exec]
 working_dir = "/workspace-root/underlay-reference"
 
 [containers.stack.workspace]
@@ -726,8 +722,6 @@ default = "stack"
 [containers.stack]
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "workspace"
-
-[containers.stack.exec]
 working_dir = "/workspace-root/underlay-reference"
 
 [containers.stack.workspace]

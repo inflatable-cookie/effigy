@@ -4,8 +4,8 @@
 //! specific container services. For example:
 //!
 //! ```toml
-//! [containers.web.exec.aliases]
-//! mysql = { service = "db", command = "mysql" }
+//! [containers.web.aliases]
+//! mysql = "db"
 //! redis-cli = { service = "cache", command = "redis-cli" }
 //! ```
 //!

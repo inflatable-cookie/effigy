@@ -223,7 +223,7 @@ primary_service = "app"
 ports = ["8080:80"]
 
 [containers.web.dns]
-domain = "project.test"
+routes = [{ domain = "project.test" }]
 "#,
     );
     fs::write(

@@ -423,6 +423,41 @@ primary_service = "worker"
     }
 
     #[test]
+    fn implied_default_workspace_uses_default_container_for_routing() {
+        let systems = systems_toml(
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+"#,
+        );
+        let containers = containers_toml(
+            r#"
+[containers.app]
+context = "dev"
+primary_service = "workspace"
+"#,
+        );
+
+        let routed = route_standard_task_execution(
+            "build",
+            &manifest_task(),
+            Some(&systems),
+            Some(&containers),
+            |name| {
+                assert_eq!(name, "app");
+                Ok(true)
+            },
+        )
+        .expect("route");
+        assert_eq!(
+            routed_container_target(&routed.decision),
+            Some(("app", "workspace"))
+        );
+    }
+
+    #[test]
     fn inline_workspace_container_errors_until_policy_support_lands() {
         let systems = systems_toml(
             r#"

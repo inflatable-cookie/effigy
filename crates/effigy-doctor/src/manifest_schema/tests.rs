@@ -67,18 +67,13 @@ profile = "default"
 compose_file = "infra/dev/docker-compose.yml"
 project_name = "effigy-web-dev"
 primary_service = "app"
-
-[containers.web.dns]
-domain = "effigy.test"
-tls = true
-port = 8080
-
-[containers.web.exec]
 working_dir = "/workspace"
 
-[containers.web.exec.aliases.mysql]
-service = "db"
-command = "mysql"
+[containers.web.dns]
+routes = [{ domain = "effigy.test", tls = true, port = 8080, service = "app" }]
+
+[containers.web.aliases]
+mysql = "db"
 
 [containers.web.lifecycle]
 on_task_exit = "stop"
@@ -205,9 +200,7 @@ compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 
 [containers.web.dns]
-domain = "clientname.test"
-tls = true
-port = 4173
+routes = [{ domain = "clientname.test", tls = true, port = 4173 }]
 "#,
     )
     .expect("parse manifest");
@@ -265,8 +258,7 @@ compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 
 [containers.web.dns]
-domain = "clientname.test"
-port = "web"
+routes = [{ domain = "clientname.test", port = "web" }]
 "#,
     )
     .expect("parse manifest");
@@ -275,9 +267,9 @@ port = "web"
     validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
 
     assert!(
-        sink.findings
-            .iter()
-            .any(|finding| finding.evidence.contains("containers.web.dns.port")),
+        sink.findings.iter().any(|finding| finding
+            .evidence
+            .contains("containers.web.dns.routes[0].port")),
         "expected dns port finding, got: {:?}",
         sink.findings
     );

@@ -166,7 +166,7 @@ fn run_workspace_container_session(
 }
 
 fn maybe_start_workspace_gateway(policy: &EffectiveContainerPolicy) -> Result<(), RunnerError> {
-    if policy.dns_domain.is_none() {
+    if policy.dns_routes.is_empty() {
         return Ok(());
     }
     let executable =
@@ -569,6 +569,25 @@ impl WorkspaceTransientProgressReporter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn temp_repo(manifest: &str) -> std::path::PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "effigy-workspace-system-tests-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos(),
+            COUNTER.fetch_add(1, Ordering::Relaxed),
+        ));
+        std::fs::create_dir_all(root.join("infra/dev")).expect("mkdir repo");
+        std::fs::write(root.join("effigy.toml"), manifest).expect("write manifest");
+        std::fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n")
+            .expect("write compose");
+        root
+    }
 
     #[test]
     fn workspace_handoff_notice_mentions_container() {
@@ -604,6 +623,28 @@ mod tests {
 
         assert!(rendered.contains("[next]"));
         assert!(rendered.contains("switching into workspace container `stack`"));
+    }
+
+    #[test]
+    fn resolve_public_workspace_container_uses_implied_default_workspace() {
+        let root = temp_repo(
+            r#"
+[catalog]
+alias = "probe"
+
+[containers.app]
+context = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "workspace"
+
+[systems.dev]
+"#,
+        );
+
+        let container = resolve_public_workspace_container(&root, None, None, "workspace")
+            .expect("resolve workspace container");
+
+        assert_eq!(container.as_deref(), Some("app"));
     }
 
     #[test]
