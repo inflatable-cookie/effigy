@@ -1,12 +1,12 @@
 use crate::runner::error::RunnerError;
 use effigy_containers::{
-    load_container_policy, load_inline_workspace_container_policy,
+    load_container_policy_with_workspace, load_inline_workspace_container_policy,
     resolve_inline_workspace_exec_working_dir, EffectiveContainerPolicy,
 };
 use effigy_manifest::{
     resolve_task_execution_binding_from_parts, ManifestContainersConfig,
     ManifestInlineWorkspaceContainerConfig, ManifestSystemsConfig, ManifestTask,
-    ResolvedTaskExecutionBinding, ResolvedWorkspaceContainer,
+    ManifestWorkspaceConfig, ResolvedTaskExecutionBinding, ResolvedWorkspaceContainer,
 };
 use std::path::{Path, PathBuf};
 
@@ -16,6 +16,7 @@ pub(in crate::runner) enum ContainerExecutionBinding {
     Host,
     Container {
         name: Option<String>,
+        workspace: Option<ManifestWorkspaceConfig>,
     },
     Inline {
         synthetic_name: String,
@@ -27,14 +28,14 @@ pub(in crate::runner) enum ContainerExecutionBinding {
 impl ContainerExecutionBinding {
     pub(in crate::runner) fn container_name(&self) -> Option<&str> {
         match self {
-            Self::Container { name } => name.as_deref(),
+            Self::Container { name, .. } => name.as_deref(),
             Self::Inline { .. } | Self::None | Self::Host => None,
         }
     }
 
     pub(in crate::runner) fn requested_container_name(&self) -> Option<Option<&str>> {
         match self {
-            Self::Container { name } => Some(name.as_deref()),
+            Self::Container { name, .. } => Some(name.as_deref()),
             Self::Inline { .. } | Self::None | Self::Host => None,
         }
     }
@@ -44,9 +45,13 @@ impl ContainerExecutionBinding {
         repo_root: &Path,
     ) -> Result<Option<EffectiveContainerPolicy>, RunnerError> {
         match self {
-            Self::Container { name } => load_container_policy(repo_root, name.as_deref())
-                .map(Some)
-                .map_err(|error| RunnerError::task_invocation(error.to_string())),
+            Self::Container { name, workspace } => load_container_policy_with_workspace(
+                repo_root,
+                name.as_deref(),
+                workspace.as_ref(),
+            )
+            .map(Some)
+            .map_err(|error| RunnerError::task_invocation(error.to_string())),
             Self::Inline {
                 synthetic_name,
                 container,
@@ -68,7 +73,7 @@ impl ContainerExecutionBinding {
         repo_root: &Path,
     ) -> Result<Option<PathBuf>, RunnerError> {
         match self {
-            Self::Container { name } => {
+            Self::Container { name, .. } => {
                 effigy_containers::load_container_exec_working_dir(repo_root, name.as_deref())
                     .map(Some)
                     .map_err(|error| RunnerError::task_invocation(error.to_string()))
@@ -102,9 +107,12 @@ pub(in crate::runner) fn resolve_container_execution_binding(
     {
         Some(ResolvedTaskExecutionBinding::Workspace(binding)) => {
             match binding.container {
-                Some(ResolvedWorkspaceContainer::Named(name)) => {
-                    Ok(ContainerExecutionBinding::Container { name: Some(name) })
-                }
+                Some(ResolvedWorkspaceContainer::Named(name)) => Ok(
+                    ContainerExecutionBinding::Container {
+                        name: Some(name),
+                        workspace: Some(binding.workspace_config),
+                    },
+                ),
                 Some(ResolvedWorkspaceContainer::Inline(inline)) => Ok(
                     ContainerExecutionBinding::Inline {
                         synthetic_name: inline.synthetic_name,

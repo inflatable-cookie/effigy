@@ -399,6 +399,21 @@ mod tests {
         root
     }
 
+    fn write_container_manifest(root: &Path, working_dir: &str) {
+        fs::write(
+            root.join("effigy.toml"),
+            format!(
+                r#"[containers.web]
+context = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+working_dir = "{working_dir}"
+"#
+            ),
+        )
+        .expect("write manifest");
+    }
+
     #[test]
     fn resolve_exec_working_dir_prefers_exec_config() {
         let config = ManifestContainerConfig {
@@ -417,9 +432,9 @@ mod tests {
             health: None,
             host: None,
             data: None,
-            workspace: None,
         };
         let root = temp_repo("working-dir");
+        write_container_manifest(&root, "/var/www/html");
         let working_dir = resolve_exec_working_dir(&root, "web", &config).expect("working dir");
         assert_eq!(working_dir, PathBuf::from("/var/www/html"));
     }
@@ -452,7 +467,6 @@ mod tests {
             health: None,
             host: None,
             data: None,
-            workspace: None,
         });
         let resolved = aliases
             .resolve_command("artisan", &["migrate".to_owned()])
@@ -487,7 +501,6 @@ mod tests {
             health: None,
             host: None,
             data: None,
-            workspace: None,
         });
         let resolved = aliases
             .resolve_command("psql", &["-U".to_owned(), "dev".to_owned()])
@@ -503,6 +516,7 @@ mod tests {
     fn build_raw_exec_args_uses_mapped_cwd() {
         let root = temp_repo("raw-args");
         fs::create_dir_all(root.join("app")).expect("mkdir app");
+        write_container_manifest(&root, "/var/www/html");
         let config = ManifestContainerConfig {
             driver: None,
             startup: None,
@@ -519,7 +533,6 @@ mod tests {
             health: None,
             host: None,
             data: None,
-            workspace: None,
         };
 
         let args = build_raw_exec_args(

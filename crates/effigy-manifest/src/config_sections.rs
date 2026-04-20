@@ -309,32 +309,48 @@ pub struct ManifestSystemsConfig {
     pub systems: BTreeMap<String, ManifestSystemConfig>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[derive(Debug, Clone, serde::Deserialize, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestSystemConfig {
     #[serde(default)]
     pub default_workspace: Option<String>,
     #[serde(default)]
     pub workspaces: BTreeMap<String, ManifestWorkspaceConfig>,
+    #[serde(default)]
+    pub container: Option<ManifestWorkspaceContainerRef>,
+    #[serde(default)]
+    pub workdir: Option<String>,
+    #[serde(default)]
+    pub extra_mounts: Vec<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub home: Option<String>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[derive(Debug, Clone, serde::Deserialize, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestWorkspaceConfig {
     #[serde(default)]
     pub container: Option<ManifestWorkspaceContainerRef>,
     #[serde(default)]
     pub workdir: Option<String>,
+    #[serde(default)]
+    pub extra_mounts: Vec<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub home: Option<String>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum ManifestWorkspaceContainerRef {
     Named(String),
     Inline(ManifestInlineWorkspaceContainerConfig),
 }
 
-#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[derive(Debug, Clone, serde::Deserialize, Default, PartialEq)]
 pub struct ManifestInlineWorkspaceContainerConfig {
     #[serde(default)]
     pub image: Option<String>,
@@ -374,8 +390,6 @@ pub struct ManifestContainerConfig {
     pub health: Option<ManifestContainerHealthConfig>,
     #[serde(default)]
     pub host: Option<ManifestContainerHostConfig>,
-    #[serde(default)]
-    pub workspace: Option<ManifestContainerWorkspaceConfig>,
     #[serde(default)]
     pub data: Option<ManifestContainerDataConfig>,
 }
@@ -497,17 +511,6 @@ pub struct ManifestContainerHostConfig {
     pub ports: Vec<String>,
     #[serde(default)]
     pub mounts: Vec<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ManifestContainerWorkspaceConfig {
-    #[serde(default)]
-    pub extra_mounts: Vec<String>,
-    #[serde(default)]
-    pub user: Option<String>,
-    #[serde(default)]
-    pub home: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
@@ -1079,32 +1082,30 @@ artisan = { service = "app", command = "php artisan" }
     }
 
     #[test]
-    fn container_config_accepts_workspace_extra_mounts() {
-        let parsed: ContainerWrapper = toml::from_str(
+    fn systems_config_accepts_system_level_workspace_config_and_overrides() {
+        let parsed: SystemWrapper = toml::from_str(
             r#"
-[containers]
-default = "stack"
-
-[containers.stack]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "workspace"
-
-[containers.stack.workspace]
+[systems.dev]
+container = "stack"
 user = "dev"
 home = "/home/dev"
+
+[systems.dev.workspaces.app]
+workdir = "/workspace-root/app"
 extra_mounts = ["../underlay", "../poodle:/workspace-root/poodle"]
 "#,
         )
-        .expect("parse containers");
+        .expect("parse systems");
 
-        let workspace = parsed
-            .containers
-            .environments
-            .get("stack")
-            .expect("stack container")
-            .workspace
-            .as_ref()
-            .expect("workspace config");
+        let system = parsed.systems.systems.get("dev").expect("dev system");
+        assert_eq!(system.container.as_ref().and_then(|container| match container {
+            ManifestWorkspaceContainerRef::Named(name) => Some(name.as_str()),
+            ManifestWorkspaceContainerRef::Inline(_) => None,
+        }), Some("stack"));
+        assert_eq!(system.user.as_deref(), Some("dev"));
+        assert_eq!(system.home.as_deref(), Some("/home/dev"));
+        let workspace = system.workspaces.get("app").expect("app workspace");
+        assert_eq!(workspace.workdir.as_deref(), Some("/workspace-root/app"));
         assert_eq!(
             workspace.extra_mounts,
             vec![
@@ -1112,8 +1113,6 @@ extra_mounts = ["../underlay", "../poodle:/workspace-root/poodle"]
                 "../poodle:/workspace-root/poodle".to_owned()
             ]
         );
-        assert_eq!(workspace.user.as_deref(), Some("dev"));
-        assert_eq!(workspace.home.as_deref(), Some("/home/dev"));
     }
 
     #[test]
@@ -1205,9 +1204,11 @@ default = "dev"
 
 [systems.dev]
 default_workspace = "app"
+container = "app"
+user = "dev"
+home = "/home/dev"
 
 [systems.dev.workspaces.app]
-container = "app"
 workdir = "/workspace"
 "#,
         )
@@ -1218,7 +1219,12 @@ workdir = "/workspace"
         assert_eq!(dev.default_workspace.as_deref(), Some("app"));
         let app = dev.workspaces.get("app").expect("app workspace");
         assert_eq!(app.workdir.as_deref(), Some("/workspace"));
-        match app.container.as_ref().expect("workspace container") {
+        assert_eq!(app.user, None);
+        match dev
+            .container
+            .as_ref()
+            .expect("workspace default container")
+        {
             ManifestWorkspaceContainerRef::Named(name) => assert_eq!(name, "app"),
             ManifestWorkspaceContainerRef::Inline(_) => {
                 panic!("expected named workspace container reference")

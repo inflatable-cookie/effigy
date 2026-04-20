@@ -5,27 +5,28 @@ use crate::config_sections::{
 use crate::{ManifestTask, TaskManifest};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedTaskExecutionBinding {
     Host,
     Workspace(ResolvedWorkspaceBinding),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedWorkspaceBinding {
     pub system: String,
     pub workspace: String,
     pub workdir: Option<String>,
+    pub workspace_config: ManifestWorkspaceConfig,
     pub container: Option<ResolvedWorkspaceContainer>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedWorkspaceContainer {
     Named(String),
     Inline(ResolvedInlineWorkspaceContainer),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedInlineWorkspaceContainer {
     pub synthetic_name: String,
     pub image: Option<String>,
@@ -157,6 +158,7 @@ pub fn resolve_task_execution_binding_from_parts(
             system: resolved_system.clone(),
             workspace: resolved_workspace,
             workdir: workspace_config.workdir.clone(),
+            workspace_config: workspace_config.clone(),
             container,
         },
     )))
@@ -222,7 +224,10 @@ fn resolve_workspace_config(
         .or_else(|| implied_default_workspace_name(system_config, containers))?;
 
     if let Some(workspace_config) = system_config.workspaces.get(&resolved_workspace) {
-        return Some((resolved_workspace, workspace_config.clone()));
+        return Some((
+            resolved_workspace,
+            merge_workspace_config(system_config, workspace_config),
+        ));
     }
 
     implied_default_workspace_config(system_config, containers, &resolved_workspace)
@@ -247,10 +252,47 @@ fn implied_default_workspace_config(
     if workspace_name != "default" || !system_config.workspaces.is_empty() {
         return None;
     }
-    default_workspace_container(containers).map(|container| ManifestWorkspaceConfig {
-        container: Some(container),
-        workdir: None,
-    })
+    let mut workspace = ManifestWorkspaceConfig {
+        container: system_config.container.clone(),
+        workdir: system_config.workdir.clone(),
+        extra_mounts: system_config.extra_mounts.clone(),
+        user: system_config.user.clone(),
+        home: system_config.home.clone(),
+    };
+    if workspace.container.is_none() {
+        workspace.container = default_workspace_container(containers);
+    }
+    workspace.container.as_ref()?;
+    Some(workspace)
+}
+
+fn merge_workspace_config(
+    system_config: &crate::config_sections::ManifestSystemConfig,
+    workspace: &crate::config_sections::ManifestWorkspaceConfig,
+) -> ManifestWorkspaceConfig {
+    let mut merged = ManifestWorkspaceConfig {
+        container: system_config.container.clone(),
+        workdir: system_config.workdir.clone(),
+        extra_mounts: system_config.extra_mounts.clone(),
+        user: system_config.user.clone(),
+        home: system_config.home.clone(),
+    };
+    if workspace.container.is_some() {
+        merged.container = workspace.container.clone();
+    }
+    if workspace.workdir.is_some() {
+        merged.workdir = workspace.workdir.clone();
+    }
+    if workspace.user.is_some() {
+        merged.user = workspace.user.clone();
+    }
+    if workspace.home.is_some() {
+        merged.home = workspace.home.clone();
+    }
+    if !workspace.extra_mounts.is_empty() {
+        merged.extra_mounts = workspace.extra_mounts.clone();
+    }
+    merged
 }
 
 fn sole_entry_name<T>(entries: &BTreeMap<String, T>) -> Option<&String> {
@@ -286,7 +328,10 @@ mod tests {
         resolve_task_execution_binding, ResolvedInlineWorkspaceContainer,
         ResolvedTaskExecutionBinding, ResolvedWorkspaceBinding, ResolvedWorkspaceContainer,
     };
-    use crate::load_task_manifest_with_inspection;
+    use crate::{
+        load_task_manifest_with_inspection, ManifestInlineWorkspaceContainerConfig,
+        ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
+    };
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -337,6 +382,13 @@ run = "npm run dev"
                     system: "dev".to_owned(),
                     workspace: "app".to_owned(),
                     workdir: Some("/workspace".to_owned()),
+                    workspace_config: ManifestWorkspaceConfig {
+                        container: Some(ManifestWorkspaceContainerRef::Named("app".to_owned())),
+                        workdir: Some("/workspace".to_owned()),
+                        extra_mounts: vec![],
+                        user: None,
+                        home: None,
+                    },
                     container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
                 }
             ))
@@ -370,6 +422,13 @@ run = "npm run dev"
                     system: "dev".to_owned(),
                     workspace: "app".to_owned(),
                     workdir: Some("/workspace".to_owned()),
+                    workspace_config: ManifestWorkspaceConfig {
+                        container: Some(ManifestWorkspaceContainerRef::Named("app".to_owned())),
+                        workdir: Some("/workspace".to_owned()),
+                        extra_mounts: vec![],
+                        user: None,
+                        home: None,
+                    },
                     container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
                 }
             ))
@@ -402,6 +461,13 @@ run = "npm run dev"
                     system: "dev".to_owned(),
                     workspace: "app".to_owned(),
                     workdir: Some("/workspace".to_owned()),
+                    workspace_config: ManifestWorkspaceConfig {
+                        container: Some(ManifestWorkspaceContainerRef::Named("app".to_owned())),
+                        workdir: Some("/workspace".to_owned()),
+                        extra_mounts: vec![],
+                        user: None,
+                        home: None,
+                    },
                     container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
                 }
             ))
@@ -433,6 +499,13 @@ run = "npm run dev"
                     system: "dev".to_owned(),
                     workspace: "default".to_owned(),
                     workdir: None,
+                    workspace_config: ManifestWorkspaceConfig {
+                        container: Some(ManifestWorkspaceContainerRef::Named("app".to_owned())),
+                        workdir: None,
+                        extra_mounts: vec![],
+                        user: None,
+                        home: None,
+                    },
                     container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
                 }
             ))
@@ -488,6 +561,21 @@ run = "npm run dev"
                     system: "dev".to_owned(),
                     workspace: "app".to_owned(),
                     workdir: None,
+                    workspace_config: ManifestWorkspaceConfig {
+                        container: Some(ManifestWorkspaceContainerRef::Inline(
+                            ManifestInlineWorkspaceContainerConfig {
+                                image: Some("node:22".to_owned()),
+                                mount: Some("./:/workspace".to_owned()),
+                                extra: [("shell".to_owned(), toml::Value::String("bash".to_owned()))]
+                                    .into_iter()
+                                    .collect(),
+                            }
+                        )),
+                        workdir: None,
+                        extra_mounts: vec![],
+                        user: None,
+                        home: None,
+                    },
                     container: Some(ResolvedWorkspaceContainer::Inline(
                         ResolvedInlineWorkspaceContainer {
                             synthetic_name: "dev__app".to_owned(),
