@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use super::CliParseError;
 
-pub(super) fn next_required_value<I>(
+pub(crate) fn next_required_value<I>(
     args: &mut I,
     missing: CliParseError,
 ) -> Result<String, CliParseError>
@@ -12,14 +12,14 @@ where
     args.next().ok_or(missing)
 }
 
-pub(super) fn parse_repo_path<I>(args: &mut I) -> Result<PathBuf, CliParseError>
+pub(crate) fn parse_repo_path<I>(args: &mut I) -> Result<PathBuf, CliParseError>
 where
     I: Iterator<Item = String>,
 {
     next_required_value(args, CliParseError::MissingRepoValue).map(PathBuf::from)
 }
 
-pub(super) fn parse_pretty_bool(value: String) -> Result<bool, CliParseError> {
+pub(crate) fn parse_pretty_bool(value: String) -> Result<bool, CliParseError> {
     parse_bool_literal(value, CliParseError::InvalidPrettyValue)
 }
 
