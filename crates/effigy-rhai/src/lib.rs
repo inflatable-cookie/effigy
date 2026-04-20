@@ -494,7 +494,11 @@ fn render_host_log_line(line: &str, color_enabled: bool) -> String {
 
     for (prefix, style) in STATUS_PREFIXES {
         if let Some(rest) = line.strip_prefix(prefix) {
-            return format!("{}{}", style_prefix(prefix, color_enabled, style(&Theme::default())), rest);
+            return format!(
+                "{}{}",
+                style_prefix(prefix, color_enabled, style(&Theme::default())),
+                rest
+            );
         }
     }
     line.to_owned()

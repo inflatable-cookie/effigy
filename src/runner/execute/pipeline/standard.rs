@@ -172,7 +172,7 @@ fn run_inline_workspace_standard_task(
     run_docker_capture(
         repo_root,
         &policy,
-        &compose_args(&policy, ["up", "-d"]),
+        &effigy_containers::compose::compose_up_args(&policy),
         "docker compose up",
     )?;
 

@@ -424,6 +424,7 @@ mod tests {
             host: None,
             data: None,
             ui: None,
+            workspace: None,
         };
         let root = temp_repo("working-dir");
         let working_dir = resolve_exec_working_dir(&root, "web", &config).expect("working dir");
@@ -477,6 +478,7 @@ mod tests {
             host: None,
             data: None,
             ui: None,
+            workspace: None,
         };
 
         let args = build_raw_exec_args(
@@ -506,6 +508,8 @@ mod tests {
         let parsed = parse_compose_exec_args(&[
             OsString::from("exec"),
             OsString::from("-T"),
+            OsString::from("-u"),
+            OsString::from("dev"),
             OsString::from("-e"),
             OsString::from("A=1"),
             OsString::from("-w"),
@@ -516,6 +520,7 @@ mod tests {
         .expect("parse");
         assert_eq!(parsed.service, "postgres");
         assert_eq!(parsed.working_dir, Some(OsString::from("/tmp/work")));
+        assert_eq!(parsed.user, Some(OsString::from("dev")));
         assert!(!parsed.tty);
         assert_eq!(parsed.env, vec![OsString::from("A=1")]);
         assert_eq!(parsed.command, vec![OsString::from("pwd")]);

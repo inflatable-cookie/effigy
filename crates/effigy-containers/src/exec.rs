@@ -423,10 +423,7 @@ pub fn recover_colima_runtime(
         &stop.label,
         COLIMA_RECOVERY_TIMEOUT,
     ) {
-        Ok(_) => steps.push(format!(
-            "[ok] stopped Colima profile `{}`",
-            policy.profile
-        )),
+        Ok(_) => steps.push(format!("[ok] stopped Colima profile `{}`", policy.profile)),
         Err(error) => steps.push(format!(
             "[warning] graceful stop failed for profile `{}`; forcing stale process cleanup\n{}",
             policy.profile, error
@@ -474,10 +471,7 @@ fn restart_and_verify_colima_profile(
         &start.label,
         COLIMA_RECOVERY_TIMEOUT,
     )?;
-    steps.push(format!(
-        "[ok] started Colima profile `{}`",
-        policy.profile
-    ));
+    steps.push(format!("[ok] started Colima profile `{}`", policy.profile));
 
     let status = colima_status_command(policy);
     let status_args: Vec<&str> = status.args.iter().map(|value| value.as_str()).collect();

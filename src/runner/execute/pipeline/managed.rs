@@ -76,7 +76,10 @@ pub(super) fn run_managed_task(
     };
     if !container_handoff
         && execution_mode == ManagedExecutionMode::Tui
-        && matches!(container_binding, ContainerExecutionBinding::Container { .. })
+        && matches!(
+            container_binding,
+            ContainerExecutionBinding::Container { .. }
+        )
     {
         let seed_command = render_workspace_seeded_task_command(
             &preflight.selector.task_name,
@@ -327,9 +330,7 @@ fn materialize_special_managed_processes(
                 process.run = if container_handoff {
                     render_handoff_managed_lifecycle_command(
                         repo_root,
-                        container_binding
-                            .container_name()
-                            .unwrap_or("default"),
+                        container_binding.container_name().unwrap_or("default"),
                         &preflight.selector.task_name,
                         managed.is_some_and(|managed| managed.health_wait),
                         managed.and_then(|managed| managed.ready_message.as_deref()),
@@ -913,8 +914,7 @@ fn shell_quote(value: &str) -> String {
 mod tests {
     use super::{
         default_handoff_managed_shell_run, finish_managed_task,
-        render_managed_lifecycle_cleanup_notice,
-        render_workspace_seeded_task_command,
+        render_managed_lifecycle_cleanup_notice, render_workspace_seeded_task_command,
     };
     use crate::runner::error::RunnerError;
 
@@ -960,7 +960,12 @@ mod tests {
     fn workspace_seeded_task_command_preserves_passthrough_args() {
         let rendered = render_workspace_seeded_task_command(
             "dev",
-            &["front".to_owned(), "--".to_owned(), "--host".to_owned(), "0.0.0.0".to_owned()],
+            &[
+                "front".to_owned(),
+                "--".to_owned(),
+                "--host".to_owned(),
+                "0.0.0.0".to_owned(),
+            ],
         );
 
         assert_eq!(rendered, "effigy dev 'front' '--' '--host' '0.0.0.0'");

@@ -1,8 +1,8 @@
 use anstyle::Style;
+use std::io::IsTerminal;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use std::io::IsTerminal;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
