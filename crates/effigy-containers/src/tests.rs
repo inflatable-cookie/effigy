@@ -63,6 +63,48 @@ primary_service = "app"
 }
 
 #[test]
+fn load_container_policy_infers_direct_compose_ports_when_manifest_ports_are_omitted() {
+    let root = temp_repo("direct-compose-inferred-ports");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "workspace"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        r#"
+services:
+  workspace:
+    image: alpine
+    ports:
+      - "41001:41001"
+      - "127.0.0.1:41002:41002"
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - target: 8025
+        published: 8025
+"#,
+    )
+    .expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert!(!policy.ports_declared_explicitly);
+    assert!(policy.declared_ports.iter().any(|value| value == "41001:41001"));
+    assert!(policy.declared_ports.iter().any(|value| value == "41002:41002"));
+    assert!(policy.declared_ports.iter().any(|value| value == "8025:8025"));
+}
+
+#[test]
 fn load_inline_workspace_container_policy_writes_compose_and_derives_exec_dir() {
     let root = temp_repo("inline-workspace-policy");
     let inline = ManifestInlineWorkspaceContainerConfig {
@@ -274,6 +316,43 @@ variant = "default"
             .iter()
             .any(|value| value == "13306:3306"));
     });
+}
+
+#[test]
+fn direct_compose_prefers_manifest_host_ports_over_inferred_ports() {
+    let root = temp_repo("direct-compose-explicit-ports");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "workspace"
+
+[containers.web.host]
+ports = ["18080:80"]
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        r#"
+services:
+  workspace:
+    image: alpine
+    ports:
+      - "8080:80"
+"#,
+    )
+    .expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert!(policy.ports_declared_explicitly);
+    assert_eq!(policy.declared_ports, vec!["18080:80".to_owned()]);
 }
 
 #[test]
