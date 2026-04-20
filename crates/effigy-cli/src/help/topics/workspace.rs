@@ -11,7 +11,7 @@ pub(crate) fn render_workspace_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
     renderer.key_values(&[
         KeyValue::new(
             "<NAME>",
-            "Optional workspace name; defaults to `[systems.<system>].default_workspace` or the sole declared workspace",
+            "Optional workspace name; defaults to `[systems.<system>].default_workspace`, the sole declared workspace, or an implied `default` workspace",
         ),
         KeyValue::new(
             "--system <NAME>",

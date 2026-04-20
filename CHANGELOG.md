@@ -39,6 +39,9 @@ During v0.x, MINOR bumps may include breaking changes.
   defaults, so repos can omit `[containers].default`, `[systems].default`,
   `[systems.<name>].default_workspace`, and workspace `container = "..."`
   when there is only one valid choice.
+- Let empty systems expose an implied `default` workspace when an eligible
+  default dev container exists, so repos can keep `[systems.<name>]`
+  without declaring a placeholder `[systems.<name>.workspaces.default]`.
 - Remove the unused `[containers.<name>.ui]` config surface and its
   `ui_tabs` status/report output; attached container sessions now always
   render the built-in `overview` plus `primary_service` tabs instead of

@@ -146,7 +146,7 @@ fn render_exec_help_shows_service_and_examples() {
     assert!(rendered.contains("exec Help"));
     assert!(rendered.contains("effigy exec [--repo <PATH>] [--service <NAME>]"));
     assert!(rendered.contains("effigy exec composer install"));
-    assert!(rendered.contains("[containers.<name>.exec.aliases]"));
+    assert!(rendered.contains("[containers.<name>.aliases]"));
 }
 
 #[test]

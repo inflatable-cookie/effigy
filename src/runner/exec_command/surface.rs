@@ -6,10 +6,7 @@ use effigy_containers::{
     EffectiveContainerPolicy,
 };
 use effigy_exec::{CwdMapper, ExecAlias, ExecAliasTable};
-use effigy_manifest::{
-    ManifestContainerConfig, ManifestContainerExecConfig, ManifestContainersConfig,
-    TASK_MANIFEST_FILE,
-};
+use effigy_manifest::{ManifestContainerConfig, ManifestContainersConfig, TASK_MANIFEST_FILE};
 
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::load_task_manifest;
@@ -67,24 +64,20 @@ pub(super) fn load_named_container_config(
         })
 }
 
-pub(super) fn build_alias_table(exec: Option<&ManifestContainerExecConfig>) -> ExecAliasTable {
-    let aliases = exec
-        .map(|config| {
-            config
-                .aliases
-                .iter()
-                .map(|(name, alias)| {
-                    (
-                        name.clone(),
-                        ExecAlias {
-                            service: alias.service.clone(),
-                            command: alias.command.clone(),
-                        },
-                    )
-                })
-                .collect::<HashMap<_, _>>()
+pub(super) fn build_alias_table(config: &ManifestContainerConfig) -> ExecAliasTable {
+    let aliases = config
+        .aliases
+        .iter()
+        .map(|(name, alias)| {
+            (
+                name.clone(),
+                ExecAlias {
+                    service: alias.service().to_owned(),
+                    command: alias.command(name).to_owned(),
+                },
+            )
         })
-        .unwrap_or_default();
+        .collect::<HashMap<_, _>>();
     ExecAliasTable::from_map(aliases)
 }
 
@@ -115,11 +108,7 @@ pub(super) fn resolve_exec_working_dir(
     container_name: &str,
     config: &ManifestContainerConfig,
 ) -> Result<PathBuf, RunnerError> {
-    if let Some(working_dir) = config
-        .exec
-        .as_ref()
-        .and_then(|exec| exec.working_dir.as_ref())
-    {
+    if let Some(working_dir) = config.working_dir.as_ref() {
         return Ok(PathBuf::from(working_dir));
     }
 
@@ -206,6 +195,6 @@ fn map_host_cwd(
 
 fn missing_working_dir_error(container_name: &str) -> RunnerError {
     RunnerError::task_invocation(format!(
-        "container `{container_name}` must declare `[containers.{container_name}.exec].working_dir` or a repo-root host mount for CWD mapping"
+        "container `{container_name}` must declare `[containers.{container_name}].working_dir` or a repo-root host mount for CWD mapping"
     ))
 }

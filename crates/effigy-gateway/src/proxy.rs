@@ -788,9 +788,9 @@ fn no_route_response(host: &str) -> Response<ProxyBody> {
          <body><h1>No route registered for <code>{host}</code></h1>\
          <p>The domain resolves via the Effigy gateway, but no project has \
          registered a route for it.</p>\
-         <p>To register a route, add a <code>dns.domain</code> to your \
+         <p>To register a route, add a DNS route to your \
          container manifest and run <code>effigy container up</code>.</p>\
-         <pre>[containers.web.dns]\ndomain = \"{host}\"</pre></body></html>"
+         <pre>[containers.web.dns]\nroutes = [{{ domain = \"{host}\" }}]</pre></body></html>"
     );
     Response::builder()
         .status(StatusCode::SERVICE_UNAVAILABLE)

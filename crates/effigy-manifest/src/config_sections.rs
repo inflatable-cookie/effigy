@@ -363,7 +363,9 @@ pub struct ManifestContainerConfig {
     #[serde(default)]
     pub services: BTreeMap<String, ManifestContainerServiceConfig>,
     #[serde(default)]
-    pub exec: Option<ManifestContainerExecConfig>,
+    pub working_dir: Option<String>,
+    #[serde(default)]
+    pub aliases: BTreeMap<String, ManifestContainerExecAliasConfig>,
     #[serde(default)]
     pub dns: Option<ManifestContainerDnsConfig>,
     #[serde(default)]
@@ -381,13 +383,6 @@ pub struct ManifestContainerConfig {
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestContainerDnsConfig {
-    pub domain: String,
-    #[serde(default)]
-    pub tls: Option<bool>,
-    #[serde(default)]
-    pub port: Option<u16>,
-    #[serde(default)]
-    pub service: Option<String>,
     #[serde(default)]
     pub routes: Vec<ManifestContainerDnsRouteConfig>,
 }
@@ -417,20 +412,35 @@ pub struct ManifestContainerServiceConfig {
     pub params: BTreeMap<String, toml::Value>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ManifestContainerExecConfig {
-    #[serde(default)]
-    pub working_dir: Option<String>,
-    #[serde(default)]
-    pub aliases: BTreeMap<String, ManifestContainerExecAliasConfig>,
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+pub enum ManifestContainerExecAliasConfig {
+    Service(String),
+    Config(ManifestContainerExecAliasTableConfig),
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ManifestContainerExecAliasConfig {
+pub struct ManifestContainerExecAliasTableConfig {
     pub service: String,
-    pub command: String,
+    #[serde(default)]
+    pub command: Option<String>,
+}
+
+impl ManifestContainerExecAliasConfig {
+    pub fn service(&self) -> &str {
+        match self {
+            Self::Service(service) => service,
+            Self::Config(config) => &config.service,
+        }
+    }
+
+    pub fn command<'a>(&'a self, alias_name: &'a str) -> &'a str {
+        match self {
+            Self::Service(_) => alias_name,
+            Self::Config(config) => config.command.as_deref().unwrap_or(alias_name),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]
@@ -1045,35 +1055,27 @@ default = "web"
 context = "dev"
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
-
-[containers.web.exec]
 working_dir = "/var/www/html"
 
-[containers.web.exec.aliases.mysql]
-service = "db"
-command = "mysql"
-
-[containers.web.exec.aliases.artisan]
-service = "app"
-command = "php artisan"
+[containers.web.aliases]
+mysql = "db"
+artisan = { service = "app", command = "php artisan" }
 "#,
         )
         .expect("parse containers");
 
-        let exec = parsed
+        let web = parsed
             .containers
             .environments
             .get("web")
-            .expect("web container")
-            .exec
-            .as_ref()
-            .expect("exec config");
-        assert_eq!(exec.working_dir.as_deref(), Some("/var/www/html"));
-        let mysql = exec.aliases.get("mysql").expect("mysql alias");
-        assert_eq!(mysql.service, "db");
-        assert_eq!(mysql.command, "mysql");
-        let artisan = exec.aliases.get("artisan").expect("artisan alias");
-        assert_eq!(artisan.command, "php artisan");
+            .expect("web container");
+        assert_eq!(web.working_dir.as_deref(), Some("/var/www/html"));
+        let mysql = web.aliases.get("mysql").expect("mysql alias");
+        assert_eq!(mysql.service(), "db");
+        assert_eq!(mysql.command("mysql"), "mysql");
+        let artisan = web.aliases.get("artisan").expect("artisan alias");
+        assert_eq!(artisan.service(), "app");
+        assert_eq!(artisan.command("artisan"), "php artisan");
     }
 
     #[test]
@@ -1126,10 +1128,9 @@ compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 
 [containers.web.dns]
-domain = "clientname.test"
-tls = true
-port = 4173
-service = "app"
+routes = [
+  { domain = "clientname.test", tls = true, port = 4173, service = "app" }
+]
 "#,
         )
         .expect("parse containers");
@@ -1142,33 +1143,37 @@ service = "app"
             .dns
             .as_ref()
             .expect("dns config");
-        assert_eq!(dns.domain, "clientname.test");
-        assert_eq!(dns.tls, Some(true));
-        assert_eq!(dns.port, Some(4173));
-        assert_eq!(dns.service.as_deref(), Some("app"));
+        assert_eq!(dns.routes.len(), 1);
+        assert_eq!(dns.routes[0].domain, "clientname.test");
+        assert_eq!(dns.routes[0].tls, Some(true));
+        assert_eq!(dns.routes[0].port, Some(4173));
+        assert_eq!(dns.routes[0].service.as_deref(), Some("app"));
     }
 
     #[test]
     fn container_dns_config_defaults_tls_to_none() {
         let parsed: ManifestContainerDnsConfig = toml::from_str(
             r#"
-domain = "clientname.test"
+routes = [
+  { domain = "clientname.test" }
+]
 "#,
         )
         .expect("parse dns");
 
-        assert_eq!(parsed.domain, "clientname.test");
-        assert_eq!(parsed.tls, None);
-        assert_eq!(parsed.port, None);
-        assert_eq!(parsed.service, None);
+        assert_eq!(parsed.routes.len(), 1);
+        assert_eq!(parsed.routes[0].domain, "clientname.test");
+        assert_eq!(parsed.routes[0].tls, None);
+        assert_eq!(parsed.routes[0].port, None);
+        assert_eq!(parsed.routes[0].service, None);
     }
 
     #[test]
     fn container_dns_config_accepts_additional_routes() {
         let parsed: ManifestContainerDnsConfig = toml::from_str(
             r#"
-domain = "clientname.test"
 routes = [
+  { domain = "clientname.test" },
   { domain = "admin.clientname.test", port = 8081, service = "admin" },
   { domain = "mailpit.clientname.test", port = 8025, tls = true, service = "mailpit" }
 ]
@@ -1176,15 +1181,19 @@ routes = [
         )
         .expect("parse dns with routes");
 
-        assert_eq!(parsed.routes.len(), 2);
-        assert_eq!(parsed.routes[0].domain, "admin.clientname.test");
-        assert_eq!(parsed.routes[0].port, Some(8081));
-        assert_eq!(parsed.routes[0].service.as_deref(), Some("admin"));
+        assert_eq!(parsed.routes.len(), 3);
+        assert_eq!(parsed.routes[0].domain, "clientname.test");
+        assert_eq!(parsed.routes[0].port, None);
+        assert_eq!(parsed.routes[0].service, None);
         assert_eq!(parsed.routes[0].tls, None);
-        assert_eq!(parsed.routes[1].domain, "mailpit.clientname.test");
-        assert_eq!(parsed.routes[1].port, Some(8025));
-        assert_eq!(parsed.routes[1].service.as_deref(), Some("mailpit"));
-        assert_eq!(parsed.routes[1].tls, Some(true));
+        assert_eq!(parsed.routes[1].domain, "admin.clientname.test");
+        assert_eq!(parsed.routes[1].port, Some(8081));
+        assert_eq!(parsed.routes[1].service.as_deref(), Some("admin"));
+        assert_eq!(parsed.routes[1].tls, None);
+        assert_eq!(parsed.routes[2].domain, "mailpit.clientname.test");
+        assert_eq!(parsed.routes[2].port, Some(8025));
+        assert_eq!(parsed.routes[2].service.as_deref(), Some("mailpit"));
+        assert_eq!(parsed.routes[2].tls, Some(true));
     }
 
     #[test]

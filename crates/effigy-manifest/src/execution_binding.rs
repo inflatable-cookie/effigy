@@ -133,43 +133,31 @@ pub fn resolve_task_execution_binding_from_parts(
         ))
     })?;
 
-    let resolved_workspace = task
-        .workspace
-        .as_ref()
-        .or(system_config.default_workspace.as_ref())
-        .or_else(|| {
-            if implicit_default_target_available {
-                sole_entry_name(&system_config.workspaces)
-            } else {
-                None
-            }
-        })
-        .ok_or_else(|| {
-            ExecutionBindingResolveError::new(format!(
-                "task `{task_name}` resolved system `{resolved_system}`, but no task `workspace`, `[systems.{resolved_system}].default_workspace`, or sole workspace entry is defined"
-            ))
-        })?;
+    let (resolved_workspace, workspace_config) = resolve_workspace_config(
+        system_config,
+        containers,
+        task.workspace.as_ref(),
+        implicit_default_target_available,
+    )
+    .ok_or_else(|| {
+        ExecutionBindingResolveError::new(format!(
+            "task `{task_name}` resolved system `{resolved_system}`, but no task `workspace`, `[systems.{resolved_system}].default_workspace`, sole workspace entry, or implied `default` workspace is defined"
+        ))
+    })?;
 
-    let workspace_config = system_config
-        .workspaces
-        .get(resolved_workspace)
-        .ok_or_else(|| {
-            ExecutionBindingResolveError::new(format!(
-                "task `{task_name}` resolved workspace `{resolved_workspace}` in system `{resolved_system}`, but `[systems.{resolved_system}.workspaces.{resolved_workspace}]` is not defined"
-            ))
-        })?;
+    let container = workspace_container(
+        resolved_system,
+        &resolved_workspace,
+        &workspace_config,
+        containers,
+    );
 
     Ok(Some(ResolvedTaskExecutionBinding::Workspace(
         ResolvedWorkspaceBinding {
             system: resolved_system.clone(),
-            workspace: resolved_workspace.clone(),
+            workspace: resolved_workspace,
             workdir: workspace_config.workdir.clone(),
-            container: workspace_container(
-                resolved_system,
-                resolved_workspace,
-                workspace_config,
-                containers,
-            ),
+            container,
         },
     )))
 }
@@ -213,6 +201,56 @@ fn default_workspace_container(
         .clone()
         .or_else(|| sole_dev_context_container_name(containers))
         .map(ManifestWorkspaceContainerRef::Named)
+}
+
+fn resolve_workspace_config(
+    system_config: &crate::config_sections::ManifestSystemConfig,
+    containers: Option<&ManifestContainersConfig>,
+    requested_workspace: Option<&String>,
+    implicit_default_target_available: bool,
+) -> Option<(String, ManifestWorkspaceConfig)> {
+    let resolved_workspace = requested_workspace
+        .cloned()
+        .or(system_config.default_workspace.clone())
+        .or_else(|| {
+            if implicit_default_target_available {
+                sole_entry_name(&system_config.workspaces).cloned()
+            } else {
+                None
+            }
+        })
+        .or_else(|| implied_default_workspace_name(system_config, containers))?;
+
+    if let Some(workspace_config) = system_config.workspaces.get(&resolved_workspace) {
+        return Some((resolved_workspace, workspace_config.clone()));
+    }
+
+    implied_default_workspace_config(system_config, containers, &resolved_workspace)
+        .map(|workspace_config| (resolved_workspace, workspace_config))
+}
+
+fn implied_default_workspace_name(
+    system_config: &crate::config_sections::ManifestSystemConfig,
+    containers: Option<&ManifestContainersConfig>,
+) -> Option<String> {
+    if !system_config.workspaces.is_empty() {
+        return None;
+    }
+    default_workspace_container(containers).map(|_| "default".to_owned())
+}
+
+fn implied_default_workspace_config(
+    system_config: &crate::config_sections::ManifestSystemConfig,
+    containers: Option<&ManifestContainersConfig>,
+    workspace_name: &str,
+) -> Option<ManifestWorkspaceConfig> {
+    if workspace_name != "default" || !system_config.workspaces.is_empty() {
+        return None;
+    }
+    default_workspace_container(containers).map(|container| ManifestWorkspaceConfig {
+        container: Some(container),
+        workdir: None,
+    })
 }
 
 fn sole_entry_name<T>(entries: &BTreeMap<String, T>) -> Option<&String> {
@@ -364,6 +402,37 @@ run = "npm run dev"
                     system: "dev".to_owned(),
                     workspace: "app".to_owned(),
                     workdir: Some("/workspace".to_owned()),
+                    container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn resolves_workspace_binding_from_implied_default_workspace() {
+        let manifest = parse_manifest(
+            r#"
+[containers.app]
+context = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "workspace"
+
+[systems.dev]
+
+[tasks.dev]
+run = "npm run dev"
+"#,
+        );
+        let task = manifest.tasks.get("dev").expect("task");
+        let resolved = resolve_task_execution_binding(&manifest, "dev", task).expect("resolve");
+
+        assert_eq!(
+            resolved,
+            Some(ResolvedTaskExecutionBinding::Workspace(
+                ResolvedWorkspaceBinding {
+                    system: "dev".to_owned(),
+                    workspace: "default".to_owned(),
+                    workdir: None,
                     container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
                 }
             ))

@@ -174,9 +174,9 @@ fn build_managed_gateway_command(
             })?;
     let policy = effigy_containers::load_container_policy(repo_root, requested_container_name)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    if policy.dns_domain.is_none() {
+    if policy.dns_routes.is_empty() {
         return Err(RunnerError::task_invocation(format!(
-            "task `{}` sets `managed.gateway = true`, but container session `{}` does not declare `[containers.{}.dns].domain`",
+            "task `{}` sets `managed.gateway = true`, but container session `{}` does not declare any `[containers.{}.dns].routes`",
             task_name,
             requested_container_name.unwrap_or("default"),
             policy.name

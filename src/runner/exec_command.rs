@@ -19,8 +19,6 @@ use surface::{
 use transport::build_routed_task_exec_args;
 
 #[cfg(test)]
-use effigy_manifest::ManifestContainerExecConfig;
-#[cfg(test)]
 use std::ffi::OsString;
 #[cfg(test)]
 use std::path::PathBuf;
@@ -60,9 +58,7 @@ pub(in crate::runner) fn try_run_exec_alias(
         Err(error) if exec_alias_surface_absent(&error) => return Ok(None),
         Err(error) => return Err(error),
     };
-    let alias = match build_alias_table(surface.config.exec.as_ref())
-        .resolve_command(alias_name, extra_args)
-    {
+    let alias = match build_alias_table(&surface.config).resolve_command(alias_name, extra_args) {
         Ok(alias) => alias,
         Err(effigy_exec::ExecError::AliasNotFound { .. }) => return Ok(None),
         Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
@@ -414,10 +410,8 @@ mod tests {
             project_name: None,
             primary_service: Some("app".to_owned()),
             services: Default::default(),
-            exec: Some(ManifestContainerExecConfig {
-                working_dir: Some("/var/www/html".to_owned()),
-                aliases: Default::default(),
-            }),
+            working_dir: Some("/var/www/html".to_owned()),
+            aliases: Default::default(),
             dns: None,
             lifecycle: None,
             health: None,
@@ -432,18 +426,34 @@ mod tests {
 
     #[test]
     fn build_alias_table_resolves_multi_word_aliases() {
-        let aliases = build_alias_table(Some(&ManifestContainerExecConfig {
+        let aliases = build_alias_table(&ManifestContainerConfig {
+            driver: None,
+            startup: None,
+            context: Some("dev".to_owned()),
+            profile: None,
+            compose_file: Some("infra/dev/docker-compose.yml".to_owned()),
+            project_name: None,
+            primary_service: Some("app".to_owned()),
+            services: Default::default(),
             working_dir: None,
             aliases: [(
                 "artisan".to_owned(),
-                effigy_manifest::ManifestContainerExecAliasConfig {
-                    service: "app".to_owned(),
-                    command: "php artisan".to_owned(),
-                },
+                effigy_manifest::ManifestContainerExecAliasConfig::Config(
+                    effigy_manifest::ManifestContainerExecAliasTableConfig {
+                        service: "app".to_owned(),
+                        command: Some("php artisan".to_owned()),
+                    },
+                ),
             )]
             .into_iter()
             .collect(),
-        }));
+            dns: None,
+            lifecycle: None,
+            health: None,
+            host: None,
+            data: None,
+            workspace: None,
+        });
         let resolved = aliases
             .resolve_command("artisan", &["migrate".to_owned()])
             .expect("alias");
@@ -451,6 +461,41 @@ mod tests {
         assert_eq!(
             resolved.command,
             vec!["php".to_owned(), "artisan".to_owned(), "migrate".to_owned()]
+        );
+    }
+
+    #[test]
+    fn build_alias_table_defaults_command_to_alias_name_for_string_entries() {
+        let aliases = build_alias_table(&ManifestContainerConfig {
+            driver: None,
+            startup: None,
+            context: Some("dev".to_owned()),
+            profile: None,
+            compose_file: Some("infra/dev/docker-compose.yml".to_owned()),
+            project_name: None,
+            primary_service: Some("app".to_owned()),
+            services: Default::default(),
+            working_dir: None,
+            aliases: [(
+                "psql".to_owned(),
+                effigy_manifest::ManifestContainerExecAliasConfig::Service("postgres".to_owned()),
+            )]
+            .into_iter()
+            .collect(),
+            dns: None,
+            lifecycle: None,
+            health: None,
+            host: None,
+            data: None,
+            workspace: None,
+        });
+        let resolved = aliases
+            .resolve_command("psql", &["-U".to_owned(), "dev".to_owned()])
+            .expect("alias");
+        assert_eq!(resolved.service, "postgres");
+        assert_eq!(
+            resolved.command,
+            vec!["psql".to_owned(), "-U".to_owned(), "dev".to_owned()]
         );
     }
 
@@ -467,10 +512,8 @@ mod tests {
             project_name: None,
             primary_service: Some("app".to_owned()),
             services: Default::default(),
-            exec: Some(ManifestContainerExecConfig {
-                working_dir: Some("/var/www/html".to_owned()),
-                aliases: Default::default(),
-            }),
+            working_dir: Some("/var/www/html".to_owned()),
+            aliases: Default::default(),
             dns: None,
             lifecycle: None,
             health: None,

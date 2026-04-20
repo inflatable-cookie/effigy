@@ -459,14 +459,6 @@ fn build_effective_policy(
     }
     let dns = config.dns.as_ref().cloned().unwrap_or_default();
     let mut dns_routes = Vec::new();
-    if !dns.domain.trim().is_empty() {
-        dns_routes.push(EffectiveDnsRoute {
-            domain: dns.domain.clone(),
-            tls: dns.tls.unwrap_or(false),
-            port: dns.port,
-            service: dns.service.filter(|value| !value.trim().is_empty()),
-        });
-    }
     for route in dns.routes {
         if route.domain.trim().is_empty() {
             continue;
@@ -501,9 +493,9 @@ fn build_effective_policy(
         shared_services,
         project_name,
         primary_service,
-        dns_domain: Some(dns.domain).filter(|value| !value.trim().is_empty()),
-        dns_tls: dns.tls.unwrap_or(false),
-        dns_port: dns.port,
+        dns_domain: dns_routes.first().map(|route| route.domain.clone()),
+        dns_tls: dns_routes.first().is_some_and(|route| route.tls),
+        dns_port: dns_routes.first().and_then(|route| route.port),
         dns_routes,
         declared_ports: effective_ports,
         ports_declared_explicitly: !host.ports.is_empty(),
@@ -568,17 +560,13 @@ fn resolve_container_exec_working_dir(
     container_name: &str,
     config: &ManifestContainerConfig,
 ) -> Result<PathBuf, ContainerPolicyError> {
-    if let Some(working_dir) = config
-        .exec
-        .as_ref()
-        .and_then(|exec| exec.working_dir.as_ref())
-    {
+    if let Some(working_dir) = config.working_dir.as_ref() {
         return Ok(PathBuf::from(working_dir));
     }
 
     let Some(host) = config.host.as_ref() else {
         return Err(ContainerPolicyError::TaskInvocation(format!(
-            "container `{container_name}` must declare `[containers.{container_name}.exec].working_dir` or a repo-root host mount for CWD mapping"
+            "container `{container_name}` must declare `[containers.{container_name}].working_dir` or a repo-root host mount for CWD mapping"
         )));
     };
     let canonical_root = repo_root
@@ -598,7 +586,7 @@ fn resolve_container_exec_working_dir(
         }
     }
     Err(ContainerPolicyError::TaskInvocation(format!(
-        "container `{container_name}` must declare `[containers.{container_name}.exec].working_dir` or a repo-root host mount for CWD mapping"
+        "container `{container_name}` must declare `[containers.{container_name}].working_dir` or a repo-root host mount for CWD mapping"
     )))
 }
 

@@ -10,7 +10,7 @@ pub(crate) fn render_gateway_help<R: HelpRenderer>(renderer: &mut R) -> HelpResu
         &[
             "Operate Effigy's host-native local DNS and reverse-proxy gateway.",
             "Projects that declare `[containers.<name>.dns]` now register and remove gateway routes through the container lifecycle.",
-            "Use `gateway setup-tls` once per machine before enabling `[containers.<name>.dns].tls = true`.",
+            "Use `gateway setup-tls` once per machine before enabling `tls = true` on any `[containers.<name>.dns].routes` entry.",
             "On macOS, `gateway up` and `gateway down` also manage `/etc/resolver/test` and will prompt for admin approval when host setup needs it.",
         ],
     )?;
