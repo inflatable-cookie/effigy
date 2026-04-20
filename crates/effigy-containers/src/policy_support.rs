@@ -51,11 +51,20 @@ pub(crate) fn resolve_compose_source(
         let compose_file =
             repo_relative_path(repo_root, compose_file, "containers.*.compose_file")?;
         let display = path_relative_to_repo(repo_root, &compose_file);
+        let effective_ports = if config
+            .host
+            .as_ref()
+            .is_some_and(|host| !host.ports.is_empty())
+        {
+            configured_host_ports(config)
+        } else {
+            infer_direct_compose_host_ports(&compose_file, project_name)?
+        };
         return Ok((
             vec![compose_file],
             display,
             Vec::new(),
-            configured_host_ports(config),
+            effective_ports,
             Vec::new(),
         ));
     }
@@ -607,6 +616,125 @@ fn configured_host_ports(config: &ManifestContainerConfig) -> Vec<String> {
         .as_ref()
         .map(|host| host.ports.clone())
         .unwrap_or_default()
+}
+
+fn infer_direct_compose_host_ports(
+    compose_file: &Path,
+    project_name: &str,
+) -> Result<Vec<String>, ContainerPolicyError> {
+    let content = std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
+        path: compose_file.to_path_buf(),
+        error,
+    })?;
+    let parsed: YamlValue = serde_yaml::from_str(&content).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "compose file for `{project_name}` is invalid YAML: {error}"
+        ))
+    })?;
+    let Some(services) = parsed.get("services").and_then(YamlValue::as_mapping) else {
+        return Ok(Vec::new());
+    };
+
+    let mut inferred = Vec::new();
+    let mut service_names = services
+        .keys()
+        .filter_map(YamlValue::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    service_names.sort();
+
+    for service_name in service_names {
+        let Some(service) = services
+            .get(YamlValue::String(service_name))
+            .and_then(YamlValue::as_mapping)
+        else {
+            continue;
+        };
+        let Some(ports) = service.get("ports").and_then(YamlValue::as_sequence) else {
+            continue;
+        };
+        for port in ports {
+            if let Some(binding) = infer_compose_port_binding(port)? {
+                inferred.push(format!("{}:{}", binding.host, binding.container));
+            }
+        }
+    }
+
+    Ok(inferred)
+}
+
+fn infer_compose_port_binding(
+    port: &YamlValue,
+) -> Result<Option<PortBinding>, ContainerPolicyError> {
+    if let Some(raw) = port.as_str() {
+        return infer_compose_port_binding_from_short_syntax(raw).map(Some);
+    }
+    let Some(mapping) = port.as_mapping() else {
+        return Ok(None);
+    };
+    let published = mapping
+        .get("published")
+        .and_then(YamlValue::as_i64)
+        .or_else(|| {
+            mapping
+                .get("published")
+                .and_then(YamlValue::as_str)
+                .and_then(|value| value.parse::<i64>().ok())
+        });
+    let target = mapping
+        .get("target")
+        .and_then(YamlValue::as_i64)
+        .or_else(|| {
+            mapping
+                .get("target")
+                .and_then(YamlValue::as_str)
+                .and_then(|value| value.parse::<i64>().ok())
+        });
+    let Some(published) = published else {
+        return Ok(None);
+    };
+    let Some(target) = target else {
+        return Ok(None);
+    };
+    Ok(Some(PortBinding {
+        host: u16::try_from(published).map_err(|_| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "compose port mapping has invalid published port `{published}`"
+            ))
+        })?,
+        container: u16::try_from(target).map_err(|_| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "compose port mapping has invalid target port `{target}`"
+            ))
+        })?,
+    }))
+}
+
+fn infer_compose_port_binding_from_short_syntax(
+    raw: &str,
+) -> Result<PortBinding, ContainerPolicyError> {
+    let raw = raw.trim();
+    let published = raw.split('/').next().unwrap_or(raw).trim();
+    let mut parts = published.split(':').map(str::trim).collect::<Vec<_>>();
+    if parts.len() < 2 {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "unsupported compose port mapping `{raw}`; expected a published host port"
+        )));
+    }
+    let container = parts.pop().unwrap_or_default();
+    let host = parts.pop().unwrap_or_default();
+    Ok(PortBinding {
+        host: host.parse::<u16>().map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "invalid published host port in compose mapping `{raw}`: {error}"
+            ))
+        })?,
+        container: container.parse::<u16>().map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "invalid target container port in compose mapping `{raw}`: {error}"
+            ))
+        })?,
+    })
 }
 
 fn configured_media_mounts(config: &ManifestContainerConfig) -> Vec<String> {
