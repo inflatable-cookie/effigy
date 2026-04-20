@@ -182,7 +182,7 @@ fn build_workspace_runtime_mounts(
             working_dir.display()
         ),
     }];
-    for raw in &workspace.extra_mounts {
+    for raw in &workspace.mounts {
         mounts.push(parse_workspace_extra_mount(
             repo_root,
             container_name,

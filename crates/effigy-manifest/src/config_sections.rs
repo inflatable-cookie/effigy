@@ -321,7 +321,7 @@ pub struct ManifestSystemConfig {
     #[serde(default)]
     pub workdir: Option<String>,
     #[serde(default)]
-    pub extra_mounts: Vec<String>,
+    pub mounts: Vec<String>,
     #[serde(default)]
     pub user: Option<String>,
     #[serde(default)]
@@ -336,7 +336,7 @@ pub struct ManifestWorkspaceConfig {
     #[serde(default)]
     pub workdir: Option<String>,
     #[serde(default)]
-    pub extra_mounts: Vec<String>,
+    pub mounts: Vec<String>,
     #[serde(default)]
     pub user: Option<String>,
     #[serde(default)]
@@ -1092,7 +1092,7 @@ home = "/home/dev"
 
 [systems.dev.workspaces.app]
 workdir = "/workspace-root/app"
-extra_mounts = ["../underlay", "../poodle:/workspace-root/poodle"]
+mounts = ["../underlay", "../poodle:/workspace-root/poodle"]
 "#,
         )
         .expect("parse systems");
@@ -1107,7 +1107,7 @@ extra_mounts = ["../underlay", "../poodle:/workspace-root/poodle"]
         let workspace = system.workspaces.get("app").expect("app workspace");
         assert_eq!(workspace.workdir.as_deref(), Some("/workspace-root/app"));
         assert_eq!(
-            workspace.extra_mounts,
+            workspace.mounts,
             vec![
                 "../underlay".to_owned(),
                 "../poodle:/workspace-root/poodle".to_owned()

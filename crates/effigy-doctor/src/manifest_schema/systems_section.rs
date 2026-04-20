@@ -32,7 +32,7 @@ pub(super) fn validate_systems_section(context: &mut SchemaContext<'_, '_>, syst
                 "workdir",
                 "user",
                 "home",
-                "extra_mounts",
+                "mounts",
             ],
         );
         validate_optional_non_empty_string_field(
@@ -66,7 +66,7 @@ fn validate_workspace_entry(context: &mut SchemaContext<'_, '_>, path: &str, val
         context,
         path,
         table,
-        &["container", "workdir", "user", "home", "extra_mounts"],
+        &["container", "workdir", "user", "home", "mounts"],
     );
     validate_workspace_fields(context, path, table);
 }
@@ -83,11 +83,11 @@ fn validate_workspace_fields(
     );
     validate_optional_non_empty_string_field(context, table.get("user"), &format!("{path}.user"));
     validate_optional_non_empty_string_field(context, table.get("home"), &format!("{path}.home"));
-    if let Some(extra_mounts) = table.get("extra_mounts") {
+    if let Some(mounts) = table.get("mounts") {
         super::values::validate_string_array(
             context,
-            &format!("{path}.extra_mounts"),
-            extra_mounts,
+            &format!("{path}.mounts"),
+            mounts,
             "expected array of strings",
         );
     }
