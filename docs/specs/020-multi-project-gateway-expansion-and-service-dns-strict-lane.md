@@ -1,0 +1,115 @@
+# 020 Multi-Project Gateway Expansion And Service DNS Strict Lane
+
+Status: staged
+Updated: 2026-04-20
+Roadmap: `g02.020`
+
+## Context
+
+The gateway and multi-project lanes are complete on their bounded v1 surfaces,
+but the local-network story still stops short of the scalable shape the
+product now wants.
+
+Effigy can already:
+
+- run multiple generated-compose projects simultaneously
+- auto-allocate host ports to avoid some collisions
+- register HTTP routes through the shared gateway
+- expose bounded shared backing services
+
+What it still cannot do cleanly:
+
+- give TCP services first-class `.test` identities
+- stop depending on declared host ports for HTTP route registration
+- express DNS-only service routes that should resolve but not reverse proxy
+
+This lane owns that follow-through without replacing the current
+gateway/container architecture.
+
+## Governing Refs
+
+- `docs/contracts/001-working-rules.md`
+- `docs/roadmaps/g02/README.md`
+- `docs/roadmaps/g02/020-multi-project-gateway-expansion-and-service-dns.md`
+- `docs/architecture/020-container-infrastructure-design.md`
+- `docs/logs/2026-04/20-120000-multi-project-gateway-expansion-handoff.md`
+
+## Lane Focus
+
+This lane owns:
+
+- per-route DNS target support in the gateway route model
+- project and shared-service loopback-IP assignment on the bounded macOS path
+- HTTP post-start published-port discovery for gateway registration
+- canonical TCP service DNS aliases derived from the shipped service catalogs
+- bounded shared-service integration with the same operator-facing naming
+  model
+
+## Current Posture
+
+`staged`
+
+The product substrate this lane builds on is already real:
+
+- `g02.014` shipped the host-native gateway command, route table, DNS
+  responder, reverse proxy, and container lifecycle route registration
+- `g02.016` shipped generated-compose host-port auto-allocation, cross-project
+  status, route dashboarding, and bounded shared services
+- the active release lane remains `g02.007`
+- the next post-release audit/documentation lane remains `g02.019`
+
+This lane is intentionally staged behind those higher-priority fronts. It now
+has an explicit first execution card so a later resume does not need to
+reconstruct the opening move.
+
+Settled design decisions carried into execution:
+
+- route entries will grow `dns_ip: Option<Ipv4Addr>`
+- HTTP routes continue to proxy; TCP service routes resolve in DNS only
+- project-owned services default to one stable loopback IP per project
+- shared-service aliases may collapse onto one shared backing-service IP when
+  several projects consume the same shared instance
+
+## Integration Constraint
+
+This lane should execute in bounded batches:
+
+- land the route/DNS model first because every later batch depends on it
+- keep HTTP post-start port discovery separate from loopback-IP allocation so
+  regressions stay attributable
+- make shared-service DNS reuse follow the base route model rather than
+  inventing special-case registration first
+- do not let the broader local-network goal reopen release-prep or the
+  `g02.019` audit lane
+
+## Staged Continuation Chain
+
+The intended execution order starts with:
+
+1. `301` — route-model foundation: add `dns_ip`, update DNS resolution, and
+   keep proxy behavior honest for HTTP-only routes
+2. later planning checkpoint — decide whether loopback-IP allocation or HTTP
+   post-start port discovery should come second based on the landed route-model
+   seam and test fallout
+3. later execution — loopback-IP allocation and gateway setup integration
+4. later execution — container registration rewrite for HTTP discovery and TCP
+   service alias registration
+5. later execution — shared-service DNS reuse and env-injection shaping
+
+## Exit Condition
+
+This strict lane is complete when:
+
+- the gateway route model can express DNS-only service routes cleanly
+- HTTP services no longer require declared host ports for gateway registration
+- TCP services expose stable `.test` names on the bounded loopback-IP model
+- shared services fit the same naming model honestly on the shipped bounded
+  runtime path
+
+## Next Task
+
+Keep `g02.007` as the live lane and `g02.019` as the next post-release audit
+lane.
+
+When `g02.020` is resumed, execute `301` to land the `dns_ip` route-model and
+DNS-resolver foundation.

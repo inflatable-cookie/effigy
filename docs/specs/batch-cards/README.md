@@ -149,6 +149,12 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. The managed dev front door is now proven in one real project,
   and `g02.013` is closed on a trustworthy boundary.
 
+Staged next-lane card:
+
+- [`301-implement-per-route-dns-ip-foundation.md`](./301-implement-per-route-dns-ip-foundation.md)
+  is staged. It is the intended first `g02.020` execution card once the live
+  release-prep lane and the queued `g02.019` audit lane have settled.
+
 ## Archive Rule
 
 - closed or paused lane cards should move to `../archive/batch-cards/` once the
@@ -160,5 +166,7 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Next Task
 
-No ready batch card is active now. Stop in planning and choose the next lane
-or roadmap batch deliberately.
+No ready batch card is active now. Resume `g02.007` first.
+
+After `g02.019`, the staged next execution move is `301` for the `g02.020`
+route-model foundation.

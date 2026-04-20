@@ -29,6 +29,10 @@ Historical command-reference rule:
 - [`007-distribution-release-and-consumer-rollout-strict-lane.md`](./007-distribution-release-and-consumer-rollout-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
+Staged next-lane specs:
+
+- [`020-multi-project-gateway-expansion-and-service-dns-strict-lane.md`](./020-multi-project-gateway-expansion-and-service-dns-strict-lane.md)
+
 Paused but still useful:
 
 - [`010-effigy-modularization-and-crate-boundaries-strict-lane.md`](./010-effigy-modularization-and-crate-boundaries-strict-lane.md)
