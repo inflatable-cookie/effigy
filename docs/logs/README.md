@@ -490,6 +490,8 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 - [`2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md`](./2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md)
 
+- [`2026-04/20-120000-multi-project-gateway-expansion-handoff.md`](./2026-04/20-120000-multi-project-gateway-expansion-handoff.md)
+
 ## Archived Validation Logs
 
 - [`2026-02-26-deferral-fallback-phase-2-1-checkpoint.md`](./2026-02/26-090000-deferral-fallback-phase-2-1-checkpoint.md)
