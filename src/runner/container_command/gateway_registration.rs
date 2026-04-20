@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
+use effigy_containers::exec::{list_running_compose_containers_for_profile, RunningComposeContainer};
 use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_gateway::registration::{deregister_route, register_route, RouteRegistration};
 
@@ -13,6 +15,7 @@ pub(in crate::runner) struct RegisteredGatewayRoute {
     pub(in crate::runner) domain: String,
     pub(in crate::runner) target: String,
     pub(in crate::runner) tls: bool,
+    pub(in crate::runner) service: Option<String>,
 }
 
 pub(in crate::runner) fn register_gateway_routes_for_container(
@@ -20,6 +23,7 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
     let routes = resolve_gateway_routes(policy)?;
+    validate_gateway_routes_against_runtime(repo_root, policy, &routes)?;
     for route in &routes {
         if route.tls {
             ensure_gateway_tls_cert(&route.domain)?;
@@ -59,6 +63,7 @@ fn register_gateway_route_at(
         &RouteRegistration {
             domain: route.domain.clone(),
             target: route.target.clone(),
+            dns_ip: None,
             tls: route.tls,
             project_path: repo_root.display().to_string(),
             source: effigy_gateway::routes::RouteSource::Container,
@@ -82,9 +87,226 @@ fn resolve_gateway_routes(
             domain: dns_route.domain.clone(),
             target: format!("127.0.0.1:{host_port}"),
             tls: dns_route.tls,
+            service: dns_route.service.clone(),
         });
     }
     Ok(routes)
+}
+
+fn validate_gateway_routes_against_runtime(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    routes: &[RegisteredGatewayRoute],
+) -> Result<(), RunnerError> {
+    if routes.is_empty() {
+        return Ok(());
+    }
+    let rows = list_running_compose_containers_for_profile(&policy.profile)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    validate_gateway_routes_against_rows(repo_root, policy, routes, &rows)?;
+    validate_gateway_routes_against_host_listeners(policy, routes)
+}
+
+fn validate_gateway_routes_against_rows(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    routes: &[RegisteredGatewayRoute],
+    rows: &[RunningComposeContainer],
+) -> Result<(), RunnerError> {
+    for route in routes {
+        let target_port = parse_target_host_port(&route.target)?;
+        if rows
+            .iter()
+            .filter(|row| row_matches_policy_project(row, repo_root, policy))
+            .filter(|row| row_matches_route_service(row, route))
+            .any(|row| row_publishes_host_port(row, target_port))
+        {
+            continue;
+        }
+        return Err(RunnerError::task_invocation(format!(
+            "container `{}` selected gateway target `{}` for domain `{}` but no running container in project `{}`{} publishes host port {}; gateway registration refuses to target an unrelated runtime binding",
+            policy.name,
+            route.target,
+            route.domain,
+            policy.project_name,
+            route
+                .service
+                .as_deref()
+                .map(|service| format!(" service `{service}`"))
+                .unwrap_or_default(),
+            target_port
+        )));
+    }
+    Ok(())
+}
+
+fn validate_gateway_routes_against_host_listeners(
+    policy: &EffectiveContainerPolicy,
+    routes: &[RegisteredGatewayRoute],
+) -> Result<(), RunnerError> {
+    for route in routes {
+        let target_port = parse_target_host_port(&route.target)?;
+        let Some(listener_command) = non_runtime_listener_for_port(target_port)? else {
+            continue;
+        };
+        return Err(RunnerError::task_invocation(format!(
+            "container `{}` selected gateway target `{}` for domain `{}` but host port {} is already held by `{}`; gateway registration refuses to target an unrelated host listener",
+            policy.name, route.target, route.domain, target_port, listener_command
+        )));
+    }
+    Ok(())
+}
+
+fn parse_target_host_port(target: &str) -> Result<u16, RunnerError> {
+    let port = target
+        .rsplit(':')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .parse::<u16>()
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "gateway route target `{target}` does not end in a valid host port: {error}"
+            ))
+        })?;
+    Ok(port)
+}
+
+fn row_matches_policy_project(
+    row: &RunningComposeContainer,
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> bool {
+    let repo_root = repo_root.to_string_lossy();
+    row.project_name.as_deref() == Some(policy.project_name.as_str())
+        && row
+            .working_dir
+            .as_deref()
+            .is_none_or(|working_dir| working_dir == repo_root.as_ref())
+}
+
+fn row_publishes_host_port(row: &RunningComposeContainer, target_port: u16) -> bool {
+    row.ports.iter().any(|port| {
+        parse_published_host_port_range(port)
+            .ok()
+            .is_some_and(|(start, end)| (start..=end).contains(&target_port))
+    })
+}
+
+fn row_matches_route_service(
+    row: &RunningComposeContainer,
+    route: &RegisteredGatewayRoute,
+) -> bool {
+    route
+        .service
+        .as_deref()
+        .is_none_or(|service| row.service.as_deref() == Some(service))
+}
+
+fn parse_published_host_port_range(raw: &str) -> Result<(u16, u16), RunnerError> {
+    let Some(published) = raw.split("->").next() else {
+        return Err(RunnerError::task_invocation(format!(
+            "runtime port mapping `{raw}` is missing a published-port segment"
+        )));
+    };
+    let candidate = published.rsplit(':').next().unwrap_or_default().trim();
+    let (start, end) = parse_port_range(candidate).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "runtime port mapping `{raw}` does not expose a valid published host port: {error}"
+        ))
+    })?;
+    Ok((start, end))
+}
+
+fn parse_port_range(raw: &str) -> Result<(u16, u16), String> {
+    let raw = raw.trim();
+    if let Some((start, end)) = raw.split_once('-') {
+        let start = start
+            .trim()
+            .parse::<u16>()
+            .map_err(|error| error.to_string())?;
+        let end = end
+            .trim()
+            .parse::<u16>()
+            .map_err(|error| error.to_string())?;
+        if start > end {
+            return Err("range start exceeds range end".to_owned());
+        }
+        return Ok((start, end));
+    }
+    let port = raw.parse::<u16>().map_err(|error| error.to_string())?;
+    Ok((port, port))
+}
+
+fn non_runtime_listener_for_port(port: u16) -> Result<Option<String>, RunnerError> {
+    let output = Command::new("lsof")
+        .args([
+            "-nP",
+            &format!("-iTCP:{port}"),
+            "-sTCP:LISTEN",
+        ])
+        .output();
+    let Ok(output) = output else {
+        return Ok(None);
+    };
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines().skip(1).filter(|line| !line.trim().is_empty()) {
+        let mut fields = line.split_whitespace();
+        let command = fields.next().unwrap_or_default().trim();
+        let pid = fields.next().and_then(|raw| raw.parse::<u32>().ok());
+        if command.is_empty() {
+            continue;
+        }
+        let full_command = pid
+            .and_then(full_process_command)
+            .unwrap_or_else(|| command.to_owned());
+        if !listener_command_looks_runtime_managed(&full_command) {
+            return Ok(Some(command.to_owned()));
+        }
+    }
+    Ok(None)
+}
+
+fn full_process_command(pid: u32) -> Option<String> {
+    let output = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let rendered = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(rendered)
+    }
+}
+
+fn listener_command_looks_runtime_managed(command: &str) -> bool {
+    let lowered = command.to_ascii_lowercase();
+    [
+        "colima",
+        "limactl",
+        "docker",
+        "docker-proxy",
+        "containerd",
+        "rootlesskit",
+        "slirp4netns",
+        "gvproxy",
+        "vpnkit",
+        "qemu",
+        "lima",
+        "podman",
+        "orb",
+        ".colima/_lima/",
+        "ssh.sock",
+    ]
+    .iter()
+    .any(|marker| lowered.contains(marker))
 }
 
 fn selected_host_port_for_route(
@@ -234,6 +456,7 @@ mod tests {
                 domain: "clientname.test".to_owned(),
                 tls: true,
                 port: None,
+                service: None,
             }],
             declared_ports: vec!["8080:80".to_owned()],
             ports_declared_explicitly: true,
@@ -258,6 +481,7 @@ mod tests {
         assert_eq!(route.domain, "clientname.test");
         assert_eq!(route.target, "127.0.0.1:8080");
         assert!(route.tls);
+        assert_eq!(route.service, None);
     }
 
     #[test]
@@ -347,6 +571,7 @@ mod tests {
                 domain: "admin.clientname.test".to_owned(),
                 tls: false,
                 port: Some(9001),
+                service: Some("admin".to_owned()),
             });
         policy.declared_ports = vec!["8080:80".to_owned(), "9001:9001".to_owned()];
 
@@ -356,5 +581,120 @@ mod tests {
         assert_eq!(routes[0].target, "127.0.0.1:8080");
         assert_eq!(routes[1].domain, "admin.clientname.test");
         assert_eq!(routes[1].target, "127.0.0.1:9001");
+        assert_eq!(routes[1].service.as_deref(), Some("admin"));
     }
+
+    #[test]
+    fn validates_gateway_route_against_matching_runtime_port() {
+        let policy = test_policy();
+        let repo_root = PathBuf::from("/tmp/repo");
+        let routes = resolve_gateway_routes(&policy).expect("routes");
+        let rows = vec![RunningComposeContainer {
+            container_name: "demo-web-dev-app-1".to_owned(),
+            status: "Up 10 seconds".to_owned(),
+            ports: vec![
+                "0.0.0.0:8080->80/tcp".to_owned(),
+                ":::8080->80/tcp".to_owned(),
+            ],
+            project_name: Some("demo-web-dev".to_owned()),
+            working_dir: Some("/tmp/repo".to_owned()),
+            service: Some("app".to_owned()),
+        }];
+
+        validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
+            .expect("matching published port should validate");
+    }
+
+    #[test]
+    fn validates_gateway_route_against_matching_runtime_service_when_declared() {
+        let mut policy = test_policy();
+        policy.dns_routes[0].service = Some("app".to_owned());
+        let repo_root = PathBuf::from("/tmp/repo");
+        let routes = resolve_gateway_routes(&policy).expect("routes");
+        let rows = vec![RunningComposeContainer {
+            container_name: "demo-web-dev-app-1".to_owned(),
+            status: "Up 10 seconds".to_owned(),
+            ports: vec!["0.0.0.0:8080->80/tcp".to_owned()],
+            project_name: Some("demo-web-dev".to_owned()),
+            working_dir: Some("/tmp/repo".to_owned()),
+            service: Some("app".to_owned()),
+        }];
+
+        validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
+            .expect("matching service should validate");
+    }
+
+    #[test]
+    fn rejects_gateway_route_when_declared_service_does_not_match_runtime_service() {
+        let mut policy = test_policy();
+        policy.dns_routes[0].service = Some("admin".to_owned());
+        let repo_root = PathBuf::from("/tmp/repo");
+        let routes = resolve_gateway_routes(&policy).expect("routes");
+        let rows = vec![RunningComposeContainer {
+            container_name: "demo-web-dev-app-1".to_owned(),
+            status: "Up 10 seconds".to_owned(),
+            ports: vec!["0.0.0.0:8080->80/tcp".to_owned()],
+            project_name: Some("demo-web-dev".to_owned()),
+            working_dir: Some("/tmp/repo".to_owned()),
+            service: Some("app".to_owned()),
+        }];
+
+        let error = validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
+            .expect_err("mismatched service should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("project `demo-web-dev` service `admin` publishes host port 8080"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_gateway_route_when_runtime_does_not_publish_selected_port() {
+        let policy = test_policy();
+        let repo_root = PathBuf::from("/tmp/repo");
+        let routes = resolve_gateway_routes(&policy).expect("routes");
+        let rows = vec![RunningComposeContainer {
+            container_name: "demo-web-dev-app-1".to_owned(),
+            status: "Up 10 seconds".to_owned(),
+            ports: vec!["0.0.0.0:9090->80/tcp".to_owned()],
+            project_name: Some("demo-web-dev".to_owned()),
+            working_dir: Some("/tmp/repo".to_owned()),
+            service: Some("app".to_owned()),
+        }];
+
+        let error = validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
+            .expect_err("mismatched published port should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("gateway registration refuses to target an unrelated host listener"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn parse_published_host_port_supports_ipv6_and_ipv4_bindings() {
+        assert_eq!(
+            parse_published_host_port_range("0.0.0.0:8080->80/tcp").expect("ipv4 host port"),
+            (8080, 8080)
+        );
+        assert_eq!(
+            parse_published_host_port_range(":::8080->80/tcp").expect("ipv6 host port"),
+            (8080, 8080)
+        );
+        assert_eq!(
+            parse_published_host_port_range("0.0.0.0:41001-41003->41001-41003/tcp")
+                .expect("host port range"),
+            (41001, 41003)
+        );
+    }
+
+    #[test]
+    fn listener_command_runtime_detection_is_narrow() {
+        assert!(listener_command_looks_runtime_managed("docker-proxy"));
+        assert!(listener_command_looks_runtime_managed("colima"));
+        assert!(!listener_command_looks_runtime_managed("Python"));
+    }
+
 }

@@ -50,6 +50,10 @@ impl Default for DnsConfig {
 pub(crate) struct DnsCacheEntry {
     /// Whether the domain has a registered route.
     has_route: bool,
+
+    /// Optional route-specific DNS IP for registered routes.
+    dns_ip: Option<Ipv4Addr>,
+
     /// When this entry was cached.
     cached_at: Instant,
 }
@@ -78,23 +82,24 @@ impl DnsCache {
     }
 
     /// Look up a domain in the cache. Returns None if not cached or expired.
-    pub fn get(&self, domain: &str) -> Option<bool> {
+    pub fn get(&self, domain: &str) -> Option<(bool, Option<Ipv4Addr>)> {
         let entries = self.entries.lock().ok()?;
         let entry = entries.get(domain)?;
         if entry.cached_at.elapsed() < self.ttl {
-            Some(entry.has_route)
+            Some((entry.has_route, entry.dns_ip))
         } else {
             None
         }
     }
 
     /// Store a lookup result in the cache.
-    pub fn put(&self, domain: String, has_route: bool) {
+    pub fn put(&self, domain: String, has_route: bool, dns_ip: Option<Ipv4Addr>) {
         if let Ok(mut entries) = self.entries.lock() {
             entries.insert(
                 domain,
                 DnsCacheEntry {
                     has_route,
+                    dns_ip,
                     cached_at: Instant::now(),
                 },
             );
@@ -242,22 +247,24 @@ fn handle_dns_query(
         }
 
         // Check if we have a route for this domain (cache-first).
-        let has_route = if let Some(cached) = cache.get(&domain) {
+        let (has_route, route_dns_ip) = if let Some(cached) = cache.get(&domain) {
             cached
         } else {
             let result = route_table
                 .read()
                 .expect("route table lock poisoned")
                 .lookup(&domain)
-                .is_some();
-            cache.put(domain.clone(), result);
+                .map(|route| (true, route.dns_ip))
+                .unwrap_or((false, None));
+            cache.put(domain.clone(), result.0, result.1);
             result
         };
 
         if has_route {
-            debug!(domain = %domain, "DNS: resolving to {}", config.resolve_to);
+            let resolved_ip = route_dns_ip.unwrap_or(config.resolve_to);
+            debug!(domain = %domain, "DNS: resolving to {}", resolved_ip);
 
-            let record = Record::from_rdata(name.clone(), 60, RData::A(A(config.resolve_to)));
+            let record = Record::from_rdata(name.clone(), 60, RData::A(A(resolved_ip)));
             response.add_answer(record);
             answered = true;
             resolved_route = true;

@@ -9,6 +9,11 @@ pub use git::{
     git_add_release_files, git_commit_release, git_create_tag, git_current_branch, git_head_sha,
     git_modified_files, git_push_release, git_remote_url, git_tag_exists,
 };
+pub use render_json::{
+    render_release_execute_plan_json, render_release_executed_json, render_release_gate_run_json,
+    render_release_prepare_plan_json, render_release_prepared_json, render_release_resume_json,
+    render_release_simulation_json, render_release_status_json, render_release_verify_install_json,
+};
 pub use review::{
     append_indexed_review_hint, build_execute_stale_review_items,
     build_execute_working_tree_review_items, parse_blocked_preflight_action,
@@ -25,13 +30,6 @@ pub use review::{
     BlockedPreflightAction, ExecuteMenuAction, ExecuteReviewItem, ExecuteReviewState,
     PrepareMenuAction, PrepareReviewState, ResumeMenuAction,
 };
-pub use render_json::{
-    render_release_execute_plan_json, render_release_executed_json,
-    render_release_gate_run_json, render_release_prepare_plan_json,
-    render_release_prepared_json, render_release_resume_json,
-    render_release_simulation_json, render_release_status_json,
-    render_release_verify_install_json,
-};
 pub use text::{
     format_counts, remediation_hints_for_blockers, render_release_execute_plan_text,
     render_release_executed_text, render_release_gate_run_text, render_release_prepare_plan_text,
@@ -40,10 +38,9 @@ pub use text::{
     render_release_verify_install_text, review_label, ReleaseBlockedStage,
 };
 pub use version::{
-    build_changelog_mutation_detail_lines, build_diff_preview,
-    build_version_mutation_detail_lines, detect_pyproject_version_path,
-    detect_version_file_kind, json_value_at_path, read_current_version,
-    render_changelog_preview_line, render_updated_version_contents,
+    build_changelog_mutation_detail_lines, build_diff_preview, build_version_mutation_detail_lines,
+    detect_pyproject_version_path, detect_version_file_kind, json_value_at_path,
+    read_current_version, render_changelog_preview_line, render_updated_version_contents,
     render_version_preview_line, replace_json_string_at_path_preserving_layout,
     resolve_version_field_path, toml_value_at_path,
 };

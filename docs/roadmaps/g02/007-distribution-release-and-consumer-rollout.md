@@ -70,8 +70,17 @@ That sequencing checkpoint is now resolved for this thread:
 - `g02.008` and `g02.009` remain valid rollout work, but they are intentionally
   out of the current `v0.3` release-prep thread
 
-The lane now returns to deliberate release prep for one explicit human-approved
-`v0.3` cut.
+The lane has now completed that bounded alignment slice:
+
+- the release-prep checkpoint is refreshed through `305`
+- `cargo test` passes on the live worktree
+- `cargo run --bin effigy -- release status --check-gates` reports all gates
+  passing and `Ready to prepare and execute: yes`
+- the built-in release flow still defaults to a patch suggestion (`0.2.14`)
+  unless the deliberate `0.3.0` target is chosen explicitly
+
+That leaves one explicit next move instead of another hidden prep batch:
+human-approved release execution for `v0.3.0`.
 
 Supported-boundary rule:
 
@@ -88,7 +97,8 @@ it is no longer only an Effigy-local product claim.
 
 ## Next Task
 
-Return to `115` and the release protocol surfaces for deliberate `v0.3`
-release prep.
+Stop in planning until release execution is explicitly requested.
 
-Stop before any irreversible release action unless explicitly requested.
+If requested, start with:
+
+`cargo run --bin effigy -- release prepare --yes --version 0.3.0 --check-gates`

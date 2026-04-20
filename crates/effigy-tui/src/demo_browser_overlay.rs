@@ -7,9 +7,7 @@ use ratatui::Frame;
 
 use crate::core::{effigy_panel_block, EFFIGY_ACCENT};
 
-use super::{
-    centered_rect, filter_menu_value, ActionMenuState, FilterMenuState, QueryPromptState,
-};
+use super::{centered_rect, filter_menu_value, ActionMenuState, FilterMenuState, QueryPromptState};
 
 pub fn render_prompt_overlay(frame: &mut Frame<'_>, area: Rect, prompt: &QueryPromptState) {
     let overlay = centered_rect(68, 22, area);

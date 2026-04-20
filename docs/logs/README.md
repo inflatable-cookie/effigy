@@ -76,6 +76,8 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/20-235500-g02-007-v0-3-release-prep-alignment-checkpoint.md`](./2026-04/20-235500-g02-007-v0-3-release-prep-alignment-checkpoint.md)
+- [`2026-04/20-154500-g02-020-route-model-foundation-closeout-and-follow-up-decision.md`](./2026-04/20-154500-g02-020-route-model-foundation-closeout-and-follow-up-decision.md)
 - [`2026-04/17-160500-generation-rollover-guardrail-and-spec-archive-cleanup.md`](./2026-04/17-160500-generation-rollover-guardrail-and-spec-archive-cleanup.md)
 - [`2026-04/17-095500-strict-lane-continuation-state-correction.md`](./2026-04/17-095500-strict-lane-continuation-state-correction.md)
 - [`2026-04/17-091500-g01-027-release-orchestration-closeout.md`](./2026-04/17-091500-g01-027-release-orchestration-closeout.md)

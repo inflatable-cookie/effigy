@@ -31,7 +31,7 @@ fn catalogs_text_contract_includes_core_sections_and_probe_fields() {
         "Resolution: catalog_a/api",
         "catalog: catalog_a",
         "task: api",
-        "lock_scopes: task:api",
+        "lock_scopes: task:catalog_a/api",
         "evidence:",
         "selected catalog via explicit prefix `catalog_a`",
     ];
@@ -76,7 +76,7 @@ fn catalogs_json_pretty_contract_uses_tasks_schema_top_level_shape() {
     assert!(parsed["builtin_tasks"].is_array());
     assert!(parsed["catalogs"].is_array());
     assert_eq!(parsed["resolve"]["catalog"], "catalog_a");
-    assert_eq!(parsed["resolve"]["lock_scopes"][0], "task:api");
+    assert_eq!(parsed["resolve"]["lock_scopes"][0], "task:catalog_a/api");
 }
 
 #[test]
@@ -112,7 +112,7 @@ fn catalogs_json_compact_contract_is_single_line_and_valid_json() {
     assert_eq!(parsed["schema"], "effigy.tasks.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert_eq!(parsed["resolve"]["status"], "ok");
-    assert_eq!(parsed["resolve"]["lock_scopes"][0], "task:api");
+    assert_eq!(parsed["resolve"]["lock_scopes"][0], "task:catalog_a/api");
 }
 
 #[test]

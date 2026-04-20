@@ -12,6 +12,7 @@
 //! (the container command in the runner). This module provides the
 //! pure registration logic.
 
+use std::net::Ipv4Addr;
 use std::path::Path;
 
 use chrono::Utc;
@@ -28,6 +29,9 @@ pub struct RouteRegistration {
 
     /// The upstream host and port (e.g., "127.0.0.1:8080").
     pub target: String,
+
+    /// Optional DNS IP override for this route.
+    pub dns_ip: Option<Ipv4Addr>,
 
     /// Whether TLS is enabled for this route.
     pub tls: bool,
@@ -52,6 +56,7 @@ pub fn register_route(
     table.upsert(Route {
         domain: registration.domain.clone(),
         target: registration.target.clone(),
+        dns_ip: registration.dns_ip,
         source: registration.source,
         project: registration.project_path.clone(),
         tls: registration.tls,
@@ -125,6 +130,7 @@ pub fn build_registration(
     RouteRegistration {
         domain: domain.to_string(),
         target: format!("127.0.0.1:{port}"),
+        dns_ip: None,
         tls,
         project_path: project_path.to_string(),
         source: RouteSource::Container,

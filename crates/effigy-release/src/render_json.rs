@@ -2,8 +2,8 @@ use serde_json::json;
 
 use crate::{
     FileMutationPlan, GateResult, ReleaseExecutePlan, ReleaseExecuted, ReleaseGateRun,
-    ReleasePreparePlan, ReleasePrepared, ReleaseSimulation, ReleaseStatus,
-    ReleaseVerifyInstall, VerificationStepResult,
+    ReleasePreparePlan, ReleasePrepared, ReleaseSimulation, ReleaseStatus, ReleaseVerifyInstall,
+    VerificationStepResult,
 };
 
 pub fn render_release_status_json(status: &ReleaseStatus) -> String {

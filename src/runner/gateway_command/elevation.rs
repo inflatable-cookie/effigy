@@ -11,7 +11,7 @@ use effigy_gateway::server::{GatewayConfig, GatewayStatus};
 
 use crate::runner::error::RunnerError;
 
-use super::{gateway_dir, GATEWAY_ESCALATED_ENV};
+use super::{gateway_dir, GATEWAY_ESCALATED_ENV, GATEWAY_KEEP_RESOLVER_ENV};
 
 pub(super) fn gateway_invocation_is_escalated() -> bool {
     std::env::var(GATEWAY_ESCALATED_ENV)
@@ -275,11 +275,20 @@ pub(super) fn build_gateway_elevated_shell_command(
     subcommand: GatewaySubcommand,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    build_gateway_elevated_shell_command_with_keep_resolver(subcommand, output_json)
+}
+
+#[cfg(target_os = "macos")]
+fn build_gateway_elevated_shell_command_with_keep_resolver(
+    subcommand: GatewaySubcommand,
+    output_json: bool,
+) -> Result<String, RunnerError> {
     let effigy_bin = std::env::current_exe().map_err(RunnerError::Cwd)?;
     let mut parts = vec!["env".to_owned()];
     for (key, value) in gateway_elevated_env_vars() {
         parts.push(format!("{key}={}", shell_quote(&value.to_string_lossy())));
     }
+    parts.push(format!("{GATEWAY_KEEP_RESOLVER_ENV}=1"));
     parts.push(shell_quote(&effigy_bin.display().to_string()));
     parts.push("gateway".to_owned());
     parts.push(gateway_subcommand_name(subcommand).to_owned());
@@ -294,12 +303,21 @@ fn build_gateway_elevated_command(
     subcommand: GatewaySubcommand,
     output_json: bool,
 ) -> Result<ProcessCommand, RunnerError> {
+    build_gateway_elevated_command_with_keep_resolver(subcommand, output_json)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn build_gateway_elevated_command_with_keep_resolver(
+    subcommand: GatewaySubcommand,
+    output_json: bool,
+) -> Result<ProcessCommand, RunnerError> {
     let effigy_bin = std::env::current_exe().map_err(RunnerError::Cwd)?;
     let mut command = ProcessCommand::new("sudo");
     command.arg("env");
     for (key, value) in gateway_elevated_env_vars() {
         command.arg(format!("{key}={}", value.to_string_lossy()));
     }
+    command.arg(format!("{GATEWAY_KEEP_RESOLVER_ENV}=1"));
     command.arg(effigy_bin);
     command.arg("gateway");
     command.arg(gateway_subcommand_name(subcommand));
@@ -320,6 +338,7 @@ fn gateway_elevated_env_vars() -> Vec<(&'static str, OsString)> {
         "EFFIGY_GATEWAY_DNS_ADDR",
         "EFFIGY_GATEWAY_PROXY_ADDR",
         "EFFIGY_GATEWAY_HTTPS_ADDR",
+        GATEWAY_KEEP_RESOLVER_ENV,
     ] {
         if let Some(value) = std::env::var_os(key) {
             vars.push((key, value));

@@ -13,6 +13,8 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::watch;
@@ -26,6 +28,15 @@ use crate::stats::GatewayStats;
 use crate::tls::{
     server_config_from_resolver, sync_sni_resolver_from_dir, SniCertResolver, TlsConfig,
 };
+
+const IDLE_SHUTDOWN_DELAY: Duration = Duration::from_secs(5 * 60);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdleShutdownAction {
+    None,
+    Arm,
+    Cancel,
+}
 
 /// Configuration for the full gateway.
 #[derive(Debug, Clone)]
@@ -214,7 +225,14 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     let watcher_table = Arc::clone(&shared_table);
     let watcher_cache = Arc::clone(&dns_cache);
     let watcher_path = config.route_table_path.clone();
-    let _watcher = setup_file_watcher(&watcher_path, watcher_table, watcher_cache)?;
+    let idle_shutdown_generation = Arc::new(AtomicU64::new(0));
+    let _watcher = setup_file_watcher(
+        &watcher_path,
+        watcher_table,
+        watcher_cache,
+        idle_shutdown_generation,
+        shutdown_tx.clone(),
+    )?;
 
     let has_tls = config.proxy.tls_bind_addr.is_some() && config.tls.is_some();
 
@@ -299,6 +317,8 @@ fn setup_file_watcher(
     path: &PathBuf,
     table: Arc<RwLock<RouteTable>>,
     dns_cache: Arc<DnsCache>,
+    idle_shutdown_generation: Arc<AtomicU64>,
+    shutdown_tx: watch::Sender<bool>,
 ) -> Result<RecommendedWatcher, GatewayError> {
     let watched_path = path.clone();
 
@@ -309,18 +329,14 @@ fn setup_file_watcher(
                 match ev.kind {
                     EventKind::Create(_) | EventKind::Modify(_) => {
                         debug!(path = %watched_path.display(), "route table changed, reloading");
-                        match RouteTable::load(&watched_path) {
-                            Ok(new_table) => {
-                                let mut guard = table.write().expect("route table lock poisoned");
-                                *guard = new_table;
-                                // Invalidate DNS cache so new routes are
-                                // resolved immediately.
-                                dns_cache.clear();
-                                debug!("route table reloaded, DNS cache cleared");
-                            }
-                            Err(e) => {
-                                error!(error = %e, "failed to reload route table");
-                            }
+                        if let Err(error) = reload_route_table_and_maybe_schedule_shutdown(
+                            &watched_path,
+                            &table,
+                            &dns_cache,
+                            &idle_shutdown_generation,
+                            &shutdown_tx,
+                        ) {
+                            error!(error = %error, "failed to reload route table");
                         }
                     }
                     _ => {}
@@ -341,6 +357,75 @@ fn setup_file_watcher(
     }
 
     Ok(watcher)
+}
+
+fn reload_route_table_and_maybe_schedule_shutdown(
+    path: &PathBuf,
+    table: &Arc<RwLock<RouteTable>>,
+    dns_cache: &Arc<DnsCache>,
+    idle_shutdown_generation: &Arc<AtomicU64>,
+    shutdown_tx: &watch::Sender<bool>,
+) -> Result<(), GatewayError> {
+    let new_table = RouteTable::load(path)?;
+    let action = apply_reloaded_route_table(table, new_table, dns_cache);
+    debug!("route table reloaded, DNS cache cleared");
+    match action {
+        IdleShutdownAction::Arm => {
+            let generation = idle_shutdown_generation.fetch_add(1, Ordering::SeqCst) + 1;
+            schedule_idle_shutdown(
+                Arc::clone(table),
+                Arc::clone(idle_shutdown_generation),
+                shutdown_tx.clone(),
+                generation,
+                IDLE_SHUTDOWN_DELAY,
+            );
+        }
+        IdleShutdownAction::Cancel => {
+            idle_shutdown_generation.fetch_add(1, Ordering::SeqCst);
+            debug!("route table became non-empty; cancelled pending idle shutdown");
+        }
+        IdleShutdownAction::None => {}
+    }
+    Ok(())
+}
+
+fn apply_reloaded_route_table(
+    table: &Arc<RwLock<RouteTable>>,
+    new_table: RouteTable,
+    dns_cache: &Arc<DnsCache>,
+) -> IdleShutdownAction {
+    let action = {
+        let mut guard = table.write().expect("route table lock poisoned");
+        let was_empty = guard.is_empty();
+        let is_empty = new_table.is_empty();
+        *guard = new_table;
+        match (was_empty, is_empty) {
+            (false, true) => IdleShutdownAction::Arm,
+            (true, false) => IdleShutdownAction::Cancel,
+            _ => IdleShutdownAction::None,
+        }
+    };
+    dns_cache.clear();
+    action
+}
+
+fn schedule_idle_shutdown(
+    table: Arc<RwLock<RouteTable>>,
+    idle_shutdown_generation: Arc<AtomicU64>,
+    shutdown_tx: watch::Sender<bool>,
+    generation: u64,
+    delay: Duration,
+) {
+    std::thread::spawn(move || {
+        std::thread::sleep(delay);
+        if idle_shutdown_generation.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        if table.read().expect("route table lock poisoned").is_empty() {
+            info!("route table stayed empty through idle timeout; stopping gateway");
+            let _ = shutdown_tx.send(true);
+        }
+    });
 }
 
 fn setup_tls_watcher(

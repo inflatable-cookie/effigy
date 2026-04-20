@@ -389,6 +389,8 @@ pub struct ManifestContainerDnsConfig {
     #[serde(default)]
     pub port: Option<u16>,
     #[serde(default)]
+    pub service: Option<String>,
+    #[serde(default)]
     pub routes: Vec<ManifestContainerDnsRouteConfig>,
 }
 
@@ -400,6 +402,8 @@ pub struct ManifestContainerDnsRouteConfig {
     pub tls: Option<bool>,
     #[serde(default)]
     pub port: Option<u16>,
+    #[serde(default)]
+    pub service: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1134,6 +1138,7 @@ primary_service = "app"
 domain = "clientname.test"
 tls = true
 port = 4173
+service = "app"
 "#,
         )
         .expect("parse containers");
@@ -1149,6 +1154,7 @@ port = 4173
         assert_eq!(dns.domain, "clientname.test");
         assert_eq!(dns.tls, Some(true));
         assert_eq!(dns.port, Some(4173));
+        assert_eq!(dns.service.as_deref(), Some("app"));
     }
 
     #[test]
@@ -1163,6 +1169,7 @@ domain = "clientname.test"
         assert_eq!(parsed.domain, "clientname.test");
         assert_eq!(parsed.tls, None);
         assert_eq!(parsed.port, None);
+        assert_eq!(parsed.service, None);
     }
 
     #[test]
@@ -1171,8 +1178,8 @@ domain = "clientname.test"
             r#"
 domain = "clientname.test"
 routes = [
-  { domain = "admin.clientname.test", port = 8081 },
-  { domain = "mailpit.clientname.test", port = 8025, tls = true }
+  { domain = "admin.clientname.test", port = 8081, service = "admin" },
+  { domain = "mailpit.clientname.test", port = 8025, tls = true, service = "mailpit" }
 ]
 "#,
         )
@@ -1181,9 +1188,11 @@ routes = [
         assert_eq!(parsed.routes.len(), 2);
         assert_eq!(parsed.routes[0].domain, "admin.clientname.test");
         assert_eq!(parsed.routes[0].port, Some(8081));
+        assert_eq!(parsed.routes[0].service.as_deref(), Some("admin"));
         assert_eq!(parsed.routes[0].tls, None);
         assert_eq!(parsed.routes[1].domain, "mailpit.clientname.test");
         assert_eq!(parsed.routes[1].port, Some(8025));
+        assert_eq!(parsed.routes[1].service.as_deref(), Some("mailpit"));
         assert_eq!(parsed.routes[1].tls, Some(true));
     }
 

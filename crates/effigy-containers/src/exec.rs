@@ -218,6 +218,12 @@ pub fn run_docker_capture(
 
 pub fn list_running_compose_containers() -> Result<Vec<RunningComposeContainer>, ContainerExecError>
 {
+    list_running_compose_containers_for_profile("default")
+}
+
+pub fn list_running_compose_containers_for_profile(
+    profile: &str,
+) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
     let output = match resolve_compose_backend() {
         ComposeBackend::Docker => run_command_capture(
             Path::new("."),
@@ -231,7 +237,7 @@ pub fn list_running_compose_containers() -> Result<Vec<RunningComposeContainer>,
             &[
                 "nerdctl",
                 "--profile",
-                "default",
+                profile,
                 "--",
                 "ps",
                 "--format",

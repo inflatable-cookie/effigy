@@ -1,7 +1,7 @@
 # 007 Distribution Release And Consumer Rollout Strict Lane
 
 Status: active
-Updated: 2026-04-17
+Updated: 2026-04-20
 Roadmap: `g02.007`
 
 ## Context
@@ -66,17 +66,21 @@ The release-prep hardening chain is real:
 That hardening detour is now fully closed:
 
 - `cargo run --bin effigy -- qa:ci` passes
-- `cargo run --bin effigy -- release simulate` now reports
-  `Ready to prepare and execute: yes`
-- the live release-prep target is the deliberate `v0.3` cut, not a `v0.2.14`
-  patch line that this repo no longer intends to ship
+- the live release-prep target is the deliberate `v0.3.0` cut, not a
+  `v0.2.14` patch line that this repo no longer intends to ship
 
-The next move is no longer another hardening batch.
+What changed since the earlier closeout checkpoint:
 
-Release execution is technically ready and `115` is complete.
+- `115` remains valid closure history, but `305` is now the live checkpoint
+  that aligns the lane on the deliberate `v0.3.0` target
+- the release gate stack is currently green:
+  `build`, `format`, `metadata`, `qa`, `smoke`, and `test` all pass from
+  `cargo run --bin effigy -- release status --check-gates`
+- the built-in release flow still suggests `0.2.14` by default without an
+  override, so the intended cut remains an explicit `0.3.0` operator choice
 
-The remaining gate is now deliberate release execution discipline, not product
-sequencing.
+That means the technical prep-alignment work is done. What remains is explicit
+human-approved release execution, not more hidden prep debt.
 
 Supported-boundary rule for this lane:
 
@@ -114,7 +118,8 @@ claims.
 
 ## Next Task
 
-Return to `115` and the release protocol surfaces for deliberate `v0.3`
-release prep.
+Stop in planning until explicit release intent is provided.
 
-Stop before any irreversible release action unless explicitly requested.
+If release execution is requested, start with:
+
+`cargo run --bin effigy -- release prepare --yes --version 0.3.0 --check-gates`

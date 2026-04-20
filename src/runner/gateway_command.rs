@@ -6,10 +6,13 @@ use effigy_cli::{GatewayArgs, GatewaySubcommand, InternalGatewayArgs};
 use effigy_gateway::routes::RouteTable;
 use effigy_gateway::server::{self, GatewayConfig, GatewayStatus};
 use effigy_gateway::tls::TlsConfig;
+use effigy_ui::theme::{resolve_color_enabled, Theme};
+use effigy_ui::theme::is_ci_environment;
+use effigy_ui::OutputMode;
 use serde_json::json;
+use std::io::IsTerminal;
 
 use super::error::RunnerError;
-#[cfg(test)]
 use daemon::normalize_gateway_daemon_output;
 use daemon::{spawn_gateway_daemon, stop_gateway_process, wait_for_pid_file};
 #[cfg(all(test, target_os = "macos"))]
@@ -28,6 +31,9 @@ mod elevation;
 
 pub(super) const GATEWAY_DIR_NAME: &str = ".effigy/gateway";
 pub(super) const GATEWAY_ESCALATED_ENV: &str = "EFFIGY_GATEWAY_ESCALATED";
+pub(super) const GATEWAY_KEEP_RESOLVER_ENV: &str = "EFFIGY_GATEWAY_KEEP_RESOLVER";
+const GATEWAY_STARTUP_NOTICE: &str =
+    "gateway is down; starting local DNS/proxy (may prompt for password)";
 
 pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
     match args.subcommand {
@@ -39,18 +45,37 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
 }
 
 pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<(), RunnerError> {
-    let status = ProcessCommand::new("sh")
+    if gateway_is_running()? {
+        return Ok(());
+    }
+    emit_gateway_startup_notice();
+    let output = ProcessCommand::new("sh")
         .arg("-lc")
         .arg(command)
-        .status()
+        .output()
         .map_err(RunnerError::Cwd)?;
-    if status.success() {
+    if output.status.success() {
         Ok(())
     } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let detail = if !stderr.is_empty() {
+            normalize_gateway_daemon_output(&stderr)
+        } else if !stdout.is_empty() {
+            normalize_gateway_daemon_output(&stdout)
+        } else {
+            "gateway startup failed without diagnostic output".to_owned()
+        };
         Err(RunnerError::task_invocation(format!(
-            "managed gateway auto-start failed: `{command}` exited with {status}"
+            "managed gateway auto-start failed: `{command}` exited with {}: {detail}",
+            output.status
         )))
     }
+}
+
+pub(in crate::runner) fn gateway_is_running() -> Result<bool, RunnerError> {
+    let config = gateway_config()?;
+    Ok(server::get_status(&config).is_ok())
 }
 
 pub(super) fn run_internal_gateway(_args: InternalGatewayArgs) -> Result<String, RunnerError> {
@@ -110,7 +135,11 @@ fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
     {
         return run_gateway_elevated(GatewaySubcommand::Down, output_json);
     }
-    let warnings = uninstall_resolver_if_needed(&config);
+    let warnings = if keep_gateway_resolver_on_down() {
+        Vec::new()
+    } else {
+        uninstall_resolver_if_needed(&config)
+    };
 
     if let Some(ref running) = status {
         stop_gateway_process(running.pid)?;
@@ -152,6 +181,12 @@ fn run_gateway_down(output_json: bool) -> Result<String, RunnerError> {
             config_dir_display(&config)
         ),
     })
+}
+
+fn keep_gateway_resolver_on_down() -> bool {
+    std::env::var(GATEWAY_KEEP_RESOLVER_ENV)
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"))
 }
 
 fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
@@ -220,6 +255,21 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
     lines.extend(routes.iter().map(render_route_line));
 
     Ok(lines.join("\n"))
+}
+
+fn emit_gateway_startup_notice() {
+    if !std::io::stderr().is_terminal() || is_ci_environment() {
+        return;
+    }
+    eprintln!(
+        "{} {}",
+        crate::runner::tasks_view::style_text(
+            resolve_color_enabled(OutputMode::from_env(), std::io::stderr().is_terminal()),
+            Theme::default().warning,
+            "[gateway]"
+        ),
+        GATEWAY_STARTUP_NOTICE
+    );
 }
 
 fn run_gateway_setup_tls(output_json: bool) -> Result<String, RunnerError> {
@@ -587,6 +637,7 @@ mod tests {
                 Route {
                     domain: "demo.test".to_owned(),
                     target: "127.0.0.1:8080".to_owned(),
+                    dns_ip: None,
                     source: RouteSource::Manual,
                     project: "/tmp/demo".to_owned(),
                     tls: false,

@@ -15,7 +15,7 @@ Resolution: cattle-grid/build
 status: ok
 catalog: cattle-grid
 task: build
-lock_scopes: task:build
+lock_scopes: task:cattle-grid/build
 evidence:
 - selected catalog via explicit prefix `cattle-grid`
 

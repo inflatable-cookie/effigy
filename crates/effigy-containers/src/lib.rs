@@ -88,6 +88,7 @@ pub struct EffectiveDnsRoute {
     pub domain: String,
     pub tls: bool,
     pub port: Option<u16>,
+    pub service: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -479,6 +480,7 @@ fn build_effective_policy(
             domain: dns.domain.clone(),
             tls: dns.tls.unwrap_or(false),
             port: dns.port,
+            service: dns.service.filter(|value| !value.trim().is_empty()),
         });
     }
     for route in dns.routes {
@@ -489,6 +491,7 @@ fn build_effective_policy(
             domain: route.domain,
             tls: route.tls.unwrap_or(false),
             port: route.port,
+            service: route.service.filter(|value| !value.trim().is_empty()),
         });
     }
     let host = config.host.as_ref().cloned().unwrap_or_default();

@@ -1,6 +1,6 @@
 # 301 Implement Per-Route DNS IP Foundation
 
-Status: staged
+Status: landed
 Updated: 2026-04-20
 Roadmap: `g02.020`
 Spec: `docs/specs/020-multi-project-gateway-expansion-and-service-dns-strict-lane.md`
@@ -47,9 +47,15 @@ carry a per-route DNS target without changing the shipped HTTP proxy contract.
 
 ## Result
 
-Staged. This card exists so `g02.020` can resume on one explicit execution
-move instead of reopening the design handoff each time.
+Landed. The gateway route model now carries an optional `dns_ip`, DNS answers
+prefer that route-specific IP when present, and ordinary HTTP routes still
+fall back to the gateway-wide default path without changing proxy behavior.
+
+This batch also refreshed the registration seam so the new route shape builds
+cleanly outside the gateway crate, keeping the rest of the product path honest
+for the later TCP-service work.
 
 ## Next Task
 
-Execute this card when `g02.020` becomes the active resumed lane.
+Execute `302` to choose whether loopback-IP allocation or HTTP post-start
+published-port discovery should come second in `g02.020`.
