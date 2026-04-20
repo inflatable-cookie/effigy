@@ -94,7 +94,6 @@ fn test_policy(profile: &str) -> EffectiveContainerPolicy {
         pull_production_hook: None,
         health_check: None,
         health_timeout_secs: 60,
-        ui_tabs: vec![],
         workspace_user: None,
         workspace_home: None,
         on_task_exit: ManifestContainerOnTaskExit::Stop,

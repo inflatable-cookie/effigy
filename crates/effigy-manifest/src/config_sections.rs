@@ -376,8 +376,6 @@ pub struct ManifestContainerConfig {
     pub workspace: Option<ManifestContainerWorkspaceConfig>,
     #[serde(default)]
     pub data: Option<ManifestContainerDataConfig>,
-    #[serde(default)]
-    pub ui: Option<ManifestContainerUiConfig>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
@@ -509,13 +507,6 @@ pub struct ManifestContainerDataConfig {
     pub media: Vec<String>,
     #[serde(default)]
     pub pull_production: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ManifestContainerUiConfig {
-    #[serde(default)]
-    pub tabs: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize, Default)]

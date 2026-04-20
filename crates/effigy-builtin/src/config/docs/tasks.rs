@@ -233,9 +233,6 @@ pub(super) fn containers_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
         "ports = [\"8080:80\", \"3306:3306\"]",
         "mounts = [\"./:/workspace\"]",
         "",
-        "[containers.web.ui]",
-        "tabs = [\"overview\", \"app\", \"db\", \"proxy\"]",
-        "",
     ]
 }
 

@@ -93,9 +93,6 @@ timeout_secs = 60
 ports = ["8080:80", "3306:3306"]
 mounts = ["./:/workspace"]
 
-[containers.web.ui]
-tabs = ["overview", "app", "db"]
-
 [distribution.package]
 name = "effigy"
 repo-url = "https://github.com/inflatable-cookie/effigy.git"

@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use effigy_containers::exec::{list_running_compose_containers_for_profile, RunningComposeContainer};
+use effigy_containers::exec::{
+    list_running_compose_containers_for_profile, RunningComposeContainer,
+};
 use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_gateway::registration::{deregister_route, register_route, RouteRegistration};
 
@@ -240,11 +242,7 @@ fn parse_port_range(raw: &str) -> Result<(u16, u16), String> {
 
 fn non_runtime_listener_for_port(port: u16) -> Result<Option<String>, RunnerError> {
     let output = Command::new("lsof")
-        .args([
-            "-nP",
-            &format!("-iTCP:{port}"),
-            "-sTCP:LISTEN",
-        ])
+        .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN"])
         .output();
     let Ok(output) = output else {
         return Ok(None);
@@ -253,7 +251,11 @@ fn non_runtime_listener_for_port(port: u16) -> Result<Option<String>, RunnerErro
         return Ok(None);
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines().skip(1).filter(|line| !line.trim().is_empty()) {
+    for line in stdout
+        .lines()
+        .skip(1)
+        .filter(|line| !line.trim().is_empty())
+    {
         let mut fields = line.split_whitespace();
         let command = fields.next().unwrap_or_default().trim();
         let pid = fields.next().and_then(|raw| raw.parse::<u32>().ok());
@@ -465,7 +467,6 @@ mod tests {
             pull_production_hook: None,
             health_check: None,
             health_timeout_secs: 60,
-            ui_tabs: vec![],
             workspace_user: None,
             workspace_home: None,
             on_task_exit: ManifestContainerOnTaskExit::Stop,
@@ -666,9 +667,9 @@ mod tests {
         let error = validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
             .expect_err("mismatched published port should fail");
         assert!(
-            error
-                .to_string()
-                .contains("gateway registration refuses to target an unrelated host listener"),
+            error.to_string().contains(
+                "gateway registration refuses to target an unrelated runtime binding"
+            ),
             "got: {error}"
         );
     }
@@ -696,5 +697,4 @@ mod tests {
         assert!(listener_command_looks_runtime_managed("colima"));
         assert!(!listener_command_looks_runtime_managed("Python"));
     }
-
 }

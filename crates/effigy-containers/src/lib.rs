@@ -75,7 +75,6 @@ pub struct EffectiveContainerPolicy {
     pub pull_production_hook: Option<String>,
     pub health_check: Option<String>,
     pub health_timeout_secs: u64,
-    pub ui_tabs: Vec<String>,
     pub workspace_user: Option<String>,
     pub workspace_home: Option<String>,
     pub on_task_exit: ManifestContainerOnTaskExit,
@@ -352,7 +351,6 @@ pub fn load_inline_workspace_container_policy(
         pull_production_hook: None,
         health_check: None,
         health_timeout_secs: DEFAULT_HEALTH_TIMEOUT_SECS,
-        ui_tabs: Vec::new(),
         workspace_user: None,
         workspace_home: None,
         on_task_exit: ManifestContainerOnTaskExit::Stop,
@@ -497,11 +495,6 @@ fn build_effective_policy(
     let host = config.host.as_ref().cloned().unwrap_or_default();
     let data = config.data.as_ref().cloned().unwrap_or_default();
     let health = config.health.as_ref().cloned().unwrap_or_default();
-    let ui_tabs = config
-        .ui
-        .as_ref()
-        .map(|value| value.tabs.clone())
-        .unwrap_or_default();
     let workspace = config.workspace.as_ref();
     let lifecycle = config.lifecycle.as_ref();
     let _ = containers;
@@ -533,7 +526,6 @@ fn build_effective_policy(
         pull_production_hook: data.pull_production,
         health_check: health.check,
         health_timeout_secs: health.timeout_secs.unwrap_or(DEFAULT_HEALTH_TIMEOUT_SECS),
-        ui_tabs,
         workspace_user: workspace
             .and_then(|value| value.user.as_deref())
             .map(str::trim)

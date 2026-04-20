@@ -423,7 +423,6 @@ mod tests {
             health: None,
             host: None,
             data: None,
-            ui: None,
             workspace: None,
         };
         let root = temp_repo("working-dir");
@@ -477,7 +476,6 @@ mod tests {
             health: None,
             host: None,
             data: None,
-            ui: None,
             workspace: None,
         };
 

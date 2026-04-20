@@ -130,9 +130,6 @@ timeout_secs = 60
 [containers.web.host]
 ports = ["8080:80", "3306:3306"]
 mounts = ["./:/workspace"]
-
-[containers.web.ui]
-tabs = ["overview", "app", "db", "proxy"]
 ```
 
 Current v1 rules:
@@ -166,7 +163,7 @@ Attached-session rule:
 - `on_task_exit = "stop"` is the default shutdown posture
 - interactive terminals now use Effigy's multi-tab session runtime with:
   - an `overview` tab that refreshes status and shutdown policy
-  - one or more service log tabs derived from `ui.tabs` and `primary_service`
+  - a primary-service log tab derived from `primary_service`
 - non-interactive runs fall back to a stream-mode overview plus primary-service
   log follow so task aliases can still run honestly in plain subprocess
   environments

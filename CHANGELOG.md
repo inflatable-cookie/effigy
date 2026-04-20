@@ -35,6 +35,10 @@ During v0.x, MINOR bumps may include breaking changes.
   plan/docs output, and trigger the shipped `effigy gateway up` path before
   the managed runtime starts.
 ### Fixed
+- Remove the unused `[containers.<name>.ui]` config surface and its
+  `ui_tabs` status/report output; attached container sessions now always
+  render the built-in `overview` plus `primary_service` tabs instead of
+  pretending repos can shape that dead UI path.
 - Start the gateway for workspace-seeded managed dev tasks too, so
   `managed.gateway = true` now applies on the TUI workspace handoff path
   instead of only on the later in-process managed runtime branch.

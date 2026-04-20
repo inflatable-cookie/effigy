@@ -622,10 +622,11 @@ fn infer_direct_compose_host_ports(
     compose_file: &Path,
     project_name: &str,
 ) -> Result<Vec<String>, ContainerPolicyError> {
-    let content = std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
-        path: compose_file.to_path_buf(),
-        error,
-    })?;
+    let content =
+        std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
+            path: compose_file.to_path_buf(),
+            error,
+        })?;
     let parsed: YamlValue = serde_yaml::from_str(&content).map_err(|error| {
         ContainerPolicyError::TaskInvocation(format!(
             "compose file for `{project_name}` is invalid YAML: {error}"
