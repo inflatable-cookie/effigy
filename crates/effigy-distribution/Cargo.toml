@@ -7,6 +7,8 @@ description = "Distribution policy contracts for Effigy"
 
 [dependencies]
 effigy-manifest = { path = "../effigy-manifest" }
+effigy-ui = { path = "../effigy-ui" }
+anstyle = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 regex = "1"
 serde_json = "1"

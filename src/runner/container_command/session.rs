@@ -17,7 +17,7 @@ use crate::runner::manifest::ManifestContainerOnTaskExit;
 use effigy_process::ProcessSpec;
 use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
 
-use super::gateway_registration::deregister_gateway_route_for_container;
+use super::gateway_registration::deregister_gateway_routes_for_container;
 use super::signals::{
     install_stop_requested_flag, spawn_docker_inherit, terminate_inherited_child_graceful,
 };
@@ -129,10 +129,10 @@ pub(super) fn render_attached_session_closeout(
     termination_reason: &str,
 ) -> Result<String, RunnerError> {
     let mut shutdown_applied = false;
-    let mut gateway_domain_removed = None;
+    let mut gateway_domains_removed = Vec::new();
     if policy.on_task_exit == ManifestContainerOnTaskExit::Stop {
         shutdown_container_via_exec(repo_root, policy)?;
-        gateway_domain_removed = deregister_gateway_route_for_container(policy)?;
+        gateway_domains_removed = deregister_gateway_routes_for_container(policy)?;
         shutdown_applied = true;
     }
     let mut rendered = render_attached_session_closeout_text(
@@ -141,7 +141,7 @@ pub(super) fn render_attached_session_closeout(
         termination_reason,
         shutdown_applied,
     );
-    if let Some(domain) = gateway_domain_removed {
+    for domain in gateway_domains_removed {
         rendered.push('\n');
         rendered.push_str(&format!("[gateway] removed {domain}"));
     }

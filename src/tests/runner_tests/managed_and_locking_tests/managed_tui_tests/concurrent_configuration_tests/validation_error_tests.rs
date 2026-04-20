@@ -54,8 +54,17 @@ concurrent = [{ name = "term", task = "shell" }]
             workspace: "managed-lifecycle-missing-managed-flag",
             manifest: r#"[tasks.dev]
 mode = "tui"
-container_session = "web"
+workspace = "app"
 concurrent = [{ role = "lifecycle" }]
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 "#,
             expected_task: "dev",
             expected_process: "process",
@@ -72,17 +81,26 @@ container_lifecycle = true
 "#,
             expected_task: "dev",
             expected_process: "process",
-            expected_detail_substring: Some("requires `container_session = \"<name>\"`"),
+            expected_detail_substring: Some("requires a container-backed execution binding"),
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-lifecycle-rejects-run",
             manifest: r#"[tasks.dev]
 mode = "tui"
-container_session = "web"
+workspace = "app"
 concurrent = [{ role = "lifecycle", run = "printf nope" }]
 
 [tasks.dev.managed]
 container_lifecycle = true
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 "#,
             expected_task: "dev",
             expected_process: "process",
@@ -96,14 +114,23 @@ concurrent = [{ role = "shell" }]
 "#,
             expected_task: "dev",
             expected_process: "process",
-            expected_detail_substring: Some("`role = \"shell\"` requires `container_session = \"<name>\"`"),
+            expected_detail_substring: Some("`role = \"shell\"` requires a container-backed execution binding"),
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-shell-rejects-run",
             manifest: r#"[tasks.dev]
 mode = "tui"
-container_session = "web"
+workspace = "app"
 concurrent = [{ role = "shell", run = "printf nope" }]
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 "#,
             expected_task: "dev",
             expected_process: "process",
@@ -121,17 +148,26 @@ health_wait = true
 "#,
             expected_task: "dev",
             expected_process: "process",
-            expected_detail_substring: Some("`role = \"lifecycle\"` requires `container_session = \"<name>\"`"),
+            expected_detail_substring: Some("`role = \"lifecycle\"` requires a container-backed execution binding"),
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-health-wait-missing-lifecycle",
             manifest: r#"[tasks.dev]
 mode = "tui"
-container_session = "web"
+workspace = "app"
 concurrent = [{ name = "api", run = "printf api" }]
 
 [tasks.dev.managed]
 health_wait = true
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 "#,
             expected_task: "dev",
             expected_process: "managed",
@@ -141,12 +177,21 @@ health_wait = true
             workspace: "managed-ready-message-requires-health-wait",
             manifest: r#"[tasks.dev]
 mode = "tui"
-container_session = "web"
+workspace = "app"
 concurrent = [{ role = "lifecycle" }]
 
 [tasks.dev.managed]
 container_lifecycle = true
 ready_message = "http://project.test"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 "#,
             expected_task: "dev",
             expected_process: "managed",
@@ -164,17 +209,26 @@ gateway = true
 "#,
             expected_task: "dev",
             expected_process: "process",
-            expected_detail_substring: Some("`role = \"lifecycle\"` requires `container_session = \"<name>\"`"),
+            expected_detail_substring: Some("`role = \"lifecycle\"` requires a container-backed execution binding"),
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-gateway-missing-lifecycle",
             manifest: r#"[tasks.dev]
 mode = "tui"
-container_session = "web"
+workspace = "app"
 concurrent = [{ name = "api", run = "printf api" }]
 
 [tasks.dev.managed]
 gateway = true
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 "#,
             expected_task: "dev",
             expected_process: "managed",

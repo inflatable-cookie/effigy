@@ -15,9 +15,14 @@ impl<W: Write> PlainRenderer<W> {
             if let Ok(style) = ProgressStyle::with_template("{spinner} {msg}") {
                 spinner.set_style(style);
             }
-            spinner.set_message(label.to_owned());
+            let styled_label = self.style_text(self.theme.muted, label);
+            spinner.set_message(styled_label);
             spinner.enable_steady_tick(std::time::Duration::from_millis(80));
-            return Ok(Box::new(IndicatifSpinnerHandle::new(spinner)));
+            return Ok(Box::new(IndicatifSpinnerHandle::new(
+                spinner,
+                self.color_enabled,
+                self.theme.muted,
+            )));
         }
         self.render_step(label, StepState::Running)?;
         Ok(Box::new(NoopSpinnerHandle))

@@ -3,8 +3,8 @@ use crate::runner::tests::prelude::{
     assert_managed_non_zero_exit_case_table, assert_managed_output_case_table,
     assert_managed_profile_not_found_case_table, assert_managed_stream_builtin_test_case_table,
     lock_test, managed_stream_env, write_managed_stream_profile_manifest, write_root_manifest,
-    ManagedInvocation, ManagedNonZeroExitCase, ManagedOutputCase, ManagedProfileNotFoundCase,
-    ManagedStreamBuiltinTestCase, Path,
+    EnvGuard, ManagedInvocation, ManagedNonZeroExitCase, ManagedOutputCase,
+    ManagedProfileNotFoundCase, ManagedStreamBuiltinTestCase, Path,
 };
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -66,14 +66,91 @@ fn setup_managed_stream_lifecycle(root: &Path) {
         root,
         r#"[tasks.dev]
 mode = "tui"
-container_session = "web"
+workspace = "app"
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
-  { name = "window", run = "sh -lc 'sleep 1; exit 0'", start = 2, tab = 2, start_after_ms = 300, shutdown_on_exit = true }
+  { name = "window", run = "true", start = 2, tab = 2, start_after_ms = 300, shutdown_on_exit = true }
 ]
 
 [tasks.dev.managed]
 container_lifecycle = true
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+"#,
+    );
+}
+
+fn setup_managed_stream_lifecycle_workspace_binding(root: &Path) {
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+mode = "tui"
+workspace = "app"
+concurrent = [
+  { role = "lifecycle", start = 1, tab = 1 },
+  { name = "window", run = "true", start = 2, tab = 2, start_after_ms = 300, shutdown_on_exit = true }
+]
+
+[tasks.dev.managed]
+container_lifecycle = true
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "demo-web-dev"
+primary_service = "app"
+"#,
+    );
+    fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
+}
+
+fn setup_managed_stream_lifecycle_inline_workspace_binding(root: &Path) {
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+mode = "tui"
+workspace = "app"
+concurrent = [
+  { role = "lifecycle", start = 1, tab = 1 },
+  { name = "window", run = "true", start = 2, tab = 2, start_after_ms = 300, shutdown_on_exit = true }
+]
+
+[tasks.dev.managed]
+container_lifecycle = true
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+workdir = "."
+container = { image = "alpine:latest", mount = "./:/workspace" }
 "#,
     );
 }
@@ -83,7 +160,7 @@ fn setup_managed_stream_readiness(root: &Path) {
         root,
         r#"[tasks.dev]
 mode = "tui"
-container_session = "web"
+workspace = "app"
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "sh -lc 'sleep 1; exit 0'", start = 2, tab = 2, shutdown_on_exit = true }
@@ -93,6 +170,15 @@ concurrent = [
 container_lifecycle = true
 health_wait = true
 ready_message = "http://project.test"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 "#,
     );
 }
@@ -102,7 +188,7 @@ fn setup_managed_stream_gateway(root: &Path) {
         root,
         r#"[tasks.dev]
 mode = "tui"
-container_session = "web"
+workspace = "app"
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "sh -lc 'sleep 1; exit 0'", start = 2, tab = 2, shutdown_on_exit = true }
@@ -113,6 +199,15 @@ container_lifecycle = true
 gateway = true
 health_wait = true
 ready_message = "http://project.test"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 
 [containers]
 default = "web"
@@ -138,13 +233,61 @@ domain = "project.test"
     .expect("write docker compose");
 }
 
+fn setup_managed_stream_container_routed_task_ref(root: &Path) {
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+mode = "tui"
+workspace = "app"
+concurrent = [
+  { role = "lifecycle", start = 1, tab = 1 },
+  { task = "api", start = 2, tab = 2 },
+  { name = "window", run = "sh -lc 'sleep 1; exit 0'", start = 3, tab = 3, shutdown_on_exit = true }
+]
+
+[tasks.dev.managed]
+container_lifecycle = true
+
+[tasks.api]
+run = "printf host-inline-api"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "demo-web-dev"
+primary_service = "app"
+
+[containers.web.host]
+ports = ["8080:80"]
+"#,
+    );
+    fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
+}
+
 fn write_fake_effigy(root: &Path) -> std::path::PathBuf {
     let script = root.join("fake-effigy.sh");
     let log = root.join("fake-effigy.log");
     fs::write(
         &script,
         format!(
-            "#!/bin/sh\nlog='{}'\ncase \"$1\" in\n  container)\n    shift\n    name='default'\n    case \"$1\" in\n      up|down|status) ;;\n      *) name=\"$1\"; shift ;;\n    esac\n    sub=\"$1\"\n    shift\n    case \"$sub\" in\n      up)\n        printf 'up:%s\\n' \"$name\" >> \"$log\"\n        exit 0\n        ;;\n      status)\n        printf 'status:%s\\n' \"$name\" >> \"$log\"\n        printf 'fake-status-%s\\n' \"$name\"\n        exit 0\n        ;;\n      down)\n        printf 'down:%s\\n' \"$name\" >> \"$log\"\n        exit 0\n        ;;\n      shell)\n        printf 'shell:%s\\n' \"$name\" >> \"$log\"\n        exit 0\n        ;;\n      *)\n        printf 'unexpected-container:%s %s\\n' \"$name\" \"$sub\" >> \"$log\"\n        exit 1\n        ;;\n    esac\n    ;;\n  gateway)\n    shift\n    case \"$1\" in\n      up)\n        printf 'gateway-up\\n' >> \"$log\"\n        exit 0\n        ;;\n      *)\n        printf 'unexpected-gateway:%s\\n' \"$*\" >> \"$log\"\n        exit 1\n        ;;\n    esac\n    ;;\n  *)\n    printf 'unexpected:%s\\n' \"$*\" >> \"$log\"\n    exit 1\n    ;;\nesac\n",
+            "#!/bin/sh\nlog='{}'\ncase \"$1\" in\n  container)\n    shift\n    name='default'\n    case \"$1\" in\n      up|down|status) ;;\n      *) name=\"$1\"; shift ;;\n    esac\n    sub=\"$1\"\n    shift\n    case \"$sub\" in\n      up)\n        printf 'up:%s\\n' \"$name\" >> \"$log\"\n        exit 0\n        ;;\n      status)\n        printf 'status:%s\\n' \"$name\" >> \"$log\"\n        printf 'fake-status-%s\\n' \"$name\"\n        exit 0\n        ;;\n      down)\n        printf 'down:%s\\n' \"$name\" >> \"$log\"\n        exit 0\n        ;;\n      shell)\n        printf 'shell:%s\\n' \"$name\" >> \"$log\"\n        exit 0\n        ;;\n      *)\n        printf 'unexpected-container:%s %s\\n' \"$name\" \"$sub\" >> \"$log\"\n        exit 1\n        ;;\n    esac\n    ;;\n  gateway)\n    shift\n    case \"$1\" in\n      up)\n        printf 'gateway-up\\n' >> \"$log\"\n        exit 0\n        ;;\n      *)\n        printf 'unexpected-gateway:%s\\n' \"$*\" >> \"$log\"\n        exit 1\n        ;;\n    esac\n    ;;\n  exec)\n    shift\n    printf 'exec:%s\\n' \"$*\" >> \"$log\"\n    printf 'fake-exec\\n'\n    exit 0\n    ;;\n  *)\n    printf 'task:%s\\n' \"$*\" >> \"$log\"\n    printf 'fake-task-%s\\n' \"$1\"\n    exit 0\n    ;;\nesac\n",
             log.display()
         ),
     )
@@ -155,6 +298,46 @@ fn write_fake_effigy(root: &Path) -> std::path::PathBuf {
     perms.set_mode(0o755);
     fs::set_permissions(&script, perms).expect("chmod fake effigy");
     script
+}
+
+fn write_fake_container_runtime(root: &Path) -> EnvGuard {
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir fake runtime bin");
+
+    let docker = bin_dir.join("docker");
+    let docker_log = root.join("fake-docker.log");
+    fs::write(
+        &docker,
+        format!(
+            "#!/bin/sh\nlog='{}'\nprintf 'docker:%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = compose ]; then\n  shift\n  while [ $# -gt 0 ]; do\n    case \"$1\" in\n      -f|-p)\n        shift 2\n        ;;\n      up)\n        printf 'compose:up\\n' >> \"$log\"\n        exit 0\n        ;;\n      down)\n        printf 'compose:down\\n' >> \"$log\"\n        exit 0\n        ;;\n      ps)\n        printf 'compose:ps\\n' >> \"$log\"\n        printf 'NAME STATUS\\n'\n        exit 0\n        ;;\n      exec)\n        shift\n        service=\"$1\"\n        shift\n        printf 'compose:exec:%s:%s\\n' \"$service\" \"$*\" >> \"$log\"\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ] && [ \"$3\" = true ]; then\n          exit 0\n        fi\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ]; then\n          command=$(printf '%s' \"$3\" | sed \"s/^'//; s/'$//\")\n          eval \"$command\"\n          exit $?\n        fi\n        exec \"$@\"\n        ;;\n      *)\n        shift\n        ;;\n    esac\n  done\nfi\nexit 0\n",
+            docker_log.display()
+        ),
+    )
+    .expect("write fake docker");
+    let mut perms = fs::metadata(&docker)
+        .expect("stat fake docker")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&docker, perms).expect("chmod fake docker");
+
+    let colima = bin_dir.join("colima");
+    let colima_log = root.join("fake-colima.log");
+    fs::write(
+        &colima,
+        format!(
+            "#!/bin/sh\nlog='{}'\nprintf 'colima:%s\\n' \"$*\" >> \"$log\"\ncase \"$1\" in\n  status)\n    printf 'INFO[0000] status: Running\\n'\n    exit 0\n    ;;\n  start)\n    printf 'started\\n'\n    exit 0\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+            colima_log.display()
+        ),
+    )
+    .expect("write fake colima");
+    let mut perms = fs::metadata(&colima)
+        .expect("stat fake colima")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&colima, perms).expect("chmod fake colima");
+
+    let old_path = std::env::var("PATH").ok().unwrap_or_default();
+    EnvGuard::set_many(&[("PATH", Some(format!("{}:{old_path}", bin_dir.display())))])
 }
 
 #[test]
@@ -302,6 +485,54 @@ fn run_manifest_task_managed_stream_lifecycle_process_owns_container_shutdown() 
 }
 
 #[test]
+fn run_manifest_task_managed_stream_workspace_binding_owns_container_shutdown() {
+    let _guard = lock_test();
+    let _env = managed_stream_env();
+    let root =
+        crate::runner::tests::prelude::temp_workspace("managed-stream-lifecycle-workspace-binding");
+    setup_managed_stream_lifecycle_workspace_binding(&root);
+    let fake_effigy = write_fake_effigy(&root);
+    let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
+
+    let out =
+        crate::runner::tests::prelude::run_dev(&root, &[]).expect("managed run should succeed");
+    assert!(
+        out.contains("process `window` requested managed shutdown on exit"),
+        "got: {out}"
+    );
+
+    let log_path = root.join("fake-effigy.log");
+    wait_for_path_exists(&log_path, Duration::from_secs(2), "fake effigy log");
+    let log = fs::read_to_string(&log_path).expect("read fake effigy log");
+    assert!(log.contains("down:web"), "log: {log}");
+}
+
+#[test]
+fn run_manifest_task_managed_stream_inline_workspace_binding_owns_container_shutdown() {
+    let _guard = lock_test();
+    let _env = managed_stream_env();
+    let root = crate::runner::tests::prelude::temp_workspace(
+        "managed-stream-lifecycle-inline-workspace-binding",
+    );
+    setup_managed_stream_lifecycle_inline_workspace_binding(&root);
+    let _runtime = write_fake_container_runtime(&root);
+
+    let out =
+        crate::runner::tests::prelude::run_dev(&root, &[]).expect("managed run should succeed");
+    assert!(
+        out.contains("process `window` requested managed shutdown on exit"),
+        "got: {out}"
+    );
+
+    let docker_log_path = root.join("fake-docker.log");
+    wait_for_path_exists(&docker_log_path, Duration::from_secs(2), "fake docker log");
+    let log = fs::read_to_string(&docker_log_path).expect("read fake docker log");
+    assert!(log.contains("compose:ps"), "log: {log}");
+    assert!(log.contains("compose:exec:workspace"), "log: {log}");
+    assert!(log.contains("compose:down"), "log: {log}");
+}
+
+#[test]
 fn run_manifest_task_managed_stream_projects_ready_message_from_lifecycle_owner() {
     let _guard = lock_test();
     let _env = managed_stream_env();
@@ -337,4 +568,54 @@ fn run_manifest_task_managed_stream_auto_starts_gateway_before_runtime() {
     let log = fs::read_to_string(&log_path).expect("read fake effigy log");
     assert!(log.contains("gateway-up"), "log: {log}");
     assert!(log.contains("up:web"), "log: {log}");
+}
+
+#[test]
+fn run_manifest_task_managed_stream_handoff_skips_gateway_and_container_lifecycle_commands() {
+    let _guard = lock_test();
+    let _env = managed_stream_env();
+    let _handoff = EnvGuard::set_many(&[(
+        "EFFIGY_INTERNAL_CONTAINER_HANDOFF",
+        Some("1".to_owned()),
+    )]);
+    let root =
+        crate::runner::tests::prelude::temp_workspace("managed-stream-container-handoff-local");
+    setup_managed_stream_gateway(&root);
+    let fake_effigy = write_fake_effigy(&root);
+    let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
+
+    let out =
+        crate::runner::tests::prelude::run_dev(&root, &[]).expect("managed run should succeed");
+    assert!(out.contains("process `window` requested managed shutdown on exit"), "got: {out}");
+    assert!(out.contains("managed lifecycle: workspace container is already running in handoff mode"), "got: {out}");
+
+    let log_path = root.join("fake-effigy.log");
+    assert!(
+        !log_path.exists(),
+        "managed handoff should not invoke fake host effigy, but log exists: {}",
+        log_path.display()
+    );
+}
+
+#[test]
+fn run_manifest_task_managed_stream_resolves_task_refs_before_container_exec_when_container_backed()
+{
+    let _guard = lock_test();
+    let _env = managed_stream_env();
+    let root =
+        crate::runner::tests::prelude::temp_workspace("managed-stream-container-routed-task-ref");
+    setup_managed_stream_container_routed_task_ref(&root);
+    let fake_effigy = write_fake_effigy(&root);
+    let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
+
+    let out =
+        crate::runner::tests::prelude::run_dev(&root, &[]).expect("managed run should succeed");
+    assert!(out.contains("[api] fake-exec"), "got: {out}");
+
+    let log_path = root.join("fake-effigy.log");
+    wait_for_path_exists(&log_path, Duration::from_secs(2), "fake effigy log");
+    let log = fs::read_to_string(&log_path).expect("read fake effigy log");
+    assert!(log.contains("exec:--repo"), "log: {log}");
+    assert!(log.contains("printf host-inline-api"), "log: {log}");
+    assert!(!log.contains("task:api"), "log: {log}");
 }

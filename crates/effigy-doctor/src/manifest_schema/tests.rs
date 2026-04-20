@@ -226,6 +226,37 @@ port = 4173
 }
 
 #[test]
+fn validate_manifest_schema_accepts_systems_and_workspace_shortcut() {
+    let manifest: Value = toml::from_str(
+        r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = { image = "node:22", mount = "./:/workspace" }
+workdir = "/workspace"
+
+[tasks.dev]
+workspace = "app"
+run = "npm run dev"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.is_empty(),
+        "expected no schema findings, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
 fn validate_manifest_schema_rejects_non_integer_container_dns_port() {
     let manifest: Value = toml::from_str(
         r#"

@@ -94,6 +94,7 @@ pub fn run_multiprocess_tui(
         &mut runtime.terminal,
         &runtime.supervisor,
         std::mem::take(&mut runtime.state.observed_non_zero),
+        &runtime.state.logs,
         &runtime.state.process_started_at,
         &runtime.diagnostics,
     )?;

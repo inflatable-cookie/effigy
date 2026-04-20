@@ -81,14 +81,25 @@ Repos can now expose one attached container session through an ordinary task
 alias:
 
 ```toml
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
 [tasks."dev:services"]
-container_session = "default"
+workspace = "app"
 ```
 
 Rules:
 
-- `container_session = "default"` resolves `[containers].default`
-- other values name one explicit container directly
+- `workspace = "app"` resolves through `systems.default` unless the task sets
+  an explicit `system = "<name>"`
+- the workspace then resolves its backing container from
+  `[systems.<name>.workspaces.<workspace>]`
 - this keeps `effigy dev` repo-owned instead of making `dev` globally special
 - the task path uses the same attached container runtime as
   `effigy container up`
@@ -203,7 +214,8 @@ The first real consumer proof for this surface used `contact-patch`:
 - detached bring-up proved against the repo's existing `docker-compose.yml`
 - running status and graceful teardown were exercised on the real machine
 - repo-owned task composition is now also proven through
-  `tasks."dev:services".container_session = "default"`
+  `tasks."dev:services".workspace = "app"` plus
+  `[systems.dev.workspaces.app].container = "web"`
 - the proof also exposed and closed two host-level gaps:
   - fallback to `colima nerdctl` when `docker` is absent
   - Colima running-state detection needed to accept lowercase `running`

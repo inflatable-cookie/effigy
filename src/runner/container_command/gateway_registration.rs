@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use effigy_containers::EffectiveContainerPolicy;
+use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_gateway::registration::{deregister_route, register_route, RouteRegistration};
 
 use crate::runner::error::RunnerError;
@@ -15,33 +15,38 @@ pub(in crate::runner) struct RegisteredGatewayRoute {
     pub(in crate::runner) tls: bool,
 }
 
-pub(in crate::runner) fn register_gateway_route_for_container(
+pub(in crate::runner) fn register_gateway_routes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-) -> Result<Option<RegisteredGatewayRoute>, RunnerError> {
-    let Some(route) = resolve_gateway_route(policy)? else {
-        return Ok(None);
-    };
-    if route.tls {
-        ensure_gateway_tls_cert(&route.domain)?;
+) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
+    let routes = resolve_gateway_routes(policy)?;
+    for route in &routes {
+        if route.tls {
+            ensure_gateway_tls_cert(&route.domain)?;
+        }
     }
     let route_table_path = gateway_route_table_path()?;
-    register_gateway_route_at(&route_table_path, repo_root, &route)?;
-    Ok(Some(route))
+    for route in &routes {
+        register_gateway_route_at(&route_table_path, repo_root, route)?;
+    }
+    Ok(routes)
 }
 
-pub(in crate::runner) fn deregister_gateway_route_for_container(
+pub(in crate::runner) fn deregister_gateway_routes_for_container(
     policy: &EffectiveContainerPolicy,
-) -> Result<Option<String>, RunnerError> {
-    let Some(domain) = policy.dns_domain.as_deref() else {
-        return Ok(None);
-    };
-    if policy.dns_tls {
-        remove_gateway_tls_cert(domain)?;
+) -> Result<Vec<String>, RunnerError> {
+    let routes = resolve_gateway_routes(policy)?;
+    if routes.is_empty() {
+        return Ok(Vec::new());
     }
     let route_table_path = gateway_route_table_path()?;
-    deregister_gateway_route_at(&route_table_path, domain)?;
-    Ok(Some(domain.to_owned()))
+    for route in &routes {
+        if route.tls {
+            remove_gateway_tls_cert(&route.domain)?;
+        }
+        deregister_gateway_route_at(&route_table_path, &route.domain)?;
+    }
+    Ok(routes.into_iter().map(|route| route.domain).collect())
 }
 
 fn register_gateway_route_at(
@@ -67,22 +72,26 @@ fn deregister_gateway_route_at(route_table_path: &Path, domain: &str) -> Result<
         .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
-fn resolve_gateway_route(
+fn resolve_gateway_routes(
     policy: &EffectiveContainerPolicy,
-) -> Result<Option<RegisteredGatewayRoute>, RunnerError> {
-    let Some(domain) = policy.dns_domain.as_deref() else {
-        return Ok(None);
-    };
-    let host_port = first_declared_host_port(policy)?;
-    Ok(Some(RegisteredGatewayRoute {
-        domain: domain.to_owned(),
-        target: format!("127.0.0.1:{host_port}"),
-        tls: policy.dns_tls,
-    }))
+) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
+    let mut routes = Vec::new();
+    for dns_route in &policy.dns_routes {
+        let host_port = selected_host_port_for_route(policy, dns_route)?;
+        routes.push(RegisteredGatewayRoute {
+            domain: dns_route.domain.clone(),
+            target: format!("127.0.0.1:{host_port}"),
+            tls: dns_route.tls,
+        });
+    }
+    Ok(routes)
 }
 
-fn first_declared_host_port(policy: &EffectiveContainerPolicy) -> Result<u16, RunnerError> {
-    if let Some(port) = policy.dns_port {
+fn selected_host_port_for_route(
+    policy: &EffectiveContainerPolicy,
+    dns_route: &EffectiveDnsRoute,
+) -> Result<u16, RunnerError> {
+    if let Some(port) = dns_route.port {
         return if policy.ports_declared_explicitly {
             selected_declared_host_port(policy, port)
         } else {
@@ -94,8 +103,8 @@ fn first_declared_host_port(policy: &EffectiveContainerPolicy) -> Result<u16, Ru
     }
     let Some(raw) = policy.declared_ports.first() else {
         return Err(RunnerError::task_invocation(format!(
-            "container `{}` declares `[containers.{}.dns]` but no `host.ports`; declare an explicit host HTTP port before enabling gateway registration",
-            policy.name, policy.name
+            "container `{}` declares gateway DNS routes but no `host.ports`; declare an explicit host HTTP port before enabling gateway registration",
+            policy.name
         )));
     };
     let host = raw.split(':').next().unwrap_or_default().trim();
@@ -119,9 +128,9 @@ fn selected_declared_host_port(
         return Ok(selected_port);
     }
     Err(RunnerError::task_invocation(format!(
-        "container `{}` declares `[containers.{}.dns].port = {selected_port}` but `host.ports` does not expose that host port",
-        policy.name, policy.name
-    )))
+            "container `{}` declares a gateway DNS route on host port {selected_port} but `host.ports` does not expose that host port",
+            policy.name
+        )))
 }
 
 fn selected_effective_container_port(
@@ -135,9 +144,9 @@ fn selected_effective_container_port(
         }
     }
     Err(RunnerError::task_invocation(format!(
-        "container `{}` declares `[containers.{}.dns].port = {selected_port}` but the generated compose does not expose that container port",
-        policy.name, policy.name
-    )))
+            "container `{}` declares a gateway DNS route for container port {selected_port} but the generated compose does not expose that container port",
+            policy.name
+        )))
 }
 
 fn first_effective_http_host_port(policy: &EffectiveContainerPolicy) -> Result<u16, RunnerError> {
@@ -153,8 +162,8 @@ fn first_effective_http_host_port(policy: &EffectiveContainerPolicy) -> Result<u
     }
     first_binding.ok_or_else(|| {
         RunnerError::task_invocation(format!(
-            "container `{}` declares `[containers.{}.dns]` but no effective published ports are available for gateway registration",
-            policy.name, policy.name
+            "container `{}` declares gateway DNS routes but no effective published ports are available for gateway registration",
+            policy.name
         ))
     })
 }
@@ -221,6 +230,11 @@ mod tests {
             dns_domain: Some("clientname.test".to_owned()),
             dns_tls: true,
             dns_port: None,
+            dns_routes: vec![effigy_containers::EffectiveDnsRoute {
+                domain: "clientname.test".to_owned(),
+                tls: true,
+                port: None,
+            }],
             declared_ports: vec!["8080:80".to_owned()],
             ports_declared_explicitly: true,
             declared_mounts: vec![],
@@ -237,9 +251,8 @@ mod tests {
 
     #[test]
     fn resolves_gateway_route_from_first_declared_host_port() {
-        let route = resolve_gateway_route(&test_policy())
-            .expect("route")
-            .expect("some route");
+        let routes = resolve_gateway_routes(&test_policy()).expect("routes");
+        let route = routes.first().expect("some route");
         assert_eq!(route.domain, "clientname.test");
         assert_eq!(route.target, "127.0.0.1:8080");
         assert!(route.tls);
@@ -249,14 +262,15 @@ mod tests {
     fn skips_gateway_route_when_dns_is_not_configured() {
         let mut policy = test_policy();
         policy.dns_domain = None;
-        assert_eq!(resolve_gateway_route(&policy).expect("route"), None);
+        policy.dns_routes.clear();
+        assert!(resolve_gateway_routes(&policy).expect("routes").is_empty());
     }
 
     #[test]
     fn errors_when_dns_is_configured_without_host_ports() {
         let mut policy = test_policy();
         policy.declared_ports.clear();
-        let error = resolve_gateway_route(&policy).expect_err("should fail");
+        let error = resolve_gateway_routes(&policy).expect_err("should fail");
         assert!(error.to_string().contains("no `host.ports`"));
     }
 
@@ -264,11 +278,11 @@ mod tests {
     fn uses_explicit_dns_port_when_present() {
         let mut policy = test_policy();
         policy.dns_port = Some(9001);
+        policy.dns_routes[0].port = Some(9001);
         policy.declared_ports = vec!["5432:5432".to_owned(), "9001:9001".to_owned()];
 
-        let route = resolve_gateway_route(&policy)
-            .expect("route")
-            .expect("some route");
+        let routes = resolve_gateway_routes(&policy).expect("routes");
+        let route = routes.first().expect("some route");
         assert_eq!(route.target, "127.0.0.1:9001");
     }
 
@@ -276,9 +290,10 @@ mod tests {
     fn errors_when_explicit_dns_port_is_not_declared() {
         let mut policy = test_policy();
         policy.dns_port = Some(9001);
+        policy.dns_routes[0].port = Some(9001);
 
-        let error = resolve_gateway_route(&policy).expect_err("should fail");
-        assert!(error.to_string().contains("dns].port = 9001"));
+        let error = resolve_gateway_routes(&policy).expect_err("should fail");
+        assert!(error.to_string().contains("host port 9001"));
     }
 
     #[test]
@@ -286,11 +301,11 @@ mod tests {
         let mut policy = test_policy();
         policy.ports_declared_explicitly = false;
         policy.dns_port = Some(8025);
+        policy.dns_routes[0].port = Some(8025);
         policy.declared_ports = vec!["8126:1025".to_owned(), "8125:8025".to_owned()];
 
-        let route = resolve_gateway_route(&policy)
-            .expect("route")
-            .expect("some route");
+        let routes = resolve_gateway_routes(&policy).expect("routes");
+        let route = routes.first().expect("some route");
         assert_eq!(route.target, "127.0.0.1:8125");
     }
 
@@ -307,9 +322,8 @@ mod tests {
         let route_table_path = dir.join("routes.json");
         let repo_root = dir.join("repo");
         std::fs::create_dir_all(&repo_root).expect("mkdir repo");
-        let route = resolve_gateway_route(&test_policy())
-            .expect("route")
-            .expect("some route");
+        let routes = resolve_gateway_routes(&test_policy()).expect("routes");
+        let route = routes.first().expect("some route");
 
         register_gateway_route_at(&route_table_path, &repo_root, &route).expect("register");
         let table = RouteTable::load(&route_table_path).expect("load registered route table");
@@ -320,5 +334,25 @@ mod tests {
         deregister_gateway_route_at(&route_table_path, "clientname.test").expect("deregister");
         let table = RouteTable::load(&route_table_path).expect("load deregistered route table");
         assert!(table.lookup("clientname.test").is_none());
+    }
+
+    #[test]
+    fn resolves_multiple_gateway_routes_for_one_container() {
+        let mut policy = test_policy();
+        policy
+            .dns_routes
+            .push(effigy_containers::EffectiveDnsRoute {
+                domain: "admin.clientname.test".to_owned(),
+                tls: false,
+                port: Some(9001),
+            });
+        policy.declared_ports = vec!["8080:80".to_owned(), "9001:9001".to_owned()];
+
+        let routes = resolve_gateway_routes(&policy).expect("routes");
+        assert_eq!(routes.len(), 2);
+        assert_eq!(routes[0].domain, "clientname.test");
+        assert_eq!(routes[0].target, "127.0.0.1:8080");
+        assert_eq!(routes[1].domain, "admin.clientname.test");
+        assert_eq!(routes[1].target, "127.0.0.1:9001");
     }
 }

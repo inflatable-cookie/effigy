@@ -17,7 +17,7 @@ and media lifecycle on the generated-compose path. The remaining roadmap work
 has moved past core lifecycle primitives into orchestration.
 
 Task-owned seeding should remain task-based. It already fits the shipped
-`container_session` and Rhai/exec surfaces better than a new data-specific
+workspace binding and Rhai/exec surfaces better than a new data-specific
 abstraction. The next product gap that still needs real ownership is bounded
 production-pull orchestration.
 

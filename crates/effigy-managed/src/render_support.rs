@@ -20,7 +20,7 @@ where
             cwd: process.cwd,
             start_after_ms: process.start_after_ms,
             shutdown_on_exit: process.shutdown_on_exit,
-            pty: true,
+            pty: process.role == ManagedProcessRole::Shell,
             env: BTreeMap::new(),
         })
         .collect()
@@ -192,5 +192,50 @@ fn managed_gateway_auto_start_label(enabled: bool) -> &'static str {
         "enabled"
     } else {
         "disabled"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::managed_process_specs;
+    use crate::{ManagedProcessRole, ManagedProcessSpec};
+    use std::path::PathBuf;
+
+    #[test]
+    fn managed_process_specs_only_enable_pty_for_shell_role() {
+        let specs = managed_process_specs([
+            ManagedProcessSpec {
+                name: "lifecycle".to_owned(),
+                role: ManagedProcessRole::Lifecycle,
+                cwd: PathBuf::from("/tmp/repo"),
+                run: "printf lifecycle".to_owned(),
+                start_after_ms: 0,
+                shutdown_on_exit: true,
+                service: None,
+            },
+            ManagedProcessSpec {
+                name: "api".to_owned(),
+                role: ManagedProcessRole::Standard,
+                cwd: PathBuf::from("/tmp/repo/api"),
+                run: "printf api".to_owned(),
+                start_after_ms: 0,
+                shutdown_on_exit: false,
+                service: None,
+            },
+            ManagedProcessSpec {
+                name: "shell".to_owned(),
+                role: ManagedProcessRole::Shell,
+                cwd: PathBuf::from("/tmp/repo"),
+                run: "sh".to_owned(),
+                start_after_ms: 0,
+                shutdown_on_exit: false,
+                service: Some("workspace".to_owned()),
+            },
+        ]);
+
+        assert_eq!(specs.len(), 3);
+        assert!(!specs[0].pty, "lifecycle should use plain pipes");
+        assert!(!specs[1].pty, "standard tabs should use plain pipes");
+        assert!(specs[2].pty, "shell tab should keep PTY transport");
     }
 }

@@ -10,7 +10,9 @@ pub struct ManifestTask {
     #[serde(default)]
     pub host: Option<bool>,
     #[serde(default)]
-    pub container_session: Option<String>,
+    pub system: Option<String>,
+    #[serde(default)]
+    pub workspace: Option<String>,
     #[serde(default)]
     pub lock: Option<String>,
     #[serde(default)]
@@ -53,6 +55,8 @@ pub struct ManifestManagedConcurrentEntry {
     pub label: Option<String>,
     #[serde(default)]
     pub role: Option<String>,
+    #[serde(default)]
+    pub service: Option<String>,
     #[serde(default)]
     pub task: Option<String>,
     #[serde(default)]

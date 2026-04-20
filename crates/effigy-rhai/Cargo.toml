@@ -7,6 +7,8 @@ description = "Rhai runtime and host API contracts for Effigy"
 
 [dependencies]
 effigy-core = { path = "../effigy-core" }
+effigy-ui = { path = "../effigy-ui" }
+anstyle = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 rhai = { version = "1", features = ["serde"] }
 serde_json = "1"

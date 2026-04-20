@@ -34,7 +34,7 @@ fn setup_lifecycle_entry(root: &Path) {
         root,
         r#"[tasks.dev]
 mode = "tui"
-container_session = "web"
+workspace = "app"
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "api", run = "printf api", start = 2, tab = 2, shutdown_on_exit = true }
@@ -42,6 +42,15 @@ concurrent = [
 
 [tasks.dev.managed]
 container_lifecycle = true
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 "#,
     );
 }
@@ -51,7 +60,7 @@ fn setup_lifecycle_and_shell_entry(root: &Path) {
         root,
         r#"[tasks.dev]
 mode = "tui"
-container_session = "web"
+workspace = "app"
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "terminal", role = "shell", start = 2, tab = 2 },
@@ -60,6 +69,42 @@ concurrent = [
 
 [tasks.dev.managed]
 container_lifecycle = true
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+"#,
+    );
+}
+
+fn setup_lifecycle_and_shell_service_entry(root: &Path) {
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+mode = "tui"
+workspace = "app"
+concurrent = [
+  { role = "lifecycle", start = 1, tab = 1 },
+  { name = "terminal", role = "shell", service = "workspace", start = 2, tab = 2 },
+  { name = "api", run = "printf api", start = 3, tab = 3, shutdown_on_exit = true }
+]
+
+[tasks.dev.managed]
+container_lifecycle = true
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 "#,
     );
 }
@@ -69,7 +114,7 @@ fn setup_lifecycle_readiness_entry(root: &Path) {
         root,
         r#"[tasks.dev]
 mode = "tui"
-container_session = "web"
+workspace = "app"
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "terminal", role = "shell", start = 2, tab = 2 },
@@ -80,6 +125,15 @@ concurrent = [
 container_lifecycle = true
 health_wait = true
 ready_message = "http://project.test"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 "#,
     );
 }
@@ -89,7 +143,7 @@ fn setup_lifecycle_gateway_and_readiness_entry(root: &Path) {
         root,
         r#"[tasks.dev]
 mode = "tui"
-container_session = "web"
+workspace = "app"
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "terminal", role = "shell", start = 2, tab = 2 },
@@ -101,6 +155,15 @@ container_lifecycle = true
 gateway = true
 health_wait = true
 ready_message = "http://project.test"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 "#,
     );
 }
@@ -170,6 +233,19 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
             ],
             expected_absent: &[],
             setup: setup_lifecycle_and_shell_entry,
+        },
+        ManagedOutputCase {
+            workspace: "managed-lifecycle-and-shell-service-entry",
+            invocation: ManagedInvocation::DevWithRepo,
+            args: &[],
+            expected: &[
+                "Managed Task Plan",
+                "tab-order: lifecycle, terminal, api",
+                "shell --service workspace --command true",
+                "shell --service workspace",
+            ],
+            expected_absent: &[],
+            setup: setup_lifecycle_and_shell_service_entry,
         },
         ManagedOutputCase {
             workspace: "managed-lifecycle-readiness-entry",

@@ -1,5 +1,5 @@
 use super::super::command_context::current_working_dir;
-use super::super::manifest::task_runtime::ManifestTask;
+use super::super::manifest::{selector_lock_name, task_lock_scope, task_runtime::ManifestTask};
 use super::super::util::parse_task_reference_invocation;
 use super::model::ResolveProbe;
 use crate::runner::deferred_builtins_from_catalogs;
@@ -27,6 +27,7 @@ pub(in crate::runner) fn build_resolve_probe(
     let probe = match select_catalog_and_task(&selector, catalogs, &cwd) {
         Ok(selection) => build_selected_probe(
             &raw_selector,
+            &selector,
             &selector_task_name,
             &selector_args,
             selection,
@@ -59,6 +60,7 @@ pub(in crate::runner) fn build_resolve_probe(
 
 fn build_selected_probe(
     raw_selector: &str,
+    selector: &effigy_tasks::TaskSelector,
     selector_task_name: &str,
     selector_args: &[String],
     selection: TaskSelection<'_>,
@@ -69,7 +71,7 @@ fn build_selected_probe(
             selector_task_name,
             Some(selection.catalog.alias.clone()),
             Some(selection.catalog.catalog_root.display().to_string()),
-            lock_scopes_for_task(selector_task_name, selection.task, None),
+            lock_scopes_for_task(selector, selection.task, None),
             selection.evidence,
         )
         .into_json();
@@ -79,7 +81,7 @@ fn build_selected_probe(
         .first()
         .cloned()
         .unwrap_or_else(|| DEFAULT_MANAGED_PROFILE.to_owned());
-    let lock_scopes = lock_scopes_for_task(selector_task_name, selection.task, Some(&profile_name));
+    let lock_scopes = lock_scopes_for_task(selector, selection.task, Some(&profile_name));
     if !has_concurrent_profile(selection.task, &profile_name) {
         let available_display = render_available_profiles(selection.task);
         return ResolveProbe::error(
@@ -123,11 +125,12 @@ fn is_builtin_or_catalogs_task(task_name: &str) -> bool {
 }
 
 fn lock_scopes_for_task(
-    task_name: &str,
+    selector: &effigy_tasks::TaskSelector,
     task: &ManifestTask,
     profile: Option<&str>,
 ) -> Vec<String> {
-    let mut scopes = vec![crate::runner::manifest::task_lock_scope(task, task_name).label()];
+    let task_name = selector_lock_name(selector);
+    let mut scopes = vec![task_lock_scope(task, selector).label()];
     if task.mode.as_deref() == Some("tui") {
         let profile_name = profile.unwrap_or(DEFAULT_MANAGED_PROFILE);
         scopes.push(format!("profile:{task_name}/{profile_name}"));

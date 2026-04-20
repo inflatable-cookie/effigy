@@ -47,6 +47,7 @@ impl SessionState {
             shutdown_on_exit_processes: HashSet::new(),
             shutdown_requested: false,
             spinner_tick: 0,
+            vt_enabled_processes: HashSet::new(),
             vt_parsers,
             vt_saw_chunk,
         }

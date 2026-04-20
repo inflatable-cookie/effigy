@@ -94,7 +94,7 @@ What is now real in the product path:
 
 The final proof is now real:
 
-- task-owned seeding stayed on the shipped task, `container_session`, exec, and
+- task-owned seeding stayed on the shipped task, workspace binding, exec, and
   Rhai surfaces rather than widening into a new product abstraction batch
 - one bounded real-project proof landed through `farmyard`
 - the proof exposed and closed two real product gaps: runtime volume-name

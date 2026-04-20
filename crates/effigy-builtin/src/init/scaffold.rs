@@ -12,6 +12,7 @@ pub(super) fn render_init_scaffold() -> String {
         "# [tasks.dev]",
         "# mode = \"tui\"",
         "# fail_on_non_zero = true",
+        "# workspace = \"app\"",
         "# concurrent = [",
         "#   { task = \"api\", start = 1, tab = 1 },",
         "#   { run = \"printf worker\", start = 2, tab = 2 }",

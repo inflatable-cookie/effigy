@@ -497,13 +497,29 @@ impl From<effigy_containers::exec::ContainerExecError> for RunnerError {
                 code,
                 stdout,
                 stderr,
-            } => Self::TaskCommandFailure {
-                command,
-                code,
-                stdout,
-                stderr,
-            },
+            } => map_container_exec_failure(command, code, stdout, stderr),
         }
+    }
+}
+
+fn map_container_exec_failure(
+    command: String,
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+) -> RunnerError {
+    let lowered = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+    if lowered.contains("error retrieving current runtime: empty value") {
+        return RunnerError::TaskInvocation(format!(
+            "Colima profile runtime state is corrupted and Effigy could not recover it automatically.\nprofile command: `{command}`\nnext: restart or delete the affected Colima profile, then retry the Effigy command.\ndetails:\n{stderr}"
+        ));
+    }
+
+    RunnerError::TaskCommandFailure {
+        command,
+        code,
+        stdout,
+        stderr,
     }
 }
 

@@ -99,6 +99,7 @@ pub(super) fn validate_concurrent_array(
                 "name",
                 "label",
                 "role",
+                "service",
                 "task",
                 "run",
                 "start",

@@ -3,7 +3,8 @@ use effigy_cli::{
     BootstrapArgs, Command, ContainerArgs, ContainerSubcommand, ContractsArgs, ContractsSubcommand,
     DemoArgs, DemoListQuery, DemoSubcommand, DistributionArgs, DistributionSubcommand, DoctorArgs,
     ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic, ReleaseArgs, ReleaseSubcommand,
-    ServiceArgs, ServiceSubcommand, TaskInvocation, TasksArgs,
+    ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs,
+    WorkspaceArgs,
 };
 
 #[test]
@@ -11,6 +12,8 @@ fn help_topic_label_maps_all_topics() {
     assert_eq!(help_topic_label(HelpTopic::General), "general");
     assert_eq!(help_topic_label(HelpTopic::Changelog), "changelog");
     assert_eq!(help_topic_label(HelpTopic::Exec), "exec");
+    assert_eq!(help_topic_label(HelpTopic::System), "system");
+    assert_eq!(help_topic_label(HelpTopic::Workspace), "workspace");
     assert_eq!(help_topic_label(HelpTopic::Gateway), "gateway");
     assert_eq!(help_topic_label(HelpTopic::Service), "service");
     assert_eq!(help_topic_label(HelpTopic::Demo), "demo");
@@ -40,6 +43,18 @@ fn command_kind_and_name_maps_command_variants() {
     });
     let service = Command::Service(ServiceArgs {
         subcommand: ServiceSubcommand::List,
+        repo_override: None,
+        output_json: false,
+    });
+    let system = Command::System(SystemArgs {
+        subcommand: SystemSubcommand::Status,
+        system: None,
+        repo_override: None,
+        output_json: false,
+    });
+    let workspace = Command::Workspace(WorkspaceArgs {
+        workspace: None,
+        system: None,
         repo_override: None,
         output_json: false,
     });
@@ -113,6 +128,14 @@ fn command_kind_and_name_maps_command_variants() {
     );
     assert_eq!(command_kind_and_name(&help), ("help", "doctor".to_owned()));
     assert_eq!(command_kind_and_name(&exec), ("exec", "exec".to_owned()));
+    assert_eq!(
+        command_kind_and_name(&system),
+        ("system", "system".to_owned())
+    );
+    assert_eq!(
+        command_kind_and_name(&workspace),
+        ("workspace", "workspace".to_owned())
+    );
     assert_eq!(
         command_kind_and_name(&gateway),
         ("gateway", "gateway".to_owned())

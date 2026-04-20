@@ -165,6 +165,20 @@ fn parse_container_help_is_scoped() {
 }
 
 #[test]
+fn parse_system_help_is_scoped() {
+    let cmd = parse_command(vec!["system".to_owned(), "--help".to_owned()])
+        .expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::System));
+}
+
+#[test]
+fn parse_workspace_help_is_scoped() {
+    let cmd = parse_command(vec!["workspace".to_owned(), "--help".to_owned()])
+        .expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Workspace));
+}
+
+#[test]
 fn parse_help_command_alias_is_general_help() {
     let cmd = parse_command(vec!["help".to_owned()]).expect("parse should succeed");
     assert_eq!(cmd, Command::Help(HelpTopic::General));

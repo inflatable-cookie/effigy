@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::io::IsTerminal;
 use std::path::Path;
 
 use effigy_catalog::volumes::classify_for_reset;
@@ -10,25 +11,33 @@ use effigy_containers::{
         shutdown_container as shutdown_container_via_exec,
     },
     health::probe_health_status,
-    load_container_policy, reset_report, status_report, up_detached_report,
+    load_container_exec_working_dir, load_container_policy, reset_report, status_report,
+    up_detached_report,
     validate_container_policy, EffectiveAttachMode, EffectiveComposeSource,
+    EffectiveContainerPolicy,
 };
+use effigy_ui::theme::{resolve_color_enabled, Theme};
+use effigy_ui::OutputMode;
 
 use super::gateway_registration::{
-    deregister_gateway_route_for_container, register_gateway_route_for_container,
+    deregister_gateway_routes_for_container, register_gateway_routes_for_container,
 };
 use super::session::{render_attached_session_closeout, run_attached_container_session};
 use super::signals::{install_stop_requested_flag, run_docker_capture, spawn_docker_inherit};
 use super::support::{
-    annotate_left_running_shared_services, annotate_registered_gateway_route,
-    annotate_removed_gateway_route, annotate_shared_service_notes, ensure_shared_services_running,
+    annotate_left_running_shared_services, annotate_registered_gateway_routes,
+    annotate_removed_gateway_routes, annotate_shared_service_notes, ensure_shared_services_running,
     remove_reset_volumes, rewrite_manifest_for_ejected_compose, wait_for_container_ready,
 };
 use super::{render_container_report, RunnerError};
+use crate::runner::exec_command::{
+    append_color_exec_env, probe_container_capabilities, run_compose_exec,
+};
 
 const DEFAULT_CONTAINER_SHELL: &str = "sh";
+const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF=1";
 
-pub(in crate::runner) fn run_task_container_session(
+pub(in crate::runner) fn run_task_workspace_session(
     repo_root: &Path,
     task_name: &str,
     container_name: Option<&str>,
@@ -36,7 +45,7 @@ pub(in crate::runner) fn run_task_container_session(
 ) -> Result<String, RunnerError> {
     if output_json {
         return Err(RunnerError::task_invocation(format!(
-            "task `{task_name}` uses `container_session` and does not support `--json` because the session is interactive"
+            "task `{task_name}` resolves to an attached workspace container session and does not support `--json` because the session is interactive"
         )));
     }
 
@@ -126,12 +135,12 @@ pub(super) fn run_container_up(
     {
         return render_attached_session_closeout(repo_root, &policy, colima_started, "signal");
     }
-    let gateway_route = register_gateway_route_for_container(repo_root, &policy)?;
+    let gateway_routes = register_gateway_routes_for_container(repo_root, &policy)?;
 
     if attach_mode == EffectiveAttachMode::Detached {
         let mut report = up_detached_report(&policy, colima_started, health);
         annotate_shared_service_notes(&mut report, &shared_service_notes);
-        annotate_registered_gateway_route(&mut report, gateway_route.as_ref());
+        annotate_registered_gateway_routes(&mut report, &gateway_routes);
         return Ok(render_container_report(report, output_json));
     }
 
@@ -155,10 +164,10 @@ pub(super) fn run_container_down(
     if colima_running {
         shutdown_container_via_exec(repo_root, &policy)?;
     }
-    let removed_gateway_domain = deregister_gateway_route_for_container(&policy)?;
+    let removed_gateway_domains = deregister_gateway_routes_for_container(&policy)?;
     let mut report = down_report(&policy, colima_running);
     annotate_left_running_shared_services(&mut report, &policy);
-    annotate_removed_gateway_route(&mut report, removed_gateway_domain.as_deref());
+    annotate_removed_gateway_routes(&mut report, &removed_gateway_domains);
     Ok(render_container_report(report, output_json))
 }
 
@@ -204,10 +213,10 @@ pub(super) fn run_container_reset(
             )?;
         }
     }
-    let removed_gateway_domain = deregister_gateway_route_for_container(&policy)?;
+    let removed_gateway_domains = deregister_gateway_routes_for_container(&policy)?;
     let mut report = reset_report(&policy, colima_running, keep_data, volume_actions.as_ref());
     annotate_left_running_shared_services(&mut report, &policy);
-    annotate_removed_gateway_route(&mut report, removed_gateway_domain.as_deref());
+    annotate_removed_gateway_routes(&mut report, &removed_gateway_domains);
     Ok(render_container_report(report, output_json))
 }
 
@@ -325,6 +334,70 @@ pub(super) fn run_container_shell(
         ));
     }
 
+    let (policy, service, working_dir) =
+        resolve_container_shell_session(repo_root, name, service)?;
+    let shell = if command.is_none() {
+        probe_container_capabilities(repo_root, &policy, &service)?.shell
+    } else {
+        format!("/bin/{DEFAULT_CONTAINER_SHELL}")
+    };
+    let args = build_container_shell_args(&policy, &service, command, &working_dir, &shell);
+    let status =
+        run_compose_exec(repo_root, &policy, &args, false, "docker compose exec")?.status;
+    if should_fail_container_shell_exit(command.is_some(), status.success()) {
+        return Err(RunnerError::task_invocation(format!(
+            "docker compose exec exited with status {status}"
+        )));
+    }
+    Ok(format!(
+        "{} finished container shell for `{}` service `{service}`",
+        crate::runner::tasks_view::style_text(
+            resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal()),
+            Theme::default().success,
+            "[ok]"
+        ),
+        policy.name
+    ))
+}
+
+pub(in crate::runner) fn run_container_shell_session(
+    repo_root: &Path,
+    name: Option<&str>,
+    service: Option<&str>,
+    initial_command: Option<&str>,
+) -> Result<String, RunnerError> {
+    let (policy, service, working_dir) =
+        resolve_container_shell_session(repo_root, name, service)?;
+    let shell = probe_container_capabilities(repo_root, &policy, &service)?.shell;
+    let args = build_interactive_container_shell_args(
+        &policy,
+        &service,
+        initial_command,
+        &working_dir,
+        &shell,
+    );
+    let _status = run_compose_exec(repo_root, &policy, &args, false, "docker compose exec")?
+        .status;
+    Ok(format!(
+        "{} finished container shell for `{}` service `{service}`",
+        crate::runner::tasks_view::style_text(
+            resolve_color_enabled(OutputMode::from_env(), std::io::stdout().is_terminal()),
+            Theme::default().success,
+            "[ok]"
+        ),
+        policy.name
+    ))
+}
+
+fn should_fail_container_shell_exit(command_mode: bool, success: bool) -> bool {
+    command_mode && !success
+}
+
+fn resolve_container_shell_session(
+    repo_root: &Path,
+    name: Option<&str>,
+    service: Option<&str>,
+) -> Result<(EffectiveContainerPolicy, String, std::path::PathBuf), RunnerError> {
     let policy = load_container_policy(repo_root, name)?;
     validate_container_policy(repo_root, &policy)?;
     if !colima_is_running(&policy, repo_root)? {
@@ -333,33 +406,95 @@ pub(super) fn run_container_shell(
             policy.profile, policy.name
         )));
     }
-    let service = service.unwrap_or(policy.primary_service.as_str());
-    let args = if let Some(command) = command {
-        let mut args = compose_args(&policy, ["exec", service, "sh", "-lc"]);
-        args.push(OsString::from(command));
-        args
-    } else {
-        compose_args(&policy, ["exec", service, DEFAULT_CONTAINER_SHELL])
-    };
-    let status = spawn_docker_inherit(repo_root, &policy, &args, "docker compose exec")?
-        .wait()
+    let service = service.unwrap_or(policy.primary_service.as_str()).to_owned();
+    let working_dir = load_container_exec_working_dir(repo_root, name)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    if !status.success() {
-        return Err(RunnerError::task_invocation(format!(
-            "docker compose exec exited with status {status}"
-        )));
+    Ok((policy, service, working_dir))
+}
+
+fn build_container_shell_args(
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    command: Option<&str>,
+    working_dir: &Path,
+    shell: &str,
+) -> Vec<OsString> {
+    if let Some(command) = command {
+        let mut args = compose_args(policy, ["exec", "-T", "-w"]);
+        args.push(OsString::from(working_dir));
+        append_color_exec_env(&mut args, false);
+        args.push(OsString::from("-e"));
+        args.push(OsString::from(CONTAINER_HANDOFF_ENV));
+        args.push(OsString::from(service));
+        args.push(OsString::from("sh"));
+        args.push(OsString::from("-lc"));
+        args.push(OsString::from(command));
+        return args;
     }
-    Ok(format!(
-        "[ok] finished container shell for `{}` service `{service}`",
-        policy.name
-    ))
+
+    let mut args = compose_args(policy, ["exec", "-w"]);
+    args.push(OsString::from(working_dir));
+    append_color_exec_env(&mut args, true);
+    args.push(OsString::from("-e"));
+    args.push(OsString::from(CONTAINER_HANDOFF_ENV));
+    args.push(OsString::from(service));
+    args.push(OsString::from(shell));
+    args.push(OsString::from("-i"));
+    args
+}
+
+fn build_interactive_container_shell_args(
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    initial_command: Option<&str>,
+    working_dir: &Path,
+    shell: &str,
+) -> Vec<OsString> {
+    let mut args = compose_args(policy, ["exec", "-w"]);
+    args.push(OsString::from(working_dir));
+    append_color_exec_env(&mut args, true);
+    args.push(OsString::from("-e"));
+    args.push(OsString::from(CONTAINER_HANDOFF_ENV));
+    args.push(OsString::from(service));
+    if let Some(command) = initial_command {
+        args.push(OsString::from(shell));
+        args.push(OsString::from("-lc"));
+        args.push(OsString::from(render_interactive_shell_session_command(
+            command, shell,
+        )));
+        return args;
+    }
+    args.push(OsString::from(shell));
+    args.push(OsString::from("-i"));
+    args
+}
+
+fn render_interactive_shell_session_command(initial_command: &str, shell: &str) -> String {
+    format!("{initial_command}; exec {} -i", shell_quote(shell))
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_owned();
+    }
+    if value.bytes().all(|byte| {
+        matches!(
+            byte,
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'/' | b':' | b'.' | b'_' | b'-'
+        )
+    }) {
+        return value.to_owned();
+    }
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        annotate_left_running_shared_services, annotate_shared_service_notes, run_container_eject,
-        run_container_reset,
+        annotate_left_running_shared_services, annotate_shared_service_notes,
+        build_container_shell_args, build_interactive_container_shell_args,
+        render_interactive_shell_session_command, run_container_eject, run_container_reset,
+        should_fail_container_shell_exit,
     };
     use effigy_containers::{
         down_report, up_detached_report, EffectiveComposeSource, EffectiveContainerPolicy,
@@ -401,6 +536,7 @@ mod tests {
             dns_domain: None,
             dns_tls: false,
             dns_port: None,
+            dns_routes: vec![],
             declared_ports: vec!["8080:80".to_owned()],
             ports_declared_explicitly: true,
             declared_mounts: vec![],
@@ -431,6 +567,102 @@ mod tests {
                 other => panic!("unexpected shared catalog {other}"),
             },
         }
+    }
+
+    #[test]
+    fn command_mode_shell_exec_disables_nested_tty() {
+        let policy = test_policy(vec![]);
+        let args = build_container_shell_args(
+            &policy,
+            "app",
+            Some("echo hi"),
+            Path::new("/tmp/work"),
+            "/bin/sh",
+        );
+        let rendered = args
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(rendered.windows(2).any(|window| window == ["exec", "-T"]));
+        assert!(rendered.windows(2).any(|window| window == ["-w", "/tmp/work"]));
+        assert!(rendered.windows(2).any(|window| window == ["-e", "EFFIGY_COLOR=always"]));
+        assert!(rendered.windows(2).any(|window| window == ["-e", "FORCE_COLOR=3"]));
+        assert!(rendered
+            .windows(2)
+            .any(|window| window == ["-e", "EFFIGY_INTERNAL_CONTAINER_HANDOFF=1"]));
+        assert!(rendered.ends_with(&[
+            "app".to_owned(),
+            "sh".to_owned(),
+            "-lc".to_owned(),
+            "echo hi".to_owned(),
+        ]));
+    }
+
+    #[test]
+    fn interactive_shell_exec_keeps_tty_and_sets_working_dir() {
+        let policy = test_policy(vec![]);
+        let args = build_container_shell_args(
+            &policy,
+            "app",
+            None,
+            Path::new("/workspace-root/repo"),
+            "/bin/bash",
+        );
+        let rendered = args
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(rendered.windows(2).all(|window| window != ["exec", "-T"]));
+        assert!(rendered.windows(2).any(|window| window == ["-w", "/workspace-root/repo"]));
+        assert!(rendered.windows(2).any(|window| window == ["-e", "EFFIGY_COLOR=always"]));
+        assert!(rendered.windows(2).any(|window| window == ["-e", "TERM=xterm-256color"]));
+        assert!(rendered.windows(2).any(|window| window == ["-e", "COLORTERM=truecolor"]));
+        assert!(rendered
+            .windows(2)
+            .any(|window| window == ["-e", "EFFIGY_INTERNAL_CONTAINER_HANDOFF=1"]));
+        assert!(rendered.ends_with(&[
+            "app".to_owned(),
+            "/bin/bash".to_owned(),
+            "-i".to_owned(),
+        ]));
+    }
+
+    #[test]
+    fn seeded_interactive_shell_exec_runs_command_then_stays_open() {
+        let policy = test_policy(vec![]);
+        let args = build_interactive_container_shell_args(
+            &policy,
+            "app",
+            Some("effigy dev"),
+            Path::new("/workspace-root/repo"),
+            "/bin/bash",
+        );
+        let rendered = args
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(rendered.windows(2).all(|window| window != ["exec", "-T"]));
+        assert!(rendered.ends_with(&[
+            "app".to_owned(),
+            "/bin/bash".to_owned(),
+            "-lc".to_owned(),
+            "effigy dev; exec /bin/bash -i".to_owned(),
+        ]));
+    }
+
+    #[test]
+    fn interactive_shell_session_command_quotes_shell_path() {
+        let rendered =
+            render_interactive_shell_session_command("effigy dev", "/bin/custom shell");
+        assert_eq!(rendered, "effigy dev; exec '/bin/custom shell' -i");
+    }
+
+    #[test]
+    fn interactive_shell_closeout_ignores_non_zero_exit_status() {
+        assert!(!should_fail_container_shell_exit(false, false));
+        assert!(!should_fail_container_shell_exit(false, true));
+        assert!(should_fail_container_shell_exit(true, false));
+        assert!(!should_fail_container_shell_exit(true, true));
     }
 
     #[test]

@@ -1,15 +1,30 @@
 use super::super::manifest::task_runtime::{ManifestManagedRun, ManifestTask};
-use effigy_manifest::LoadedCatalog;
+use effigy_manifest::{
+    resolve_task_execution_binding_from_systems, LoadedCatalog, ResolvedTaskExecutionBinding,
+};
 
-pub(in crate::runner) fn task_run_preview(task: &ManifestTask) -> String {
+pub(in crate::runner) fn task_run_preview(
+    catalog: &LoadedCatalog,
+    task_name: &str,
+    task: &ManifestTask,
+) -> String {
     if let Some(run) = task.run.as_ref() {
         return match run {
             ManifestManagedRun::Command(command) => command.clone(),
             ManifestManagedRun::Sequence(steps) => format!("<sequence:{}>", steps.len()),
         };
     }
-    if let Some(container_session) = task.container_session.as_deref() {
-        return format!("<container:{container_session}>");
+    if let Ok(Some(binding)) = resolve_task_execution_binding_from_systems(
+        catalog.manifest.systems.as_ref(),
+        task_name,
+        task,
+    ) {
+        return match binding {
+            ResolvedTaskExecutionBinding::Host => "<host>".to_owned(),
+            ResolvedTaskExecutionBinding::Workspace(binding) => {
+                format!("<workspace:{}:{}>", binding.system, binding.workspace)
+            }
+        };
     }
     if let Some(mode) = task.mode.as_ref() {
         return format!("<managed:{mode}>");

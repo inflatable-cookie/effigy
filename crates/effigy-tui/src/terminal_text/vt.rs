@@ -13,9 +13,7 @@ pub fn vt_logs(
     parser
         .screen_mut()
         .set_size(safe_rows as u16, panel_cols.max(1) as u16);
-    // vt100 0.15.x can panic when scrollback offset exceeds visible row count.
-    // Clamp to a safe range until we move to a parser version without this issue.
-    let max_offset = vt_max_scrollback(parser).min(safe_rows.saturating_sub(1));
+    let max_offset = vt_max_scrollback(parser);
     let clamped = if follow {
         max_offset
     } else {

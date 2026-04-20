@@ -44,6 +44,7 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
                 "lifecycle",
                 "health",
                 "host",
+                "workspace",
                 "ui",
             ],
         );
@@ -68,6 +69,9 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
         }
         if let Some(host) = table.get("host") {
             validate_container_host(context, &path, host);
+        }
+        if let Some(workspace) = table.get("workspace") {
+            validate_container_workspace(context, &path, workspace);
         }
         if let Some(ui) = table.get("ui") {
             validate_container_ui(context, &path, ui);
@@ -153,7 +157,7 @@ fn validate_container_dns(context: &mut SchemaContext<'_, '_>, base_path: &str, 
     let Some(table) = require_table(context, &path, value, "expected table") else {
         return;
     };
-    validate_allowed_keys(context, &path, table, &["domain", "tls", "port"]);
+    validate_allowed_keys(context, &path, table, &["domain", "tls", "port", "routes"]);
     validate_string_field(context, &path, table.get("domain"), "domain");
     if let Some(tls) = table.get("tls") {
         if tls.as_bool().is_none() {
@@ -171,6 +175,52 @@ fn validate_container_dns(context: &mut SchemaContext<'_, '_>, base_path: &str, 
                 SchemaContext::value_type(port),
                 "expected integer",
             );
+        }
+    }
+    if let Some(routes) = table.get("routes") {
+        let Some(entries) = routes.as_array() else {
+            context.unsupported_value(
+                &format!("{path}.routes"),
+                SchemaContext::value_type(routes),
+                "expected array of tables",
+            );
+            return;
+        };
+        for (index, entry) in entries.iter().enumerate() {
+            let route_path = format!("{path}.routes[{index}]");
+            let Some(route_table) = entry.as_table() else {
+                context.unsupported_value(
+                    &route_path,
+                    SchemaContext::value_type(entry),
+                    "expected table",
+                );
+                continue;
+            };
+            validate_allowed_keys(
+                context,
+                &route_path,
+                route_table,
+                &["domain", "tls", "port"],
+            );
+            validate_string_field(context, &route_path, route_table.get("domain"), "domain");
+            if let Some(tls) = route_table.get("tls") {
+                if tls.as_bool().is_none() {
+                    context.unsupported_value(
+                        &format!("{route_path}.tls"),
+                        SchemaContext::value_type(tls),
+                        "expected boolean",
+                    );
+                }
+            }
+            if let Some(port) = route_table.get("port") {
+                if port.as_integer().is_none() {
+                    context.unsupported_value(
+                        &format!("{route_path}.port"),
+                        SchemaContext::value_type(port),
+                        "expected integer",
+                    );
+                }
+            }
         }
     }
 }
@@ -229,6 +279,19 @@ fn validate_container_host(context: &mut SchemaContext<'_, '_>, base_path: &str,
     validate_allowed_keys(context, &path, table, &["ports", "mounts"]);
     validate_string_array(context, &format!("{path}.ports"), table.get("ports"));
     validate_string_array(context, &format!("{path}.mounts"), table.get("mounts"));
+}
+
+fn validate_container_workspace(
+    context: &mut SchemaContext<'_, '_>,
+    base_path: &str,
+    value: &Value,
+) {
+    let path = format!("{base_path}.workspace");
+    let Some(table) = require_table(context, &path, value, "expected table") else {
+        return;
+    };
+    validate_allowed_keys(context, &path, table, &["extra_mounts"]);
+    validate_string_array(context, &format!("{path}.extra_mounts"), table.get("extra_mounts"));
 }
 
 fn validate_container_ui(context: &mut SchemaContext<'_, '_>, base_path: &str, value: &Value) {

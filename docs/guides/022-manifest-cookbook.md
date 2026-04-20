@@ -10,6 +10,8 @@ If you want the narrative front doors first, start with:
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md) for the demo system
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
   for `[manifest].include` and fragment layout
+- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
+  for the composed `system` / `workspace` runtime model
 - [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md) for
   Effigy-native scripting in Rust-first repos
 

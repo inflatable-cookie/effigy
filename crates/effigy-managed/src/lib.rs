@@ -54,6 +54,7 @@ pub struct ManagedProcessSpec {
     pub role: ManagedProcessRole,
     pub run: String,
     pub cwd: PathBuf,
+    pub service: Option<String>,
     pub start_after_ms: u64,
     pub shutdown_on_exit: bool,
 }

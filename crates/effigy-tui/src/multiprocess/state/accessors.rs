@@ -63,6 +63,10 @@ impl SessionState {
         self.vt_saw_chunk.insert(process.to_owned(), value);
     }
 
+    pub fn vt_enabled_for(&self, process: &str) -> bool {
+        self.vt_enabled_processes.contains(process)
+    }
+
     pub fn logs_for(&self, process: &str) -> Option<&VecDeque<LogEntry>> {
         self.logs.get(process)
     }

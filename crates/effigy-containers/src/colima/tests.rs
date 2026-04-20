@@ -32,6 +32,19 @@ fn colima_start_command_uses_profile() {
     let cmd = colima_start_command(&policy);
     assert_eq!(cmd.program, "colima");
     assert!(cmd.args.contains(&"myprofile".to_string()));
+    assert!(cmd.args.contains(&"--dns".to_string()));
+    assert!(cmd.args.contains(&"1.1.1.1".to_string()));
+    assert!(cmd.args.contains(&"8.8.8.8".to_string()));
+    assert!(!cmd.allow_failure);
+}
+
+#[test]
+fn colima_stop_command_uses_profile() {
+    let policy = test_policy("myprofile");
+    let cmd = colima_stop_command(&policy);
+    assert_eq!(cmd.program, "colima");
+    assert!(cmd.args.contains(&"stop".to_string()));
+    assert!(cmd.args.contains(&"myprofile".to_string()));
     assert!(!cmd.allow_failure);
 }
 
@@ -73,6 +86,7 @@ fn test_policy(profile: &str) -> EffectiveContainerPolicy {
         dns_domain: None,
         dns_tls: false,
         dns_port: None,
+        dns_routes: vec![],
         declared_ports: vec![],
         ports_declared_explicitly: false,
         declared_mounts: vec![],

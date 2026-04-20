@@ -1,0 +1,916 @@
+use effigy_cli::{ContainerArgs, ContainerSubcommand, SystemArgs, SystemSubcommand, WorkspaceArgs};
+use effigy_containers::{
+    exec::{
+        colima_is_running, list_running_compose_containers, recover_colima_runtime,
+        ColimaRecoveryReport, ContainerExecError, RunningComposeContainer,
+    },
+    load_container_policy, validate_container_policy, EffectiveContainerPolicy,
+};
+use effigy_core::widgets::NoticeLevel;
+use effigy_manifest::ManifestTask;
+use effigy_ui::theme::{is_ci_environment, Theme};
+use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
+use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
+use std::process::{Command as ProcessCommand, Stdio};
+
+use crate::runner::command_context::{current_working_dir, resolve_repo_root};
+use crate::runner::container_command::{run_container, run_container_shell_session};
+use crate::runner::exec_command::copy_file_into_service;
+use crate::runner::execute::{resolve_container_execution_binding, ContainerExecutionBinding};
+use crate::runner::manifest::load_task_manifest;
+
+use super::error::RunnerError;
+
+const LINUX_WORKSPACE_EFFIGY_RELATIVE_PATH: &str =
+    ".effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu";
+const LINUX_WORKSPACE_EFFIGY_CACHE_RELATIVE_PATH: &str =
+    ".effigy/workspace-bin/linux/x86_64-unknown-linux-gnu";
+const CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH: &str = "/tmp/effigy-host";
+const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
+const EFFIGY_RELEASE_REPO_BASE_URL: &str = "https://github.com/inflatable-cookie/effigy";
+const EFFIGY_LINUX_RELEASE_TRIPLE: &str = "x86_64-unknown-linux-gnu";
+
+pub(super) fn run_system(args: SystemArgs) -> Result<String, RunnerError> {
+    let cwd = current_working_dir()?;
+    let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
+    let repo_root = resolved.resolved_root;
+    let container_name =
+        resolve_public_workspace_container(&repo_root, args.system.as_deref(), None, "system")?;
+    let progress_label = system_progress_label(&args.subcommand);
+
+    let mapped = match args.subcommand {
+        SystemSubcommand::Up => ContainerSubcommand::Up {
+            name: container_name,
+            attach: false,
+            detach: true,
+        },
+        SystemSubcommand::Down => ContainerSubcommand::Down {
+            name: container_name,
+        },
+        SystemSubcommand::Status => ContainerSubcommand::Status {
+            name: container_name,
+            all: false,
+        },
+        SystemSubcommand::Logs { follow } => ContainerSubcommand::Logs {
+            name: container_name,
+            service: None,
+            follow,
+        },
+        SystemSubcommand::Repair => {
+            let policy = load_resolved_container_policy(&repo_root, container_name.as_deref())?;
+            let mut progress = SystemProgressReporter::new(args.output_json, progress_label);
+            let result = render_system_recovery(
+                recover_colima_runtime(&policy, &repo_root).map_err(Into::<RunnerError>::into),
+                args.output_json,
+            );
+            progress.finish(result.is_ok());
+            return result;
+        }
+    };
+
+    let mut progress = SystemProgressReporter::new(args.output_json, progress_label);
+    let result = run_container(ContainerArgs {
+        subcommand: mapped,
+        repo_override: args.repo_override,
+        output_json: args.output_json,
+    });
+    progress.finish(result.is_ok());
+    result
+}
+
+pub(super) fn run_workspace(args: WorkspaceArgs) -> Result<String, RunnerError> {
+    if args.output_json {
+        return Err(RunnerError::task_invocation(
+            "`effigy workspace` does not support `--json` because it opens an interactive shell",
+        ));
+    }
+
+    let cwd = current_working_dir()?;
+    let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
+    let repo_root = resolved.resolved_root;
+    let container_name = resolve_public_workspace_container(
+        &repo_root,
+        args.system.as_deref(),
+        args.workspace.as_deref(),
+        "workspace",
+    )?;
+    run_workspace_container_session(&repo_root, container_name.as_deref(), args.repo_override, None)
+}
+
+pub(in crate::runner) fn run_workspace_seeded_session(
+    repo_root: &Path,
+    container_name: Option<&str>,
+    repo_override: Option<PathBuf>,
+    initial_command: &str,
+) -> Result<String, RunnerError> {
+    run_workspace_container_session(
+        repo_root,
+        container_name,
+        repo_override,
+        Some(initial_command),
+    )
+}
+
+fn resolve_public_workspace_container(
+    repo_root: &std::path::Path,
+    system: Option<&str>,
+    workspace: Option<&str>,
+    surface: &str,
+) -> Result<Option<String>, RunnerError> {
+    let manifest = load_task_manifest(&repo_root.join(effigy_manifest::TASK_MANIFEST_FILE))?;
+    let mut task = ManifestTask::default();
+    task.system = system.map(str::to_owned);
+    task.workspace = workspace.map(str::to_owned);
+    let binding = resolve_container_execution_binding(
+        manifest.systems.as_ref(),
+        surface,
+        &task,
+        &format!("`effigy {surface}`"),
+    )?;
+
+    match binding {
+        ContainerExecutionBinding::Container { name } => Ok(name),
+        ContainerExecutionBinding::Inline { .. } => Err(RunnerError::task_invocation(format!(
+            "`effigy {surface}` does not support inline workspace containers yet"
+        ))),
+        ContainerExecutionBinding::Host | ContainerExecutionBinding::None => {
+            Err(RunnerError::task_invocation(format!(
+                "`effigy {surface}` requires a workspace-backed system binding"
+            )))
+        }
+    }
+}
+
+fn run_workspace_container_session(
+    repo_root: &Path,
+    container_name: Option<&str>,
+    repo_override: Option<PathBuf>,
+    initial_command: Option<&str>,
+) -> Result<String, RunnerError> {
+    let container_name = container_name.map(str::to_owned);
+    let policy = load_resolved_container_policy(repo_root, container_name.as_deref())?;
+    let system_was_running = is_primary_service_running(repo_root, &policy)?;
+
+    if !system_was_running {
+        run_container(ContainerArgs {
+            subcommand: ContainerSubcommand::Up {
+                name: container_name.clone(),
+                attach: false,
+                detach: true,
+            },
+            repo_override: repo_override.clone(),
+            output_json: false,
+        })?;
+    }
+
+    ensure_workspace_effigy_available(
+        repo_root,
+        &policy,
+        container_name.as_deref(),
+        repo_override.clone(),
+    )?;
+
+    if initial_command.is_some() {
+        println!("{}", render_workspace_handoff_notice(&policy));
+    }
+
+    let shell_result = run_container_shell_session(
+        repo_root,
+        container_name.as_deref(),
+        None,
+        initial_command,
+    );
+
+    let cleanup_result = if !system_was_running {
+        let mut progress = WorkspaceShutdownProgressReporter::new();
+        run_container(ContainerArgs {
+            subcommand: ContainerSubcommand::Down {
+                name: container_name,
+            },
+            repo_override,
+            output_json: false,
+        })
+        .inspect(|_| progress.finish(true))
+        .inspect_err(|_| progress.finish(false))
+        .map(|_| ())
+    } else {
+        Ok(())
+    };
+
+    match (shell_result, cleanup_result) {
+        (Ok(output), Ok(())) => Ok(output),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(shell_error), Err(cleanup_error)) => Err(RunnerError::task_invocation(format!(
+            "{shell_error}\nworkspace cleanup also failed: {cleanup_error}"
+        ))),
+    }
+}
+
+fn load_resolved_container_policy(
+    repo_root: &std::path::Path,
+    container_name: Option<&str>,
+) -> Result<EffectiveContainerPolicy, RunnerError> {
+    let policy = load_container_policy(repo_root, container_name)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    validate_container_policy(repo_root, &policy)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    Ok(policy)
+}
+
+fn is_primary_service_running(
+    repo_root: &std::path::Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<bool, RunnerError> {
+    if !colima_is_running(policy, repo_root).map_err(Into::<RunnerError>::into)? {
+        return Ok(false);
+    }
+
+    let running = match list_running_compose_containers() {
+        Ok(running) => running,
+        Err(error) if exec_error_means_runtime_not_running(&error) => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(has_running_primary_service(
+        &running,
+        repo_root,
+        &policy.project_name,
+        &policy.primary_service,
+    ))
+}
+
+fn has_running_primary_service(
+    rows: &[RunningComposeContainer],
+    repo_root: &std::path::Path,
+    project_name: &str,
+    primary_service: &str,
+) -> bool {
+    let repo_root = repo_root.to_string_lossy();
+    rows.iter().any(|row| {
+        row.project_name.as_deref() == Some(project_name)
+            && row.working_dir.as_deref() == Some(repo_root.as_ref())
+            && row.service.as_deref() == Some(primary_service)
+    })
+}
+
+fn render_workspace_handoff_notice(policy: &EffectiveContainerPolicy) -> String {
+    let color_enabled = effigy_ui::theme::resolve_color_enabled(
+        OutputMode::from_env(),
+        std::io::stdout().is_terminal(),
+    );
+    format!(
+        "{} switching into workspace container `{}`",
+        crate::runner::tasks_view::style_text(color_enabled, Theme::default().warning, "[next]"),
+        policy.name
+    )
+}
+
+fn ensure_workspace_effigy_available(
+    workspace_repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container_name: Option<&str>,
+    repo_override: Option<PathBuf>,
+) -> Result<(), RunnerError> {
+    let artifact = ensure_linux_workspace_effigy_artifact(workspace_repo_root)?;
+    let mut progress = WorkspaceTransientProgressReporter::new(
+        repo_override.is_some(),
+        "installing linux effigy into workspace container",
+        false,
+    );
+    copy_file_into_service(
+        workspace_repo_root,
+        policy,
+        policy.primary_service.as_str(),
+        &artifact,
+        CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH,
+    )
+    .inspect_err(|_| progress.finish(false))?;
+    run_container(ContainerArgs {
+        subcommand: ContainerSubcommand::Shell {
+            name: container_name.map(str::to_owned),
+            service: Some(policy.primary_service.clone()),
+            command: Some(format!(
+                "install -m 0755 {src} {dest} && rm -f {src}",
+                src = CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH,
+                dest = CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH,
+            )),
+        },
+        repo_override,
+        output_json: false,
+    })
+    .inspect_err(|_| progress.finish(false))?;
+    progress.finish(true);
+    Ok(())
+}
+
+fn ensure_linux_workspace_effigy_artifact(workspace_repo_root: &Path) -> Result<PathBuf, RunnerError> {
+    let host_binary = std::env::current_exe().map_err(RunnerError::Cwd)?;
+    if let Some(effigy_repo_root) = sibling_effigy_repo_root(workspace_repo_root) {
+        return ensure_local_linux_workspace_effigy_artifact(&host_binary, &effigy_repo_root);
+    }
+    let current_exe = std::env::current_exe().map_err(RunnerError::Cwd)?;
+    if let Some(effigy_repo_root) = discover_effigy_repo_root(current_exe.parent()) {
+        return ensure_local_linux_workspace_effigy_artifact(&host_binary, &effigy_repo_root);
+    }
+
+    let cwd = current_working_dir()?;
+    if let Some(effigy_repo_root) = discover_effigy_repo_root(Some(cwd.as_path())) {
+        return ensure_local_linux_workspace_effigy_artifact(&host_binary, &effigy_repo_root);
+    }
+
+    ensure_downloaded_linux_workspace_effigy_artifact()
+}
+
+fn sibling_effigy_repo_root(workspace_repo_root: &Path) -> Option<PathBuf> {
+    let parent = workspace_repo_root.parent()?;
+    let sibling = parent.join("effigy");
+    looks_like_effigy_repo_root(&sibling).then_some(sibling)
+}
+
+fn discover_effigy_repo_root(start: Option<&Path>) -> Option<PathBuf> {
+    let mut current = start?;
+    loop {
+        if looks_like_effigy_repo_root(current) {
+            return Some(current.to_path_buf());
+        }
+        current = current.parent()?;
+    }
+}
+
+fn looks_like_effigy_repo_root(path: &Path) -> bool {
+    path.join("effigy.toml").is_file()
+        && path.join("tasks/effigy.tasks.toml").is_file()
+        && path.join("containers/effigy.containers.toml").is_file()
+}
+
+fn ensure_local_linux_workspace_effigy_artifact(
+    host_binary: &Path,
+    effigy_repo_root: &Path,
+) -> Result<PathBuf, RunnerError> {
+    let artifact_path = effigy_repo_root.join(LINUX_WORKSPACE_EFFIGY_RELATIVE_PATH);
+    let needs_refresh = linux_workspace_effigy_artifact_needs_refresh(host_binary, &artifact_path);
+
+    if needs_refresh {
+        emit_workspace_notice(
+            "building linux effigy artifact for workspace container access",
+            false,
+        );
+        run_linux_workspace_effigy_rehearsal(host_binary, effigy_repo_root)?;
+    }
+
+    if !artifact_path.is_file() {
+        return Err(RunnerError::task_invocation(format!(
+            "expected linux effigy artifact at `{}` after preparation",
+            artifact_path.display()
+        )));
+    }
+    Ok(artifact_path)
+}
+
+fn ensure_downloaded_linux_workspace_effigy_artifact() -> Result<PathBuf, RunnerError> {
+    let cache_path = linux_workspace_effigy_cache_path()?;
+    if cache_path.is_file() {
+        return Ok(cache_path);
+    }
+
+    let parent = cache_path.parent().ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "workspace linux effigy cache path has no parent: `{}`",
+            cache_path.display()
+        ))
+    })?;
+    std::fs::create_dir_all(parent).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to create workspace linux effigy cache directory `{}`: {error}",
+            parent.display()
+        ))
+    })?;
+
+    let url = linux_workspace_effigy_release_url();
+    emit_workspace_notice(
+        &format!("downloading linux effigy release artifact from `{url}`"),
+        false,
+    );
+    download_linux_workspace_effigy_release(&url, &cache_path)?;
+    Ok(cache_path)
+}
+
+fn linux_workspace_effigy_cache_path() -> Result<PathBuf, RunnerError> {
+    let home = std::env::var_os("HOME").ok_or_else(|| {
+        RunnerError::task_invocation(
+            "HOME is not set; cannot resolve workspace linux effigy cache path",
+        )
+    })?;
+    Ok(Path::new(&home)
+        .join(LINUX_WORKSPACE_EFFIGY_CACHE_RELATIVE_PATH)
+        .join(format!("v{}", env!("CARGO_PKG_VERSION")))
+        .join(format!("effigy-{}", EFFIGY_LINUX_RELEASE_TRIPLE)))
+}
+
+fn linux_workspace_effigy_release_url() -> String {
+    format!(
+        "{}/releases/download/v{}/effigy-{}",
+        EFFIGY_RELEASE_REPO_BASE_URL,
+        env!("CARGO_PKG_VERSION"),
+        EFFIGY_LINUX_RELEASE_TRIPLE
+    )
+}
+
+fn download_linux_workspace_effigy_release(url: &str, dest: &Path) -> Result<(), RunnerError> {
+    let response = reqwest::blocking::Client::builder()
+        .build()
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to initialize release download client for `{url}`: {error}"
+            ))
+        })?
+        .get(url)
+        .send()
+        .and_then(|response| response.error_for_status())
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to download linux effigy release artifact from `{url}`: {error}"
+            ))
+        })?;
+
+    let tmp_path = dest.with_extension("tmp");
+    let bytes = response.bytes().map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to read linux effigy release artifact payload from `{url}`: {error}"
+        ))
+    })?;
+    std::fs::write(&tmp_path, &bytes).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to write linux effigy release artifact to `{}`: {error}",
+            tmp_path.display()
+        ))
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&tmp_path)
+            .map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "failed to stat linux effigy release artifact `{}`: {error}",
+                    tmp_path.display()
+                ))
+            })?
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&tmp_path, permissions).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to mark linux effigy release artifact executable `{}`: {error}",
+                tmp_path.display()
+            ))
+        })?;
+    }
+    std::fs::rename(&tmp_path, dest).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to move linux effigy release artifact into cache `{}`: {error}",
+            dest.display()
+        ))
+    })?;
+    Ok(())
+}
+
+fn linux_workspace_effigy_artifact_needs_refresh(host_binary: &Path, artifact_path: &Path) -> bool {
+    if !artifact_path.is_file() {
+        return true;
+    }
+    let Ok(host_meta) = std::fs::metadata(host_binary) else {
+        return true;
+    };
+    let Ok(artifact_meta) = std::fs::metadata(artifact_path) else {
+        return true;
+    };
+    match (host_meta.modified(), artifact_meta.modified()) {
+        (Ok(host_modified), Ok(artifact_modified)) => artifact_modified < host_modified,
+        _ => true,
+    }
+}
+
+fn run_linux_workspace_effigy_rehearsal(
+    host_binary: &Path,
+    effigy_repo_root: &Path,
+) -> Result<(), RunnerError> {
+    let output = ProcessCommand::new(host_binary)
+        .arg("release:linux:rehearse")
+        .arg("--repo")
+        .arg(effigy_repo_root)
+        .env("EFFIGY_INTERNAL_SUPPRESS_HEADER", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|error| RunnerError::TaskCommandLaunch {
+            command: format!(
+                "{} release:linux:rehearse --repo {}",
+                host_binary.display(),
+                effigy_repo_root.display()
+            ),
+            error,
+        })?;
+
+    if !output.success() {
+        return Err(RunnerError::task_invocation(format!(
+            "linux effigy rehearsal failed with status {output}"
+        )));
+    }
+    Ok(())
+}
+
+fn emit_workspace_notice(message: &str, suppress: bool) {
+    if suppress {
+        return;
+    }
+    let mut renderer = PlainRenderer::stderr(OutputMode::from_env());
+    let _ = renderer.notice(NoticeLevel::Info, message);
+}
+
+fn exec_error_means_runtime_not_running(error: &ContainerExecError) -> bool {
+    match error {
+        ContainerExecError::Failure { stderr, .. } => {
+            stderr.contains("level=fatal msg=\"colima is not running\"")
+                || stderr.contains("Cannot connect to the Docker daemon")
+                || stderr.contains("daemon is not running")
+        }
+        ContainerExecError::Launch { .. } => false,
+    }
+}
+
+fn system_progress_label(subcommand: &SystemSubcommand) -> Option<&'static str> {
+    match subcommand {
+        SystemSubcommand::Up => Some("System: starting containers"),
+        SystemSubcommand::Down => Some("System: stopping containers"),
+        SystemSubcommand::Repair => Some("System: recovering Colima runtime"),
+        SystemSubcommand::Logs { follow: false } => Some("System: collecting logs"),
+        SystemSubcommand::Status | SystemSubcommand::Logs { follow: true } => None,
+    }
+}
+
+fn render_system_recovery(
+    result: Result<ColimaRecoveryReport, RunnerError>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let report = result?;
+    if output_json {
+        return serde_json::to_string_pretty(&serde_json::json!({
+            "schema": "effigy.system.recover.v1",
+            "schema_version": 1,
+            "ok": true,
+            "profile": report.profile,
+            "steps": report.steps,
+        }))
+        .map_err(|error| RunnerError::task_invocation(error.to_string()));
+    }
+    Ok(report.steps.join("\n"))
+}
+
+struct SystemProgressReporter {
+    spinner: Option<Box<dyn SpinnerHandle>>,
+}
+
+impl SystemProgressReporter {
+    fn new(output_json: bool, label: Option<&str>) -> Self {
+        if output_json || !std::io::stderr().is_terminal() || is_ci_environment() {
+            return Self { spinner: None };
+        }
+
+        let Some(label) = label else {
+            return Self { spinner: None };
+        };
+
+        let mut renderer = PlainRenderer::stderr(OutputMode::from_env());
+        let spinner = renderer.spinner(label).ok();
+        Self { spinner }
+    }
+
+    fn finish(&mut self, success: bool) {
+        let Some(spinner) = self.spinner.take() else {
+            return;
+        };
+        if success {
+            spinner.finish_clear();
+        } else {
+            spinner.finish_error("System command failed");
+        }
+    }
+}
+
+struct WorkspaceShutdownProgressReporter {
+    spinner: Option<Box<dyn SpinnerHandle>>,
+}
+
+impl WorkspaceShutdownProgressReporter {
+    fn new() -> Self {
+        let transient = WorkspaceTransientProgressReporter::new(
+            false,
+            "waiting for workspace system shutdown",
+            true,
+        );
+        Self {
+            spinner: transient.spinner,
+        }
+    }
+
+    fn finish(&mut self, success: bool) {
+        let Some(spinner) = self.spinner.take() else {
+            return;
+        };
+        if success {
+            spinner.finish_clear();
+        } else {
+            spinner.finish_error("workspace system shutdown failed");
+        }
+    }
+}
+
+struct WorkspaceTransientProgressReporter {
+    spinner: Option<Box<dyn SpinnerHandle>>,
+}
+
+impl WorkspaceTransientProgressReporter {
+    fn new(suppress: bool, label: &str, leading_blank_lines: bool) -> Self {
+        use std::io::Write;
+
+        if suppress {
+            return Self { spinner: None };
+        }
+
+        if leading_blank_lines {
+            let mut stderr = std::io::stderr().lock();
+            let _ = writeln!(stderr);
+            let _ = writeln!(stderr);
+        }
+
+        if !std::io::stderr().is_terminal() || is_ci_environment() {
+            emit_workspace_notice(label, false);
+            return Self { spinner: None };
+        }
+
+        let mut renderer = PlainRenderer::stderr(OutputMode::from_env());
+        let spinner = renderer.spinner(label).ok();
+        Self { spinner }
+    }
+
+    fn finish(&mut self, success: bool) {
+        let Some(spinner) = self.spinner.take() else {
+            return;
+        };
+        if success {
+            spinner.finish_clear();
+        } else {
+            spinner.finish_error("workspace operation failed");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_progress_labels_match_blocking_subcommands() {
+        assert_eq!(
+            system_progress_label(&SystemSubcommand::Up),
+            Some("System: starting containers")
+        );
+        assert_eq!(
+            system_progress_label(&SystemSubcommand::Down),
+            Some("System: stopping containers")
+        );
+        assert_eq!(
+            system_progress_label(&SystemSubcommand::Repair),
+            Some("System: recovering Colima runtime")
+        );
+        assert_eq!(
+            system_progress_label(&SystemSubcommand::Logs { follow: false }),
+            Some("System: collecting logs")
+        );
+        assert_eq!(system_progress_label(&SystemSubcommand::Status), None);
+        assert_eq!(
+            system_progress_label(&SystemSubcommand::Logs { follow: true }),
+            None
+        );
+    }
+
+    #[test]
+    fn running_primary_service_requires_repo_project_and_service_match() {
+        let repo_root = std::path::Path::new("/tmp/demo");
+        let rows = vec![
+            RunningComposeContainer {
+                container_name: "demo-postgres-1".to_owned(),
+                status: "Up 10 seconds".to_owned(),
+                ports: Vec::new(),
+                project_name: Some("demo".to_owned()),
+                working_dir: Some("/tmp/demo".to_owned()),
+                service: Some("postgres".to_owned()),
+            },
+            RunningComposeContainer {
+                container_name: "other-workspace-1".to_owned(),
+                status: "Up 10 seconds".to_owned(),
+                ports: Vec::new(),
+                project_name: Some("other".to_owned()),
+                working_dir: Some("/tmp/demo".to_owned()),
+                service: Some("workspace".to_owned()),
+            },
+            RunningComposeContainer {
+                container_name: "demo-workspace-1".to_owned(),
+                status: "Up 10 seconds".to_owned(),
+                ports: Vec::new(),
+                project_name: Some("demo".to_owned()),
+                working_dir: Some("/tmp/demo".to_owned()),
+                service: Some("workspace".to_owned()),
+            },
+        ];
+
+        assert!(has_running_primary_service(
+            &rows,
+            repo_root,
+            "demo",
+            "workspace"
+        ));
+        assert!(!has_running_primary_service(&rows, repo_root, "demo", "api"));
+        assert!(!has_running_primary_service(
+            &rows,
+            std::path::Path::new("/tmp/other"),
+            "demo",
+            "workspace"
+        ));
+    }
+
+    #[test]
+    fn workspace_handoff_notice_mentions_container() {
+        let rendered = render_workspace_handoff_notice(&EffectiveContainerPolicy {
+            name: "stack".to_owned(),
+            driver: effigy_manifest::ManifestContainerDriver::Colima,
+            startup: effigy_manifest::ManifestContainerStartup::Detached,
+            profile: "default".to_owned(),
+            compose_source: effigy_containers::EffectiveComposeSource::Direct,
+            compose_files: vec![std::path::PathBuf::from("docker-compose.yml")],
+            compose_file_display: "docker-compose.yml".to_owned(),
+            managed_volumes: vec![],
+            shared_services: vec![],
+            project_name: "demo-stack".to_owned(),
+            primary_service: "workspace".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            dns_routes: vec![],
+            declared_ports: vec![],
+            ports_declared_explicitly: false,
+            declared_mounts: vec![],
+            declared_media_mounts: vec![],
+            pull_production_hook: None,
+            health_check: None,
+            health_timeout_secs: 60,
+            ui_tabs: vec![],
+            on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
+            shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+        });
+
+        assert!(rendered.contains("[next]"));
+        assert!(rendered.contains("switching into workspace container `stack`"));
+    }
+
+    #[test]
+    fn runtime_not_running_errors_degrade_to_false() {
+        let colima_stopped = ContainerExecError::Failure {
+            command: "colima nerdctl ps".to_owned(),
+            code: Some(1),
+            stdout: String::new(),
+            stderr: "time=\"2026-04-20T08:31:53+01:00\" level=fatal msg=\"colima is not running\""
+                .to_owned(),
+        };
+        let docker_stopped = ContainerExecError::Failure {
+            command: "docker ps".to_owned(),
+            code: Some(1),
+            stdout: String::new(),
+            stderr: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"
+                .to_owned(),
+        };
+
+        assert!(exec_error_means_runtime_not_running(&colima_stopped));
+        assert!(exec_error_means_runtime_not_running(&docker_stopped));
+    }
+
+    #[test]
+    fn linux_artifact_refreshes_when_missing_or_older_than_host_binary() {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-linux-artifact-refresh-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("mkdir root");
+        let host = root.join("effigy-host");
+        let artifact = root.join("effigy-linux");
+        std::fs::write(&host, "host").expect("write host");
+
+        assert!(linux_workspace_effigy_artifact_needs_refresh(&host, &artifact));
+
+        std::fs::write(&artifact, "artifact").expect("write artifact");
+        assert!(!linux_workspace_effigy_artifact_needs_refresh(&host, &artifact));
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(&host, "host-new").expect("rewrite host");
+        assert!(linux_workspace_effigy_artifact_needs_refresh(&host, &artifact));
+    }
+
+    #[test]
+    fn discover_effigy_repo_root_walks_up_to_repo_markers() {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-workspace-root-discovery-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("tasks")).expect("mkdir tasks");
+        std::fs::create_dir_all(root.join("containers")).expect("mkdir containers");
+        std::fs::create_dir_all(root.join("target/debug")).expect("mkdir debug");
+        std::fs::write(root.join("effigy.toml"), "").expect("write manifest");
+        std::fs::write(root.join("tasks/effigy.tasks.toml"), "").expect("write tasks");
+        std::fs::write(root.join("containers/effigy.containers.toml"), "")
+            .expect("write containers");
+
+        let discovered = discover_effigy_repo_root(Some(root.join("target/debug").as_path()))
+            .expect("discover repo root");
+        assert_eq!(discovered, root);
+    }
+
+    #[test]
+    fn linux_workspace_release_url_matches_published_artifact_shape() {
+        assert_eq!(
+            linux_workspace_effigy_release_url(),
+            format!(
+                "https://github.com/inflatable-cookie/effigy/releases/download/v{}/effigy-x86_64-unknown-linux-gnu",
+                env!("CARGO_PKG_VERSION")
+            )
+        );
+    }
+
+    #[test]
+    fn workspace_linux_cache_path_is_versioned() {
+        let original_home = std::env::var_os("HOME");
+        let temp_home = std::env::temp_dir().join(format!(
+            "effigy-workspace-cache-home-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_home).expect("mkdir temp home");
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        let cache_path = linux_workspace_effigy_cache_path().expect("cache path");
+
+        if let Some(value) = original_home {
+            unsafe {
+                std::env::set_var("HOME", value);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert!(cache_path.starts_with(&temp_home));
+        assert!(cache_path
+            .display()
+            .to_string()
+            .contains(&format!("v{}", env!("CARGO_PKG_VERSION"))));
+        assert!(cache_path
+            .display()
+            .to_string()
+            .ends_with("effigy-x86_64-unknown-linux-gnu"));
+    }
+
+    #[test]
+    fn sibling_effigy_repo_root_prefers_adjacent_effigy_checkout() {
+        let parent = std::env::temp_dir().join(format!(
+            "effigy-sibling-root-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let workspace = parent.join("underlay-reference");
+        let effigy = parent.join("effigy");
+        std::fs::create_dir_all(&workspace).expect("mkdir workspace");
+        std::fs::create_dir_all(effigy.join("tasks")).expect("mkdir tasks");
+        std::fs::create_dir_all(effigy.join("containers")).expect("mkdir containers");
+        std::fs::write(effigy.join("effigy.toml"), "").expect("write manifest");
+        std::fs::write(effigy.join("tasks/effigy.tasks.toml"), "").expect("write tasks");
+        std::fs::write(effigy.join("containers/effigy.containers.toml"), "")
+            .expect("write containers");
+
+        let discovered = sibling_effigy_repo_root(&workspace).expect("discover sibling effigy");
+        assert_eq!(discovered, effigy);
+    }
+}

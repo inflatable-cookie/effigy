@@ -39,8 +39,8 @@ Why readiness comes first:
 - `294` already gives the managed dev task the second owned tab the daily
   driver needed, so the next missing piece is honest "when is this usable?"
   feedback inside the same runtime
-- the lifecycle owner already starts the named `container_session` through the
-  shipped detached container path, so health waiting and ready-state projection
+- the lifecycle owner already starts the resolved workspace container through
+  the shipped detached container path, so health waiting and ready-state projection
   are the next narrow follow-through on the same product seam
 - the roadmap already calls for `tasks.<name>.managed.health_wait` and
   `ready_message`, and those fields stay within the repo-owned task contract

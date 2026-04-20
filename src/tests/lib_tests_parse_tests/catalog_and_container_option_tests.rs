@@ -1,6 +1,6 @@
 use crate::tests::prelude::{
     parse_command, Command, ContainerArgs, ContainerSubcommand, ExecArgs, HelpTopic, PathBuf,
-    ServiceArgs, ServiceSubcommand,
+    ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand, WorkspaceArgs,
 };
 use effigy_cli::ContainerDataSubcommand;
 
@@ -233,6 +233,92 @@ fn parse_container_data_export_is_supported() {
             },
             repo_override: None,
             output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_system_up_supports_repo_and_system_override() {
+    let cmd = parse_command(vec![
+        "system".to_owned(),
+        "up".to_owned(),
+        "--system".to_owned(),
+        "dev".to_owned(),
+        "--repo".to_owned(),
+        "demo".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::System(SystemArgs {
+            subcommand: SystemSubcommand::Up,
+            system: Some("dev".to_owned()),
+            repo_override: Some(PathBuf::from("demo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_system_logs_supports_follow() {
+    let cmd = parse_command(vec![
+        "system".to_owned(),
+        "logs".to_owned(),
+        "--follow".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::System(SystemArgs {
+            subcommand: SystemSubcommand::Logs { follow: true },
+            system: None,
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_system_repair_supports_repo_and_system_override() {
+    let cmd = parse_command(vec![
+        "system".to_owned(),
+        "repair".to_owned(),
+        "--system".to_owned(),
+        "dev".to_owned(),
+        "--repo".to_owned(),
+        "demo".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::System(SystemArgs {
+            subcommand: SystemSubcommand::Repair,
+            system: Some("dev".to_owned()),
+            repo_override: Some(PathBuf::from("demo")),
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_workspace_supports_name_and_system_override() {
+    let cmd = parse_command(vec![
+        "workspace".to_owned(),
+        "admin".to_owned(),
+        "--system".to_owned(),
+        "dev".to_owned(),
+        "--repo".to_owned(),
+        "demo".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Workspace(WorkspaceArgs {
+            workspace: Some("admin".to_owned()),
+            system: Some("dev".to_owned()),
+            repo_override: Some(PathBuf::from("demo")),
+            output_json: false,
         })
     );
 }

@@ -10,5 +10,6 @@ effigy-catalog = { path = "../effigy-catalog" }
 effigy-core = { path = "../effigy-core" }
 effigy-gateway = { path = "../effigy-gateway" }
 effigy-manifest = { path = "../effigy-manifest" }
+nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 serde_json = "1"
 serde_yaml = "0.9"

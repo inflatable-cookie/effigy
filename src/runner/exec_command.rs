@@ -16,7 +16,7 @@ use surface::{
     build_alias_table, build_raw_exec_args, ensure_container_running, exec_alias_surface_absent,
     load_named_container_config, resolve_dev_exec_surface, resolve_exec_working_dir,
 };
-use transport::{build_routed_task_exec_args, probe_container_capabilities, run_compose_exec};
+use transport::build_routed_task_exec_args;
 
 #[cfg(test)]
 use effigy_manifest::ManifestContainerExecConfig;
@@ -31,6 +31,10 @@ use transport::parse_compose_exec_args;
 mod surface;
 #[path = "exec_command/transport.rs"]
 mod transport;
+
+pub(in crate::runner) use transport::{
+    append_color_exec_env, copy_file_into_service, probe_container_capabilities, run_compose_exec,
+};
 
 pub(super) fn run_exec(args: ExecArgs) -> Result<String, RunnerError> {
     let cwd = current_working_dir()?;
@@ -134,6 +138,66 @@ pub(in crate::runner) fn capture_routed_task_container_exec(
     )
 }
 
+pub(in crate::runner) fn run_routed_task_container_exec_with_policy(
+    repo_root: &Path,
+    invocation_cwd: &Path,
+    selector: &TaskSelector,
+    task_args: &[String],
+    policy: &EffectiveContainerPolicy,
+    working_dir: &Path,
+    service: &str,
+    command: &str,
+    secret_env: Option<&[(&str, &SecretString)]>,
+) -> Result<String, RunnerError> {
+    let output = run_routed_task_exec_internal_with_surface(
+        repo_root,
+        invocation_cwd,
+        selector,
+        task_args,
+        policy,
+        working_dir,
+        service,
+        command,
+        secret_env,
+        false,
+    )?;
+
+    if !output.status.success() {
+        return Err(RunnerError::TaskCommandFailure {
+            command: command.to_owned(),
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        });
+    }
+    Ok(String::new())
+}
+
+pub(in crate::runner) fn capture_routed_task_container_exec_with_policy(
+    repo_root: &Path,
+    invocation_cwd: &Path,
+    selector: &TaskSelector,
+    task_args: &[String],
+    policy: &EffectiveContainerPolicy,
+    working_dir: &Path,
+    service: &str,
+    command: &str,
+    secret_env: Option<&[(&str, &SecretString)]>,
+) -> Result<Output, RunnerError> {
+    run_routed_task_exec_internal_with_surface(
+        repo_root,
+        invocation_cwd,
+        selector,
+        task_args,
+        policy,
+        working_dir,
+        service,
+        command,
+        secret_env,
+        true,
+    )
+}
+
 fn run_explicit_exec(
     repo_root: &Path,
     invocation_cwd: &Path,
@@ -204,19 +268,73 @@ fn run_routed_task_exec_internal(
     ensure_container_running(repo_root, &policy, container_name)?;
 
     let mapped_cwd = map_host_cwd(repo_root, invocation_cwd, container_name, &config)?;
+    run_routed_task_exec_internal_with_mapped_cwd(
+        repo_root,
+        selector,
+        task_args,
+        &policy,
+        &mapped_cwd,
+        service,
+        command,
+        secret_env,
+        capture,
+    )
+}
+
+fn run_routed_task_exec_internal_with_surface(
+    repo_root: &Path,
+    invocation_cwd: &Path,
+    selector: &TaskSelector,
+    task_args: &[String],
+    policy: &EffectiveContainerPolicy,
+    working_dir: &Path,
+    service: &str,
+    command: &str,
+    secret_env: Option<&[(&str, &SecretString)]>,
+    capture: bool,
+) -> Result<Output, RunnerError> {
+    let mapper = effigy_exec::CwdMapper::new(repo_root.to_path_buf(), working_dir.to_path_buf());
+    let mapped_cwd = mapper
+        .host_to_container(invocation_cwd)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    run_routed_task_exec_internal_with_mapped_cwd(
+        repo_root,
+        selector,
+        task_args,
+        policy,
+        &mapped_cwd,
+        service,
+        command,
+        secret_env,
+        capture,
+    )
+}
+
+fn run_routed_task_exec_internal_with_mapped_cwd(
+    repo_root: &Path,
+    selector: &TaskSelector,
+    task_args: &[String],
+    policy: &EffectiveContainerPolicy,
+    mapped_cwd: &str,
+    service: &str,
+    command: &str,
+    secret_env: Option<&[(&str, &SecretString)]>,
+    capture: bool,
+) -> Result<Output, RunnerError> {
     let raw_command = vec!["sh".to_owned(), "-lc".to_owned(), command.to_owned()];
-    let capabilities = probe_container_capabilities(repo_root, &policy, service)?;
+    let capabilities = transport::probe_container_capabilities(repo_root, policy, service)?;
     let selector_name = render_task_selector(selector);
     let strategy = determine_strategy(
         &capabilities,
         &selector_name,
         task_args,
-        &mapped_cwd,
+        mapped_cwd,
         &raw_command,
     );
-    let args = build_routed_task_exec_args(&strategy, secret_env, service, &mapped_cwd);
+    let args = build_routed_task_exec_args(&strategy, secret_env, service, mapped_cwd);
 
-    run_compose_exec(repo_root, &policy, &args, capture, "docker compose exec")
+    run_compose_exec(repo_root, policy, &args, capture, "docker compose exec")
 }
 
 fn map_host_cwd(
@@ -387,6 +505,7 @@ mod tests {
     fn parse_compose_exec_args_reads_workdir_env_and_command() {
         let parsed = parse_compose_exec_args(&[
             OsString::from("exec"),
+            OsString::from("-T"),
             OsString::from("-e"),
             OsString::from("A=1"),
             OsString::from("-w"),
@@ -397,8 +516,26 @@ mod tests {
         .expect("parse");
         assert_eq!(parsed.service, "postgres");
         assert_eq!(parsed.working_dir, Some(OsString::from("/tmp/work")));
+        assert!(!parsed.tty);
         assert_eq!(parsed.env, vec![OsString::from("A=1")]);
         assert_eq!(parsed.command, vec![OsString::from("pwd")]);
+    }
+
+    #[test]
+    fn parse_compose_exec_args_defaults_to_tty_when_not_disabled() {
+        let parsed = parse_compose_exec_args(&[
+            OsString::from("exec"),
+            OsString::from("-w"),
+            OsString::from("/workspace"),
+            OsString::from("workspace"),
+            OsString::from("sh"),
+            OsString::from("-lc"),
+            OsString::from("pwd"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.tty);
+        assert_eq!(parsed.service, "workspace");
     }
 
     #[test]
@@ -416,6 +553,13 @@ mod tests {
             args,
             vec![
                 OsString::from("exec"),
+                OsString::from("-T"),
+                OsString::from("-e"),
+                OsString::from("EFFIGY_COLOR=always"),
+                OsString::from("-e"),
+                OsString::from("CLICOLOR_FORCE=1"),
+                OsString::from("-e"),
+                OsString::from("FORCE_COLOR=3"),
                 OsString::from("-w"),
                 OsString::from("/tmp/work"),
                 OsString::from("postgres"),

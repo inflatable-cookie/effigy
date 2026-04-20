@@ -7,7 +7,8 @@ use crate::{
     DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSubcommand, DistributionArgs,
     DistributionSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, ExecArgs,
     GatewayArgs, GatewaySubcommand, HelpTopic, InternalGatewayArgs, InternalRhaiArgs, ReleaseArgs,
-    ReleaseSubcommand, ServiceArgs, ServiceSubcommand, TaskInvocation, TasksArgs,
+    ReleaseSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand,
+    TaskInvocation, TasksArgs, WorkspaceArgs,
 };
 
 use super::value_parsing::{next_required_value, parse_pretty_bool, parse_repo_path};
@@ -27,6 +28,8 @@ where
         "--help" | "-h" | "help" => Ok(Command::Help(HelpTopic::General)),
         "changelog" => parse_changelog_command(args),
         "exec" => parse_exec_command(args),
+        "system" => parse_system_command(args),
+        "workspace" => parse_workspace_command(args),
         "gateway" => parse_gateway_command(args),
         "service" => parse_service_command(args),
         "demo" => parse_demo_command(args),
@@ -129,6 +132,8 @@ fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
         "init" => Some(HelpTopic::Init),
         "migrate" => Some(HelpTopic::Migrate),
         "exec" => Some(HelpTopic::Exec),
+        "system" => Some(HelpTopic::System),
+        "workspace" => Some(HelpTopic::Workspace),
         "gateway" => Some(HelpTopic::Gateway),
         "demo" => Some(HelpTopic::Demo),
         "service" => Some(HelpTopic::Service),
@@ -171,6 +176,97 @@ where
 
     Ok(Command::Gateway(GatewayArgs {
         subcommand,
+        output_json,
+    }))
+}
+
+fn parse_system_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcmd) = args.next() else {
+        return Ok(Command::Help(HelpTopic::System));
+    };
+
+    let mut subcommand = match subcmd.as_str() {
+        "--help" | "-h" => return Ok(Command::Help(HelpTopic::System)),
+        "up" => SystemSubcommand::Up,
+        "down" => SystemSubcommand::Down,
+        "status" => SystemSubcommand::Status,
+        "logs" => SystemSubcommand::Logs { follow: false },
+        "repair" => SystemSubcommand::Repair,
+        other => return Err(unknown_argument(other)),
+    };
+    let mut system = None;
+    let mut repo_override = None;
+    let mut output_json = false;
+    let mut follow = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--system" => {
+                system = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--system".to_owned(),
+                    },
+                )?)
+            }
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--follow" if matches!(subcommand, SystemSubcommand::Logs { .. }) => follow = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::System)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    if matches!(subcommand, SystemSubcommand::Logs { .. }) {
+        subcommand = SystemSubcommand::Logs { follow };
+    }
+
+    Ok(Command::System(SystemArgs {
+        subcommand,
+        system,
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_workspace_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut workspace = None;
+    let mut system = None;
+    let mut repo_override = None;
+    let mut output_json = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Workspace)),
+            "--system" => {
+                system = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--system".to_owned(),
+                    },
+                )?)
+            }
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ if workspace.is_none() => workspace = Some(arg),
+            _ => return Err(unknown_argument(arg)),
+        }
+    }
+
+    Ok(Command::Workspace(WorkspaceArgs {
+        workspace,
+        system,
+        repo_override,
         output_json,
     }))
 }

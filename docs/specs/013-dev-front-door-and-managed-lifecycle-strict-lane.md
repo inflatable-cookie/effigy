@@ -42,8 +42,7 @@ This lane owns:
 Shipped substrate that this lane builds on:
 
 - normal task dispatch already supports managed concurrent runtimes
-- task routing already supports `container_session = "<name>"` on repo-owned
-  tasks
+- task routing already supports repo-owned workspace-backed execution binding
 - the container lane already owns attached session lifecycle, environment
   health checks, and primary-service shell execution
 - the gateway lane already owns startup, route registration, status, and TLS
@@ -81,7 +80,7 @@ The bounded continuation chain ran through:
 7. `297` — decide the first post-readiness follow-up now that readiness UX is
    real
 8. `298` — gateway auto-start foundation on top of the shipped gateway lane
-   and task-owned container session
+   and task-owned workspace container
 9. `299` — decide the final post-gateway follow-up now that the bounded
    front-door contract is fully shipped
 10. `300` — one real-project proof that the shipped managed dev front door can
@@ -103,8 +102,8 @@ What is now real in the product path:
 
 - `[tasks.<name>.managed].container_lifecycle = true`
 - `concurrent` lifecycle-role validation and plan rendering
-- one bounded runtime path where a repo-owned managed task starts the named
-  `container_session` through a managed lifecycle process and applies shutdown
+- one bounded runtime path where a repo-owned managed task starts the resolved
+  workspace container through a managed lifecycle process and applies shutdown
   on managed-runtime exit
 
 The final proof is now real:

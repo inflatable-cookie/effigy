@@ -14,6 +14,7 @@ pub(super) fn validate_top_level_keys(
         "docs_policy",
         "bootstrap",
         "containers",
+        "systems",
         "distribution",
         "env",
         "package_manager",

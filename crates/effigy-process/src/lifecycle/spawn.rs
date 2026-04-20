@@ -13,9 +13,7 @@ use nix::unistd::{setpgid, Pid};
 use super::super::{ProcessEvent, ProcessManagerError, ProcessSpec};
 use super::monitor::attach_child_stream_threads;
 
-#[cfg(target_os = "macos")]
 const DEMO_BROWSER_TERMINAL_COLS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_COLS";
-#[cfg(target_os = "macos")]
 const DEMO_BROWSER_TERMINAL_ROWS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_ROWS";
 
 pub(super) fn spawn_process_instance(
@@ -81,44 +79,32 @@ fn spawn_plain_shell(spec: &ProcessSpec) -> ProcessCommand {
 }
 
 fn spawn_with_pty_wrapper(spec: &ProcessSpec) -> ProcessCommand {
-    #[cfg(target_os = "macos")]
-    {
-        let terminal_size = browser_terminal_size_override();
-        let wrapped_run = wrap_pty_shell_command(&spec.run, terminal_size);
-        let mut process = ProcessCommand::new("script");
-        process
-            .arg("-q")
-            .arg("/dev/null")
-            .arg("sh")
-            .arg("-c")
-            .arg(wrapped_run)
-            .current_dir(&spec.cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        #[cfg(unix)]
-        unsafe {
-            process.pre_exec(|| {
-                setpgid(Pid::from_raw(0), Pid::from_raw(0))
-                    .map_err(|error| std::io::Error::other(error.to_string()))
-            });
-        }
-        with_local_node_bin_path(&mut process, &spec.cwd);
-        if let Some((cols, rows)) = terminal_size {
-            process
-                .env("COLUMNS", cols.to_string())
-                .env("LINES", rows.to_string());
-        }
-        for (key, value) in &spec.env {
-            process.env(key, value);
-        }
-        process
+    let terminal_size = browser_terminal_size_override();
+    let wrapped_run = wrap_pty_shell_command(&spec.run, terminal_size);
+    let mut process = ProcessCommand::new("script");
+    apply_pty_wrapper_invocation(&mut process, &wrapped_run);
+    process
+        .current_dir(&spec.cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    unsafe {
+        process.pre_exec(|| {
+            setpgid(Pid::from_raw(0), Pid::from_raw(0))
+                .map_err(|error| std::io::Error::other(error.to_string()))
+        });
     }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        spawn_plain_shell(spec)
+    with_local_node_bin_path(&mut process, &spec.cwd);
+    if let Some((cols, rows)) = terminal_size {
+        process
+            .env("COLUMNS", cols.to_string())
+            .env("LINES", rows.to_string());
     }
+    for (key, value) in &spec.env {
+        process.env(key, value);
+    }
+    process
 }
 
 fn with_local_node_bin_path(process: &mut ProcessCommand, cwd: &Path) {
@@ -134,7 +120,6 @@ fn with_local_node_bin_path(process: &mut ProcessCommand, cwd: &Path) {
     process.env("PATH", merged);
 }
 
-#[cfg(target_os = "macos")]
 fn browser_terminal_size_override() -> Option<(u16, u16)> {
     let cols = std::env::var(DEMO_BROWSER_TERMINAL_COLS_ENV)
         .ok()?
@@ -150,10 +135,44 @@ fn browser_terminal_size_override() -> Option<(u16, u16)> {
     Some((cols, rows))
 }
 
-#[cfg(target_os = "macos")]
 fn wrap_pty_shell_command(run_command: &str, terminal_size: Option<(u16, u16)>) -> String {
     let Some((cols, rows)) = terminal_size else {
         return run_command.to_owned();
     };
     format!("stty cols {cols} rows {rows} >/dev/null 2>&1; {run_command}")
+}
+
+#[cfg(target_os = "macos")]
+fn apply_pty_wrapper_invocation(process: &mut ProcessCommand, wrapped_run: &str) {
+    process
+        .arg("-q")
+        .arg("/dev/null")
+        .arg("sh")
+        .arg("-c")
+        .arg(wrapped_run);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_pty_wrapper_invocation(process: &mut ProcessCommand, wrapped_run: &str) {
+    process
+        .arg("-qefc")
+        .arg(wrapped_run)
+        .arg("/dev/null");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_pty_shell_command;
+
+    #[test]
+    fn wrap_pty_shell_command_prefixes_stty_with_terminal_size() {
+        let wrapped = wrap_pty_shell_command("printf demo", Some((96, 28)));
+        assert_eq!(wrapped, "stty cols 96 rows 28 >/dev/null 2>&1; printf demo");
+    }
+
+    #[test]
+    fn wrap_pty_shell_command_leaves_command_when_size_missing() {
+        let wrapped = wrap_pty_shell_command("printf demo", None);
+        assert_eq!(wrapped, "printf demo");
+    }
 }

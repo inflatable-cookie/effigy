@@ -4,6 +4,8 @@
 use std::io::IsTerminal;
 use std::path::Path;
 
+const MANAGED_EXEC_READINESS_TIMEOUT_SECS: u64 = 30;
+
 use crate::{
     compose::{on_task_exit_label, shutdown_label},
     EffectiveContainerPolicy,
@@ -176,13 +178,17 @@ pub fn managed_lifecycle_command(
     owner_task: &str,
     health_wait: bool,
     ready_message: Option<&str>,
+    setup_commands: &[String],
     executable: &str,
 ) -> String {
     let repo = shell_quote(&repo_root.display().to_string());
+    let lifecycle_owner_task = owner_task;
     let owner_task = shell_quote(owner_task);
     let selector = container_name
         .map(str::trim)
         .filter(|value| !value.is_empty() && *value != "default");
+    let lifecycle_state = managed_lifecycle_state_path(repo_root, selector, lifecycle_owner_task);
+    let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
     let up = effigy_container_command(executable, selector, "up --detach", &repo);
     let status = effigy_container_command(executable, selector, "status", &repo);
     let down = effigy_container_command(executable, selector, "down", &repo);
@@ -197,13 +203,15 @@ pub fn managed_lifecycle_command(
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("container `{label}` is ready"));
+    let setup_sequence = render_managed_lifecycle_setup_sequence(setup_commands);
     format!(
         "sh -lc {script}",
         script = shell_quote(&format!(
-            "started=0; cleanup() {{ if [ \"$started\" = 1 ]; then {down} >/dev/null 2>&1 || true; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; {up}; started=1; printf 'managed ready: %s\\n' {ready_banner}; while true; do printf '\\033[2J\\033[H'; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; printf 'ready_message: %s\\n\\n' {ready_banner}; {status} || true; sleep 0.2; done",
+            "state_path={lifecycle_state}; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; printf 'ready_message: %s\\n\\n' {ready_banner}; {status} || true; printf '\\n[info] lifecycle owner is idle; use `effigy container {label} status` to refresh.\\n'; while true; do sleep 3600; done",
             label = shell_quote(label),
             readiness_status = shell_quote(readiness_status),
             ready_banner = shell_quote(&ready_banner),
+            setup_sequence = setup_sequence,
         )),
     )
 }
@@ -223,13 +231,152 @@ pub fn managed_lifecycle_shutdown_command(
 pub fn managed_shell_command(
     repo_root: &Path,
     container_name: Option<&str>,
+    owner_task: &str,
+    service: Option<&str>,
     executable: &str,
 ) -> String {
     let repo = shell_quote(&repo_root.display().to_string());
     let selector = container_name
         .map(str::trim)
         .filter(|value| !value.is_empty() && *value != "default");
-    effigy_container_command(executable, selector, "shell", &repo)
+    let lifecycle_state = managed_lifecycle_state_path(repo_root, selector, owner_task);
+    let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
+    let service_flag = service
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(" --service {}", shell_quote(value)))
+        .unwrap_or_default();
+    let readiness_probe = format!(
+        "{} >/dev/null 2>&1",
+        effigy_container_command_with_extra(
+            executable,
+            selector,
+            &format!("shell{service_flag} --command true"),
+            &repo,
+        )
+    );
+    let attach = effigy_container_command_with_extra(
+        executable,
+        selector,
+        &format!("shell{service_flag}"),
+        &repo,
+    );
+    format!(
+        "sh -lc {script}",
+        script = shell_quote(&format!(
+            "state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if {readiness_probe}; then exec {attach}; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before shell became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed shell timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
+            timeout_secs = MANAGED_EXEC_READINESS_TIMEOUT_SECS,
+        )),
+    )
+}
+
+pub fn managed_standard_exec_command(
+    repo_root: &Path,
+    container_name: Option<&str>,
+    owner_task: &str,
+    process_cwd: &Path,
+    container_repo_root: Option<&Path>,
+    executable: &str,
+    command: &str,
+) -> String {
+    let repo = shell_quote(&repo_root.display().to_string());
+    let cwd = shell_quote(&process_cwd.display().to_string());
+    let command = shell_quote(&container_exec_command(
+        command,
+        repo_root,
+        process_cwd,
+        container_repo_root,
+    ));
+    let selector = container_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "default");
+    let lifecycle_state = managed_lifecycle_state_path(repo_root, selector, owner_task);
+    let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
+    let readiness_probe = format!(
+        "{} >/dev/null 2>&1",
+        effigy_container_command_with_extra(executable, selector, "shell --command true", &repo,)
+    );
+    let attach = effigy_container_command_with_extra(
+        executable,
+        selector,
+        &format!("shell --command {command}"),
+        &repo,
+    );
+    format!(
+        "sh -lc {script}",
+        script = shell_quote(&format!(
+            "cd {cwd} && state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if {readiness_probe}; then exec {attach}; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before exec surface became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed exec timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
+            timeout_secs = MANAGED_EXEC_READINESS_TIMEOUT_SECS,
+        )),
+    )
+}
+
+fn managed_lifecycle_state_path(
+    repo_root: &Path,
+    container_name: Option<&str>,
+    owner_task: &str,
+) -> std::path::PathBuf {
+    let container_label = container_name.unwrap_or("default");
+    let sanitized_task = sanitize_state_key(owner_task);
+    let sanitized_container = sanitize_state_key(container_label);
+    repo_root
+        .join(".effigy/runtime/managed-lifecycle")
+        .join(format!("{sanitized_task}-{sanitized_container}.state"))
+}
+
+fn sanitize_state_key(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn rewrite_command_for_container(
+    command: &str,
+    repo_root: &Path,
+    container_repo_root: &Path,
+) -> String {
+    command.replace(
+        &repo_root.display().to_string(),
+        &container_repo_root.display().to_string(),
+    )
+}
+
+fn container_exec_command(
+    command: &str,
+    repo_root: &Path,
+    process_cwd: &Path,
+    container_repo_root: Option<&Path>,
+) -> String {
+    let Some(container_repo_root) = container_repo_root else {
+        return command.to_owned();
+    };
+    let container_cwd =
+        container_repo_root.join(process_cwd.strip_prefix(repo_root).unwrap_or(process_cwd));
+    let container_local_bin = container_cwd.join("node_modules/.bin");
+    let rewritten_command = rewrite_command_for_container(command, repo_root, container_repo_root);
+    format!(
+        "cd {} && export PATH={}:$PATH; {}",
+        shell_quote(&container_cwd.display().to_string()),
+        shell_quote(&container_local_bin.display().to_string()),
+        rewritten_command
+    )
+}
+
+fn render_managed_lifecycle_setup_sequence(setup_commands: &[String]) -> String {
+    if setup_commands.is_empty() {
+        return String::new();
+    }
+    setup_commands
+        .iter()
+        .map(|command| format!("if ! {command}; then printf '%s\\n' 'managed lifecycle failed during container setup' 1>&2; exit 1; fi; ", command = command))
+        .collect()
 }
 
 pub fn managed_gateway_command(executable: &str) -> String {
@@ -294,7 +441,8 @@ fn attached_logs_command(
 ) -> String {
     let repo = shell_quote(&repo_root.display().to_string());
     format!(
-        "{executable} container {name} logs --follow --service {service} --repo {repo}",
+        "{} {executable} container {name} logs --follow --service {service} --repo {repo}",
+        effigy_internal_env_prefix(),
         name = shell_quote(&policy.name),
         service = shell_quote(service),
     )
@@ -306,13 +454,30 @@ fn effigy_container_command(
     subcommand: &str,
     repo: &str,
 ) -> String {
+    effigy_container_command_with_extra(executable, container_name, subcommand, repo)
+}
+
+fn effigy_container_command_with_extra(
+    executable: &str,
+    container_name: Option<&str>,
+    subcommand: &str,
+    repo: &str,
+) -> String {
     match container_name {
         Some(name) => format!(
-            "{executable} container {name} {subcommand} --repo {repo}",
+            "{} {executable} container {name} {subcommand} --repo {repo}",
+            effigy_internal_env_prefix(),
             name = shell_quote(name),
         ),
-        None => format!("{executable} container {subcommand} --repo {repo}"),
+        None => format!(
+            "{} {executable} container {subcommand} --repo {repo}",
+            effigy_internal_env_prefix(),
+        ),
     }
+}
+
+fn effigy_internal_env_prefix() -> &'static str {
+    "env EFFIGY_INTERNAL_SUPPRESS_HEADER=1"
 }
 
 fn shell_quote(value: &str) -> String {
@@ -339,5 +504,150 @@ fn yes_no(value: bool) -> &'static str {
         "yes"
     } else {
         "no"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{managed_lifecycle_command, managed_shell_command, managed_standard_exec_command};
+    use std::path::Path;
+
+    #[test]
+    fn managed_lifecycle_command_renders_one_shot_snapshot_without_screen_clear_loop() {
+        let rendered = managed_lifecycle_command(
+            Path::new("/tmp/repo"),
+            Some("web"),
+            "dev",
+            true,
+            Some("http://project.test"),
+            &[],
+            "effigy",
+        );
+
+        assert!(!rendered.contains("\\033[2J\\033[H"), "got: {rendered}");
+        assert!(!rendered.contains("sleep 0.2"), "got: {rendered}");
+        assert!(
+            rendered.contains("lifecycle owner is idle"),
+            "got: {rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web status --repo"
+            ),
+            "got: {rendered}"
+        );
+        assert!(
+            rendered.contains("env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web up --detach --repo /tmp/repo"),
+            "got: {rendered}"
+        );
+        assert!(
+            rendered.contains(".effigy/runtime/managed-lifecycle/dev-web.state"),
+            "got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn managed_lifecycle_command_runs_setup_before_ready_projection() {
+        let rendered = managed_lifecycle_command(
+            Path::new("/tmp/repo"),
+            Some("web"),
+            "dev",
+            true,
+            Some("http://project.test"),
+            &[String::from(
+                "effigy exec --repo /tmp/repo -- sh -lc 'cd /workspace/app && bun install'",
+            )],
+            "effigy",
+        );
+
+        assert!(
+            rendered.contains("managed lifecycle failed during container setup"),
+            "got: {rendered}"
+        );
+        let setup_index = rendered
+            .find("bun install")
+            .expect("setup command should be present");
+        let ready_index = rendered
+            .find("managed ready:")
+            .expect("ready banner should be present");
+        assert!(setup_index < ready_index, "got: {rendered}");
+    }
+
+    #[test]
+    fn managed_standard_exec_command_waits_for_exec_surface_before_launch() {
+        let rendered = managed_standard_exec_command(
+            Path::new("/tmp/repo"),
+            Some("web"),
+            "dev",
+            Path::new("/tmp/repo/acme-api"),
+            Some(Path::new("/workspace-root/repo")),
+            "effigy",
+            "printf api-ok",
+        );
+
+        assert!(
+            rendered.contains("cd /tmp/repo/acme-api && state_path=/tmp/repo/.effigy/runtime/managed-lifecycle/dev-web.state; deadline=$(( $(date +%s) + 30 )); while true; do if env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web shell --command true --repo /tmp/repo >/dev/null 2>&1; then exec env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web shell --command"),
+            "got: {rendered}"
+        );
+        assert!(
+            rendered.contains("managed lifecycle failed before exec surface became available"),
+            "got: {rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "cd /workspace-root/repo/acme-api && export PATH=/workspace-root/repo/acme-api/node_modules/.bin:$PATH; printf api-ok"
+            ),
+            "got: {rendered}"
+        );
+        assert!(rendered.contains("printf api-ok"), "got: {rendered}");
+    }
+
+    #[test]
+    fn managed_standard_exec_command_rewrites_host_repo_paths_for_container_commands() {
+        let rendered = managed_standard_exec_command(
+            Path::new("/Users/tom/repo"),
+            Some("web"),
+            "dev",
+            Path::new("/Users/tom/repo/acme-admin"),
+            Some(Path::new("/workspace-root/repo")),
+            "effigy",
+            "(cd '/Users/tom/repo/acme-admin' && svelte-kit sync)",
+        );
+
+        assert!(
+            rendered.contains("/workspace-root/repo/acme-admin"),
+            "got: {rendered}"
+        );
+        assert!(
+            rendered
+                .contains("cd /workspace-root/repo/acme-admin && export PATH=/workspace-root/repo/acme-admin/node_modules/.bin:$PATH;"),
+            "got: {rendered}"
+        );
+        assert!(rendered.contains("svelte-kit sync"), "got: {rendered}");
+    }
+
+    #[test]
+    fn managed_shell_command_exits_when_lifecycle_fails() {
+        let rendered = managed_shell_command(
+            Path::new("/tmp/repo"),
+            Some("web"),
+            "dev",
+            Some("workspace"),
+            "effigy",
+        );
+
+        assert!(
+            rendered
+                .contains("state_path=/tmp/repo/.effigy/runtime/managed-lifecycle/dev-web.state"),
+            "got: {rendered}"
+        );
+        assert!(
+            rendered.contains("managed lifecycle failed before shell became available"),
+            "got: {rendered}"
+        );
+        assert!(
+            rendered.contains("env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web shell --service workspace"),
+            "got: {rendered}"
+        );
     }
 }

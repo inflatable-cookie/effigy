@@ -89,19 +89,9 @@ fn host_override_forces_host() {
 }
 
 #[test]
-fn container_session_none_forces_host() {
+fn explicit_container_targets_specific_container() {
     let overrides = TaskOverrides {
-        container_session: Some("none".to_string()),
-        ..Default::default()
-    };
-    let d = route("test", &running_context(), &overrides);
-    assert!(d.is_host());
-}
-
-#[test]
-fn container_session_targets_specific_container() {
-    let overrides = TaskOverrides {
-        container_session: Some("staging".to_string()),
+        container: Some("staging".to_string()),
         ..Default::default()
     };
     let d = route("test", &running_context(), &overrides);
@@ -152,7 +142,7 @@ fn stopped_container_returns_not_running() {
 #[test]
 fn stopped_container_with_session_override() {
     let overrides = TaskOverrides {
-        container_session: Some("staging".to_string()),
+        container: Some("staging".to_string()),
         ..Default::default()
     };
     let d = route("test", &stopped_context(), &overrides);
