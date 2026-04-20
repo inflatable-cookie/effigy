@@ -115,7 +115,6 @@ pub fn up_detached_report(
         "ports": policy.declared_ports,
         "mounts": policy.declared_mounts,
         "media_mounts": policy.declared_media_mounts,
-        "ui_tabs": policy.ui_tabs,
         "health": health,
     });
     let mut lines = Vec::new();
@@ -309,7 +308,6 @@ pub fn status_report(
         "health": health,
         "ports": policy.declared_ports,
         "mounts": policy.declared_mounts,
-        "ui_tabs": policy.ui_tabs,
         "detach_timeout_secs": policy.detach_timeout_secs,
         "compose_ps": compose_ps,
         "media_mounts": policy.declared_media_mounts,
@@ -335,9 +333,6 @@ pub fn status_report(
             "media_mounts: {}",
             policy.declared_media_mounts.join(", ")
         ));
-    }
-    if !policy.ui_tabs.is_empty() {
-        lines.push(format!("ui_tabs: {}", policy.ui_tabs.join(", ")));
     }
     append_shared_service_lines(&mut lines, policy);
     lines.push(format!(

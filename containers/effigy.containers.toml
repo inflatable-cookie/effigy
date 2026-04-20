@@ -13,6 +13,3 @@ detach_timeout_secs = 10
 
 [containers."linux-release".host]
 mounts = ["./:/workspace"]
-
-[containers."linux-release".ui]
-tabs = ["overview", "builder"]

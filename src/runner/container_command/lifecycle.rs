@@ -538,9 +538,8 @@ mod tests {
     use super::{
         annotate_left_running_shared_services, annotate_shared_service_notes,
         build_container_shell_args, build_interactive_container_shell_args,
-        finish_container_up_failure,
-        render_interactive_shell_session_command, run_container_eject, run_container_reset,
-        should_fail_container_shell_exit,
+        finish_container_up_failure, render_interactive_shell_session_command, run_container_eject,
+        run_container_reset, should_fail_container_shell_exit,
     };
     use crate::runner::RunnerError;
     use effigy_containers::{
@@ -591,7 +590,6 @@ mod tests {
             pull_production_hook: None,
             health_check: None,
             health_timeout_secs: 60,
-            ui_tabs: vec![],
             workspace_user: None,
             workspace_home: None,
             on_task_exit: ManifestContainerOnTaskExit::Stop,

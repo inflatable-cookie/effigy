@@ -73,9 +73,6 @@ pub fn render_stream_session_overview(
     if !policy.declared_ports.is_empty() {
         lines.push(format!("ports: {}", policy.declared_ports.join(", ")));
     }
-    if !policy.ui_tabs.is_empty() {
-        lines.push(format!("tabs: {}", policy.ui_tabs.join(", ")));
-    }
     lines.join("\n")
 }
 
@@ -116,11 +113,6 @@ pub fn attached_session_tab_order(policy: &EffectiveContainerPolicy) -> Vec<Stri
     let mut tabs = vec!["overview".to_owned()];
     let mut seen = std::collections::BTreeSet::<String>::new();
     seen.insert("overview".to_owned());
-    for tab in &policy.ui_tabs {
-        if seen.insert(tab.clone()) {
-            tabs.push(tab.clone());
-        }
-    }
     if seen.insert(policy.primary_service.clone()) {
         tabs.push(policy.primary_service.clone());
     }
@@ -143,23 +135,7 @@ pub fn attached_session_process_plans(
 
     let mut added = std::collections::BTreeSet::<String>::new();
     added.insert("overview".to_owned());
-    let mut service_tabs = policy
-        .ui_tabs
-        .iter()
-        .filter(|tab| tab.as_str() != "overview")
-        .cloned()
-        .collect::<Vec<_>>();
-    if service_tabs.is_empty() {
-        service_tabs.push(policy.primary_service.clone());
-    }
-    if !service_tabs
-        .iter()
-        .any(|tab| tab == &policy.primary_service)
-    {
-        service_tabs.insert(0, policy.primary_service.clone());
-    }
-
-    for service in service_tabs {
+    for service in [policy.primary_service.clone()] {
         if !added.insert(service.clone()) {
             continue;
         }
@@ -550,10 +526,7 @@ mod tests {
             rendered.contains(".effigy/runtime/managed-lifecycle/dev-web.state"),
             "got: {rendered}"
         );
-        assert!(
-            rendered.contains("parent_pid=$PPID"),
-            "got: {rendered}"
-        );
+        assert!(rendered.contains("parent_pid=$PPID"), "got: {rendered}");
         assert!(
             rendered.contains("while kill -0 \"$parent_pid\" >/dev/null 2>&1; do sleep 1; done"),
             "got: {rendered}"

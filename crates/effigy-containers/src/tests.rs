@@ -99,9 +99,18 @@ services:
     let policy = load_container_policy(&root, None).expect("policy");
 
     assert!(!policy.ports_declared_explicitly);
-    assert!(policy.declared_ports.iter().any(|value| value == "41001:41001"));
-    assert!(policy.declared_ports.iter().any(|value| value == "41002:41002"));
-    assert!(policy.declared_ports.iter().any(|value| value == "8025:8025"));
+    assert!(policy
+        .declared_ports
+        .iter()
+        .any(|value| value == "41001:41001"));
+    assert!(policy
+        .declared_ports
+        .iter()
+        .any(|value| value == "41002:41002"));
+    assert!(policy
+        .declared_ports
+        .iter()
+        .any(|value| value == "8025:8025"));
 }
 
 #[test]
