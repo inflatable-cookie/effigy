@@ -94,16 +94,10 @@ fn build_managed_task_plan(
         tab_order,
         fail_on_non_zero: task.fail_on_non_zero.unwrap_or(true),
         passthrough: passthrough.iter().skip(1).cloned().collect(),
-        gateway_auto_start: task.managed.as_ref().is_some_and(|managed| managed.gateway),
+        gateway_auto_start: task.gateway.unwrap_or(false),
         readiness: ManagedTaskReadiness {
-            health_wait: task
-                .managed
-                .as_ref()
-                .is_some_and(|managed| managed.health_wait),
-            ready_message: task
-                .managed
-                .as_ref()
-                .and_then(|managed| managed.ready_message.clone()),
+            health_wait: task.health_wait.unwrap_or(false),
+            ready_message: task.ready_message.clone(),
         },
     })
 }
@@ -127,75 +121,58 @@ fn validate_lifecycle_role_usage(
             "only one `role = \"lifecycle\"` entry is supported in this batch",
         ));
     }
-    if task
-        .managed
-        .as_ref()
-        .is_some_and(|managed| managed.container_lifecycle)
-        && lifecycle_count == 0
-    {
+    if task.container_lifecycle.unwrap_or(false) && lifecycle_count == 0 {
         return Err(invalid_managed_process_definition(
             selector,
             "managed",
-            "`managed.container_lifecycle = true` requires one `concurrent` entry with `role = \"lifecycle\"`",
+            "`container_lifecycle = true` requires one `concurrent` entry with `role = \"lifecycle\"`",
         ));
     }
-    if task.managed.as_ref().is_some_and(|managed| managed.gateway) {
+    if task.gateway.unwrap_or(false) {
         if !has_container_backed_binding {
             return Err(invalid_managed_process_definition(
                 selector,
                 "managed",
-                "`managed.gateway = true` requires a container-backed execution binding on the task (`workspace`)",
+                "`gateway = true` requires a container-backed execution binding on the task (`workspace`)",
             ));
         }
         if lifecycle_count == 0 {
             return Err(invalid_managed_process_definition(
                 selector,
                 "managed",
-                "`managed.gateway = true` requires one `concurrent` entry with `role = \"lifecycle\"`",
+                "`gateway = true` requires one `concurrent` entry with `role = \"lifecycle\"`",
             ));
         }
     }
-    if task
-        .managed
-        .as_ref()
-        .is_some_and(|managed| managed.health_wait)
-    {
+    if task.health_wait.unwrap_or(false) {
         if !has_container_backed_binding {
             return Err(invalid_managed_process_definition(
                 selector,
                 "managed",
-                "`managed.health_wait = true` requires a container-backed execution binding on the task (`workspace`)",
+                "`health_wait = true` requires a container-backed execution binding on the task (`workspace`)",
             ));
         }
         if lifecycle_count == 0 {
             return Err(invalid_managed_process_definition(
                 selector,
                 "managed",
-                "`managed.health_wait = true` requires one `concurrent` entry with `role = \"lifecycle\"`",
+                "`health_wait = true` requires one `concurrent` entry with `role = \"lifecycle\"`",
             ));
         }
     }
-    if let Some(ready_message) = task
-        .managed
-        .as_ref()
-        .and_then(|managed| managed.ready_message.as_deref())
-    {
+    if let Some(ready_message) = task.ready_message.as_deref() {
         if ready_message.trim().is_empty() {
             return Err(invalid_managed_process_definition(
                 selector,
                 "managed",
-                "`managed.ready_message` must be a non-empty string",
+                "`ready_message` must be a non-empty string",
             ));
         }
-        if !task
-            .managed
-            .as_ref()
-            .is_some_and(|managed| managed.health_wait)
-        {
+        if !task.health_wait.unwrap_or(false) {
             return Err(invalid_managed_process_definition(
                 selector,
                 "managed",
-                "`managed.ready_message` requires `managed.health_wait = true` in this batch",
+                "`ready_message` requires `health_wait = true` in this batch",
             ));
         }
     }

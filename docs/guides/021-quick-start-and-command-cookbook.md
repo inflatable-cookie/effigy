@@ -92,9 +92,8 @@ runtime, prefer the shipped managed-task contract:
 
 - `workspace = "<name>"` on the task
 - `[systems]` plus `[systems.<name>.workspaces.<workspace>]` in the manifest
-- `[tasks.<name>.managed].container_lifecycle = true`
-- optional `managed.health_wait`, `managed.ready_message`, and
-  `managed.gateway = true`
+- `container_lifecycle = true` on `[tasks.<name>]`
+- optional `health_wait`, `ready_message`, and `gateway = true`
 - `role = "lifecycle"` and `role = "shell"` in `concurrent` where the fuller
   local-dev contract fits
 

@@ -462,7 +462,7 @@ run = "npm run dev"
                     workspace: "app".to_owned(),
                     workdir: Some("/workspace".to_owned()),
                     workspace_config: ManifestWorkspaceConfig {
-                        container: Some(ManifestWorkspaceContainerRef::Named("app".to_owned())),
+                        container: None,
                         workdir: Some("/workspace".to_owned()),
                         mounts: vec![],
                         user: None,
@@ -566,9 +566,12 @@ run = "npm run dev"
                             ManifestInlineWorkspaceContainerConfig {
                                 image: Some("node:22".to_owned()),
                                 mount: Some("./:/workspace".to_owned()),
-                                extra: [("shell".to_owned(), toml::Value::String("bash".to_owned()))]
-                                    .into_iter()
-                                    .collect(),
+                                extra: [(
+                                    "shell".to_owned(),
+                                    toml::Value::String("bash".to_owned())
+                                )]
+                                .into_iter()
+                                .collect(),
                             }
                         )),
                         workdir: None,

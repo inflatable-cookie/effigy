@@ -21,6 +21,7 @@ pub(crate) use policy_support::with_test_effigy_home;
 use policy_support::{resolve_compose_source, validate_declared_mounts, validate_media_mounts};
 use workspace::materialize_runtime_workspace_mount_rewrite;
 
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -198,6 +199,8 @@ pub fn load_container_policy_with_workspace(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
     })?;
+    let default_project_name = default_project_name_base(&loaded.manifest, repo_root);
+    validate_unique_project_names(containers, &default_project_name)?;
     let name = resolve_container_name(&containers, requested_name)?;
     let config = containers.environments.get(&name).ok_or_else(|| {
         let available = containers
@@ -213,6 +216,7 @@ pub fn load_container_policy_with_workspace(
     build_effective_policy(
         repo_root,
         &containers,
+        &default_project_name,
         &name,
         config,
         &loaded.effective_manifest,
@@ -230,6 +234,8 @@ pub fn load_all_container_policies(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
     })?;
+    let default_project_name = default_project_name_base(&loaded.manifest, repo_root);
+    validate_unique_project_names(containers, &default_project_name)?;
 
     let mut policies = containers
         .environments
@@ -238,6 +244,7 @@ pub fn load_all_container_policies(
             build_effective_policy(
                 repo_root,
                 &containers,
+                &default_project_name,
                 name,
                 config,
                 &loaded.effective_manifest,
@@ -434,6 +441,7 @@ pub fn effective_attach_mode(
 fn build_effective_policy(
     repo_root: &Path,
     containers: &ManifestContainersConfig,
+    default_project_name: &str,
     name: &str,
     config: &ManifestContainerConfig,
     effective_manifest: &str,
@@ -444,14 +452,7 @@ fn build_effective_policy(
         .profile
         .clone()
         .unwrap_or_else(|| DEFAULT_COLIMA_PROFILE.to_owned());
-    let project_name = config.project_name.clone().unwrap_or_else(|| {
-        let repo = repo_root
-            .file_name()
-            .and_then(OsStr::to_str)
-            .unwrap_or("repo")
-            .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
-        format!("{repo}-{name}-dev")
-    });
+    let project_name = resolve_project_name(config, default_project_name);
     let (
         mut compose_files,
         compose_file_display,
@@ -547,12 +548,81 @@ fn build_effective_policy(
     })
 }
 
+fn default_project_name_base(manifest: &effigy_manifest::TaskManifest, repo_root: &Path) -> String {
+    manifest
+        .catalog
+        .as_ref()
+        .and_then(|catalog| catalog.alias.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(sanitize_project_name_component)
+        .unwrap_or_else(|| {
+            let repo = repo_root
+                .file_name()
+                .and_then(OsStr::to_str)
+                .unwrap_or("repo");
+            sanitize_project_name_component(repo)
+        })
+}
+
+fn sanitize_project_name_component(value: &str) -> String {
+    value.replace(|c: char| !c.is_ascii_alphanumeric(), "-")
+}
+
+fn resolve_project_name(config: &ManifestContainerConfig, default_project_name: &str) -> String {
+    config
+        .project_name
+        .clone()
+        .unwrap_or_else(|| default_project_name.to_owned())
+}
+
+fn validate_unique_project_names(
+    containers: &ManifestContainersConfig,
+    default_project_name: &str,
+) -> Result<(), ContainerPolicyError> {
+    if containers.environments.len() <= 1 {
+        return Ok(());
+    }
+
+    let mut by_project_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (name, config) in &containers.environments {
+        by_project_name
+            .entry(resolve_project_name(config, default_project_name))
+            .or_default()
+            .push(name.clone());
+    }
+
+    let duplicates = by_project_name
+        .into_iter()
+        .filter(|(_project_name, names)| names.len() > 1)
+        .map(|(project_name, mut names)| {
+            names.sort();
+            format!(
+                "`{project_name}` for containers {}",
+                names
+                    .into_iter()
+                    .map(|name| format!("`{name}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+        .collect::<Vec<_>>();
+    if duplicates.is_empty() {
+        return Ok(());
+    }
+
+    Err(ContainerPolicyError::TaskInvocation(format!(
+        "containers must resolve to unique `project_name` values when more than one container is declared; duplicate effective project names: {}",
+        duplicates.join("; ")
+    )))
+}
+
 fn infer_default_workspace_for_container(
     manifest: &effigy_manifest::TaskManifest,
     requested_container_name: Option<&str>,
 ) -> Option<ManifestWorkspaceConfig> {
-    let binding = resolve_task_execution_binding(manifest, "container", &ManifestTask::default())
-        .ok()?;
+    let binding =
+        resolve_task_execution_binding(manifest, "container", &ManifestTask::default()).ok()?;
     let ResolvedTaskExecutionBinding::Workspace(binding) = binding? else {
         return None;
     };

@@ -35,13 +35,11 @@ fn setup_lifecycle_entry(root: &Path) {
         r#"[tasks.dev]
 mode = "tui"
 workspace = "app"
+container_lifecycle = true
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "api", run = "printf api", start = 2, tab = 2, shutdown_on_exit = true }
 ]
-
-[tasks.dev.managed]
-container_lifecycle = true
 
 [systems]
 default = "dev"
@@ -61,14 +59,12 @@ fn setup_lifecycle_and_shell_entry(root: &Path) {
         r#"[tasks.dev]
 mode = "tui"
 workspace = "app"
+container_lifecycle = true
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "terminal", role = "shell", start = 2, tab = 2 },
   { name = "api", run = "printf api", start = 3, tab = 3, shutdown_on_exit = true }
 ]
-
-[tasks.dev.managed]
-container_lifecycle = true
 
 [systems]
 default = "dev"
@@ -88,14 +84,12 @@ fn setup_lifecycle_and_shell_service_entry(root: &Path) {
         r#"[tasks.dev]
 mode = "tui"
 workspace = "app"
+container_lifecycle = true
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "terminal", role = "shell", service = "workspace", start = 2, tab = 2 },
   { name = "api", run = "printf api", start = 3, tab = 3, shutdown_on_exit = true }
 ]
-
-[tasks.dev.managed]
-container_lifecycle = true
 
 [systems]
 default = "dev"
@@ -115,16 +109,14 @@ fn setup_lifecycle_readiness_entry(root: &Path) {
         r#"[tasks.dev]
 mode = "tui"
 workspace = "app"
+container_lifecycle = true
+health_wait = true
+ready_message = "http://project.test"
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "terminal", role = "shell", start = 2, tab = 2 },
   { name = "api", run = "printf api", start = 3, tab = 3, shutdown_on_exit = true }
 ]
-
-[tasks.dev.managed]
-container_lifecycle = true
-health_wait = true
-ready_message = "http://project.test"
 
 [systems]
 default = "dev"
@@ -144,17 +136,15 @@ fn setup_lifecycle_gateway_and_readiness_entry(root: &Path) {
         r#"[tasks.dev]
 mode = "tui"
 workspace = "app"
+container_lifecycle = true
+gateway = true
+health_wait = true
+ready_message = "http://project.test"
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "terminal", role = "shell", start = 2, tab = 2 },
   { name = "api", run = "printf api", start = 3, tab = 3, shutdown_on_exit = true }
 ]
-
-[tasks.dev.managed]
-container_lifecycle = true
-gateway = true
-health_wait = true
-ready_message = "http://project.test"
 
 [systems]
 default = "dev"

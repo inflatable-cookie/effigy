@@ -68,15 +68,15 @@ container = "web"
 "#,
             expected_task: "dev",
             expected_process: "process",
-            expected_detail_substring: Some("requires `[tasks.<name>.managed] container_lifecycle = true`"),
+            expected_detail_substring: Some(
+                "requires `container_lifecycle = true` on `[tasks.<name>]`",
+            ),
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-lifecycle-missing-container-session",
             manifest: r#"[tasks.dev]
 mode = "tui"
 concurrent = [{ role = "lifecycle" }]
-
-[tasks.dev.managed]
 container_lifecycle = true
 "#,
             expected_task: "dev",
@@ -89,8 +89,6 @@ container_lifecycle = true
 mode = "tui"
 workspace = "app"
 concurrent = [{ role = "lifecycle", run = "printf nope" }]
-
-[tasks.dev.managed]
 container_lifecycle = true
 
 [systems]
@@ -114,7 +112,9 @@ concurrent = [{ role = "shell" }]
 "#,
             expected_task: "dev",
             expected_process: "process",
-            expected_detail_substring: Some("`role = \"shell\"` requires a container-backed execution binding"),
+            expected_detail_substring: Some(
+                "`role = \"shell\"` requires a container-backed execution binding",
+            ),
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-shell-rejects-run",
@@ -134,21 +134,23 @@ container = "web"
 "#,
             expected_task: "dev",
             expected_process: "process",
-            expected_detail_substring: Some("owns the container shell in this batch; omit `run` and `task`"),
+            expected_detail_substring: Some(
+                "owns the container shell in this batch; omit `run` and `task`",
+            ),
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-health-wait-missing-container-session",
             manifest: r#"[tasks.dev]
 mode = "tui"
 concurrent = [{ role = "lifecycle" }]
-
-[tasks.dev.managed]
 container_lifecycle = true
 health_wait = true
 "#,
             expected_task: "dev",
             expected_process: "process",
-            expected_detail_substring: Some("`role = \"lifecycle\"` requires a container-backed execution binding"),
+            expected_detail_substring: Some(
+                "`role = \"lifecycle\"` requires a container-backed execution binding",
+            ),
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-health-wait-missing-lifecycle",
@@ -156,8 +158,6 @@ health_wait = true
 mode = "tui"
 workspace = "app"
 concurrent = [{ name = "api", run = "printf api" }]
-
-[tasks.dev.managed]
 health_wait = true
 
 [systems]
@@ -171,7 +171,9 @@ container = "web"
 "#,
             expected_task: "dev",
             expected_process: "managed",
-            expected_detail_substring: Some("requires one `concurrent` entry with `role = \"lifecycle\"`"),
+            expected_detail_substring: Some(
+                "requires one `concurrent` entry with `role = \"lifecycle\"`",
+            ),
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-ready-message-requires-health-wait",
@@ -179,8 +181,6 @@ container = "web"
 mode = "tui"
 workspace = "app"
 concurrent = [{ role = "lifecycle" }]
-
-[tasks.dev.managed]
 container_lifecycle = true
 ready_message = "http://project.test"
 
@@ -195,21 +195,21 @@ container = "web"
 "#,
             expected_task: "dev",
             expected_process: "managed",
-            expected_detail_substring: Some("`managed.ready_message` requires `managed.health_wait = true`"),
+            expected_detail_substring: Some("`ready_message` requires `health_wait = true`"),
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-gateway-missing-container-session",
             manifest: r#"[tasks.dev]
 mode = "tui"
 concurrent = [{ role = "lifecycle" }]
-
-[tasks.dev.managed]
 container_lifecycle = true
 gateway = true
 "#,
             expected_task: "dev",
             expected_process: "process",
-            expected_detail_substring: Some("`role = \"lifecycle\"` requires a container-backed execution binding"),
+            expected_detail_substring: Some(
+                "`role = \"lifecycle\"` requires a container-backed execution binding",
+            ),
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-gateway-missing-lifecycle",
@@ -217,8 +217,6 @@ gateway = true
 mode = "tui"
 workspace = "app"
 concurrent = [{ name = "api", run = "printf api" }]
-
-[tasks.dev.managed]
 gateway = true
 
 [systems]
@@ -232,7 +230,9 @@ container = "web"
 "#,
             expected_task: "dev",
             expected_process: "managed",
-            expected_detail_substring: Some("`managed.gateway = true` requires one `concurrent` entry with `role = \"lifecycle\"`"),
+            expected_detail_substring: Some(
+                "`gateway = true` requires one `concurrent` entry with `role = \"lifecycle\"`",
+            ),
         },
     ];
 

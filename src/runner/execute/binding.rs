@@ -45,13 +45,11 @@ impl ContainerExecutionBinding {
         repo_root: &Path,
     ) -> Result<Option<EffectiveContainerPolicy>, RunnerError> {
         match self {
-            Self::Container { name, workspace } => load_container_policy_with_workspace(
-                repo_root,
-                name.as_deref(),
-                workspace.as_ref(),
-            )
-            .map(Some)
-            .map_err(|error| RunnerError::task_invocation(error.to_string())),
+            Self::Container { name, workspace } => {
+                load_container_policy_with_workspace(repo_root, name.as_deref(), workspace.as_ref())
+                    .map(Some)
+                    .map_err(|error| RunnerError::task_invocation(error.to_string()))
+            }
             Self::Inline {
                 synthetic_name,
                 container,

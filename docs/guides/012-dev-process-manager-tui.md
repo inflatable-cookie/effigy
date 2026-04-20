@@ -79,8 +79,6 @@ workdir = "."
 [tasks.dev]
 mode = "tui"
 workspace = "app"
-
-[tasks.dev.managed]
 container_lifecycle = true
 health_wait = true
 ready_message = "App ready at http://project.test"
@@ -99,7 +97,7 @@ ad-hoc shell steps.
 
 ## 3) Managed Contract
 
-The shipped managed-task additions live under `[tasks.<name>.managed]`.
+The shipped managed-task additions live directly under `[tasks.<name>]`.
 
 Current bounded fields:
 
@@ -180,8 +178,6 @@ workdir = "."
 [tasks.dev]
 mode = "tui"
 workspace = "app"
-
-[tasks.dev.managed]
 container_lifecycle = true
 health_wait = true
 ready_message = "App ready at http://project.test"
@@ -211,10 +207,10 @@ concurrent = [
   and shutdown.
 - `role = "shell"` uses the primary-service container shell and coexists with
   the lifecycle-owned container session.
-- `managed.health_wait = true` delays the final ready projection until the
+- `health_wait = true` delays the final ready projection until the
   task-owned container health gate succeeds.
-- `managed.ready_message` is shown only after that ready state is reached.
-- `managed.gateway = true` starts the gateway before the managed runtime when
+- `ready_message` is shown only after that ready state is reached.
+- `gateway = true` starts the gateway before the managed runtime when
   the task-owned container environment declares local DNS ownership.
 - Non-shell tabs use input panel mode (`Tab` toggles command/insert; `Enter`
   sends input).
@@ -258,12 +254,12 @@ not the only way the substrate can be used.
    opens.
 2. If the repo uses a workspace-backed container binding, verify the resolved
    environment starts and shuts down with the managed session.
-3. If the repo uses `managed.gateway = true`, verify the gateway starts only
-   when the container declares the expected local domain route.
-4. If the repo uses `managed.health_wait = true`, verify readiness is delayed
-   until the health gate passes.
-5. If the repo uses `managed.ready_message`, verify the final ready message is
-   honest and repo-specific.
+3. If the repo uses `gateway = true`, verify the gateway starts only
+  when the container declares the expected local domain route.
+4. If the repo uses `health_wait = true`, verify readiness is delayed
+  until the health gate passes.
+5. If the repo uses `ready_message`, verify the final ready message is
+  honest and repo-specific.
 6. If the repo uses `role = "shell"`, verify shell input capture and completion
    work in the embedded terminal tab.
 7. If the repo uses `shutdown_on_exit`, close the designated root process and

@@ -38,7 +38,6 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
             "teardown_policy = \"always\"",
             "[test.runners]",
             "concurrent = [",
-            "[tasks.dev.managed]",
             "container_lifecycle = true",
             "gateway = true",
             "health_wait = true",

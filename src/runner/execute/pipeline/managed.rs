@@ -169,14 +169,14 @@ fn build_managed_gateway_command(
             .requested_container_name()
             .ok_or_else(|| {
                 RunnerError::task_invocation(
-            "`managed.gateway = true` requires a workspace-backed container binding on the task",
-        )
+                    "`gateway = true` requires a workspace-backed container binding on the task",
+                )
             })?;
     let policy = effigy_containers::load_container_policy(repo_root, requested_container_name)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     if policy.dns_routes.is_empty() {
         return Err(RunnerError::task_invocation(format!(
-            "task `{}` sets `managed.gateway = true`, but container session `{}` does not declare any `[containers.{}.dns].routes`",
+            "task `{}` sets `gateway = true`, but container session `{}` does not declare any `[containers.{}.dns].routes`",
             task_name,
             requested_container_name.unwrap_or("default"),
             policy.name
@@ -345,14 +345,13 @@ fn materialize_special_managed_processes(
     for process in &mut plan.processes {
         match process.role {
             ManagedProcessRole::Lifecycle => {
-                let managed = selection.task.managed.as_ref();
                 process.run = if container_handoff {
                     render_handoff_managed_lifecycle_command(
                         repo_root,
                         container_binding.container_name().unwrap_or("default"),
                         &preflight.selector.task_name,
-                        managed.is_some_and(|managed| managed.health_wait),
-                        managed.and_then(|managed| managed.ready_message.as_deref()),
+                        selection.task.health_wait.unwrap_or(false),
+                        selection.task.ready_message.as_deref(),
                         &lifecycle_setup_commands,
                     )
                 } else if let Some(policy) = inline_policy.as_ref() {
@@ -360,8 +359,8 @@ fn materialize_special_managed_processes(
                         repo_root,
                         policy,
                         &preflight.selector.task_name,
-                        managed.is_some_and(|managed| managed.health_wait),
-                        managed.and_then(|managed| managed.ready_message.as_deref()),
+                        selection.task.health_wait.unwrap_or(false),
+                        selection.task.ready_message.as_deref(),
                         &lifecycle_setup_commands,
                     )
                 } else {
@@ -369,8 +368,8 @@ fn materialize_special_managed_processes(
                         repo_root,
                         container_binding.container_name(),
                         &preflight.selector.task_name,
-                        managed.is_some_and(|managed| managed.health_wait),
-                        managed.and_then(|managed| managed.ready_message.as_deref()),
+                        selection.task.health_wait.unwrap_or(false),
+                        selection.task.ready_message.as_deref(),
                         &lifecycle_setup_commands,
                         &executable,
                     )
