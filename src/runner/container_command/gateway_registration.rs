@@ -667,9 +667,9 @@ mod tests {
         let error = validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
             .expect_err("mismatched published port should fail");
         assert!(
-            error.to_string().contains(
-                "gateway registration refuses to target an unrelated runtime binding"
-            ),
+            error
+                .to_string()
+                .contains("gateway registration refuses to target an unrelated runtime binding"),
             "got: {error}"
         );
     }

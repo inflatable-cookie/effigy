@@ -186,14 +186,7 @@ pub fn load_container_policy(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
     })?;
-    let name = requested_name
-        .map(str::to_owned)
-        .or_else(|| containers.default.clone())
-        .ok_or_else(|| {
-            ContainerPolicyError::TaskInvocation(
-                "container name omitted but `[containers].default` is not defined".to_owned(),
-            )
-        })?;
+    let name = resolve_container_name(&containers, requested_name)?;
     let config = containers.environments.get(&name).ok_or_else(|| {
         let available = containers
             .environments
@@ -253,14 +246,7 @@ pub fn load_container_exec_working_dir(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
     })?;
-    let name = requested_name
-        .map(str::to_owned)
-        .or_else(|| containers.default.clone())
-        .ok_or_else(|| {
-            ContainerPolicyError::TaskInvocation(
-                "container name omitted but `[containers].default` is not defined".to_owned(),
-            )
-        })?;
+    let name = resolve_container_name(&containers, requested_name)?;
     let config = containers.environments.get(&name).ok_or_else(|| {
         let available = containers
             .environments
@@ -546,6 +532,35 @@ fn build_effective_policy(
             .and_then(|value| value.detach_timeout_secs)
             .unwrap_or(DEFAULT_ATTACH_TIMEOUT_SECS),
     })
+}
+
+fn resolve_container_name(
+    containers: &ManifestContainersConfig,
+    requested_name: Option<&str>,
+) -> Result<String, ContainerPolicyError> {
+    requested_name
+        .map(str::to_owned)
+        .or_else(|| containers.default.clone())
+        .or_else(|| sole_dev_context_container_name(containers))
+        .ok_or_else(|| {
+            ContainerPolicyError::TaskInvocation(
+                "container name omitted but `[containers].default` is not defined and no sole `context = \"dev\"` container is available for implicit targeting"
+                    .to_owned(),
+            )
+        })
+}
+
+fn sole_dev_context_container_name(containers: &ManifestContainersConfig) -> Option<String> {
+    let mut matches = containers
+        .environments
+        .iter()
+        .filter(|(_, config)| config.context.as_deref() == Some("dev"))
+        .map(|(name, _)| name.clone());
+    let first = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some(first)
 }
 
 fn resolve_container_exec_working_dir(

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use effigy_manifest::{resolve_task_execution_binding_from_systems, LoadedCatalog};
+use effigy_manifest::{resolve_task_execution_binding, LoadedCatalog};
 use effigy_routing::select_catalog_and_task;
 use effigy_tasks::parse_task_reference_invocation;
 
@@ -70,8 +70,8 @@ impl<'a, 'b> ReferenceChecker<'a, 'b> {
             }
         };
 
-        let execution_binding = resolve_task_execution_binding_from_systems(
-            selection.catalog.manifest.systems.as_ref(),
+        let execution_binding = resolve_task_execution_binding(
+            &selection.catalog.manifest,
             &selector.task_name,
             selection.task,
         )

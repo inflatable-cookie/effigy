@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use effigy_manifest::{
-    resolve_task_execution_binding_from_systems, LoadedCatalog, ManifestManagedRun, TaskResolverFn,
+    resolve_task_execution_binding, LoadedCatalog, ManifestManagedRun, TaskResolverFn,
     TaskSelection,
 };
 
@@ -96,12 +96,9 @@ where
         );
     }
 
-    let execution_binding = resolve_task_execution_binding_from_systems(
-        selection.catalog.manifest.systems.as_ref(),
-        task_name,
-        selection.task,
-    )
-    .map_err(|error| ManagedError::task_invocation(error.to_string()))?;
+    let execution_binding =
+        resolve_task_execution_binding(&selection.catalog.manifest, task_name, selection.task)
+            .map_err(|error| ManagedError::task_invocation(error.to_string()))?;
 
     if selection.task.mode.is_some()
         || has_concurrent_schema(selection.task)

@@ -1,6 +1,6 @@
 use super::super::manifest::task_runtime::{ManifestManagedRun, ManifestTask};
 use effigy_manifest::{
-    resolve_task_execution_binding_from_systems, LoadedCatalog, ResolvedTaskExecutionBinding,
+    resolve_task_execution_binding, LoadedCatalog, ResolvedTaskExecutionBinding,
 };
 
 pub(in crate::runner) fn task_run_preview(
@@ -14,11 +14,7 @@ pub(in crate::runner) fn task_run_preview(
             ManifestManagedRun::Sequence(steps) => format!("<sequence:{}>", steps.len()),
         };
     }
-    if let Ok(Some(binding)) = resolve_task_execution_binding_from_systems(
-        catalog.manifest.systems.as_ref(),
-        task_name,
-        task,
-    ) {
+    if let Ok(Some(binding)) = resolve_task_execution_binding(&catalog.manifest, task_name, task) {
         return match binding {
             ResolvedTaskExecutionBinding::Host => "<host>".to_owned(),
             ResolvedTaskExecutionBinding::Workspace(binding) => {

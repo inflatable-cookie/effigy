@@ -4,8 +4,9 @@ use effigy_containers::{
     resolve_inline_workspace_exec_working_dir, EffectiveContainerPolicy,
 };
 use effigy_manifest::{
-    resolve_task_execution_binding_from_systems, ManifestInlineWorkspaceContainerConfig,
-    ManifestSystemsConfig, ManifestTask, ResolvedTaskExecutionBinding, ResolvedWorkspaceContainer,
+    resolve_task_execution_binding_from_parts, ManifestContainersConfig,
+    ManifestInlineWorkspaceContainerConfig, ManifestSystemsConfig, ManifestTask,
+    ResolvedTaskExecutionBinding, ResolvedWorkspaceContainer,
 };
 use std::path::{Path, PathBuf};
 
@@ -91,11 +92,12 @@ impl ContainerExecutionBinding {
 
 pub(in crate::runner) fn resolve_container_execution_binding(
     systems: Option<&ManifestSystemsConfig>,
+    containers: Option<&ManifestContainersConfig>,
     task_name: &str,
     task: &ManifestTask,
     runtime_surface: &str,
 ) -> Result<ContainerExecutionBinding, RunnerError> {
-    match resolve_task_execution_binding_from_systems(systems, task_name, task)
+    match resolve_task_execution_binding_from_parts(systems, containers, task_name, task)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
     {
         Some(ResolvedTaskExecutionBinding::Workspace(binding)) => {

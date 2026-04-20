@@ -77,6 +77,7 @@ pub(super) fn resolve_public_workspace_container(
     task.workspace = workspace.map(str::to_owned);
     let binding = resolve_container_execution_binding(
         manifest.systems.as_ref(),
+        manifest.containers.as_ref(),
         surface,
         &task,
         &format!("`effigy {surface}`"),

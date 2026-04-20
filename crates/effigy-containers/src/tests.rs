@@ -63,6 +63,53 @@ primary_service = "app"
 }
 
 #[test]
+fn load_container_policy_uses_sole_container_without_default() {
+    let root = temp_repo("sole-container");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+
+[containers.web]
+context = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert_eq!(policy.name, "web");
+}
+
+#[test]
+fn load_container_policy_rejects_sole_non_dev_container_without_default() {
+    let root = temp_repo("sole-non-dev-container");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let error = load_container_policy(&root, None).expect_err("should fail");
+
+    assert!(error
+        .to_string()
+        .contains("no sole `context = \"dev\"` container is available"));
+}
+
+#[test]
 fn load_container_policy_infers_direct_compose_ports_when_manifest_ports_are_omitted() {
     let root = temp_repo("direct-compose-inferred-ports");
     fs::write(

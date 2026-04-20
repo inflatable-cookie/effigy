@@ -72,6 +72,7 @@ pub(super) fn run_standard_task(
 
     let container_binding = resolve_container_execution_binding(
         selection.catalog.manifest.systems.as_ref(),
+        selection.catalog.manifest.containers.as_ref(),
         &preflight.selector.task_name,
         selection.task,
         "standard task execution",

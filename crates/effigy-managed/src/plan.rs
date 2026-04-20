@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use effigy_manifest::{
-    resolve_task_execution_binding_from_systems, LoadedCatalog, ManifestTask,
-    ResolvedTaskExecutionBinding, TaskResolverFn,
+    resolve_task_execution_binding, LoadedCatalog, ManifestTask, ResolvedTaskExecutionBinding,
+    TaskResolverFn,
 };
 use effigy_tasks::TaskSelector;
 
@@ -207,12 +207,8 @@ fn task_has_container_backed_execution_binding(
     selector: &TaskSelector,
     task: &ManifestTask,
 ) -> Result<bool, ManagedError> {
-    let binding = resolve_task_execution_binding_from_systems(
-        catalog.manifest.systems.as_ref(),
-        &selector.task_name,
-        task,
-    )
-    .map_err(|error| ManagedError::task_invocation(error.to_string()))?;
+    let binding = resolve_task_execution_binding(&catalog.manifest, &selector.task_name, task)
+        .map_err(|error| ManagedError::task_invocation(error.to_string()))?;
     Ok(matches!(
         binding,
         Some(ResolvedTaskExecutionBinding::Workspace(_))
