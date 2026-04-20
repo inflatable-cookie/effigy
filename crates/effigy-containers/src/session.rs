@@ -204,14 +204,16 @@ pub fn managed_lifecycle_command(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("container `{label}` is ready"));
     let setup_sequence = render_managed_lifecycle_setup_sequence(setup_commands);
+    let idle_wait = managed_lifecycle_idle_wait_command();
     format!(
         "sh -lc {script}",
         script = shell_quote(&format!(
-            "state_path={lifecycle_state}; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; printf 'ready_message: %s\\n\\n' {ready_banner}; {status} || true; printf '\\n[info] lifecycle owner is idle; use `effigy container {label} status` to refresh.\\n'; while true; do sleep 3600; done",
+            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; printf 'ready_message: %s\\n\\n' {ready_banner}; {status} || true; printf '\\n[info] lifecycle owner is idle; use `effigy container {label} status` to refresh.\\n'; {idle_wait}",
             label = shell_quote(label),
             readiness_status = shell_quote(readiness_status),
             ready_banner = shell_quote(&ready_banner),
             setup_sequence = setup_sequence,
+            idle_wait = idle_wait,
         )),
     )
 }
@@ -268,6 +270,10 @@ pub fn managed_shell_command(
             timeout_secs = MANAGED_EXEC_READINESS_TIMEOUT_SECS,
         )),
     )
+}
+
+fn managed_lifecycle_idle_wait_command() -> &'static str {
+    "while kill -0 \"$parent_pid\" >/dev/null 2>&1; do sleep 1; done"
 }
 
 pub fn managed_standard_exec_command(
@@ -380,7 +386,7 @@ fn render_managed_lifecycle_setup_sequence(setup_commands: &[String]) -> String 
 }
 
 pub fn managed_gateway_command(executable: &str) -> String {
-    format!("{executable} gateway up")
+    format!("env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 {executable} gateway up")
 }
 
 pub fn resolve_effigy_invocation_prefix() -> Result<String, std::io::Error> {
@@ -544,6 +550,14 @@ mod tests {
             rendered.contains(".effigy/runtime/managed-lifecycle/dev-web.state"),
             "got: {rendered}"
         );
+        assert!(
+            rendered.contains("parent_pid=$PPID"),
+            "got: {rendered}"
+        );
+        assert!(
+            rendered.contains("while kill -0 \"$parent_pid\" >/dev/null 2>&1; do sleep 1; done"),
+            "got: {rendered}"
+        );
     }
 
     #[test]
@@ -648,6 +662,16 @@ mod tests {
         assert!(
             rendered.contains("env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web shell --service workspace"),
             "got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn managed_gateway_command_suppresses_header_output() {
+        let rendered = super::managed_gateway_command("effigy");
+
+        assert_eq!(
+            rendered,
+            "env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy gateway up"
         );
     }
 }

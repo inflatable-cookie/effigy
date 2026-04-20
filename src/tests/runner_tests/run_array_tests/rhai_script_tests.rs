@@ -216,7 +216,11 @@ fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
     let args_log = fs::read_to_string(&docker_args).expect("read docker args");
     assert!(args_log.contains(" up -d"), "got: {args_log}");
     assert!(
-        args_log.contains("exec app sh -lc printf helper-shell"),
+        args_log.contains("exec -T -w /workspace"),
+        "got: {args_log}"
+    );
+    assert!(
+        args_log.contains("app sh -lc printf helper-shell"),
         "got: {args_log}"
     );
     assert!(

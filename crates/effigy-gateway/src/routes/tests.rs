@@ -1,9 +1,11 @@
 use super::*;
+use std::net::Ipv4Addr;
 
 fn test_route(domain: &str, target: &str) -> Route {
     Route {
         domain: domain.to_string(),
         target: target.to_string(),
+        dns_ip: None,
         source: RouteSource::Container,
         project: "/tmp/test".to_string(),
         tls: false,
@@ -168,6 +170,7 @@ fn route_serialization_format() {
     let route = Route {
         domain: "test.test".to_string(),
         target: "127.0.0.1:8080".to_string(),
+        dns_ip: Some(Ipv4Addr::new(127, 1, 0, 7)),
         source: RouteSource::Container,
         project: "/tmp/proj".to_string(),
         tls: false,
@@ -179,11 +182,28 @@ fn route_serialization_format() {
     let json = serde_json::to_string_pretty(&route).unwrap();
     assert!(json.contains("\"source\": \"container\""));
     assert!(json.contains("\"tls\": false"));
+    assert!(json.contains("\"dns_ip\": \"127.1.0.7\""));
 
     // Deserialize back.
     let parsed: Route = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.domain, "test.test");
     assert_eq!(parsed.source, RouteSource::Container);
+    assert_eq!(parsed.dns_ip, Some(Ipv4Addr::new(127, 1, 0, 7)));
+}
+
+#[test]
+fn route_deserialization_defaults_missing_dns_ip() {
+    let json = r#"{
+  "domain": "test.test",
+  "target": "127.0.0.1:8080",
+  "source": "container",
+  "project": "/tmp/proj",
+  "tls": false,
+  "registered": "2026-04-16T10:00:00Z"
+}"#;
+
+    let parsed: Route = serde_json::from_str(json).unwrap();
+    assert_eq!(parsed.dns_ip, None);
 }
 
 #[test]

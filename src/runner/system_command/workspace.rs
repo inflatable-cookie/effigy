@@ -13,6 +13,7 @@ use crate::runner::command_context::{current_working_dir, resolve_repo_root};
 use crate::runner::container_command::{run_container, run_container_shell_session};
 use crate::runner::exec_command::copy_file_into_service;
 use crate::runner::execute::{resolve_container_execution_binding, ContainerExecutionBinding};
+use crate::runner::gateway_command::gateway_up_for_managed_task;
 use crate::runner::manifest::load_task_manifest;
 
 use super::RunnerError;
@@ -102,6 +103,7 @@ fn run_workspace_container_session(
 ) -> Result<String, RunnerError> {
     let container_name = container_name.map(str::to_owned);
     let policy = super::load_resolved_container_policy(repo_root, container_name.as_deref())?;
+    maybe_start_workspace_gateway(&policy)?;
     let system_was_running = super::is_primary_service_running(repo_root, &policy)?;
 
     if !system_was_running {
@@ -160,6 +162,16 @@ fn run_workspace_container_session(
             "{shell_error}\nworkspace cleanup also failed: {cleanup_error}"
         ))),
     }
+}
+
+fn maybe_start_workspace_gateway(policy: &EffectiveContainerPolicy) -> Result<(), RunnerError> {
+    if policy.dns_domain.is_none() {
+        return Ok(());
+    }
+    let executable =
+        effigy_containers::session::resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
+    let command = effigy_containers::session::managed_gateway_command(&executable);
+    gateway_up_for_managed_task(&command)
 }
 
 fn ensure_workspace_permissions_ready(

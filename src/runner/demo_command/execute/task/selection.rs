@@ -444,15 +444,17 @@ fn render_inline_managed_lifecycle_command(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("container `{}` is ready", policy.name));
     let setup_sequence = render_managed_lifecycle_setup_sequence(setup_commands);
+    let idle_wait = managed_lifecycle_idle_wait_command();
     format!(
         "sh -lc {}",
         shell_quote(&format!(
-            "state_path={lifecycle_state}; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; printf 'ready_message: %s\\n\\n' {ready_banner}; {ps} || true; printf '\\n[info] lifecycle owner is idle; use compose status to refresh.\\n'; while true; do sleep 3600; done",
+            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; printf 'ready_message: %s\\n\\n' {ready_banner}; {ps} || true; printf '\\n[info] lifecycle owner is idle; use compose status to refresh.\\n'; {idle_wait}",
             label = shell_quote(&policy.name),
             owner_task = shell_quote(owner_task),
             readiness_status = shell_quote(readiness_status),
             ready_banner = shell_quote(&ready_banner),
             setup_sequence = setup_sequence,
+            idle_wait = idle_wait,
         ))
     )
 }
@@ -485,6 +487,10 @@ fn render_inline_managed_shell_command(
             "state_path={lifecycle_state}; while true; do if {readiness_probe} >/dev/null 2>&1; then {attach}; exit $?; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before shell became available' 1>&2; exit 1; fi; sleep 1; done"
         ))
     )
+}
+
+fn managed_lifecycle_idle_wait_command() -> &'static str {
+    "while kill -0 \"$parent_pid\" >/dev/null 2>&1; do sleep 1; done"
 }
 
 fn rewrite_command_for_container(
@@ -647,6 +653,6 @@ container = { image = "alpine:latest", mount = "./:/workspace" }
             .run
             .contains(".effigy/inline-workspaces/dev__app/docker-compose.yml"));
         assert!(lifecycle.run.contains("down --remove-orphans"));
-        assert!(standard.run.contains("exec workspace sh -lc"));
+        assert!(standard.run.contains("exec -T workspace sh -lc"));
     }
 }

@@ -9,6 +9,7 @@ fn register_and_deregister_roundtrip() {
     let reg = RouteRegistration {
         domain: "myapp.test".to_string(),
         target: "127.0.0.1:8080".to_string(),
+        dns_ip: None,
         tls: false,
         project_path: "/projects/myapp".to_string(),
         source: RouteSource::Container,
@@ -36,6 +37,7 @@ fn register_upserts_existing() {
     let reg1 = RouteRegistration {
         domain: "myapp.test".to_string(),
         target: "127.0.0.1:8080".to_string(),
+        dns_ip: None,
         tls: false,
         project_path: "/projects/myapp".to_string(),
         source: RouteSource::Container,
@@ -45,6 +47,7 @@ fn register_upserts_existing() {
     let reg2 = RouteRegistration {
         domain: "myapp.test".to_string(),
         target: "127.0.0.1:9090".to_string(),
+        dns_ip: None,
         tls: true,
         project_path: "/projects/myapp".to_string(),
         source: RouteSource::Container,
@@ -76,6 +79,7 @@ fn deregister_project_routes_removes_all() {
         &RouteRegistration {
             domain: "app.test".to_string(),
             target: "127.0.0.1:8080".to_string(),
+            dns_ip: None,
             tls: false,
             project_path: "/projects/myapp".to_string(),
             source: RouteSource::Container,
@@ -88,6 +92,7 @@ fn deregister_project_routes_removes_all() {
         &RouteRegistration {
             domain: "api.test".to_string(),
             target: "127.0.0.1:8080".to_string(),
+            dns_ip: None,
             tls: false,
             project_path: "/projects/myapp".to_string(),
             source: RouteSource::Container,
@@ -100,6 +105,7 @@ fn deregister_project_routes_removes_all() {
         &RouteRegistration {
             domain: "other.test".to_string(),
             target: "127.0.0.1:9090".to_string(),
+            dns_ip: None,
             tls: false,
             project_path: "/projects/other".to_string(),
             source: RouteSource::Container,

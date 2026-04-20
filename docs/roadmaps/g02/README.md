@@ -59,13 +59,16 @@ Rules:
 
 ## Next Task
 
-Resume `g02.007` for the deliberate `v0.3` release-prep path.
+`g02.007` is back in planning with a clean `v0.3.0` prep checkpoint.
 
-Return to `115` and the release protocol surfaces, then stop before any
-irreversible release action unless explicitly requested.
+Wait for explicit human approval before any irreversible release action. If
+requested, start with:
 
-After that lane settles, move to `g02.019` for the surfaced audit cleanup and
-UX-simplification batch.
+`cargo run --bin effigy -- release prepare --yes --version 0.3.0 --check-gates`
+
+After the `g02.007` release move settles, move to `g02.019` for the surfaced
+audit cleanup and UX-simplification batch.
 
 After `g02.019`, queue `g02.020` for the multi-project gateway and service-DNS
-expansion lane.
+expansion lane at `303`, the loopback-IP allocation and gateway-setup
+foundation batch.

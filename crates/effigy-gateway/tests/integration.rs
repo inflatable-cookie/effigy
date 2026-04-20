@@ -3,7 +3,7 @@
 //! These tests start real DNS and proxy servers on ephemeral ports and
 //! verify end-to-end behavior.
 
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
 
 use effigy_gateway::dns::{run_dns_server, DnsConfig};
@@ -30,6 +30,19 @@ fn test_route(domain: &str, target: &str) -> Route {
     Route {
         domain: domain.to_string(),
         target: target.to_string(),
+        dns_ip: None,
+        source: RouteSource::Container,
+        project: "/tmp/test".to_string(),
+        tls: false,
+        registered: Utc::now(),
+    }
+}
+
+fn test_route_with_dns_ip(domain: &str, target: &str, dns_ip: Ipv4Addr) -> Route {
+    Route {
+        domain: domain.to_string(),
+        target: target.to_string(),
+        dns_ip: Some(dns_ip),
         source: RouteSource::Container,
         project: "/tmp/test".to_string(),
         tls: false,
@@ -132,11 +145,8 @@ async fn dns_resolves_registered_domain_end_to_end() {
     use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
     use std::str::FromStr;
 
-    let mut query_msg = Message::new();
-    query_msg.set_id(42);
-    query_msg.set_message_type(MessageType::Query);
-    query_msg.set_op_code(OpCode::Query);
-    query_msg.set_recursion_desired(true);
+    let mut query_msg = Message::new(42, MessageType::Query, OpCode::Query);
+    query_msg.metadata.recursion_desired = true;
     query_msg.add_query(Query::query(
         Name::from_str("myapp.test.").unwrap(),
         RecordType::A,
@@ -160,14 +170,86 @@ async fn dns_resolves_registered_domain_end_to_end() {
     .unwrap();
 
     let response = Message::from_bytes(&buf[..len]).unwrap();
-    assert_eq!(response.id(), 42);
-    assert_eq!(response.answers().len(), 1);
-    match response.answers()[0].data() {
+    assert_eq!(response.metadata.id, 42);
+    assert_eq!(response.answers.len(), 1);
+    match &response.answers[0].data {
         RData::A(a) => assert_eq!(a.0, std::net::Ipv4Addr::LOCALHOST),
         other => panic!("expected A record, got {other:?}"),
     }
 
     // Shutdown.
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), dns_handle).await;
+}
+
+#[tokio::test]
+async fn dns_resolves_registered_domain_to_route_specific_ip_end_to_end() {
+    let dns_port = available_udp_port().await;
+    let config = DnsConfig {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], dns_port)),
+        tld: "test".to_string(),
+        resolve_to: Ipv4Addr::LOCALHOST,
+    };
+
+    let mut table = RouteTable::new();
+    table.upsert(test_route_with_dns_ip(
+        "db.myapp.test",
+        "127.0.0.1:5432",
+        Ipv4Addr::new(127, 1, 0, 7),
+    ));
+    let shared = Arc::new(RwLock::new(table));
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let dns_cache = Arc::new(effigy_gateway::dns::DnsCache::new(
+        std::time::Duration::from_secs(2),
+    ));
+    let dns_handle = tokio::spawn(run_dns_server(
+        config,
+        shared,
+        Arc::new(GatewayStats::new()),
+        dns_cache,
+        shutdown_rx,
+    ));
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    use hickory_proto::op::{Message, MessageType, OpCode, Query};
+    use hickory_proto::rr::{Name, RData, RecordType};
+    use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
+    use std::str::FromStr;
+
+    let mut query_msg = Message::new(43, MessageType::Query, OpCode::Query);
+    query_msg.metadata.recursion_desired = true;
+    query_msg.add_query(Query::query(
+        Name::from_str("db.myapp.test.").unwrap(),
+        RecordType::A,
+    ));
+
+    let query_bytes = query_msg.to_bytes().unwrap();
+
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    socket
+        .send_to(&query_bytes, format!("127.0.0.1:{dns_port}"))
+        .await
+        .unwrap();
+
+    let mut buf = vec![0u8; 512];
+    let (len, _) = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        socket.recv_from(&mut buf),
+    )
+    .await
+    .expect("DNS response timeout")
+    .unwrap();
+
+    let response = Message::from_bytes(&buf[..len]).unwrap();
+    assert_eq!(response.metadata.id, 43);
+    assert_eq!(response.answers.len(), 1);
+    match &response.answers[0].data {
+        RData::A(a) => assert_eq!(a.0, Ipv4Addr::new(127, 1, 0, 7)),
+        other => panic!("expected A record, got {other:?}"),
+    }
+
     let _ = shutdown_tx.send(true);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), dns_handle).await;
 }

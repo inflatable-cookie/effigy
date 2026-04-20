@@ -145,7 +145,10 @@ pub fn rows_from_payload(payload: &DemoListPayload) -> Vec<BrowserRow> {
     if let Some(groups) = &payload.groups {
         let mut rows = Vec::new();
         for group in groups {
-            rows.push(BrowserRow::Group(format!("{} ({})", group.label, group.count)));
+            rows.push(BrowserRow::Group(format!(
+                "{} ({})",
+                group.label, group.count
+            )));
             for demo in &group.demos {
                 rows.push(BrowserRow::Demo(Box::new(demo.clone())));
             }
@@ -182,7 +185,10 @@ pub fn detail_prefers_live_browser_terminal(
     matches!(
         subcommand,
         DemoSubcommand::Run { .. } | DemoSubcommand::Rerun { .. }
-    ) && detail.runtime_backend.projection_shape.live_terminal_eligible
+    ) && detail
+        .runtime_backend
+        .projection_shape
+        .live_terminal_eligible
         && !detail.active_terminal_session.nested_tui
         && matches!(detail.mode.as_str(), "interactive" | "hybrid")
 }

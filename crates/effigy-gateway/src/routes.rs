@@ -10,6 +10,7 @@
 //! notifications.
 
 use std::collections::HashMap;
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
@@ -26,6 +27,14 @@ pub struct Route {
 
     /// Upstream target (e.g., "127.0.0.1:8080").
     pub target: String,
+
+    /// Optional DNS IP override for this route.
+    ///
+    /// When present, the DNS resolver answers with this IP instead of the
+    /// gateway-wide default `resolve_to` address. This keeps DNS behavior
+    /// route-specific without changing the HTTP proxy contract.
+    #[serde(default)]
+    pub dns_ip: Option<Ipv4Addr>,
 
     /// How this route was registered.
     pub source: RouteSource,

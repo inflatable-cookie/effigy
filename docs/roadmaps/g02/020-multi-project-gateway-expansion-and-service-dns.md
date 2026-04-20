@@ -228,5 +228,5 @@ This roadmap is complete when:
 Keep `g02.007` as the active release-prep lane.
 
 After the deliberate `v0.3` release-prep path settles and the front-door audit
-work in `g02.019` lands, start this roadmap with the route-model foundation:
-add `dns_ip` and teach the DNS resolver to use it.
+work in `g02.019` lands, resume this roadmap from the next bounded execution
+card: `303`, loopback-IP allocation and gateway setup integration.

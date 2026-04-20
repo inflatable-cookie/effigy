@@ -81,6 +81,12 @@ pub(super) fn run_managed_task(
             ContainerExecutionBinding::Container { .. }
         )
     {
+        maybe_start_managed_gateway(
+            &selection.catalog.catalog_root,
+            &preflight.selector.task_name,
+            selection,
+            plan.gateway_auto_start,
+        )?;
         let seed_command = render_workspace_seeded_task_command(
             &preflight.selector.task_name,
             &preflight.runtime_args_exec.passthrough,
@@ -108,16 +114,13 @@ pub(super) fn run_managed_task(
     }
     let _lock_guards = acquire_scopes(&preflight.resolved.resolved_root, &lock_scopes)?;
 
-    if execution_mode != ManagedExecutionMode::RenderPlan
-        && plan.gateway_auto_start
-        && !container_handoff
-    {
-        let gateway_command = build_managed_gateway_command(
+    if execution_mode != ManagedExecutionMode::RenderPlan && !container_handoff {
+        maybe_start_managed_gateway(
             &repo_for_task,
             &preflight.selector.task_name,
             selection,
+            plan.gateway_auto_start,
         )?;
-        gateway_up_for_managed_task(&gateway_command)?;
     }
 
     let lifecycle_cleanup = if !container_handoff
@@ -179,6 +182,19 @@ fn build_managed_gateway_command(
     }
     let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
     Ok(managed_gateway_command(&executable))
+}
+
+fn maybe_start_managed_gateway(
+    repo_root: &std::path::Path,
+    task_name: &str,
+    selection: &TaskSelection<'_>,
+    should_start: bool,
+) -> Result<(), RunnerError> {
+    if !should_start {
+        return Ok(());
+    }
+    let gateway_command = build_managed_gateway_command(repo_root, task_name, selection)?;
+    gateway_up_for_managed_task(&gateway_command)
 }
 
 fn normalize_managed_lifecycle_container_ref(container_name: &str) -> Option<&str> {
@@ -709,15 +725,17 @@ fn render_handoff_managed_lifecycle_command(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("workspace container `{container_label}` is ready"));
     let setup_sequence = render_managed_lifecycle_setup_sequence(setup_commands);
+    let idle_wait = managed_lifecycle_idle_wait_command();
     format!(
         "sh -lc {}",
         shell_quote(&format!(
-            "state_path={lifecycle_state}; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; cleanup() {{ printf '%s\\n' stopped > \"$state_path\"; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; printf 'ready_message: %s\\n\\n' {ready_banner}; printf '[info] lifecycle owner is idle; workspace container handoff is already active.\\n'; while true; do sleep 3600; done",
+            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; cleanup() {{ printf '%s\\n' stopped > \"$state_path\"; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; printf 'ready_message: %s\\n\\n' {ready_banner}; printf '[info] lifecycle owner is idle; workspace container handoff is already active.\\n'; {idle_wait}",
             label = shell_quote(container_label),
             owner_task = shell_quote(owner_task),
             readiness_status = shell_quote(readiness_status),
             ready_banner = shell_quote(&ready_banner),
             setup_sequence = setup_sequence,
+            idle_wait = idle_wait,
         ))
     )
 }
@@ -750,15 +768,17 @@ fn render_inline_managed_lifecycle_command(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("container `{}` is ready", policy.name));
     let setup_sequence = render_managed_lifecycle_setup_sequence(setup_commands);
+    let idle_wait = managed_lifecycle_idle_wait_command();
     format!(
         "sh -lc {}",
         shell_quote(&format!(
-            "state_path={lifecycle_state}; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; printf 'ready_message: %s\\n\\n' {ready_banner}; {ps} || true; printf '\\n[info] lifecycle owner is idle; use compose status to refresh.\\n'; while true; do sleep 3600; done",
+            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; printf 'ready_message: %s\\n\\n' {ready_banner}; {ps} || true; printf '\\n[info] lifecycle owner is idle; use compose status to refresh.\\n'; {idle_wait}",
             label = shell_quote(&policy.name),
             owner_task = shell_quote(owner_task),
             readiness_status = shell_quote(readiness_status),
             ready_banner = shell_quote(&ready_banner),
             setup_sequence = setup_sequence,
+            idle_wait = idle_wait,
         ))
     )
 }
@@ -791,6 +811,10 @@ fn render_inline_managed_shell_command(
             "state_path={lifecycle_state}; while true; do if {readiness_probe} >/dev/null 2>&1; then {attach}; exit $?; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before shell became available' 1>&2; exit 1; fi; sleep 1; done"
         ))
     )
+}
+
+fn managed_lifecycle_idle_wait_command() -> &'static str {
+    "while kill -0 \"$parent_pid\" >/dev/null 2>&1; do sleep 1; done"
 }
 
 fn rewrite_command_for_container(
@@ -919,17 +943,17 @@ mod tests {
     use crate::runner::error::RunnerError;
 
     #[test]
-    fn finish_managed_task_preserves_primary_failure_when_cleanup_also_fails() {
+    fn finish_managed_task_preserves_primary_failure_without_running_cleanup() {
         let error = finish_managed_task(
             Err(RunnerError::task_invocation("task failed")),
             Some("missing-cleanup-command >/dev/null 2>&1"),
         )
-        .expect_err("combined failure should surface");
+        .expect_err("primary task failure should surface");
 
         let rendered = error.to_string();
         assert!(rendered.contains("task failed"), "got: {rendered}");
         assert!(
-            rendered.contains("managed lifecycle cleanup also failed"),
+            !rendered.contains("managed lifecycle cleanup also failed"),
             "got: {rendered}"
         );
     }

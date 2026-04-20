@@ -13,6 +13,15 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`304-decide-post-release-closure-v0-3-prep-follow-up.md`](./304-decide-post-release-closure-v0-3-prep-follow-up.md)
+  is complete. The next `g02.007` move is now explicit again: one bounded
+  `v0.3.0` release-prep alignment slice before any human-approved release
+  action.
+- [`305-implement-v0-3-release-prep-alignment.md`](./305-implement-v0-3-release-prep-alignment.md)
+  is complete. The release-prep checkpoint is now refreshed from live command
+  evidence, and the lane is back in planning pending explicit human-approved
+  release execution for `v0.3.0`.
+
 - [`260-decide-post-modularization-integration-spine-for-g02-011-through-g02-016.md`](./260-decide-post-modularization-integration-spine-for-g02-011-through-g02-016.md)
   is complete. The post-`g02.010` integration order is now explicit:
   `011` first, then `012`, then `014`, then `015`, then `016`, with
@@ -152,7 +161,14 @@ Batch cards are the execution units for active Effigy strict-lane work.
 Staged next-lane card:
 
 - [`301-implement-per-route-dns-ip-foundation.md`](./301-implement-per-route-dns-ip-foundation.md)
-  is staged. It is the intended first `g02.020` execution card once the live
+  is complete. The `g02.020` route-model seam is now real: routes can carry a
+  per-route `dns_ip`, DNS resolution honors it, and the product path compiles
+  cleanly with the new shape.
+- [`302-decide-post-route-model-foundation-follow-up.md`](./302-decide-post-route-model-foundation-follow-up.md)
+  is complete. The next bounded `g02.020` move is now explicit: loopback-IP
+  allocation comes before HTTP post-start port discovery.
+- [`303-implement-loopback-ip-allocation-and-gateway-setup-foundation.md`](./303-implement-loopback-ip-allocation-and-gateway-setup-foundation.md)
+  is staged. It is the intended next `g02.020` execution card once the live
   release-prep lane and the queued `g02.019` audit lane have settled.
 
 ## Archive Rule
@@ -166,7 +182,7 @@ Staged next-lane card:
 
 ## Next Task
 
-No ready batch card is active now. Resume `g02.007` first.
+Resume `g02.007` at `305`.
 
-After `g02.019`, the staged next execution move is `301` for the `g02.020`
-route-model foundation.
+After `g02.019`, the staged next execution move is `303` for the `g02.020`
+loopback-IP allocation and gateway-setup foundation.

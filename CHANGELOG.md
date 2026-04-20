@@ -35,6 +35,29 @@ During v0.x, MINOR bumps may include breaking changes.
   plan/docs output, and trigger the shipped `effigy gateway up` path before
   the managed runtime starts.
 ### Fixed
+- Start the gateway for workspace-seeded managed dev tasks too, so
+  `managed.gateway = true` now applies on the TUI workspace handoff path
+  instead of only on the later in-process managed runtime branch.
+- Stop the gateway daemon automatically when container route deregistration
+  leaves the shared route table empty, keeping the resolver setup in place
+  while restoring the intended zero-route idle shutdown behavior.
+- Make managed lifecycle owner shells self-terminate when their parent runtime
+  disappears, so interrupted or abandoned dev sessions do not leave idle
+  `managed-lifecycle/*.state` owners behind on the host.
+- Make gateway route registration reject host ports already held by unrelated
+  listeners, so container DNS routes no longer silently proxy to whichever
+  process happens to own the declared host port.
+- Roll back detached container bring-up automatically when gateway
+  registration fails, so rejected DNS-route registration does not leave a
+  partial stack running behind.
+- Allow `[containers.<name>.dns]` routes to declare an optional `service`,
+  and when present require gateway registration to prove the published host
+  port belongs to that runtime service instead of only the same compose
+  project.
+- Make the gateway daemon arm a 5 minute idle shutdown when the watched
+  route table transitions from non-empty to empty, and cancel that timer
+  if routes return, so workspace/container restarts do not immediately tear
+  down the shared gateway after the last route is removed.
 - Make `effigy workspace` verify that the bound system's primary service is
   actually running before it skips bring-up, so stale compose state no longer
   drops straight into `no running containers from service workspace`.

@@ -150,7 +150,7 @@ fn tasks_json_contract_with_resolve_has_diagnostics_and_probe_fields() {
     assert_eq!(parsed["resolve"]["status"], "ok");
     assert_eq!(parsed["resolve"]["catalog"], "catalog_a");
     assert_eq!(parsed["resolve"]["task"], "api");
-    assert_eq!(parsed["resolve"]["lock_scopes"][0], "task:api");
+    assert_eq!(parsed["resolve"]["lock_scopes"][0], "task:catalog_a/api");
 }
 
 #[test]
@@ -183,7 +183,7 @@ fn tasks_filtered_json_contract_with_resolve_has_diagnostics_and_probe_fields() 
     assert_eq!(parsed["resolve"]["status"], "ok");
     assert_eq!(parsed["resolve"]["catalog"], "catalog_a");
     assert_eq!(parsed["resolve"]["task"], "build");
-    assert_eq!(parsed["resolve"]["lock_scopes"][0], "task:build");
+    assert_eq!(parsed["resolve"]["lock_scopes"][0], "task:catalog_a/build");
 }
 
 #[test]

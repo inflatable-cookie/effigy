@@ -58,13 +58,13 @@ The product substrate this lane builds on is already real:
 - the active release lane remains `g02.007`
 - the next post-release audit/documentation lane remains `g02.019`
 
-This lane is intentionally staged behind those higher-priority fronts. It now
-has an explicit first execution card so a later resume does not need to
-reconstruct the opening move.
+This lane is intentionally staged behind those higher-priority fronts, but the
+first route-model batch has now landed in a parallel thread so a later resume
+does not need to reconstruct the opening move.
 
 Settled design decisions carried into execution:
 
-- route entries will grow `dns_ip: Option<Ipv4Addr>`
+- route entries now carry `dns_ip: Option<Ipv4Addr>`
 - HTTP routes continue to proxy; TCP service routes resolve in DNS only
 - project-owned services default to one stable loopback IP per project
 - shared-service aliases may collapse onto one shared backing-service IP when
@@ -86,15 +86,17 @@ This lane should execute in bounded batches:
 
 The intended execution order starts with:
 
-1. `301` — route-model foundation: add `dns_ip`, update DNS resolution, and
-   keep proxy behavior honest for HTTP-only routes
-2. later planning checkpoint — decide whether loopback-IP allocation or HTTP
-   post-start port discovery should come second based on the landed route-model
-   seam and test fallout
-3. later execution — loopback-IP allocation and gateway setup integration
-4. later execution — container registration rewrite for HTTP discovery and TCP
-   service alias registration
-5. later execution — shared-service DNS reuse and env-injection shaping
+1. `301` — complete. The route-model foundation landed: `dns_ip` is part of
+   the route shape, DNS resolution uses it when present, and proxy behavior
+   stays honest for HTTP-only routes
+2. `302` — complete. The post-`301` decision point now chooses loopback-IP
+   allocation before HTTP post-start port discovery
+3. `303` — next execution. Land loopback-IP allocation and gateway setup
+   integration on the bounded macOS path
+4. later execution — HTTP post-start published-port discovery for gateway
+   registration
+5. later execution — container registration rewrite for TCP service alias
+   registration and shared-service DNS reuse
 
 ## Exit Condition
 
@@ -111,5 +113,5 @@ This strict lane is complete when:
 Keep `g02.007` as the live lane and `g02.019` as the next post-release audit
 lane.
 
-When `g02.020` is resumed, execute `301` to land the `dns_ip` route-model and
-DNS-resolver foundation.
+When `g02.020` is resumed after those fronts settle, execute `303` to land the
+loopback-IP allocation and gateway setup foundation.

@@ -1,4 +1,8 @@
 use super::*;
+use crate::dns::DnsCache;
+use crate::routes::{Route, RouteSource, RouteTable};
+use std::sync::{Arc, RwLock};
+use tokio::sync::watch;
 
 #[test]
 fn standard_config_paths() {
@@ -84,4 +88,88 @@ async fn run_gateway_propagates_proxy_bind_failure() {
         .await
         .expect_err("proxy bind should fail");
     assert!(matches!(error, GatewayError::ProxyBindError { .. }));
+}
+
+fn demo_route_table() -> RouteTable {
+    let mut table = RouteTable::new();
+    table.upsert(Route {
+        domain: "demo.test".to_owned(),
+        target: "127.0.0.1:41003".to_owned(),
+        dns_ip: None,
+        tls: false,
+        source: RouteSource::Container,
+        project: "/tmp/demo".to_owned(),
+        registered: chrono::Utc::now(),
+    });
+    table
+}
+
+#[test]
+fn apply_reloaded_route_table_noops_when_already_empty() {
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(std::time::Duration::from_secs(2)));
+
+    let action = apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache);
+
+    assert_eq!(action, IdleShutdownAction::None);
+    assert!(table.read().unwrap().is_empty());
+}
+
+#[test]
+fn apply_reloaded_route_table_arms_idle_shutdown_when_last_route_removed() {
+    let table = Arc::new(RwLock::new(demo_route_table()));
+    let dns_cache = Arc::new(DnsCache::new(std::time::Duration::from_secs(2)));
+
+    let action = apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache);
+
+    assert_eq!(action, IdleShutdownAction::Arm);
+    assert!(table.read().unwrap().is_empty());
+}
+
+#[test]
+fn apply_reloaded_route_table_cancels_idle_shutdown_when_route_returns() {
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let dns_cache = Arc::new(DnsCache::new(std::time::Duration::from_secs(2)));
+
+    let action = apply_reloaded_route_table(&table, demo_route_table(), &dns_cache);
+
+    assert_eq!(action, IdleShutdownAction::Cancel);
+    assert_eq!(table.read().unwrap().len(), 1);
+}
+
+#[test]
+fn scheduled_idle_shutdown_stops_gateway_when_table_stays_empty() {
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let generation = Arc::new(std::sync::atomic::AtomicU64::new(1));
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    schedule_idle_shutdown(
+        Arc::clone(&table),
+        generation,
+        shutdown_tx,
+        1,
+        std::time::Duration::from_millis(10),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(30));
+
+    assert!(*shutdown_rx.borrow());
+}
+
+#[test]
+fn scheduled_idle_shutdown_is_cancelled_when_generation_changes() {
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let generation = Arc::new(std::sync::atomic::AtomicU64::new(1));
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    schedule_idle_shutdown(
+        Arc::clone(&table),
+        Arc::clone(&generation),
+        shutdown_tx,
+        1,
+        std::time::Duration::from_millis(20),
+    );
+    generation.store(2, std::sync::atomic::Ordering::SeqCst);
+    std::thread::sleep(std::time::Duration::from_millis(40));
+
+    assert!(!*shutdown_rx.borrow());
 }

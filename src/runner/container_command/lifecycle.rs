@@ -134,7 +134,13 @@ pub(super) fn run_container_up(
     {
         return render_attached_session_closeout(repo_root, &policy, colima_started, "signal");
     }
-    let gateway_routes = register_gateway_routes_for_container(repo_root, &policy)?;
+    let gateway_routes = match register_gateway_routes_for_container(repo_root, &policy) {
+        Ok(routes) => routes,
+        Err(error) => {
+            let cleanup_result = cleanup_failed_container_up(repo_root, &policy);
+            return Err(finish_container_up_failure(error, cleanup_result));
+        }
+    };
 
     if attach_mode == EffectiveAttachMode::Detached {
         let mut report = up_detached_report(&policy, colima_started, health);
@@ -150,6 +156,35 @@ pub(super) fn run_container_up(
     }
 
     run_attached_container_session(repo_root, &policy, colima_started, health, None)
+}
+
+fn cleanup_failed_container_up(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let shutdown_result = shutdown_container_via_exec(repo_root, policy).map_err(RunnerError::from);
+    let deregister_result = deregister_gateway_routes_for_container(policy).map(|_| ());
+    match (shutdown_result, deregister_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(shutdown_error), Err(deregister_error)) => Err(RunnerError::task_invocation(
+            format!(
+                "{shutdown_error}\ncontainer up cleanup also failed while removing gateway routes: {deregister_error}"
+            ),
+        )),
+    }
+}
+
+fn finish_container_up_failure(
+    startup_error: RunnerError,
+    cleanup_result: Result<(), RunnerError>,
+) -> RunnerError {
+    match cleanup_result {
+        Ok(()) => startup_error,
+        Err(cleanup_error) => RunnerError::task_invocation(format!(
+            "{startup_error}\ncontainer up cleanup also failed: {cleanup_error}"
+        )),
+    }
 }
 
 pub(super) fn run_container_down(
@@ -503,9 +538,11 @@ mod tests {
     use super::{
         annotate_left_running_shared_services, annotate_shared_service_notes,
         build_container_shell_args, build_interactive_container_shell_args,
+        finish_container_up_failure,
         render_interactive_shell_session_command, run_container_eject, run_container_reset,
         should_fail_container_shell_exit,
     };
+    use crate::runner::RunnerError;
     use effigy_containers::{
         down_report, up_detached_report, EffectiveComposeSource, EffectiveContainerPolicy,
         SharedServiceBinding,
@@ -776,6 +813,24 @@ variant = "default"
                     "cache [redis] -> host.docker.internal:8110"
                 ]
             })
+        );
+    }
+
+    #[test]
+    fn finish_container_up_failure_preserves_startup_error_when_cleanup_succeeds() {
+        let startup_error = RunnerError::task_invocation("gateway registration failed");
+        let rendered = finish_container_up_failure(startup_error, Ok(()));
+        assert_eq!(rendered.to_string(), "gateway registration failed");
+    }
+
+    #[test]
+    fn finish_container_up_failure_reports_cleanup_failure_too() {
+        let startup_error = RunnerError::task_invocation("gateway registration failed");
+        let cleanup_error = RunnerError::task_invocation("docker compose down failed");
+        let rendered = finish_container_up_failure(startup_error, Err(cleanup_error));
+        assert_eq!(
+            rendered.to_string(),
+            "gateway registration failed\ncontainer up cleanup also failed: docker compose down failed"
         );
     }
 

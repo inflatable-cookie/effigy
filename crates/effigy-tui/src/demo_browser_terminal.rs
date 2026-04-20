@@ -14,7 +14,7 @@ use ratatui::widgets::{Block, Borders};
 
 use crate::demo_browser::{
     browser_body_constraints, compact_kv_line, detail_tab_lines, muted_line,
-    resolve_repo_relative_path, DetailSelectableItem, DetailTab, DetailRender,
+    resolve_repo_relative_path, DetailRender, DetailSelectableItem, DetailTab,
 };
 use crate::terminal_text::{render_vt_lines, LiveTerminalBuffer};
 

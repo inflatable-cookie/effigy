@@ -12,7 +12,6 @@ use nix::sys::signal::{kill, Signal};
 #[cfg(unix)]
 use nix::unistd::{setpgid, Pid};
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
-use signal_hook::iterator::Signals;
 
 use effigy_containers::{
     compose::compose_invocation, exec::run_docker_capture as run_docker_capture_via_exec,
@@ -107,14 +106,10 @@ pub(super) fn install_stop_requested_flag(
     let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     #[cfg(unix)]
     {
-        let mut signals = Signals::new([SIGTERM, SIGINT])
+        signal_hook::flag::register(SIGTERM, Arc::clone(&flag))
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        let stop_flag = Arc::clone(&flag);
-        thread::spawn(move || {
-            for _signal in signals.forever() {
-                stop_flag.store(true, std::sync::atomic::Ordering::SeqCst);
-            }
-        });
+        signal_hook::flag::register(SIGINT, Arc::clone(&flag))
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     }
     Ok(flag)
 }

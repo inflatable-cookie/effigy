@@ -3,12 +3,19 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Stdio};
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use super::support::{
     parse_stdout_json, run_json_cli_command, run_json_cli_command_with_manifest,
     run_json_task_success, temp_workspace, wait_for_path_exists,
 };
+
+static CLI_PROCESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+fn lock_cli_process_tests() -> std::sync::MutexGuard<'static, ()> {
+    CLI_PROCESS_TEST_LOCK.lock().expect("cli process test lock")
+}
 
 fn init_git_repo(root: &std::path::Path) {
     let init = Command::new("git")
@@ -1765,6 +1772,7 @@ fn cli_demo_input_json_forwards_to_running_concurrent_runner_demo_session() {
 
 #[test]
 fn cli_demo_resize_json_updates_concurrent_runner_terminal_session_geometry() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("demo-concurrent-resize-json");
     write_demo_concurrent_runner_fixture(&root);
 
@@ -7418,6 +7426,7 @@ fn cli_container_up_detached_starts_colima_and_reports_ready() {
 
 #[test]
 fn cli_container_attached_session_stops_environment_on_sigint() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("container-up-attached");
     write_container_fixture(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
@@ -7466,6 +7475,7 @@ fn cli_container_attached_session_stops_environment_on_sigint() {
 
 #[test]
 fn cli_container_attached_stream_session_reports_operator_overview() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("container-up-stream-overview");
     write_container_fixture(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
@@ -7522,6 +7532,7 @@ fn cli_container_attached_stream_session_reports_operator_overview() {
 
 #[test]
 fn cli_container_attached_session_handles_sigint_during_startup() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("container-up-startup-sigint");
     write_container_fixture(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
@@ -7628,6 +7639,7 @@ fn cli_task_workspace_binding_stops_environment_on_sigint() {
 
 #[test]
 fn cli_container_attached_session_terminates_log_process_group() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("container-up-process-group-stop");
     write_container_fixture(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
@@ -7722,7 +7734,7 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
 #[test]
 fn cli_container_shell_command_runs_via_sh_lc() {
     let root = temp_workspace("container-shell-command");
-    write_container_fixture(&root, None, "./app:/workspace");
+    write_container_fixture(&root, None, "./:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
     let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
@@ -7754,7 +7766,11 @@ fn cli_container_shell_command_runs_via_sh_lc() {
     assert!(output.status.success(), "shell failed: {output:?}");
     let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
     assert!(
-        docker_invocations.contains("exec app sh -lc printf shell-ok"),
+        docker_invocations.contains("exec -T -w /workspace"),
+        "got: {docker_invocations}"
+    );
+    assert!(
+        docker_invocations.contains("app sh -lc printf shell-ok"),
         "got: {docker_invocations}"
     );
 }

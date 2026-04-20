@@ -48,4 +48,9 @@ Recently completed:
 
 ## Next Task
 
-Resume `g02.007` and the `v0.3` release-prep path.
+`g02.007` is back in planning.
+
+Wait for explicit release intent before any irreversible action. If requested,
+start with:
+
+`cargo run --bin effigy -- release prepare --yes --version 0.3.0 --check-gates`

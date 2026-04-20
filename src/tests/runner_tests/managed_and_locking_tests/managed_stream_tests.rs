@@ -287,7 +287,7 @@ fn write_fake_effigy(root: &Path) -> std::path::PathBuf {
     fs::write(
         &script,
         format!(
-            "#!/bin/sh\nlog='{}'\ncase \"$1\" in\n  container)\n    shift\n    name='default'\n    case \"$1\" in\n      up|down|status) ;;\n      *) name=\"$1\"; shift ;;\n    esac\n    sub=\"$1\"\n    shift\n    case \"$sub\" in\n      up)\n        printf 'up:%s\\n' \"$name\" >> \"$log\"\n        exit 0\n        ;;\n      status)\n        printf 'status:%s\\n' \"$name\" >> \"$log\"\n        printf 'fake-status-%s\\n' \"$name\"\n        exit 0\n        ;;\n      down)\n        printf 'down:%s\\n' \"$name\" >> \"$log\"\n        exit 0\n        ;;\n      shell)\n        printf 'shell:%s\\n' \"$name\" >> \"$log\"\n        exit 0\n        ;;\n      *)\n        printf 'unexpected-container:%s %s\\n' \"$name\" \"$sub\" >> \"$log\"\n        exit 1\n        ;;\n    esac\n    ;;\n  gateway)\n    shift\n    case \"$1\" in\n      up)\n        printf 'gateway-up\\n' >> \"$log\"\n        exit 0\n        ;;\n      *)\n        printf 'unexpected-gateway:%s\\n' \"$*\" >> \"$log\"\n        exit 1\n        ;;\n    esac\n    ;;\n  exec)\n    shift\n    printf 'exec:%s\\n' \"$*\" >> \"$log\"\n    printf 'fake-exec\\n'\n    exit 0\n    ;;\n  *)\n    printf 'task:%s\\n' \"$*\" >> \"$log\"\n    printf 'fake-task-%s\\n' \"$1\"\n    exit 0\n    ;;\nesac\n",
+            "#!/bin/sh\nlog='{}'\ncase \"$1\" in\n  container)\n    shift\n    name='default'\n    case \"$1\" in\n      up|down|status) ;;\n      *) name=\"$1\"; shift ;;\n    esac\n    sub=\"$1\"\n    shift\n    case \"$sub\" in\n      up)\n        printf 'up:%s\\n' \"$name\" >> \"$log\"\n        exit 0\n        ;;\n      status)\n        printf 'status:%s\\n' \"$name\" >> \"$log\"\n        printf 'fake-status-%s\\n' \"$name\"\n        exit 0\n        ;;\n      down)\n        printf 'down:%s\\n' \"$name\" >> \"$log\"\n        exit 0\n        ;;\n      shell)\n        printf 'shell:%s:%s\\n' \"$name\" \"$*\" >> \"$log\"\n        exit 0\n        ;;\n      *)\n        printf 'unexpected-container:%s %s\\n' \"$name\" \"$sub\" >> \"$log\"\n        exit 1\n        ;;\n    esac\n    ;;\n  gateway)\n    shift\n    case \"$1\" in\n      up)\n        printf 'gateway-up\\n' >> \"$log\"\n        exit 0\n        ;;\n      *)\n        printf 'unexpected-gateway:%s\\n' \"$*\" >> \"$log\"\n        exit 1\n        ;;\n    esac\n    ;;\n  exec)\n    shift\n    printf 'exec:%s\\n' \"$*\" >> \"$log\"\n    printf 'fake-exec\\n'\n    exit 0\n    ;;\n  *)\n    printf 'task:%s\\n' \"$*\" >> \"$log\"\n    printf 'fake-task-%s\\n' \"$1\"\n    exit 0\n    ;;\nesac\n",
             log.display()
         ),
     )
@@ -309,7 +309,7 @@ fn write_fake_container_runtime(root: &Path) -> EnvGuard {
     fs::write(
         &docker,
         format!(
-            "#!/bin/sh\nlog='{}'\nprintf 'docker:%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = compose ]; then\n  shift\n  while [ $# -gt 0 ]; do\n    case \"$1\" in\n      -f|-p)\n        shift 2\n        ;;\n      up)\n        printf 'compose:up\\n' >> \"$log\"\n        exit 0\n        ;;\n      down)\n        printf 'compose:down\\n' >> \"$log\"\n        exit 0\n        ;;\n      ps)\n        printf 'compose:ps\\n' >> \"$log\"\n        printf 'NAME STATUS\\n'\n        exit 0\n        ;;\n      exec)\n        shift\n        service=\"$1\"\n        shift\n        printf 'compose:exec:%s:%s\\n' \"$service\" \"$*\" >> \"$log\"\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ] && [ \"$3\" = true ]; then\n          exit 0\n        fi\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ]; then\n          command=$(printf '%s' \"$3\" | sed \"s/^'//; s/'$//\")\n          eval \"$command\"\n          exit $?\n        fi\n        exec \"$@\"\n        ;;\n      *)\n        shift\n        ;;\n    esac\n  done\nfi\nexit 0\n",
+            "#!/bin/sh\nlog='{}'\nprintf 'docker:%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = compose ]; then\n  shift\n  while [ $# -gt 0 ]; do\n    case \"$1\" in\n      -f|-p)\n        shift 2\n        ;;\n      up)\n        printf 'compose:up\\n' >> \"$log\"\n        exit 0\n        ;;\n      down)\n        printf 'compose:down\\n' >> \"$log\"\n        exit 0\n        ;;\n      ps)\n        printf 'compose:ps\\n' >> \"$log\"\n        printf 'NAME STATUS\\n'\n        exit 0\n        ;;\n      exec)\n        shift\n        if [ \"$1\" = -T ]; then\n          shift\n        fi\n        service=\"$1\"\n        shift\n        printf 'compose:exec:%s:%s\\n' \"$service\" \"$*\" >> \"$log\"\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ] && [ \"$3\" = true ]; then\n          exit 0\n        fi\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ]; then\n          command=$(printf '%s' \"$3\" | sed \"s/^'//; s/'$//\")\n          eval \"$command\"\n          exit $?\n        fi\n        exec \"$@\"\n        ;;\n      *)\n        shift\n        ;;\n    esac\n  done\nfi\nexit 0\n",
             docker_log.display()
         ),
     )
@@ -614,12 +614,16 @@ fn run_manifest_task_managed_stream_resolves_task_refs_before_container_exec_whe
 
     let out =
         crate::runner::tests::prelude::run_dev(&root, &[]).expect("managed run should succeed");
-    assert!(out.contains("[api] fake-exec"), "got: {out}");
+    assert!(out.contains("summary  ok:3"), "got: {out}");
 
     let log_path = root.join("fake-effigy.log");
     wait_for_path_exists(&log_path, Duration::from_secs(2), "fake effigy log");
     let log = fs::read_to_string(&log_path).expect("read fake effigy log");
-    assert!(log.contains("exec:--repo"), "log: {log}");
-    assert!(log.contains("printf host-inline-api"), "log: {log}");
+    assert!(log.contains("shell:web:"), "log: {log}");
+    assert!(log.contains("--command true"), "log: {log}");
+    assert!(
+        log.contains("--command printf host-inline-api"),
+        "log: {log}"
+    );
     assert!(!log.contains("task:api"), "log: {log}");
 }

@@ -15,9 +15,7 @@ use effigy_cli::{
     DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus,
     DemoSubcommand,
 };
-use effigy_demo::browser::{
-    DemoDetail, DemoHistoryAttempt, DemoHistoryPayload, DemoSummary,
-};
+use effigy_demo::browser::{DemoDetail, DemoHistoryAttempt, DemoHistoryPayload, DemoSummary};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -26,16 +24,14 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 use serde_json::Value as JsonValue;
 
-use crate::core::{
-    next_index, prev_index, EFFIGY_ACCENT,
-};
+use crate::core::{next_index, prev_index, EFFIGY_ACCENT};
 
-#[path = "demo_browser_terminal.rs"]
-mod terminal;
 #[path = "demo_browser_overlay.rs"]
 mod overlay;
 #[path = "demo_browser_render.rs"]
 mod render;
+#[path = "demo_browser_terminal.rs"]
+mod terminal;
 
 use overlay::{render_action_overlay, render_filter_overlay, render_prompt_overlay};
 pub use render::{
@@ -43,15 +39,15 @@ pub use render::{
     browser_header_lines, browser_help_line, browser_list_summary_lines,
     browser_terminal_key_input, centered_rect, clamp_artifact_index, compact_kv_line,
     demo_history_args, demo_input_args, demo_inspect_args, demo_list_args, demo_payload_message,
-    demo_resize_args, demo_stop_args, detail_prefers_live_browser_terminal,
-    detail_tab_lines, filter_change_message, filter_menu_value, first_demo_id,
-    history_detail_render, muted_line, next_gap_filter, next_group_by, next_mode_filter,
-    next_status_filter, normalized_prompt_value, overview_detail_render, parse_demo_history_payload,
-    parse_demo_inspect_payload, parse_demo_list_payload, preferred_run_action,
-    prompt_apply_message, query_summary, render_browser_demo_row, render_browser_empty_overlay,
-    render_browser_footer, render_browser_header, render_browser_list, render_browser_overlay,
-    resolve_artifact_path, resolve_repo_relative_path, row_contains_demo, rows_from_payload,
-    section_heading, selectable_detail_line, selected_artifact, selected_list_highlight_style,
+    demo_resize_args, demo_stop_args, detail_prefers_live_browser_terminal, detail_tab_lines,
+    filter_change_message, filter_menu_value, first_demo_id, history_detail_render, muted_line,
+    next_gap_filter, next_group_by, next_mode_filter, next_status_filter, normalized_prompt_value,
+    overview_detail_render, parse_demo_history_payload, parse_demo_inspect_payload,
+    parse_demo_list_payload, preferred_run_action, prompt_apply_message, query_summary,
+    render_browser_demo_row, render_browser_empty_overlay, render_browser_footer,
+    render_browser_header, render_browser_list, render_browser_overlay, resolve_artifact_path,
+    resolve_repo_relative_path, row_contains_demo, rows_from_payload, section_heading,
+    selectable_detail_line, selected_artifact, selected_list_highlight_style,
     selected_list_highlight_symbol, stacked_kv_lines, status_style,
 };
 pub use terminal::{
