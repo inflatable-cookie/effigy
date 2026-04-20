@@ -11,6 +11,9 @@ During v0.x, MINOR bumps may include breaking changes.
   replacing the extra `[systems.<name>.workspace_defaults]` layer, and route
   workspace `workdir`, `user`, `home`, and `mounts` resolution through
   that system-level config plus per-workspace overrides.
+- Flatten managed dev-task settings onto `[tasks.<name>]` itself and remove
+  the nested `[tasks.<name>.managed]` table; `container_lifecycle`, `gateway`,
+  `health_wait`, and `ready_message` now live directly on the task.
 
 ### Added
 - Add the first composed `system`/`workspace` task-runtime contract, including
@@ -23,7 +26,7 @@ During v0.x, MINOR bumps may include breaking changes.
   artifact from the current Effigy checkout before installing it into the
   running workspace service.
 - Add the first bounded `g02.013` managed dev-task foundation, including
-  `[tasks.<name>.managed].container_lifecycle`, `concurrent` lifecycle roles,
+  task-level `container_lifecycle`, `concurrent` lifecycle roles,
   plan/schema/docs support, and managed runtime ownership for starting and
   stopping a repo-owned workspace-backed container through one task-owned
   lifecycle process.
@@ -31,12 +34,12 @@ During v0.x, MINOR bumps may include breaking changes.
   can declare `role = "shell"` and open the task-owned primary-service
   container shell through the shipped `effigy container shell` path.
 - Add bounded `g02.013` managed readiness UX support, so repo-owned managed dev
-  tasks can declare `managed.health_wait` plus `managed.ready_message`, render
+  tasks can declare `health_wait` plus `ready_message`, render
   that contract in plan/docs/schema output, and project one honest ready
   message through the lifecycle-owned runtime path after detached container
   startup reaches ready state.
 - Add bounded `g02.013` managed gateway auto-start support, so repo-owned
-  managed dev tasks can declare `managed.gateway = true`, validate that
+  managed dev tasks can declare `gateway = true`, validate that
   contract against lifecycle-owned workspace containers, render it in
   plan/docs output, and trigger the shipped `effigy gateway up` path before
   the managed runtime starts.
@@ -53,7 +56,7 @@ During v0.x, MINOR bumps may include breaking changes.
   render the built-in `overview` plus `primary_service` tabs instead of
   pretending repos can shape that dead UI path.
 - Start the gateway for workspace-seeded managed dev tasks too, so
-  `managed.gateway = true` now applies on the TUI workspace handoff path
+  `gateway = true` now applies on the TUI workspace handoff path
   instead of only on the later in-process managed runtime branch.
 - Stop the gateway daemon automatically when container route deregistration
   leaves the shared route table empty, keeping the resolver setup in place
@@ -110,6 +113,9 @@ During v0.x, MINOR bumps may include breaking changes.
   cleanup stops failing as an outer 15s wrapper timeout with orphaned child
   processes left behind.
 ### Changed
+- Default a sole container's effective `project_name` to the catalog alias
+  when present, and reject multi-container manifests whose effective
+  `project_name` values collide unless they declare unique overrides.
 - Show a spinner for non-streaming `effigy system` calls while they are
   waiting on container runtime output, so long-running `system up/down/logs`
   paths do not sit silent in interactive terminals.

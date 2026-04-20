@@ -142,8 +142,6 @@ workdir = "."
 mode = "tui"
 fail_on_non_zero = true
 workspace = "app"
-
-[tasks.dev.managed]
 container_lifecycle = true
 health_wait = true
 ready_message = "App ready at http://project.test"

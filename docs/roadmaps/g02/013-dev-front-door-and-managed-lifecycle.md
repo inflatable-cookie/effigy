@@ -84,8 +84,6 @@ container = "web"
 [tasks.dev]
 workspace = "app"
 mode = "attached"
-
-[tasks.dev.managed]
 gateway = true
 health_wait = true
 ready_message = "http://projectname.test"

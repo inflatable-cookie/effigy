@@ -83,6 +83,12 @@ primary_service = "app"
     let policy = load_container_policy(&root, None).expect("policy");
 
     assert_eq!(policy.name, "web");
+    let expected = root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .expect("repo dir name")
+        .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
+    assert_eq!(policy.project_name, expected);
 }
 
 #[test]
@@ -107,6 +113,67 @@ primary_service = "app"
     assert!(error
         .to_string()
         .contains("no sole `context = \"dev\"` container is available"));
+}
+
+#[test]
+fn load_container_policy_uses_catalog_alias_as_single_container_project_name() {
+    let root = temp_repo("single-container-alias");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[catalog]
+alias = "underlay-reference"
+
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert_eq!(policy.project_name, "underlay-reference");
+}
+
+#[test]
+fn load_container_policy_rejects_duplicate_effective_project_names() {
+    let root = temp_repo("duplicate-project-names");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[catalog]
+alias = "underlay-reference"
+
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+project_name = "all-policies-web"
+
+[containers.worker]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "jobs"
+project_name = "all-policies-worker"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let error = load_container_policy(&root, None).expect_err("should fail");
+
+    assert!(error.to_string().contains("unique `project_name` values"));
+    assert!(error.to_string().contains("`underlay-reference`"));
+    assert!(error.to_string().contains("`web`"));
+    assert!(error.to_string().contains("`worker`"));
 }
 
 #[test]

@@ -47,7 +47,7 @@ pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &
         validate_task_run_field(context, task_name, task_table.get("run"));
         validate_task_system_field(context, task_name, task_table.get("system"));
         validate_task_workspace_field(context, task_name, task_table.get("workspace"));
-        validate_task_managed_field(context, task_name, task_table.get("managed"));
+        validate_task_managed_fields(context, task_name, task_table);
         validate_task_env_field(context, task_name, task_table.get("env"));
         validate_task_env_file_field(context, task_name, task_table.get("env_file"));
 
@@ -105,7 +105,10 @@ fn validate_task_table_keys(
             "env_file",
             "mode",
             "fail_on_non_zero",
-            "managed",
+            "container_lifecycle",
+            "gateway",
+            "health_wait",
+            "ready_message",
             "concurrent",
             "profiles",
         ],
@@ -188,52 +191,30 @@ fn validate_task_workspace_field(
     );
 }
 
-fn validate_task_managed_field(
+fn validate_task_managed_fields(
     context: &mut SchemaContext<'_, '_>,
     task_name: &str,
-    managed: Option<&Value>,
+    task_table: &toml::map::Map<String, Value>,
 ) {
-    let Some(managed) = managed else {
-        return;
-    };
-    let Some(table) = require_table(
+    validate_optional_boolean_field(
         context,
-        &format!("tasks.{task_name}.managed"),
-        managed,
-        "expected table",
-    ) else {
-        return;
-    };
-    validate_allowed_keys(
-        context,
-        &format!("tasks.{task_name}.managed"),
-        table,
-        &[
-            "container_lifecycle",
-            "gateway",
-            "health_wait",
-            "ready_message",
-        ],
+        task_table.get("container_lifecycle"),
+        &format!("tasks.{task_name}.container_lifecycle"),
     );
     validate_optional_boolean_field(
         context,
-        table.get("container_lifecycle"),
-        &format!("tasks.{task_name}.managed.container_lifecycle"),
+        task_table.get("gateway"),
+        &format!("tasks.{task_name}.gateway"),
     );
     validate_optional_boolean_field(
         context,
-        table.get("gateway"),
-        &format!("tasks.{task_name}.managed.gateway"),
-    );
-    validate_optional_boolean_field(
-        context,
-        table.get("health_wait"),
-        &format!("tasks.{task_name}.managed.health_wait"),
+        task_table.get("health_wait"),
+        &format!("tasks.{task_name}.health_wait"),
     );
     validate_optional_non_empty_string_field(
         context,
-        table.get("ready_message"),
-        &format!("tasks.{task_name}.managed.ready_message"),
+        task_table.get("ready_message"),
+        &format!("tasks.{task_name}.ready_message"),
     );
 }
 

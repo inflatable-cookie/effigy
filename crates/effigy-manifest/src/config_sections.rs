@@ -1098,10 +1098,16 @@ mounts = ["../underlay", "../poodle:/workspace-root/poodle"]
         .expect("parse systems");
 
         let system = parsed.systems.systems.get("dev").expect("dev system");
-        assert_eq!(system.container.as_ref().and_then(|container| match container {
-            ManifestWorkspaceContainerRef::Named(name) => Some(name.as_str()),
-            ManifestWorkspaceContainerRef::Inline(_) => None,
-        }), Some("stack"));
+        assert_eq!(
+            system
+                .container
+                .as_ref()
+                .and_then(|container| match container {
+                    ManifestWorkspaceContainerRef::Named(name) => Some(name.as_str()),
+                    ManifestWorkspaceContainerRef::Inline(_) => None,
+                }),
+            Some("stack")
+        );
         assert_eq!(system.user.as_deref(), Some("dev"));
         assert_eq!(system.home.as_deref(), Some("/home/dev"));
         let workspace = system.workspaces.get("app").expect("app workspace");
@@ -1220,11 +1226,7 @@ workdir = "/workspace"
         let app = dev.workspaces.get("app").expect("app workspace");
         assert_eq!(app.workdir.as_deref(), Some("/workspace"));
         assert_eq!(app.user, None);
-        match dev
-            .container
-            .as_ref()
-            .expect("workspace default container")
-        {
+        match dev.container.as_ref().expect("workspace default container") {
             ManifestWorkspaceContainerRef::Named(name) => assert_eq!(name, "app"),
             ManifestWorkspaceContainerRef::Inline(_) => {
                 panic!("expected named workspace container reference")

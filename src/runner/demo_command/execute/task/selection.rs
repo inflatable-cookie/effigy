@@ -180,14 +180,13 @@ fn materialize_demo_special_managed_processes(
     for process in &mut plan.processes {
         match process.role {
             ManagedProcessRole::Lifecycle => {
-                let managed = task.managed.as_ref();
                 process.run = if let Some(policy) = inline_policy.as_ref() {
                     render_inline_managed_lifecycle_command(
                         repo_root,
                         policy,
                         task_name,
-                        managed.is_some_and(|managed| managed.health_wait),
-                        managed.and_then(|managed| managed.ready_message.as_deref()),
+                        task.health_wait.unwrap_or(false),
+                        task.ready_message.as_deref(),
                         &lifecycle_setup_commands,
                     )
                 } else {
@@ -195,8 +194,8 @@ fn materialize_demo_special_managed_processes(
                         repo_root,
                         container_binding.container_name(),
                         task_name,
-                        managed.is_some_and(|managed| managed.health_wait),
-                        managed.and_then(|managed| managed.ready_message.as_deref()),
+                        task.health_wait.unwrap_or(false),
+                        task.ready_message.as_deref(),
                         &lifecycle_setup_commands,
                         &executable,
                     )
@@ -613,13 +612,11 @@ mod tests {
             r#"[tasks.dev]
 mode = "tui"
 workspace = "app"
+container_lifecycle = true
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "true", start = 2, tab = 2, shutdown_on_exit = true }
 ]
-
-[tasks.dev.managed]
-container_lifecycle = true
 
 [systems]
 default = "dev"

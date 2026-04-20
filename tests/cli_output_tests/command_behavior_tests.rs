@@ -6861,7 +6861,7 @@ fn write_container_fixture_with_task(
         format!("\n[containers.web.health]\ncheck = \"{check}\"\ntimeout_secs = 2\n")
     });
     let task_block = if include_task {
-        "\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\ncontainer = \"web\"\n\n[tasks.dev]\nworkspace = \"app\"\n"
+        "\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\ncontainer = \"web\"\nworkdir = \"/workspace\"\n\n[tasks.dev]\nworkspace = \"app\"\n"
     } else {
         ""
     };

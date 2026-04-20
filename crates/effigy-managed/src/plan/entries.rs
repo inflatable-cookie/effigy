@@ -234,14 +234,13 @@ fn normalize_role(
                 ));
             }
             if !task
-                .managed
-                .as_ref()
-                .is_some_and(|managed| managed.container_lifecycle)
+                .container_lifecycle
+                .unwrap_or(false)
             {
                 return Err(invalid_managed_process_definition(
                     selector,
                     process,
-                    "`role = \"lifecycle\"` requires `[tasks.<name>.managed] container_lifecycle = true`",
+                    "`role = \"lifecycle\"` requires `container_lifecycle = true` on `[tasks.<name>]`",
                 ));
             }
             if !has_container_backed_binding {

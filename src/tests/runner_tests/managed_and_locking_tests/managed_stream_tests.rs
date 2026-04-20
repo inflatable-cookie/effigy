@@ -67,13 +67,11 @@ fn setup_managed_stream_lifecycle(root: &Path) {
         r#"[tasks.dev]
 mode = "tui"
 workspace = "app"
+container_lifecycle = true
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "true", start = 2, tab = 2, start_after_ms = 300, shutdown_on_exit = true }
 ]
-
-[tasks.dev.managed]
-container_lifecycle = true
 
 [systems]
 default = "dev"
@@ -82,6 +80,7 @@ default = "dev"
 default_workspace = "app"
 
 [systems.dev.workspaces.app]
+workdir = "/workspace"
 container = "web"
 "#,
     );
@@ -93,13 +92,11 @@ fn setup_managed_stream_lifecycle_workspace_binding(root: &Path) {
         r#"[tasks.dev]
 mode = "tui"
 workspace = "app"
+container_lifecycle = true
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "true", start = 2, tab = 2, start_after_ms = 300, shutdown_on_exit = true }
 ]
-
-[tasks.dev.managed]
-container_lifecycle = true
 
 [systems]
 default = "dev"
@@ -108,6 +105,7 @@ default = "dev"
 default_workspace = "app"
 
 [systems.dev.workspaces.app]
+workdir = "/workspace"
 container = "web"
 
 [containers]
@@ -134,13 +132,11 @@ fn setup_managed_stream_lifecycle_inline_workspace_binding(root: &Path) {
         r#"[tasks.dev]
 mode = "tui"
 workspace = "app"
+container_lifecycle = true
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "true", start = 2, tab = 2, start_after_ms = 300, shutdown_on_exit = true }
 ]
-
-[tasks.dev.managed]
-container_lifecycle = true
 
 [systems]
 default = "dev"
@@ -161,15 +157,13 @@ fn setup_managed_stream_readiness(root: &Path) {
         r#"[tasks.dev]
 mode = "tui"
 workspace = "app"
+container_lifecycle = true
+health_wait = true
+ready_message = "http://project.test"
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "sh -lc 'sleep 1; exit 0'", start = 2, tab = 2, shutdown_on_exit = true }
 ]
-
-[tasks.dev.managed]
-container_lifecycle = true
-health_wait = true
-ready_message = "http://project.test"
 
 [systems]
 default = "dev"
@@ -178,6 +172,7 @@ default = "dev"
 default_workspace = "app"
 
 [systems.dev.workspaces.app]
+workdir = "/workspace"
 container = "web"
 "#,
     );
@@ -189,16 +184,14 @@ fn setup_managed_stream_gateway(root: &Path) {
         r#"[tasks.dev]
 mode = "tui"
 workspace = "app"
-concurrent = [
-  { role = "lifecycle", start = 1, tab = 1 },
-  { name = "window", run = "sh -lc 'sleep 1; exit 0'", start = 2, tab = 2, shutdown_on_exit = true }
-]
-
-[tasks.dev.managed]
 container_lifecycle = true
 gateway = true
 health_wait = true
 ready_message = "http://project.test"
+concurrent = [
+  { role = "lifecycle", start = 1, tab = 1 },
+  { name = "window", run = "sh -lc 'sleep 1; exit 0'", start = 2, tab = 2, shutdown_on_exit = true }
+]
 
 [systems]
 default = "dev"
@@ -207,6 +200,7 @@ default = "dev"
 default_workspace = "app"
 
 [systems.dev.workspaces.app]
+workdir = "/workspace"
 container = "web"
 
 [containers]
@@ -239,14 +233,12 @@ fn setup_managed_stream_container_routed_task_ref(root: &Path) {
         r#"[tasks.dev]
 mode = "tui"
 workspace = "app"
+container_lifecycle = true
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { task = "api", start = 2, tab = 2 },
   { name = "window", run = "sh -lc 'sleep 1; exit 0'", start = 3, tab = 3, shutdown_on_exit = true }
 ]
-
-[tasks.dev.managed]
-container_lifecycle = true
 
 [tasks.api]
 run = "printf host-inline-api"
