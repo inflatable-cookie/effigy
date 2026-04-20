@@ -6,8 +6,9 @@ pub(crate) fn render_system_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
         "Operate the manifest default system substrate by resolving its default workspace container.",
     )?;
     renderer.section("Usage")?;
-    renderer
-        .text("effigy system <up|down|status|logs|repair> [--system <NAME>] [--repo <PATH>] [--json]")?;
+    renderer.text(
+        "effigy system <up|down|status|logs|repair> [--system <NAME>] [--repo <PATH>] [--json]",
+    )?;
     renderer.text("")?;
     renderer.key_values(&[
         KeyValue::new(

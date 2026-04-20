@@ -48,6 +48,14 @@ pub fn compose_args<'a>(
     args
 }
 
+/// Build standard detached bring-up args.
+///
+/// Uses `--build` so compose-backed services track local Dockerfile changes
+/// instead of silently reusing stale tagged images.
+pub fn compose_up_args(policy: &EffectiveContainerPolicy) -> Vec<OsString> {
+    compose_args(policy, ["up", "-d", "--build"])
+}
+
 /// Resolve the final program and arguments for a compose invocation.
 ///
 /// For `ComposeBackend::Docker`, returns `("docker", args)`.

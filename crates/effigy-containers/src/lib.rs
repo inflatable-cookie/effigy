@@ -74,6 +74,8 @@ pub struct EffectiveContainerPolicy {
     pub health_check: Option<String>,
     pub health_timeout_secs: u64,
     pub ui_tabs: Vec<String>,
+    pub workspace_user: Option<String>,
+    pub workspace_home: Option<String>,
     pub on_task_exit: ManifestContainerOnTaskExit,
     pub shutdown: ManifestContainerShutdownMode,
     pub detach_timeout_secs: u64,
@@ -272,6 +274,54 @@ pub fn load_container_exec_working_dir(
     resolve_container_exec_working_dir(repo_root, &name, config)
 }
 
+pub fn load_workspace_ownership_targets(
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<String>, ContainerPolicyError> {
+    let mut targets = std::collections::BTreeSet::new();
+    if let Some(home) = policy
+        .workspace_home
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        targets.insert(home.to_owned());
+    }
+    for compose_file in &policy.compose_files {
+        let content =
+            std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
+                path: compose_file.clone(),
+                error,
+            })?;
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "failed to parse compose file {} for workspace ownership targets: {error}",
+                compose_file.display()
+            ))
+        })?;
+        let Some(service) = parsed
+            .get("services")
+            .and_then(|services| services.get(policy.primary_service.as_str()))
+            .and_then(serde_yaml::Value::as_mapping)
+        else {
+            continue;
+        };
+        let Some(volumes) = service
+            .get("volumes")
+            .and_then(serde_yaml::Value::as_sequence)
+        else {
+            continue;
+        };
+        for target in volumes
+            .iter()
+            .filter_map(compose_volume_ownership_target)
+            .filter(|value| !value.trim().is_empty())
+        {
+            targets.insert(target);
+        }
+    }
+    Ok(targets.into_iter().collect())
+}
+
 pub fn load_inline_workspace_container_policy(
     repo_root: &Path,
     synthetic_name: &str,
@@ -348,6 +398,8 @@ pub fn load_inline_workspace_container_policy(
         health_check: None,
         health_timeout_secs: DEFAULT_HEALTH_TIMEOUT_SECS,
         ui_tabs: Vec::new(),
+        workspace_user: None,
+        workspace_home: None,
         on_task_exit: ManifestContainerOnTaskExit::Stop,
         shutdown: ManifestContainerShutdownMode::Graceful,
         detach_timeout_secs: DEFAULT_ATTACH_TIMEOUT_SECS,
@@ -493,6 +545,7 @@ fn build_effective_policy(
         .as_ref()
         .map(|value| value.tabs.clone())
         .unwrap_or_default();
+    let workspace = config.workspace.as_ref();
     let lifecycle = config.lifecycle.as_ref();
     let _ = containers;
 
@@ -524,6 +577,16 @@ fn build_effective_policy(
         health_check: health.check,
         health_timeout_secs: health.timeout_secs.unwrap_or(DEFAULT_HEALTH_TIMEOUT_SECS),
         ui_tabs,
+        workspace_user: workspace
+            .and_then(|value| value.user.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
+        workspace_home: workspace
+            .and_then(|value| value.home.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
         on_task_exit: lifecycle
             .and_then(|value| value.on_task_exit)
             .unwrap_or(ManifestContainerOnTaskExit::Stop),
@@ -613,6 +676,20 @@ fn parse_mount_parts(mount: &str) -> Option<(&str, &str, Option<&str>)> {
     Some((source, target, options))
 }
 
+fn compose_volume_ownership_target(entry: &serde_yaml::Value) -> Option<String> {
+    let raw = entry.as_str()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if let Some((source, target, _options)) = parse_mount_parts(raw) {
+        if looks_like_bind_mount_source(source) {
+            return None;
+        }
+        return Some(target.to_owned());
+    }
+    raw.starts_with('/').then(|| raw.to_owned())
+}
+
 fn render_inline_workspace_compose(
     image: &str,
     workdir: &Path,
@@ -687,10 +764,12 @@ fn rewrite_workspace_mounts_for_direct_compose(
             working_dir.display()
         ))
     })?;
-    let compose_dir = source_compose.parent().ok_or_else(|| ContainerPolicyError::Read {
-        path: source_compose.to_path_buf(),
-        error: std::io::Error::other("compose file has no parent directory"),
-    })?;
+    let compose_dir = source_compose
+        .parent()
+        .ok_or_else(|| ContainerPolicyError::Read {
+            path: source_compose.to_path_buf(),
+            error: std::io::Error::other("compose file has no parent directory"),
+        })?;
     let content =
         std::fs::read_to_string(source_compose).map_err(|error| ContainerPolicyError::Read {
             path: source_compose.to_path_buf(),
@@ -756,15 +835,20 @@ fn build_workspace_runtime_mounts(
             working_dir.display()
         ))
     })?;
-    let canonical_repo_root = repo_root
-        .canonicalize()
-        .map_err(|error| ContainerPolicyError::Read {
-            path: repo_root.to_path_buf(),
-            error,
-        })?;
+    let canonical_repo_root =
+        repo_root
+            .canonicalize()
+            .map_err(|error| ContainerPolicyError::Read {
+                path: repo_root.to_path_buf(),
+                error,
+            })?;
     let mut mounts = vec![RenderedWorkspaceMount {
         target: working_dir.display().to_string(),
-        rendered: format!("{}:{}", canonical_repo_root.display(), working_dir.display()),
+        rendered: format!(
+            "{}:{}",
+            canonical_repo_root.display(),
+            working_dir.display()
+        ),
     }];
     for raw in &workspace.extra_mounts {
         mounts.push(parse_workspace_extra_mount(
@@ -785,8 +869,14 @@ fn parse_workspace_extra_mount(
 ) -> Result<RenderedWorkspaceMount, ContainerPolicyError> {
     let mut parts = raw.splitn(3, ':');
     let source_raw = parts.next().unwrap_or_default().trim();
-    let target_raw = parts.next().map(str::trim).filter(|value| !value.is_empty());
-    let options = parts.next().map(str::trim).filter(|value| !value.is_empty());
+    let target_raw = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let options = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     if source_raw.is_empty() {
         return Err(ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` workspace extra mount `{raw}` is invalid: source path is empty"

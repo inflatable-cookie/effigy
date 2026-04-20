@@ -1,11 +1,11 @@
 use super::{
     data_list_report, data_transfer_report, effective_attach_mode, eject_generated_compose,
     load_all_container_policies, load_container_policy, load_inline_workspace_container_policy,
-    resolve_inline_workspace_exec_working_dir, stats_all_report, status_all_report, status_report,
-    validate_container_policy, with_test_effigy_home, AllocatedPortsSummary,
-    ContainerDataTransferAction, ContainerDataVolumeEntry, ContainerPolicyError,
-    ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
-    EffectiveAttachMode, EffectiveComposeSource, SharedServiceBinding,
+    load_workspace_ownership_targets, resolve_inline_workspace_exec_working_dir, stats_all_report,
+    status_all_report, status_report, validate_container_policy, with_test_effigy_home,
+    AllocatedPortsSummary, ContainerDataTransferAction, ContainerDataVolumeEntry,
+    ContainerPolicyError, ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry,
+    ContainerStatusService, EffectiveAttachMode, EffectiveComposeSource, SharedServiceBinding,
 };
 use effigy_catalog::volumes::VolumeClassification;
 use effigy_manifest::ManifestInlineWorkspaceContainerConfig;
@@ -512,6 +512,8 @@ primary_service = "workspace"
 working_dir = "/workspace-root/underlay-reference"
 
 [containers.stack.workspace]
+user = "dev"
+home = "/home/dev"
 extra_mounts = ["../underlay", "../poodle"]
 "#,
     )
@@ -555,6 +557,80 @@ volumes:
         rewritten.contains("- stack-cache:/cache"),
         "rewritten compose should preserve named volumes: {rewritten}"
     );
+    assert!(
+        !rewritten.contains("user: dev"),
+        "rewritten compose should not force runtime user: {rewritten}"
+    );
+    assert!(
+        !rewritten.contains("HOME: /home/dev"),
+        "rewritten compose should not force runtime HOME: {rewritten}"
+    );
+    assert_eq!(policy.workspace_user.as_deref(), Some("dev"));
+    assert_eq!(policy.workspace_home.as_deref(), Some("/home/dev"));
+}
+
+#[test]
+fn load_workspace_ownership_targets_collects_named_volume_targets() {
+    let parent = std::env::temp_dir().join(format!(
+        "effigy-workspace-ownership-targets-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    let root = parent.join("underlay-reference");
+    let underlay = parent.join("underlay");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir repo");
+    fs::create_dir_all(&underlay).expect("mkdir underlay");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "stack"
+
+[containers.stack]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "workspace"
+
+[containers.stack.exec]
+working_dir = "/workspace-root/underlay-reference"
+
+[containers.stack.workspace]
+user = "dev"
+home = "/home/dev"
+extra_mounts = ["../underlay"]
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        r#"
+services:
+  workspace:
+    image: "node:22"
+    volumes:
+      - ../../../:/workspace-root
+      - stack-cache:/cache
+      - stack-node-modules:/workspace-root/underlay-reference/acme-client/node_modules
+      - /tmp/host-path:/workspace-root/host-cache
+"#,
+    )
+    .expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let targets = load_workspace_ownership_targets(&policy).expect("targets");
+
+    assert!(targets.iter().any(|value| value == "/home/dev"));
+    assert!(targets.iter().any(|value| value == "/cache"));
+    assert!(targets
+        .iter()
+        .any(|value| value == "/workspace-root/underlay-reference/acme-client/node_modules"));
+    assert!(!targets
+        .iter()
+        .any(|value| value == "/workspace-root/host-cache"));
+    assert!(!targets
+        .iter()
+        .any(|value| value == "/workspace-root/underlay-reference"));
 }
 
 #[test]

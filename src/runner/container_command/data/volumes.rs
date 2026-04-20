@@ -153,6 +153,8 @@ mod tests {
             health_check: None,
             health_timeout_secs: 60,
             ui_tabs: vec![],
+            workspace_user: None,
+            workspace_home: None,
             on_task_exit: ManifestContainerOnTaskExit::Stop,
             shutdown: ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,

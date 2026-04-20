@@ -290,8 +290,14 @@ fn validate_container_workspace(
     let Some(table) = require_table(context, &path, value, "expected table") else {
         return;
     };
-    validate_allowed_keys(context, &path, table, &["extra_mounts"]);
-    validate_string_array(context, &format!("{path}.extra_mounts"), table.get("extra_mounts"));
+    validate_allowed_keys(context, &path, table, &["extra_mounts", "user", "home"]);
+    validate_string_array(
+        context,
+        &format!("{path}.extra_mounts"),
+        table.get("extra_mounts"),
+    );
+    validate_string_field(context, &path, table.get("user"), "user");
+    validate_string_field(context, &path, table.get("home"), "home");
 }
 
 fn validate_container_ui(context: &mut SchemaContext<'_, '_>, base_path: &str, value: &Value) {

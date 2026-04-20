@@ -4,8 +4,10 @@ use effigy_containers::{
         colima_is_running, list_running_compose_containers, recover_colima_runtime,
         ColimaRecoveryReport, ContainerExecError, RunningComposeContainer,
     },
-    load_container_policy, validate_container_policy, EffectiveContainerPolicy,
+    load_container_policy, load_workspace_ownership_targets, validate_container_policy,
+    EffectiveContainerPolicy,
 };
+use effigy_core::shell::shell_quote;
 use effigy_core::widgets::NoticeLevel;
 use effigy_manifest::ManifestTask;
 use effigy_ui::theme::{is_ci_environment, Theme};
@@ -95,7 +97,12 @@ pub(super) fn run_workspace(args: WorkspaceArgs) -> Result<String, RunnerError> 
         args.workspace.as_deref(),
         "workspace",
     )?;
-    run_workspace_container_session(&repo_root, container_name.as_deref(), args.repo_override, None)
+    run_workspace_container_session(
+        &repo_root,
+        container_name.as_deref(),
+        args.repo_override,
+        None,
+    )
 }
 
 pub(in crate::runner) fn run_workspace_seeded_session(
@@ -170,17 +177,19 @@ fn run_workspace_container_session(
         container_name.as_deref(),
         repo_override.clone(),
     )?;
+    ensure_workspace_permissions_ready(
+        repo_root,
+        &policy,
+        container_name.as_deref(),
+        repo_override.clone(),
+    )?;
 
     if initial_command.is_some() {
         println!("{}", render_workspace_handoff_notice(&policy));
     }
 
-    let shell_result = run_container_shell_session(
-        repo_root,
-        container_name.as_deref(),
-        None,
-        initial_command,
-    );
+    let shell_result =
+        run_container_shell_session(repo_root, container_name.as_deref(), None, initial_command);
 
     let cleanup_result = if !system_was_running {
         let mut progress = WorkspaceShutdownProgressReporter::new();
@@ -206,6 +215,53 @@ fn run_workspace_container_session(
             "{shell_error}\nworkspace cleanup also failed: {cleanup_error}"
         ))),
     }
+}
+
+fn ensure_workspace_permissions_ready(
+    _workspace_repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container_name: Option<&str>,
+    repo_override: Option<PathBuf>,
+) -> Result<(), RunnerError> {
+    let Some(user) = policy.workspace_user.as_deref() else {
+        return Ok(());
+    };
+    let targets = load_workspace_ownership_targets(policy)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    if targets.is_empty() {
+        return Ok(());
+    }
+
+    let mut progress = WorkspaceTransientProgressReporter::new(
+        repo_override.is_some(),
+        "preparing workspace permissions",
+        false,
+    );
+    run_container(ContainerArgs {
+        subcommand: ContainerSubcommand::Shell {
+            name: container_name.map(str::to_owned),
+            service: Some(policy.primary_service.clone()),
+            command: Some(render_workspace_permission_command(user, &targets)),
+        },
+        repo_override,
+        output_json: false,
+    })
+    .inspect_err(|_| progress.finish(false))?;
+    progress.finish(true);
+    Ok(())
+}
+
+fn render_workspace_permission_command(user: &str, targets: &[String]) -> String {
+    let quoted_targets = targets
+        .iter()
+        .map(|target| shell_quote(target))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "user={user}; if id -u \"$user\" >/dev/null 2>&1; then uid=$(id -u \"$user\"); gid=$(id -g \"$user\"); for path in {targets}; do mkdir -p \"$path\" && chown -R \"$uid:$gid\" \"$path\"; done; fi",
+        user = shell_quote(user),
+        targets = quoted_targets,
+    )
 }
 
 fn load_resolved_container_policy(
@@ -304,7 +360,9 @@ fn ensure_workspace_effigy_available(
     Ok(())
 }
 
-fn ensure_linux_workspace_effigy_artifact(workspace_repo_root: &Path) -> Result<PathBuf, RunnerError> {
+fn ensure_linux_workspace_effigy_artifact(
+    workspace_repo_root: &Path,
+) -> Result<PathBuf, RunnerError> {
     let host_binary = std::env::current_exe().map_err(RunnerError::Cwd)?;
     if let Some(effigy_repo_root) = sibling_effigy_repo_root(workspace_repo_root) {
         return ensure_local_linux_workspace_effigy_artifact(&host_binary, &effigy_repo_root);
@@ -731,7 +789,9 @@ mod tests {
             "demo",
             "workspace"
         ));
-        assert!(!has_running_primary_service(&rows, repo_root, "demo", "api"));
+        assert!(!has_running_primary_service(
+            &rows, repo_root, "demo", "api"
+        ));
         assert!(!has_running_primary_service(
             &rows,
             std::path::Path::new("/tmp/other"),
@@ -766,6 +826,8 @@ mod tests {
             health_check: None,
             health_timeout_secs: 60,
             ui_tabs: vec![],
+            workspace_user: None,
+            workspace_home: None,
             on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
             shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
@@ -810,14 +872,20 @@ mod tests {
         let artifact = root.join("effigy-linux");
         std::fs::write(&host, "host").expect("write host");
 
-        assert!(linux_workspace_effigy_artifact_needs_refresh(&host, &artifact));
+        assert!(linux_workspace_effigy_artifact_needs_refresh(
+            &host, &artifact
+        ));
 
         std::fs::write(&artifact, "artifact").expect("write artifact");
-        assert!(!linux_workspace_effigy_artifact_needs_refresh(&host, &artifact));
+        assert!(!linux_workspace_effigy_artifact_needs_refresh(
+            &host, &artifact
+        ));
 
         std::thread::sleep(std::time::Duration::from_millis(10));
         std::fs::write(&host, "host-new").expect("rewrite host");
-        assert!(linux_workspace_effigy_artifact_needs_refresh(&host, &artifact));
+        assert!(linux_workspace_effigy_artifact_needs_refresh(
+            &host, &artifact
+        ));
     }
 
     #[test]

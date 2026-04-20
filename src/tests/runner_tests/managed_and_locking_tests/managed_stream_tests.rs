@@ -574,10 +574,8 @@ fn run_manifest_task_managed_stream_auto_starts_gateway_before_runtime() {
 fn run_manifest_task_managed_stream_handoff_skips_gateway_and_container_lifecycle_commands() {
     let _guard = lock_test();
     let _env = managed_stream_env();
-    let _handoff = EnvGuard::set_many(&[(
-        "EFFIGY_INTERNAL_CONTAINER_HANDOFF",
-        Some("1".to_owned()),
-    )]);
+    let _handoff =
+        EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", Some("1".to_owned()))]);
     let root =
         crate::runner::tests::prelude::temp_workspace("managed-stream-container-handoff-local");
     setup_managed_stream_gateway(&root);
@@ -586,8 +584,14 @@ fn run_manifest_task_managed_stream_handoff_skips_gateway_and_container_lifecycl
 
     let out =
         crate::runner::tests::prelude::run_dev(&root, &[]).expect("managed run should succeed");
-    assert!(out.contains("process `window` requested managed shutdown on exit"), "got: {out}");
-    assert!(out.contains("managed lifecycle: workspace container is already running in handoff mode"), "got: {out}");
+    assert!(
+        out.contains("process `window` requested managed shutdown on exit"),
+        "got: {out}"
+    );
+    assert!(
+        out.contains("managed lifecycle: workspace container is already running in handoff mode"),
+        "got: {out}"
+    );
 
     let log_path = root.join("fake-effigy.log");
     assert!(

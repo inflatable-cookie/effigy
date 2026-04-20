@@ -100,7 +100,7 @@ pub(super) fn run_container_data_pull_production(
     super::signals::run_docker_capture(
         repo_root,
         &policy,
-        &effigy_containers::compose::compose_args(&policy, ["up", "-d"]),
+        &effigy_containers::compose::compose_up_args(&policy),
         "docker compose up",
     )?;
     let health = wait_for_container_ready(&policy, None)?;
@@ -226,6 +226,8 @@ mod tests {
             health_check: None,
             health_timeout_secs: 60,
             ui_tabs: vec![],
+            workspace_user: None,
+            workspace_home: None,
             on_task_exit: ManifestContainerOnTaskExit::Stop,
             shutdown: ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,

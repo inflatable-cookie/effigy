@@ -492,6 +492,10 @@ pub struct ManifestContainerHostConfig {
 pub struct ManifestContainerWorkspaceConfig {
     #[serde(default)]
     pub extra_mounts: Vec<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub home: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
@@ -1089,6 +1093,8 @@ compose_file = "infra/dev/docker-compose.yml"
 primary_service = "workspace"
 
 [containers.stack.workspace]
+user = "dev"
+home = "/home/dev"
 extra_mounts = ["../underlay", "../poodle:/workspace-root/poodle"]
 "#,
         )
@@ -1109,6 +1115,8 @@ extra_mounts = ["../underlay", "../poodle:/workspace-root/poodle"]
                 "../poodle:/workspace-root/poodle".to_owned()
             ]
         );
+        assert_eq!(workspace.user.as_deref(), Some("dev"));
+        assert_eq!(workspace.home.as_deref(), Some("/home/dev"));
     }
 
     #[test]

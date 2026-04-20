@@ -154,10 +154,7 @@ fn apply_pty_wrapper_invocation(process: &mut ProcessCommand, wrapped_run: &str)
 
 #[cfg(not(target_os = "macos"))]
 fn apply_pty_wrapper_invocation(process: &mut ProcessCommand, wrapped_run: &str) {
-    process
-        .arg("-qefc")
-        .arg(wrapped_run)
-        .arg("/dev/null");
+    process.arg("-qefc").arg(wrapped_run).arg("/dev/null");
 }
 
 #[cfg(test)]
