@@ -45,7 +45,7 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
 }
 
 pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<(), RunnerError> {
-    if gateway_is_running()? {
+    if effigy_core::executable_override::current().is_none() && gateway_is_running()? {
         return Ok(());
     }
     emit_gateway_startup_notice();

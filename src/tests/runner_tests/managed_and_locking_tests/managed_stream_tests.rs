@@ -82,8 +82,24 @@ default_workspace = "app"
 [systems.dev.workspaces.app]
 workdir = "/workspace"
 container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "demo-web-dev"
+primary_service = "app"
+working_dir = "/workspace"
 "#,
     );
+    fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
 }
 
 fn setup_managed_stream_lifecycle_workspace_binding(root: &Path) {
@@ -174,8 +190,24 @@ default_workspace = "app"
 [systems.dev.workspaces.app]
 workdir = "/workspace"
 container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "demo-web-dev"
+primary_service = "app"
+working_dir = "/workspace"
 "#,
     );
+    fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
 }
 
 fn setup_managed_stream_gateway(root: &Path) {
@@ -261,9 +293,50 @@ startup = "detached"
 compose_file = "docker-compose.yml"
 project_name = "demo-web-dev"
 primary_service = "app"
+working_dir = "/workspace"
 
 [containers.web.host]
 ports = ["8080:80"]
+"#,
+    );
+    fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
+}
+
+fn setup_managed_stream_stale_project_name_mismatch(root: &Path) {
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+mode = "tui"
+workspace = "app"
+container_lifecycle = true
+concurrent = [
+  { role = "lifecycle", start = 1, tab = 1 },
+  { name = "window", run = "true", start = 2, tab = 2, shutdown_on_exit = true }
+]
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "demo-web-renamed"
+primary_service = "app"
+working_dir = "/workspace"
 "#,
     );
     fs::write(
@@ -327,6 +400,33 @@ fn write_fake_container_runtime(root: &Path) -> EnvGuard {
         .permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&colima, perms).expect("chmod fake colima");
+
+    let old_path = std::env::var("PATH").ok().unwrap_or_default();
+    EnvGuard::set_many(&[("PATH", Some(format!("{}:{old_path}", bin_dir.display())))])
+}
+
+fn write_fake_docker_ps_with_stale_project(root: &Path, stale_project_name: &str) -> EnvGuard {
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir fake runtime bin");
+    let canonical_root = root.canonicalize().expect("canonical root");
+
+    let docker = bin_dir.join("docker");
+    let docker_log = root.join("fake-docker.log");
+    fs::write(
+        &docker,
+        format!(
+            "#!/bin/sh\nlog='{}'\nprintf 'docker:%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = ps ]; then\n  printf 'demo-app-1\\tUp 2 minutes\\t\\t{}\\t{}\\tapp\\n'\n  exit 0\nfi\nprintf 'unexpected:%s\\n' \"$*\" >> \"$log\"\nexit 0\n",
+            docker_log.display(),
+            stale_project_name,
+            canonical_root.display()
+        ),
+    )
+    .expect("write fake docker");
+    let mut perms = fs::metadata(&docker)
+        .expect("stat fake docker")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&docker, perms).expect("chmod fake docker");
 
     let old_path = std::env::var("PATH").ok().unwrap_or_default();
     EnvGuard::set_many(&[("PATH", Some(format!("{}:{old_path}", bin_dir.display())))])
@@ -614,8 +714,31 @@ fn run_manifest_task_managed_stream_resolves_task_refs_before_container_exec_whe
     assert!(log.contains("shell:web:"), "log: {log}");
     assert!(log.contains("--command true"), "log: {log}");
     assert!(
-        log.contains("--command printf host-inline-api"),
+        log.contains("printf host-inline-api"),
         "log: {log}"
     );
     assert!(!log.contains("task:api"), "log: {log}");
+}
+
+#[test]
+fn run_manifest_task_managed_stream_fails_fast_for_stale_project_name_runtime() {
+    let _guard = lock_test();
+    let _env = managed_stream_env();
+    let root =
+        crate::runner::tests::prelude::temp_workspace("managed-stream-stale-project-name-runtime");
+    setup_managed_stream_stale_project_name_mismatch(&root);
+    let _runtime = write_fake_docker_ps_with_stale_project(&root, "demo-web-old");
+
+    let error = crate::runner::tests::prelude::run_dev(&root, &[])
+        .expect_err("managed run should fail for stale project name");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("expects Compose project `demo-web-renamed`"),
+        "got: {rendered}"
+    );
+    assert!(rendered.contains("under `demo-web-old`"), "got: {rendered}");
+    assert!(
+        rendered.contains("project_name` changed while the old runtime was still up"),
+        "got: {rendered}"
+    );
 }

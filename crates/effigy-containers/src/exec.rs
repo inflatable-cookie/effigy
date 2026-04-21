@@ -17,16 +17,20 @@ use serde_json::Value as JsonValue;
 
 use crate::{
     colima::{
-        colima_start_command, colima_status_command, colima_stop_command, parse_colima_running,
+        colima_start_command, colima_status_command, colima_stop_command,
+        managed_colima_profile_resources, parse_colima_running, prepare_managed_colima_profile,
         shutdown_compose_commands,
     },
     compose::{compose_invocation, resolve_compose_backend, ComposeBackend},
-    EffectiveContainerPolicy,
+    EffectiveContainerPolicy, DEFAULT_COLIMA_PROFILE,
 };
 
 const DOCKER_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}";
 const DOCKER_STATS_FORMAT: &str = "{{ json . }}";
-const COLIMA_RECOVERY_TIMEOUT: Duration = Duration::from_secs(15);
+const COLIMA_START_TIMEOUT: Duration = Duration::from_secs(15);
+const COLIMA_STATUS_TIMEOUT: Duration = Duration::from_secs(15);
+const COLIMA_STOP_TIMEOUT: Duration = Duration::from_secs(45);
+const COLIMA_STOP_SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
 const CONTAINER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +61,14 @@ pub struct RunningContainerStats {
 pub struct RunningContainerStatsCapture {
     pub stats: Vec<RunningContainerStats>,
     pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ColimaProfileEntry {
+    name: String,
+    status: String,
+    cpus: u64,
+    memory: u64,
 }
 
 #[derive(Debug)]
@@ -104,9 +116,21 @@ pub fn ensure_colima_running(
     if colima_is_running(policy, repo_root)? {
         return Ok(false);
     }
+    prepare_managed_colima_profile(policy).map_err(|error| ContainerExecError::Failure {
+        command: "colima profile config".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: error,
+    })?;
     let cmd = colima_start_command(policy);
     let args: Vec<&str> = cmd.args.iter().map(|s| s.as_str()).collect();
-    run_command_capture(repo_root, &cmd.program, &args, &cmd.label)?;
+    run_command_stream_with_timeout(
+        repo_root,
+        &cmd.program,
+        &args,
+        &cmd.label,
+        COLIMA_START_TIMEOUT,
+    )?;
     Ok(true)
 }
 
@@ -218,7 +242,18 @@ pub fn run_docker_capture(
 
 pub fn list_running_compose_containers() -> Result<Vec<RunningComposeContainer>, ContainerExecError>
 {
-    list_running_compose_containers_for_profile("default")
+    match resolve_compose_backend() {
+        ComposeBackend::Docker => {
+            list_running_compose_containers_for_profile(DEFAULT_COLIMA_PROFILE)
+        }
+        ComposeBackend::ColimaNerdctl => {
+            let mut rows = Vec::new();
+            for profile in running_colima_profiles(Path::new("."))? {
+                rows.extend(list_running_compose_containers_for_profile(&profile)?);
+            }
+            Ok(rows)
+        }
+    }
 }
 
 pub fn list_running_compose_containers_for_profile(
@@ -251,6 +286,13 @@ pub fn list_running_compose_containers_for_profile(
 }
 
 pub fn capture_running_container_stats(container_names: &[String]) -> RunningContainerStatsCapture {
+    capture_running_container_stats_for_profile(DEFAULT_COLIMA_PROFILE, container_names)
+}
+
+pub fn capture_running_container_stats_for_profile(
+    profile: &str,
+    container_names: &[String],
+) -> RunningContainerStatsCapture {
     if container_names.is_empty() {
         return RunningContainerStatsCapture {
             stats: Vec::new(),
@@ -270,7 +312,7 @@ pub fn capture_running_container_stats(container_names: &[String]) -> RunningCon
             run_command_capture_allow_failure(Path::new("."), "docker", &command)
         }
         ComposeBackend::ColimaNerdctl => {
-            let mut nerdctl_command = vec!["nerdctl", "--profile", "default", "--"];
+            let mut nerdctl_command = vec!["nerdctl", "--profile", profile, "--"];
             nerdctl_command.extend(command.iter().copied());
             run_command_capture_allow_failure(Path::new("."), "colima", &nerdctl_command)
         }
@@ -327,6 +369,45 @@ pub fn capture_running_container_stats(container_names: &[String]) -> RunningCon
             warning: Some(format!("resource stats unavailable: {error}")),
         },
     }
+}
+
+pub fn colima_profile_warnings(policy: &EffectiveContainerPolicy, repo_root: &Path) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if policy.profile == "default" {
+        warnings.push(
+            "Colima profile `default` is shared with unrelated Colima workloads; Effigy now reserves the implicit profile name `effigy`. Keep `default` only if that sharing is intentional.".to_owned(),
+        );
+    }
+
+    let Some(resources) = managed_colima_profile_resources(&policy.profile) else {
+        return warnings;
+    };
+    let Some(entry) = colima_profile_entry(repo_root, &policy.profile) else {
+        return warnings;
+    };
+    if !entry.status.eq_ignore_ascii_case("running") {
+        return warnings;
+    }
+
+    let expected_memory_bytes = resources.memory_gib.saturating_mul(1024 * 1024 * 1024);
+    if entry.memory >= expected_memory_bytes {
+        return warnings;
+    }
+
+    let actual_memory_gib = entry.memory / (1024 * 1024 * 1024);
+    let host_memory = resources
+        .host_memory_gib
+        .map(|value| format!(" on this {value}GiB host"))
+        .unwrap_or_default();
+    warnings.push(format!(
+        "Colima profile `{}` is running with {}GiB RAM; Effigy recommends {}GiB memory and {}GiB swap{} for workspace-heavy Rust builds. Stop the profile and rerun Effigy to apply the managed sizing.",
+        policy.profile,
+        actual_memory_gib.max(1),
+        resources.memory_gib,
+        resources.swap_gib,
+        host_memory,
+    ));
+    warnings
 }
 
 pub fn run_command_capture(
@@ -386,27 +467,102 @@ fn format_args(args: &[OsString]) -> String {
         .join(" ")
 }
 
+fn running_colima_profiles(repo_root: &Path) -> Result<Vec<String>, ContainerExecError> {
+    let profiles = list_colima_profiles(repo_root)?;
+    Ok(profiles
+        .into_iter()
+        .filter(|entry| entry.status.eq_ignore_ascii_case("running"))
+        .map(|entry| entry.name)
+        .collect())
+}
+
+fn colima_profile_entry(repo_root: &Path, profile: &str) -> Option<ColimaProfileEntry> {
+    list_colima_profiles(repo_root)
+        .ok()?
+        .into_iter()
+        .find(|entry| entry.name == profile)
+}
+
+fn list_colima_profiles(repo_root: &Path) -> Result<Vec<ColimaProfileEntry>, ContainerExecError> {
+    let output = run_command_capture(repo_root, "colima", &["list", "--json"], "colima list")?;
+    parse_colima_profiles(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_colima_profiles(stdout: &str) -> Result<Vec<ColimaProfileEntry>, ContainerExecError> {
+    stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let value: JsonValue =
+                serde_json::from_str(line).map_err(|error| ContainerExecError::Failure {
+                    command: "colima list".to_owned(),
+                    code: None,
+                    stdout: stdout.to_owned(),
+                    stderr: format!("failed to parse `colima list --json` row: {error}"),
+                })?;
+            Ok(ColimaProfileEntry {
+                name: value
+                    .get("name")
+                    .and_then(JsonValue::as_str)
+                    .ok_or_else(|| ContainerExecError::Failure {
+                        command: "colima list".to_owned(),
+                        code: None,
+                        stdout: stdout.to_owned(),
+                        stderr: "missing `name` in `colima list --json` row".to_owned(),
+                    })?
+                    .to_owned(),
+                status: value
+                    .get("status")
+                    .and_then(JsonValue::as_str)
+                    .ok_or_else(|| ContainerExecError::Failure {
+                        command: "colima list".to_owned(),
+                        code: None,
+                        stdout: stdout.to_owned(),
+                        stderr: "missing `status` in `colima list --json` row".to_owned(),
+                    })?
+                    .to_owned(),
+                cpus: value
+                    .get("cpus")
+                    .and_then(JsonValue::as_u64)
+                    .ok_or_else(|| ContainerExecError::Failure {
+                        command: "colima list".to_owned(),
+                        code: None,
+                        stdout: stdout.to_owned(),
+                        stderr: "missing `cpus` in `colima list --json` row".to_owned(),
+                    })?,
+                memory: value
+                    .get("memory")
+                    .and_then(JsonValue::as_u64)
+                    .ok_or_else(|| ContainerExecError::Failure {
+                        command: "colima list".to_owned(),
+                        code: None,
+                        stdout: stdout.to_owned(),
+                        stderr: "missing `memory` in `colima list --json` row".to_owned(),
+                    })?,
+            })
+        })
+        .collect()
+}
+
 fn repair_colima_runtime(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<(), ContainerExecError> {
-    let stop = colima_stop_command(policy);
-    let stop_args: Vec<&str> = stop.args.iter().map(|value| value.as_str()).collect();
-    run_command_capture_with_timeout(
-        repo_root,
-        &stop.program,
-        &stop_args,
-        &stop.label,
-        COLIMA_RECOVERY_TIMEOUT,
-    )?;
+    stop_colima_profile_for_repair(policy, repo_root)?;
+    prepare_managed_colima_profile(policy).map_err(|error| ContainerExecError::Failure {
+        command: "colima profile config".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: error,
+    })?;
     let start = colima_start_command(policy);
     let start_args: Vec<&str> = start.args.iter().map(|value| value.as_str()).collect();
-    run_command_capture_with_timeout(
+    run_command_stream_with_timeout(
         repo_root,
         &start.program,
         &start_args,
         &start.label,
-        COLIMA_RECOVERY_TIMEOUT,
+        COLIMA_START_TIMEOUT,
     )?;
     Ok(())
 }
@@ -420,15 +576,7 @@ pub fn recover_colima_runtime(
         policy.profile
     )];
 
-    let stop = colima_stop_command(policy);
-    let stop_args: Vec<&str> = stop.args.iter().map(|value| value.as_str()).collect();
-    match run_command_capture_with_timeout(
-        repo_root,
-        &stop.program,
-        &stop_args,
-        &stop.label,
-        COLIMA_RECOVERY_TIMEOUT,
-    ) {
+    match stop_colima_profile_for_repair(policy, repo_root) {
         Ok(_) => steps.push(format!("[ok] stopped Colima profile `{}`", policy.profile)),
         Err(error) => steps.push(format!(
             "[warning] graceful stop failed for profile `{}`; forcing stale process cleanup\n{}",
@@ -463,19 +611,65 @@ pub fn recover_colima_runtime(
     })
 }
 
+pub fn reset_colima_runtime(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<ColimaRecoveryReport, ContainerExecError> {
+    let mut steps = vec![format!(
+        "[check] resetting Colima profile `{}` to a fully stopped state",
+        policy.profile
+    )];
+
+    match stop_colima_profile_for_repair(policy, repo_root) {
+        Ok(_) => steps.push(format!("[ok] stopped Colima profile `{}`", policy.profile)),
+        Err(error) => steps.push(format!(
+            "[warning] graceful stop failed for profile `{}`; forcing stale process cleanup\n{}",
+            policy.profile, error
+        )),
+    }
+
+    force_terminate_colima_profile_processes(policy, repo_root, &mut steps)?;
+    if colima_running_probe_after_stop(policy, repo_root)?.unwrap_or(false) {
+        return Err(ContainerExecError::Failure {
+            command: "colima status".to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: format!(
+                "Colima profile `{}` still appears to be running after reset-runtime",
+                policy.profile
+            ),
+        });
+    }
+    steps.push(format!(
+        "[ok] verified Colima profile `{}` is fully stopped",
+        policy.profile
+    ));
+
+    Ok(ColimaRecoveryReport {
+        profile: policy.profile.clone(),
+        steps,
+    })
+}
+
 fn restart_and_verify_colima_profile(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
     steps: &mut Vec<String>,
 ) -> Result<(), ContainerExecError> {
+    prepare_managed_colima_profile(policy).map_err(|error| ContainerExecError::Failure {
+        command: "colima profile config".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: error,
+    })?;
     let start = colima_start_command(policy);
     let start_args: Vec<&str> = start.args.iter().map(|value| value.as_str()).collect();
-    run_command_capture_with_timeout(
+    run_command_stream_with_timeout(
         repo_root,
         &start.program,
         &start_args,
         &start.label,
-        COLIMA_RECOVERY_TIMEOUT,
+        COLIMA_START_TIMEOUT,
     )?;
     steps.push(format!("[ok] started Colima profile `{}`", policy.profile));
 
@@ -486,7 +680,7 @@ fn restart_and_verify_colima_profile(
         &status.program,
         &status_args,
         &status.label,
-        COLIMA_RECOVERY_TIMEOUT,
+        COLIMA_STATUS_TIMEOUT,
     )?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -503,6 +697,68 @@ fn restart_and_verify_colima_profile(
         policy.profile
     ));
     Ok(())
+}
+
+fn stop_colima_profile_for_repair(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<(), ContainerExecError> {
+    let stop = colima_stop_command(policy);
+    let stop_args: Vec<&str> = stop.args.iter().map(|value| value.as_str()).collect();
+    match run_command_capture_with_timeout(
+        repo_root,
+        &stop.program,
+        &stop_args,
+        &stop.label,
+        COLIMA_STOP_TIMEOUT,
+    ) {
+        Ok(output) => Ok(output).map(|_| ()),
+        Err(error) if stop_timeout_can_be_accepted(policy, repo_root, &error)? => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn stop_timeout_can_be_accepted(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    error: &ContainerExecError,
+) -> Result<bool, ContainerExecError> {
+    if !error_is_timeout(error) {
+        return Ok(false);
+    }
+    let deadline = Instant::now() + COLIMA_STOP_SETTLE_TIMEOUT;
+    loop {
+        match colima_running_probe_after_stop(policy, repo_root)? {
+            Some(true) if Instant::now() < deadline => thread::sleep(Duration::from_millis(250)),
+            Some(true) => return Ok(false),
+            Some(false) | None => return Ok(true),
+        }
+    }
+}
+
+fn colima_running_probe_after_stop(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<Option<bool>, ContainerExecError> {
+    let status = colima_status_command(policy);
+    let args: Vec<&str> = status.args.iter().map(|value| value.as_str()).collect();
+    let output = run_command_capture_allow_failure(repo_root, &status.program, &args)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success() {
+        return Ok(Some(parse_colima_running(&stdout, &stderr)));
+    }
+    if docker_failure_looks_like_colima_runtime_state_loss(&stdout, &stderr) {
+        return Ok(None);
+    }
+    Ok(Some(parse_colima_running(&stdout, &stderr)))
+}
+
+fn error_is_timeout(error: &ContainerExecError) -> bool {
+    match error {
+        ContainerExecError::Failure { stderr, .. } => stderr.contains("[effigy] command timed out"),
+        ContainerExecError::Launch { .. } => false,
+    }
 }
 
 fn force_terminate_colima_profile_processes(
@@ -657,6 +913,63 @@ fn run_command_capture_with_timeout(
     }
 }
 
+fn run_command_stream_with_timeout(
+    repo_root: &Path,
+    program: &str,
+    args: &[&str],
+    label: &str,
+    timeout: Duration,
+) -> Result<(), ContainerExecError> {
+    let mut child = spawn_stream_child(repo_root, program, args).map_err(|error| {
+        ContainerExecError::Launch {
+            command: format!("{program} {}", args.join(" ")),
+            error,
+        }
+    })?;
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => {
+                return Err(ContainerExecError::Failure {
+                    command: label.to_owned(),
+                    code: status.code(),
+                    stdout: String::new(),
+                    stderr: format!(
+                        "[effigy] `{label}` failed after streaming output directly to the terminal"
+                    ),
+                });
+            }
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(100)),
+            Ok(None) => {
+                terminate_child_process_tree(&mut child);
+                let status = child.wait().map_err(|error| ContainerExecError::Launch {
+                    command: format!("{program} {}", args.join(" ")),
+                    error,
+                })?;
+                return Err(ContainerExecError::Failure {
+                    command: label.to_owned(),
+                    code: status.code(),
+                    stdout: String::new(),
+                    stderr: format!(
+                        "[effigy] `{label}` timed out after {}s while streaming output directly to the terminal",
+                        timeout.as_secs()
+                    ),
+                });
+            }
+            Err(error) => {
+                terminate_child_process_tree(&mut child);
+                let _ = child.wait();
+                return Err(ContainerExecError::Launch {
+                    command: format!("{program} {}", args.join(" ")),
+                    error,
+                });
+            }
+        }
+    }
+}
+
 fn spawn_capture_child(
     repo_root: &Path,
     program: &str,
@@ -668,6 +981,28 @@ fn spawn_capture_child(
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .stdin(Stdio::null());
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            setpgid(Pid::from_raw(0), Pid::from_raw(0))
+                .map_err(|error| std::io::Error::other(error.to_string()))
+        });
+    }
+    command.spawn()
+}
+
+fn spawn_stream_child(
+    repo_root: &Path,
+    program: &str,
+    args: &[&str],
+) -> Result<std::process::Child, std::io::Error> {
+    let mut command = Command::new(program);
+    command
+        .current_dir(repo_root)
+        .args(args)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
         .stdin(Stdio::null());
     #[cfg(unix)]
     unsafe {
@@ -725,6 +1060,50 @@ fn parse_running_compose_containers(
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
     let mut rows = Vec::new();
     for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
+        let Some((container_name, status, ports, project_name, working_dir, service)) =
+            parse_running_compose_container_row(line)
+        else {
+            continue;
+        };
+
+        if container_name.is_empty() || status.is_empty() {
+            return Err(ContainerExecError::Failure {
+                command: "docker ps".to_owned(),
+                code: None,
+                stdout: stdout.to_owned(),
+                stderr: format!("failed to parse docker ps row: {line}"),
+            });
+        }
+
+        rows.push(RunningComposeContainer {
+            container_name,
+            status,
+            ports,
+            project_name,
+            working_dir,
+            service,
+        });
+    }
+
+    Ok(rows)
+}
+
+fn parse_running_compose_container_row(
+    line: &str,
+) -> Option<(
+    String,
+    String,
+    Vec<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+)> {
+    let trimmed = line.trim();
+    if trimmed.eq_ignore_ascii_case("name status") {
+        return None;
+    }
+
+    if line.contains('\t') {
         let mut parts = line.splitn(6, '\t');
         let container_name = parts.next().unwrap_or_default().trim().to_owned();
         let status = parts.next().unwrap_or_default().trim().to_owned();
@@ -752,26 +1131,20 @@ fn parse_running_compose_containers(
             .filter(|value| !value.is_empty())
             .map(str::to_owned);
 
-        if container_name.is_empty() || status.is_empty() {
-            return Err(ContainerExecError::Failure {
-                command: "docker ps".to_owned(),
-                code: None,
-                stdout: stdout.to_owned(),
-                stderr: format!("failed to parse docker ps row: {line}"),
-            });
-        }
-
-        rows.push(RunningComposeContainer {
+        return Some((
             container_name,
             status,
             ports,
             project_name,
             working_dir,
             service,
-        });
+        ));
     }
 
-    Ok(rows)
+    let mut parts = trimmed.split_whitespace();
+    let container_name = parts.next()?.to_owned();
+    let status = parts.collect::<Vec<_>>().join(" ");
+    Some((container_name, status, Vec::new(), None, None, None))
 }
 
 fn parse_running_container_stats(
@@ -839,6 +1212,24 @@ mod tests {
         assert_eq!(parsed[0].working_dir.as_deref(), Some("/tmp/demo"));
         assert_eq!(parsed[0].service.as_deref(), Some("app"));
         assert_eq!(parsed[0].ports.len(), 2);
+    }
+
+    #[test]
+    fn parse_running_compose_containers_skips_plain_table_header() {
+        let parsed = parse_running_compose_containers("NAME STATUS\n").expect("parse");
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn parse_running_compose_containers_accepts_plain_table_rows() {
+        let parsed = parse_running_compose_containers("NAME STATUS\napp running\n").expect("parse");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].container_name, "app");
+        assert_eq!(parsed[0].status, "running");
+        assert!(parsed[0].ports.is_empty());
+        assert_eq!(parsed[0].project_name, None);
+        assert_eq!(parsed[0].working_dir, None);
+        assert_eq!(parsed[0].service, None);
     }
 
     #[test]
@@ -914,6 +1305,57 @@ mod tests {
             }
             other => panic!("expected failure, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn streamed_command_failure_reports_streaming_footer() {
+        let error = run_command_stream_with_timeout(
+            Path::new("."),
+            "sh",
+            &[
+                "-c",
+                "echo streamed-output; echo streamed-error >&2; exit 7",
+            ],
+            "stream test",
+            Duration::from_secs(1),
+        )
+        .expect_err("command should fail");
+
+        match error {
+            ContainerExecError::Failure {
+                command,
+                code,
+                stderr,
+                ..
+            } => {
+                assert_eq!(command, "stream test");
+                assert_eq!(code, Some(7));
+                assert!(stderr.contains("streaming output directly to the terminal"));
+            }
+            other => panic!("expected failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn timeout_detection_matches_timeout_footer() {
+        let error = ContainerExecError::Failure {
+            command: "colima stop".to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: "[effigy] command timed out after 45s".to_owned(),
+        };
+        assert!(error_is_timeout(&error));
+    }
+
+    #[test]
+    fn timeout_detection_ignores_non_timeout_failures() {
+        let error = ContainerExecError::Failure {
+            command: "colima stop".to_owned(),
+            code: Some(1),
+            stdout: String::new(),
+            stderr: "plain failure".to_owned(),
+        };
+        assert!(!error_is_timeout(&error));
     }
 
     #[cfg(unix)]
