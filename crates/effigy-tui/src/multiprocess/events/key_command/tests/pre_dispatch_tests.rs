@@ -8,7 +8,13 @@ use super::super::handle_pre_dispatch_key;
 
 #[test]
 fn pre_dispatch_esc_quits_only_when_all_processes_exited() {
-    let mut state = SessionState::new(vec!["api".to_owned(), "db".to_owned()], 2000, 240, 8000);
+    let mut state = SessionState::new(
+        ".".into(),
+        vec!["api".to_owned(), "db".to_owned()],
+        2000,
+        240,
+        8000,
+    );
     state
         .exit_states
         .insert("api".to_owned(), ProcessExitState::Success);

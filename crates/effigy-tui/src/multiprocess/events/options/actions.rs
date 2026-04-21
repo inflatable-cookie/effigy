@@ -6,6 +6,7 @@ use effigy_process::ProcessSupervisor;
 
 use super::super::super::state::{OptionsAction, SessionState};
 use super::super::super::terminal_text::{push_entry, sanitize_log_text};
+use super::super::super::transcript::export_active_process_transcript;
 use super::super::super::MultiProcessTuiError;
 
 pub(super) fn apply_options_action(
@@ -22,6 +23,17 @@ pub(super) fn apply_options_action(
             if !follow {
                 state.set_scroll_offset_for(active, max_offset);
             }
+            Ok(false)
+        }
+        OptionsAction::ExportTranscript => {
+            let export_path = export_active_process_transcript(state)?;
+            let display_path = export_path
+                .strip_prefix(&state.repo_root)
+                .unwrap_or(export_path.as_path());
+            state.set_footer_message(format!(
+                "exported clean transcript to {}",
+                display_path.display()
+            ));
             Ok(false)
         }
         OptionsAction::Restart => {

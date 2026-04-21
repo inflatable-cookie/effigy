@@ -78,4 +78,8 @@ impl SessionState {
     pub fn vt_parser_mut_for(&mut self, process: &str) -> Option<&mut VtParser> {
         self.vt_parsers.get_mut(process)
     }
+
+    pub fn set_footer_message(&mut self, message: impl Into<String>) {
+        self.footer_message = Some(message.into());
+    }
 }

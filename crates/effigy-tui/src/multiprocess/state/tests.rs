@@ -2,7 +2,13 @@ use super::SessionState;
 
 #[test]
 fn new_initializes_process_scoped_maps_and_defaults() {
-    let state = SessionState::new(vec!["api".to_owned(), "shell".to_owned()], 2000, 240, 8000);
+    let state = SessionState::new(
+        ".".into(),
+        vec!["api".to_owned(), "shell".to_owned()],
+        2000,
+        240,
+        8000,
+    );
 
     assert_eq!(state.active_process(), "api");
     assert_eq!(state.logs.len(), 2);
@@ -18,7 +24,7 @@ fn new_initializes_process_scoped_maps_and_defaults() {
 
 #[test]
 fn accessor_fallbacks_remain_safe_for_unknown_processes() {
-    let mut state = SessionState::new(vec!["api".to_owned()], 2000, 240, 8000);
+    let mut state = SessionState::new(".".into(), vec!["api".to_owned()], 2000, 240, 8000);
 
     assert_eq!(state.scroll_offset_for("missing"), 0);
     assert!(state.follow_for("missing"));

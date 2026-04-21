@@ -14,7 +14,7 @@ fn empty_supervisor() -> ProcessSupervisor {
 #[test]
 fn insert_mode_char_backspace_and_escape_update_input_state() {
     let supervisor = empty_supervisor();
-    let mut state = SessionState::new(vec!["api".to_owned()], 2000, 240, 8000);
+    let mut state = SessionState::new(".".into(), vec!["api".to_owned()], 2000, 240, 8000);
     state.input_mode = InputMode::Insert;
 
     handle_insert_key(
@@ -46,7 +46,7 @@ fn insert_mode_char_backspace_and_escape_update_input_state() {
 #[test]
 fn insert_mode_enter_with_non_empty_line_clears_buffer_after_send() {
     let supervisor = empty_supervisor();
-    let mut state = SessionState::new(vec!["api".to_owned()], 2000, 240, 8000);
+    let mut state = SessionState::new(".".into(), vec!["api".to_owned()], 2000, 240, 8000);
     state.input_mode = InputMode::Insert;
     state.input_line = "run now".to_owned();
 

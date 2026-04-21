@@ -38,6 +38,7 @@ pub(super) struct RenderUiState<'a> {
     pub(super) show_help: bool,
     pub(super) show_options: bool,
     pub(super) options_index: usize,
+    pub(super) footer_message: Option<&'a str>,
     pub(super) active_output_seen: bool,
     pub(super) spinner_tick: usize,
     pub(super) active_elapsed: Duration,
@@ -63,6 +64,7 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
         show_help,
         show_options,
         options_index,
+        footer_message,
         active_output_seen,
         spinner_tick,
         active_elapsed,
@@ -139,5 +141,6 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
         shell_capture_mode,
         show_help,
         show_options,
+        footer_message,
     );
 }

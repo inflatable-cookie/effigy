@@ -5,7 +5,6 @@ let copied_binary = path_join(host_artifacts_dir, "effigy-x86_64-unknown-linux-g
 let proof_log = path_join(host_artifacts_dir, "rehearsal.txt");
 
 fn run_effigy_checked(label, process_args) {
-    log("[check] " + label);
     let result = run_effigy(process_args);
     if !result["success"] {
         let status = result["status"].to_string();
@@ -46,7 +45,6 @@ run_process(
     "colima",
     ["nerdctl", "--profile", "effigy-release", "--", "image", "rm", image_name],
 );
-log("[check] bring up linux release container");
 let up = container_up(container_name, true);
 if up.trim() != "" {
     log(up);
@@ -56,12 +54,16 @@ let build_script =
     "set -eu\n"
     + "mkdir -p /workspace/.effigy/linux-release/artifacts\n"
     + "export CARGO_TARGET_DIR=/workspace/.effigy/linux-release/target\n"
+    + "export EFFIGY_INTERNAL_SUPPRESS_HEADER=1\n"
     + "cd /workspace\n"
     + "rustc --version > /workspace/.effigy/linux-release/artifacts/toolchain.txt\n"
     + "cargo build --release --bin effigy\n"
+    + "printf '\\n\\n'\n"
     + "\"${CARGO_TARGET_DIR}/release/effigy\" help >/dev/null\n"
-    + "\"${CARGO_TARGET_DIR}/release/effigy\" smoke:release \"${CARGO_TARGET_DIR}/release/effigy\"\n"
-    + "\"${CARGO_TARGET_DIR}/release/effigy\" distribution check-glibc-floor --binary \"${CARGO_TARGET_DIR}/release/effigy\" --max-glibc 2.35\n"
+    + "smoke_output=$(\"${CARGO_TARGET_DIR}/release/effigy\" smoke:release \"${CARGO_TARGET_DIR}/release/effigy\")\n"
+    + "printf '%s\\n\\n' \"$smoke_output\"\n"
+    + "glibc_output=$(\"${CARGO_TARGET_DIR}/release/effigy\" distribution check-glibc-floor --binary \"${CARGO_TARGET_DIR}/release/effigy\" --max-glibc 2.35)\n"
+    + "printf '%s\\n' \"$glibc_output\"\n"
     + "cp \"${CARGO_TARGET_DIR}/release/effigy\" /workspace/.effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu\n"
     + "{\n"
     + "  echo \"binary=${CARGO_TARGET_DIR}/release/effigy\"\n"

@@ -1,11 +1,10 @@
 use effigy_cli::{ContainerArgs, ContainerSubcommand, WorkspaceArgs};
 use effigy_containers::{load_workspace_ownership_targets, EffectiveContainerPolicy};
 use effigy_core::shell::shell_quote;
-use effigy_core::widgets::NoticeLevel;
 use effigy_manifest::ManifestTask;
 use effigy_ui::theme::{is_ci_environment, Theme};
 use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 
@@ -26,6 +25,12 @@ const CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH: &str = "/tmp/effigy-host";
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
 const EFFIGY_RELEASE_REPO_BASE_URL: &str = "https://github.com/inflatable-cookie/effigy";
 const EFFIGY_LINUX_RELEASE_TRIPLE: &str = "x86_64-unknown-linux-gnu";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorkspaceSessionOwnership {
+    OwnStartedSystem,
+    LeaveSystemRunning,
+}
 
 pub(super) fn run_workspace(args: WorkspaceArgs) -> Result<String, RunnerError> {
     if args.output_json {
@@ -48,6 +53,7 @@ pub(super) fn run_workspace(args: WorkspaceArgs) -> Result<String, RunnerError> 
         container_name.as_deref(),
         args.repo_override,
         None,
+        WorkspaceSessionOwnership::OwnStartedSystem,
     )
 }
 
@@ -62,6 +68,7 @@ pub(in crate::runner) fn run_workspace_seeded_session(
         container_name,
         repo_override,
         Some(initial_command),
+        WorkspaceSessionOwnership::LeaveSystemRunning,
     )
 }
 
@@ -101,9 +108,17 @@ fn run_workspace_container_session(
     container_name: Option<&str>,
     repo_override: Option<PathBuf>,
     initial_command: Option<&str>,
+    ownership: WorkspaceSessionOwnership,
 ) -> Result<String, RunnerError> {
     let container_name = container_name.map(str::to_owned);
     let policy = super::load_resolved_container_policy(repo_root, container_name.as_deref())?;
+    emit_workspace_info(
+        &format!(
+            "preparing workspace container `{}` for handoff",
+            policy.name
+        ),
+        false,
+    );
     maybe_start_workspace_gateway(&policy)?;
     let system_was_running = super::is_primary_service_running(repo_root, &policy)?;
 
@@ -135,25 +150,29 @@ fn run_workspace_container_session(
     if initial_command.is_some() {
         println!("{}", render_workspace_handoff_notice(&policy));
     }
+    if initial_command.is_none() {
+        clear_terminal_for_workspace_handoff()?;
+    }
 
     let shell_result =
         run_container_shell_session(repo_root, container_name.as_deref(), None, initial_command);
 
-    let cleanup_result = if !system_was_running {
-        let mut progress = WorkspaceShutdownProgressReporter::new();
-        run_container(ContainerArgs {
-            subcommand: ContainerSubcommand::Down {
-                name: container_name,
-            },
-            repo_override,
-            output_json: false,
-        })
-        .inspect(|_| progress.finish(true))
-        .inspect_err(|_| progress.finish(false))
-        .map(|_| ())
-    } else {
-        Ok(())
-    };
+    let cleanup_result =
+        if should_shutdown_started_system(system_was_running, ownership, shell_result.is_ok()) {
+            let mut progress = WorkspaceShutdownProgressReporter::new();
+            run_container(ContainerArgs {
+                subcommand: ContainerSubcommand::Down {
+                    name: container_name,
+                },
+                repo_override,
+                output_json: false,
+            })
+            .inspect(|_| progress.finish(true))
+            .inspect_err(|_| progress.finish(false))
+            .map(|_| ())
+        } else {
+            Ok(())
+        };
 
     match (shell_result, cleanup_result) {
         (Ok(output), Ok(())) => Ok(output),
@@ -162,6 +181,20 @@ fn run_workspace_container_session(
         (Err(shell_error), Err(cleanup_error)) => Err(RunnerError::task_invocation(format!(
             "{shell_error}\nworkspace cleanup also failed: {cleanup_error}"
         ))),
+    }
+}
+
+fn should_shutdown_started_system(
+    system_was_running: bool,
+    ownership: WorkspaceSessionOwnership,
+    session_succeeded: bool,
+) -> bool {
+    if system_was_running {
+        return false;
+    }
+    match ownership {
+        WorkspaceSessionOwnership::OwnStartedSystem => true,
+        WorkspaceSessionOwnership::LeaveSystemRunning => session_succeeded,
     }
 }
 
@@ -322,7 +355,7 @@ fn ensure_local_linux_workspace_effigy_artifact(
     let needs_refresh = linux_workspace_effigy_artifact_needs_refresh(host_binary, &artifact_path);
 
     if needs_refresh {
-        emit_workspace_notice(
+        emit_workspace_info(
             "building linux effigy artifact for workspace container access",
             false,
         );
@@ -358,7 +391,7 @@ fn ensure_downloaded_linux_workspace_effigy_artifact() -> Result<PathBuf, Runner
     })?;
 
     let url = linux_workspace_effigy_release_url();
-    emit_workspace_notice(
+    emit_workspace_info(
         &format!("downloading linux effigy release artifact from `{url}`"),
         false,
     );
@@ -490,12 +523,42 @@ fn run_linux_workspace_effigy_rehearsal(
     Ok(())
 }
 
-fn emit_workspace_notice(message: &str, suppress: bool) {
+fn emit_workspace_info(message: &str, suppress: bool) {
     if suppress {
         return;
     }
-    let mut renderer = PlainRenderer::stderr(OutputMode::from_env());
-    let _ = renderer.notice(NoticeLevel::Info, message);
+    eprintln!("{}", render_workspace_info(message));
+}
+
+fn render_workspace_info(message: &str) -> String {
+    let color_enabled = effigy_ui::theme::resolve_color_enabled(
+        OutputMode::from_env(),
+        std::io::stderr().is_terminal(),
+    );
+    format!(
+        "{} {}",
+        crate::runner::tasks_view::style_text(color_enabled, Theme::default().label, "[info]"),
+        message
+    )
+}
+
+fn clear_terminal_for_workspace_handoff() -> Result<(), RunnerError> {
+    if !std::io::stdout().is_terminal() {
+        return Ok(());
+    }
+    let mut stdout = std::io::stdout().lock();
+    stdout
+        .write_all(workspace_handoff_terminal_reset_sequence().as_bytes())
+        .and_then(|_| stdout.flush())
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to prepare terminal for workspace handoff: {error}"
+            ))
+        })
+}
+
+fn workspace_handoff_terminal_reset_sequence() -> &'static str {
+    "\x1b[2J\x1b[H\x1b[3J"
 }
 
 struct WorkspaceShutdownProgressReporter {
@@ -545,7 +608,7 @@ impl WorkspaceTransientProgressReporter {
         }
 
         if !std::io::stderr().is_terminal() || is_ci_environment() {
-            emit_workspace_notice(label, false);
+            emit_workspace_info(label, false);
             return Self { spinner: None };
         }
 
@@ -595,7 +658,7 @@ mod tests {
             name: "stack".to_owned(),
             driver: effigy_manifest::ManifestContainerDriver::Colima,
             startup: effigy_manifest::ManifestContainerStartup::Detached,
-            profile: "default".to_owned(),
+            profile: "effigy".to_owned(),
             compose_source: effigy_containers::EffectiveComposeSource::Direct,
             compose_files: vec![std::path::PathBuf::from("docker-compose.yml")],
             compose_file_display: "docker-compose.yml".to_owned(),
@@ -623,6 +686,22 @@ mod tests {
 
         assert!(rendered.contains("[next]"));
         assert!(rendered.contains("switching into workspace container `stack`"));
+    }
+
+    #[test]
+    fn workspace_info_render_mentions_info_label_and_message() {
+        let rendered = render_workspace_info("building linux effigy artifact");
+
+        assert!(rendered.contains("[info]"));
+        assert!(rendered.contains("building linux effigy artifact"));
+    }
+
+    #[test]
+    fn workspace_handoff_reset_sequence_clears_screen_and_scrollback() {
+        assert_eq!(
+            workspace_handoff_terminal_reset_sequence(),
+            "\x1b[2J\x1b[H\x1b[3J"
+        );
     }
 
     #[test]
@@ -769,5 +848,42 @@ primary_service = "workspace"
 
         let discovered = sibling_effigy_repo_root(&workspace).expect("discover sibling effigy");
         assert_eq!(discovered, effigy);
+    }
+
+    #[test]
+    fn plain_workspace_session_shuts_down_only_if_it_started_the_system() {
+        assert!(should_shutdown_started_system(
+            false,
+            WorkspaceSessionOwnership::OwnStartedSystem,
+            true,
+        ));
+        assert!(!should_shutdown_started_system(
+            true,
+            WorkspaceSessionOwnership::OwnStartedSystem,
+            true,
+        ));
+    }
+
+    #[test]
+    fn seeded_workspace_session_shuts_down_after_successful_handoff() {
+        assert!(should_shutdown_started_system(
+            false,
+            WorkspaceSessionOwnership::LeaveSystemRunning,
+            true,
+        ));
+    }
+
+    #[test]
+    fn seeded_workspace_session_leaves_started_system_running_after_failed_handoff() {
+        assert!(!should_shutdown_started_system(
+            false,
+            WorkspaceSessionOwnership::LeaveSystemRunning,
+            false,
+        ));
+        assert!(!should_shutdown_started_system(
+            true,
+            WorkspaceSessionOwnership::LeaveSystemRunning,
+            true,
+        ));
     }
 }

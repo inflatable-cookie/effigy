@@ -12,6 +12,7 @@ mod render;
 mod runtime_loop;
 mod setup;
 mod state;
+mod transcript;
 pub(crate) mod terminal_text;
 mod view_model;
 

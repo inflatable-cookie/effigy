@@ -1,14 +1,13 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::core::{next_index, prev_index, InputMode};
-
-use super::{LoopControl, SessionState};
+use super::{LoopControl, MultiProcessTuiError, SessionState};
 
 pub(super) fn handle_command_key(
     key: &KeyEvent,
     state: &mut SessionState,
     max_offset: usize,
-) -> LoopControl {
+) -> Result<LoopControl, MultiProcessTuiError> {
     match key.code {
         KeyCode::Char('i') if state.process_names[state.active_index] != "shell" => {
             state.input_mode = InputMode::Insert;
@@ -95,5 +94,5 @@ pub(super) fn handle_command_key(
         _ => {}
     }
 
-    LoopControl::Continue
+    Ok(LoopControl::Continue)
 }

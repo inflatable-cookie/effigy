@@ -13,6 +13,7 @@ pub(super) fn render_footer(
     shell_capture_mode: bool,
     show_help: bool,
     show_options: bool,
+    footer_message: Option<&str>,
 ) {
     let mode_label = if input_mode == InputMode::Insert {
         "insert"
@@ -45,6 +46,7 @@ pub(super) fn render_footer(
         Span::styled("help (h)", if show_help { active } else { muted }),
         Span::styled("  |  ", muted),
         Span::styled("options (o)", if show_options { active } else { muted }),
+        Span::styled("  |  ", muted),
     ];
     if active_is_shell {
         footer_spans.push(Span::styled("  |  ", muted));
@@ -56,6 +58,10 @@ pub(super) fn render_footer(
             },
             active,
         ));
+    }
+    if let Some(message) = footer_message {
+        footer_spans.push(Span::styled("  |  ", muted));
+        footer_spans.push(Span::styled(message.to_owned(), active));
     }
     let footer = Paragraph::new(Line::from(footer_spans));
     frame.render_widget(footer, area);

@@ -9,7 +9,6 @@ if !path_exists(bin_path) || !is_file(bin_path) {
 }
 
 fn run_check(label, program, process_args) {
-    log("[check] " + label);
     let result = run_process(program, process_args);
     if !result["success"] {
         let status = result["status"].to_string();

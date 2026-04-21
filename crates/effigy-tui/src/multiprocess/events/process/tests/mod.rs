@@ -3,7 +3,7 @@ use crate::multiprocess::state::SessionState;
 use effigy_process::{ProcessEvent, ProcessEventKind};
 
 pub(super) fn state_with_process(name: &str) -> SessionState {
-    SessionState::new(vec![name.to_owned()], 2000, 240, 8000)
+    SessionState::new(".".into(), vec![name.to_owned()], 2000, 240, 8000)
 }
 
 pub(super) fn state_with_vt_process(name: &str) -> SessionState {

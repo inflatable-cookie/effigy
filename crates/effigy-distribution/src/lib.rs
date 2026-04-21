@@ -1053,9 +1053,8 @@ pub fn check_glibc_floor_command(
     if let Some(required) = required_glibc {
         if ok {
             Ok(format!(
-                "{} {} GLIBC floor is compatible (requires GLIBC_{required}, max GLIBC_{max_glibc})",
+                "{} GLIBC floor is compatible (requires GLIBC_{required}, max GLIBC_{max_glibc})",
                 styled_status_prefix("[ok]", Theme::default().success),
-                binary_path.display(),
             ))
         } else {
             Err(DistributionExecutionError::Message(format!(

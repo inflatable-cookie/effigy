@@ -1,8 +1,9 @@
 use crossterm::event::KeyEvent;
 
 use effigy_process::{ProcessEventKind, ProcessSupervisor};
+use std::time::Instant;
 
-use super::config::EVENT_DRAIN_WAIT;
+use super::config::{EVENT_DRAIN_WAIT, MAX_EVENT_DRAIN_TIME};
 use super::diagnostics::RuntimeDiagnostics;
 use super::state::SessionState;
 use super::{MultiProcessTuiError, MultiProcessTuiOptions};
@@ -36,8 +37,12 @@ pub(super) fn drain_process_events(
     max_events: usize,
     vt_emulator_enabled: bool,
 ) {
+    let started_at = Instant::now();
     let mut drained_events = 0usize;
     while drained_events < max_events {
+        if should_stop_draining(started_at, drained_events) {
+            break;
+        }
         let Some(event_item) = supervisor.next_event_timeout(EVENT_DRAIN_WAIT) else {
             break;
         };
@@ -62,6 +67,10 @@ pub(super) fn drain_process_events(
             ProcessEventKind::Exit => handle_exit_event(&event_item, state, diagnostics),
         }
     }
+}
+
+fn should_stop_draining(started_at: Instant, drained_events: usize) -> bool {
+    drained_events > 0 && started_at.elapsed() >= MAX_EVENT_DRAIN_TIME
 }
 
 pub(super) fn handle_key_event(
@@ -95,7 +104,7 @@ pub(super) fn handle_key_event(
         handle_insert_key(key, supervisor, state)?;
         return Ok(LoopControl::Continue);
     }
-    Ok(handle_command_key(key, state, max_offset))
+    handle_command_key(key, state, max_offset)
 }
 #[cfg(test)]
 #[path = "events/tests.rs"]
