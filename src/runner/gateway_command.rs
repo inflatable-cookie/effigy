@@ -282,17 +282,7 @@ fn run_gateway_setup_tls(output_json: bool) -> Result<String, RunnerError> {
         ));
     }
 
-    std::fs::create_dir_all(&tls_config.certs_dir).map_err(RunnerError::Cwd)?;
-    let already_installed = TlsConfig::ca_installed();
-    if !already_installed
-        && !gateway_invocation_is_escalated()
-        && gateway_setup_tls_requires_elevation()
-    {
-        return run_gateway_elevated(GatewaySubcommand::SetupTls, output_json);
-    }
-    if !already_installed {
-        TlsConfig::install_ca().map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    }
+    let already_installed = ensure_gateway_tls_ca_ready(&tls_config, output_json)?;
     let ca_installed = TlsConfig::ca_installed();
 
     if output_json {
@@ -318,6 +308,23 @@ fn run_gateway_setup_tls(output_json: bool) -> Result<String, RunnerError> {
         },
         tls_config.certs_dir.display()
     ))
+}
+
+fn ensure_gateway_tls_ca_ready(
+    tls_config: &TlsConfig,
+    output_json: bool,
+) -> Result<bool, RunnerError> {
+    std::fs::create_dir_all(&tls_config.certs_dir).map_err(RunnerError::Cwd)?;
+    let already_installed = TlsConfig::ca_installed();
+    if !already_installed
+        && !gateway_invocation_is_escalated()
+        && gateway_setup_tls_requires_elevation()
+    {
+        run_gateway_elevated(GatewaySubcommand::SetupTls, output_json)?;
+    } else if !already_installed {
+        TlsConfig::install_ca().map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    }
+    Ok(already_installed)
 }
 
 fn gateway_config() -> Result<GatewayConfig, RunnerError> {
@@ -508,6 +515,7 @@ pub(in crate::runner) fn ensure_gateway_tls_cert(domain: &str) -> Result<(), Run
             "container route `{domain}` requires TLS but `mkcert` is not installed; install mkcert and run `effigy gateway setup-tls` first"
         )));
     }
+    ensure_gateway_tls_ca_ready(&tls_config, false)?;
     tls_config
         .generate_cert(domain)
         .map(|_| ())

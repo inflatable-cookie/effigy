@@ -743,6 +743,11 @@ fn direct_compose_policy_rewrites_workspace_mounts_from_manifest_contract() {
     fs::create_dir_all(&underlay).expect("mkdir underlay");
     fs::create_dir_all(&poodle).expect("mkdir poodle");
     fs::write(
+        root.join("infra/dev/workspace.Dockerfile"),
+        "FROM node:22\n",
+    )
+    .expect("dockerfile");
+    fs::write(
         root.join("effigy.toml"),
         r#"
 [containers]
@@ -766,7 +771,9 @@ primary_service = "workspace"
         r#"
 services:
   workspace:
-    image: "node:22"
+    build:
+      context: ../..
+      dockerfile: infra/dev/workspace.Dockerfile
     volumes:
       - ../../../:/workspace-root
       - stack-cache:/cache
@@ -779,7 +786,11 @@ volumes:
     let policy = load_container_policy(&root, None).expect("policy");
     let rewritten =
         fs::read_to_string(&policy.compose_files[0]).expect("read rewritten workspace compose");
+    let expected_rewrite_path = root.join(".effigy/runtime/compose/stack.workspace.compose.yml");
+    let canonical_root = root.canonicalize().expect("canonical repo root");
 
+    assert_eq!(policy.compose_files[0], expected_rewrite_path);
+    assert!(expected_rewrite_path.exists(), "rewrite path should exist");
     assert!(
         rewritten.contains(":/workspace-root/underlay-reference"),
         "rewritten compose: {rewritten}"
@@ -807,6 +818,14 @@ volumes:
     assert!(
         !rewritten.contains("HOME: /home/dev"),
         "rewritten compose should not force runtime HOME: {rewritten}"
+    );
+    assert!(
+        rewritten.contains(&format!("context: {}", canonical_root.display())),
+        "rewritten compose should preserve relocated build context: {rewritten}"
+    );
+    assert!(
+        rewritten.contains("dockerfile: infra/dev/workspace.Dockerfile"),
+        "rewritten compose should preserve dockerfile path relative to build context: {rewritten}"
     );
     assert_eq!(policy.workspace_user.as_deref(), Some("dev"));
     assert_eq!(policy.workspace_home.as_deref(), Some("/home/dev"));

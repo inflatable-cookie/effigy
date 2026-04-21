@@ -818,7 +818,7 @@ fn materialize_runtime_dns_override(
     if dns_servers.is_empty() {
         return Ok(());
     }
-    let override_dir = repo_root.join(".effigy").join("runtime-dns");
+    let override_dir = repo_root.join(".effigy").join("runtime").join("dns");
     std::fs::create_dir_all(&override_dir).map_err(|error| ContainerPolicyError::Read {
         path: override_dir.clone(),
         error,
