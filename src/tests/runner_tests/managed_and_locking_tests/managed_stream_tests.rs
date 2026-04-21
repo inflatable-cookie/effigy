@@ -560,6 +560,7 @@ fn run_manifest_task_managed_stream_lifecycle_process_owns_container_shutdown() 
     let _env = managed_stream_env();
     let root = crate::runner::tests::prelude::temp_workspace("managed-stream-lifecycle");
     setup_managed_stream_lifecycle(&root);
+    let _runtime = write_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
     let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
 
@@ -583,6 +584,7 @@ fn run_manifest_task_managed_stream_workspace_binding_owns_container_shutdown() 
     let root =
         crate::runner::tests::prelude::temp_workspace("managed-stream-lifecycle-workspace-binding");
     setup_managed_stream_lifecycle_workspace_binding(&root);
+    let _runtime = write_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
     let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
 
@@ -630,6 +632,7 @@ fn run_manifest_task_managed_stream_projects_ready_message_from_lifecycle_owner(
     let _env = managed_stream_env();
     let root = crate::runner::tests::prelude::temp_workspace("managed-stream-readiness");
     setup_managed_stream_readiness(&root);
+    let _runtime = write_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
     let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
 
@@ -672,6 +675,7 @@ fn run_manifest_task_managed_stream_handoff_skips_gateway_and_container_lifecycl
     let root =
         crate::runner::tests::prelude::temp_workspace("managed-stream-container-handoff-local");
     setup_managed_stream_gateway(&root);
+    let _runtime = write_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
     let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
 
@@ -702,6 +706,7 @@ fn run_manifest_task_managed_stream_resolves_task_refs_before_container_exec_whe
     let root =
         crate::runner::tests::prelude::temp_workspace("managed-stream-container-routed-task-ref");
     setup_managed_stream_container_routed_task_ref(&root);
+    let _runtime = write_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
     let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
 
