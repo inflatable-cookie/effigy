@@ -43,7 +43,28 @@ During v0.x, MINOR bumps may include breaking changes.
   contract against lifecycle-owned workspace containers, render it in
   plan/docs output, and trigger the shipped `effigy gateway up` path before
   the managed runtime starts.
+- Add explicit `setup = [...]` support on standard managed `concurrent` panes,
+  including `run`, `task`, and `rhai` step sequences, so repos can own
+  transparent per-pane hydration and other pre-run logic directly in
+  manifest config instead of relying on hidden runner heuristics.
 ### Fixed
+- Move the implicit Colima profile from `default` to `effigy`, auto-size that
+  Effigy-owned profile with a host-aware memory+swap plan, and warn when a
+  running workspace profile is still undersized or intentionally sharing
+  Colima's global `default` profile name.
+- Clear the host terminal immediately before `effigy workspace` hands off into
+  the interactive container shell, so cold-start and prep logs do not stay on
+  screen above the final workspace prompt.
+- Remove the hidden managed-dev JS auto-hydration wrapper from container-backed
+  standard panes; repos should now declare explicit per-pane `setup = [...]`
+  when they need `bun install`, workspace hydration, or other startup prep.
+- Keep `effigy workspace` handoff notices on explicit `[info]` labels and cap
+  managed TUI per-frame event draining so heavy compile output does not stall
+  redraws for multiple seconds during `effigy dev` startup.
+- Fail fast when a repo changes `[containers.<name>].project_name` while the
+  old Compose project is still running, so `effigy dev`, `effigy exec`, and
+  container shell entrypoints now report the stale/new project mismatch
+  directly instead of hanging or crashing later in the managed runtime path.
 - Let single-entry container/system/workspace registries resolve implied
   defaults, so repos can omit `[containers].default`, `[systems].default`,
   `[systems.<name>].default_workspace`, and workspace `container = "..."`
@@ -78,6 +99,20 @@ During v0.x, MINOR bumps may include breaking changes.
   route table transitions from non-empty to empty, and cancel that timer
   if routes return, so workspace/container restarts do not immediately tear
   down the shared gateway after the last route is removed.
+- Make workspace-seeded managed dev sessions shut their cold-started system
+  back down after a successful `effigy dev` handoff, while still leaving it
+  running when the handoff itself fails so debugging does not lose the live
+  workspace.
+- Preserve seeded workspace handoff transport failures as the primary error
+  instead of masking them behind a later shutdown failure when the container
+  exec session has already died.
+- Add `effigy system reset-runtime` as an explicit hard reset path for wedged
+  Colima-backed systems, so Effigy can kill stale profile processes, clear
+  control sockets, and leave the profile fully stopped without waiting on the
+  softer repair flow.
+- Give `colima stop` a longer shutdown timeout than startup/status probes, so
+  ordinary macOS VZ teardown does not get misreported as a fatal workspace
+  shutdown failure after 15 seconds.
 - Make `effigy workspace` verify that the bound system's primary service is
   actually running before it skips bring-up, so stale compose state no longer
   drops straight into `no running containers from service workspace`.

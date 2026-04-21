@@ -443,7 +443,7 @@ mod tests {
             name: "web".to_owned(),
             driver: ManifestContainerDriver::Colima,
             startup: ManifestContainerStartup::Detached,
-            profile: "default".to_owned(),
+            profile: "effigy".to_owned(),
             compose_source: EffectiveComposeSource::Direct,
             compose_files: vec![PathBuf::from("/tmp/docker-compose.yml")],
             compose_file_display: "docker-compose.yml".to_owned(),
@@ -552,7 +552,7 @@ mod tests {
         let routes = resolve_gateway_routes(&test_policy()).expect("routes");
         let route = routes.first().expect("some route");
 
-        register_gateway_route_at(&route_table_path, &repo_root, &route).expect("register");
+        register_gateway_route_at(&route_table_path, &repo_root, route).expect("register");
         let table = RouteTable::load(&route_table_path).expect("load registered route table");
         let registered = table.lookup("clientname.test").expect("registered route");
         assert_eq!(registered.target, "127.0.0.1:8080");

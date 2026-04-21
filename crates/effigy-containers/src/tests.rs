@@ -88,7 +88,7 @@ primary_service = "app"
         .and_then(|value| value.to_str())
         .expect("repo dir name")
         .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
-    assert_eq!(policy.project_name, expected);
+    assert_eq!(policy.project_name, format!("{expected}-dev"));
 }
 
 #[test]
@@ -138,7 +138,7 @@ primary_service = "app"
 
     let policy = load_container_policy(&root, None).expect("policy");
 
-    assert_eq!(policy.project_name, "underlay-reference");
+    assert_eq!(policy.project_name, "underlay-reference-dev");
 }
 
 #[test]
@@ -156,12 +156,12 @@ default = "web"
 [containers.web]
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
-project_name = "all-policies-web"
+project_name = "underlay-reference-dev"
 
 [containers.worker]
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "jobs"
-project_name = "all-policies-worker"
+project_name = "underlay-reference-dev"
 "#,
     )
     .expect("write manifest");
@@ -171,9 +171,43 @@ project_name = "all-policies-worker"
     let error = load_container_policy(&root, None).expect_err("should fail");
 
     assert!(error.to_string().contains("unique `project_name` values"));
-    assert!(error.to_string().contains("`underlay-reference`"));
+    assert!(error.to_string().contains("`underlay-reference-dev`"));
     assert!(error.to_string().contains("`web`"));
     assert!(error.to_string().contains("`worker`"));
+}
+
+#[test]
+fn load_container_policy_uses_distinct_default_project_names_for_multiple_containers() {
+    let root = temp_repo("multiple-default-project-names");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[catalog]
+alias = "underlay-reference"
+
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.worker]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "jobs"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policies = load_all_container_policies(&root).expect("policies");
+
+    assert_eq!(policies.len(), 2);
+    assert_eq!(policies[0].name, "web");
+    assert_eq!(policies[0].project_name, "underlay-reference-web-dev");
+    assert_eq!(policies[1].name, "worker");
+    assert_eq!(policies[1].project_name, "underlay-reference-worker-dev");
 }
 
 #[test]
@@ -942,7 +976,7 @@ fn status_all_report_renders_environment_inventory() {
         repo_root: "/tmp/demo".to_owned(),
         container: "web".to_owned(),
         project_name: "demo-web-dev".to_owned(),
-        profile: "default".to_owned(),
+        profile: "effigy".to_owned(),
         primary_service: "app".to_owned(),
         dns_domain: Some("demo.test".to_owned()),
         dns_tls: true,
@@ -977,7 +1011,7 @@ fn stats_all_report_renders_resource_inventory_and_warning() {
             repo_root: "/tmp/demo".to_owned(),
             container: "web".to_owned(),
             project_name: "demo-web-dev".to_owned(),
-            profile: "default".to_owned(),
+            profile: "effigy".to_owned(),
             primary_service: "app".to_owned(),
             services: vec![
                 ContainerStatsService {

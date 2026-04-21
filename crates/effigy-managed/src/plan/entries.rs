@@ -9,6 +9,7 @@ use effigy_tasks::TaskSelector;
 
 use super::{invalid_managed_process_definition, select_run_or_task};
 use crate::references;
+use crate::run_spec::{render_run_step_sequence, wrap_reference_command_in_cwd};
 use crate::{ManagedProcessRole, ManagedProcessSpec, DEFAULT_MANAGED_SHELL_RUN};
 
 pub fn resolve_concurrent_process_entries<'a>(
@@ -43,11 +44,22 @@ pub fn resolve_concurrent_process_entries<'a>(
             task_scope_cwd,
             resolver,
         )?;
+        let setup = resolve_process_setup(
+            selector,
+            task,
+            &process_name,
+            entry,
+            catalog,
+            catalogs,
+            &cwd,
+            resolver,
+        )?;
         resolved.push(super::ConcurrentResolvedProcess {
             spec: ManagedProcessSpec {
                 name: process_name,
                 role: normalized.role,
                 run,
+                setup,
                 cwd,
                 service: normalized.service,
                 start_after_ms: normalized.start_after_ms,
@@ -59,6 +71,42 @@ pub fn resolve_concurrent_process_entries<'a>(
         });
     }
     Ok(resolved)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_process_setup<'a>(
+    selector: &TaskSelector,
+    task: &ManifestTask,
+    process_name: &str,
+    entry: &ManifestManagedConcurrentEntry,
+    catalog: &LoadedCatalog,
+    catalogs: &'a [LoadedCatalog],
+    process_cwd: &Path,
+    resolver: TaskResolverFn<'a>,
+) -> Result<Option<String>, crate::ManagedError> {
+    if entry.setup.is_empty() {
+        return Ok(None);
+    }
+    if matches!(entry.role.as_deref(), Some("lifecycle") | Some("shell")) {
+        return Err(invalid_managed_process_definition(
+            selector,
+            process_name,
+            "`setup` is only supported on standard concurrent entries",
+        ));
+    }
+    let rendered = render_run_step_sequence(
+        process_name,
+        &entry.setup,
+        &task.env,
+        task.env_file.as_ref(),
+        &catalog.manifest.env,
+        &catalog.catalog_root,
+        catalogs,
+        process_cwd,
+        None,
+        resolver,
+    )?;
+    Ok(Some(wrap_reference_command_in_cwd(process_cwd, &rendered)))
 }
 
 struct NormalizedConcurrentEntry {

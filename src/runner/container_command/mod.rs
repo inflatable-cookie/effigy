@@ -25,7 +25,7 @@ mod gateway_registration;
 mod lifecycle;
 mod session;
 mod signals;
-mod support;
+pub(in crate::runner) mod support;
 
 pub(super) fn render_container_report(report: ContainerCommandReport, output_json: bool) -> String {
     if output_json {

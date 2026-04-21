@@ -3,7 +3,8 @@ use std::path::Path;
 
 use effigy_containers::{
     exec::{
-        capture_running_container_stats, list_running_compose_containers, RunningComposeContainer,
+        capture_running_container_stats_for_profile, list_running_compose_containers,
+        RunningComposeContainer,
     },
     load_all_container_policies, stats_all_report, status_all_report, AllocatedPortsSummary,
     ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
@@ -65,25 +66,31 @@ pub(super) fn run_container_status_all(output_json: bool) -> Result<String, Runn
 
 pub(super) fn run_container_stats_all(output_json: bool) -> Result<String, RunnerError> {
     let environments = discover_running_environments()?;
-    let stats = capture_running_container_stats(
-        &environments
-            .iter()
-            .flat_map(|environment| {
-                environment
-                    .services
-                    .iter()
-                    .map(|service| service.container_name.clone())
-            })
-            .collect::<Vec<_>>(),
+    let mut stats_warning_lines = Vec::new();
+    let mut stats_by_container = BTreeMap::new();
+    let grouped_names = environments.iter().fold(
+        BTreeMap::<String, Vec<String>>::new(),
+        |mut acc, environment| {
+            acc.entry(environment.policy.profile.clone())
+                .or_default()
+                .extend(
+                    environment
+                        .services
+                        .iter()
+                        .map(|service| service.container_name.clone()),
+                );
+            acc
+        },
     );
-    let stats_by_container = stats
-        .stats
-        .into_iter()
-        .map(|sample| {
-            let container_name = sample.container_name.clone();
-            (container_name, sample)
-        })
-        .collect::<BTreeMap<_, _>>();
+    for (profile, container_names) in grouped_names {
+        let capture = capture_running_container_stats_for_profile(&profile, &container_names);
+        if let Some(warning) = capture.warning {
+            stats_warning_lines.push(warning);
+        }
+        for sample in capture.stats {
+            stats_by_container.insert(sample.container_name.clone(), sample);
+        }
+    }
 
     let environments = environments
         .into_iter()
@@ -118,8 +125,13 @@ pub(super) fn run_container_stats_all(output_json: bool) -> Result<String, Runne
         })
         .collect::<Vec<_>>();
 
+    let stats_warning = if stats_warning_lines.is_empty() {
+        None
+    } else {
+        Some(stats_warning_lines.join("; "))
+    };
     Ok(render_container_report(
-        stats_all_report(&environments, stats.warning.as_deref()),
+        stats_all_report(&environments, stats_warning.as_deref()),
         output_json,
     ))
 }

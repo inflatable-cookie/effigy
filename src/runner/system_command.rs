@@ -4,8 +4,8 @@ mod workspace;
 use effigy_cli::{ContainerArgs, ContainerSubcommand, SystemArgs, SystemSubcommand, WorkspaceArgs};
 use effigy_containers::{
     exec::{
-        colima_is_running, list_running_compose_containers, recover_colima_runtime,
-        ColimaRecoveryReport, ContainerExecError, RunningComposeContainer,
+        colima_is_running, list_running_compose_containers_for_profile, recover_colima_runtime,
+        reset_colima_runtime, ColimaRecoveryReport, ContainerExecError, RunningComposeContainer,
     },
     load_container_policy, validate_container_policy, EffectiveContainerPolicy,
 };
@@ -54,6 +54,16 @@ pub(super) fn run_system(args: SystemArgs) -> Result<String, RunnerError> {
             let mut progress = SystemProgressReporter::new(args.output_json, progress_label);
             let result = render_system_recovery(
                 recover_colima_runtime(&policy, &repo_root).map_err(Into::<RunnerError>::into),
+                args.output_json,
+            );
+            progress.finish(result.is_ok());
+            return result;
+        }
+        SystemSubcommand::ResetRuntime => {
+            let policy = load_resolved_container_policy(&repo_root, container_name.as_deref())?;
+            let mut progress = SystemProgressReporter::new(args.output_json, progress_label);
+            let result = render_system_recovery(
+                reset_colima_runtime(&policy, &repo_root).map_err(Into::<RunnerError>::into),
                 args.output_json,
             );
             progress.finish(result.is_ok());
@@ -108,7 +118,7 @@ pub(super) fn is_primary_service_running(
         return Ok(false);
     }
 
-    let running = match list_running_compose_containers() {
+    let running = match list_running_compose_containers_for_profile(&policy.profile) {
         Ok(running) => running,
         Err(error) if exec_error_means_runtime_not_running(&error) => return Ok(false),
         Err(error) => return Err(error.into()),
@@ -151,6 +161,7 @@ fn system_progress_label(subcommand: &SystemSubcommand) -> Option<&'static str> 
         SystemSubcommand::Up => Some("System: starting containers"),
         SystemSubcommand::Down => Some("System: stopping containers"),
         SystemSubcommand::Repair => Some("System: recovering Colima runtime"),
+        SystemSubcommand::ResetRuntime => Some("System: hard-resetting Colima runtime"),
         SystemSubcommand::Logs { follow: false } => Some("System: collecting logs"),
         SystemSubcommand::Status | SystemSubcommand::Logs { follow: true } => None,
     }
@@ -222,6 +233,10 @@ mod tests {
         assert_eq!(
             system_progress_label(&SystemSubcommand::Repair),
             Some("System: recovering Colima runtime")
+        );
+        assert_eq!(
+            system_progress_label(&SystemSubcommand::ResetRuntime),
+            Some("System: hard-resetting Colima runtime")
         );
         assert_eq!(
             system_progress_label(&SystemSubcommand::Logs { follow: false }),

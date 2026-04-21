@@ -227,6 +227,7 @@ fn materialize_demo_special_managed_processes(
                         task_name,
                         &process.cwd,
                         container_repo_root.as_deref(),
+                        process.setup.as_deref(),
                         &process.run,
                     );
                 } else if matches!(
@@ -239,6 +240,7 @@ fn materialize_demo_special_managed_processes(
                         task_name,
                         &process.cwd,
                         container_repo_root.as_deref(),
+                        process.setup.as_deref(),
                         &executable,
                         &process.run,
                     );
@@ -284,7 +286,7 @@ fn build_demo_managed_lifecycle_setup_commands(
     }
     Ok(setup_dirs
         .into_iter()
-        .map(|host_dir| {
+        .filter_map(|host_dir| {
             let relative_dir = host_dir.strip_prefix(repo_root).ok()?;
             let container_dir = container_repo_root.join(relative_dir);
             Some(if let Some(policy) = inline_policy {
@@ -305,7 +307,6 @@ fn build_demo_managed_lifecycle_setup_commands(
                 )
             })
         })
-        .flatten()
         .collect())
 }
 
@@ -533,6 +534,7 @@ fn render_inline_managed_standard_exec_command(
     owner_task: &str,
     process_cwd: &Path,
     container_repo_root: Option<&Path>,
+    setup_command: Option<&str>,
     command: &str,
 ) -> String {
     let cwd = shell_quote(&process_cwd.display().to_string());
@@ -574,11 +576,13 @@ fn render_inline_managed_standard_exec_command(
             ],
         ),
     );
+    let setup_sequence = setup_command.unwrap_or("");
     format!(
         "sh -lc {}",
         shell_quote(&format!(
-            "cd {cwd} && state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if {probe} >/dev/null 2>&1; then {attach}; exit $?; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before exec surface became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed exec timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
+            "cd {cwd} && state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if {probe} >/dev/null 2>&1; then {setup_sequence}{attach}; exit $?; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before exec surface became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed exec timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
             timeout_secs = MANAGED_EXEC_READINESS_TIMEOUT_SECS,
+            setup_sequence = setup_sequence,
         ))
     )
 }

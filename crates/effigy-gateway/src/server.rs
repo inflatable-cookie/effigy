@@ -11,7 +11,7 @@
 //! is coordinated via a `tokio::sync::watch` channel.
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -117,7 +117,7 @@ pub struct GatewayStatus {
 }
 
 /// Write a PID file for lifecycle management.
-pub fn write_pid_file(path: &PathBuf) -> Result<(), GatewayError> {
+pub fn write_pid_file(path: &Path) -> Result<(), GatewayError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -126,7 +126,7 @@ pub fn write_pid_file(path: &PathBuf) -> Result<(), GatewayError> {
 }
 
 /// Read the PID from a PID file.
-pub fn read_pid_file(path: &PathBuf) -> Result<u32, GatewayError> {
+pub fn read_pid_file(path: &Path) -> Result<u32, GatewayError> {
     if !path.exists() {
         return Err(GatewayError::NotRunning);
     }
@@ -138,7 +138,7 @@ pub fn read_pid_file(path: &PathBuf) -> Result<u32, GatewayError> {
 }
 
 /// Remove the PID file.
-pub fn remove_pid_file(path: &PathBuf) {
+pub fn remove_pid_file(path: &Path) {
     let _ = std::fs::remove_file(path);
 }
 
@@ -314,13 +314,13 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
 
 /// Set up a filesystem watcher that reloads the route table when it changes.
 fn setup_file_watcher(
-    path: &PathBuf,
+    path: &Path,
     table: Arc<RwLock<RouteTable>>,
     dns_cache: Arc<DnsCache>,
     idle_shutdown_generation: Arc<AtomicU64>,
     shutdown_tx: watch::Sender<bool>,
 ) -> Result<RecommendedWatcher, GatewayError> {
-    let watched_path = path.clone();
+    let watched_path = path.to_path_buf();
 
     let mut watcher =
         notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
@@ -360,7 +360,7 @@ fn setup_file_watcher(
 }
 
 fn reload_route_table_and_maybe_schedule_shutdown(
-    path: &PathBuf,
+    path: &Path,
     table: &Arc<RwLock<RouteTable>>,
     dns_cache: &Arc<DnsCache>,
     idle_shutdown_generation: &Arc<AtomicU64>,
@@ -429,10 +429,10 @@ fn schedule_idle_shutdown(
 }
 
 fn setup_tls_watcher(
-    certs_dir: &PathBuf,
+    certs_dir: &Path,
     resolver: Arc<SniCertResolver>,
 ) -> Result<RecommendedWatcher, GatewayError> {
-    let watched_dir = certs_dir.clone();
+    let watched_dir = certs_dir.to_path_buf();
 
     let mut watcher =
         notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {

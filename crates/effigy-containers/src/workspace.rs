@@ -11,7 +11,7 @@ pub(crate) fn materialize_runtime_workspace_mount_rewrite(
     workspace: &ManifestWorkspaceConfig,
     working_dir: &Path,
     primary_service: &str,
-    compose_files: &mut Vec<PathBuf>,
+    compose_files: &mut [PathBuf],
 ) -> Result<(), ContainerPolicyError> {
     let Some(source_compose) = compose_files.first().cloned() else {
         return Ok(());

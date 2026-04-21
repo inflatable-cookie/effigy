@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedTaskExecutionBinding {
     Host,
-    Workspace(ResolvedWorkspaceBinding),
+    Workspace(Box<ResolvedWorkspaceBinding>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -153,7 +153,7 @@ pub fn resolve_task_execution_binding_from_parts(
         containers,
     );
 
-    Ok(Some(ResolvedTaskExecutionBinding::Workspace(
+    Ok(Some(ResolvedTaskExecutionBinding::Workspace(Box::new(
         ResolvedWorkspaceBinding {
             system: resolved_system.clone(),
             workspace: resolved_workspace,
@@ -161,7 +161,7 @@ pub fn resolve_task_execution_binding_from_parts(
             workspace_config: workspace_config.clone(),
             container,
         },
-    )))
+    ))))
 }
 
 fn workspace_container(
@@ -170,14 +170,11 @@ fn workspace_container(
     workspace: &ManifestWorkspaceConfig,
     containers: Option<&ManifestContainersConfig>,
 ) -> Option<ResolvedWorkspaceContainer> {
-    let Some(container_ref) = workspace
+    let container_ref = workspace
         .container
         .as_ref()
         .cloned()
-        .or_else(|| default_workspace_container(containers))
-    else {
-        return None;
-    };
+        .or_else(|| default_workspace_container(containers))?;
     match container_ref {
         ManifestWorkspaceContainerRef::Named(name) => Some(ResolvedWorkspaceContainer::Named(name)),
         ManifestWorkspaceContainerRef::Inline(ManifestInlineWorkspaceContainerConfig {
@@ -377,7 +374,7 @@ run = "npm run dev"
 
         assert_eq!(
             resolved,
-            Some(ResolvedTaskExecutionBinding::Workspace(
+            Some(ResolvedTaskExecutionBinding::Workspace(Box::new(
                 ResolvedWorkspaceBinding {
                     system: "dev".to_owned(),
                     workspace: "app".to_owned(),
@@ -391,7 +388,7 @@ run = "npm run dev"
                     },
                     container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
                 }
-            ))
+            )))
         );
     }
 
@@ -417,7 +414,7 @@ run = "npm run dev"
 
         assert_eq!(
             resolved,
-            Some(ResolvedTaskExecutionBinding::Workspace(
+            Some(ResolvedTaskExecutionBinding::Workspace(Box::new(
                 ResolvedWorkspaceBinding {
                     system: "dev".to_owned(),
                     workspace: "app".to_owned(),
@@ -431,7 +428,7 @@ run = "npm run dev"
                     },
                     container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
                 }
-            ))
+            )))
         );
     }
 
@@ -456,7 +453,7 @@ run = "npm run dev"
 
         assert_eq!(
             resolved,
-            Some(ResolvedTaskExecutionBinding::Workspace(
+            Some(ResolvedTaskExecutionBinding::Workspace(Box::new(
                 ResolvedWorkspaceBinding {
                     system: "dev".to_owned(),
                     workspace: "app".to_owned(),
@@ -470,7 +467,7 @@ run = "npm run dev"
                     },
                     container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
                 }
-            ))
+            )))
         );
     }
 
@@ -494,7 +491,7 @@ run = "npm run dev"
 
         assert_eq!(
             resolved,
-            Some(ResolvedTaskExecutionBinding::Workspace(
+            Some(ResolvedTaskExecutionBinding::Workspace(Box::new(
                 ResolvedWorkspaceBinding {
                     system: "dev".to_owned(),
                     workspace: "default".to_owned(),
@@ -508,7 +505,7 @@ run = "npm run dev"
                     },
                     container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
                 }
-            ))
+            )))
         );
     }
 
@@ -556,7 +553,7 @@ run = "npm run dev"
 
         assert_eq!(
             resolved,
-            Some(ResolvedTaskExecutionBinding::Workspace(
+            Some(ResolvedTaskExecutionBinding::Workspace(Box::new(
                 ResolvedWorkspaceBinding {
                     system: "dev".to_owned(),
                     workspace: "app".to_owned(),
@@ -587,7 +584,7 @@ run = "npm run dev"
                         }
                     )),
                 }
-            ))
+            )))
         );
     }
 

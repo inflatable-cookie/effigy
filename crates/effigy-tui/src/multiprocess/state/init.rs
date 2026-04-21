@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use vt100::Parser as VtParser;

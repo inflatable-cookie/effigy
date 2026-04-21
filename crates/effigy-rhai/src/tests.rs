@@ -90,6 +90,23 @@ fn execute_rhai_script_exposes_task_effigy_and_container_helpers() {
 }
 
 #[test]
+fn execute_rhai_script_can_stream_process_output() {
+    let root = temp_root("stream-process");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+            let streamed = run_process_stream("sh", ["-lc", "printf stream-ok"]);
+            if !streamed["success"] { throw("stream"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
 fn run_effigy_json_surfaces_callback_errors_as_runtime_errors() {
     let root = temp_root("effigy-json-error");
     let context = ScriptContext {

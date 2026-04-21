@@ -1,4 +1,5 @@
 use super::super::super::container_command::run_task_workspace_session;
+use super::super::super::container_command::support::validate_running_container_runtime_match;
 use super::super::super::gateway_command::gateway_up_for_managed_task;
 use super::super::super::locking::io::acquire_scopes;
 use super::super::super::locking::model::LockScope;
@@ -17,10 +18,7 @@ use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::presentation::run_or_render_managed_task;
 use effigy_managed::ManagedProcessRole;
 use effigy_managed::{managed_execution_mode, ManagedExecutionMode};
-use effigy_manifest::config_sections::ManifestJsPackageManager;
 use effigy_manifest::TaskSelection;
-use serde_json::Value as JsonValue;
-use std::collections::BTreeSet;
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -82,6 +80,12 @@ pub(super) fn run_managed_task(
             ContainerExecutionBinding::Container { .. }
         )
     {
+        let policy = load_container_policy(
+            &selection.catalog.catalog_root,
+            container_binding.requested_container_name().flatten(),
+        )
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        validate_running_container_runtime_match(&selection.catalog.catalog_root, &policy)?;
         maybe_start_managed_gateway(
             &selection.catalog.catalog_root,
             &preflight.selector.task_name,
@@ -322,6 +326,17 @@ fn materialize_special_managed_processes(
         }
         _ => None,
     };
+    if !container_handoff {
+        if let Some(policy) = inline_policy.as_ref() {
+            validate_running_container_runtime_match(repo_root, policy)?;
+        } else if let Some(requested_container_name) =
+            container_binding.requested_container_name().flatten()
+        {
+            let policy = load_container_policy(repo_root, Some(requested_container_name))
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            validate_running_container_runtime_match(repo_root, &policy)?;
+        }
+    }
     let container_repo_root = match &container_binding {
         ContainerExecutionBinding::Inline { .. } => {
             container_binding.exec_working_dir(repo_root)?
@@ -334,14 +349,6 @@ fn materialize_special_managed_processes(
                     .ok()
             }),
     };
-    let lifecycle_setup_commands = build_managed_lifecycle_setup_commands(
-        plan,
-        selection,
-        &preflight.selector.task_name,
-        container_repo_root.as_deref(),
-        &executable,
-        container_handoff,
-    );
     for process in &mut plan.processes {
         match process.role {
             ManagedProcessRole::Lifecycle => {
@@ -352,7 +359,7 @@ fn materialize_special_managed_processes(
                         &preflight.selector.task_name,
                         selection.task.health_wait.unwrap_or(false),
                         selection.task.ready_message.as_deref(),
-                        &lifecycle_setup_commands,
+                        &[],
                     )
                 } else if let Some(policy) = inline_policy.as_ref() {
                     render_inline_managed_lifecycle_command(
@@ -361,7 +368,7 @@ fn materialize_special_managed_processes(
                         &preflight.selector.task_name,
                         selection.task.health_wait.unwrap_or(false),
                         selection.task.ready_message.as_deref(),
-                        &lifecycle_setup_commands,
+                        &[],
                     )
                 } else {
                     managed_lifecycle_command(
@@ -370,7 +377,7 @@ fn materialize_special_managed_processes(
                         &preflight.selector.task_name,
                         selection.task.health_wait.unwrap_or(false),
                         selection.task.ready_message.as_deref(),
-                        &lifecycle_setup_commands,
+                        &[],
                         &executable,
                     )
                 };
@@ -403,6 +410,10 @@ fn materialize_special_managed_processes(
             }
             ManagedProcessRole::Standard => {
                 if container_handoff {
+                    process.run = render_handoff_managed_standard_command(
+                        process.setup.as_deref(),
+                        &process.run,
+                    );
                     continue;
                 }
                 if let Some(policy) = inline_policy.as_ref() {
@@ -412,6 +423,7 @@ fn materialize_special_managed_processes(
                         &preflight.selector.task_name,
                         &process.cwd,
                         container_repo_root.as_deref(),
+                        process.setup.as_deref(),
                         &process.run,
                     );
                 } else if container_binding.container_name().is_some() {
@@ -421,6 +433,7 @@ fn materialize_special_managed_processes(
                         &preflight.selector.task_name,
                         &process.cwd,
                         container_repo_root.as_deref(),
+                        process.setup.as_deref(),
                         &executable,
                         &process.run,
                     );
@@ -431,218 +444,20 @@ fn materialize_special_managed_processes(
     Ok(())
 }
 
-fn build_managed_lifecycle_setup_commands(
-    plan: &effigy_managed::ManagedTaskPlan,
-    selection: &TaskSelection<'_>,
-    task_name: &str,
-    container_repo_root: Option<&std::path::Path>,
-    executable: &str,
-    container_handoff: bool,
-) -> Vec<String> {
-    let Some(container_repo_root) = container_repo_root else {
-        return Vec::new();
-    };
-    let Some(package_manager) = selection
-        .catalog
-        .manifest
-        .package_manager
-        .as_ref()
-        .and_then(|config| config.js)
-    else {
-        return Vec::new();
-    };
-    let Some(install_command) = package_manager.install_command() else {
-        return Vec::new();
-    };
-    let repo_root = selection.catalog.catalog_root.as_path();
-    let container_binding = resolve_container_execution_binding(
-        selection.catalog.manifest.systems.as_ref(),
-        selection.catalog.manifest.containers.as_ref(),
-        task_name,
-        selection.task,
-        "managed lifecycle setup",
-    )
-    .ok();
-    let container_policy = container_binding
-        .as_ref()
-        .and_then(|binding| binding.load_effective_policy(repo_root).ok().flatten())
-        .or_else(|| {
-            container_binding
-                .as_ref()
-                .and_then(ContainerExecutionBinding::requested_container_name)
-                .and_then(|requested_name| load_container_policy(repo_root, requested_name).ok())
-        });
-    let mut setup_dirs = std::collections::BTreeSet::<std::path::PathBuf>::new();
-    for process in &plan.processes {
-        if process.role != ManagedProcessRole::Standard {
-            continue;
-        }
-        let package_json = process.cwd.join("package.json");
-        if package_json.is_file() {
-            setup_dirs.insert(process.cwd.clone());
-        }
-    }
-    let mut ordered_setup_dirs = Vec::new();
-    let mut visited = BTreeSet::new();
-    for host_dir in setup_dirs {
-        collect_container_setup_dirs(repo_root, &host_dir, &mut visited, &mut ordered_setup_dirs);
-    }
-    ordered_setup_dirs
-        .into_iter()
-        .filter_map(|host_dir| {
-            let relative_dir = host_dir.strip_prefix(repo_root).ok()?;
-            let container_dir = container_repo_root.join(relative_dir);
-            let force_install = package_declares_local_file_deps(&host_dir);
-            Some(if container_handoff {
-                render_local_js_hydration_command(
-                    &host_dir,
-                    &container_dir,
-                    package_manager,
-                    install_command,
-                    force_install,
-                )
-            } else {
-                render_container_js_hydration_command(
-                    repo_root,
-                    container_policy.as_ref(),
-                    &host_dir,
-                    &container_dir,
-                    package_manager,
-                    install_command,
-                    executable,
-                    force_install,
-                )
-            })
-        })
-        .collect()
-}
-
 fn inside_container_handoff() -> bool {
     std::env::var_os(CONTAINER_HANDOFF_ENV).is_some()
 }
 
-fn collect_container_setup_dirs(
-    repo_root: &std::path::Path,
-    host_dir: &std::path::Path,
-    visited: &mut BTreeSet<std::path::PathBuf>,
-    ordered: &mut Vec<std::path::PathBuf>,
-) {
-    let canonical = match host_dir.canonicalize() {
-        Ok(path) => path,
-        Err(_) => return,
+fn render_handoff_managed_standard_command(setup_command: Option<&str>, run: &str) -> String {
+    let Some(setup_command) = setup_command
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return run.to_owned();
     };
-    if !canonical.starts_with(repo_root.parent().unwrap_or(repo_root)) {
-        return;
-    }
-    if !visited.insert(canonical.clone()) {
-        return;
-    }
-    for dependency_dir in package_local_file_dependency_dirs(&canonical) {
-        collect_container_setup_dirs(repo_root, &dependency_dir, visited, ordered);
-    }
-    ordered.push(canonical);
-}
-
-fn package_declares_local_file_deps(host_dir: &std::path::Path) -> bool {
-    !package_local_file_dependency_dirs(host_dir).is_empty()
-}
-
-fn package_local_file_dependency_dirs(host_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let package_json = host_dir.join("package.json");
-    let Ok(contents) = std::fs::read_to_string(&package_json) else {
-        return Vec::new();
-    };
-    let Ok(parsed) = serde_json::from_str::<JsonValue>(&contents) else {
-        return Vec::new();
-    };
-    let mut dirs = Vec::new();
-    for section in [
-        "dependencies",
-        "devDependencies",
-        "optionalDependencies",
-        "peerDependencies",
-    ] {
-        let Some(entries) = parsed.get(section).and_then(JsonValue::as_object) else {
-            continue;
-        };
-        for value in entries.values().filter_map(JsonValue::as_str) {
-            let Some(relative) = value.strip_prefix("file:") else {
-                continue;
-            };
-            let candidate = host_dir.join(relative);
-            if candidate.join("package.json").is_file() {
-                dirs.push(candidate);
-            }
-        }
-    }
-    dirs.sort();
-    dirs.dedup();
-    dirs
-}
-
-fn render_container_js_hydration_command(
-    repo_root: &std::path::Path,
-    _container_policy: Option<&effigy_containers::EffectiveContainerPolicy>,
-    host_dir: &std::path::Path,
-    container_dir: &std::path::Path,
-    package_manager: ManifestJsPackageManager,
-    install_command: &str,
-    executable: &str,
-    force_install: bool,
-) -> String {
-    let repo = shell_quote(&repo_root.display().to_string());
-    let container_dir_path = container_dir.display().to_string();
-    let package_manager_label = package_manager.binary_name().unwrap_or("js");
-    let container_has_node_modules = format!(
-        "{executable} exec --repo {repo} -- sh -lc {probe} >/dev/null 2>&1",
-        probe = shell_quote(&format!(
-            "cd {} && [ -d node_modules ] && [ -n \"$(ls -A node_modules 2>/dev/null)\" ] && [ -d node_modules/.bin ] && [ -n \"$(ls -A node_modules/.bin 2>/dev/null)\" ]",
-            shell_quote(&container_dir_path)
-        )),
-    );
-    let install_command = format!(
-        "{executable} exec --repo {repo} -- sh -lc {script}",
-        script = shell_quote(&format!(
-            "cd {container_dir} && if [ -f package.json ]; then printf 'managed setup: hydrating %s in %s\\n' {package_manager_label} {container_dir}; {install_command}; fi",
-            container_dir = shell_quote(&container_dir_path),
-        )),
-    );
-    let script = if force_install {
-        format!(
-            "printf 'managed setup: forcing container-local install for %s because it declares local file dependencies\\n' {host_dir}; {install_command}",
-            host_dir = shell_quote(&host_dir.display().to_string()),
-        )
-    } else {
-        format!("if {container_has_node_modules}; then :; else {install_command}; fi")
-    };
-    format!("sh -lc {}", shell_quote(&script))
-}
-
-fn render_local_js_hydration_command(
-    host_dir: &std::path::Path,
-    container_dir: &std::path::Path,
-    package_manager: ManifestJsPackageManager,
-    install_command: &str,
-    force_install: bool,
-) -> String {
-    let package_manager_label = package_manager.binary_name().unwrap_or("js");
-    let container_dir_path = shell_quote(&container_dir.display().to_string());
-    let local_install_command = format!(
-        "cd {container_dir} && if [ -f package.json ]; then printf 'managed setup: hydrating %s in %s\\n' {package_manager_label} {container_dir}; {install_command}; fi",
-        container_dir = container_dir_path,
-    );
-    let script = if force_install {
-        format!(
-            "printf 'managed setup: forcing local install for %s because it declares local file dependencies\\n' {host_dir}; {local_install_command}",
-            host_dir = shell_quote(&host_dir.display().to_string()),
-        )
-    } else {
-        format!(
-            "cd {container_dir} && if [ -d node_modules ] && [ -n \"$(ls -A node_modules 2>/dev/null)\" ] && [ -d node_modules/.bin ] && [ -n \"$(ls -A node_modules/.bin 2>/dev/null)\" ]; then :; else {local_install_command}; fi",
-            container_dir = container_dir_path,
-        )
-    };
-    format!("sh -lc {}", shell_quote(&script))
+    format!(
+        "if ! {setup_command}; then printf '%s\\n' 'managed setup failed before process launch' 1>&2; exit 1; fi; {run}"
+    )
 }
 
 fn format_os_args(args: &[std::ffi::OsString]) -> String {
@@ -858,6 +673,7 @@ fn render_inline_managed_standard_exec_command(
     owner_task: &str,
     process_cwd: &std::path::Path,
     container_repo_root: Option<&std::path::Path>,
+    setup_command: Option<&str>,
     command: &str,
 ) -> String {
     let cwd = shell_quote(&process_cwd.display().to_string());
@@ -899,11 +715,13 @@ fn render_inline_managed_standard_exec_command(
             ],
         ),
     );
+    let setup_sequence = setup_command.unwrap_or("");
     format!(
         "sh -lc {}",
         shell_quote(&format!(
-            "cd {cwd} && state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if {probe} >/dev/null 2>&1; then {attach}; exit $?; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before exec surface became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed exec timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
+            "cd {cwd} && state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if {probe} >/dev/null 2>&1; then {setup_sequence}{attach}; exit $?; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before exec surface became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed exec timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
             timeout_secs = MANAGED_EXEC_READINESS_TIMEOUT_SECS,
+            setup_sequence = setup_sequence,
         ))
     )
 }
@@ -941,9 +759,16 @@ fn shell_quote(value: &str) -> String {
 mod tests {
     use super::{
         default_handoff_managed_shell_run, finish_managed_task,
+        render_handoff_managed_standard_command, render_inline_managed_standard_exec_command,
         render_managed_lifecycle_cleanup_notice, render_workspace_seeded_task_command,
     };
     use crate::runner::error::RunnerError;
+    use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
+    use effigy_manifest::{
+        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
+        ManifestContainerStartup,
+    };
+    use std::path::Path;
 
     #[test]
     fn finish_managed_task_preserves_primary_failure_without_running_cleanup() {
@@ -996,5 +821,70 @@ mod tests {
         );
 
         assert_eq!(rendered, "effigy dev 'front' '--' '--host' '0.0.0.0'");
+    }
+
+    #[test]
+    fn handoff_managed_standard_command_runs_setup_before_process() {
+        let rendered =
+            render_handoff_managed_standard_command(Some("printf setup-ok"), "bun run dev");
+
+        let setup_index = rendered.find("printf setup-ok").expect("setup command");
+        let run_index = rendered.find("bun run dev").expect("run command");
+        assert!(setup_index < run_index, "got: {rendered}");
+        assert!(
+            rendered.contains("managed setup failed before process launch"),
+            "got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn inline_managed_standard_exec_runs_setup_before_attach() {
+        let rendered = render_inline_managed_standard_exec_command(
+            Path::new("/tmp/repo"),
+            &test_policy(),
+            "dev",
+            Path::new("/tmp/repo/acme-front"),
+            Some(Path::new("/workspace-root/repo")),
+            Some("printf setup-ok; "),
+            "bun run dev",
+        );
+
+        let setup_index = rendered.find("printf setup-ok").expect("setup command");
+        let attach_index = rendered
+            .find("bun run dev")
+            .expect("attach command should be present");
+        assert!(setup_index < attach_index, "got: {rendered}");
+    }
+
+    fn test_policy() -> EffectiveContainerPolicy {
+        EffectiveContainerPolicy {
+            name: "stack".to_owned(),
+            driver: ManifestContainerDriver::Colima,
+            startup: ManifestContainerStartup::Attached,
+            profile: "effigy".to_owned(),
+            compose_source: EffectiveComposeSource::Direct,
+            compose_files: vec![std::path::PathBuf::from("docker-compose.yml")],
+            compose_file_display: "docker-compose.yml".to_owned(),
+            managed_volumes: vec![],
+            shared_services: vec![],
+            project_name: "stack".to_owned(),
+            primary_service: "workspace".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            dns_routes: vec![],
+            declared_ports: vec![],
+            ports_declared_explicitly: false,
+            declared_mounts: vec![],
+            declared_media_mounts: vec![],
+            pull_production_hook: None,
+            health_check: None,
+            health_timeout_secs: 60,
+            workspace_user: None,
+            workspace_home: None,
+            on_task_exit: ManifestContainerOnTaskExit::Stop,
+            shutdown: ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+        }
     }
 }

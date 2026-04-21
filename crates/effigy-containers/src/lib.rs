@@ -34,7 +34,7 @@ use effigy_manifest::{
     ResolvedTaskExecutionBinding, ResolvedWorkspaceContainer, TASK_MANIFEST_FILE,
 };
 
-const DEFAULT_COLIMA_PROFILE: &str = "default";
+pub(crate) const DEFAULT_COLIMA_PROFILE: &str = "effigy";
 const DEFAULT_ATTACH_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_HEALTH_TIMEOUT_SECS: u64 = 60;
 const GENERATED_COMPOSE_DIR: &str = "infra/dev";
@@ -199,9 +199,9 @@ pub fn load_container_policy_with_workspace(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
     })?;
-    let default_project_name = default_project_name_base(&loaded.manifest, repo_root);
-    validate_unique_project_names(containers, &default_project_name)?;
-    let name = resolve_container_name(&containers, requested_name)?;
+    let default_project_name_base = default_project_name_base(&loaded.manifest, repo_root);
+    validate_unique_project_names(containers, &default_project_name_base)?;
+    let name = resolve_container_name(containers, requested_name)?;
     let config = containers.environments.get(&name).ok_or_else(|| {
         let available = containers
             .environments
@@ -215,8 +215,8 @@ pub fn load_container_policy_with_workspace(
     })?;
     build_effective_policy(
         repo_root,
-        &containers,
-        &default_project_name,
+        containers,
+        &default_project_name_base,
         &name,
         config,
         &loaded.effective_manifest,
@@ -234,8 +234,8 @@ pub fn load_all_container_policies(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
     })?;
-    let default_project_name = default_project_name_base(&loaded.manifest, repo_root);
-    validate_unique_project_names(containers, &default_project_name)?;
+    let default_project_name_base = default_project_name_base(&loaded.manifest, repo_root);
+    validate_unique_project_names(containers, &default_project_name_base)?;
 
     let mut policies = containers
         .environments
@@ -243,8 +243,8 @@ pub fn load_all_container_policies(
         .map(|(name, config)| {
             build_effective_policy(
                 repo_root,
-                &containers,
-                &default_project_name,
+                containers,
+                &default_project_name_base,
                 name,
                 config,
                 &loaded.effective_manifest,
@@ -269,7 +269,7 @@ pub fn load_container_exec_working_dir(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
     })?;
-    let name = resolve_container_name(&containers, requested_name)?;
+    let name = resolve_container_name(containers, requested_name)?;
     let config = containers.environments.get(&name).ok_or_else(|| {
         let available = containers
             .environments
@@ -441,7 +441,7 @@ pub fn effective_attach_mode(
 fn build_effective_policy(
     repo_root: &Path,
     containers: &ManifestContainersConfig,
-    default_project_name: &str,
+    default_project_name_base: &str,
     name: &str,
     config: &ManifestContainerConfig,
     effective_manifest: &str,
@@ -452,7 +452,12 @@ fn build_effective_policy(
         .profile
         .clone()
         .unwrap_or_else(|| DEFAULT_COLIMA_PROFILE.to_owned());
-    let project_name = resolve_project_name(config, default_project_name);
+    let project_name = resolve_project_name(
+        config,
+        default_project_name_base,
+        name,
+        containers.environments.len(),
+    );
     let (
         mut compose_files,
         compose_file_display,
@@ -569,16 +574,32 @@ fn sanitize_project_name_component(value: &str) -> String {
     value.replace(|c: char| !c.is_ascii_alphanumeric(), "-")
 }
 
-fn resolve_project_name(config: &ManifestContainerConfig, default_project_name: &str) -> String {
+fn resolve_project_name(
+    config: &ManifestContainerConfig,
+    default_project_name_base: &str,
+    name: &str,
+    container_count: usize,
+) -> String {
     config
         .project_name
         .clone()
-        .unwrap_or_else(|| default_project_name.to_owned())
+        .unwrap_or_else(|| default_project_name(default_project_name_base, name, container_count))
+}
+
+fn default_project_name(
+    default_project_name_base: &str,
+    name: &str,
+    container_count: usize,
+) -> String {
+    if container_count <= 1 {
+        return format!("{default_project_name_base}-dev");
+    }
+    format!("{default_project_name_base}-{name}-dev")
 }
 
 fn validate_unique_project_names(
     containers: &ManifestContainersConfig,
-    default_project_name: &str,
+    default_project_name_base: &str,
 ) -> Result<(), ContainerPolicyError> {
     if containers.environments.len() <= 1 {
         return Ok(());
@@ -587,7 +608,12 @@ fn validate_unique_project_names(
     let mut by_project_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (name, config) in &containers.environments {
         by_project_name
-            .entry(resolve_project_name(config, default_project_name))
+            .entry(resolve_project_name(
+                config,
+                default_project_name_base,
+                name,
+                containers.environments.len(),
+            ))
             .or_default()
             .push(name.clone());
     }

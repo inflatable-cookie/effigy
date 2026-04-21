@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
+use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -370,6 +370,23 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks
             Ok(process_result_map(output))
         },
     );
+    let process_context = context.clone();
+    engine.register_fn(
+        "run_process_stream",
+        move |program: ImmutableString, args: Array| -> Result<Map, Box<EvalAltResult>> {
+            let mut process = ProcessCommand::new(program.as_str());
+            process.args(dynamic_array_to_strings(&args)?);
+            process.current_dir(&process_context.cwd);
+            process.stdin(Stdio::null());
+            process.stdout(Stdio::inherit());
+            process.stderr(Stdio::inherit());
+            with_local_node_bin_path(&mut process, &process_context.cwd);
+            let status = process
+                .status()
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            Ok(process_status_map(status))
+        },
+    );
 
     let task_context = context.clone();
     let task_callbacks = callbacks.clone();
@@ -529,6 +546,18 @@ fn process_result_map(output: std::process::Output) -> Map {
         "stderr".into(),
         String::from_utf8_lossy(&output.stderr).to_string().into(),
     );
+    map
+}
+
+fn process_status_map(status: std::process::ExitStatus) -> Map {
+    let mut map = Map::new();
+    map.insert(
+        "status".into(),
+        Dynamic::from_int(status.code().unwrap_or(-1).into()),
+    );
+    map.insert("success".into(), Dynamic::from_bool(status.success()));
+    map.insert("stdout".into(), String::new().into());
+    map.insert("stderr".into(), String::new().into());
     map
 }
 

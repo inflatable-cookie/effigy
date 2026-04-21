@@ -55,6 +55,8 @@ pub struct ManifestManagedConcurrentEntry {
     #[serde(default)]
     pub run: Option<String>,
     #[serde(default)]
+    pub setup: Vec<ManifestManagedRunStep>,
+    #[serde(default)]
     pub start: Option<usize>,
     #[serde(default)]
     pub tab: Option<usize>,

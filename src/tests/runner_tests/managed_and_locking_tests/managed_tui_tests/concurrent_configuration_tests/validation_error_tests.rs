@@ -139,6 +139,29 @@ container = "web"
             ),
         },
         ManagedInvalidDefinitionCase {
+            workspace: "managed-lifecycle-rejects-setup",
+            manifest: r#"[tasks.dev]
+mode = "tui"
+workspace = "app"
+concurrent = [{ role = "lifecycle", setup = [{ run = "printf nope" }] }]
+container_lifecycle = true
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+"#,
+            expected_task: "dev",
+            expected_process: "lifecycle",
+            expected_detail_substring: Some(
+                "`setup` is only supported on standard concurrent entries",
+            ),
+        },
+        ManagedInvalidDefinitionCase {
             workspace: "managed-health-wait-missing-container-session",
             manifest: r#"[tasks.dev]
 mode = "tui"

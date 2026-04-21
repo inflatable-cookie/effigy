@@ -7,7 +7,7 @@ use effigy_containers::{
     compose::{compose_args, compose_up_args},
     down_report, effective_attach_mode, eject_generated_compose, eject_report,
     exec::{
-        capture_compose_ps, colima_is_running, ensure_colima_running,
+        capture_compose_ps, colima_is_running, colima_profile_warnings, ensure_colima_running,
         shutdown_container as shutdown_container_via_exec,
     },
     health::probe_health_status,
@@ -25,8 +25,9 @@ use super::session::{render_attached_session_closeout, run_attached_container_se
 use super::signals::{install_stop_requested_flag, run_docker_capture, spawn_docker_inherit};
 use super::support::{
     annotate_left_running_shared_services, annotate_registered_gateway_routes,
-    annotate_removed_gateway_routes, annotate_shared_service_notes, ensure_shared_services_running,
-    remove_reset_volumes, rewrite_manifest_for_ejected_compose, wait_for_container_ready,
+    annotate_removed_gateway_routes, annotate_shared_service_notes, annotate_warning_lines,
+    ensure_shared_services_running, remove_reset_volumes, rewrite_manifest_for_ejected_compose,
+    validate_running_container_runtime_match, wait_for_container_ready,
 };
 use super::{render_container_report, RunnerError};
 use crate::runner::exec_command::{
@@ -54,6 +55,7 @@ pub(in crate::runner) fn run_task_workspace_session(
         normalize_task_container_reference(container_name),
     )?;
     validate_container_policy(repo_root, &policy)?;
+    emit_colima_profile_warnings(repo_root, &policy);
     if stop_requested.load(std::sync::atomic::Ordering::Relaxed) {
         return render_attached_session_closeout(repo_root, &policy, false, "signal");
     }
@@ -101,6 +103,8 @@ pub(super) fn run_container_up(
     let startup_stop_requested = install_stop_requested_flag()?;
     let policy = load_container_policy(repo_root, name)?;
     validate_container_policy(repo_root, &policy)?;
+    let warnings = colima_profile_warnings(&policy, repo_root);
+    emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
     let stop_requested = if attach_mode == EffectiveAttachMode::Attached {
         Some(startup_stop_requested)
@@ -146,6 +150,7 @@ pub(super) fn run_container_up(
         let mut report = up_detached_report(&policy, colima_started, health);
         annotate_shared_service_notes(&mut report, &shared_service_notes);
         annotate_registered_gateway_routes(&mut report, &gateway_routes);
+        annotate_warning_lines(&mut report, &warnings);
         return Ok(render_container_report(report, output_json));
     }
 
@@ -292,10 +297,9 @@ pub(super) fn run_container_status(
     } else {
         None
     };
-    Ok(render_container_report(
-        status_report(&policy, colima_running, health, compose_ps.as_deref()),
-        output_json,
-    ))
+    let mut report = status_report(&policy, colima_running, health, compose_ps.as_deref());
+    annotate_warning_lines(&mut report, &colima_profile_warnings(&policy, repo_root));
+    Ok(render_container_report(report, output_json))
 }
 
 pub(super) fn run_container_logs(
@@ -407,7 +411,12 @@ pub(in crate::runner) fn run_container_shell_session(
         &working_dir,
         &shell,
     );
-    let _status = run_compose_exec(repo_root, &policy, &args, false, "docker compose exec")?.status;
+    let status = run_compose_exec(repo_root, &policy, &args, false, "docker compose exec")?.status;
+    if should_fail_container_shell_exit(initial_command.is_some(), status.success()) {
+        return Err(RunnerError::task_invocation(format!(
+            "docker compose exec exited with status {status}"
+        )));
+    }
     Ok(format!(
         "{} finished container shell for `{}` service `{service}`",
         crate::runner::tasks_view::style_text(
@@ -423,6 +432,17 @@ fn should_fail_container_shell_exit(command_mode: bool, success: bool) -> bool {
     command_mode && !success
 }
 
+fn emit_colima_profile_warnings(repo_root: &Path, policy: &EffectiveContainerPolicy) {
+    let warnings = colima_profile_warnings(policy, repo_root);
+    emit_warning_lines(&warnings);
+}
+
+fn emit_warning_lines(warnings: &[String]) {
+    for warning in warnings {
+        eprintln!("[warn] {warning}");
+    }
+}
+
 fn resolve_container_shell_session(
     repo_root: &Path,
     name: Option<&str>,
@@ -436,6 +456,7 @@ fn resolve_container_shell_session(
             policy.profile, policy.name
         )));
     }
+    validate_running_container_runtime_match(repo_root, &policy)?;
     let service = service
         .unwrap_or(policy.primary_service.as_str())
         .to_owned();
@@ -571,7 +592,7 @@ mod tests {
             name: "web".to_owned(),
             driver: ManifestContainerDriver::Colima,
             startup: ManifestContainerStartup::Detached,
-            profile: "default".to_owned(),
+            profile: "effigy".to_owned(),
             compose_source: EffectiveComposeSource::Direct,
             compose_files: vec![PathBuf::from("docker-compose.yml")],
             compose_file_display: "docker-compose.yml".to_owned(),

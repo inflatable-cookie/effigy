@@ -302,6 +302,28 @@ fn parse_system_repair_supports_repo_and_system_override() {
 }
 
 #[test]
+fn parse_system_reset_runtime_supports_repo_and_system_override() {
+    let cmd = parse_command(vec![
+        "system".to_owned(),
+        "reset-runtime".to_owned(),
+        "--system".to_owned(),
+        "dev".to_owned(),
+        "--repo".to_owned(),
+        "demo".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::System(SystemArgs {
+            subcommand: SystemSubcommand::ResetRuntime,
+            system: Some("dev".to_owned()),
+            repo_override: Some(PathBuf::from("demo")),
+            output_json: false,
+        })
+    );
+}
+
+#[test]
 fn parse_workspace_supports_name_and_system_override() {
     let cmd = parse_command(vec![
         "workspace".to_owned(),

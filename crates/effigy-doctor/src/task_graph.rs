@@ -83,6 +83,17 @@ where
         if let Some(run) = entry.run.as_ref() {
             visit(run);
         }
+        for step in &entry.setup {
+            match step {
+                ManifestManagedRunStep::Command(command) => visit(command),
+                ManifestManagedRunStep::Step(table) => {
+                    let table = table.as_ref();
+                    if let Some(run) = table.run.as_ref() {
+                        visit(run);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -96,6 +107,25 @@ where
                 continue;
             }
             visit(reference);
+        }
+        for step in &entry.setup {
+            match step {
+                ManifestManagedRunStep::Command(command) => {
+                    if let Some(reference) = command
+                        .strip_prefix("task:")
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        visit(reference);
+                    }
+                }
+                ManifestManagedRunStep::Step(table) => {
+                    let table = table.as_ref();
+                    if let Some(reference) = table.task.as_deref() {
+                        visit(reference);
+                    }
+                }
+            }
         }
     }
 }

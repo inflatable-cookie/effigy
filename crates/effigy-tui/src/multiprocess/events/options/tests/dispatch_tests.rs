@@ -74,21 +74,17 @@ fn export_hotkey_writes_clean_transcript_and_closes_overlay() {
     let mut state = state_with_processes(&["api"]);
     state.repo_root = repo_root.clone();
     state.show_options = true;
-    state
-        .logs
-        .get_mut("api")
-        .expect("api logs")
-        .extend([
-            LogEntry {
-                kind: LogEntryKind::Stderr,
-                line: "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s"
-                    .to_owned(),
-            },
-            LogEntry {
-                kind: LogEntryKind::Stdout,
-                line: "ready".to_owned(),
-            },
-        ]);
+    state.logs.get_mut("api").expect("api logs").extend([
+        LogEntry {
+            kind: LogEntryKind::Stderr,
+            line: "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s"
+                .to_owned(),
+        },
+        LogEntry {
+            kind: LogEntryKind::Stdout,
+            line: "ready".to_owned(),
+        },
+    ]);
 
     let control = handle_options_overlay_key(
         &KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),

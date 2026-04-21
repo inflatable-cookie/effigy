@@ -102,6 +102,7 @@ pub(super) fn validate_concurrent_array(
                 "service",
                 "task",
                 "run",
+                "setup",
                 "start",
                 "tab",
                 "start_after_ms",
