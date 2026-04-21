@@ -24,6 +24,18 @@ run = "printf front"
     );
 }
 
+fn setup_concurrent_entries_with_setup(root: &Path) {
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [
+  { name = "front", setup = [{ rhai = "scripts/front-setup.rhai" }], run = "bun run dev", start = 1, tab = 1, shutdown_on_exit = true }
+]
+"#,
+    );
+}
+
 fn setup_single_definition_ordered_profile_entries(root: &Path) {
     write_ranked_task_ref_manifest(root, Some(1200));
     write_ranked_catalog_tasks(root);
@@ -49,8 +61,24 @@ default_workspace = "app"
 
 [systems.dev.workspaces.app]
 container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "demo-web-dev"
+primary_service = "app"
+working_dir = "/workspace"
 "#,
     );
+    std::fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
 }
 
 fn setup_lifecycle_and_shell_entry(root: &Path) {
@@ -74,8 +102,24 @@ default_workspace = "app"
 
 [systems.dev.workspaces.app]
 container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "demo-web-dev"
+primary_service = "app"
+working_dir = "/workspace"
 "#,
     );
+    std::fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
 }
 
 fn setup_lifecycle_and_shell_service_entry(root: &Path) {
@@ -99,8 +143,24 @@ default_workspace = "app"
 
 [systems.dev.workspaces.app]
 container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "demo-web-dev"
+primary_service = "app"
+working_dir = "/workspace"
 "#,
     );
+    std::fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
 }
 
 fn setup_lifecycle_readiness_entry(root: &Path) {
@@ -126,8 +186,24 @@ default_workspace = "app"
 
 [systems.dev.workspaces.app]
 container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "demo-web-dev"
+primary_service = "app"
+working_dir = "/workspace"
 "#,
     );
+    std::fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
 }
 
 fn setup_lifecycle_gateway_and_readiness_entry(root: &Path) {
@@ -154,8 +230,27 @@ default_workspace = "app"
 
 [systems.dev.workspaces.app]
 container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "demo-web-dev"
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.web.dns]
+routes = [{ domain = "project.test" }]
 "#,
     );
+    std::fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
 }
 
 #[test]
@@ -267,4 +362,23 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
     ];
 
     assert_managed_output_case_table(&cases);
+}
+
+#[test]
+fn run_manifest_task_managed_tui_plan_renders_explicit_concurrent_setup() {
+    let _guard = lock_test();
+    let _env = managed_tui_env();
+    assert_managed_output_case_table(&[ManagedOutputCase {
+        workspace: "managed-concurrent-setup-entry",
+        invocation: ManagedInvocation::DevWithRepo,
+        args: &[],
+        expected: &[
+            "Managed Task Plan",
+            "setup",
+            "__rhai-step --file 'scripts/front-setup.rhai'",
+            "bun run dev",
+        ],
+        expected_absent: &[],
+        setup: setup_concurrent_entries_with_setup,
+    }]);
 }
