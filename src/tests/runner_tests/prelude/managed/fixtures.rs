@@ -2,6 +2,8 @@ use super::super::harness::{
     create_workspace_dir, write_catalog_tasks, write_manifest, write_root_manifest, EnvGuard,
 };
 use super::super::runtime::Path;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 
 pub(in crate::runner::tests) fn managed_tui_env() -> EnvGuard {
     EnvGuard::set_many(&[("EFFIGY_MANAGED_TUI", Some("0".to_owned()))])
@@ -9,6 +11,46 @@ pub(in crate::runner::tests) fn managed_tui_env() -> EnvGuard {
 
 pub(in crate::runner::tests) fn managed_stream_env() -> EnvGuard {
     EnvGuard::set_many(&[("EFFIGY_MANAGED_STREAM", Some("1".to_owned()))])
+}
+
+pub(in crate::runner::tests) fn install_fake_container_runtime(root: &Path) -> EnvGuard {
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir fake runtime bin");
+
+    let docker = bin_dir.join("docker");
+    let docker_log = root.join("fake-docker.log");
+    fs::write(
+        &docker,
+        format!(
+            "#!/bin/sh\nlog='{}'\nprintf 'docker:%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = compose ]; then\n  shift\n  while [ $# -gt 0 ]; do\n    case \"$1\" in\n      -f|-p)\n        shift 2\n        ;;\n      up)\n        printf 'compose:up\\n' >> \"$log\"\n        exit 0\n        ;;\n      down)\n        printf 'compose:down\\n' >> \"$log\"\n        exit 0\n        ;;\n      ps)\n        printf 'compose:ps\\n' >> \"$log\"\n        printf 'NAME STATUS\\n'\n        exit 0\n        ;;\n      exec)\n        shift\n        if [ \"$1\" = -T ]; then\n          shift\n        fi\n        service=\"$1\"\n        shift\n        printf 'compose:exec:%s:%s\\n' \"$service\" \"$*\" >> \"$log\"\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ] && [ \"$3\" = true ]; then\n          exit 0\n        fi\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ]; then\n          command=$(printf '%s' \"$3\" | sed \"s/^'//; s/'$//\")\n          eval \"$command\"\n          exit $?\n        fi\n        exec \"$@\"\n        ;;\n      *)\n        shift\n        ;;\n    esac\n  done\nfi\nexit 0\n",
+            docker_log.display()
+        ),
+    )
+    .expect("write fake docker");
+    let mut perms = fs::metadata(&docker)
+        .expect("stat fake docker")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&docker, perms).expect("chmod fake docker");
+
+    let colima = bin_dir.join("colima");
+    let colima_log = root.join("fake-colima.log");
+    fs::write(
+        &colima,
+        format!(
+            "#!/bin/sh\nlog='{}'\nprintf 'colima:%s\\n' \"$*\" >> \"$log\"\ncase \"$1\" in\n  status)\n    printf 'INFO[0000] status: Running\\n'\n    exit 0\n    ;;\n  start)\n    printf 'started\\n'\n    exit 0\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+            colima_log.display()
+        ),
+    )
+    .expect("write fake colima");
+    let mut perms = fs::metadata(&colima)
+        .expect("stat fake colima")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&colima, perms).expect("chmod fake colima");
+
+    let old_path = std::env::var("PATH").ok().unwrap_or_default();
+    EnvGuard::set_many(&[("PATH", Some(format!("{}:{old_path}", bin_dir.display())))])
 }
 
 pub(in crate::runner::tests) fn write_catalogs_with_tasks(

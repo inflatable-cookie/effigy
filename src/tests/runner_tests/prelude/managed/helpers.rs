@@ -14,7 +14,9 @@ use super::cases::{
     ManagedProfileNotFoundCase, ManagedStreamBuiltinTestCase, ManagedUnlockInvocationErrorCase,
     ManagedUnlockSuccessCase,
 };
-use super::fixtures::write_managed_stream_builtin_test_manifest;
+use super::fixtures::{
+    install_fake_container_runtime, write_managed_stream_builtin_test_manifest,
+};
 
 fn task_args(args: &[&str]) -> Vec<String> {
     args.iter().map(|arg| (*arg).to_owned()).collect()
@@ -189,6 +191,7 @@ fn run_managed_case(
     args: &[&str],
 ) -> (PathBuf, Result<String, RunnerError>) {
     let root = setup_workspace_with(workspace, setup);
+    let _runtime = install_fake_container_runtime(&root);
     let result = run_managed_invocation(&root, invocation, args);
     (root, result)
 }
