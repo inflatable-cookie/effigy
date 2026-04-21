@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use ratatui::Frame;
 
 use crate::core::{InputMode, LogEntry, ProcessExitState};
@@ -88,6 +88,7 @@ pub(super) fn render_output_pane(
             .block(panel)
             .style(shell_inactive_style)
             .scroll((render_scroll_offset.min(u16::MAX as usize) as u16, 0))
+            .wrap(Wrap { trim: false })
     };
     frame.render_widget(logs, area);
 
