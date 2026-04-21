@@ -7563,7 +7563,11 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
         .spawn()
         .expect("spawn effigy");
 
-    std::thread::sleep(Duration::from_millis(800));
+    wait_for_path_exists(
+        &colima_args,
+        Duration::from_secs(3),
+        "startup colima invocation marker",
+    );
     nix::sys::signal::kill(
         nix::unistd::Pid::from_raw(child.id() as i32),
         nix::sys::signal::Signal::SIGINT,
