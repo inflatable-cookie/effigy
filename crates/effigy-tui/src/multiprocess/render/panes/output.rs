@@ -44,6 +44,9 @@ fn format_log_entry_line(entry: &LogEntry) -> Line<'static> {
     match entry.kind {
         LogEntryKind::Stdout => ansi_line(&entry.line, Style::default()),
         LogEntryKind::Stderr => {
+            if is_known_cargo_status_line(&entry.line) {
+                return ansi_line(&entry.line, Style::default());
+            }
             let mut spans = vec![Span::styled("[stderr] ", Style::default().fg(Color::Red))];
             spans.extend(ansi_line(&entry.line, Style::default()).spans);
             Line::from(spans)
@@ -53,4 +56,11 @@ fn format_log_entry_line(entry: &LogEntry) -> Line<'static> {
             Span::styled(entry.line.clone(), Style::default().fg(Color::Gray)),
         ]),
     }
+}
+
+fn is_known_cargo_status_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("Compiling ")
+        || trimmed.starts_with("Finished ")
+        || trimmed.starts_with("Running `")
 }
