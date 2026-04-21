@@ -141,8 +141,14 @@ fn rewrite_workspace_mounts_for_direct_compose(
         working_dir,
         &injected_mounts,
     )?;
+    normalize_runtime_rewrite_paths(&mut parsed, compose_dir);
 
-    let rewrite_path = compose_dir.join(format!(".effigy-{container_name}.workspace.compose.yml"));
+    let rewrite_dir = repo_root.join(".effigy").join("runtime").join("compose");
+    std::fs::create_dir_all(&rewrite_dir).map_err(|error| ContainerPolicyError::Read {
+        path: rewrite_dir.clone(),
+        error,
+    })?;
+    let rewrite_path = rewrite_dir.join(format!("{container_name}.workspace.compose.yml"));
     let rendered = serde_yaml::to_string(&parsed).map_err(|error| {
         ContainerPolicyError::TaskInvocation(format!(
             "failed to serialize workspace mount rewrite for `{container_name}`: {error}"
@@ -361,4 +367,113 @@ fn looks_like_bind_mount_source(source: &str) -> bool {
         || source == "."
         || source == ".."
         || source.contains('/')
+}
+
+fn normalize_runtime_rewrite_paths(parsed: &mut serde_yaml::Value, compose_dir: &Path) {
+    let Some(services) = parsed
+        .get_mut("services")
+        .and_then(serde_yaml::Value::as_mapping_mut)
+    else {
+        return;
+    };
+    for service in services.values_mut() {
+        let Some(service) = service.as_mapping_mut() else {
+            continue;
+        };
+        normalize_service_build_paths(service, compose_dir);
+        normalize_service_env_file_paths(service, compose_dir);
+        normalize_service_volume_sources(service, compose_dir);
+    }
+}
+
+fn normalize_service_build_paths(service: &mut serde_yaml::Mapping, compose_dir: &Path) {
+    let Some(build) = service.get_mut(serde_yaml::Value::String("build".to_owned())) else {
+        return;
+    };
+    match build {
+        serde_yaml::Value::String(path) => {
+            if let Some(normalized) = normalize_compose_relative_path(path, compose_dir) {
+                *path = normalized;
+            }
+        }
+        serde_yaml::Value::Mapping(mapping) => {
+            let key = serde_yaml::Value::String("context".to_owned());
+            if let Some(serde_yaml::Value::String(path)) = mapping.get_mut(&key) {
+                if let Some(normalized) = normalize_compose_relative_path(path, compose_dir) {
+                    *path = normalized;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn normalize_service_env_file_paths(service: &mut serde_yaml::Mapping, compose_dir: &Path) {
+    let Some(env_file) = service.get_mut(serde_yaml::Value::String("env_file".to_owned())) else {
+        return;
+    };
+    match env_file {
+        serde_yaml::Value::String(path) => {
+            if let Some(normalized) = normalize_compose_relative_path(path, compose_dir) {
+                *path = normalized;
+            }
+        }
+        serde_yaml::Value::Sequence(entries) => {
+            for entry in entries {
+                if let serde_yaml::Value::String(path) = entry {
+                    if let Some(normalized) = normalize_compose_relative_path(path, compose_dir) {
+                        *path = normalized;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn normalize_service_volume_sources(service: &mut serde_yaml::Mapping, compose_dir: &Path) {
+    let Some(serde_yaml::Value::Sequence(volumes)) =
+        service.get_mut(serde_yaml::Value::String("volumes".to_owned()))
+    else {
+        return;
+    };
+    for volume in volumes {
+        let Some(raw) = volume.as_str() else {
+            continue;
+        };
+        let Some((source, target, options)) = parse_mount_parts(raw) else {
+            continue;
+        };
+        let Some(normalized_source) = normalize_bind_mount_source(source, compose_dir) else {
+            continue;
+        };
+        let mut rendered = format!("{normalized_source}:{target}");
+        if let Some(options) = options.filter(|value| !value.is_empty()) {
+            rendered.push(':');
+            rendered.push_str(options);
+        }
+        *volume = serde_yaml::Value::String(rendered);
+    }
+}
+
+fn normalize_bind_mount_source(source: &str, compose_dir: &Path) -> Option<String> {
+    looks_like_bind_mount_source(source).then(|| render_compose_relative_path(source, compose_dir))
+}
+
+fn normalize_compose_relative_path(path: &str, compose_dir: &Path) -> Option<String> {
+    (!path.is_empty() && !Path::new(path).is_absolute() && !looks_like_remote_build_context(path))
+        .then(|| render_compose_relative_path(path, compose_dir))
+}
+
+fn render_compose_relative_path(path: &str, compose_dir: &Path) -> String {
+    let resolved = compose_dir.join(path);
+    resolved
+        .canonicalize()
+        .unwrap_or(resolved)
+        .display()
+        .to_string()
+}
+
+fn looks_like_remote_build_context(path: &str) -> bool {
+    path.contains("://") || path.starts_with("git@")
 }
