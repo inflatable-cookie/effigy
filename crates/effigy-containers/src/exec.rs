@@ -124,7 +124,7 @@ pub fn ensure_colima_running(
     })?;
     let cmd = colima_start_command(policy);
     let args: Vec<&str> = cmd.args.iter().map(|s| s.as_str()).collect();
-    run_command_stream_with_timeout(
+    run_command_capture_with_timeout(
         repo_root,
         &cmd.program,
         &args,
@@ -557,7 +557,7 @@ fn repair_colima_runtime(
     })?;
     let start = colima_start_command(policy);
     let start_args: Vec<&str> = start.args.iter().map(|value| value.as_str()).collect();
-    run_command_stream_with_timeout(
+    run_command_capture_with_timeout(
         repo_root,
         &start.program,
         &start_args,
@@ -664,7 +664,7 @@ fn restart_and_verify_colima_profile(
     })?;
     let start = colima_start_command(policy);
     let start_args: Vec<&str> = start.args.iter().map(|value| value.as_str()).collect();
-    run_command_stream_with_timeout(
+    run_command_capture_with_timeout(
         repo_root,
         &start.program,
         &start_args,
@@ -913,6 +913,7 @@ fn run_command_capture_with_timeout(
     }
 }
 
+#[cfg(test)]
 fn run_command_stream_with_timeout(
     repo_root: &Path,
     program: &str,
@@ -992,6 +993,7 @@ fn spawn_capture_child(
     command.spawn()
 }
 
+#[cfg(test)]
 fn spawn_stream_child(
     repo_root: &Path,
     program: &str,
