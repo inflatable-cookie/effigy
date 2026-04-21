@@ -10,7 +10,7 @@ use super::empty_supervisor;
 #[test]
 fn shell_shortcut_control_g_toggles_shell_capture_mode() {
     let supervisor = empty_supervisor();
-    let mut state = SessionState::new(vec!["shell".to_owned()], 2000, 240, 8000);
+    let mut state = SessionState::new(".".into(), vec!["shell".to_owned()], 2000, 240, 8000);
     state.shell_capture_mode = false;
     state.input_mode = InputMode::Insert;
 

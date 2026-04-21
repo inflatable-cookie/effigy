@@ -29,9 +29,10 @@ pub(super) fn prepare_runtime_session(
         .map(|process| process.name.clone())
         .collect();
 
-    let supervisor = ProcessSupervisor::spawn(repo_root, processes)?;
+    let supervisor = ProcessSupervisor::spawn(repo_root.clone(), processes)?;
     let terminal = init_terminal()?;
     let mut state = SessionState::new(
+        repo_root,
         process_names,
         VT_PARSER_ROWS,
         VT_PARSER_COLS,

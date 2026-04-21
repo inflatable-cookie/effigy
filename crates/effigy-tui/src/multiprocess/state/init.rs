@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -9,6 +10,7 @@ use super::SessionState;
 
 impl SessionState {
     pub fn new(
+        repo_root: PathBuf,
         process_names: Vec<String>,
         vt_rows: u16,
         vt_cols: u16,
@@ -27,6 +29,7 @@ impl SessionState {
         let vt_saw_chunk = map_for_processes(&process_names, || false);
 
         Self {
+            repo_root,
             process_names,
             logs,
             scroll_offsets,
@@ -42,6 +45,7 @@ impl SessionState {
             show_help: false,
             show_options: false,
             options_index: 0,
+            footer_message: None,
             observed_non_zero: HashMap::new(),
             exit_states: HashMap::new(),
             shutdown_on_exit_processes: HashSet::new(),

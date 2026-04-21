@@ -1,6 +1,9 @@
+use std::fs;
+use std::path::PathBuf;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::core::LogEntryKind;
+use crate::core::{LogEntry, LogEntryKind};
 use crate::multiprocess::events::options::handle_options_overlay_key;
 use crate::multiprocess::events::LoopControl;
 
@@ -65,6 +68,51 @@ fn restart_hotkey_logs_failure_and_closes_overlay() {
 }
 
 #[test]
+fn export_hotkey_writes_clean_transcript_and_closes_overlay() {
+    let supervisor = empty_supervisor();
+    let repo_root = export_test_root("options_export_hotkey_writes_clean_transcript");
+    let mut state = state_with_processes(&["api"]);
+    state.repo_root = repo_root.clone();
+    state.show_options = true;
+    state
+        .logs
+        .get_mut("api")
+        .expect("api logs")
+        .extend([
+            LogEntry {
+                kind: LogEntryKind::Stderr,
+                line: "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s"
+                    .to_owned(),
+            },
+            LogEntry {
+                kind: LogEntryKind::Stdout,
+                line: "ready".to_owned(),
+            },
+        ]);
+
+    let control = handle_options_overlay_key(
+        &KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        &supervisor,
+        &mut state,
+        0,
+    )
+    .expect("export result");
+
+    assert!(matches!(control, Some(LoopControl::Continue)));
+    assert!(!state.show_options);
+    let export_path = repo_root.join(".effigy/exports/managed-tui/api.log");
+    let exported = fs::read_to_string(&export_path).expect("read export");
+    assert_eq!(
+        exported,
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s\nready"
+    );
+    assert_eq!(
+        state.footer_message.as_deref(),
+        Some("exported clean transcript to .effigy/exports/managed-tui/api.log")
+    );
+}
+
+#[test]
 fn stop_hotkey_logs_failure_and_closes_overlay() {
     let supervisor = empty_supervisor();
     let mut state = state_with_processes(&["api"]);
@@ -93,7 +141,7 @@ fn enter_cancel_closes_overlay() {
     let supervisor = empty_supervisor();
     let mut state = state_with_processes(&["api"]);
     state.show_options = true;
-    state.options_index = 3;
+    state.options_index = 4;
 
     let control = handle_options_overlay_key(
         &KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
@@ -122,4 +170,17 @@ fn quit_hotkey_requests_quit() {
     .expect("quit result");
 
     assert!(matches!(control, Some(LoopControl::Quit)));
+}
+
+fn export_test_root(name: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "effigy-tui-{name}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("unix epoch")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).expect("create temp root");
+    root
 }

@@ -14,7 +14,7 @@ pub(super) fn handle_command_key(
     key: &KeyEvent,
     state: &mut SessionState,
     max_offset: usize,
-) -> LoopControl {
+) -> Result<LoopControl, MultiProcessTuiError> {
     command_dispatch::handle_command_key(key, state, max_offset)
 }
 

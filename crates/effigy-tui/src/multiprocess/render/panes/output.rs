@@ -4,6 +4,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
 use crate::core::{LogEntry, LogEntryKind};
+use crate::multiprocess::transcript::is_known_cargo_status_line;
 
 use super::super::super::terminal_text::{ansi_line, runtime_meta_line};
 
@@ -56,11 +57,4 @@ fn format_log_entry_line(entry: &LogEntry) -> Line<'static> {
             Span::styled(entry.line.clone(), Style::default().fg(Color::Gray)),
         ]),
     }
-}
-
-fn is_known_cargo_status_line(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    trimmed.starts_with("Compiling ")
-        || trimmed.starts_with("Finished ")
-        || trimmed.starts_with("Running `")
 }

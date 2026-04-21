@@ -64,5 +64,5 @@ fn up_and_down_keys_clamp_selection() {
         )
         .expect("down result");
     }
-    assert_eq!(state.options_index, 4);
+    assert_eq!(state.options_index, 5);
 }

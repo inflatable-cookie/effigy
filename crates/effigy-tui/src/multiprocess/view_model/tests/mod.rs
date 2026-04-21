@@ -2,7 +2,7 @@ use crate::core::{LogEntry, LogEntryKind};
 use crate::multiprocess::state::SessionState;
 
 pub(super) fn state_with_logs(lines: usize) -> SessionState {
-    let mut state = SessionState::new(vec!["api".to_owned()], 2000, 240, 8000);
+    let mut state = SessionState::new(".".into(), vec!["api".to_owned()], 2000, 240, 8000);
     let buffer = state.logs.get_mut("api").expect("api log buffer");
     for idx in 0..lines {
         buffer.push_back(LogEntry {

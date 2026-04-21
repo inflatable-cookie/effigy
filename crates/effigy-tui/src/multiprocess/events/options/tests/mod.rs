@@ -9,6 +9,7 @@ pub(super) fn empty_supervisor() -> ProcessSupervisor {
 
 pub(super) fn state_with_processes(processes: &[&str]) -> SessionState {
     SessionState::new(
+        ".".into(),
         processes.iter().map(|name| (*name).to_owned()).collect(),
         2000,
         240,

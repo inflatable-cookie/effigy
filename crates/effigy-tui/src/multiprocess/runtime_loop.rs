@@ -53,6 +53,7 @@ pub(super) fn run_event_loop(
                     show_help: runtime.state.show_help,
                     show_options: runtime.state.show_options,
                     options_index: runtime.state.options_index,
+                    footer_message: runtime.state.footer_message.as_deref(),
                     active_output_seen: active_view.active_output_seen,
                     spinner_tick: runtime.state.spinner_tick,
                     active_elapsed: active_view.active_elapsed,
