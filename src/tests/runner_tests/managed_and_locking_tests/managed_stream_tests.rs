@@ -648,6 +648,7 @@ fn run_manifest_task_managed_stream_auto_starts_gateway_before_runtime() {
     let _env = managed_stream_env();
     let root = crate::runner::tests::prelude::temp_workspace("managed-stream-gateway");
     setup_managed_stream_gateway(&root);
+    let _runtime = write_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
     let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
 
