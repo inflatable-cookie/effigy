@@ -713,10 +713,7 @@ fn run_manifest_task_managed_stream_resolves_task_refs_before_container_exec_whe
     let log = fs::read_to_string(&log_path).expect("read fake effigy log");
     assert!(log.contains("shell:web:"), "log: {log}");
     assert!(log.contains("--command true"), "log: {log}");
-    assert!(
-        log.contains("printf host-inline-api"),
-        "log: {log}"
-    );
+    assert!(log.contains("printf host-inline-api"), "log: {log}");
     assert!(!log.contains("task:api"), "log: {log}");
 }
 

@@ -12,6 +12,10 @@ fn parse_colima_running_detects_not_running() {
     assert!(!parse_colima_running("", ""));
     assert!(!parse_colima_running("colima is stopped", ""));
     assert!(!parse_colima_running(
+        "",
+        r#"time="2026-04-20T23:15:01+01:00" level=fatal msg="colima is not running""#,
+    ));
+    assert!(!parse_colima_running(
         "error: not found",
         "profile does not exist"
     ));
@@ -36,6 +40,111 @@ fn colima_start_command_uses_profile() {
     assert!(cmd.args.contains(&"1.1.1.1".to_string()));
     assert!(cmd.args.contains(&"8.8.8.8".to_string()));
     assert!(!cmd.allow_failure);
+}
+
+#[test]
+fn colima_start_command_applies_managed_resources_for_effigy_profile() {
+    unsafe {
+        std::env::set_var(
+            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
+            (128u64 * 1024 * 1024 * 1024).to_string(),
+        );
+    }
+    let cmd = colima_start_command(&test_policy("effigy"));
+    unsafe {
+        std::env::remove_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
+    }
+
+    assert!(cmd.args.contains(&"--memory".to_string()));
+    assert!(cmd.args.contains(&"32".to_string()));
+    assert!(!cmd.args.contains(&"--swap".to_string()));
+}
+
+#[test]
+fn managed_colima_profile_resources_scale_with_host_memory() {
+    unsafe {
+        std::env::set_var(
+            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
+            (16u64 * 1024 * 1024 * 1024).to_string(),
+        );
+    }
+    let small = managed_colima_profile_resources("effigy").expect("managed resources");
+    unsafe {
+        std::env::set_var(
+            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
+            (128u64 * 1024 * 1024 * 1024).to_string(),
+        );
+    }
+    let large = managed_colima_profile_resources("effigy").expect("managed resources");
+    unsafe {
+        std::env::remove_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
+    }
+
+    assert_eq!(small.memory_gib, 4);
+    assert_eq!(small.swap_gib, 4);
+    assert_eq!(large.memory_gib, 32);
+    assert_eq!(large.swap_gib, 16);
+}
+
+#[test]
+fn prepare_managed_colima_profile_writes_memory_and_swap_provision() {
+    let root = std::env::temp_dir().join(format!(
+        "effigy-colima-config-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("mkdir home");
+    let previous_home = std::env::var_os("HOME");
+    unsafe {
+        std::env::set_var("HOME", &root);
+        std::env::set_var(
+            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
+            (128u64 * 1024 * 1024 * 1024).to_string(),
+        );
+    }
+
+    prepare_managed_colima_profile(&test_policy("effigy")).expect("prepare profile");
+
+    unsafe {
+        std::env::remove_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
+        if let Some(home) = previous_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+
+    let rendered = std::fs::read_to_string(root.join(".colima/effigy/colima.yaml"))
+        .expect("read colima config");
+    let parsed = serde_yaml::from_str::<serde_yaml::Value>(&rendered).expect("parse yaml");
+    let root = parsed.as_mapping().expect("yaml mapping");
+    assert_eq!(
+        root.get(serde_yaml::Value::String("memory".to_owned()))
+            .and_then(serde_yaml::Value::as_u64),
+        Some(32)
+    );
+    let provision = root
+        .get(serde_yaml::Value::String("provision".to_owned()))
+        .and_then(serde_yaml::Value::as_sequence)
+        .expect("provision sequence");
+    let entry = provision
+        .iter()
+        .find_map(serde_yaml::Value::as_mapping)
+        .expect("provision entry");
+    assert_eq!(
+        entry
+            .get(serde_yaml::Value::String("mode".to_owned()))
+            .and_then(serde_yaml::Value::as_str),
+        Some("after-boot")
+    );
+    let script = entry
+        .get(serde_yaml::Value::String("script".to_owned()))
+        .and_then(serde_yaml::Value::as_str)
+        .expect("script");
+    assert!(script.contains("# effigy-managed-swap"));
+    assert!(script.contains("swap_gib=16"));
 }
 
 #[test]

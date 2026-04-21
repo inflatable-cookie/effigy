@@ -98,6 +98,7 @@ pub fn write_managed_plan_process_table(
             "process".to_owned(),
             "role".to_owned(),
             "cwd".to_owned(),
+            "setup".to_owned(),
             "run".to_owned(),
             "start-after-ms".to_owned(),
             "shutdown-on-exit".to_owned(),
@@ -134,6 +135,10 @@ fn managed_plan_process_rows(plan: &ManagedTaskPlan) -> Vec<Vec<String>> {
                 process.name.clone(),
                 managed_process_role_label(process.role).to_owned(),
                 process.cwd.display().to_string(),
+                process
+                    .setup
+                    .clone()
+                    .unwrap_or_else(|| "disabled".to_owned()),
                 process.run.clone(),
                 process.start_after_ms.to_string(),
                 managed_process_shutdown_on_exit_label(process.shutdown_on_exit).to_owned(),
@@ -209,6 +214,7 @@ mod tests {
                 role: ManagedProcessRole::Lifecycle,
                 cwd: PathBuf::from("/tmp/repo"),
                 run: "printf lifecycle".to_owned(),
+                setup: None,
                 start_after_ms: 0,
                 shutdown_on_exit: true,
                 service: None,
@@ -218,6 +224,7 @@ mod tests {
                 role: ManagedProcessRole::Standard,
                 cwd: PathBuf::from("/tmp/repo/api"),
                 run: "printf api".to_owned(),
+                setup: None,
                 start_after_ms: 0,
                 shutdown_on_exit: false,
                 service: None,
@@ -227,6 +234,7 @@ mod tests {
                 role: ManagedProcessRole::Shell,
                 cwd: PathBuf::from("/tmp/repo"),
                 run: "sh".to_owned(),
+                setup: None,
                 start_after_ms: 0,
                 shutdown_on_exit: false,
                 service: Some("workspace".to_owned()),

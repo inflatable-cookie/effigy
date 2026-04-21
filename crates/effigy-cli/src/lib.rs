@@ -471,6 +471,7 @@ pub enum SystemSubcommand {
     Status,
     Logs { follow: bool },
     Repair,
+    ResetRuntime,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

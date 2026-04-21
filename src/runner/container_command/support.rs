@@ -5,6 +5,9 @@ use std::process::Output;
 use effigy_catalog::volumes::{reset_commands, DockerCommand, VolumeClassification};
 use effigy_containers::{
     compose::{resolve_compose_backend, ComposeBackend},
+    exec::{
+        list_running_compose_containers_for_profile, ContainerExecError, RunningComposeContainer,
+    },
     health::wait_for_ready,
     EffectiveContainerPolicy,
 };
@@ -24,6 +27,78 @@ pub(super) fn wait_for_container_ready(
         stop_requested,
     )
     .map_err(RunnerError::task_invocation)
+}
+
+pub(in crate::runner) fn validate_running_container_runtime_match(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let rows = match list_running_compose_containers_for_profile(&policy.profile) {
+        Ok(rows) => rows,
+        Err(error) if exec_error_means_runtime_not_running(&error) => return Ok(()),
+        Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
+    };
+    if let Some(message) = running_container_runtime_mismatch(repo_root, policy, &rows) {
+        return Err(RunnerError::task_invocation(message));
+    }
+    Ok(())
+}
+
+fn exec_error_means_runtime_not_running(error: &ContainerExecError) -> bool {
+    match error {
+        ContainerExecError::Failure { stderr, .. } => {
+            stderr.contains("level=fatal msg=\"colima is not running\"")
+                || stderr.contains("Cannot connect to the Docker daemon")
+                || stderr.contains("daemon is not running")
+        }
+        ContainerExecError::Launch { .. } => false,
+    }
+}
+
+fn running_container_runtime_mismatch(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    rows: &[RunningComposeContainer],
+) -> Option<String> {
+    let repo_root = repo_root.to_string_lossy();
+    let repo_rows = rows
+        .iter()
+        .filter(|row| row.working_dir.as_deref() == Some(repo_root.as_ref()))
+        .collect::<Vec<_>>();
+    if repo_rows.is_empty() {
+        return None;
+    }
+
+    let expected_project_running = repo_rows.iter().any(|row| {
+        row.project_name.as_deref() == Some(policy.project_name.as_str())
+            && row.service.as_deref() == Some(policy.primary_service.as_str())
+    });
+    if expected_project_running {
+        return None;
+    }
+
+    let mut stale_projects = repo_rows
+        .iter()
+        .filter(|row| row.service.as_deref() == Some(policy.primary_service.as_str()))
+        .filter_map(|row| row.project_name.as_deref())
+        .filter(|project_name| *project_name != policy.project_name)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    stale_projects.sort();
+    stale_projects.dedup();
+    if stale_projects.is_empty() {
+        return None;
+    }
+
+    let stale = stale_projects
+        .iter()
+        .map(|project| format!("`{project}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "container `{}` expects Compose project `{}`, but this repo still has running `{}` service container(s) under {}. `project_name` changed while the old runtime was still up; stop the stale project first, then start the current one again.",
+        policy.name, policy.project_name, policy.primary_service, stale
+    ))
 }
 
 pub(super) fn rewrite_manifest_for_ejected_compose(
@@ -178,6 +253,22 @@ pub(super) fn annotate_shared_service_notes(
     }
 }
 
+pub(super) fn annotate_warning_lines(
+    report: &mut effigy_containers::ContainerCommandReport,
+    warnings: &[String],
+) {
+    if warnings.is_empty() {
+        return;
+    }
+    if let Some(json_object) = report.json.as_object_mut() {
+        json_object.insert("warnings".to_owned(), json!(warnings));
+    }
+    for warning in warnings {
+        report.success_text.push('\n');
+        report.success_text.push_str(&format!("[warn] {warning}"));
+    }
+}
+
 pub(super) fn annotate_left_running_shared_services(
     report: &mut effigy_containers::ContainerCommandReport,
     policy: &EffectiveContainerPolicy,
@@ -318,4 +409,104 @@ fn format_args(args: &[OsString]) -> String {
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{exec_error_means_runtime_not_running, running_container_runtime_mismatch};
+    use effigy_containers::{
+        exec::{ContainerExecError, RunningComposeContainer},
+        EffectiveComposeSource, EffectiveContainerPolicy,
+    };
+    use std::path::{Path, PathBuf};
+
+    fn test_policy() -> EffectiveContainerPolicy {
+        EffectiveContainerPolicy {
+            name: "web".to_owned(),
+            driver: effigy_manifest::ManifestContainerDriver::Colima,
+            startup: effigy_manifest::ManifestContainerStartup::Detached,
+            profile: "effigy".to_owned(),
+            compose_source: EffectiveComposeSource::Direct,
+            compose_files: vec![PathBuf::from("docker-compose.yml")],
+            compose_file_display: "docker-compose.yml".to_owned(),
+            managed_volumes: vec![],
+            shared_services: vec![],
+            project_name: "demo-web-renamed".to_owned(),
+            primary_service: "app".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            dns_routes: vec![],
+            declared_ports: vec![],
+            ports_declared_explicitly: false,
+            declared_mounts: vec![],
+            declared_media_mounts: vec![],
+            pull_production_hook: None,
+            health_check: None,
+            health_timeout_secs: 60,
+            workspace_user: None,
+            workspace_home: None,
+            on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
+            shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+        }
+    }
+
+    #[test]
+    fn runtime_mismatch_detects_stale_project_name_for_same_repo_service() {
+        let mismatch = running_container_runtime_mismatch(
+            Path::new("/tmp/demo"),
+            &test_policy(),
+            &[RunningComposeContainer {
+                container_name: "demo-app-1".to_owned(),
+                status: "Up 2 minutes".to_owned(),
+                ports: vec![],
+                project_name: Some("demo-web-old".to_owned()),
+                working_dir: Some("/tmp/demo".to_owned()),
+                service: Some("app".to_owned()),
+            }],
+        )
+        .expect("mismatch");
+
+        assert!(mismatch.contains("expects Compose project `demo-web-renamed`"));
+        assert!(mismatch.contains("under `demo-web-old`"));
+    }
+
+    #[test]
+    fn runtime_mismatch_ignores_matching_project_name() {
+        let mismatch = running_container_runtime_mismatch(
+            Path::new("/tmp/demo"),
+            &test_policy(),
+            &[RunningComposeContainer {
+                container_name: "demo-app-1".to_owned(),
+                status: "Up 2 minutes".to_owned(),
+                ports: vec![],
+                project_name: Some("demo-web-renamed".to_owned()),
+                working_dir: Some("/tmp/demo".to_owned()),
+                service: Some("app".to_owned()),
+            }],
+        );
+
+        assert!(mismatch.is_none());
+    }
+
+    #[test]
+    fn runtime_not_running_errors_degrade_to_no_mismatch_probe() {
+        let colima_stopped = ContainerExecError::Failure {
+            command: "colima nerdctl ps".to_owned(),
+            code: Some(1),
+            stdout: String::new(),
+            stderr: "time=\"2026-04-21T07:59:20+01:00\" level=fatal msg=\"colima is not running\""
+                .to_owned(),
+        };
+        let docker_stopped = ContainerExecError::Failure {
+            command: "docker ps".to_owned(),
+            code: Some(1),
+            stdout: String::new(),
+            stderr: "Cannot connect to the Docker daemon".to_owned(),
+        };
+
+        assert!(exec_error_means_runtime_not_running(&colima_stopped));
+        assert!(exec_error_means_runtime_not_running(&docker_stopped));
+    }
 }

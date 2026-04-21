@@ -8,6 +8,7 @@ use effigy_containers::{
 use effigy_exec::{CwdMapper, ExecAlias, ExecAliasTable};
 use effigy_manifest::{ManifestContainerConfig, ManifestContainersConfig, TASK_MANIFEST_FILE};
 
+use crate::runner::container_command::support::validate_running_container_runtime_match;
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::load_task_manifest;
 
@@ -118,6 +119,7 @@ pub(super) fn ensure_container_running(
     container_name: &str,
 ) -> Result<(), RunnerError> {
     if colima_is_running(policy, repo_root)? {
+        validate_running_container_runtime_match(repo_root, policy)?;
         return Ok(());
     }
     Err(RunnerError::task_invocation(format!(

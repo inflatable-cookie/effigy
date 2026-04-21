@@ -113,7 +113,7 @@ default = "web"
 [containers.web]
 driver = "colima"
 startup = "attached"
-profile = "default"
+profile = "effigy"
 compose_file = "infra/dev/docker-compose.yml"
 project_name = "my-app-dev"
 primary_service = "app"

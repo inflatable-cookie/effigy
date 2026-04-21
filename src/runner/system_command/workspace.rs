@@ -79,9 +79,11 @@ pub(super) fn resolve_public_workspace_container(
     surface: &str,
 ) -> Result<Option<String>, RunnerError> {
     let manifest = load_task_manifest(&repo_root.join(effigy_manifest::TASK_MANIFEST_FILE))?;
-    let mut task = ManifestTask::default();
-    task.system = system.map(str::to_owned);
-    task.workspace = workspace.map(str::to_owned);
+    let task = ManifestTask {
+        system: system.map(str::to_owned),
+        workspace: workspace.map(str::to_owned),
+        ..Default::default()
+    };
     let binding = resolve_container_execution_binding(
         manifest.systems.as_ref(),
         manifest.containers.as_ref(),

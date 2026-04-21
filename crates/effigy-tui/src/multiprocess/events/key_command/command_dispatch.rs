@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::core::{next_index, prev_index, InputMode};
 use super::{LoopControl, MultiProcessTuiError, SessionState};
+use crate::core::{next_index, prev_index, InputMode};
 
 pub(super) fn handle_command_key(
     key: &KeyEvent,

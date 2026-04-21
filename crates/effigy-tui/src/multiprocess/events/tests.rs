@@ -1,9 +1,11 @@
+use std::time::{Duration, Instant};
+
 use std::collections::HashMap;
 
 use crate::core::{next_index, prev_index, toggle_follow_for_active};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::input::shell_key_input;
+use super::{input::shell_key_input, should_stop_draining};
 
 #[test]
 fn tab_index_helpers_wrap_correctly() {
@@ -32,4 +34,18 @@ fn shell_key_input_maps_control_keys() {
     assert_eq!(shell_key_input(&key), Some("\u{3}".to_owned()));
     let key = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
     assert_eq!(shell_key_input(&key), Some("\u{1b}[D".to_owned()));
+}
+
+#[test]
+fn draining_allows_first_event_even_after_budget_elapsed() {
+    let started_at = Instant::now() - Duration::from_millis(20);
+
+    assert!(!should_stop_draining(started_at, 0));
+}
+
+#[test]
+fn draining_stops_after_first_event_once_budget_elapsed() {
+    let started_at = Instant::now() - Duration::from_millis(20);
+
+    assert!(should_stop_draining(started_at, 1));
 }

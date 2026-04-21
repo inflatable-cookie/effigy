@@ -44,8 +44,14 @@ fn output_lines_skip_stderr_prefix_for_known_cargo_status_lines() {
 
     let lines = output_lines(&logs, false, Duration::from_secs(2), 0);
     assert_eq!(lines.len(), 3);
-    assert_eq!(lines[1].spans[0].content.as_ref(), "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s");
-    assert_eq!(lines[2].spans[0].content.as_ref(), "     Running `target/debug/acme-api`");
+    assert_eq!(
+        lines[1].spans[0].content.as_ref(),
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s"
+    );
+    assert_eq!(
+        lines[2].spans[0].content.as_ref(),
+        "     Running `target/debug/acme-api`"
+    );
 }
 
 #[test]

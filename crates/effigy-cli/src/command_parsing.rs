@@ -199,6 +199,7 @@ where
         "status" => SystemSubcommand::Status,
         "logs" => SystemSubcommand::Logs { follow: false },
         "repair" => SystemSubcommand::Repair,
+        "reset-runtime" => SystemSubcommand::ResetRuntime,
         other => return Err(unknown_argument(other)),
     };
     let mut system = None;

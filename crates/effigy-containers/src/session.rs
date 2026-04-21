@@ -258,6 +258,7 @@ pub fn managed_standard_exec_command(
     owner_task: &str,
     process_cwd: &Path,
     container_repo_root: Option<&Path>,
+    setup_command: Option<&str>,
     executable: &str,
     command: &str,
 ) -> String {
@@ -284,11 +285,13 @@ pub fn managed_standard_exec_command(
         &format!("shell --command {command}"),
         &repo,
     );
+    let setup_sequence = setup_command.unwrap_or("");
     format!(
         "sh -lc {script}",
         script = shell_quote(&format!(
-            "cd {cwd} && state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if {readiness_probe}; then exec {attach}; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before exec surface became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed exec timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
+            "cd {cwd} && state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if {readiness_probe}; then {setup_sequence}exec {attach}; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before exec surface became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed exec timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
             timeout_secs = MANAGED_EXEC_READINESS_TIMEOUT_SECS,
+            setup_sequence = setup_sequence,
         )),
     )
 }
@@ -568,6 +571,7 @@ mod tests {
             "dev",
             Path::new("/tmp/repo/acme-api"),
             Some(Path::new("/workspace-root/repo")),
+            None,
             "effigy",
             "printf api-ok",
         );
@@ -597,6 +601,7 @@ mod tests {
             "dev",
             Path::new("/Users/tom/repo/acme-admin"),
             Some(Path::new("/workspace-root/repo")),
+            None,
             "effigy",
             "(cd '/Users/tom/repo/acme-admin' && svelte-kit sync)",
         );
@@ -611,6 +616,26 @@ mod tests {
             "got: {rendered}"
         );
         assert!(rendered.contains("svelte-kit sync"), "got: {rendered}");
+    }
+
+    #[test]
+    fn managed_standard_exec_command_runs_process_setup_before_attach() {
+        let rendered = managed_standard_exec_command(
+            Path::new("/tmp/repo"),
+            Some("web"),
+            "dev",
+            Path::new("/tmp/repo/acme-front"),
+            Some(Path::new("/workspace-root/repo")),
+            Some("printf setup-ok; "),
+            "effigy",
+            "bun run dev",
+        );
+
+        let setup_index = rendered.find("printf setup-ok").expect("setup command");
+        let attach_index = rendered
+            .rfind("shell --command")
+            .expect("attach command should be present");
+        assert!(setup_index < attach_index, "got: {rendered}");
     }
 
     #[test]

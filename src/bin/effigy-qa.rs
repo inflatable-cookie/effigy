@@ -1,7 +1,11 @@
+#[cfg(not(test))]
 use std::env;
+#[cfg(not(test))]
 use std::path::PathBuf;
+#[cfg(not(test))]
 use std::process::{exit, Command};
 
+#[cfg(not(test))]
 fn main() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let args: Vec<String> = env::args().skip(1).collect();
@@ -26,3 +30,6 @@ fn main() {
 
     exit(status.code().unwrap_or(1));
 }
+
+#[cfg(test)]
+fn main() {}

@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use effigy_containers::{
-    data_list_report, data_pull_production_report, data_transfer_report, exec::colima_is_running,
+    data_list_report, data_pull_production_report, data_transfer_report,
+    exec::{colima_is_running, colima_profile_warnings},
     load_container_policy, validate_container_policy, ContainerDataHookResult,
     ContainerDataTransferAction, ContainerDataVolumeEntry, EffectiveComposeSource,
     EffectiveContainerPolicy,
@@ -9,7 +10,7 @@ use effigy_containers::{
 
 use super::gateway_registration::register_gateway_routes_for_container;
 use super::support::{
-    annotate_registered_gateway_routes, annotate_shared_service_notes,
+    annotate_registered_gateway_routes, annotate_shared_service_notes, annotate_warning_lines,
     ensure_shared_services_running, wait_for_container_ready,
 };
 use super::{render_container_report, RunnerError};
@@ -115,6 +116,7 @@ pub(super) fn run_container_data_pull_production(
     );
     annotate_shared_service_notes(&mut report, &shared_service_notes);
     annotate_registered_gateway_routes(&mut report, &gateway_routes);
+    annotate_warning_lines(&mut report, &colima_profile_warnings(&policy, repo_root));
     Ok(render_container_report(report, output_json))
 }
 
@@ -206,7 +208,7 @@ mod tests {
             name: "web".to_owned(),
             driver: ManifestContainerDriver::Colima,
             startup: ManifestContainerStartup::Detached,
-            profile: "default".to_owned(),
+            profile: "effigy".to_owned(),
             compose_source: EffectiveComposeSource::Direct,
             compose_files: vec![PathBuf::from("docker-compose.yml")],
             compose_file_display: "docker-compose.yml".to_owned(),

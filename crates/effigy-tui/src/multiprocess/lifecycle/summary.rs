@@ -70,7 +70,7 @@ fn render_failure_output_section(
         .filter_map(|name| {
             let logs = process_logs.get(name)?;
             let tail = failure_log_tail(logs);
-            (!tail.is_empty()).then(|| (name.as_str(), tail))
+            (!tail.is_empty()).then_some((name.as_str(), tail))
         })
         .collect::<Vec<_>>();
     failures.sort_by(|a, b| a.0.cmp(b.0));
