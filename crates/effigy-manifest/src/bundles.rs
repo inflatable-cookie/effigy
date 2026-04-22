@@ -278,18 +278,17 @@ fn required_bundle_string(
 }
 
 fn merge_missing_values(current: &mut Value, defaults: &Value) {
-    match (current.as_table_mut(), defaults.as_table()) {
-        (Some(current_table), Some(defaults_table)) => {
-            for (key, default_value) in defaults_table {
-                match current_table.get_mut(key) {
-                    Some(current_value) => merge_missing_values(current_value, default_value),
-                    None => {
-                        current_table.insert(key.clone(), default_value.clone());
-                    }
+    if let (Some(current_table), Some(defaults_table)) =
+        (current.as_table_mut(), defaults.as_table())
+    {
+        for (key, default_value) in defaults_table {
+            match current_table.get_mut(key) {
+                Some(current_value) => merge_missing_values(current_value, default_value),
+                None => {
+                    current_table.insert(key.clone(), default_value.clone());
                 }
             }
         }
-        _ => {}
     }
 }
 

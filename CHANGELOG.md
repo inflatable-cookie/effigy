@@ -24,6 +24,12 @@ During v0.x, MINOR bumps may include breaking changes.
   remains under `infra/dev` after an explicit eject.
 
 ### Added
+- Acknowledge Ctrl+C during `effigy container up` across both attached and
+  detached bring-up: SIGINT/SIGTERM now surfaces a visible
+  `[info] shutdown requested; stopping container cleanly...` line, and the
+  bring-up unwinds through `compose down` plus gateway deregistration before
+  returning control to the terminal. The detached path used to ignore the
+  stop flag entirely while compose was still pulling images.
 - Persist bounded gateway loopback-IP assignments in
   `~/.effigy/gateway/loopback-ips.json` and provision the macOS
   `127.1.0.1`–`127.1.0.50` alias range during the existing elevated

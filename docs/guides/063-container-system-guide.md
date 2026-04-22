@@ -168,6 +168,15 @@ Attached-session rule:
   log follow so task aliases can still run honestly in plain subprocess
   environments
 
+Startup interruption rule:
+
+- Ctrl+C during `effigy container up` (attached or detached) surfaces a
+  `[info] shutdown requested; stopping container cleanly...` acknowledgement
+  and unwinds through compose teardown plus gateway deregistration before
+  returning to the terminal
+- this applies even while compose is still pulling or creating images; the
+  detached bring-up path used to ignore the stop flag during that window
+
 Current `down` behavior is intentionally narrow:
 
 - it tears down the compose environment
