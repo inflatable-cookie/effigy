@@ -24,6 +24,15 @@ During v0.x, MINOR bumps may include breaking changes.
   remains under `infra/dev` after an explicit eject.
 
 ### Added
+- Register the `northstar` starter with `effigy init`: `effigy init northstar`
+  now emits the single-repo Northstar + Effigy consumer contract (root
+  `effigy.toml` with a starter `[docs_policy]` block and `qa` / `qa:docs` /
+  `qa:northstar` task bundle, `README.md`, `AGENTS.md`, `CHANGELOG.md`, the
+  four-file docs spine under `docs/{README, vision/README, roadmaps/README,
+  logs/README}.md`, a first `docs/vision/001-product-vision.md`, and a
+  starter `docs/policy/vision-next-task-verbs.txt`) plus a post-emission
+  edit checklist. Lands as a pure content starter on top of the unified
+  `effigy init <name>` loader — no command work was required.
 - Register the `underlay` starter with `effigy init`: `effigy init underlay`
   now emits the five-file Underlay manifest shape (root `effigy.toml`,
   `effigy.system.toml`, `effigy.bootstrap.toml`, `effigy.tasks.toml`, and

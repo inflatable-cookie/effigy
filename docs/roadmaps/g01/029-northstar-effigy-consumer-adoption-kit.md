@@ -400,10 +400,12 @@ Candidate product surfaces:
   with `--dry-run` / `--force` / `--json` and `--list [--json]`; multi-file
   starters (e.g. `underlay`) emit nested file trees plus optional
   post-emission guidance via the `effigy.init.v1` payload's `files[]` and
-  `guidance` fields. A Northstar starter is a content follow-up slot on
-  top of that surface — land it as
-  `crates/effigy-catalog/starters/northstar/` with a `starter.toml`
-  descriptor; no command work is required.
+  `guidance` fields. The Northstar starter itself is now also shipped as
+  a pure content slot at `crates/effigy-catalog/starters/northstar/`,
+  emitting the single-repo consumer contract (README, AGENTS, CHANGELOG,
+  docs spine, starter `[docs_policy]`, `qa:northstar` bundle, and vision
+  next-task verb list) through the same loader — no command work was
+  required.
 - reusable consumer `[docs_policy]` starter blocks
 - explicit repo-contract validation command family
 - release/changelog starter generation

@@ -1,0 +1,76 @@
+# Starter descriptor for the `northstar` starter.
+#
+# This starter materializes the Northstar + Effigy consumer-repo contract
+# defined in `docs/guides/056-northstar-effigy-consumer-repo-contract.md`:
+# a docs spine (vision / roadmaps / logs), an agent contract, a task
+# validation bundle (`qa` / `qa:docs` / `qa:northstar`), a changelog
+# baseline, and a starter `[docs_policy]` block ready to validate the
+# spine through `effigy docs` built-ins.
+#
+# Shape: single-repo. Workspace-container adoption (thin root + nested
+# docs-authority repo) is intentionally a follow-up content slot, not
+# a second variant on this starter.
+
+[starter]
+name = "northstar"
+description = "Northstar + Effigy consumer contract: docs spine, agent contract, qa:northstar bundle, and starter docs_policy."
+
+[[files]]
+target = "effigy.toml"
+
+[[files]]
+target = "README.md"
+
+[[files]]
+target = "AGENTS.md"
+
+[[files]]
+target = "CHANGELOG.md"
+
+[[files]]
+target = "docs/README.md"
+
+[[files]]
+target = "docs/vision/README.md"
+
+[[files]]
+target = "docs/vision/001-product-vision.md"
+
+[[files]]
+target = "docs/roadmaps/README.md"
+
+[[files]]
+target = "docs/logs/README.md"
+
+[[files]]
+target = "docs/policy/vision-next-task-verbs.txt"
+
+[guidance]
+text = """
+Next steps:
+
+1. Replace `<PROJECT_NAME>` throughout the emitted files with the real
+   repo name (README.md, AGENTS.md, docs/README.md, effigy.toml).
+
+2. In `docs/vision/001-product-vision.md`:
+   - fill in the long-term outcome, strategic constraints, and target
+     envelope
+   - leave a concrete `## Next Task` that uses one of the verbs in
+     `docs/policy/vision-next-task-verbs.txt`
+
+3. In `docs/roadmaps/README.md`, either declare the first roadmap
+   generation (`g01`) or point at an existing planning queue.
+
+4. Run `effigy qa:northstar` to validate the docs spine, agent contract,
+   and next-action coverage. Fix anything the bundle flags before the
+   first real commit.
+
+5. When the repo is ready to release, add a `[release]` section to
+   `effigy.toml` per `docs/guides/056-northstar-effigy-consumer-repo-contract.md`
+   section 5. Workspace-container roots without release artifacts can
+   skip this step.
+
+The `[docs_policy]` block in `effigy.toml` already points at the
+emitted vision index and verb list. `effigy qa:northstar` layers on top
+of that — no extra wiring is needed to start validating drift.
+"""

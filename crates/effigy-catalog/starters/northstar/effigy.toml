@@ -1,0 +1,81 @@
+# Root Effigy manifest for a Northstar + Effigy consumer repo.
+#
+# Shape: single-repo. Adjust task contents, add release config, and
+# extend `qa:northstar` with repo-specific checks as the project grows.
+
+[tasks]
+ping = "printf ok"
+
+# Repo-owned test entrypoint. Either leave `test` as the default
+# built-in (by omitting it here), or declare an explicit task — do
+# not leave this ambiguous in multi-runner repos.
+# test = "<your test command>"
+
+# Per-repo health surface. `effigy doctor` still works without this;
+# declare `health` when the repo has project-specific readiness checks.
+# health = "<your health command>"
+
+# Generic validation aggregator. Keep this as the `qa` spine and
+# compose it from `validate` + docs-contract checks.
+validate = [
+  { task = "ping" },
+]
+
+# ---- Docs + Northstar contract ------------------------------------------------
+# These use Effigy's built-in `docs` checks to enforce the consumer contract.
+# Tune the paths below once the repo's real docs tree takes shape.
+
+"qa:docs" = [
+  { task = "qa:northstar:spine" },
+  { task = "qa:northstar:docs-front-door" },
+  { task = "qa:northstar:readme" },
+]
+
+"qa:northstar:spine" = "effigy docs check-paths README.md AGENTS.md docs/README.md docs/vision/README.md docs/roadmaps/README.md docs/logs/README.md docs/policy/vision-next-task-verbs.txt"
+"qa:northstar:agent-contract" = "effigy docs check-contains AGENTS.md --require 'effigy tasks' --require 'effigy test --plan' --require 'docs/README.md' --require 'docs/vision/README.md' --require 'docs/roadmaps/README.md' --require 'docs/logs/README.md'"
+"qa:northstar:readme" = "effigy docs check-contains README.md --require 'docs/README.md'"
+"qa:northstar:docs-front-door" = "effigy docs check-contains docs/README.md --require 'vision/README.md' --require 'roadmaps/README.md' --require 'logs/README.md'"
+"qa:northstar:indexes" = "effigy docs check-index --policy-index vision"
+"qa:northstar:next-action" = "effigy docs check-next-action --policy vision"
+"qa:northstar:headings" = "effigy docs check-headings docs/vision/README.md --require-heading '## Vision Artifacts'"
+"qa:northstar:agent-defaults" = "effigy docs check-forbidden AGENTS.md README.md --forbid '--repo .'"
+
+"qa:northstar" = [
+  { task = "qa:northstar:spine" },
+  { task = "qa:northstar:agent-contract" },
+  { task = "qa:northstar:readme" },
+  { task = "qa:northstar:docs-front-door" },
+  { task = "qa:northstar:indexes" },
+  { task = "qa:northstar:next-action" },
+  { task = "qa:northstar:headings" },
+  { task = "qa:northstar:agent-defaults" },
+]
+
+qa = [
+  { task = "validate" },
+  { task = "qa:docs" },
+  { task = "qa:northstar" },
+]
+
+# ---- Docs policy -------------------------------------------------------------
+# Starter `[docs_policy]` block — wire the vision index to the
+# `effigy docs check-index` / `check-next-action` engines.
+
+[docs_policy.indexes.vision]
+file = "docs/vision/README.md"
+dir = "docs/vision"
+section = "Vision Artifacts"
+exclude = ["history/**"]
+
+[docs_policy.next_actions.vision]
+index = "vision"
+heading = "## Next Task"
+allowlist_file = "docs/policy/vision-next-task-verbs.txt"
+
+# ---- Release (deferred) ------------------------------------------------------
+# Uncomment and tune once the repo is actually preparing to ship artifacts.
+# See docs/guides/056-northstar-effigy-consumer-repo-contract.md §5.
+#
+# [release]
+# changelog = "CHANGELOG.md"
+# tag-format = "v{version}"
